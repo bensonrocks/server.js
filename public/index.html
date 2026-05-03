@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-brand">
+      <span class="header-logo">&#128230;</span>
+      <span class="header-title">Order Dashboard</span>
+    </div>
+    <div class="header-actions">
+      <input type="text" id="search" class="search-input" placeholder="Search orders, clients&#8230;" autocomplete="off">
+      <button id="btn-ingest" class="btn btn-primary">+ Ingest Email</button>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Clients</div>
+        <ul id="client-list"></ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Channels</div>
+        <ul id="channel-list"></ul>
+      </div>
+    </aside>
+
+    <!-- ── Main ────────────────────────────────────────────────────────── -->
+    <main class="main">
+
+      <!-- Stats -->
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div></div>
+        <div class="stat-card"><div class="stat-label">Total Revenue</div><div class="stat-value" id="stat-revenue">—</div></div>
+        <div class="stat-card"><div class="stat-label">Clients</div><div class="stat-value" id="stat-clients">—</div></div>
+        <div class="stat-card"><div class="stat-label">Channels</div><div class="stat-value" id="stat-channels">—</div></div>
+      </div>
+
+      <!-- Filters -->
+      <div class="filters-bar">
+        <span class="label">Channel:</span>
+        <div id="channel-tabs" class="channel-tabs"></div>
+        <span class="label">Status:</span>
+        <select id="status-filter" class="select">
+          <option value="">All</option>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="processing">Processing</option>
+          <option value="shipped">Shipped</option>
+          <option value="delivered">Delivered</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+
+      <!-- Orders table -->
+      <div class="table-container">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Client</th>
+              <th>Channel</th>
+              <th>Date</th>
+              <th>Items</th>
+              <th>Total</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ── Order detail panel ──────────────────────────────────────────────── -->
+  <div id="detail-panel" class="detail-panel">
+    <div class="detail-header">
+      <h2 id="detail-title">Order Details</h2>
+      <button id="close-detail" class="btn-close" title="Close">&#10005;</button>
+    </div>
+    <div id="detail-content" class="detail-content"></div>
+  </div>
+  <div id="panel-overlay" class="overlay hidden"></div>
+
+  <!-- ── Email ingest modal ──────────────────────────────────────────────── -->
+  <div id="ingest-modal" class="modal hidden">
+    <div class="modal-header">
+      <h2>Ingest Order Email</h2>
+      <button id="close-modal" class="btn-close" title="Close">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-hint">
+        Paste a standardised order email body. Required markers:
+        <code>---ORDER-START---</code> &hellip; <code>---ORDER-END---</code>
+      </p>
+      <div class="form-group">
+        <label>From</label>
+        <input type="text" id="email-from" class="input" placeholder="orders@client.com">
+      </div>
+      <div class="form-group">
+        <label>Subject</label>
+        <input type="text" id="email-subject" class="input" placeholder="[ECOM-ORDER] client-id | ORD-XXXX | channel">
+      </div>
+      <div class="form-group">
+        <label>Email Body</label>
+        <textarea id="email-body" class="textarea" rows="14" spellcheck="false"></textarea>
+      </div>
+      <div>
+        <button id="btn-sample" class="btn btn-secondary btn-sm">Load Sample Email</button>
+      </div>
+      <div id="ingest-error" class="error-msg hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-cancel" class="btn btn-ghost">Cancel</button>
+      <button id="btn-submit-email" class="btn btn-primary">Parse &amp; Add Order</button>
+    </div>
+  </div>
+  <div id="modal-overlay" class="overlay hidden"></div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
