@@ -359,13 +359,33 @@ $('btn-submit-email').onclick = submitEmail;
 $('btn-sample').onclick    = () => { $('email-body').value = SAMPLE_EMAIL; };
 
 let searchTimer;
-$('search').oninput = e => {
+const onSearch = e => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.searchQuery = e.target.value.trim();
     loadAll();
   }, 250);
 };
+$('search').oninput = onSearch;
+$('search-mobile').oninput = onSearch;
+
+// ── Hamburger / drawer ────────────────────────────────────────────────────────
+
+const hamburger = $('hamburger');
+const sidebar   = $('sidebar');
+
+hamburger.onclick = e => {
+  e.stopPropagation();
+  sidebar.classList.toggle('open');
+};
+
+document.addEventListener('click', e => {
+  if (sidebar.classList.contains('open') &&
+      !sidebar.contains(e.target) &&
+      e.target !== hamburger) {
+    sidebar.classList.remove('open');
+  }
+});
 
 $('status-filter').onchange = e => {
   state.activeStatus = e.target.value;

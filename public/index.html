@@ -3,6 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Orders">
+  <link rel="manifest" href="manifest.json">
   <title>Order Dashboard</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -11,6 +17,9 @@
 
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
   <header class="header">
+    <button id="hamburger" class="hamburger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
     <div class="header-brand">
       <span class="header-logo">&#128230;</span>
       <span class="header-title">Order Dashboard</span>
@@ -24,7 +33,12 @@
   <div class="layout">
 
     <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
-    <aside class="sidebar">
+    <!-- Mobile search (below header, above sidebar) -->
+    <div class="mobile-search-wrap">
+      <input type="text" id="search-mobile" class="mobile-search-input" placeholder="Search orders, clients&#8230;" autocomplete="off">
+    </div>
+
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-section">
         <div class="sidebar-label">Clients</div>
         <ul id="client-list"></ul>

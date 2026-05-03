@@ -1,7 +1,8 @@
 'use strict';
 
 const express = require('express');
-const path = require('path');
+const path    = require('path');
+const { exec } = require('child_process');
 const store = require('./lib/store');
 const { parseEmailBody } = require('./lib/email-parser');
 
@@ -49,5 +50,11 @@ app.get('/api/channels', (req, res) => res.json(store.getChannels()));
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`Order dashboard running at http://localhost:${PORT}`);
+  const url = `http://localhost:${PORT}`;
+  console.log(`\n  Order Dashboard ready → ${url}\n`);
+  // Auto-open browser
+  const cmd = process.platform === 'win32' ? `start "" "${url}"`
+            : process.platform === 'darwin' ? `open "${url}"`
+            : `xdg-open "${url}"`;
+  exec(cmd);
 });
