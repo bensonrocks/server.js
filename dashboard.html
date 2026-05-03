@@ -43,6 +43,7 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
 .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .d-email{background:#6366f1}.d-shopify{background:#22c55e}.d-amazon{background:#f97316}
 .d-woocommerce{background:#a855f7}.d-web{background:#0ea5e9}.d-instagram{background:#ec4899}
+.d-waybill{background:#f59e0b}
 
 /* ── MAIN ── */
 .main{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:11px}
@@ -81,6 +82,7 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
 .b-email{background:#eef2ff;color:#4f46e5}.b-shopify{background:#dcfce7;color:#16a34a}
 .b-amazon{background:#fff7ed;color:#c2410c}.b-woocommerce{background:#faf5ff;color:#7e22ce}
 .b-web{background:#e0f2fe;color:#0369a1}.b-instagram{background:#fdf2f8;color:#be185d}
+.b-waybill{background:#fef3c7;color:#92400e}
 .sts{display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700}
 .s-pending{background:#fef9c3;color:#854d0e}.s-confirmed{background:#dbeafe;color:#1e40af}
 .s-processing{background:#ede9fe;color:#5b21b6}.s-shipped{background:#cffafe;color:#155e75}
@@ -118,21 +120,44 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
 .notes-b{background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.5}
 
 /* ── MODAL ── */
-.modal{position:fixed;top:50%;left:50%;z-index:300;transform:translate(-50%,-50%);background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.22);width:540px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column}
+.modal{position:fixed;top:50%;left:50%;z-index:300;transform:translate(-50%,-50%);background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.22);width:560px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column}
 .modal.hidden{display:none}
 .modal-h{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #e2e8f0;flex-shrink:0}
 .modal-h h2{font-size:15px;font-weight:700}
+.modal-tabs{display:flex;border-bottom:1.5px solid #e2e8f0;flex-shrink:0;padding:0 18px}
+.mtab{padding:10px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:2.5px solid transparent;margin-bottom:-1.5px;transition:color .12s,border-color .12s;background:none}
+.mtab.on{color:#2563eb;border-bottom-color:#2563eb}
 .modal-b{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
 .modal-f{display:flex;justify-content:flex-end;gap:8px;padding:13px 18px;border-top:1px solid #e2e8f0;flex-shrink:0}
+
+/* ── MODAL TABS ── */
+.tab-section{display:none;flex-direction:column;gap:12px}
+.tab-section.on{display:flex}
+
+/* ── FORM ── */
 .fg{display:flex;flex-direction:column;gap:4px}
 .fg label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
-.inp{padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;color:#0f172a;transition:border .12s}
+.inp{padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;color:#0f172a;transition:border .12s;background:#fff}
 .inp:focus{outline:none;border-color:#2563eb}
-.ta{padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:11px;font-family:monospace;resize:vertical;min-height:185px;color:#0f172a;transition:border .12s;line-height:1.6}
+.ta{padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:11px;font-family:monospace;resize:vertical;min-height:160px;color:#0f172a;transition:border .12s;line-height:1.6}
 .ta:focus{outline:none;border-color:#2563eb}
 .err{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;border-radius:8px;padding:8px 12px;font-size:13px}
 .err.hidden{display:none}
 .hint{font-size:13px;color:#64748b;line-height:1.6}
+
+/* ── DROP ZONE ── */
+.drop-zone{border:2px dashed #e2e8f0;border-radius:10px;padding:22px 16px;text-align:center;cursor:pointer;color:#94a3b8;font-size:13px;transition:all .15s;position:relative;background:#fafafa}
+.drop-zone:hover,.drop-zone.drag{border-color:#2563eb;background:#eff6ff;color:#2563eb}
+.drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.dz-txt{pointer-events:none;line-height:1.8}
+.dz-preview{display:none;max-width:100%;max-height:160px;border-radius:6px;object-fit:contain;margin-top:8px}
+.dz-fname{display:none;font-size:12px;color:#2563eb;margin-top:6px;font-weight:600;pointer-events:none}
+
+/* ── WAYBILL FORM GRID ── */
+.wb-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.wb-full{grid-column:1/-1}
+.wb-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.sep{border:none;border-top:1px solid #e2e8f0}
 
 /* ── OVERLAY ── */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:190;backdrop-filter:blur(2px)}
@@ -157,6 +182,9 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
   .filters{padding:8px 10px}
   .detail-panel{width:100%;top:56px}
   .mob-search{display:block}
+  .wb-grid{grid-template-columns:1fr}
+  .wb-full{grid-column:auto}
+  .wb-3{grid-template-columns:1fr 1fr}
 }
 @media(min-width:769px){.mob-search{display:none}}
 </style>
@@ -172,7 +200,7 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
     </div>
     <div class="hdr-r">
       <input id="search" class="search-box" placeholder="Search orders&#8230;" autocomplete="off">
-      <button id="btn-ingest" class="btn btn-p">+ Ingest Email</button>
+      <button id="btn-ingest" class="btn btn-p">+ Add Order</button>
     </div>
   </header>
 
@@ -233,20 +261,136 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
   </div>
   <div id="dp-ov" class="overlay hidden"></div>
 
-  <!-- Ingest modal -->
+  <!-- Add Order modal -->
   <div id="modal" class="modal hidden">
     <div class="modal-h">
-      <h2>Ingest Order Email</h2>
+      <h2>Add Order</h2>
       <button id="close-modal" class="btn-x">&#10005;</button>
     </div>
+
+    <div class="modal-tabs">
+      <button class="mtab on" id="tab-email" onclick="switchTab('email')">&#9993; Email</button>
+      <button class="mtab" id="tab-waybill" onclick="switchTab('waybill')">&#128230; Waybill</button>
+    </div>
+
     <div class="modal-b">
-      <p class="hint">Paste the order email body below. It must contain <code>---ORDER-START---</code> and <code>---ORDER-END---</code> markers.</p>
-      <div class="fg"><label>From</label><input id="em-from" class="inp" placeholder="orders@client.com"></div>
-      <div class="fg"><label>Subject</label><input id="em-sub" class="inp" placeholder="[ECOM-ORDER] client | ORD-XXXX | channel"></div>
-      <div class="fg"><label>Email Body</label><textarea id="em-body" class="ta" spellcheck="false"></textarea></div>
-      <div><button id="btn-sample" class="btn btn-s btn-sm">Load Sample Email</button></div>
+
+      <!-- ── EMAIL TAB ── -->
+      <div id="sec-email" class="tab-section on">
+        <p class="hint">Paste the order email body. It must contain <code>---ORDER-START---</code> and <code>---ORDER-END---</code> markers.</p>
+        <div class="fg"><label>From</label><input id="em-from" class="inp" placeholder="orders@client.com"></div>
+        <div class="fg"><label>Subject</label><input id="em-sub" class="inp" placeholder="[ECOM-ORDER] client | ORD-XXXX | channel"></div>
+        <div class="fg"><label>Email Body</label><textarea id="em-body" class="ta" spellcheck="false"></textarea></div>
+        <div><button id="btn-sample" class="btn btn-s btn-sm">Load Sample Email</button></div>
+      </div>
+
+      <!-- ── WAYBILL TAB ── -->
+      <div id="sec-waybill" class="tab-section">
+        <p class="hint">Upload a waybill image or paste the waybill text to auto-fill the form, then review and save.</p>
+
+        <div class="drop-zone" id="drop-zone">
+          <input type="file" id="wb-file" accept="image/*,.pdf">
+          <div class="dz-txt">&#128248; Click or drag waybill image / PDF here<br><span style="font-size:11px;opacity:.7">JPG, PNG, PDF supported</span></div>
+          <img id="dz-img" class="dz-preview" alt="">
+          <div id="dz-name" class="dz-fname"></div>
+        </div>
+
+        <div class="fg">
+          <label>Paste Waybill Text (auto-fills form below)</label>
+          <textarea id="wb-text" class="ta" style="min-height:80px" spellcheck="false" placeholder="Paste any waybill / airway bill text here, then click Parse&#8230;"></textarea>
+        </div>
+        <div><button class="btn btn-s btn-sm" onclick="parseWaybillAndFill()">&#128269; Parse &amp; Auto-fill</button></div>
+
+        <hr class="sep">
+
+        <div class="wb-grid">
+          <div class="fg wb-full">
+            <label>Waybill / Tracking Number *</label>
+            <input id="wb-trackno" class="inp" placeholder="e.g. 1Z999AA10123456784">
+          </div>
+          <div class="fg">
+            <label>Courier</label>
+            <select id="wb-courier" class="inp">
+              <option value="">Select&#8230;</option>
+              <option>DHL</option>
+              <option>FedEx</option>
+              <option>UPS</option>
+              <option>USPS</option>
+              <option>Pos Malaysia</option>
+              <option>SingPost</option>
+              <option>J&amp;T Express</option>
+              <option>Lalamove</option>
+              <option>GrabExpress</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label>Status</label>
+            <select id="wb-status" class="inp">
+              <option value="shipped">Shipped</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="processing">Processing</option>
+              <option value="delivered">Delivered</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+          <div class="fg wb-full">
+            <label>Client *</label>
+            <select id="wb-client" class="inp" onchange="handleClientChange()">
+              <option value="">Select client&#8230;</option>
+              <option value="__new__">+ New client&#8230;</option>
+            </select>
+          </div>
+          <div class="fg wb-full" id="wb-newclient-row" style="display:none">
+            <label>New Client Name *</label>
+            <input id="wb-newclient" class="inp" placeholder="Company or person name">
+          </div>
+          <div class="fg wb-full">
+            <label>Recipient Name *</label>
+            <input id="wb-recipient" class="inp" placeholder="Full name of receiver">
+          </div>
+          <div class="fg wb-full">
+            <label>Address Line 1</label>
+            <input id="wb-addr1" class="inp" placeholder="Street address">
+          </div>
+          <div class="fg wb-full">
+            <label>Address Line 2</label>
+            <input id="wb-addr2" class="inp" placeholder="Unit, floor, etc.">
+          </div>
+          <div class="fg">
+            <label>City</label>
+            <input id="wb-city" class="inp" placeholder="City">
+          </div>
+          <div class="fg">
+            <label>State / Province</label>
+            <input id="wb-state" class="inp" placeholder="e.g. CA">
+          </div>
+          <div class="fg">
+            <label>ZIP / Postal Code</label>
+            <input id="wb-zip" class="inp" placeholder="e.g. 94102">
+          </div>
+          <div class="fg">
+            <label>Country</label>
+            <input id="wb-country" class="inp" placeholder="e.g. US" value="US">
+          </div>
+          <div class="fg wb-full">
+            <label>Description / Goods</label>
+            <input id="wb-desc" class="inp" placeholder="e.g. Electronics, clothing, 3 cartons">
+          </div>
+          <div class="fg">
+            <label>Weight</label>
+            <input id="wb-weight" class="inp" placeholder="e.g. 2.5 kg">
+          </div>
+          <div class="fg">
+            <label>No. of Pieces</label>
+            <input id="wb-pieces" class="inp" type="number" min="1" placeholder="1">
+          </div>
+        </div>
+      </div>
+
       <div id="em-err" class="err hidden"></div>
     </div>
+
     <div class="modal-f">
       <button id="btn-cancel" class="btn btn-g">Cancel</button>
       <button id="btn-submit" class="btn btn-p">Parse &amp; Add Order</button>
@@ -282,7 +426,7 @@ const SEED = [
   {id:'ORD-2026-020',clientId:'outdoor-world',clientName:'Outdoor World',channel:'shopify',orderDate:'2026-05-03T06:00:00Z',status:'pending',currency:'USD',notes:'',items:[{sku:'TENT-2P',name:'2-Person Tent',qty:2,unitPrice:199.99},{sku:'BACKPACK-45L',name:'45L Hiking Backpack',qty:2,unitPrice:89.99}],shipping:{recipient:'Sam Wilson',addressLine1:'99 Summit Rd',addressLine2:'',city:'Flagstaff',state:'AZ',zip:'86001',country:'US'},subtotal:579.96,shippingCost:14.99,tax:52.20,total:647.15,source:{type:'shopify',ingestedAt:'2026-05-03T06:05:00Z'}},
 ];
 
-const CHANNEL_LABELS = {email:'Email',shopify:'Shopify',amazon:'Amazon',woocommerce:'WooCommerce',web:'Web',instagram:'Instagram'};
+const CHANNEL_LABELS = {email:'Email',shopify:'Shopify',amazon:'Amazon',woocommerce:'WooCommerce',web:'Web',instagram:'Instagram',waybill:'Waybill'};
 
 // ── STORAGE ───────────────────────────────────────────────────────────────────
 let orders = (()=>{ try{ const s=localStorage.getItem('od'); return s?JSON.parse(s):SEED.map(o=>({...o})); }catch{ return SEED.map(o=>({...o})); }})();
@@ -290,6 +434,7 @@ const save = ()=>{ try{ localStorage.setItem('od',JSON.stringify(orders)); }catc
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 const F = { client:null, channel:null, status:'', search:'' };
+let activeTab = 'email';
 
 // ── COMPUTE ───────────────────────────────────────────────────────────────────
 function filtered(){
@@ -327,13 +472,11 @@ const $=id=>document.getElementById(id);
 function render(){
   const st=stats(), cl=clients(), ch=channels(), rows=filtered();
 
-  // Stats
   $('s-orders').textContent=st.total;
   $('s-rev').textContent=fmt(st.rev);
   $('s-cli').textContent=st.clients;
   $('s-ch').textContent=st.channels;
 
-  // Client sidebar
   const cul=$('client-list'); cul.innerHTML='';
   [{ id:null,name:'All Clients',count:st.total },...cl].forEach(c=>{
     const li=document.createElement('li');
@@ -343,7 +486,6 @@ function render(){
     cul.appendChild(li);
   });
 
-  // Channel sidebar
   const chul=$('channel-list'); chul.innerHTML='';
   ch.forEach(c=>{
     const li=document.createElement('li');
@@ -353,7 +495,6 @@ function render(){
     chul.appendChild(li);
   });
 
-  // Channel tabs
   const tabs=$('ch-tabs'); tabs.innerHTML='';
   [null,...ch.map(c=>c.channel)].forEach(c=>{
     const b=document.createElement('button');
@@ -363,7 +504,6 @@ function render(){
     tabs.appendChild(b);
   });
 
-  // Orders table
   const tbody=$('tbody');
   if(!rows.length){ tbody.innerHTML=`<tr class="empty"><td colspan="7">&#128241; No orders match your filters</td></tr>`; return; }
   tbody.innerHTML=rows.map(o=>`
@@ -385,6 +525,7 @@ function openDetail(id){
   $('dp-title').textContent=o.id;
   const addr=[o.shipping.addressLine1,o.shipping.addressLine2,o.shipping.city,(o.shipping.state?o.shipping.state+' ':'')+o.shipping.zip,o.shipping.country].filter(Boolean).join(', ');
   const itemsHTML=o.items.map(i=>`<tr><td><div style="font-weight:600">${i.name}</div><div class="it-sku">${i.sku}</div></td><td style="text-align:center">${i.qty}</td><td style="text-align:right">${fmt(i.unitPrice)}</td><td style="text-align:right;font-weight:700">${fmt(i.qty*i.unitPrice)}</td></tr>`).join('');
+  const src=o.source||{};
   $('dp-body').innerHTML=`
     <div class="dp-sec">
       <div class="dp-sec-t">Order Info</div>
@@ -392,7 +533,10 @@ function openDetail(id){
       <div class="dp-row"><span class="dk">Channel</span><span class="dv">${chBdg(o.channel)}</span></div>
       <div class="dp-row"><span class="dk">Date</span><span class="dv">${fmtD(o.orderDate)}</span></div>
       <div class="dp-row"><span class="dk">Status</span><span class="dv">${stBdg(o.status)}</span></div>
-      ${o.source.emailFrom?`<div class="dp-row"><span class="dk">From</span><span class="dv">${o.source.emailFrom}</span></div>`:''}
+      ${src.emailFrom?`<div class="dp-row"><span class="dk">From</span><span class="dv">${src.emailFrom}</span></div>`:''}
+      ${src.courier?`<div class="dp-row"><span class="dk">Courier</span><span class="dv">${src.courier}</span></div>`:''}
+      ${src.trackingNo?`<div class="dp-row"><span class="dk">Tracking No.</span><span class="dv" style="font-family:monospace">${src.trackingNo}</span></div>`:''}
+      ${src.weight?`<div class="dp-row"><span class="dk">Weight</span><span class="dv">${src.weight}</span></div>`:''}
     </div>
     <div class="dp-sec">
       <div class="dp-sec-t">Items (${o.items.length})</div>
@@ -447,6 +591,123 @@ function parseEmail(raw){
   };
 }
 
+// ── WAYBILL TEXT PARSER ───────────────────────────────────────────────────────
+function parseWaybillText(txt){
+  const find=(patterns)=>{
+    for(const p of patterns){const m=txt.match(p);if(m)return(m[2]||m[1]||'').trim();}
+    return '';
+  };
+  const trackingNo=find([
+    /(?:tracking|waybill|airway[\s-]*bill|awb|shipment|consignment|cn)\s*(?:number|no\.?|#|id)?\s*[:\-]?\s*([A-Z0-9][\w\-]{5,30})/i,
+    /\b(1Z[A-Z0-9]{16})\b/,
+    /\b(\d{20,22})\b/,
+    /\b([A-Z]{2}\d{9}[A-Z]{2})\b/,
+    /\b(\d{12})\b/,
+  ]);
+  const courierRaw=find([
+    /\b(fedex(?:\s+express)?)\b/i,
+    /\b(ups(?:\s+express)?)\b/i,
+    /\b(dhl(?:\s+express)?)\b/i,
+    /\b(usps)\b/i,
+    /\b(pos\s+malaysia)\b/i,
+    /\b(singpost)\b/i,
+    /\b(j\s*&\s*t\s*express)\b/i,
+    /\b(lalamove)\b/i,
+    /\b(grab\s*express)\b/i,
+  ]);
+  const courierMap={'fedex':'FedEx','ups':'UPS','dhl':'DHL','usps':'USPS','pos malaysia':'Pos Malaysia','singpost':'SingPost','j&t express':'J&T Express','lalamove':'Lalamove','grab express':'GrabExpress'};
+  const courier=courierMap[courierRaw.toLowerCase()]||courierRaw;
+
+  // Recipient — try lines after "ship to:" / "deliver to:" / "consignee:"
+  const recipientSection=txt.match(/(?:ship\s+to|deliver(?:y)?\s+to|consignee|recipient|to\s*name|receiver)\s*[:\-]?\s*\n?\s*([^\n,\d]{2,50})/i);
+  const recipient=(recipientSection?.[1]||find([/(?:attn|attention)\s*[:\-]\s*([^\n]{2,50})/i])).trim();
+
+  const address1=find([
+    /(?:address\s*(?:line\s*)?1|street\s*address|addr\s*1)\s*[:\-]\s*([^\n]+)/i,
+    /\b(\d+\s+[A-Za-z][^\n,]{3,50}(?:st(?:reet)?|ave(?:nue)?|rd|road|blvd|boulevard|dr(?:ive)?|ln|lane|way|pl(?:ace)?|close|crescent|terrace)\.?)\b/i,
+  ]);
+  const city=find([/(?:city|town)\s*[:\-]\s*([^\n,]+)/i]);
+  const state=find([/(?:state|province)\s*[:\-]\s*([A-Z][A-Za-z\s]{0,20})/i,/,\s*([A-Z]{2})\s+\d{5}/]);
+  const zip=find([/(?:zip|postal)\s*(?:code)?\s*[:\-]\s*([\dA-Z\-\s]{3,12})/i,/\b(\d{5}(?:-\d{4})?)\b/]);
+  const country=find([/(?:country)\s*[:\-]\s*([^\n,]{2,30})/i]);
+  const description=find([/(?:description|content|goods|item|commodity|merchandise|nature\s+of\s+goods)\s*[:\-]\s*([^\n]+)/i]);
+  const weight=find([/(?:weight|wt\.?)\s*[:\-]\s*([\d.,]+\s*(?:kg|g|lb|lbs|oz)?)/i]);
+  const pieces=find([/(?:pieces?|pcs?|pkgs?|packages?|cartons?|boxes?)\s*[:\-]\s*(\d+)/i]);
+  return{trackingNo,courier,recipient,address1,city,state,zip,country,description,weight,pieces};
+}
+
+function parseWaybillAndFill(){
+  const txt=$('wb-text').value;
+  if(!txt.trim()){showErr('Paste some waybill text first.');return;}
+  $('em-err').classList.add('hidden');
+  const p=parseWaybillText(txt);
+  if(p.trackingNo) $('wb-trackno').value=p.trackingNo;
+  if(p.courier){
+    const sel=$('wb-courier');
+    for(const opt of sel.options){
+      if(opt.value.toLowerCase()===p.courier.toLowerCase()){sel.value=opt.value;break;}
+    }
+    if(sel.value===''&&p.courier){sel.value='Other';}
+  }
+  if(p.recipient) $('wb-recipient').value=p.recipient;
+  if(p.address1)  $('wb-addr1').value=p.address1;
+  if(p.city)      $('wb-city').value=p.city;
+  if(p.state)     $('wb-state').value=p.state;
+  if(p.zip)       $('wb-zip').value=p.zip;
+  if(p.country)   $('wb-country').value=p.country;
+  if(p.description) $('wb-desc').value=p.description;
+  if(p.weight)    $('wb-weight').value=p.weight;
+  if(p.pieces)    $('wb-pieces').value=p.pieces;
+}
+
+// ── WAYBILL FILE UPLOAD ───────────────────────────────────────────────────────
+function handleWaybillFile(file){
+  if(!file)return;
+  const dz=$('drop-zone');
+  const img=$('dz-img');
+  const nm=$('dz-name');
+  nm.textContent=file.name;
+  nm.style.display='block';
+  if(file.type.startsWith('image/')){
+    const reader=new FileReader();
+    reader.onload=e=>{img.src=e.target.result;img.style.display='block';};
+    reader.readAsDataURL(file);
+  } else {
+    img.style.display='none';
+  }
+  dz.classList.add('has-file');
+}
+
+// ── CLIENT DROPDOWN ───────────────────────────────────────────────────────────
+function populateClientDropdown(){
+  const sel=$('wb-client');
+  while(sel.options.length>1)sel.remove(1);
+  const newOpt=document.createElement('option');
+  newOpt.value='__new__';newOpt.textContent='+ New client…';
+  for(const c of clients()){
+    const opt=document.createElement('option');
+    opt.value=c.id;opt.textContent=c.name;opt.dataset.name=c.name;
+    sel.appendChild(opt);
+  }
+  sel.appendChild(newOpt);
+}
+
+function handleClientChange(){
+  const v=$('wb-client').value;
+  $('wb-newclient-row').style.display=v==='__new__'?'':'none';
+}
+
+// ── MODAL TABS ────────────────────────────────────────────────────────────────
+function switchTab(tab){
+  activeTab=tab;
+  $('tab-email').classList.toggle('on',tab==='email');
+  $('tab-waybill').classList.toggle('on',tab==='waybill');
+  $('sec-email').classList.toggle('on',tab==='email');
+  $('sec-waybill').classList.toggle('on',tab==='waybill');
+  $('btn-submit').textContent=tab==='email'?'Parse & Add Order':'Add Waybill Order';
+  $('em-err').classList.add('hidden');
+}
+
 // ── MODAL ─────────────────────────────────────────────────────────────────────
 const SAMPLE=`---ORDER-START---
 ORDER_ID: ORD-2026-021
@@ -479,8 +740,16 @@ TAX: 7.65
 TOTAL: 98.61
 ---ORDER-END---`;
 
-function openModal(){ $('modal').classList.remove('hidden'); $('modal-ov').classList.remove('hidden'); $('em-err').classList.add('hidden'); }
-function closeModal(){ $('modal').classList.add('hidden'); $('modal-ov').classList.add('hidden'); }
+function openModal(){
+  populateClientDropdown();
+  $('modal').classList.remove('hidden');
+  $('modal-ov').classList.remove('hidden');
+  $('em-err').classList.add('hidden');
+}
+function closeModal(){
+  $('modal').classList.add('hidden');
+  $('modal-ov').classList.add('hidden');
+}
 
 function submitEmail(){
   const body=$('em-body').value.trim();
@@ -494,11 +763,104 @@ function submitEmail(){
     orders.unshift(o); save();
     closeModal();
     $('em-from').value='';$('em-sub').value='';$('em-body').value='';
-    render();
-    openDetail(o.id);
+    render(); openDetail(o.id);
   }catch(e){ showErr(e.message); }
 }
+
+function submitWaybill(){
+  $('em-err').classList.add('hidden');
+  const trackNo=$('wb-trackno').value.trim();
+  if(!trackNo){showErr('Waybill/Tracking number is required.');return;}
+
+  const clientSel=$('wb-client').value;
+  let clientName='', clientId='';
+  if(clientSel==='__new__'){
+    clientName=$('wb-newclient').value.trim();
+    if(!clientName){showErr('Please enter a client name.');return;}
+    clientId=clientName.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'');
+  } else if(clientSel){
+    const opt=[...$('wb-client').options].find(o=>o.value===clientSel);
+    clientName=opt?opt.textContent:clientSel;
+    clientId=clientSel;
+  } else {
+    showErr('Please select or enter a client.');return;
+  }
+
+  const recipient=$('wb-recipient').value.trim();
+  if(!recipient){showErr('Recipient name is required.');return;}
+
+  const orderId='WB-'+trackNo.replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(-16);
+  if(orders.find(x=>x.id===orderId)){showErr(`Waybill ${orderId} already exists.`);return;}
+
+  const courier=$('wb-courier').value;
+  const pieces=parseInt($('wb-pieces').value)||1;
+  const desc=$('wb-desc').value.trim()||'Shipment';
+  const weight=$('wb-weight').value.trim();
+  const noteParts=[];
+  if(courier)noteParts.push(`Courier: ${courier}`);
+  if(weight)noteParts.push(`Weight: ${weight}`);
+
+  const o={
+    id:orderId,clientId,clientName,
+    channel:'waybill',
+    orderDate:new Date().toISOString(),
+    status:$('wb-status').value,
+    currency:'USD',
+    notes:noteParts.join(' | '),
+    items:[{sku:trackNo.toUpperCase().slice(0,20),name:desc,qty:pieces,unitPrice:0}],
+    shipping:{
+      recipient,
+      addressLine1:$('wb-addr1').value.trim(),
+      addressLine2:$('wb-addr2').value.trim(),
+      city:$('wb-city').value.trim(),
+      state:$('wb-state').value.trim(),
+      zip:$('wb-zip').value.trim(),
+      country:$('wb-country').value.trim()||'US',
+    },
+    subtotal:0,shippingCost:0,tax:0,total:0,
+    source:{type:'waybill',courier,trackingNo:trackNo,weight:weight||undefined,ingestedAt:new Date().toISOString()},
+  };
+
+  orders.unshift(o); save();
+  closeModal();
+  resetWaybillForm();
+  render(); openDetail(o.id);
+}
+
+function resetWaybillForm(){
+  ['wb-trackno','wb-recipient','wb-addr1','wb-addr2','wb-city','wb-state','wb-zip','wb-desc','wb-weight','wb-pieces','wb-text','wb-newclient'].forEach(id=>{ const el=$(id); if(el)el.value=el.type==='number'?'':id==='wb-country'?'US':el.id==='wb-pieces'?'':''; });
+  $('wb-country').value='US';
+  $('wb-courier').value='';
+  $('wb-status').value='shipped';
+  $('wb-client').value='';
+  $('wb-newclient-row').style.display='none';
+  $('dz-img').style.display='none';
+  $('dz-img').src='';
+  $('dz-name').style.display='none';
+  $('dz-name').textContent='';
+  $('wb-file').value='';
+}
+
+function submitOrder(){
+  if(activeTab==='email') submitEmail();
+  else submitWaybill();
+}
+
 function showErr(m){ $('em-err').textContent=m; $('em-err').classList.remove('hidden'); }
+
+// ── DRAG & DROP on waybill zone ───────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded',()=>{
+  const dz=$('drop-zone');
+  if(!dz)return;
+  dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag');});
+  dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+  dz.addEventListener('drop',e=>{
+    e.preventDefault();dz.classList.remove('drag');
+    const f=e.dataTransfer.files[0];
+    if(f)handleWaybillFile(f);
+  });
+  $('wb-file').addEventListener('change',e=>handleWaybillFile(e.target.files[0]));
+});
 
 // ── HAMBURGER ─────────────────────────────────────────────────────────────────
 const closeSidebar=()=>$('sidebar').classList.remove('open');
@@ -509,7 +871,7 @@ document.addEventListener('click',e=>{ if($('sidebar').classList.contains('open'
 $('close-dp').onclick=$('dp-ov').onclick=closeDetail;
 $('btn-ingest').onclick=openModal;
 $('close-modal').onclick=$('modal-ov').onclick=$('btn-cancel').onclick=closeModal;
-$('btn-submit').onclick=submitEmail;
+$('btn-submit').onclick=submitOrder;
 $('btn-sample').onclick=()=>{ $('em-body').value=SAMPLE; $('em-from').value='orders@acme-corp.com'; $('em-sub').value='[ECOM-ORDER] acme-corp | ORD-2026-021 | email'; };
 $('status-sel').onchange=e=>{ F.status=e.target.value; render(); };
 
