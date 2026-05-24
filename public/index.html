@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>MarketPulse — Swing Trade News</title>
+<style>
+:root {
+  --bg:       #080810;
+  --surface:  #0e0e1c;
+  --card:     #13131f;
+  --border:   #1e1e30;
+  --cyan:     #00d4ff;
+  --gold:     #ffd700;
+  --orange:   #ff9500;
+  --green:    #00e676;
+  --red:      #ff4c4c;
+  --muted:    #555570;
+  --text:     #d8d8ee;
+  --textdim:  #888899;
+  --badge-direct:  #00d4ff22;
+  --badge-related: #ff950022;
+  --badge-swing:   #ffd70022;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif; font-size:14px; overflow:hidden; }
+
+/* ── Layout ── */
+.app { display:flex; flex-direction:column; height:100vh; }
+
+/* ── Header ── */
+header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 16px; height:52px; background:var(--surface);
+  border-bottom:1px solid var(--border); flex-shrink:0; gap:12px;
+}
+.logo { display:flex; align-items:center; gap:8px; font-size:17px; font-weight:800; letter-spacing:1.5px; color:#fff; flex-shrink:0; }
+.logo-dot { width:8px; height:8px; border-radius:50%; background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+.header-right { display:flex; align-items:center; gap:10px; }
+.status-pill {
+  display:flex; align-items:center; gap:6px; padding:4px 10px;
+  border-radius:20px; border:1px solid var(--border); font-size:11px; color:var(--textdim);
+}
+.status-dot { width:6px; height:6px; border-radius:50%; background:var(--muted); transition:.4s; }
+.status-dot.live { background:var(--green); box-shadow:0 0 6px var(--green); animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+.btn-notif {
+  display:flex; align-items:center; gap:6px; padding:6px 12px;
+  background:none; border:1px solid var(--border); border-radius:8px;
+  color:var(--textdim); cursor:pointer; font-size:12px; transition:.2s;
+}
+.btn-notif:hover { border-color:var(--cyan); color:var(--cyan); }
+.btn-notif.active { border-color:var(--cyan); color:var(--cyan); background:var(--badge-direct); }
+.unread-badge {
+  display:none; align-items:center; justify-content:center;
+  width:18px; height:18px; border-radius:50%; background:var(--red);
+  color:#fff; font-size:10px; font-weight:700;
+}
+.unread-badge.show { display:flex; }
+
+/* ── Body ── */
+.body { display:flex; flex:1; overflow:hidden; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width:220px; flex-shrink:0; background:var(--surface);
+  border-right:1px solid var(--border); display:flex; flex-direction:column;
+  overflow:hidden;
+}
+.sidebar-top { padding:14px 14px 10px; }
+.search-wrap { position:relative; }
+.search-input {
+  width:100%; padding:8px 10px 8px 32px; background:var(--card);
+  border:1px solid var(--border); border-radius:8px; color:var(--text);
+  font-size:13px; outline:none; transition:.2s;
+}
+.search-input::placeholder { color:var(--muted); }
+.search-input:focus { border-color:var(--cyan); }
+.search-icon { position:absolute; left:9px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
+.search-results {
+  position:absolute; top:calc(100% + 4px); left:0; right:0;
+  background:var(--card); border:1px solid var(--border); border-radius:10px;
+  z-index:100; max-height:260px; overflow-y:auto; display:none;
+}
+.search-results.show { display:block; }
+.search-item {
+  padding:9px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; transition:.15s;
+}
+.search-item:hover { background:var(--border); }
+.search-item-sym { font-weight:700; font-size:13px; color:var(--cyan); min-width:52px; }
+.search-item-name { font-size:12px; color:var(--textdim); }
+.search-item-mkt { font-size:10px; padding:1px 6px; border-radius:4px; margin-left:auto; }
+
+.watchlist-scroll { flex:1; overflow-y:auto; padding:0 10px 16px; }
+.watchlist-scroll::-webkit-scrollbar { width:4px; }
+.watchlist-scroll::-webkit-scrollbar-track { background:transparent; }
+.watchlist-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+.mkt-group { margin-bottom:8px; }
+.mkt-label { font-size:10px; letter-spacing:1.5px; color:var(--muted); text-transform:uppercase; padding:10px 6px 4px; }
+.wl-item {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:7px 8px; border-radius:8px; cursor:pointer; transition:.15s;
+  border:1px solid transparent;
+}
+.wl-item:hover { background:var(--card); border-color:var(--border); }
+.wl-info { display:flex; flex-direction:column; gap:1px; }
+.wl-sym { font-size:13px; font-weight:700; color:#fff; }
+.wl-name { font-size:11px; color:var(--textdim); }
+.wl-remove { background:none; border:none; color:var(--muted); cursor:pointer; padding:2px 4px; border-radius:4px; font-size:12px; line-height:1; }
+.wl-remove:hover { color:var(--red); background:#ff4c4c11; }
+.wl-empty { padding:20px 8px; text-align:center; color:var(--muted); font-size:12px; line-height:1.6; }
+
+/* ── Main ── */
+.main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+
+/* ── Filters ── */
+.filters {
+  display:flex; align-items:center; gap:4px; padding:10px 16px;
+  border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0; flex-wrap:wrap;
+}
+.filter-btn {
+  padding:5px 14px; border-radius:20px; border:1px solid var(--border);
+  background:none; color:var(--textdim); cursor:pointer; font-size:12px; font-weight:600;
+  transition:.15s; white-space:nowrap;
+}
+.filter-btn:hover { border-color:var(--text); color:var(--text); }
+.filter-btn.active { background:var(--cyan); border-color:var(--cyan); color:#000; }
+.filter-swing {
+  margin-left:auto; padding:5px 12px; border-radius:20px; border:1px solid var(--border);
+  background:none; color:var(--textdim); cursor:pointer; font-size:12px; font-weight:600;
+  transition:.15s; display:flex; align-items:center; gap:5px;
+}
+.filter-swing:hover { border-color:var(--gold); color:var(--gold); }
+.filter-swing.active { background:var(--badge-swing); border-color:var(--gold); color:var(--gold); }
+.filter-swing-dot { width:6px; height:6px; border-radius:50%; background:var(--gold); }
+
+/* ── Feed ── */
+.feed { flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:10px; }
+.feed::-webkit-scrollbar { width:4px; }
+.feed::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+.feed-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:12px; color:var(--muted); }
+.feed-empty-icon { font-size:40px; opacity:.3; }
+
+/* ── Article Card ── */
+.article {
+  background:var(--card); border:1px solid var(--border); border-radius:12px;
+  padding:14px 16px; cursor:pointer; transition:.15s; text-decoration:none; display:block;
+}
+.article:hover { border-color:var(--muted); transform:translateY(-1px); }
+.article.direct { border-left:3px solid var(--cyan); }
+.article.related { border-left:3px solid var(--orange); }
+.article.new-item { animation:slideIn .4s ease; }
+@keyframes slideIn { from{opacity:0; transform:translateY(-8px)} to{opacity:1; transform:translateY(0)} }
+
+.article-top { display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.badge {
+  padding:2px 8px; border-radius:5px; font-size:10px; font-weight:700;
+  letter-spacing:.5px; text-transform:uppercase;
+}
+.badge-direct  { background:var(--badge-direct);  color:var(--cyan);   border:1px solid var(--cyan)33; }
+.badge-related { background:var(--badge-related); color:var(--orange); border:1px solid var(--orange)33; }
+.badge-general { background:#ffffff11; color:var(--textdim); border:1px solid #ffffff22; }
+.badge-swing   { background:var(--badge-swing);   color:var(--gold);   border:1px solid var(--gold)33; }
+.badge-new     { background:#00e67622; color:var(--green); border:1px solid var(--green)44; animation:glow .8s ease infinite alternate; }
+@keyframes glow { from{box-shadow:0 0 0 var(--green)} to{box-shadow:0 0 6px var(--green)} }
+.source-label { font-size:11px; color:var(--muted); margin-left:auto; }
+.time-label { font-size:11px; color:var(--muted); }
+
+.article-title { font-size:14px; font-weight:600; color:#fff; line-height:1.45; margin-bottom:6px; }
+.article-summary { font-size:12px; color:var(--textdim); line-height:1.6; margin-bottom:10px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.article-tickers { display:flex; gap:6px; flex-wrap:wrap; }
+.ticker-chip {
+  display:flex; align-items:center; gap:4px; padding:2px 8px;
+  background:#ffffff0a; border:1px solid var(--border); border-radius:6px;
+  font-size:11px; font-weight:700;
+}
+.ticker-chip .tc-sym { color:var(--cyan); }
+.ticker-chip .tc-type { color:var(--muted); font-weight:400; }
+.swing-signals { margin-top:6px; display:flex; gap:4px; flex-wrap:wrap; }
+.swing-sig { padding:2px 7px; background:var(--badge-swing); border:1px solid var(--gold)33; border-radius:4px; font-size:10px; color:var(--gold); }
+
+/* ── Toast ── */
+.toast-container { position:fixed; top:60px; right:16px; z-index:999; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+.toast {
+  background:var(--card); border:1px solid var(--border); border-radius:10px;
+  padding:10px 14px; max-width:320px; pointer-events:all;
+  box-shadow:0 8px 32px #00000088; animation:toastIn .3s ease;
+  border-left:3px solid var(--cyan);
+}
+@keyframes toastIn { from{opacity:0; transform:translateX(20px)} to{opacity:1; transform:translateX(0)} }
+.toast-title { font-size:12px; font-weight:700; color:#fff; margin-bottom:3px; }
+.toast-body  { font-size:11px; color:var(--textdim); line-height:1.4; }
+.toast-close { float:right; background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; margin-left:8px; }
+
+/* ── Loading ── */
+.skeleton { background:linear-gradient(90deg,var(--card) 25%,var(--border) 50%,var(--card) 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:8px; }
+@keyframes shimmer { from{background-position:200% 0} to{background-position:-200% 0} }
+
+/* ── Market badges color ── */
+.mkt-stocks     { background:#00d4ff22; color:var(--cyan); }
+.mkt-crypto     { background:#ffd70022; color:var(--gold); }
+.mkt-forex      { background:#00e67622; color:var(--green); }
+.mkt-commodities{ background:#ff950022; color:var(--orange); }
+.mkt-indices    { background:#aa88ff22; color:#aa88ff; }
+.mkt-general    { background:#ffffff11; color:var(--textdim); }
+
+/* ── Responsive ── */
+@media(max-width:640px){
+  .sidebar{ width:0; overflow:hidden; position:absolute; z-index:50; height:100%; }
+  .sidebar.open{ width:240px; }
+  .logo-text{ display:none; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-dot"></div>
+      <span class="logo-text">MARKET<span style="color:var(--cyan)">PULSE</span></span>
+    </div>
+    <div class="header-right">
+      <div class="status-pill">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Connecting…</span>
+      </div>
+      <button class="btn-notif" id="notifBtn" onclick="toggleNotifications()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Notify
+      </button>
+      <div class="unread-badge" id="unreadBadge">0</div>
+    </div>
+  </header>
+
+  <div class="body">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="search-wrap" id="searchWrap">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input class="search-input" id="searchInput" placeholder="Add ticker… (e.g. AAPL)"
+            oninput="onSearch(this.value)" onkeydown="onSearchKey(event)" autocomplete="off" spellcheck="false"/>
+          <div class="search-results" id="searchResults"></div>
+        </div>
+      </div>
+      <div class="watchlist-scroll" id="watchlistEl"></div>
+    </aside>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="filters">
+        <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+        <button class="filter-btn" onclick="setFilter('stocks',this)">Stocks</button>
+        <button class="filter-btn" onclick="setFilter('crypto',this)">Crypto</button>
+        <button class="filter-btn" onclick="setFilter('forex',this)">Forex</button>
+        <button class="filter-btn" onclick="setFilter('commodities',this)">Commodities</button>
+        <button class="filter-btn" onclick="setFilter('indices',this)">Indices</button>
+        <button class="filter-swing" id="swingBtn" onclick="toggleSwing()">
+          <span class="filter-swing-dot"></span> Swing Signals
+        </button>
+      </div>
+      <div class="feed" id="feed"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let allArticles    = [];
+let watchlist      = [];
+let currentFilter  = 'all';
+let swingOnly      = false;
+let notifEnabled   = false;
+let unreadCount    = 0;
+let ws             = null;
+let reconnectTimer = null;
+
+// ── WebSocket ──────────────────────────────────────────────────────────────────
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onopen = () => {
+    setStatus(true);
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  };
+
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'init' || msg.type === 'refresh') {
+      allArticles = msg.data;
+      renderFeed();
+    } else if (msg.type === 'new_articles') {
+      const fresh = msg.data;
+      allArticles.unshift(...fresh);
+      if (allArticles.length > 600) allArticles = allArticles.slice(0, 600);
+      addNewToFeed(fresh);
+      bumpUnread(fresh.length);
+      notifyUser(fresh);
+    }
+  };
+
+  ws.onclose = () => {
+    setStatus(false);
+    reconnectTimer = setTimeout(connect, 4000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+function setStatus(live) {
+  document.getElementById('statusDot').className  = 'status-dot' + (live ? ' live' : '');
+  document.getElementById('statusText').textContent = live ? 'Live' : 'Reconnecting…';
+}
+
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+async function loadWatchlist() {
+  const res = await fetch('/api/watchlist');
+  watchlist  = await res.json();
+  for (const w of watchlist) TICKER_MARKET[w.ticker] = w.market;
+  renderWatchlist();
+}
+
+async function addTicker(ticker) {
+  const res  = await fetch('/api/watchlist', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ticker }) });
+  const data = await res.json();
+  if (data.error) { showToast('Error', data.error, 'red'); return; }
+  watchlist.push({ ticker, ...data.info });
+  if (data.info) TICKER_MARKET[ticker] = data.info.market;
+  renderWatchlist();
+  showToast('Added', `${ticker} added to watchlist`, 'cyan');
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchResults').classList.remove('show');
+}
+
+async function removeTicker(ticker) {
+  await fetch(`/api/watchlist/${ticker}`, { method:'DELETE' });
+  watchlist = watchlist.filter(w => w.ticker !== ticker);
+  renderWatchlist();
+}
+
+function renderWatchlist() {
+  const el = document.getElementById('watchlistEl');
+  if (!watchlist.length) {
+    el.innerHTML = `<div class="wl-empty">Search above to add tickers.<br>Track stocks, crypto, forex &amp; more.</div>`;
+    return;
+  }
+  const groups = {};
+  for (const w of watchlist) {
+    const m = w.market || 'other';
+    if (!groups[m]) groups[m] = [];
+    groups[m].push(w);
+  }
+  const ORDER = ['stocks','crypto','forex','commodities','indices','other'];
+  let html = '';
+  for (const mkt of ORDER) {
+    if (!groups[mkt]) continue;
+    html += `<div class="mkt-group"><div class="mkt-label">${mkt}</div>`;
+    for (const w of groups[mkt]) {
+      html += `<div class="wl-item">
+        <div class="wl-info">
+          <span class="wl-sym">${w.ticker}</span>
+          <span class="wl-name">${(w.name||'').slice(0,22)}</span>
+        </div>
+        <button class="wl-remove" onclick="removeTicker('${w.ticker}')" title="Remove">×</button>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  el.innerHTML = html;
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+let searchDebounce = null;
+async function onSearch(q) {
+  clearTimeout(searchDebounce);
+  const res = document.getElementById('searchResults');
+  if (!q.trim()) { res.classList.remove('show'); return; }
+  searchDebounce = setTimeout(async () => {
+    const data = await fetch(`/api/tickers?q=${encodeURIComponent(q)}`).then(r=>r.json());
+    if (!data.length) { res.classList.remove('show'); return; }
+    res.innerHTML = data.map(d => `
+      <div class="search-item" onclick="addTicker('${d.ticker}')">
+        <span class="search-item-sym">${d.ticker}</span>
+        <span class="search-item-name">${d.name}</span>
+        <span class="search-item-mkt mkt-${d.market}">${d.market}</span>
+      </div>`).join('');
+    res.classList.add('show');
+  }, 220);
+}
+
+function onSearchKey(e) {
+  if (e.key === 'Escape') { document.getElementById('searchResults').classList.remove('show'); }
+  if (e.key === 'Enter') {
+    const first = document.querySelector('.search-item');
+    if (first) first.click();
+  }
+}
+
+document.addEventListener('click', e => {
+  if (!document.getElementById('searchWrap').contains(e.target))
+    document.getElementById('searchResults').classList.remove('show');
+});
+
+// ── Feed Rendering ────────────────────────────────────────────────────────────
+// Market per ticker sym — derived from watchlist data
+const TICKER_MARKET = {};
+async function refreshTickerMarkets() {
+  const wl = await fetch('/api/watchlist').then(r=>r.json()).catch(()=>[]);
+  for (const w of wl) TICKER_MARKET[w.ticker] = w.market;
+}
+
+function filteredArticles() {
+  let list = allArticles;
+  if (currentFilter !== 'all') {
+    list = list.filter(a => {
+      if (a.sourceMkt === currentFilter) return true;
+      if ((a.matches||[]).some(m => TICKER_MARKET[m.ticker] === currentFilter)) return true;
+      return false;
+    });
+  }
+  if (swingOnly) list = list.filter(a => a.isSwingRelevant);
+  return list;
+}
+
+function renderFeed() {
+  const feed   = document.getElementById('feed');
+  const list   = filteredArticles();
+  if (!list.length) {
+    feed.innerHTML = `<div class="feed-empty"><div class="feed-empty-icon">📡</div><div>Fetching market news…<br>Add tickers to your watchlist to filter</div></div>`;
+    return;
+  }
+  feed.innerHTML = list.map(a => articleHTML(a)).join('');
+}
+
+function addNewToFeed(articles) {
+  const feed  = document.getElementById('feed');
+  const list  = filteredArticles();
+  const fresh = articles.filter(a => list.includes(a));
+  for (const a of fresh.reverse()) {
+    const div = document.createElement('div');
+    div.innerHTML = articleHTML(a, true);
+    feed.insertBefore(div.firstElementChild, feed.firstChild);
+  }
+}
+
+function articleHTML(a, isNew = false) {
+  const mt   = a.matchType || 'general';
+  const time = timeAgo(a.publishedAt);
+  const dom  = a.url ? new URL(a.url).hostname.replace('www.','') : a.source;
+
+  let topBadges = '';
+  if (isNew) topBadges += `<span class="badge badge-new">NEW</span>`;
+  if (mt === 'direct')  topBadges += `<span class="badge badge-direct">DIRECT</span>`;
+  if (mt === 'related') topBadges += `<span class="badge badge-related">RELATED</span>`;
+  if (mt === 'general') topBadges += `<span class="badge badge-general">GENERAL</span>`;
+  if (a.isSwingRelevant) topBadges += `<span class="badge badge-swing">⚡ SWING</span>`;
+
+  const tickers = (a.matches||[]).slice(0,4).map(m =>
+    `<span class="ticker-chip"><span class="tc-sym">${m.ticker}</span><span class="tc-type">${m.matchType==='direct'?'▲':'~'}</span></span>`
+  ).join('');
+
+  const swingSigs = (a.swingSignals||[]).slice(0,3).map(s =>
+    `<span class="swing-sig">${s}</span>`
+  ).join('');
+
+  const summary = a.summary ? `<div class="article-summary">${escHtml(a.summary)}</div>` : '';
+
+  return `<a class="article ${mt} ${isNew?'new-item':''}" href="${a.url}" target="_blank" rel="noopener">
+    <div class="article-top">
+      ${topBadges}
+      <span class="source-label">${escHtml(a.source||dom)}</span>
+      <span class="time-label">${time}</span>
+    </div>
+    <div class="article-title">${escHtml(a.title||'')}</div>
+    ${summary}
+    ${tickers ? `<div class="article-tickers">${tickers}</div>` : ''}
+    ${swingSigs ? `<div class="swing-signals">${swingSigs}</div>` : ''}
+  </a>`;
+}
+
+// ── Filter Controls ────────────────────────────────────────────────────────────
+function setFilter(mkt, btn) {
+  currentFilter = mkt;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderFeed();
+}
+
+function toggleSwing() {
+  swingOnly = !swingOnly;
+  document.getElementById('swingBtn').classList.toggle('active', swingOnly);
+  renderFeed();
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+async function toggleNotifications() {
+  if (notifEnabled) {
+    notifEnabled = false;
+    document.getElementById('notifBtn').classList.remove('active');
+    showToast('Notifications', 'Notifications disabled', 'muted');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') {
+    notifEnabled = true;
+    document.getElementById('notifBtn').classList.add('active');
+    showToast('Notifications', 'You\'ll be notified of new relevant news!', 'cyan');
+  } else {
+    showToast('Blocked', 'Please allow notifications in your browser settings.', 'red');
+  }
+}
+
+function notifyUser(articles) {
+  if (!notifEnabled) return;
+  for (const a of articles.slice(0,3)) {
+    if (a.matchType === 'general' && !a.isSwingRelevant) continue;
+    new Notification(`MarketPulse — ${a.source}`, {
+      body: a.title,
+      icon: '/icon.png',
+      tag:  a.url,
+    });
+  }
+}
+
+// ── Unread Badge ───────────────────────────────────────────────────────────────
+function bumpUnread(n) {
+  unreadCount += n;
+  const el = document.getElementById('unreadBadge');
+  el.textContent = unreadCount > 99 ? '99+' : unreadCount;
+  el.classList.add('show');
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    unreadCount = 0;
+    document.getElementById('unreadBadge').classList.remove('show');
+  }
+});
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(title, body, color='cyan') {
+  const colors = { cyan:var(--cyan), red:var(--red), muted:var(--muted) };
+  const borderColor = color === 'cyan' ? '#00d4ff' : color === 'red' ? '#ff4c4c' : '#555570';
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.style.borderLeftColor = borderColor;
+  el.innerHTML = `<button class="toast-close" onclick="this.parentElement.remove()">×</button>
+    <div class="toast-title">${escHtml(title)}</div>
+    <div class="toast-body">${escHtml(body)}</div>`;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function timeAgo(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(ms/1000);
+  if (s < 60)  return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  await loadWatchlist();
+  connect();
+})();
+</script>
+</body>
+</html>
