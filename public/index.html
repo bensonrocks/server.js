@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Louve Luxe</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="brand">
+    <h1>LOUVE LUXE</h1>
+  </header>
+  <main>
+    <div class="card">
+      <h2>New Client</h2>
+      <form id="new-client-form">
+        <label for="name">Client Name *</label>
+        <input id="name" name="name" required />
+
+        <label for="address">Address</label>
+        <input id="address" name="address" />
+
+        <label for="particulars">Particulars</label>
+        <textarea id="particulars" name="particulars" rows="3"></textarea>
+
+        <button type="submit">Create Client</button>
+        <span id="new-client-error" class="error"></span>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Clients</h2>
+      <div id="client-list" class="muted">Loading...</div>
+    </div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/index.js"></script>
+</body>
+</html>

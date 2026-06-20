@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Louve Luxe — Client</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="brand">
+    <h1>LOUVE LUXE</h1>
+    <a href="/index.html">&larr; All Clients</a>
+  </header>
+  <main>
+    <div class="card">
+      <h2 id="client-name">Loading...</h2>
+      <p id="client-meta" class="muted"></p>
+    </div>
+
+    <div class="card">
+      <h2>Floor Plan</h2>
+      <div id="floorplan-preview" class="floorplan-preview"></div>
+      <label for="floorplan-input">Upload floor plan (AI will suggest rooms)</label>
+      <input type="file" id="floorplan-input" accept="image/*" />
+      <button id="floorplan-upload-btn">Upload & Interpret</button>
+      <span id="floorplan-status" class="muted"></span>
+      <div id="suggested-rooms" class="suggested-rooms"></div>
+    </div>
+
+    <div class="card">
+      <h2>Rooms</h2>
+      <div id="rooms-container"></div>
+      <form id="add-room-form" class="row">
+        <div>
+          <label for="room-name">Add room manually</label>
+          <input id="room-name" placeholder="e.g. Study Room" />
+        </div>
+        <div style="flex:0">
+          <button type="submit" style="margin-top:1.6rem">Add Room</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Quote</h2>
+      <p id="grand-total" class="total-banner"></p>
+      <a id="quote-pdf-link" href="#" target="_blank"><button>Generate Picture Quote (PDF)</button></a>
+    </div>
+  </main>
+
+  <template id="furniture-form-template">
+    <form class="add-furniture-form card" style="margin-top:0.75rem">
+      <div class="row">
+        <div>
+          <label>Furniture name *</label>
+          <input name="name" required />
+        </div>
+        <div>
+          <label>Material</label>
+          <input name="material" />
+        </div>
+      </div>
+      <label>Furniture image</label>
+      <input type="file" name="image" accept="image/*" />
+      <div class="row">
+        <div>
+          <label>Width (cm)</label>
+          <input type="number" name="widthCm" step="0.1" />
+        </div>
+        <div>
+          <label>Depth (cm)</label>
+          <input type="number" name="depthCm" step="0.1" />
+        </div>
+        <div>
+          <label>Height (cm)</label>
+          <input type="number" name="heightCm" step="0.1" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Cost Price *</label>
+          <input type="number" name="costPrice" step="0.01" required />
+        </div>
+        <div>
+          <label>Currency *</label>
+          <select name="costCurrency">
+            <option value="SGD">SGD</option>
+            <option value="USD">USD</option>
+            <option value="INR">INR</option>
+            <option value="RMB">RMB</option>
+          </select>
+        </div>
+      </div>
+      <button type="submit">Add Furniture</button>
+      <button type="button" class="secondary cancel-btn">Cancel</button>
+      <span class="error"></span>
+    </form>
+  </template>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/client.js"></script>
+</body>
+</html>

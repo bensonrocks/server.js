@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id          String   @id @default(uuid())
+  name        String
+  address     String?
+  particulars String?
+  floorPlanUrl String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  rooms       Room[]
+}
+
+model Room {
+  id        String     @id @default(uuid())
+  clientId  String
+  client    Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name      String
+  order     Int        @default(0)
+  createdAt DateTime   @default(now())
+  furniture Furniture[]
+}
+
+model Furniture {
+  id              String   @id @default(uuid())
+  roomId          String
+  room            Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name            String
+  imageUrl        String?
+  material        String?
+  widthCm         Float?
+  depthCm         Float?
+  heightCm        Float?
+  costPrice       Float
+  costCurrency    String
+  exchangeRate    Float
+  sellingPriceSgd Float
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

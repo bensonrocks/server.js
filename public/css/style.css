@@ -1,0 +1,195 @@
+:root {
+  --gold: #b08d57;
+  --ink: #1a1a1a;
+  --muted: #666;
+  --border: #e3ddd2;
+  --bg: #faf8f5;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  margin: 0;
+}
+
+header.brand {
+  background: var(--ink);
+  color: #fff;
+  padding: 1.25rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+header.brand h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+}
+
+header.brand a {
+  color: #fff;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+main {
+  max-width: 960px;
+  margin: 2rem auto;
+  padding: 0 1.5rem 4rem;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+  color: var(--ink);
+  border-bottom: 2px solid var(--gold);
+  display: inline-block;
+  padding-bottom: 0.25rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  margin-top: 0.75rem;
+  color: var(--muted);
+}
+
+input, textarea, select {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.95rem;
+}
+
+button {
+  background: var(--gold);
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+button.secondary {
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+button.danger {
+  background: #b54545;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.client-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.client-list-item a {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.client-list-item small {
+  color: var(--muted);
+  display: block;
+  font-weight: 400;
+}
+
+.room-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.room-block h3 {
+  margin: 0 0 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.furniture-item {
+  display: flex;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px dashed var(--border);
+  align-items: flex-start;
+}
+
+.furniture-item:last-child { border-bottom: none; }
+
+.furniture-item img {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 5px;
+  background: #eee;
+}
+
+.furniture-item .details { flex: 1; }
+.furniture-item .price { font-weight: 700; color: #0a5c36; }
+
+.suggested-rooms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.chip {
+  background: var(--bg);
+  border: 1px solid var(--gold);
+  color: var(--ink);
+  border-radius: 20px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.row { display: flex; gap: 1rem; }
+.row > div { flex: 1; }
+
+.floorplan-preview img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin-top: 0.5rem;
+}
+
+.muted { color: var(--muted); font-size: 0.85rem; }
+.error { color: #b54545; font-size: 0.85rem; margin-top: 0.5rem; }
+.total-banner {
+  text-align: right;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--ink);
+}

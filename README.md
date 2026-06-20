@@ -1,0 +1,38 @@
+# Louve Luxe App
+
+All-in-one app for managing prospective clients, floor plans, room-by-room
+furniture selections, and generating picture quotes with retail pricing.
+
+## Features
+
+- Create clients with name, address, and particulars.
+- Upload a floor plan image; Claude (vision) suggests room names, which can
+  be added as room sub-headings with one click, or added manually.
+- Per room, add furniture items with an image, material, dimensions
+  (W x D x H in cm), and cost price in SGD/USD/INR/RMB.
+- Cost price is converted to SGD using a live exchange rate, then multiplied
+  by a markup (default 2.4x, configurable via `SELLING_PRICE_MULTIPLIER`) to
+  get the retail/selling price.
+- Generate a picture quote PDF with room sub-headings, furniture photos,
+  materials, dimensions, and the retail price per item plus a grand total.
+
+## Setup
+
+1. `npm install`
+2. Copy `.env.example` to `.env` and fill in:
+   - `DATABASE_URL` — a Postgres connection string (e.g. from Supabase, Neon, or RDS).
+   - `S3_*` — credentials and bucket for any S3-compatible object storage
+     (AWS S3, Cloudflare R2, Supabase Storage, MinIO). The bucket should
+     allow public read on uploaded objects, since the app links to
+     `S3_PUBLIC_URL_BASE` directly for images.
+   - `ANTHROPIC_API_KEY` — used for AI-assisted floor plan room detection.
+3. `npx prisma migrate dev --name init` to create the database schema.
+4. `npm start` (or `npm run dev` for auto-restart on changes).
+5. Open `http://localhost:3000`.
+
+## Notes
+
+- Exchange rates are fetched live from a free FX API and cached for 1 hour
+  per currency.
+- The selling price multiplier is a flat markup applied after converting
+  cost price to SGD: `sellingPriceSgd = costPrice * rateToSgd * multiplier`.
