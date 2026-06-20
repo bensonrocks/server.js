@@ -170,4 +170,7 @@ els.addRoomForm.addEventListener('submit', async (e) => {
   await loadClient();
 });
 
-loadClient();
+(async () => {
+  const user = await ensureAuth();
+  if (user) loadClient();
+})();

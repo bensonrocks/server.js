@@ -15,6 +15,9 @@ furniture selections, and generating picture quotes with retail pricing.
   get the retail/selling price.
 - Generate a picture quote PDF with room sub-headings, furniture photos,
   materials, dimensions, and the retail price per item plus a grand total.
+- Staff login required for all client/quote data. Accounts are admin-created
+  only — there is no public sign-up page. Admins can create and remove staff
+  accounts from the "Manage Users" page.
 
 ## Setup
 
@@ -26,9 +29,14 @@ furniture selections, and generating picture quotes with retail pricing.
      allow public read on uploaded objects, since the app links to
      `S3_PUBLIC_URL_BASE` directly for images.
    - `ANTHROPIC_API_KEY` — used for AI-assisted floor plan room detection.
+   - `SESSION_SECRET` — a long random string for signing session cookies
+     (e.g. `openssl rand -hex 32`).
 3. `npx prisma migrate dev --name init` to create the database schema.
-4. `npm start` (or `npm run dev` for auto-restart on changes).
-5. Open `http://localhost:3000`.
+4. Create the first admin account: set `SEED_ADMIN_EMAIL`,
+   `SEED_ADMIN_PASSWORD` (8+ chars), and `SEED_ADMIN_NAME` in `.env`, then
+   run `npm run seed:admin`. You can remove those env vars afterwards.
+5. `npm start` (or `npm run dev` for auto-restart on changes).
+6. Open `http://localhost:3000` and log in with the admin account.
 
 ## Notes
 

@@ -27,6 +27,11 @@ async function renderClients() {
   });
 }
 
+(async () => {
+  const user = await ensureAuth();
+  if (user) renderClients();
+})();
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorEl.textContent = '';
@@ -42,5 +47,3 @@ form.addEventListener('submit', async (e) => {
     errorEl.textContent = err.message;
   }
 });
-
-renderClients();
