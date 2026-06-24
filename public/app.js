@@ -129,39 +129,37 @@
       <div class="stat-box"><div class="val">${totalLines}</div><div class="lbl">Lines</div></div>
       <div class="stat-box"><div class="val">${totalQty}</div><div class="lbl">Total Units</div></div>`;
 
-    // Preview first 5 orders
+    // Preview first 5 orders with exact WMS column names
     const preview = loadedOrders.slice(0, 5);
     let rows = '';
-    let wmsCtr = 1;
     for (const ord of preview) {
-      let lineNo = 1;
-      const wmsNo = `WMS-${String(wmsCtr++).padStart(6, '0')}`;
+      const dateVal = ord.required_date || new Date().toISOString().slice(0, 10);
       for (const item of ord.lines) {
         rows += `<tr>
-          <td><code>${wmsNo}</code></td>
+          <td style="color:var(--text-light);font-size:.75rem">=ROW()-1</td>
+          <td>ULD-PL</td>
           <td>${esc(ord.order_number)}</td>
-          <td>${esc(ord.required_date || '—')}</td>
-          <td>${esc(ord.customer_name || '—')}</td>
-          <td>${esc(ord.carrier || '—')}</td>
-          <td>${esc(ord.waybill_number || '—')}</td>
-          <td>${lineNo++}</td>
+          <td>${esc(dateVal)}</td>
           <td><code>${esc(item.sku)}</code></td>
-          <td>${esc(item.description)}</td>
           <td>${item.qty}</td>
-          <td>${esc(item.uom)}</td>
-          <td><span class="chip">PENDING</span></td>
+          <td>${esc(item.uom || 'EACH')}</td>
+          <td>${esc(ord.customer_name || '—')}</td>
+          <td>${esc(ord.waybill_number || '—')}</td>
+          <td>${esc(ord.carrier || '—')}</td>
+          <td>NM</td>
         </tr>`;
       }
     }
-    const more = loadedOrders.length > 5 ? `<tr><td colspan="12" style="text-align:center;color:var(--text-light);padding:.75rem">… and ${loadedOrders.length - 5} more orders</td></tr>` : '';
+    const more = loadedOrders.length > 5 ? `<tr><td colspan="11" style="text-align:center;color:var(--text-light);padding:.75rem">… and ${loadedOrders.length - 5} more orders</td></tr>` : '';
 
     document.getElementById('wmsPreviewTable').innerHTML = `
+      <p class="hint" style="margin-bottom:.6rem">Preview — columns match the BETIME_OUTBOUND_UPLOAD template exactly. Only key columns shown.</p>
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>WMS Order #</th><th>Client Order #</th><th>Req. Date</th>
-            <th>Customer</th><th>Carrier</th><th>Waybill</th>
-            <th>Line</th><th>SKU</th><th>Description</th><th>Qty</th><th>UOM</th><th>Status</th>
+            <th>d-exline</th><th>d-sitecode</th><th>d-exref2</th><th>d-exdate2</th>
+            <th>d-SKUCODE</th><th>QTY</th><th>d-uom</th><th>d-shname</th>
+            <th>d-shaddr1 (waybill)</th><th>d-rem1 (carrier)</th><th>d-lot13</th>
           </tr></thead>
           <tbody>${rows}${more}</tbody>
         </table>

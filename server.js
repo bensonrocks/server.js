@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const { stringify } = require('csv-stringify/sync');
+const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
@@ -107,43 +108,91 @@ function summarizeOrders(lines) {
   return Object.values(map);
 }
 
-// Generate WMS order format CSV for picklist upload
+// WMS column headers — exact order from BETIME_OUTBOUND_UPLOAD template
+const WMS_HEADERS = [
+  'd-exline','d-sitecode','d-exref2','d-exdate2','d-SKUCODE','QTY','d-uom',
+  'd-shname','d-exref1','d-exdate1','d-expdate','d-priority',
+  'd-shaddr1','d-shaddr2','d-shaddr3','d-shaddr4','d-shzipcode',
+  'd-shtotel','d-shtotelexfax','d-isdrem1','d-rem1','d-rcdate','d-loccode',
+  'd-lot1','d-lot2','d-lot3','d-lot4','d-lot5','d-lot6','d-lot7','d-lot8',
+  'd-lot9','d-lot10','d-lot11','d-lot12','d-lot13','d-lot14','d-lot15','d-lot16',
+];
+
+function buildWmsRows(orders) {
+  const dataRows = [];
+  for (const ord of orders) {
+    const orderDate = ord.required_date ? new Date(ord.required_date) : new Date();
+    for (const item of ord.lines) {
+      // One row per order line; d-exline formula added when writing the sheet
+      dataRows.push({
+        'd-sitecode': 'ULD-PL',
+        'd-exref2':   ord.order_number,
+        'd-exdate2':  isNaN(orderDate) ? new Date() : orderDate,
+        'd-SKUCODE':  item.sku,
+        'QTY':        item.qty,
+        'd-uom':      item.uom || 'EACH',
+        'd-shname':   ord.customer_name || '',
+        'd-exref1':   '',
+        'd-exdate1':  '',
+        'd-expdate':  '',
+        'd-priority': '',
+        'd-shaddr1':  ord.waybill_number || '',   // tracking/waybill goes here
+        'd-shaddr2':  '', 'd-shaddr3': '', 'd-shaddr4': '',
+        'd-shzipcode':'', 'd-shtotel': '', 'd-shtotelexfax': '',
+        'd-isdrem1':  '',
+        'd-rem1':     ord.carrier || '',           // carrier/logistics provider
+        'd-rcdate':   '', 'd-loccode': '',
+        'd-lot1':'',  'd-lot2':'',  'd-lot3':'',  'd-lot4':'',
+        'd-lot5':'',  'd-lot6':'',  'd-lot7':'',  'd-lot8':'',
+        'd-lot9':'',  'd-lot10':'', 'd-lot11':'', 'd-lot12':'',
+        'd-lot13': 'NM',                           // fixed value per template
+        'd-lot14':'', 'd-lot15':'', 'd-lot16':'',
+      });
+    }
+  }
+  return dataRows;
+}
+
+// Generate WMS XLSX in the exact BETIME_OUTBOUND_UPLOAD format
 app.get('/api/wms-export', (req, res) => {
   const session = getSession(req.headers['x-session-id'] || '');
   if (!session.orders.length) return res.status(400).json({ error: 'No orders loaded' });
 
   const orders = summarizeOrders(session.orders);
-  const rows = [];
-  let wmsOrderCounter = 1;
+  const dataRows = buildWmsRows(orders);
 
-  for (const ord of orders) {
-    let lineNo = 1;
-    const wmsOrderNo = `WMS-${String(wmsOrderCounter++).padStart(6, '0')}`;
-    for (const item of ord.lines) {
-      rows.push({
-        WAREHOUSE_ORDER_NO: wmsOrderNo,
-        CLIENT_ORDER_NO: ord.order_number,
-        ORDER_DATE: new Date().toISOString().slice(0, 10),
-        REQUIRED_DATE: ord.required_date || '',
-        CUSTOMER_NAME: ord.customer_name,
-        SHIP_TO_ADDRESS: ord.ship_to_address,
-        CARRIER: ord.carrier,
-        WAYBILL_NO: ord.waybill_number,
-        LINE_NO: lineNo++,
-        SKU: item.sku,
-        DESCRIPTION: item.description,
-        QTY_ORDERED: item.qty,
-        UOM: item.uom,
-        QTY_PICKED: '',
-        PICK_STATUS: 'PENDING',
-      });
-    }
+  const wb = XLSX.utils.book_new();
+
+  // Build AOA without d-exline (placeholder '') — patch formulas after sheet creation
+  const aoa = [WMS_HEADERS];
+  for (const r of dataRows) {
+    aoa.push(WMS_HEADERS.map(h => {
+      if (h === 'd-exline') return '';
+      const v = r[h];
+      return v instanceof Date ? v : (v ?? '');
+    }));
   }
 
-  const csv = stringify(rows, { header: true });
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="wms_picklist.csv"');
-  res.send(csv);
+  const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+
+  // Patch d-exline (col A) with =ROW()-1 formula + cached value for each data row
+  for (let R = 1; R <= dataRows.length; R++) {
+    const addr = XLSX.utils.encode_cell({ r: R, c: 0 });
+    ws[addr] = { t: 'n', v: R, f: 'ROW()-1' };
+  }
+
+  // Format date column d-exdate2 (col D = index 3)
+  for (let R = 1; R <= dataRows.length; R++) {
+    const addr = XLSX.utils.encode_cell({ r: R, c: 3 });
+    if (ws[addr]) { ws[addr].t = 'd'; ws[addr].z = 'yyyy-mm-dd'; }
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, 'IssueDetail');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellDates: true });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="BETIME_OUTBOUND_UPLOAD.xlsx"');
+  res.send(buf);
 });
 
 // Generate order scanning sheet: one row per line, ready for scan verification

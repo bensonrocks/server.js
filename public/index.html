@@ -55,12 +55,12 @@
     <section id="tab-wms" class="tab">
       <div class="card">
         <h2>WMS Order Format — Picklist Generator</h2>
-        <p class="hint">Converts uploaded orders into the standard WMS format ready for picklist generation and warehouse upload.</p>
+        <p class="hint">Converts uploaded orders into the <strong>BETIME_OUTBOUND_UPLOAD</strong> XLSX format (<code>IssueDetail</code> sheet) — ready to upload directly into the WMS for picklist generation.</p>
         <div id="wmsNoOrders" class="empty-state">No orders loaded. <button class="link-btn" data-tab-link="upload">Upload orders first.</button></div>
         <div id="wmsContent" class="hidden">
           <div class="wms-summary" id="wmsSummary"></div>
           <div class="wms-actions">
-            <button class="btn-primary large" id="downloadWmsBtn">&#8681; Download WMS Picklist CSV</button>
+            <button class="btn-primary large" id="downloadWmsBtn">&#8681; Download BETIME_OUTBOUND_UPLOAD.xlsx</button>
           </div>
           <div id="wmsPreviewTable"></div>
         </div>
