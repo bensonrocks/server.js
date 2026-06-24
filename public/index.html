@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Processing &amp; WMS Fulfillment</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#9679; WMS Fulfillment</span>
+      <nav>
+        <button class="tab-btn active" data-tab="upload">Upload Orders</button>
+        <button class="tab-btn" data-tab="wms">WMS Picklist</button>
+        <button class="tab-btn" data-tab="scan">Order Scanning</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- ── TAB 1: Upload Orders ── -->
+    <section id="tab-upload" class="tab active">
+      <div class="card">
+        <h2>Upload Client Orders</h2>
+        <p class="hint">Upload a CSV file containing order lines. Required columns: <code>order_number</code>, <code>sku</code>, <code>quantity</code>.</p>
+
+        <div class="upload-area" id="dropZone">
+          <input type="file" id="fileInput" accept=".csv" hidden />
+          <div class="upload-icon">&#8679;</div>
+          <p>Drag &amp; drop CSV here or <button class="link-btn" id="browseBtn">browse</button></p>
+          <p class="hint">Supports: order_number, customer_name, sku, product_name, quantity, uom, ship_to_address, city, state, zip, waybill_number, carrier, required_date</p>
+        </div>
+
+        <div id="uploadStatus" class="status-bar hidden"></div>
+
+        <div class="sample-section">
+          <button class="btn-secondary" id="downloadSampleBtn">Download Sample CSV</button>
+        </div>
+      </div>
+
+      <div id="ordersSection" class="hidden">
+        <div class="section-header">
+          <h2>Loaded Orders <span id="orderCount" class="badge"></span></h2>
+          <div class="actions">
+            <button class="btn-primary" id="goWmsBtn">Generate WMS Picklist &rarr;</button>
+            <button class="btn-primary" id="goScanBtn">Go to Scanning &rarr;</button>
+          </div>
+        </div>
+        <div id="ordersTable"></div>
+      </div>
+    </section>
+
+    <!-- ── TAB 2: WMS Picklist ── -->
+    <section id="tab-wms" class="tab">
+      <div class="card">
+        <h2>WMS Order Format — Picklist Generator</h2>
+        <p class="hint">Converts uploaded orders into the standard WMS format ready for picklist generation and warehouse upload.</p>
+        <div id="wmsNoOrders" class="empty-state">No orders loaded. <button class="link-btn" data-tab-link="upload">Upload orders first.</button></div>
+        <div id="wmsContent" class="hidden">
+          <div class="wms-summary" id="wmsSummary"></div>
+          <div class="wms-actions">
+            <button class="btn-primary large" id="downloadWmsBtn">&#8681; Download WMS Picklist CSV</button>
+          </div>
+          <div id="wmsPreviewTable"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TAB 3: Order Scanning ── -->
+    <section id="tab-scan" class="tab">
+      <div class="card">
+        <h2>Order Scanning &amp; Waybill Verification</h2>
+        <p class="hint">Cross-check picked items against each order and verify the waybill number matches.</p>
+        <div id="scanNoOrders" class="empty-state">No orders loaded. <button class="link-btn" data-tab-link="upload">Upload orders first.</button></div>
+        <div id="scanContent" class="hidden">
+          <div class="scan-top">
+            <div class="scan-select-wrap">
+              <label for="orderSelect">Select Order</label>
+              <select id="orderSelect"></select>
+            </div>
+            <button class="btn-secondary" id="downloadScanBtn">&#8681; Download Full Scan Sheet</button>
+          </div>
+
+          <div id="scanOrderCard" class="hidden">
+            <div class="order-meta" id="scanOrderMeta"></div>
+            <table class="scan-table" id="scanTable">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Description</th>
+                  <th>Qty Ordered</th>
+                  <th>Qty Picked</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="scanTableBody"></tbody>
+            </table>
+            <div class="waybill-row">
+              <label>Waybill / Tracking #</label>
+              <input type="text" id="waybillInput" placeholder="Scan or enter waybill number" />
+              <button class="btn-primary" id="verifyBtn">Verify &amp; Check</button>
+            </div>
+            <div id="verifyResult" class="hidden"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
