@@ -43,7 +43,6 @@
   });
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
   document.getElementById('goScannerBtn').addEventListener('click', () => switchTab('scanner'));
-  document.getElementById('downloadSampleBtn').addEventListener('click', downloadSample);
 
   async function uploadFile(file) {
     setUploadStatus('loading', `Uploading ${file.name}…`);
@@ -519,20 +518,4 @@
     if (scanned !== undefined) loadedOrders[idx].scanned = scanned;
   }
 
-  function downloadSample() {
-    const csv = [
-      'order_number,customer_name,sku,product_name,quantity,uom,waybill_number,carrier,required_date',
-      'ORD-001,John Smith,SKU-A123,Blue Widget,2,EACH,WB123456789,FedEx,2026-06-25',
-      'ORD-001,John Smith,SKU-B456,Red Gadget,1,EACH,WB123456789,FedEx,2026-06-25',
-      'ORD-002,Jane Doe,SKU-C789,Green Tool,3,EACH,WB987654321,UPS,2026-06-26',
-      'ORD-003,Acme Corp,SKU-D012,Widget Pro,5,EACH,WB555000111,DHL,2026-06-26',
-      'ORD-003,Acme Corp,SKU-E345,Adapter Kit,2,EACH,WB555000111,DHL,2026-06-26',
-    ].join('\n');
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-      download: 'sample_orders.csv',
-    });
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
 })();
