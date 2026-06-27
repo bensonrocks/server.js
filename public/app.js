@@ -1,7 +1,7 @@
 (() => {
-  let SESSION_ID = sessionStorage.getItem('wms_session') || '';
-  let loadedOrders = [];  // each has scan_status + scanned{}
-  let activeOrder = null; // order currently being scanned
+  let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
+  let loadedOrders = [];
+  let activeOrder  = null;
 
   function hdrs() {
     return { 'x-session-id': SESSION_ID, 'Content-Type': 'application/json' };
@@ -26,6 +26,7 @@
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
     if (name === 'orders')  renderOrdersDash();
     if (name === 'scanner') renderScannerTab();
+    if (name === 'log')     renderLogTab();
   }
 
   // ── Upload tab ─────────────────────────────────────────────────────────────
@@ -55,8 +56,10 @@
       SESSION_ID = data.sessionId;
       sessionStorage.setItem('wms_session', SESSION_ID);
       loadedOrders = data.orders;
-      activeOrder = null;
-      setUploadStatus('success', `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}"`);
+      activeOrder  = null;
+      setUploadStatus('success',
+        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed.`
+      );
       renderUploadList(data.orders);
     } catch (err) {
       setUploadStatus('error', err.message);
@@ -86,11 +89,10 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>SKU</th><th>Description</th><th>Qty</th><th>UOM</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Qty</th><th>UOM</th></tr></thead>
             <tbody>
               ${ord.lines.map(l => `<tr>
                 <td><code>${esc(l.sku)}</code></td>
-                <td>${esc(l.description)}</td>
                 <td>${l.qty}</td>
                 <td>${esc(l.uom)}</td>
               </tr>`).join('')}
@@ -116,27 +118,16 @@
     loadedOrders.forEach(o => { c[o.scan_status] = (c[o.scan_status] || 0) + 1; });
 
     document.getElementById('statsBar').innerHTML = `
-      <div class="stat-box">
-        <div class="val">${loadedOrders.length}</div><div class="lbl">Total</div>
-      </div>
-      <div class="stat-box pending">
-        <div class="val">${c.pending || 0}</div><div class="lbl">Pending</div>
-      </div>
-      <div class="stat-box processing">
-        <div class="val">${c.processing || 0}</div><div class="lbl">In Progress</div>
-      </div>
-      <div class="stat-box done">
-        <div class="val">${c.done || 0}</div><div class="lbl">Done</div>
-      </div>
-      <div class="stat-box unprocessed">
-        <div class="val">${c.unprocessed || 0}</div><div class="lbl">Unprocessed</div>
-      </div>`;
+      <div class="stat-box"><div class="val">${loadedOrders.length}</div><div class="lbl">Total</div></div>
+      <div class="stat-box pending"><div class="val">${c.pending||0}</div><div class="lbl">Pending</div></div>
+      <div class="stat-box processing"><div class="val">${c.processing||0}</div><div class="lbl">In Progress</div></div>
+      <div class="stat-box done"><div class="val">${c.done||0}</div><div class="lbl">Done</div></div>
+      <div class="stat-box unprocessed"><div class="val">${c.unprocessed||0}</div><div class="lbl">Unprocessed</div></div>`;
 
     const sortPriority = { processing: 0, pending: 1, unprocessed: 2, done: 3 };
     const sorted = [...loadedOrders].sort((a, b) =>
       (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
     );
-
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
 
     document.getElementById('ordersDashList').innerHTML = sorted.map(ord => {
@@ -183,7 +174,6 @@
       return;
     }
     if (activeOrder) {
-      // Re-sync this order's state from server
       const fresh = loadedOrders.find(o => o.order_number === activeOrder.order_number);
       if (fresh) activeOrder = fresh;
       enterItemsPhase(activeOrder);
@@ -250,7 +240,6 @@
         return;
       }
       errEl.classList.add('hidden');
-      // Merge fresh state into loadedOrders
       const idx = loadedOrders.findIndex(o => o.order_number === data.order_number);
       if (idx >= 0) loadedOrders[idx] = data; else loadedOrders.push(data);
       enterItemsPhase(data);
@@ -273,15 +262,13 @@
     document.getElementById('phaseItems').classList.remove('hidden');
 
     document.getElementById('scanOrderNo').textContent = order.order_number;
-
     document.getElementById('scanOrderMeta').innerHTML = `
       <span><strong>Customer:</strong> ${esc(order.customer_name || '—')}</span>
       <span><strong>Carrier:</strong> ${esc(order.carrier || '—')}</span>
       <span class="${order.waybill_number ? 'waybill-ok' : ''}">
         <strong>Waybill:</strong>
         ${order.waybill_number ? `${esc(order.waybill_number)} &#10003;` : 'Not provided'}
-      </span>
-      ${order.required_date ? `<span><strong>Req. Date:</strong> ${esc(order.required_date)}</span>` : ''}`;
+      </span>`;
 
     renderItemsTable(order);
     updateProgress(order);
@@ -295,9 +282,9 @@
   function renderItemsTable(order) {
     const scanned = order.scanned || {};
     document.getElementById('scanItemsTbody').innerHTML = order.lines.map(item => {
-      const s = scanned[item.sku] || 0;
+      const s        = scanned[item.sku] || 0;
       const rowClass = s === 0 ? '' : s === item.qty ? 'row-ok' : s > item.qty ? 'row-over' : 'row-partial';
-      const icon = s === item.qty && s > 0 ? '&#10003;' : s > item.qty ? '&#10007;' : s > 0 ? '&#8230;' : '';
+      const icon     = s === item.qty && s > 0 ? '&#10003;' : s > item.qty ? '&#10007;' : s > 0 ? '&#8230;' : '';
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
           <td><code>${esc(item.sku)}</code></td>
@@ -311,23 +298,21 @@
         </tr>`;
     }).join('');
 
-    // Manual qty change
     document.querySelectorAll('.qty-input').forEach(inp => {
       inp.addEventListener('change', async () => {
         const qty = parseInt(inp.value, 10) || 0;
         await setItemQty(activeOrder.order_number, inp.dataset.sku, qty);
-        // Refocus scan input after manual edit
         document.getElementById('itemScanInput').focus();
       });
     });
   }
 
   function updateProgress(order) {
-    const scanned = order.scanned || {};
+    const scanned   = order.scanned || {};
     const doneCount = order.lines.filter(l => (scanned[l.sku] || 0) === l.qty).length;
-    const el = document.getElementById('scanProgress');
-    el.textContent = `${doneCount}/${order.lines.length} items`;
-    el.className = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
+    const el        = document.getElementById('scanProgress');
+    el.textContent  = `${doneCount}/${order.lines.length} items`;
+    el.className    = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
   }
 
   // ── Item barcode scan ──────────────────────────────────────────────────────
@@ -351,7 +336,6 @@
         showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
         return;
       }
-      // Update local state
       if (!activeOrder.scanned) activeOrder.scanned = {};
       activeOrder.scanned[data.sku] = data.scanned_qty;
       activeOrder.scan_status = 'processing';
@@ -359,7 +343,6 @@
       renderItemsTable(activeOrder);
       updateProgress(activeOrder);
 
-      // Flash the updated row
       const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
       if (row) {
         row.classList.add('row-flash');
@@ -419,7 +402,6 @@
       });
       const data = await resp.json();
       if (!resp.ok) { alert(data.error); return; }
-
       if (data.ok) {
         activeOrder.scan_status = 'done';
         mergeOrderState(activeOrder.order_number, 'done');
@@ -433,14 +415,14 @@
   });
 
   function flashCompleteBtn() {
-    const btn = document.getElementById('completeOrderBtn');
+    const btn  = document.getElementById('completeOrderBtn');
     const orig = btn.textContent;
     btn.textContent = '✓ Done!';
-    btn.disabled = true;
+    btn.disabled    = true;
     setTimeout(() => {
       btn.textContent = orig;
-      btn.disabled = false;
-      activeOrder = null;
+      btn.disabled    = false;
+      activeOrder     = null;
       refreshOrders().then(enterWaybillPhase);
     }, 1400);
   }
@@ -449,7 +431,7 @@
 
   document.getElementById('cancelOrderBtn').addEventListener('click', () => {
     if (!activeOrder) return;
-    if (confirm(`Cancel order ${activeOrder.order_number}?\nIt will be marked as Unprocessed and you will move to the next order.`)) {
+    if (confirm(`Cancel order ${activeOrder.order_number}?\nIt will be marked as Unprocessed.`)) {
       doCancel();
     }
   });
@@ -499,6 +481,50 @@
     document.getElementById('mismatchOverlay').classList.add('hidden');
     await doCancel();
   });
+
+  // ── Log tab ────────────────────────────────────────────────────────────────
+
+  async function renderLogTab() {
+    const listEl  = document.getElementById('logList');
+    const emptyEl = document.getElementById('logEmpty');
+    listEl.innerHTML = '<p class="hint" style="padding:1rem">Loading…</p>';
+    try {
+      const resp    = await fetch('/api/batches');
+      const batches = await resp.json();
+
+      if (!batches.length) {
+        listEl.innerHTML = '';
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+      emptyEl.classList.add('hidden');
+
+      listEl.innerHTML = batches.map(b => {
+        const date = new Date(b.uploaded_at).toLocaleString();
+        const states = b.orderStates || {};
+        const done   = Object.values(states).filter(s => s.status === 'done').length;
+        const unproc = Object.values(states).filter(s => s.status === 'unprocessed').length;
+        return `
+          <div class="log-card">
+            <div class="log-card-left">
+              <span class="log-filename">${esc(b.filename)}</span>
+              <span class="log-date">${date}</span>
+              <div class="log-chips">
+                <span class="chip">${b.order_count} orders</span>
+                <span class="chip">${b.row_count} lines</span>
+                ${done    ? `<span class="chip chip-done">${done} done</span>` : ''}
+                ${unproc  ? `<span class="chip chip-unproc">${unproc} unprocessed</span>` : ''}
+              </div>
+            </div>
+            <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>
+              &#8681; WMS File
+            </a>
+          </div>`;
+      }).join('');
+    } catch (err) {
+      listEl.innerHTML = `<p class="scan-error" style="padding:1rem">${esc(err.message)}</p>`;
+    }
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 

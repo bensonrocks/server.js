@@ -386,3 +386,29 @@ tr:hover td { background: #f8fafc; }
 .modal-actions { display: flex; flex-direction: column; gap: .6rem; }
 .modal-actions .btn-secondary { text-align: center; padding: .65rem; }
 .modal-actions .btn-danger    { text-align: center; padding: .65rem; }
+
+/* ── Log tab ── */
+.log-header { padding: 1.25rem 1.25rem .5rem; }
+.log-header h2 { margin-bottom: .25rem; }
+
+.log-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.25rem; margin: 0 1rem .75rem;
+  box-shadow: var(--shadow);
+}
+.log-card-left { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.log-filename  { font-weight: 700; font-size: .95rem; color: var(--text); word-break: break-all; }
+.log-date      { font-size: .8rem; color: var(--text-light); }
+.log-chips     { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .15rem; }
+.chip-done     { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+.chip-unproc   { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
+
+.btn-download {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: var(--primary); color: #fff; border-radius: 6px;
+  padding: .55rem 1rem; font-size: .875rem; font-weight: 600;
+  text-decoration: none; white-space: nowrap; flex-shrink: 0;
+  transition: background .15s;
+}
+.btn-download:hover { background: var(--primary-hover); }
