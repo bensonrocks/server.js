@@ -10,6 +10,12 @@ const { PDFDocument } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
 
+// Keyfields WMS format — edit lib/keyfields.js to change column mappings or output
+const {
+  mapRow, normalizeKey, dateVal,
+  generateKeyfieldsXLSX,
+} = require('./lib/keyfields');
+
 const app    = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -85,44 +91,7 @@ function getScanState(session, orderNumber) {
   return session.scanStates[orderNumber];
 }
 
-// ── Column mapping ──────────────────────────────────────────────────────────
-function normalizeKey(k) {
-  return String(k).toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .replace(/_+/g, '_');
-}
-
-function dateStr(v) {
-  if (!v) return null;
-  if (v instanceof Date) return v.toISOString().split('T')[0];
-  return String(v).split('T')[0] || null;
-}
-
-function mapClientRow(row) {
-  const n = {};
-  for (const k of Object.keys(row)) n[normalizeKey(k)] = row[k];
-  const rawQty = n.quantity ?? n.qty ?? 1;
-  const qty    = typeof rawQty === 'number' ? Math.round(rawQty) : parseInt(String(rawQty), 10) || 1;
-  return {
-    order_number:     String(n.ref ?? n.order_number ?? n.order_no ?? 'UNKNOWN'),
-    customer_name:    String(n.customer_name ?? ''),
-    client_name:      String(n.client_name ?? n.client ?? n.merchant ?? ''),
-    tel:              String(n.tel ?? ''),
-    delivery_address: String(n.delivery_address ?? ''),
-    waybill_number:   String(n.tracking_number ?? n.waybill_number ?? n.waybill ?? ''),
-    carrier:          String(n.driver ?? n.carrier ?? ''),
-    platform:         String(n.platform ?? ''),
-    shop_name:        String(n.shop_name ?? ''),
-    date:             dateStr(n.date),
-    sku:              String(n.product_code ?? n.sku ?? n.item_code ?? ''),
-    qty,
-    batch_number:     String(n.batch_number ?? ''),
-    expiry_date:      dateStr(n.expiry_date),
-    remarks:          String(n.remarks ?? ''),
-    remarks_betime:   String(n.remarks_betime ?? ''),
-  };
-}
+// Column mapping and format generation live in lib/keyfields.js
 
 function summarizeOrders(lines) {
   const map = {};
@@ -130,15 +99,26 @@ function summarizeOrders(lines) {
     const key = line.order_number;
     if (!map[key]) {
       map[key] = {
-        order_number: key, customer_name: line.customer_name,
-        carrier: line.carrier, waybill_number: line.waybill_number,
-        platform: line.platform || '', shop_name: line.shop_name || '',
-        date: line.date, lines: [], total_qty: 0,
+        order_number:     key,
+        customer_name:    line.customer_name,
+        tel:              line.tel              || '',
+        delivery_address: line.delivery_address || '',
+        carrier:          line.carrier,
+        waybill_number:   line.waybill_number,
+        platform:         line.platform         || '',
+        shop_name:        line.shop_name        || '',
+        date:             line.date,
+        lines:            [],
+        total_qty:        0,
       };
     }
     map[key].lines.push({
-      sku: line.sku, description: line.sku, qty: line.qty, uom: 'EACH',
-      expiry_date: line.expiry_date, remarks_betime: line.remarks_betime,
+      sku:            line.sku,
+      description:    line.sku,
+      qty:            line.qty,
+      uom:            'EACH',
+      expiry_date:    line.expiry_date,
+      remarks_betime: line.remarks_betime,
     });
     map[key].total_qty += line.qty;
   }
@@ -208,56 +188,20 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
   return matched;
 }
 
-// ── BETIME WMS XLSX ─────────────────────────────────────────────────────────
-const BETIME_HEADERS = [
-  'd-exline','d-sitecode','d-exref2','d-exdate2','d-SKUCODE','QTY',
-  'd-uom','d-shname','d-exref1','d-exdate1','d-expdate','d-priority',
-  'd-shaddr1','d-shaddr2','d-shaddr3','d-shaddr4','d-shzipcode',
-  'd-shtotel','d-shtotelexfax','d-isdrem1','d-rem1','d-rcdate',
-  'd-loccode','d-lot1','d-lot2','d-lot3','d-lot4','d-lot5',
-  'd-lot6','d-lot7','d-lot8','d-lot9','d-lot10','d-lot11',
-  'd-lot12','d-lot13','d-lot14','d-lot15','d-lot16',
-];
-
-function generateBeTimeXLSX(orders) {
-  const aoa = [BETIME_HEADERS];
-  let lineNum = 1;
-  for (const order of orders) {
-    const date = order.date ? new Date(order.date) : null;
-    for (const line of order.lines) {
-      const expiry = line.expiry_date ? new Date(line.expiry_date) : null;
-      aoa.push([
-        lineNum++, 'ULD-PL', order.order_number, date, line.sku, line.qty, 'EACH',
-        order.customer_name, null, null, null, null, order.waybill_number,
-        null, null, null, null, null, null, null, order.carrier, null, null,
-        expiry, null, null, null, null, null, null, null, null, null, null, null,
-        line.remarks_betime || 'NM', null, null, null,
-      ]);
-    }
-  }
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
-  for (let r = 1; r < aoa.length; r++) {
-    const addr = XLSX.utils.encode_cell({ r, c: 0 });
-    ws[addr] = { t: 'n', f: 'ROW()-1', v: r };
-  }
-  XLSX.utils.book_append_sheet(wb, ws, 'IssueDetail');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([]), 'Sheet1');
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-}
+// Keyfields XLSX generation → see lib/keyfields.js
 
 // ── File parsing ────────────────────────────────────────────────────────────
 function parseUploadedFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.csv') {
     const records = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
-    return records.map(mapClientRow);
+    return records.map(mapRow);
   }
   if (ext === '.xlsx' || ext === '.xls') {
     const wb      = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const ws      = wb.Sheets[wb.SheetNames[0]];
     const records = XLSX.utils.sheet_to_json(ws, { defval: null });
-    return records.map(mapClientRow).filter(r => r.sku && r.order_number !== 'UNKNOWN');
+    return records.map(mapRow).filter(r => r.sku && r.order_number !== 'UNKNOWN');
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -291,11 +235,11 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
 
     let allRows = [], skipped = 0;
     if (ext === '.csv') {
-      allRows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true }).map(mapClientRow);
+      allRows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true }).map(mapRow);
     } else {
       const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const all = XLSX.utils.sheet_to_json(ws, { defval: null }).map(mapClientRow);
+      const all = XLSX.utils.sheet_to_json(ws, { defval: null }).map(mapRow);
       allRows = all.filter(r => r.sku && r.order_number !== 'UNKNOWN');
       skipped = all.length - allRows.length;
     }
@@ -327,7 +271,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const session   = getSession(sessionId);
     const orders    = summarizeOrders(mapped);
-    const wmsBuffer  = generateBeTimeXLSX(orders);
+    const wmsBuffer  = generateKeyfieldsXLSX(orders);
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
