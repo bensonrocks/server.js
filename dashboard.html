@@ -738,12 +738,12 @@ async function refreshConnectionStatus(){
   const banner=$('server-banner');
   if(serverAvailable&&status){
     banner.className='server-banner info';
-    banner.innerHTML='<span>&#9989;</span><span><strong>Server is running</strong> &mdash; OAuth auto-connect and live sync are available.</span>';
+    banner.innerHTML='<span>&#9989;</span><span><strong>Connected to IdealOMS database</strong> &mdash; All credentials and orders are stored in the server database. OAuth and live sync are active.</span>';
     banner.classList.remove('hidden');
     for(const[p,info]of Object.entries(status))updateTileStatus(p,info.connected,info.lastSync,info.lastSyncCount);
   }else{
     banner.className='server-banner warn';
-    banner.innerHTML='<span>&#9888;</span><span><strong>Server not running.</strong> Credentials are saved in your browser. Start the server (double-click START.bat / START.command) to enable OAuth and live sync.</span>';
+    banner.innerHTML='<span>&#9888;</span><span><strong>Server offline &mdash; database unavailable.</strong> Start the server (double-click START.bat / START.command) to save credentials and orders permanently. Browser mode is read-only.</span>';
     banner.classList.remove('hidden');
     for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!c.accessToken,c.lastSync,c.lastSyncCount);}
   }

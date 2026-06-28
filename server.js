@@ -7,6 +7,7 @@ const { exec } = require('child_process');
 const store   = require('./lib/store');
 const emailP  = require('./lib/email-parser');
 const creds   = require('./lib/credentials');
+const syncLog = require('./lib/sync-log');
 const lazada  = require('./lib/marketplace/lazada');
 const shopee  = require('./lib/marketplace/shopee');
 const tiktok  = require('./lib/marketplace/tiktok');
@@ -176,9 +177,7 @@ app.get('/api/connect/shopify/callback', async (req, res) => {
 
 // ── Order Sync ────────────────────────────────────────────────────────────────
 
-const syncLog = []; // in-memory — persists as long as server is running
-
-app.get('/api/sync/log', (req, res) => res.json(syncLog.slice().reverse().slice(0, 100)));
+app.get('/api/sync/log', (req, res) => res.json(syncLog.recent(100)));
 
 async function syncPlatform(platform, fetchFn, mapFn, opts = {}) {
   const c = creds.get(platform);
