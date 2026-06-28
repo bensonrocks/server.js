@@ -471,7 +471,11 @@
       document.getElementById('uploadConfirmOverlay').classList.add('hidden');
 
       if (!resp.ok) {
-        setUploadStatus('error', data.error || 'Upload failed');
+        if (resp.status === 422 && data.validation) {
+          showValidationErrors(data.validation);
+        } else {
+          setUploadStatus('error', data.error || 'Upload failed');
+        }
         return;
       }
       SESSION_ID = data.sessionId;
@@ -519,6 +523,49 @@
     el.className = `status-bar ${type}`;
     el.textContent = msg;
     el.classList.remove('hidden');
+  }
+
+  function showValidationErrors(v) {
+    const el = document.getElementById('uploadStatus');
+    el.className = 'status-bar error';
+    el.innerHTML = '';
+    el.classList.remove('hidden');
+
+    const header = document.createElement('div');
+    header.className = 'val-abort-header';
+    header.innerHTML =
+      `<span class="val-abort-icon">&#10007;</span>` +
+      `<span class="val-abort-title">UPLOAD ABORTED</span>`;
+    el.appendChild(header);
+
+    const summary = document.createElement('div');
+    summary.className = 'val-summary';
+    summary.textContent =
+      `${v.totalErrors} error${v.totalErrors !== 1 ? 's' : ''} found ` +
+      `in ${v.rowsWithErrors} row${v.rowsWithErrors !== 1 ? 's' : ''} ` +
+      `(${v.totalRowsProcessed} rows processed). ` +
+      (v.hasCritical ? 'Includes CRITICAL delivery address errors.' : 'Please correct and re-upload.');
+    el.appendChild(summary);
+
+    const table = document.createElement('table');
+    table.className = 'val-error-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Row</th><th>Order ID</th><th>Field</th><th>Issue</th><th>Action Required</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${v.errors.map(e => `
+          <tr class="${e.critical ? 'val-critical' : ''}">
+            <td>${e.excelRow}</td>
+            <td><code>${esc(e.orderId)}</code></td>
+            <td><code>${esc(e.field)}</code></td>
+            <td>${e.critical ? '<span class="val-crit-badge">CRITICAL</span> ' : ''}${esc(e.issue)}</td>
+            <td>${esc(e.action)}</td>
+          </tr>`).join('')}
+      </tbody>`;
+    el.appendChild(table);
   }
 
   function renderUploadList(orders) {

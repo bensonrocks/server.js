@@ -14,9 +14,13 @@ try { pdfParse = require('pdf-parse'); } catch {}
 // Keyfields WMS format — edit lib/keyfields.js to change column mappings or output
 const {
   mapRow, normalizeKey, dateVal,
+  buildRow,
   generateKeyfieldsXLSX, generateTemplateSampleXLSX,
   KEYFIELDS_HEADERS,
 } = require('./lib/keyfields');
+
+// Upload validation ruleset — edit lib/validation.js to change rules
+const { validateRows } = require('./lib/validation');
 
 const app    = express();
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
@@ -327,6 +331,24 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const orders    = summarizeOrders(mapped);
+
+    // ── Validation (lib/validation.js) — ABORT if any error found ──────────
+    const wmsRows = [];
+    let vLine = 1;
+    for (const order of orders) {
+      for (const line of order.lines) {
+        wmsRows.push(buildRow(vLine++, order, line));
+      }
+    }
+    const validation = validateRows(wmsRows);
+    if (!validation.passed) {
+      return res.status(422).json({
+        error:      validation.abortMessage,
+        validation,
+      });
+    }
+    // ── Validation passed — proceed ─────────────────────────────────────────
+
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
