@@ -93,7 +93,7 @@ a:hover{text-decoration:underline}
 .b-lazada{background:#FFF3EC;color:#CC3C00}.b-shopee{background:#FFF0EE;color:#BF3010}.b-tiktok{background:#f0f0f0;color:#111}
 .sts{display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700}
 .s-pending{background:#fef9c3;color:#854d0e}.s-confirmed{background:#dbeafe;color:#1e40af}
-.s-processing{background:#ede9fe;color:#5b21b6}.s-shipped{background:#cffafe;color:#155e75}
+.s-processing{background:#ede9fe;color:#5b21b6}.s-packed{background:#fef3c7;color:#92400e}.s-shipped{background:#cffafe;color:#155e75}
 .s-delivered{background:#dcfce7;color:#166534}.s-cancelled{background:#fee2e2;color:#991b1b}
 
 /* ── BUTTONS ── */
@@ -406,6 +406,7 @@ a:hover{text-decoration:underline}
             <option value="pending">Pending</option>
             <option value="confirmed">Confirmed</option>
             <option value="processing">Processing</option>
+            <option value="packed">Packed</option>
             <option value="shipped">Shipped</option>
             <option value="delivered">Delivered</option>
             <option value="cancelled">Cancelled</option>
@@ -654,7 +655,7 @@ a:hover{text-decoration:underline}
           <div class="fg"><label>Status</label>
             <select id="wb-status" class="inp">
               <option value="shipped">Shipped</option><option value="confirmed">Confirmed</option>
-              <option value="processing">Processing</option><option value="delivered">Delivered</option><option value="pending">Pending</option>
+              <option value="processing">Processing</option><option value="packed">Packed</option><option value="delivered">Delivered</option><option value="pending">Pending</option>
             </select>
           </div>
           <div class="fg wb-full"><label>Client *</label>
@@ -1350,13 +1351,22 @@ async function _scanLookup(code, source) {
   code = code.trim();
   if (!code) return;
 
-  // deduplicate in session
-  if (_scanSession.some(s => s.code === code)) {
-    _scanDupes++;
-    const lbl = document.getElementById('scan-dupe-label');
-    if (lbl) { lbl.textContent = _scanDupes + ' dupe' + (_scanDupes !== 1 ? 's' : '') + ' skipped'; lbl.style.display = ''; }
-    _scanFlash('Already scanned — ' + _esc(code), false);
-    return;
+  // deduplicate — but allow re-scan of processing orders (second scan = pack complete)
+  const existing = _scanSession.find(s => s.code === code);
+  if (existing) {
+    // allow re-scan only if the order is currently in processing (advancing to packed)
+    if (existing.orderStatus === 'processing') {
+      // remove the old session entry so we replace it with the new packed entry
+      _scanSession = _scanSession.filter(s => s.code !== code);
+      const oldTr = document.querySelector(`#scan-sess-tbody tr[data-id="${CSS.escape(existing.orderId)}"]`);
+      if (oldTr) oldTr.remove();
+    } else {
+      _scanDupes++;
+      const lbl = document.getElementById('scan-dupe-label');
+      if (lbl) { lbl.textContent = _scanDupes + ' dupe' + (_scanDupes !== 1 ? 's' : '') + ' skipped'; lbl.style.display = ''; }
+      _scanFlash('Already scanned — ' + _esc(code), false);
+      return;
+    }
   }
 
   _scanFlash('&#128269; Looking up ' + _esc(code) + '…', null);
@@ -1421,7 +1431,8 @@ async function _scanLookup(code, source) {
   if (matched && order) {
     _scanShowOrder(order, { previousStatus, newStatus, platformPush, trackingAttached });
     if (autoAdvance && previousStatus !== newStatus) {
-      _scanFlash('&#10003; ' + _esc(order.id) + ' → ' + newStatus + (trackingAttached ? ' (tracking attached)' : ''), true);
+      const extra = newStatus === 'packed' ? ' — print waybill &#128230;' : trackingAttached ? ' (tracking attached)' : '';
+      _scanFlash('&#10003; ' + _esc(order.id) + ' → ' + newStatus + extra, true);
     } else {
       _scanFlash('&#10003; Matched → ' + _esc(order.id), true);
     }
@@ -1508,13 +1519,18 @@ function _scanShowOrder(o, meta = {}) {
 
     ${o.notes ? `<div class="src-sec"><div class="src-sec-t">Notes</div><div style="padding:10px 16px;background:#fefce8;border-top:1px solid #fde047;font-size:13px;color:#713f12;line-height:1.5">${_esc(o.notes)}</div></div>` : ''}
 
-    <!-- Actions — update status + view full order -->
+    <!-- Actions — update status + print waybill + view full order -->
     <div class="src-actions">
+      ${meta.waybillReady || o.status === 'packed' ? `
+      <button class="btn btn-p btn-sm" style="background:#0d9488;border-color:#0d9488;width:100%;margin-bottom:8px;font-size:13px;padding:10px" onclick="scanPrintWaybill('${_esc(o.id)}')">
+        &#128230; Print Waybill
+      </button>` : ''}
       <select id="scan-status-sel" class="src-status-sel" onchange="scanUpdateStatus('${_esc(o.id)}')">
         <option value="">Update status…</option>
         <option value="pending"    ${o.status==='pending'    ?'selected':''}>Pending</option>
         <option value="confirmed"  ${o.status==='confirmed'  ?'selected':''}>Confirmed</option>
-        <option value="processing" ${o.status==='processing' ?'selected':''}>Processing</option>
+        <option value="processing" ${o.status==='processing' ?'selected':''}>Processing (Picking)</option>
+        <option value="packed"     ${o.status==='packed'     ?'selected':''}>Packed</option>
         <option value="shipped"    ${o.status==='shipped'    ?'selected':''}>Shipped</option>
         <option value="delivered"  ${o.status==='delivered'  ?'selected':''}>Delivered</option>
         <option value="cancelled"  ${o.status==='cancelled'  ?'selected':''}>Cancelled</option>
@@ -1562,6 +1578,38 @@ async function scanUpdateStatus(orderId) {
       entry.orderStatus = status;
       const tr = document.querySelector(`#scan-sess-tbody tr[data-id="${CSS.escape(orderId)}"]`);
       if (tr) { const sts = tr.querySelector('.scan-sess-sts'); if (sts) sts.innerHTML = stBdg(status); }
+    }
+  } catch (e) {
+    _scanFlash('&#9888; ' + e.message, false);
+  }
+}
+
+// ── Print waybill from platform ───────────────────────────────────────────────
+async function scanPrintWaybill(orderId) {
+  _scanFlash('&#128230; Fetching waybill from platform…', null);
+  try {
+    const res = await fetch(`${SERVER}/api/orders/${encodeURIComponent(orderId)}/waybill`);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      _scanFlash('&#9888; Waybill error: ' + (j.error || res.statusText), false);
+      return;
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/pdf')) {
+      // Serve PDF inline — open in new tab, browser print dialog
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const win  = window.open(url, '_blank');
+      if (win) { win.onload = () => win.print(); }
+      _scanFlash('&#10003; Waybill opened — print from the new tab', true);
+    } else {
+      const j = await res.json();
+      if (j.url) {
+        window.open(j.url, '_blank');
+        _scanFlash('&#10003; Waybill opened (' + (j.platform || '') + ')', true);
+      } else {
+        _scanFlash('&#9888; Platform returned no waybill URL', false);
+      }
     }
   } catch (e) {
     _scanFlash('&#9888; ' + e.message, false);

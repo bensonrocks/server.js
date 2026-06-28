@@ -83,7 +83,7 @@ app.post('/api/orders/:id/fulfill', async (req, res) => {
 app.post('/api/orders/bulk-fulfill', async (req, res) => {
   const { ids, targetStatus, trackingNumbers = {}, pushPlatform = true } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
-  const VALID = ['pending','confirmed','processing','shipped','delivered','cancelled'];
+  const VALID = ['pending','confirmed','processing','packed','shipped','delivered','cancelled'];
   if (targetStatus && !VALID.includes(targetStatus)) return res.status(400).json({ error: 'Invalid targetStatus' });
   const results = await Promise.allSettled(
     ids.map(id => fulfillment.fulfill(id, {
@@ -114,11 +114,27 @@ app.get('/api/orders/lookup', (req, res) => {
 // Update order status
 app.patch('/api/orders/:id/status', (req, res) => {
   const { status } = req.body || {};
-  const VALID = ['pending','confirmed','processing','shipped','delivered','cancelled'];
+  const VALID = ['pending','confirmed','processing','packed','shipped','delivered','cancelled'];
   if (!VALID.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   const order = store.updateStatus(req.params.id, status);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
+});
+
+// Fetch waybill from source platform — returns { url } or streams PDF
+app.get('/api/orders/:id/waybill', async (req, res) => {
+  try {
+    const result = await fulfillment.getWaybill(req.params.id);
+    if (result.pdf) {
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `inline; filename="waybill-${req.params.id}.pdf"`);
+      return res.send(result.pdf);
+    }
+    if (result.url) return res.json({ url: result.url, platform: result.platform });
+    res.status(502).json({ error: 'Platform returned no waybill document' });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // ── Marketplace Connections ───────────────────────────────────────────────────
