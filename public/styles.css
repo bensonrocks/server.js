@@ -489,6 +489,7 @@ body.scan-open { overflow: hidden; }
 .scan-progress.all-done { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
 .scan-order-meta { display: flex; gap: .5rem 1.5rem; flex-wrap: wrap; padding: .5rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: .8rem; flex-shrink: 0; }
 .scan-order-meta span { display: flex; gap: .3rem; }
+.scan-meta-address { width: 100%; }
 .waybill-ok { color: var(--success); }
 
 .scan-items-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }

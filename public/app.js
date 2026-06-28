@@ -1024,6 +1024,9 @@
         <strong>Waybill:</strong>
         ${order.waybill_number ? `${esc(order.waybill_number)} &#10003;` : 'Not provided'}
       </span>
+      ${order.tel ? `<span><strong>Tel:</strong> ${esc(order.tel)}</span>` : ''}
+      ${order.delivery_address ? `<span class="scan-meta-address"><strong>Address:</strong> ${esc(order.delivery_address)}</span>` : ''}
+      ${order.platform ? `<span><strong>Platform:</strong> ${esc(order.platform)}${order.shop_name ? ' / ' + esc(order.shop_name) : ''}</span>` : ''}
       ${order.has_waybill_pdf ? `<span class="meta-waybill-note">&#128196; Waybill PDF ready</span>` : ''}`;
 
     renderItemsTable(order);
