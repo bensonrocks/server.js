@@ -323,6 +323,27 @@ main { max-width: var(--content-max); margin: 0 auto; padding: 1.25rem var(--pad
 .stat-box.unprocessed .val { color: var(--danger); }
 
 /* ================================================================
+   WAYBILL SCAN BAR
+   ================================================================ */
+.waybill-scan-bar { padding: .75rem 0 .5rem; }
+.waybill-scan-inner {
+  display: flex; align-items: center; gap: .6rem;
+  background: var(--surface); border: 2px solid var(--primary);
+  border-radius: var(--radius); padding: .55rem .85rem;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.waybill-scan-icon { font-size: 1.25rem; color: var(--primary); flex-shrink: 0; }
+.waybill-scan-input {
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: 1rem; font-weight: 500; color: var(--text);
+}
+.waybill-scan-input::placeholder { color: var(--text-muted); font-weight: 400; }
+.waybill-scan-msg { font-size: .82rem; font-weight: 600; white-space: nowrap; }
+.waybill-scan-ok  { color: var(--success); }
+.waybill-scan-err { color: var(--danger); }
+.waybill-scan-msg.hidden { display: none; }
+
+/* ================================================================
    FILTER ROW
    ================================================================ */
 .filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; padding: .4rem 0; margin-bottom: .3rem; }

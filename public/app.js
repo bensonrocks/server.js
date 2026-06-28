@@ -303,7 +303,7 @@
     document.getElementById(`tab-${name}`).classList.add('active');
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
-    if (name === 'orders') renderOrdersDash();
+    if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
   }
 
   function lockTabsForDownload() {
@@ -767,6 +767,55 @@
 
     renderOrdersList();
   }
+
+  // ── Waybill scan bar ───────────────────────────────────────────────────────
+  function focusWaybillInput() {
+    const inp = document.getElementById('waybillScanInput');
+    if (inp && !inp.closest('.hidden')) inp.focus();
+  }
+
+  function setWaybillMsg(text, isError) {
+    const el = document.getElementById('waybillScanMsg');
+    if (!el) return;
+    if (!text) { el.classList.add('hidden'); return; }
+    el.textContent = text;
+    el.className = 'waybill-scan-msg ' + (isError ? 'waybill-scan-err' : 'waybill-scan-ok');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.add('hidden'), 3000);
+  }
+
+  document.getElementById('waybillScanInput').addEventListener('keydown', async e => {
+    if (e.key !== 'Enter') return;
+    const val = e.target.value.trim();
+    if (!val) return;
+    e.target.value = '';
+    setWaybillMsg('Searching...', false);
+    try {
+      const r = await fetch('/api/waybill-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ waybill: val }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.order_number) {
+        setWaybillMsg('No order found for that waybill.', true);
+        return;
+      }
+      const ord = loadedOrders.find(o => o.order_number === data.order_number);
+      if (!ord) {
+        setWaybillMsg('Order not in current batch.', true);
+        return;
+      }
+      if (ord.scan_status === 'done') {
+        setWaybillMsg('Order already completed.', true);
+        return;
+      }
+      setWaybillMsg('', false);
+      openScanOverlay(data.order_number);
+    } catch (err) {
+      setWaybillMsg('Lookup failed. Try again.', true);
+    }
+  });
 
   function renderOrdersList() {
     let orders = loadedOrders;
