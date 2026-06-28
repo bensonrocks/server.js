@@ -958,6 +958,90 @@
   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
   document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
 
+  document.getElementById('printLabelBtn').addEventListener('click', () => {
+    if (activeOrder) printWaybillLabel(activeOrder);
+  });
+
+  function printWaybillLabel(order) {
+    const carrier   = (order.carrier || '').trim();
+    const header    = carrier || 'IDEALOMS';
+    const customer  = order.customer_name   || '—';
+    const address   = order.delivery_address || '—';
+    const platform  = order.platform
+      ? (order.shop_name ? `${order.platform} / ${order.shop_name}` : order.platform)
+      : (order.shop_name || '');
+    const waybill   = order.waybill_number  || '';
+    const tel       = order.tel             || '';
+
+    const itemRows = (order.lines || []).map(l =>
+      `<tr><td>${esc(String(l.sku))}</td><td class="qty">${l.qty}</td></tr>`
+    ).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>Label ${esc(order.order_number)}</title>
+<style>
+  @page { size: 100mm 150mm; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; }
+  body { width: 100mm; padding: 4mm; font-size: 9pt; }
+  .label-header {
+    background: #000; color: #fff;
+    text-align: center; font-size: 18pt; font-weight: 900;
+    letter-spacing: 2px; padding: 4mm 2mm; margin-bottom: 3mm;
+    text-transform: uppercase;
+  }
+  .section { border: 1px solid #000; border-radius: 2px; padding: 2.5mm; margin-bottom: 2.5mm; }
+  .section-title { font-size: 6.5pt; font-weight: 700; text-transform: uppercase; color: #555; margin-bottom: 1.5mm; letter-spacing: .5px; }
+  .customer-name { font-size: 12pt; font-weight: 700; margin-bottom: 1mm; }
+  .address { font-size: 9pt; line-height: 1.4; }
+  .tel { font-size: 8pt; color: #333; margin-top: 1mm; }
+  table.items { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  table.items th { text-align: left; font-size: 7pt; text-transform: uppercase; color: #555; border-bottom: 1px solid #ccc; padding-bottom: 1mm; }
+  table.items th.qty, table.items td.qty { text-align: right; }
+  table.items td { padding: 1mm 0; border-bottom: 1px solid #eee; }
+  .footer-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 2mm; }
+  .platform-badge { background: #f0f0f0; border: 1px solid #ccc; border-radius: 2px; font-size: 7.5pt; font-weight: 700; padding: 1mm 2mm; }
+  .order-no { font-size: 7pt; color: #555; }
+  .waybill-no { font-size: 8pt; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="label-header">${esc(header)}</div>
+
+  <div class="section">
+    <div class="section-title">Deliver To</div>
+    <div class="customer-name">${esc(customer)}</div>
+    <div class="address">${esc(address)}</div>
+    ${tel ? `<div class="tel">Tel: ${esc(tel)}</div>` : ''}
+  </div>
+
+  <div class="section">
+    <div class="section-title">Items</div>
+    <table class="items">
+      <thead><tr><th>SKU / Item</th><th class="qty">Qty</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+  </div>
+
+  <div class="footer-row">
+    <div>
+      <div class="order-no">Order: ${esc(order.order_number)}</div>
+      ${waybill ? `<div class="waybill-no">Waybill: ${esc(waybill)}</div>` : ''}
+    </div>
+    ${platform ? `<div class="platform-badge">${esc(platform)}</div>` : ''}
+  </div>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank', 'width=420,height=600');
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { w.print(); }, 400);
+  }
+
   document.getElementById('clearAndRestartBtn').addEventListener('click', async () => {
     if (!activeOrder) return;
     if (!confirm(`Clear all scanned quantities for ${activeOrder.order_number} and restart from zero?`)) return;

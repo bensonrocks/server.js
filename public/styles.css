@@ -530,6 +530,9 @@ body.scan-open { overflow: hidden; }
 .btn-pause { background: #f0f9ff; color: #0369a1; border: 1px solid #bae6fd; padding: .6rem .9rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .875rem; font-weight: 600; transition: background .15s; flex: 1; }
 .btn-pause:hover { background: #e0f2fe; }
 
+.scan-header-right { display: flex; align-items: center; gap: .5rem; flex-shrink: 0; }
+.btn-print-label { background: none; border: 1px solid var(--border); padding: .28rem .65rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .76rem; font-weight: 600; color: var(--text-light); white-space: nowrap; transition: background .12s, color .12s; }
+.btn-print-label:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
 .scan-timer { font-size: .8rem; font-weight: 700; font-family: monospace; background: var(--bg); border: 1px solid var(--border); padding: .2em .6em; border-radius: var(--radius-sm); color: var(--text-muted); flex-shrink: 0; white-space: nowrap; min-width: 42px; text-align: center; }
 .scan-error { max-width: 520px; margin: .5rem auto 0; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); border-radius: var(--radius-sm); padding: .5rem .85rem; font-size: .85rem; }
 
