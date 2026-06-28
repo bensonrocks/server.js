@@ -544,7 +544,203 @@ tr:hover td { background: #f8fafc; }
    ════════════════════════════════════════════════════ */
 @media (min-width: 900px) {
   .stats-bar { flex-wrap: nowrap; }
-
-  /* Wider scan input on desktop */
   .big-scan-wrap { max-width: 600px; }
+}
+
+/* ════════════════════════════════════════════════════
+   LOGIN OVERLAY
+   ════════════════════════════════════════════════════ */
+.login-overlay {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.login-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2rem;
+  width: 100%; max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.1);
+}
+.login-logo {
+  font-size: 1rem; font-weight: 800; color: var(--primary);
+  text-align: center; margin-bottom: 1.25rem;
+}
+.login-box h2 { text-align: center; font-size: 1.4rem; margin-bottom: .25rem; }
+.login-box .hint { text-align: center; margin-bottom: 1.5rem; }
+.form-group { margin-bottom: 1rem; }
+.form-group label {
+  display: block; font-size: .82rem; font-weight: 600;
+  color: var(--text-light); margin-bottom: .35rem;
+}
+.form-group input {
+  width: 100%; padding: .7rem .9rem;
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 1rem; color: var(--text); background: var(--surface);
+  outline: none; transition: border-color .15s;
+}
+.form-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px #bfdbfe40; }
+.login-error {
+  background: var(--danger-bg); color: var(--danger);
+  border: 1px solid var(--danger-border); border-radius: 6px;
+  padding: .5rem .9rem; font-size: .82rem; margin-bottom: .85rem;
+}
+.login-submit { width: 100%; padding: .75rem; font-size: 1rem; margin-top: .5rem; }
+
+/* ════════════════════════════════════════════════════
+   PIN LOCK OVERLAY
+   ════════════════════════════════════════════════════ */
+.pin-overlay {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.93);
+  z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.pin-box {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 2rem 1.75rem;
+  width: 100%; max-width: 300px;
+  text-align: center;
+  box-shadow: 0 24px 80px rgba(0,0,0,.4);
+}
+.pin-icon { font-size: 2.25rem; margin-bottom: .6rem; }
+.pin-box h2 { font-size: 1.15rem; margin-bottom: .2rem; }
+.pin-box .hint { margin-bottom: 0; font-size: .8rem; }
+.pin-dots {
+  display: flex; justify-content: center; gap: .9rem;
+  margin: 1.25rem 0 .6rem;
+}
+.pin-dot {
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 2px solid var(--border); background: transparent;
+  transition: background .12s, border-color .12s;
+}
+.pin-dot.filled { background: var(--primary); border-color: var(--primary); }
+.pin-error {
+  background: var(--danger-bg); color: var(--danger);
+  border: 1px solid var(--danger-border); border-radius: 6px;
+  padding: .4rem .75rem; font-size: .8rem; margin-bottom: .5rem;
+}
+.pin-keypad {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: .5rem; margin: .85rem 0 0;
+}
+.pk {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: .9rem;
+  font-size: 1.2rem; font-weight: 600; color: var(--text);
+  cursor: pointer; transition: background .1s, transform .08s;
+  line-height: 1;
+}
+.pk:active { background: var(--border); transform: scale(.94); }
+.pk-del { font-size: .9rem; }
+.pk-placeholder { /* empty grid cell */ }
+.pin-signout { margin-top: 1.25rem; font-size: .82rem; color: var(--text-light); }
+
+/* ════════════════════════════════════════════════════
+   HEADER USER + LOCK
+   ════════════════════════════════════════════════════ */
+.header-user {
+  margin-left: auto;
+  display: flex; align-items: center; gap: .5rem;
+  flex-shrink: 0;
+}
+.user-chip {
+  font-size: .75rem; font-weight: 600;
+  background: #eff6ff; color: var(--primary);
+  padding: .2em .65em; border-radius: 99px;
+  border: 1px solid #bfdbfe; white-space: nowrap;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+}
+.lock-btn {
+  background: none; border: 1px solid var(--border);
+  border-radius: 6px; padding: .22rem .5rem;
+  cursor: pointer; font-size: .95rem; line-height: 1;
+  transition: background .15s; flex-shrink: 0;
+}
+.lock-btn:hover { background: var(--bg); }
+
+/* ════════════════════════════════════════════════════
+   DASHBOARD STATS (upload tab)
+   ════════════════════════════════════════════════════ */
+.dash-stats-section {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem; box-shadow: var(--shadow);
+}
+.dash-stats-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: .75rem;
+}
+.dash-stats-header h3 { font-size: .9rem; font-weight: 700; }
+.dash-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: .6rem;
+}
+.dstat {
+  text-align: center; background: var(--bg);
+  border-radius: 8px; padding: .7rem .4rem;
+}
+.dstat-val { font-size: 1.6rem; font-weight: 800; color: var(--text); line-height: 1; }
+.dstat-lbl { font-size: .65rem; color: var(--text-light); text-transform: uppercase; letter-spacing: .04em; margin-top: .25rem; }
+.dstat.pending .dstat-val { color: var(--primary); }
+.dstat.done    .dstat-val { color: var(--success); }
+.dstat.avg     .dstat-val { color: var(--warning); font-size: 1.2rem; }
+
+/* ════════════════════════════════════════════════════
+   SCAN TIMER
+   ════════════════════════════════════════════════════ */
+.scan-timer {
+  font-size: .82rem; font-weight: 700; font-family: monospace;
+  background: var(--bg); border: 1px solid var(--border);
+  padding: .2em .6em; border-radius: 5px;
+  color: var(--text-light); flex-shrink: 0; white-space: nowrap;
+  min-width: 42px; text-align: center;
+}
+
+/* ════════════════════════════════════════════════════
+   PAUSE BUTTON + 3-BUTTON DOCK
+   ════════════════════════════════════════════════════ */
+.btn-pause {
+  background: #f0f9ff; color: #0369a1;
+  border: 1px solid #bae6fd;
+  padding: .6rem .9rem; border-radius: 6px;
+  cursor: pointer; font-size: .875rem; font-weight: 600;
+  transition: background .15s; flex: 1;
+}
+.btn-pause:hover { background: #e0f2fe; }
+
+.dock-actions { display: flex; gap: .5rem; }
+.dock-actions .btn-danger  { flex: 1; }
+.dock-actions .btn-pause   { flex: 1; }
+.dock-actions .btn-success { flex: 2; }
+
+/* Log: in-progress chip */
+.chip-inprog { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+
+/* ════════════════════════════════════════════════════
+   RESPONSIVE ADDITIONS — MOBILE
+   ════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  .dash-stats-grid { grid-template-columns: repeat(3, 1fr); gap: .4rem; }
+  .dstat { padding: .55rem .25rem; }
+  .dstat-val { font-size: 1.3rem; }
+  .dstat.avg .dstat-val { font-size: 1rem; }
+
+  .header-user { gap: .3rem; }
+  .user-chip { max-width: 90px; font-size: .68rem; }
+
+  .login-box { padding: 1.5rem 1.25rem; }
+  .pin-keypad { gap: .4rem; }
+  .pk { padding: .8rem; font-size: 1.1rem; }
+
+  .dock-actions .btn-danger,
+  .dock-actions .btn-pause,
+  .dock-actions .btn-success { font-size: .78rem; padding: .55rem .4rem; }
 }

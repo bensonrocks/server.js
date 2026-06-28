@@ -8,6 +8,56 @@
 </head>
 <body>
 
+  <!-- ── Login Overlay ── -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+      <div class="login-logo">&#9679; Fulfillment Scanner</div>
+      <h2>Sign In</h2>
+      <p class="hint">Enter your details to continue</p>
+      <div class="form-group">
+        <label>Your Name</label>
+        <input type="text" id="loginName" placeholder="Full name" autocomplete="name" />
+      </div>
+      <div class="form-group">
+        <label>Last 4 digits of IC / FIN</label>
+        <input type="text" id="loginIC" placeholder="e.g. 1234" maxlength="4" inputmode="numeric" pattern="\d{4}" />
+      </div>
+      <div id="loginError" class="login-error hidden"></div>
+      <button class="btn-primary login-submit" id="loginBtn">Continue &#8594;</button>
+    </div>
+  </div>
+
+  <!-- ── PIN Lock Overlay ── -->
+  <div id="pinOverlay" class="pin-overlay hidden">
+    <div class="pin-box">
+      <div class="pin-icon">&#128274;</div>
+      <h2 id="pinTitle">App Locked</h2>
+      <p class="hint" id="pinSubtitle">Enter your PIN to continue</p>
+      <div class="pin-dots">
+        <div class="pin-dot" id="pd0"></div>
+        <div class="pin-dot" id="pd1"></div>
+        <div class="pin-dot" id="pd2"></div>
+        <div class="pin-dot" id="pd3"></div>
+      </div>
+      <div id="pinError" class="pin-error hidden">Incorrect PIN. Try again.</div>
+      <div class="pin-keypad">
+        <button class="pk" data-d="1">1</button>
+        <button class="pk" data-d="2">2</button>
+        <button class="pk" data-d="3">3</button>
+        <button class="pk" data-d="4">4</button>
+        <button class="pk" data-d="5">5</button>
+        <button class="pk" data-d="6">6</button>
+        <button class="pk" data-d="7">7</button>
+        <button class="pk" data-d="8">8</button>
+        <button class="pk" data-d="9">9</button>
+        <button class="pk pk-del" data-d="del">&#9003;</button>
+        <button class="pk" data-d="0">0</button>
+        <div class="pk-placeholder"></div>
+      </div>
+      <button class="link-btn pin-signout" id="pinLogoutBtn">Sign out</button>
+    </div>
+  </div>
+
   <header>
     <div class="header-inner">
       <span class="logo">&#9679; Fulfillment Scanner</span>
@@ -17,13 +67,26 @@
         <button class="tab-btn" data-tab="scanner">Scanner</button>
         <button class="tab-btn" data-tab="log">Log</button>
       </nav>
+      <div class="header-user">
+        <span id="userDisplay" class="user-chip hidden"></span>
+        <button id="lockBtn" class="lock-btn hidden" title="Lock app">&#128274;</button>
+      </div>
     </div>
   </header>
 
   <main>
 
-    <!-- ── TAB 1: Upload ── -->
+    <!-- ── TAB 1: Upload / Dashboard ── -->
     <section id="tab-upload" class="tab active">
+
+      <div id="dashStatsSection" class="dash-stats-section hidden">
+        <div class="dash-stats-header">
+          <h3>Dashboard</h3>
+          <button class="link-btn" id="refreshStatsBtn">&#8635; Refresh</button>
+        </div>
+        <div id="dashStatsGrid" class="dash-stats-grid"></div>
+      </div>
+
       <div class="card">
         <h2>Upload Client Picklist</h2>
         <p class="hint">Upload the client's XLSX or CSV picklist. The app will generate the WMS upload file and email it automatically.</p>
@@ -38,7 +101,7 @@
       <div id="uploadOrdersSection" class="hidden">
         <div class="section-header">
           <h2>Loaded Orders <span id="orderCount" class="badge"></span></h2>
-          <button class="btn-primary" id="goScannerBtn">Go to Scanner &#8594;</button>
+          <button class="btn-primary" id="goScannerBtn">Proceed to Scanning &#8594;</button>
         </div>
         <div id="uploadOrdersList"></div>
       </div>
@@ -75,7 +138,6 @@
           </div>
           <div id="waybillError" class="scan-error hidden"></div>
         </div>
-
         <div class="pending-section-header">
           <span>Pending Orders</span>
           <span id="pendingCount" class="badge"></span>
@@ -92,6 +154,7 @@
             <span class="scan-order-no" id="scanOrderNo"></span>
             <span class="scan-progress" id="scanProgress"></span>
           </div>
+          <span id="scanTimer" class="scan-timer"></span>
         </div>
 
         <div class="scan-order-meta" id="scanOrderMeta"></div>
@@ -120,20 +183,20 @@
           </div>
           <div id="itemScanFeedback" class="scan-feedback hidden"></div>
           <div class="dock-actions">
-            <button class="btn-danger" id="cancelOrderBtn">&#10005; Cancel Order</button>
-            <button class="btn-success" id="completeOrderBtn">&#10003; Complete Order</button>
+            <button class="btn-danger"  id="cancelOrderBtn">&#10005; Cancel</button>
+            <button class="btn-pause"   id="pauseOrderBtn">&#9646;&#9646; Pause</button>
+            <button class="btn-success" id="completeOrderBtn">&#10003; Complete</button>
           </div>
         </div>
 
       </div><!-- /phaseItems -->
-
     </section>
 
     <!-- ── TAB 4: Log ── -->
     <section id="tab-log" class="tab">
       <div class="log-header">
         <h2>Upload Log</h2>
-        <p class="hint">All uploaded batches. Click a batch to download its WMS file.</p>
+        <p class="hint">All uploaded batches. Click to download the WMS file.</p>
       </div>
       <div id="logEmpty" class="empty-state hidden">No uploads yet.</div>
       <div id="logList"></div>
@@ -157,7 +220,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn-secondary" id="mismatchContinueBtn">Continue Scanning</button>
-        <button class="btn-danger" id="mismatchCancelBtn">Cancel Order &#8212; Mark Unprocessed</button>
+        <button class="btn-danger"    id="mismatchCancelBtn">Cancel Order &#8212; Mark Unprocessed</button>
       </div>
     </div>
   </div>

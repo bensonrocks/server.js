@@ -1,17 +1,181 @@
 (() => {
+  // ── State ──────────────────────────────────────────────────────────────────
   let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
   let loadedOrders = [];
   let activeOrder  = null;
+  let currentUser  = null;
+  let timerInterval = null;
 
+  // Persist order start times across page reloads
+  let orderTimings = {};
+  try { orderTimings = JSON.parse(sessionStorage.getItem('wms_timings') || '{}'); } catch {}
+
+  function saveTimings() { sessionStorage.setItem('wms_timings', JSON.stringify(orderTimings)); }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function hdrs() {
     return { 'x-session-id': SESSION_ID, 'Content-Type': 'application/json' };
   }
   function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+  function fmtMs(ms) {
+    if (!ms) return '—';
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    if (h > 0) return `${h}h ${m % 60}m`;
+    if (m > 0) return `${m}m ${s % 60}s`;
+    return `${s}s`;
+  }
+
+  // ── Login ──────────────────────────────────────────────────────────────────
+  function initLogin() {
+    const stored = localStorage.getItem('wms_user');
+    if (stored) {
+      currentUser = JSON.parse(stored);
+      showUserInHeader();
+      fetchAndRenderStats();
+    } else {
+      document.getElementById('loginOverlay').classList.remove('hidden');
+    }
+  }
+
+  function showUserInHeader() {
+    document.getElementById('loginOverlay').classList.add('hidden');
+    if (!currentUser) return;
+    const chip = document.getElementById('userDisplay');
+    chip.textContent = `${currentUser.name} ···${currentUser.icLast4}`;
+    chip.classList.remove('hidden');
+    document.getElementById('lockBtn').classList.remove('hidden');
+  }
+
+  document.getElementById('loginName').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('loginIC').focus();
+  });
+  document.getElementById('loginIC').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.getElementById('loginBtn').addEventListener('click', doLogin);
+
+  function doLogin() {
+    const name  = document.getElementById('loginName').value.trim();
+    const ic    = document.getElementById('loginIC').value.trim();
+    const errEl = document.getElementById('loginError');
+    if (!name) {
+      errEl.textContent = 'Please enter your name.';
+      errEl.classList.remove('hidden'); return;
+    }
+    if (!/^\d{4}$/.test(ic)) {
+      errEl.textContent = 'Enter exactly 4 digits for IC / FIN.';
+      errEl.classList.remove('hidden'); return;
+    }
+    errEl.classList.add('hidden');
+    currentUser = { name, icLast4: ic };
+    localStorage.setItem('wms_user', JSON.stringify(currentUser));
+    showUserInHeader();
+    fetchAndRenderStats();
+  }
+
+  // ── PIN Lock ───────────────────────────────────────────────────────────────
+  const PIN_KEY = 'wms_pin';
+  let pinBuffer     = '';
+  let pinMode       = 'unlock';
+  let pinSetupFirst = '';
+
+  function getPin() { return localStorage.getItem(PIN_KEY); }
+  function savePin(p) { localStorage.setItem(PIN_KEY, p); }
+
+  document.getElementById('lockBtn').addEventListener('click', () => {
+    if (!getPin()) {
+      pinMode = 'setup';
+      openPinOverlay('Set a 4-digit PIN', 'Choose a PIN to lock the app when you step away');
+    } else {
+      pinMode = 'unlock';
+      openPinOverlay('App Locked', currentUser ? `Signed in as ${currentUser.name}` : 'Enter PIN to unlock');
+    }
+  });
+
+  function openPinOverlay(title, subtitle) {
+    pinBuffer = ''; pinSetupFirst = '';
+    document.getElementById('pinTitle').textContent    = title;
+    document.getElementById('pinSubtitle').textContent = subtitle;
+    document.getElementById('pinError').classList.add('hidden');
+    document.getElementById('pinOverlay').classList.remove('hidden');
+    refreshPinDots();
+  }
+
+  function closePinOverlay() {
+    document.getElementById('pinOverlay').classList.add('hidden');
+    pinBuffer = '';
+    refreshPinDots();
+  }
+
+  function refreshPinDots() {
+    for (let i = 0; i < 4; i++)
+      document.getElementById(`pd${i}`).classList.toggle('filled', i < pinBuffer.length);
+  }
+
+  document.querySelectorAll('.pk').forEach(k => {
+    k.addEventListener('click', () => {
+      const d = k.dataset.d;
+      if (!d) return;
+      if (d === 'del') {
+        pinBuffer = pinBuffer.slice(0, -1);
+        refreshPinDots();
+      } else if (pinBuffer.length < 4) {
+        pinBuffer += d;
+        refreshPinDots();
+        if (pinBuffer.length === 4) setTimeout(handlePinSubmit, 180);
+      }
+    });
+  });
+
+  function handlePinSubmit() {
+    const errEl = document.getElementById('pinError');
+    if (pinMode === 'setup') {
+      pinSetupFirst = pinBuffer;
+      pinBuffer = '';
+      refreshPinDots();
+      document.getElementById('pinTitle').textContent    = 'Confirm PIN';
+      document.getElementById('pinSubtitle').textContent = 'Re-enter your 4-digit PIN to confirm';
+      errEl.classList.add('hidden');
+      pinMode = 'confirm';
+    } else if (pinMode === 'confirm') {
+      if (pinBuffer === pinSetupFirst) {
+        savePin(pinBuffer);
+        closePinOverlay();
+      } else {
+        errEl.textContent = 'PINs do not match. Try again.';
+        errEl.classList.remove('hidden');
+        pinBuffer = ''; pinSetupFirst = '';
+        refreshPinDots();
+        document.getElementById('pinTitle').textContent    = 'Set a 4-digit PIN';
+        document.getElementById('pinSubtitle').textContent = 'Choose a PIN to lock the app when you step away';
+        pinMode = 'setup';
+      }
+    } else { // unlock
+      if (pinBuffer === getPin()) {
+        closePinOverlay();
+      } else {
+        errEl.textContent = 'Incorrect PIN. Try again.';
+        errEl.classList.remove('hidden');
+        pinBuffer = '';
+        refreshPinDots();
+      }
+    }
+  }
+
+  document.getElementById('pinLogoutBtn').addEventListener('click', () => {
+    if (confirm('Sign out? Your current session will be cleared.')) {
+      localStorage.removeItem('wms_user');
+      localStorage.removeItem(PIN_KEY);
+      sessionStorage.clear();
+      location.reload();
+    }
+  });
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => switchTab(btn.dataset.tab))
   );
@@ -24,13 +188,46 @@
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
+    if (name === 'upload')  fetchAndRenderStats();
     if (name === 'orders')  renderOrdersDash();
     if (name === 'scanner') renderScannerTab();
     if (name === 'log')     renderLogTab();
   }
 
-  // ── Upload tab ─────────────────────────────────────────────────────────────
+  // ── Dashboard Stats ────────────────────────────────────────────────────────
+  async function fetchAndRenderStats() {
+    try {
+      const resp  = await fetch('/api/stats');
+      if (!resp.ok) return;
+      const s = await resp.json();
+      document.getElementById('dashStatsGrid').innerHTML = `
+        <div class="dstat pending">
+          <div class="dstat-val">${s.todayPending}</div>
+          <div class="dstat-lbl">Pending Today</div>
+        </div>
+        <div class="dstat done">
+          <div class="dstat-val">${s.yesterdayDone}</div>
+          <div class="dstat-lbl">Done Yesterday</div>
+        </div>
+        <div class="dstat">
+          <div class="dstat-val">${s.totalOrders}</div>
+          <div class="dstat-lbl">Total Orders</div>
+        </div>
+        <div class="dstat">
+          <div class="dstat-val">${s.totalLines}</div>
+          <div class="dstat-lbl">Total Lines</div>
+        </div>
+        <div class="dstat avg">
+          <div class="dstat-val">${fmtMs(s.avgScanMs)}</div>
+          <div class="dstat-lbl">Avg Scan Time</div>
+        </div>`;
+      document.getElementById('dashStatsSection').classList.remove('hidden');
+    } catch {}
+  }
 
+  document.getElementById('refreshStatsBtn').addEventListener('click', fetchAndRenderStats);
+
+  // ── Upload tab ─────────────────────────────────────────────────────────────
   const dropZone  = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
 
@@ -50,7 +247,9 @@
     const form = new FormData();
     form.append('orderFile', file);
     try {
-      const resp = await fetch('/api/upload', { method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: form });
+      const resp = await fetch('/api/upload', {
+        method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: form,
+      });
       const data = await resp.json();
       if (!resp.ok) { setUploadStatus('error', data.error || 'Upload failed'); return; }
       SESSION_ID = data.sessionId;
@@ -61,6 +260,7 @@
         `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed.`
       );
       renderUploadList(data.orders);
+      fetchAndRenderStats();
     } catch (err) {
       setUploadStatus('error', err.message);
     }
@@ -81,17 +281,17 @@
         <div class="order-card-header">
           <span class="order-no">${esc(ord.order_number)}</span>
           <div class="order-meta-chips">
-            ${ord.customer_name ? `<span class="chip">${esc(ord.customer_name)}</span>` : ''}
+            ${ord.customer_name  ? `<span class="chip">${esc(ord.customer_name)}</span>` : ''}
             ${ord.waybill_number ? `<span class="chip waybill">${esc(ord.waybill_number)}</span>` : ''}
-            ${ord.carrier ? `<span class="chip">${esc(ord.carrier)}</span>` : ''}
+            ${ord.carrier        ? `<span class="chip">${esc(ord.carrier)}</span>` : ''}
             <span class="chip">${ord.total_qty} unit${ord.total_qty !== 1 ? 's' : ''}</span>
           </div>
         </div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>SKU</th><th>Qty</th><th>UOM</th></tr></thead>
-            <tbody>
-              ${ord.lines.map(l => `<tr>
+            <tbody>${ord.lines.map(l => `
+              <tr>
                 <td><code>${esc(l.sku)}</code></td>
                 <td>${l.qty}</td>
                 <td>${esc(l.uom)}</td>
@@ -103,7 +303,6 @@
   }
 
   // ── Orders Dashboard ───────────────────────────────────────────────────────
-
   async function renderOrdersDash() {
     await refreshOrders();
     if (!loadedOrders.length) {
@@ -157,13 +356,11 @@
   }
 
   function goToScanner(orderNumber) {
-    const ord = loadedOrders.find(o => o.order_number === orderNumber);
-    if (ord) activeOrder = ord;
+    activeOrder = loadedOrders.find(o => o.order_number === orderNumber) || null;
     switchTab('scanner');
   }
 
   // ── Scanner tab ────────────────────────────────────────────────────────────
-
   async function renderScannerTab() {
     await refreshOrders();
     const hasOrders = loadedOrders.length > 0;
@@ -183,11 +380,11 @@
   }
 
   // ── Phase A: Waybill ───────────────────────────────────────────────────────
-
   function enterWaybillPhase() {
     document.getElementById('phaseWaybill').classList.remove('hidden');
     document.getElementById('phaseItems').classList.add('hidden');
     activeOrder = null;
+    stopTimer();
 
     const wbInput = document.getElementById('waybillScanInput');
     wbInput.value = '';
@@ -197,19 +394,21 @@
     document.getElementById('pendingCount').textContent = pending.length;
 
     document.getElementById('pendingOrdersList').innerHTML = pending.length
-      ? pending.map(ord => `
-          <div class="pending-order-btn" data-order="${esc(ord.order_number)}">
-            <div class="pob-left">
-              <span class="pob-no">${esc(ord.order_number)}</span>
-              <span class="pob-customer">${esc(ord.customer_name || '')}</span>
-            </div>
-            <div class="pob-right">
-              ${ord.waybill_number ? `<span class="pob-waybill">${esc(ord.waybill_number)}</span>` : ''}
-              ${ord.scan_status === 'processing' ? '<span class="status-badge processing">In Progress</span>' : ''}
-              <span class="pob-items">${ord.lines.length} SKU${ord.lines.length !== 1 ? 's' : ''} · ${ord.total_qty} units</span>
-            </div>
-          </div>`)
-        .join('')
+      ? pending.map(ord => {
+          const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
+          return `
+            <div class="pending-order-btn" data-order="${esc(ord.order_number)}">
+              <div class="pob-left">
+                <span class="pob-no">${esc(ord.order_number)}</span>
+                <span class="pob-customer">${esc(ord.customer_name || '')}</span>
+              </div>
+              <div class="pob-right">
+                ${ord.waybill_number ? `<span class="pob-waybill">${esc(ord.waybill_number)}</span>` : ''}
+                ${ord.scan_status === 'processing' ? '<span class="status-badge processing">In Progress</span>' : ''}
+                <span class="pob-items">${ord.lines.length} SKU${ord.lines.length !== 1 ? 's' : ''} · ${scannedTotal}/${ord.total_qty}</span>
+              </div>
+            </div>`;
+        }).join('')
       : '<p class="empty-state" style="padding:1.5rem">All orders processed!</p>';
 
     document.querySelectorAll('.pending-order-btn').forEach(btn =>
@@ -249,15 +448,19 @@
     }
   }
 
-  async function startOrderScan(orderNumber) {
+  function startOrderScan(orderNumber) {
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
     if (ord) enterItemsPhase(ord);
   }
 
   // ── Phase B: Items ─────────────────────────────────────────────────────────
-
   function enterItemsPhase(order) {
     activeOrder = order;
+    if (!orderTimings[order.order_number]) {
+      orderTimings[order.order_number] = new Date().toISOString();
+      saveTimings();
+    }
+
     document.getElementById('phaseWaybill').classList.add('hidden');
     document.getElementById('phaseItems').classList.remove('hidden');
 
@@ -272,6 +475,7 @@
 
     renderItemsTable(order);
     updateProgress(order);
+    startTimer(orderTimings[order.order_number]);
 
     const input = document.getElementById('itemScanInput');
     input.value = '';
@@ -279,6 +483,29 @@
     setTimeout(() => input.focus(), 80);
   }
 
+  // ── Timer ──────────────────────────────────────────────────────────────────
+  function startTimer(startISO) {
+    stopTimer();
+    const el = document.getElementById('scanTimer');
+    function tick() {
+      const elapsed = Date.now() - new Date(startISO).getTime();
+      const s = Math.floor(elapsed / 1000) % 60;
+      const m = Math.floor(elapsed / 60000) % 60;
+      const h = Math.floor(elapsed / 3600000);
+      el.textContent = h > 0
+        ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+        : `${m}:${String(s).padStart(2,'0')}`;
+    }
+    tick();
+    timerInterval = setInterval(tick, 1000);
+  }
+
+  function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    document.getElementById('scanTimer').textContent = '';
+  }
+
+  // ── Items table ────────────────────────────────────────────────────────────
   function renderItemsTable(order) {
     const scanned = order.scanned || {};
     document.getElementById('scanItemsTbody').innerHTML = order.lines.map(item => {
@@ -300,8 +527,7 @@
 
     document.querySelectorAll('.qty-input').forEach(inp => {
       inp.addEventListener('change', async () => {
-        const qty = parseInt(inp.value, 10) || 0;
-        await setItemQty(activeOrder.order_number, inp.dataset.sku, qty);
+        await setItemQty(activeOrder.order_number, inp.dataset.sku, parseInt(inp.value, 10) || 0);
         document.getElementById('itemScanInput').focus();
       });
     });
@@ -316,7 +542,6 @@
   }
 
   // ── Item barcode scan ──────────────────────────────────────────────────────
-
   document.getElementById('itemScanInput').addEventListener('keydown', async e => {
     if (e.key !== 'Enter') return;
     const val = e.target.value.trim();
@@ -339,26 +564,20 @@
       if (!activeOrder.scanned) activeOrder.scanned = {};
       activeOrder.scanned[data.sku] = data.scanned_qty;
       activeOrder.scan_status = 'processing';
-
       renderItemsTable(activeOrder);
       updateProgress(activeOrder);
 
       const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
-      if (row) {
-        row.classList.add('row-flash');
-        setTimeout(() => row.classList.remove('row-flash'), 450);
-      }
+      if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
 
       const overBy = data.scanned_qty - data.ordered_qty;
-      if (overBy > 0) {
-        showFeedback(feedback, 'error', `${data.sku}: OVER by ${overBy} (scanned ${data.scanned_qty}, ordered ${data.ordered_qty})`);
-      } else {
-        showFeedback(feedback, 'success',
-          data.scanned_qty === data.ordered_qty
+      showFeedback(feedback, overBy > 0 ? 'error' : 'success',
+        overBy > 0
+          ? `${data.sku}: OVER by ${overBy} (scanned ${data.scanned_qty}, ordered ${data.ordered_qty})`
+          : data.scanned_qty === data.ordered_qty
             ? `${data.sku}: ✓ Complete (${data.scanned_qty}/${data.ordered_qty})`
             : `${data.sku}: ${data.scanned_qty}/${data.ordered_qty} scanned`
-        );
-      }
+      );
     } catch (err) {
       showFeedback(feedback, 'error', err.message);
     }
@@ -378,9 +597,7 @@
       activeOrder.scan_status = 'processing';
       renderItemsTable(activeOrder);
       updateProgress(activeOrder);
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (err) { alert(err.message); }
   }
 
   function showFeedback(el, type, msg) {
@@ -392,74 +609,90 @@
   }
 
   // ── Complete order ─────────────────────────────────────────────────────────
-
   document.getElementById('completeOrderBtn').addEventListener('click', async () => {
     if (!activeOrder) return;
     try {
       const resp = await fetch('/api/scan/complete', {
         method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+        body: JSON.stringify({
+          orderNumber: activeOrder.order_number,
+          startTime:   orderTimings[activeOrder.order_number] || null,
+          endTime:     new Date().toISOString(),
+          operator:    currentUser ? `${currentUser.name} (···${currentUser.icLast4})` : null,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) { alert(data.error); return; }
       if (data.ok) {
+        delete orderTimings[activeOrder.order_number];
+        saveTimings();
         activeOrder.scan_status = 'done';
         mergeOrderState(activeOrder.order_number, 'done');
-        flashCompleteBtn();
+        stopTimer();
+        const btn = document.getElementById('completeOrderBtn');
+        btn.textContent = '✓ Done!'; btn.disabled = true;
+        setTimeout(() => {
+          btn.textContent = '✓ Complete'; btn.disabled = false;
+          activeOrder = null;
+          refreshOrders().then(enterWaybillPhase);
+          fetchAndRenderStats();
+        }, 1400);
       } else {
         showMismatchModal(data.mismatches);
       }
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (err) { alert(err.message); }
   });
 
-  function flashCompleteBtn() {
-    const btn  = document.getElementById('completeOrderBtn');
-    const orig = btn.textContent;
-    btn.textContent = '✓ Done!';
-    btn.disabled    = true;
-    setTimeout(() => {
-      btn.textContent = orig;
-      btn.disabled    = false;
-      activeOrder     = null;
-      refreshOrders().then(enterWaybillPhase);
-    }, 1400);
+  // ── Pause order ────────────────────────────────────────────────────────────
+  document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToQueue);
+
+  async function pauseAndGoToQueue() {
+    if (!activeOrder) return;
+    try {
+      await fetch('/api/scan/save', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      });
+    } catch {}
+    stopTimer();
+    activeOrder = null;
+    await refreshOrders();
+    enterWaybillPhase();
   }
 
-  // ── Cancel / back ──────────────────────────────────────────────────────────
+  // ── Back to queue (also saves progress) ───────────────────────────────────
+  document.getElementById('backToQueueBtn').addEventListener('click', pauseAndGoToQueue);
 
+  // ── Cancel order ───────────────────────────────────────────────────────────
   document.getElementById('cancelOrderBtn').addEventListener('click', () => {
     if (!activeOrder) return;
-    if (confirm(`Cancel order ${activeOrder.order_number}?\nIt will be marked as Unprocessed.`)) {
-      doCancel();
-    }
-  });
-
-  document.getElementById('backToQueueBtn').addEventListener('click', () => {
-    activeOrder = null;
-    enterWaybillPhase();
+    if (confirm(`Cancel order ${activeOrder.order_number}?\nIt will be marked as Unprocessed.`)) doCancel();
   });
 
   async function doCancel() {
     try {
       const resp = await fetch('/api/scan/cancel', {
         method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+        body: JSON.stringify({
+          orderNumber: activeOrder.order_number,
+          startTime:   orderTimings[activeOrder.order_number] || null,
+          endTime:     new Date().toISOString(),
+          operator:    currentUser ? `${currentUser.name} (···${currentUser.icLast4})` : null,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) { alert(data.error); return; }
+      delete orderTimings[activeOrder.order_number];
+      saveTimings();
       mergeOrderState(activeOrder.order_number, 'unprocessed', {});
+      stopTimer();
       activeOrder = null;
       await refreshOrders();
       enterWaybillPhase();
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (err) { alert(err.message); }
   }
 
   // ── Mismatch modal ─────────────────────────────────────────────────────────
-
   function showMismatchModal(mismatches) {
     document.getElementById('mismatchTbody').innerHTML = mismatches.map(m => `
       <tr>
@@ -483,7 +716,6 @@
   });
 
   // ── Log tab ────────────────────────────────────────────────────────────────
-
   async function renderLogTab() {
     const listEl  = document.getElementById('logList');
     const emptyEl = document.getElementById('logEmpty');
@@ -491,18 +723,15 @@
     try {
       const resp    = await fetch('/api/batches');
       const batches = await resp.json();
-
       if (!batches.length) {
-        listEl.innerHTML = '';
-        emptyEl.classList.remove('hidden');
-        return;
+        listEl.innerHTML = ''; emptyEl.classList.remove('hidden'); return;
       }
       emptyEl.classList.add('hidden');
-
       listEl.innerHTML = batches.map(b => {
-        const date = new Date(b.uploaded_at).toLocaleString();
+        const date   = new Date(b.uploaded_at).toLocaleString();
         const states = b.orderStates || {};
         const done   = Object.values(states).filter(s => s.status === 'done').length;
+        const inprog = Object.values(states).filter(s => s.status === 'processing').length;
         const unproc = Object.values(states).filter(s => s.status === 'unprocessed').length;
         return `
           <div class="log-card">
@@ -512,13 +741,12 @@
               <div class="log-chips">
                 <span class="chip">${b.order_count} orders</span>
                 <span class="chip">${b.row_count} lines</span>
-                ${done    ? `<span class="chip chip-done">${done} done</span>` : ''}
-                ${unproc  ? `<span class="chip chip-unproc">${unproc} unprocessed</span>` : ''}
+                ${done   ? `<span class="chip chip-done">${done} done</span>` : ''}
+                ${inprog ? `<span class="chip chip-inprog">${inprog} in progress</span>` : ''}
+                ${unproc ? `<span class="chip chip-unproc">${unproc} unprocessed</span>` : ''}
               </div>
             </div>
-            <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>
-              &#8681; WMS File
-            </a>
+            <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>&#8681; WMS</a>
           </div>`;
       }).join('');
     } catch (err) {
@@ -527,14 +755,13 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-
   async function refreshOrders() {
     if (!SESSION_ID) return;
     try {
       const resp = await fetch('/api/orders', { headers: { 'x-session-id': SESSION_ID } });
       const data = await resp.json();
       if (Array.isArray(data)) loadedOrders = data;
-    } catch (_) {}
+    } catch {}
   }
 
   function mergeOrderState(orderNumber, status, scanned) {
@@ -544,4 +771,6 @@
     if (scanned !== undefined) loadedOrders[idx].scanned = scanned;
   }
 
+  // ── Init ───────────────────────────────────────────────────────────────────
+  initLogin();
 })();
