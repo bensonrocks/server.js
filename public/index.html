@@ -105,6 +105,21 @@ a{color:inherit;text-decoration:none}
 .psig{padding:2px 6px;background:#ffffff07;border:1px solid var(--border);border-radius:3px;font-size:9px;color:var(--dim)}
 .psig.insider{background:#ffd70009;border-color:#ffd70030;color:var(--gold)}
 
+/* ── TIGER BUTTON ── */
+.tiger-btn{display:inline-flex;align-items:center;gap:3px;padding:4px 10px;border-radius:5px;background:#f5831f;color:#000;border:none;cursor:pointer;font-size:10px;font-weight:800;transition:.15s;flex-shrink:0;text-decoration:none;vertical-align:middle}
+.tiger-btn:hover{background:#ffaa2a;transform:scale(1.04)}
+.tiger-short-btn{background:#c0392b;color:#fff}
+.tiger-short-btn:hover{background:#e74c3c}
+.tiger-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--card);border:1px solid #f5831f22;border-radius:var(--brad);margin-top:10px}
+.tiger-cfg{display:none;flex-direction:column;gap:6px;padding:10px 12px;background:var(--card2);border:1px solid var(--border);border-radius:var(--brad);margin-top:6px}
+.tiger-cfg.open{display:flex}
+.tcf-row{display:flex;gap:6px;align-items:center}
+.tcf-lbl{font-size:10px;color:var(--dim);width:120px;flex-shrink:0}
+.tcf-in{flex:1;padding:6px 9px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;outline:none}
+.tcf-in:focus{border-color:var(--orange)}
+.tcf-save{padding:6px 12px;background:var(--orange);border:none;border-radius:5px;color:#000;font-size:11px;font-weight:700;cursor:pointer}
+.tcf-save:hover{background:#ffaa2a}
+
 .short-list{display:flex;flex-direction:column;gap:8px}
 .scard{background:var(--card);border:1px solid #ff4c4c1a;border-left:3px solid var(--red);border-radius:var(--brad);padding:11px 14px;cursor:pointer;transition:.15s}
 .scard:hover{border-color:#ff4c4c44}
@@ -284,6 +299,31 @@ a{color:inherit;text-decoration:none}
     <span id="lastUp" style="margin-left:6px;opacity:.6"></span>
     <button class="rbtn" onclick="loadBrief()">↺ Refresh Now</button>
   </div>
+
+  <!-- Tiger Broker Settings -->
+  <div class="tiger-bar">
+    <span style="font-size:14px">🐯</span>
+    <span style="font-size:11px;font-weight:700;color:var(--orange)">Tiger Brokers</span>
+    <span style="font-size:10px;color:var(--dim)" id="tigerStatus">Click 🐯 Buy on any play to open in Tiger Trade</span>
+    <button class="rbtn" style="margin-left:auto" onclick="document.getElementById('tigerCfg').classList.toggle('open')">⚙ Configure</button>
+  </div>
+  <div class="tiger-cfg" id="tigerCfg">
+    <div style="font-size:10px;color:var(--dim);margin-bottom:4px">
+      Set your Tiger platform URL. Default works for most users. Adjust if your Tiger account is on a regional domain.
+    </div>
+    <div class="tcf-row">
+      <span class="tcf-lbl">Tiger Web Base URL</span>
+      <input class="tcf-in" id="tigerBaseUrl" placeholder="https://broker.tiger.com"/>
+    </div>
+    <div class="tcf-row">
+      <span class="tcf-lbl">Account # (optional)</span>
+      <input class="tcf-in" id="tigerAccount" placeholder="Your Tiger account number"/>
+    </div>
+    <div class="tcf-row" style="justify-content:flex-end;gap:8px">
+      <span style="font-size:10px;color:var(--muted)">Full API order placement: <a href="https://developer.tigerbrokers.com.sg" target="_blank" style="color:var(--orange)">developer.tigerbrokers.com.sg</a></span>
+      <button class="tcf-save" onclick="saveTigerCfg()">Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- ══════════ NEWS ══════════ -->
@@ -360,6 +400,57 @@ let curFil = 'all', swingOnly = false, notifOn = false;
 let unread = 0, ws = null, reconnT = null, briefT = null;
 let briefFil = 'all', currentBrief = null;
 const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+// ─── Tiger Brokers Integration ────────────────────────────────────────────────
+const TIGER_MARKET = { NYSE:'US', NASDAQ:'US', HKEX:'HK', SGX:'SG', ASX:'AU' };
+
+function tigerBase() {
+  return localStorage.getItem('tigerBase') || 'https://broker.tiger.com';
+}
+
+function tigerUrl(ticker, exchange) {
+  const market = TIGER_MARKET[exchange] || 'US';
+  // Tiger Trade web: broker.tiger.com/#/trade?symbol=AAPL&market=US
+  return `${tigerBase()}/#/trade?symbol=${encodeURIComponent(ticker)}&market=${market}`;
+}
+
+function openTiger(e, ticker, exchange) {
+  e.preventDefault();
+  e.stopPropagation();
+  const webUrl = tigerUrl(ticker, exchange);
+  const market = TIGER_MARKET[exchange] || 'US';
+
+  // On mobile: try Tiger Trade app deep link first, fall back to web
+  if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) {
+    const appUrl = `tigertrade://stock?symbol=${encodeURIComponent(ticker)}&market=${market}`;
+    const fallbackT = setTimeout(() => window.open(webUrl, '_blank', 'noopener'), 1200);
+    window.addEventListener('blur', () => clearTimeout(fallbackT), { once: true });
+    window.location.href = appUrl;
+  } else {
+    window.open(webUrl, '_blank', 'noopener');
+  }
+  toast('🐯 Tiger Trade', `Opening ${ticker} on Tiger — log in to place order`, 'orange');
+}
+
+function saveTigerCfg() {
+  const base = document.getElementById('tigerBaseUrl').value.trim().replace(/\/$/, '');
+  const acct = document.getElementById('tigerAccount').value.trim();
+  if (base) localStorage.setItem('tigerBase', base);
+  if (acct) localStorage.setItem('tigerAccount', acct);
+  document.getElementById('tigerCfg').classList.remove('open');
+  document.getElementById('tigerStatus').textContent = `Platform: ${base || 'broker.tiger.com'}${acct ? ' · Acct: '+acct : ''}`;
+  toast('Tiger Settings', 'Saved', 'orange');
+}
+
+function loadTigerCfg() {
+  const base = localStorage.getItem('tigerBase') || '';
+  const acct = localStorage.getItem('tigerAccount') || '';
+  if (base) document.getElementById('tigerBaseUrl').value = base;
+  if (acct) {
+    document.getElementById('tigerAccount').value = acct;
+    document.getElementById('tigerStatus').textContent = `Platform: ${base || 'broker.tiger.com'} · Acct: ${acct}`;
+  }
+}
 
 // ─── Session-based sort ───────────────────────────────────────────────────────
 function getPrimaryExchanges() {
@@ -499,26 +590,31 @@ function renderBrief(b) {
   if(longs.length) {
     lg.innerHTML = longs.map((p,i)=>{
       const isPrimary = primaryEx.includes(p.exchange);
-      const isInsider = (p.signals||[]).some(s => s.includes('insider'));
       return `
-      <a class="pcard long${isPrimary?' primary-mkt':''}" href="${p.articleUrl||'#'}" target="_blank" rel="noopener">
+      <div class="pcard long${isPrimary?' primary-mkt':''}">
         <div class="prank">${i+1}</div>
         <div>
           <div class="ptop">
             <span class="pticker">${esc(p.ticker)}</span>
             ${p.exchange?`<span class="pexch">${esc(p.exchange)}</span>`:''}
-            <span class="pdir long">▲ BUY</span>
+            <span class="pdir long">▲ LONG</span>
             <span class="ptag">${esc(p.tag)}</span>
-            <span class="pstars">${st(p.stars)}</span>
+            <span class="pstars" style="margin-left:auto">${st(p.stars)}</span>
           </div>
           <div class="ptitle">${esc(p.title)}</div>
           <div class="pmeta">
             <span class="ptarget long">▲ +${p.upMin}–${p.upMax}% · 2hr target</span>
             <span class="pnote">${esc(p.note)}</span>
           </div>
-          <div class="psigs">${(p.signals||[]).map(s=>`<span class="psig${s.includes('insider')?' insider':''}">${esc(s)}</span>`).join('')}</div>
+          <div class="psigs" style="margin-top:6px;justify-content:space-between">
+            <div style="display:flex;gap:4px;flex-wrap:wrap">${(p.signals||[]).map(s=>`<span class="psig${s.includes('insider')?' insider':''}">${esc(s)}</span>`).join('')}</div>
+            <div style="display:flex;gap:5px;align-items:center;margin-top:4px">
+              <a class="tiger-btn" href="${tigerUrl(p.ticker,p.exchange)}" onclick="openTiger(event,'${esc(p.ticker)}','${esc(p.exchange||'')}')">🐯 Buy on Tiger</a>
+              <a href="${p.articleUrl||'#'}" target="_blank" rel="noopener" style="font-size:10px;color:var(--dim);text-decoration:none" onclick="event.stopPropagation()">Read →</a>
+            </div>
+          </div>
         </div>
-      </a>`;
+      </div>`;
     }).join('');
   } else {
     lg.innerHTML='<div style="color:var(--dim);padding:14px;font-size:12px">No setups match — try "All Plays" or add tickers to your watchlist</div>';
@@ -528,7 +624,7 @@ function renderBrief(b) {
   const sl = document.getElementById('shortList');
   if(shorts.length) {
     sl.innerHTML = shorts.map(p=>`
-      <a class="scard" href="${p.articleUrl||'#'}" target="_blank" rel="noopener">
+      <div class="scard">
         <div class="stop">
           <span class="sticker">${esc(p.ticker)}</span>
           ${p.exchange?`<span style="font-size:9px;color:var(--muted);padding:1px 5px;border:1px solid var(--border);border-radius:3px">${esc(p.exchange)}</span>`:''}
@@ -536,7 +632,11 @@ function renderBrief(b) {
           <span class="starget">▼ ${p.upMin}–${p.upMax}% · 2hr</span>
         </div>
         <div class="stitle">${esc(p.title)}</div>
-      </a>`).join('');
+        <div style="display:flex;gap:6px;margin-top:7px;align-items:center">
+          <a class="tiger-btn tiger-short-btn" href="${tigerUrl(p.ticker,p.exchange)}" onclick="openTiger(event,'${esc(p.ticker)}','${esc(p.exchange||'')}')">🐯 Short on Tiger</a>
+          <a href="${p.articleUrl||'#'}" target="_blank" rel="noopener" style="font-size:10px;color:var(--dim)" onclick="event.stopPropagation()">Read →</a>
+        </div>
+      </div>`).join('');
   } else { sl.innerHTML='<div style="color:var(--dim);padding:10px;font-size:11px">No short setups flagged</div>'; }
 
   const lu = new Intl.DateTimeFormat('en-GB',{timeZone:userTz,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(b.generatedAt));
@@ -748,7 +848,7 @@ function switchTab(id,btn) {
 
 // ─── Toast ───────────────────────────────────────────────────────────────────
 function toast(title,body,color='cyan') {
-  const bc=color==='cyan'?'#00d4ff':color==='red'?'#ff4c4c':'#44445a';
+  const bc=color==='cyan'?'#00d4ff':color==='red'?'#ff4c4c':color==='orange'?'#f5831f':'#44445a';
   const w=document.getElementById('toastWrap');
   const el=document.createElement('div'); el.className='toast'; el.style.borderLeft='3px solid '+bc;
   el.innerHTML=`<button class="t-cls" onclick="this.parentElement.remove()">×</button><div class="t-ttl">${esc(title)}</div><div class="t-bod">${esc(body)}</div>`;
@@ -760,7 +860,7 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function timeAgo(iso){const s=Math.floor((Date.now()-new Date(iso))/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-(async()=>{ await loadWl(); connect(); loadBrief(); })();
+(async()=>{ loadTigerCfg(); await loadWl(); connect(); loadBrief(); })();
 </script>
 </body>
 </html>
