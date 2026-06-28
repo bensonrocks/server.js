@@ -13,6 +13,7 @@ const shopee  = require('./lib/marketplace/shopee');
 const tiktok  = require('./lib/marketplace/tiktok');
 const shopify = require('./lib/marketplace/shopify');
 const mapper  = require('./lib/marketplace/mapper');
+const auth    = require('./lib/auth');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -20,6 +21,34 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Auth — public routes (before middleware) ──────────────────────────────────
+
+app.post('/api/auth/login', (req, res) => {
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'Password required' });
+  if (!auth.checkPassword(password)) return res.status(401).json({ error: 'Incorrect password' });
+  res.json({ token: auth.generateToken() });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  auth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/status', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  res.json({ authenticated: auth.validateToken(token) });
+});
+
+// ── Auth middleware — protects all /api/* routes below ────────────────────────
+
+app.use('/api', (req, res, next) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  if (!auth.validateToken(token)) return res.status(401).json({ error: 'Unauthorized' });
+  next();
+});
 
 // ── Orders ────────────────────────────────────────────────────────────────────
 

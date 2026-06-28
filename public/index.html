@@ -260,6 +260,27 @@ a:hover{text-decoration:underline}
   .cm-full{grid-column:auto}
 }
 @media(min-width:769px){.mob-search{display:none}}
+
+/* ── LOGIN SCREEN ── */
+.login-screen{position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}
+.login-screen.hidden{display:none}
+.login-card{background:#1e293b;border-radius:20px;padding:42px 38px;width:380px;max-width:100%;display:flex;flex-direction:column;align-items:center;gap:16px;box-shadow:0 32px 80px rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.07)}
+.login-brand{display:flex;align-items:center;gap:14px;align-self:flex-start;margin-bottom:6px}
+.login-brand-name{font-size:22px;font-weight:900;color:#fff;letter-spacing:-.3px;line-height:1.15}
+.login-brand-sub{font-size:10px;font-weight:600;color:#fb923c;letter-spacing:.2px;line-height:1}
+.login-title{font-size:18px;font-weight:800;color:#fff;align-self:flex-start}
+.login-sub{font-size:13px;color:#94a3b8;align-self:flex-start;margin-top:-8px;line-height:1.5}
+.login-err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:9px;padding:10px 14px;font-size:13px;width:100%;line-height:1.5}
+.login-input{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:15px;outline:none;transition:border-color .15s,background .15s}
+.login-input::placeholder{color:rgba(255,255,255,.22)}
+.login-input:focus{border-color:#3b82f6;background:rgba(255,255,255,.08)}
+.login-btn{width:100%;padding:13px;border-radius:10px;background:#1d4ed8;color:#fff;font-size:15px;font-weight:700;border:none;cursor:pointer;transition:background .15s;margin-top:2px}
+.login-btn:hover{background:#1e40af}
+.login-btn:disabled{opacity:.6;cursor:not-allowed}
+.login-footer{font-size:11px;color:#475569;margin-top:4px}
+.login-footer code{background:rgba(255,255,255,.07);color:#94a3b8;padding:2px 7px;border-radius:4px;font-size:11px}
+.btn-logout{padding:5px 11px;border-radius:8px;border:1.5px solid rgba(255,255,255,.15);background:transparent;color:rgba(255,255,255,.55);font-size:12px;font-weight:600;cursor:pointer;transition:all .12s}
+.btn-logout:hover{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.3)}
 </style>
 </head>
 <body>
@@ -289,6 +310,7 @@ a:hover{text-decoration:underline}
       <input id="search" class="search-box" placeholder="Search orders&#8230;" autocomplete="off">
       <button id="sync-all-btn" class="sync-all-btn">&#8635; Sync All</button>
       <button id="btn-ingest" class="btn btn-p">+ Add Order</button>
+      <button id="btn-logout" class="btn-logout" onclick="logout()">Sign Out</button>
     </div>
   </header>
 
@@ -541,6 +563,35 @@ a:hover{text-decoration:underline}
   <div id="conn-modal-ov" class="overlay conn-ov hidden" onclick="closeConnModal()"></div>
 
 </div>
+
+<!-- ── Login Screen ── -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <svg width="48" height="48" viewBox="0 0 38 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="38" height="38" rx="7" fill="#1d4ed8"/>
+        <rect x="4"    y="8"   width="3"   height="22" rx="1"    fill="white"/>
+        <rect x="9"    y="13"  width="1.5" height="17" rx=".75"  fill="white"/>
+        <rect x="12.5" y="8"   width="3"   height="22" rx="1"    fill="white"/>
+        <rect x="17.5" y="11"  width="1.5" height="16" rx=".75"  fill="white"/>
+        <rect x="21"   y="8"   width="3"   height="22" rx="1"    fill="white"/>
+        <rect x="26"   y="13"  width="1.5" height="17" rx=".75"  fill="white"/>
+        <rect x="29.5" y="8"   width="2.5" height="22" rx="1"    fill="white"/>
+      </svg>
+      <div>
+        <div class="login-brand-name">IDEALOMS</div>
+        <div class="login-brand-sub">United Logistics &amp; Distribution</div>
+      </div>
+    </div>
+    <div class="login-title">Sign In</div>
+    <p class="login-sub">Enter your password to access the dashboard.</p>
+    <div id="login-err" class="login-err" style="display:none"></div>
+    <input id="login-pw" class="login-input" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="login-btn" class="login-btn">Sign In</button>
+    <div class="login-footer">Default password: <code>Ideal@2024</code></div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -615,6 +666,7 @@ const PLAT_CONFIG={
 const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
 
 // ── STORAGE ───────────────────────────────────────────────────────────────────
+let authToken=localStorage.getItem('idealoms_token')||null;
 let orders=(()=>{try{const s=localStorage.getItem('od');return s?JSON.parse(s):SEED.map(o=>({...o}));}catch{return SEED.map(o=>({...o}));}})();
 const save=()=>{try{localStorage.setItem('od',JSON.stringify(orders));}catch{}};
 let connCreds=(()=>{try{return JSON.parse(localStorage.getItem('idealoms_creds')||'{}');}catch{return {};}})();
@@ -626,13 +678,78 @@ const F={client:null,channel:null,status:'',search:''};
 let activeTab='email',currentPage='dashboard',serverAvailable=false,currentConnPlatform=null;
 const SERVER='http://localhost:3000';
 
-// ── SERVER CHECK ──────────────────────────────────────────────────────────────
-async function checkServer(){
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+const $=id=>document.getElementById(id);
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+async function authedFetch(url,opts={}){
+  opts.headers={...(opts.headers||{}),'Authorization':`Bearer ${authToken||''}`};
+  const r=await fetch(url,opts);
+  if(r.status===401){
+    authToken=null;localStorage.removeItem('idealoms_token');
+    showLoginScreen('Session expired — please sign in again.');
+    throw new Error('Unauthorized');
+  }
+  return r;
+}
+
+function showLoginScreen(msg){
+  $('login-screen').classList.remove('hidden');
+  const e=$('login-err');
+  if(msg){e.textContent=msg;e.style.display='block';}else e.style.display='none';
+  setTimeout(()=>{try{$('login-pw').focus();}catch{}},80);
+}
+
+function hideLoginScreen(){
+  $('login-screen').classList.add('hidden');
+  $('login-err').style.display='none';
+  $('login-pw').value='';
+}
+
+function setLoginError(msg){
+  const e=$('login-err');e.textContent=msg;e.style.display='block';
+  $('login-pw').value='';$('login-pw').focus();
+}
+
+async function login(){
+  const pw=$('login-pw').value.trim();
+  if(!pw){setLoginError('Enter your password.');return;}
+  const btn=$('login-btn');btn.disabled=true;btn.textContent='Signing in…';
   try{
-    const r=await fetch(`${SERVER}/api/connect/status`,{signal:AbortSignal.timeout(1500)});
-    if(r.ok){serverAvailable=true;return await r.json();}
+    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw}),signal:AbortSignal.timeout(5000)});
+    const j=await r.json();
+    if(!r.ok){setLoginError(j.error||'Incorrect password.');return;}
+    authToken=j.token;localStorage.setItem('idealoms_token',authToken);
+    serverAvailable=true;hideLoginScreen();
+    await loadOrdersFromServer();render();
+  }catch(e){
+    if(e.name==='TimeoutError'||e.name==='AbortError')setLoginError('Server not responding. Is it running?');
+    else if(e.message!=='Unauthorized')setLoginError('Cannot connect to server.');
+  }finally{btn.disabled=false;btn.textContent='Sign In';}
+}
+
+async function logout(){
+  if(authToken){try{await authedFetch(`${SERVER}/api/auth/logout`,{method:'POST'});}catch{}}
+  authToken=null;localStorage.removeItem('idealoms_token');
+  serverAvailable=false;showLoginScreen();
+}
+
+async function checkAuth(){
+  try{
+    const r=await fetch(`${SERVER}/api/auth/status`,{
+      headers:authToken?{'Authorization':`Bearer ${authToken}`}:{},
+      signal:AbortSignal.timeout(2000)
+    });
+    if(r.ok){
+      const j=await r.json();serverAvailable=true;
+      if(j.authenticated){hideLoginScreen();return true;}
+      authToken=null;localStorage.removeItem('idealoms_token');
+      showLoginScreen();return false;
+    }
   }catch{}
-  serverAvailable=false;return null;
+  serverAvailable=false;
+  showLoginScreen('Server offline — start the server to sign in.');
+  return false;
 }
 
 // ── COMPUTE ───────────────────────────────────────────────────────────────────
@@ -650,8 +767,6 @@ const chBdg=c=>`<span class="bdg b-${c}"><span class="dot d-${c}"></span>${CHANN
 const stBdg=s=>`<span class="sts s-${s}">${cap(s)}</span>`;
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
-const $=id=>document.getElementById(id);
-
 function render(){
   const st=stats(),cl=clients(),ch=channels(),rows=filtered();
   $('s-orders').textContent=st.total;$('s-rev').textContent=fmt(st.rev);$('s-cli').textContent=st.clients;$('s-ch').textContent=st.channels;
@@ -734,16 +849,27 @@ function updateTileStatus(platform,connected,lastSync,lastSyncCount){
 }
 
 async function refreshConnectionStatus(){
-  const status=await checkServer();
   const banner=$('server-banner');
-  if(serverAvailable&&status){
-    banner.className='server-banner info';
-    banner.innerHTML='<span>&#9989;</span><span><strong>Connected to IdealOMS database</strong> &mdash; All credentials and orders are stored in the server database. OAuth and live sync are active.</span>';
-    banner.classList.remove('hidden');
-    for(const[p,info]of Object.entries(status))updateTileStatus(p,info.connected,info.lastSync,info.lastSyncCount);
+  if(serverAvailable){
+    try{
+      const r=await authedFetch(`${SERVER}/api/connect/status`);
+      if(r.ok){
+        const status=await r.json();
+        banner.className='server-banner info';
+        banner.innerHTML='<span>&#9989;</span><span><strong>Connected to IdealOMS database</strong> &mdash; All credentials and orders are stored in the server database. OAuth and live sync are active.</span>';
+        banner.classList.remove('hidden');
+        for(const[p,info]of Object.entries(status))updateTileStatus(p,info.connected,info.lastSync,info.lastSyncCount);
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        banner.className='server-banner warn';
+        banner.innerHTML='<span>&#9888;</span><span><strong>Connection error.</strong> Could not load platform status.</span>';
+        banner.classList.remove('hidden');
+      }
+    }
   }else{
     banner.className='server-banner warn';
-    banner.innerHTML='<span>&#9888;</span><span><strong>Server offline &mdash; database unavailable.</strong> Start the server (double-click START.bat / START.command) to save credentials and orders permanently. Browser mode is read-only.</span>';
+    banner.innerHTML='<span>&#9888;</span><span><strong>Server offline.</strong> Start the server to enable live sync.</span>';
     banner.classList.remove('hidden');
     for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!c.accessToken,c.lastSync,c.lastSyncCount);}
   }
@@ -822,13 +948,13 @@ async function saveConnCredentials(){
   if(!Object.keys(payload).length){showCMMsg('Fill in at least the required fields.');return;}
   if(serverAvailable){
     try{
-      const r=await fetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const r=await authedFetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const j=await r.json();
       if(!r.ok){showCMMsg(j.error||'Save failed');return;}
       connCreds[platform]={...connCreds[platform],...payload};saveCreds();
       showCMMsg('Credentials saved to server!',false);
       updateTileStatus(platform,!!payload.accessToken,null,null);
-    }catch(e){showCMMsg('Server error: '+e.message);}
+    }catch(e){if(e.message!=='Unauthorized')showCMMsg('Server error: '+e.message);}
   }else{
     connCreds[platform]={...connCreds[platform],...payload};saveCreds();
     showCMMsg('Saved in browser. Start the server for live sync.',false);
@@ -841,13 +967,13 @@ async function generateConnOAuthUrl(){
   const urlInput=$('cm-oauth-url'),copyBtn=$('cm-copy-btn');
   if(!serverAvailable){showCMMsg('Start the server first, then click Generate.');return;}
   try{
-    const r=await fetch(`${SERVER}/api/connect/${platform}/oauth-url`);
+    const r=await authedFetch(`${SERVER}/api/connect/${platform}/oauth-url`);
     const j=await r.json();
     if(!r.ok){showCMMsg(j.error||'Could not generate. Save credentials first.');return;}
     urlInput.value=j.url;if(copyBtn)copyBtn.style.display='';
     window.open(j.url,'_blank');
     showCMMsg('Authorization page opened. Approve to auto-save connection.',false);
-  }catch(e){showCMMsg('Server error: '+e.message);}
+  }catch(e){if(e.message!=='Unauthorized')showCMMsg('Server error: '+e.message);}
 }
 
 function copyConnOAuthUrl(){
@@ -860,7 +986,7 @@ async function syncConnNow(){
   if(!serverAvailable){showCMMsg('Start the server first, then sync.');return;}
   showCMMsg('Syncing…',false);
   try{
-    const r=await fetch(`${SERVER}/api/sync/${platform}`,{method:'POST'});
+    const r=await authedFetch(`${SERVER}/api/sync/${platform}`,{method:'POST'});
     const j=await r.json();
     if(j.error){showCMMsg(j.error);return;}
     await loadOrdersFromServer();
@@ -868,26 +994,26 @@ async function syncConnNow(){
     updateTileStatus(platform,true,j.at,j.added);
     showCMMsg(`Done — fetched ${j.fetched}, added ${j.added} new orders.`,false);
     localSyncLog.unshift(j);render();
-  }catch(e){showCMMsg('Server error: '+e.message);}
+  }catch(e){if(e.message!=='Unauthorized')showCMMsg('Server error: '+e.message);}
 }
 
 async function disconnectConn(){
   const platform=currentConnPlatform;if(!platform)return;
   delete connCreds[platform];saveCreds();
-  if(serverAvailable)try{await fetch(`${SERVER}/api/connect/${platform}`,{method:'DELETE'});}catch{}
+  if(serverAvailable)try{await authedFetch(`${SERVER}/api/connect/${platform}`,{method:'DELETE'});}catch{}
   updateTileStatus(platform,false,null,null);
   showCMMsg('Disconnected.',false);
 }
 
 async function loadOrdersFromServer(){
-  if(!serverAvailable)return;
-  try{const r=await fetch(`${SERVER}/api/orders`);if(r.ok){orders=await r.json();save();}}catch{}
+  if(!serverAvailable||!authToken)return;
+  try{const r=await authedFetch(`${SERVER}/api/orders`);if(r.ok){orders=await r.json();save();}}catch{}
 }
 
 // ── SYNC LOG ──────────────────────────────────────────────────────────────────
 async function renderSyncLog(){
   let log=localSyncLog;
-  if(serverAvailable){try{const r=await fetch(`${SERVER}/api/sync/log`);if(r.ok)log=await r.json();}catch{}}
+  if(serverAvailable){try{const r=await authedFetch(`${SERVER}/api/sync/log`);if(r.ok)log=await r.json();}catch{}}
   const tbody=$('sync-log-tbody');
   if(!log.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:36px;color:#94a3b8">No sync history yet.</td></tr>';return;}
   tbody.innerHTML=log.map(e=>`<tr><td><span class="plat-chip pc-${e.platform}">${CHANNEL_LABELS[e.platform]||e.platform}</span></td><td>${fmtT(e.at)}</td><td>${e.error?'—':e.fetched}</td><td>${e.error?'—':e.added}</td><td>${e.error?`<span class="log-err">${e.error}</span>`:'<span class="log-ok">OK</span>'}</td></tr>`).join('');
@@ -897,7 +1023,7 @@ async function syncAll(){
   const btn=$('sync-all-btn');btn.disabled=true;btn.textContent='&#8635; Syncing…';
   if(serverAvailable){
     try{
-      const r=await fetch(`${SERVER}/api/sync/all`,{method:'POST'});
+      const r=await authedFetch(`${SERVER}/api/sync/all`,{method:'POST'});
       const j=await r.json();
       await loadOrdersFromServer();render();
       Object.values(j).forEach(e=>{if(!e.error)localSyncLog.unshift(e);});
@@ -1073,9 +1199,13 @@ let st;const onSearch=e=>{clearTimeout(st);st=setTimeout(()=>{F.search=e.target.
 $('search').oninput=onSearch;$('search-mob').oninput=onSearch;
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
+$('login-btn').onclick=login;
+$('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+
 (async()=>{
-  await checkServer();
-  if(serverAvailable)await loadOrdersFromServer();
+  const authed=await checkAuth();
+  if(!authed)return;
+  await loadOrdersFromServer();
   render();
 })();
 </script>
