@@ -19,14 +19,15 @@ a:hover{text-decoration:underline}
 
 /* ── APP SHELL ── */
 .app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
-
 .header{display:flex;align-items:center;height:56px;padding:0 14px;gap:10px;background:#0f172a;color:#fff;flex-shrink:0;z-index:10}
 .hbg{display:none;flex-direction:column;justify-content:center;gap:5px;width:34px;height:34px;padding:5px;flex-shrink:0;border-radius:6px}
 .hbg span{display:block;height:2px;width:100%;background:#fff;border-radius:2px}
-.brand{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
-.brand-icon{font-size:20px}
-.brand-name{font-size:17px;font-weight:800;letter-spacing:-.3px;white-space:nowrap}
-.brand-tag{font-size:10px;font-weight:600;background:rgba(255,255,255,.12);color:rgba(255,255,255,.7);padding:2px 7px;border-radius:10px;letter-spacing:.3px;text-transform:uppercase}
+.brand{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.brand-icon{flex-shrink:0;display:flex}
+.brand-text{display:flex;align-items:baseline;gap:0;white-space:nowrap}
+.brand-word{font-size:17px;font-weight:900;letter-spacing:-.2px;color:#fff}
+.brand-prod{font-size:17px;font-weight:300;letter-spacing:.8px;color:#93c5fd}
+.brand-tag{font-size:10px;font-weight:600;background:rgba(255,255,255,.12);color:rgba(255,255,255,.7);padding:2px 7px;border-radius:10px;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap}
 .hdr-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .search-box{padding:6px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.1);color:#fff;font-size:13px;width:190px}
 .search-box::placeholder{color:rgba(255,255,255,.4)}
@@ -34,7 +35,6 @@ a:hover{text-decoration:underline}
 .sync-all-btn{padding:5px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-size:12px;font-weight:600;transition:all .12s}
 .sync-all-btn:hover{background:rgba(255,255,255,.16)}
 .sync-all-btn:disabled{opacity:.4;cursor:not-allowed}
-
 .layout{display:flex;flex:1;overflow:hidden}
 
 /* ── SIDEBAR ── */
@@ -129,9 +129,9 @@ a:hover{text-decoration:underline}
 .notes-b{background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.5}
 
 /* ── MODAL ── */
-.modal{position:fixed;top:50%;left:50%;z-index:300;transform:translate(-50%,-50%);background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.22);width:560px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column}
+.modal{position:fixed;top:50%;left:50%;z-index:300;transform:translate(-50%,-50%);background:#fff;border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,.24);width:560px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column}
 .modal.hidden{display:none}
-.modal-h{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+.modal-h{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e2e8f0;flex-shrink:0;gap:12px}
 .modal-h h2{font-size:15px;font-weight:700}
 .modal-tabs{display:flex;border-bottom:1.5px solid #e2e8f0;flex-shrink:0;padding:0 18px}
 .mtab{padding:10px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:2.5px solid transparent;margin-bottom:-1.5px;transition:color .12s,border-color .12s;background:none}
@@ -150,8 +150,6 @@ a:hover{text-decoration:underline}
 .ta:focus{outline:none;border-color:#2563eb}
 .err{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;border-radius:8px;padding:8px 12px;font-size:13px}
 .err.hidden{display:none}
-.ok-msg{background:#dcfce7;border:1px solid #86efac;color:#166534;border-radius:8px;padding:8px 12px;font-size:13px}
-.ok-msg.hidden{display:none}
 .hint{font-size:13px;color:#64748b;line-height:1.6}
 
 /* ── DROP ZONE ── */
@@ -165,38 +163,56 @@ a:hover{text-decoration:underline}
 .wb-full{grid-column:1/-1}
 .sep{border:none;border-top:1px solid #e2e8f0}
 
-/* ── CONNECTIONS PAGE ── */
+/* ── PAGES ── */
 .page{display:none;flex-direction:column;gap:14px}
 .page.on{display:flex}
 .page-hdr{background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
 .page-hdr h2{font-size:17px;font-weight:800;margin-bottom:3px}
 .page-hdr p{font-size:13px;color:#64748b}
-.conn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.conn-card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;display:flex;flex-direction:column}
-.conn-card-hdr{padding:14px 16px 10px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;gap:8px}
-.conn-plat{display:flex;align-items:center;gap:10px}
-.conn-logo{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
-.logo-lazada{background:#FF6000}.logo-shopee{background:#EE4D2D}.logo-tiktok{background:#010101}
-.conn-name{font-size:15px;font-weight:800}
-.conn-sub{font-size:11px;color:#64748b;margin-top:1px}
-.conn-status{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;flex-shrink:0;white-space:nowrap}
+.server-banner{border-radius:10px;padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:8px}
+.server-banner.info{background:#dbeafe;border:1px solid #93c5fd;color:#1e40af}
+.server-banner.warn{background:#fef9c3;border:1px solid #fde047;color:#854d0e}
+.server-banner.hidden{display:none}
+
+/* ── PLATFORM TILES ── */
+.plat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.plat-tile{background:#fff;border-radius:16px;padding:22px 14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07);cursor:pointer;transition:all .18s;display:flex;flex-direction:column;align-items:center;gap:9px;border:2px solid transparent;text-align:center;user-select:none}
+.plat-tile:hover{box-shadow:0 8px 24px rgba(0,0,0,.12);border-color:#dbeafe;transform:translateY(-3px)}
+.plat-tile.connected{border-color:#bbf7d0}
+.plat-tile.connected:hover{border-color:#86efac}
+.pt-logo{width:54px;height:54px;border-radius:15px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;color:#fff}
+.pt-name{font-size:14px;font-weight:700;color:#0f172a}
+.pt-status{font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px}
+.pt-status.on{color:#16a34a}.pt-status.off{color:#94a3b8}
+.pt-sync{font-size:10px;color:#94a3b8;min-height:14px;line-height:1.4}
+.pt-cta{font-size:11px;color:#2563eb;font-weight:600;opacity:0;transition:opacity .15s}
+.plat-tile:hover .pt-cta{opacity:1}
+
+/* Platform logo colours */
+.logo-lazada{background:#FF6000}.logo-shopee{background:#EE4D2D}
+.logo-tiktok{background:#111;font-size:14px;font-weight:900;letter-spacing:0}
+.logo-shopify{background:#96bf48}
+
+/* ── CONNECTION MODAL ── */
+.conn-modal-hdr{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
+.cm-logo{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;flex-shrink:0}
+.cm-plat-name{font-size:16px;font-weight:800;color:#0f172a}
+.cm-plat-sub{font-size:12px;color:#64748b;margin-top:1px}
+.cm-fields-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cm-full{grid-column:1/-1}
+.cm-info{font-size:11px;color:#64748b;background:#f8fafc;border-radius:8px;padding:9px 12px;line-height:1.7;border:1px solid #f1f5f9}
+.oauth-wrap{display:flex;flex-direction:column;gap:5px}
+.oauth-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.oauth-link-box{display:flex;gap:5px;align-items:stretch}
+.oauth-link-box input{flex:1;padding:7px 9px;border-radius:7px;border:1.5px solid #e2e8f0;font-size:11px;font-family:monospace;background:#f8fafc;color:#334155;min-width:0}
+.btn-copy{padding:6px 11px;border-radius:7px;background:#e2e8f0;font-size:11px;font-weight:600;color:#0f172a;flex-shrink:0;transition:background .1s}
+.btn-copy:hover{background:#cbd5e1}
+.oauth-hint{font-size:11px;color:#94a3b8}
+.conn-status{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0}
 .status-on{color:#16a34a}.status-on .dot-sm{background:#22c55e}
 .status-off{color:#94a3b8}.status-off .dot-sm{background:#cbd5e1}
-.conn-card-body{padding:12px 16px;display:flex;flex-direction:column;gap:9px;flex:1}
-.conn-card-footer{padding:10px 16px;border-top:1px solid #f1f5f9;display:flex;gap:7px;flex-wrap:wrap}
-.cred-row{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.cred-row.single{grid-template-columns:1fr}
-.cred-field{display:flex;flex-direction:column;gap:3px}
-.cred-field label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
-.cred-field input,.cred-field select{padding:6px 9px;border-radius:7px;border:1.5px solid #e2e8f0;font-size:12px;color:#0f172a;background:#fff;width:100%}
-.cred-field input:focus,.cred-field select:focus{outline:none;border-color:#2563eb}
-.conn-info{font-size:11px;color:#64748b;background:#f8fafc;border-radius:7px;padding:8px 10px;line-height:1.7}
-.oauth-link-box{display:flex;gap:5px;align-items:stretch}
-.oauth-link-box input{flex:1;padding:6px 8px;border-radius:7px;border:1.5px solid #e2e8f0;font-size:11px;font-family:monospace;background:#f8fafc;color:#334155;min-width:0}
-.btn-copy{padding:6px 10px;border-radius:7px;background:#e2e8f0;font-size:11px;font-weight:600;color:#0f172a;flex-shrink:0}
-.btn-copy:hover{background:#cbd5e1}
 .last-sync{font-size:11px;color:#64748b}
-.conn-msg{font-size:11px;border-radius:6px;padding:6px 9px;display:none}
+.conn-msg{font-size:12px;border-radius:7px;padding:8px 11px;display:none}
 .conn-msg.err{background:#fee2e2;color:#991b1b;display:block}
 .conn-msg.ok{background:#dcfce7;color:#166534;display:block}
 
@@ -206,17 +222,16 @@ a:hover{text-decoration:underline}
 .sync-log-tbl th{padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;background:#f8fafc;border-bottom:1.5px solid #e2e8f0}
 .sync-log-tbl td{padding:10px 14px;border-bottom:1px solid #f1f5f9;font-size:13px}
 .sync-log-tbl tr:last-child td{border-bottom:none}
-.plat-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
-.pc-lazada{background:#FFF3EC;color:#CC3C00}.pc-shopee{background:#FFF0EE;color:#BF3010}.pc-tiktok{background:#f0f0f0;color:#111}
+.plat-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700}
+.pc-lazada{background:#FFF3EC;color:#CC3C00}.pc-shopee{background:#FFF0EE;color:#BF3010}
+.pc-tiktok{background:#f0f0f0;color:#111}.pc-shopify{background:#f0fdf4;color:#16a34a}
 .log-ok{color:#16a34a;font-weight:700}.log-err{color:#991b1b}
-.server-banner{border-radius:10px;padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:8px}
-.server-banner.info{background:#dbeafe;border:1px solid #93c5fd;color:#1e40af}
-.server-banner.warn{background:#fef9c3;border:1px solid #fde047;color:#854d0e}
-.server-banner.hidden{display:none}
 
 /* ── OVERLAY ── */
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:190;backdrop-filter:blur(2px)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:190;backdrop-filter:blur(2px)}
 .overlay.hidden{display:none}
+/* connection modal overlay sits above the app overlay but below modal */
+.conn-ov{z-index:295}
 
 /* ── MOBILE SEARCH ── */
 .mob-search{padding:8px 10px 2px;display:none}
@@ -224,7 +239,7 @@ a:hover{text-decoration:underline}
 .mob-search-inp:focus{outline:none;border-color:#2563eb}
 
 /* ── RESPONSIVE ── */
-@media(max-width:1100px){.conn-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:1100px){.plat-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){
   .hbg{display:flex}
   .sidebar{position:fixed;top:56px;left:0;bottom:0;z-index:150;transform:translateX(-100%);transition:transform .22s ease;box-shadow:6px 0 24px rgba(0,0,0,.3)}
@@ -241,7 +256,9 @@ a:hover{text-decoration:underline}
   .mob-search{display:block}
   .wb-grid{grid-template-columns:1fr}
   .wb-full{grid-column:auto}
-  .conn-grid{grid-template-columns:1fr}
+  .plat-grid{grid-template-columns:repeat(2,1fr)}
+  .cm-fields-grid{grid-template-columns:1fr}
+  .cm-full{grid-column:auto}
 }
 @media(min-width:769px){.mob-search{display:none}}
 </style>
@@ -252,8 +269,14 @@ a:hover{text-decoration:underline}
   <header class="header">
     <button id="hbg" class="hbg" aria-label="Menu"><span></span><span></span><span></span></button>
     <div class="brand">
-      <span class="brand-icon">&#9889;</span>
-      <span class="brand-name">IdealOMS</span>
+      <!-- IDEAL brand mark — consistent across all IDEAL software -->
+      <svg class="brand-icon" width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="30" height="30" rx="8" fill="#2563eb"/>
+        <rect x="8" y="7" width="14" height="3.5" rx="1.75" fill="white"/>
+        <rect x="13.25" y="10.5" width="3.5" height="9" rx="1.75" fill="white"/>
+        <rect x="8" y="19.5" width="14" height="3.5" rx="1.75" fill="white"/>
+      </svg>
+      <div class="brand-text"><span class="brand-word">IDEAL</span><span class="brand-prod">OMS</span></div>
       <span class="brand-tag">Order Management</span>
     </div>
     <div class="hdr-r">
@@ -329,7 +352,7 @@ a:hover{text-decoration:underline}
       <div id="page-connections" class="page">
         <div class="page-hdr">
           <h2>&#128279; Marketplace Connections</h2>
-          <p>Connect your Lazada, Shopee and TikTok Shop stores. IdealOMS will automatically pull in orders when you sync.</p>
+          <p>Click a platform to enter credentials and sync orders into IdealOMS.</p>
         </div>
 
         <div id="server-banner" class="server-banner hidden">
@@ -337,154 +360,41 @@ a:hover{text-decoration:underline}
           <span id="server-banner-text"></span>
         </div>
 
-        <div class="conn-grid">
-
-          <!-- LAZADA -->
-          <div class="conn-card">
-            <div class="conn-card-hdr">
-              <div class="conn-plat">
-                <div class="conn-logo logo-lazada">&#128722;</div>
-                <div><div class="conn-name">Lazada</div><div class="conn-sub">Lazada Open Platform</div></div>
-              </div>
-              <div class="conn-status status-off" id="laz-status">
-                <span class="dot-sm"></span><span id="laz-status-txt">Not Connected</span>
-              </div>
-            </div>
-            <div class="conn-card-body">
-              <div class="conn-info">
-                Get credentials from <a href="https://open.lazada.com" target="_blank">open.lazada.com</a> &#8594; My Apps &#8594; App Detail &#8594; API Access
-              </div>
-              <div class="cred-row">
-                <div class="cred-field"><label>App Key *</label><input id="laz-appkey" type="text" placeholder="123456"></div>
-                <div class="cred-field"><label>App Secret *</label><input id="laz-appsecret" type="password" placeholder="••••••••"></div>
-              </div>
-              <div class="cred-row">
-                <div class="cred-field">
-                  <label>Region</label>
-                  <select id="laz-region">
-                    <option value="MY">Malaysia (MY)</option>
-                    <option value="SG">Singapore (SG)</option>
-                    <option value="TH">Thailand (TH)</option>
-                    <option value="PH">Philippines (PH)</option>
-                    <option value="ID">Indonesia (ID)</option>
-                    <option value="VN">Vietnam (VN)</option>
-                  </select>
-                </div>
-                <div class="cred-field"><label>Store Name</label><input id="laz-storename" type="text" placeholder="My Lazada Store"></div>
-              </div>
-              <div class="cred-row single">
-                <div class="cred-field"><label>Access Token (paste if you have one)</label><input id="laz-token" type="password" placeholder="Optional — or use OAuth link below"></div>
-              </div>
-              <div>
-                <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">OAuth Link (auto-connect)</div>
-                <div class="oauth-link-box">
-                  <input id="laz-oauth-url" type="text" placeholder="Click Generate after saving credentials" readonly>
-                  <button class="btn-copy" onclick="generateOAuthUrl('lazada')">Generate</button>
-                  <button class="btn-copy" onclick="copyOAuthUrl('lazada')" id="laz-copy-btn" style="display:none">Copy</button>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:4px">Generate &#8594; open link &#8594; authorize &#8594; auto-saved (server must be running)</div>
-              </div>
-              <div id="laz-msg" class="conn-msg"></div>
-              <div id="laz-last-sync" class="last-sync"></div>
-            </div>
-            <div class="conn-card-footer">
-              <button class="btn btn-p btn-sm" onclick="saveCredentials('lazada')">Save &amp; Connect</button>
-              <button class="btn btn-s btn-sm" onclick="syncNow('lazada')">&#8635; Sync Now</button>
-              <button class="btn btn-g btn-sm" onclick="disconnect('lazada')" id="laz-disconnect-btn" style="display:none">Disconnect</button>
-            </div>
+        <div class="plat-grid">
+          <!-- Lazada -->
+          <div class="plat-tile" data-platform="lazada" onclick="openConnModal('lazada')">
+            <div class="pt-logo logo-lazada">&#128722;</div>
+            <div class="pt-name">Lazada</div>
+            <div class="pt-status off" id="tile-lazada-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-lazada-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
           </div>
-
-          <!-- SHOPEE -->
-          <div class="conn-card">
-            <div class="conn-card-hdr">
-              <div class="conn-plat">
-                <div class="conn-logo logo-shopee">&#129380;</div>
-                <div><div class="conn-name">Shopee</div><div class="conn-sub">Shopee Open Platform v2</div></div>
-              </div>
-              <div class="conn-status status-off" id="shop-status">
-                <span class="dot-sm"></span><span id="shop-status-txt">Not Connected</span>
-              </div>
-            </div>
-            <div class="conn-card-body">
-              <div class="conn-info">
-                Get credentials from <a href="https://open.shopee.com" target="_blank">open.shopee.com</a> &#8594; My Apps &#8594; App Detail &#8594; API Access Info
-              </div>
-              <div class="cred-row">
-                <div class="cred-field"><label>Partner ID *</label><input id="shop-partnerid" type="text" placeholder="2007890"></div>
-                <div class="cred-field"><label>Partner Key *</label><input id="shop-partnerkey" type="password" placeholder="••••••••"></div>
-              </div>
-              <div class="cred-row">
-                <div class="cred-field"><label>Shop ID *</label><input id="shop-shopid" type="text" placeholder="123456789"></div>
-                <div class="cred-field"><label>Store Name</label><input id="shop-storename" type="text" placeholder="My Shopee Store"></div>
-              </div>
-              <div class="cred-row single">
-                <div class="cred-field"><label>Access Token (paste if you have one)</label><input id="shop-token" type="password" placeholder="Optional — or use OAuth link below"></div>
-              </div>
-              <div>
-                <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">OAuth Link (auto-connect)</div>
-                <div class="oauth-link-box">
-                  <input id="shop-oauth-url" type="text" placeholder="Click Generate after saving credentials" readonly>
-                  <button class="btn-copy" onclick="generateOAuthUrl('shopee')">Generate</button>
-                  <button class="btn-copy" onclick="copyOAuthUrl('shopee')" id="shop-copy-btn" style="display:none">Copy</button>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:4px">Generate &#8594; open link &#8594; authorize &#8594; auto-saved (server must be running)</div>
-              </div>
-              <div id="shop-msg" class="conn-msg"></div>
-              <div id="shop-last-sync" class="last-sync"></div>
-            </div>
-            <div class="conn-card-footer">
-              <button class="btn btn-p btn-sm" onclick="saveCredentials('shopee')">Save &amp; Connect</button>
-              <button class="btn btn-s btn-sm" onclick="syncNow('shopee')">&#8635; Sync Now</button>
-              <button class="btn btn-g btn-sm" onclick="disconnect('shopee')" id="shop-disconnect-btn" style="display:none">Disconnect</button>
-            </div>
+          <!-- Shopee -->
+          <div class="plat-tile" data-platform="shopee" onclick="openConnModal('shopee')">
+            <div class="pt-logo logo-shopee">&#129380;</div>
+            <div class="pt-name">Shopee</div>
+            <div class="pt-status off" id="tile-shopee-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-shopee-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
           </div>
-
-          <!-- TIKTOK SHOP -->
-          <div class="conn-card">
-            <div class="conn-card-hdr">
-              <div class="conn-plat">
-                <div class="conn-logo logo-tiktok" style="color:#fff;font-size:16px;font-weight:900;letter-spacing:0">TT</div>
-                <div><div class="conn-name">TikTok Shop</div><div class="conn-sub">TikTok Shop Partner API</div></div>
-              </div>
-              <div class="conn-status status-off" id="ttk-status">
-                <span class="dot-sm"></span><span id="ttk-status-txt">Not Connected</span>
-              </div>
-            </div>
-            <div class="conn-card-body">
-              <div class="conn-info">
-                Get credentials from <a href="https://partner.tiktokshop.com" target="_blank">partner.tiktokshop.com</a> &#8594; App Management &#8594; App Detail
-              </div>
-              <div class="cred-row">
-                <div class="cred-field"><label>App Key *</label><input id="ttk-appkey" type="text" placeholder="abc123xyz"></div>
-                <div class="cred-field"><label>App Secret *</label><input id="ttk-appsecret" type="password" placeholder="••••••••"></div>
-              </div>
-              <div class="cred-row single">
-                <div class="cred-field"><label>Store Name</label><input id="ttk-storename" type="text" placeholder="My TikTok Shop"></div>
-              </div>
-              <div class="cred-row single">
-                <div class="cred-field"><label>Access Token (paste if you have one)</label><input id="ttk-token" type="password" placeholder="Optional — or use OAuth link below"></div>
-              </div>
-              <div>
-                <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">OAuth Link (auto-connect)</div>
-                <div class="oauth-link-box">
-                  <input id="ttk-oauth-url" type="text" placeholder="Click Generate after saving credentials" readonly>
-                  <button class="btn-copy" onclick="generateOAuthUrl('tiktok')">Generate</button>
-                  <button class="btn-copy" onclick="copyOAuthUrl('tiktok')" id="ttk-copy-btn" style="display:none">Copy</button>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:4px">Generate &#8594; open link &#8594; authorize &#8594; auto-saved (server must be running)</div>
-              </div>
-              <div id="ttk-msg" class="conn-msg"></div>
-              <div id="ttk-last-sync" class="last-sync"></div>
-            </div>
-            <div class="conn-card-footer">
-              <button class="btn btn-p btn-sm" onclick="saveCredentials('tiktok')">Save &amp; Connect</button>
-              <button class="btn btn-s btn-sm" onclick="syncNow('tiktok')">&#8635; Sync Now</button>
-              <button class="btn btn-g btn-sm" onclick="disconnect('tiktok')" id="ttk-disconnect-btn" style="display:none">Disconnect</button>
-            </div>
+          <!-- TikTok Shop -->
+          <div class="plat-tile" data-platform="tiktok" onclick="openConnModal('tiktok')">
+            <div class="pt-logo logo-tiktok">TT</div>
+            <div class="pt-name">TikTok Shop</div>
+            <div class="pt-status off" id="tile-tiktok-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-tiktok-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
           </div>
-
-        </div><!-- /conn-grid -->
-      </div><!-- /page-connections -->
+          <!-- Shopify -->
+          <div class="plat-tile" data-platform="shopify" onclick="openConnModal('shopify')">
+            <div class="pt-logo logo-shopify">&#127978;</div>
+            <div class="pt-name">Shopify</div>
+            <div class="pt-status off" id="tile-shopify-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-shopify-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
+          </div>
+        </div>
+      </div>
 
       <!-- ═══════════════════════════════════════
            SYNC LOG PAGE
@@ -492,7 +402,7 @@ a:hover{text-decoration:underline}
       <div id="page-synclog" class="page">
         <div class="page-hdr">
           <h2>&#128260; Sync Log</h2>
-          <p>History of marketplace order syncs. Each row shows how many orders were fetched and added.</p>
+          <p>History of marketplace order syncs.</p>
         </div>
         <div class="sync-log-tbl">
           <table>
@@ -507,7 +417,7 @@ a:hover{text-decoration:underline}
     </main>
   </div>
 
-  <!-- Detail panel -->
+  <!-- ── Detail panel ── -->
   <div id="dp" class="detail-panel">
     <div class="dp-hdr">
       <h2 id="dp-title">Order Details</h2>
@@ -517,7 +427,7 @@ a:hover{text-decoration:underline}
   </div>
   <div id="dp-ov" class="overlay hidden"></div>
 
-  <!-- Add Order modal -->
+  <!-- ── Add Order modal ── -->
   <div id="modal" class="modal hidden">
     <div class="modal-h">
       <h2>Add Order</h2>
@@ -582,7 +492,7 @@ a:hover{text-decoration:underline}
           <div class="fg"><label>City</label><input id="wb-city" class="inp" placeholder="City"></div>
           <div class="fg"><label>State / Province</label><input id="wb-state" class="inp" placeholder="e.g. CA"></div>
           <div class="fg"><label>ZIP / Postal</label><input id="wb-zip" class="inp" placeholder="e.g. 94102"></div>
-          <div class="fg"><label>Country</label><input id="wb-country" class="inp" value="US"></div>
+          <div class="fg"><label>Country</label><input id="wb-country" class="inp" value="MY"></div>
           <div class="fg wb-full"><label>Description / Goods</label><input id="wb-desc" class="inp" placeholder="e.g. Electronics, 3 cartons"></div>
           <div class="fg"><label>Weight</label><input id="wb-weight" class="inp" placeholder="e.g. 2.5 kg"></div>
           <div class="fg"><label>No. of Pieces</label><input id="wb-pieces" class="inp" type="number" min="1" placeholder="1"></div>
@@ -596,6 +506,33 @@ a:hover{text-decoration:underline}
     </div>
   </div>
   <div id="modal-ov" class="overlay hidden"></div>
+
+  <!-- ── Platform Connection Modal (shared, rendered dynamically) ── -->
+  <div id="conn-modal" class="modal hidden" style="width:520px">
+    <div class="modal-h">
+      <div class="conn-modal-hdr">
+        <div id="cm-logo" class="cm-logo"></div>
+        <div>
+          <div id="cm-name" class="cm-plat-name"></div>
+          <div id="cm-sub" class="cm-plat-sub"></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <div id="cm-status" class="conn-status status-off">
+          <span class="dot-sm"></span><span id="cm-status-txt">Not Connected</span>
+        </div>
+        <button class="btn-x" onclick="closeConnModal()">&#10005;</button>
+      </div>
+    </div>
+    <div class="modal-b" id="cm-body" style="gap:10px"></div>
+    <div class="modal-f">
+      <button id="cm-disconnect-btn" class="btn btn-g" style="margin-right:auto;display:none" onclick="disconnectConn()">Disconnect</button>
+      <button class="btn btn-g" onclick="closeConnModal()">Close</button>
+      <button class="btn btn-s" onclick="syncConnNow()">&#8635; Sync Now</button>
+      <button class="btn btn-p" onclick="saveConnCredentials()">Save &amp; Connect</button>
+    </div>
+  </div>
+  <div id="conn-modal-ov" class="overlay conn-ov hidden" onclick="closeConnModal()"></div>
 
 </div>
 <script>
@@ -614,6 +551,63 @@ const SEED=[
 
 const CHANNEL_LABELS={email:'Email',shopify:'Shopify',amazon:'Amazon',woocommerce:'WooCommerce',web:'Web',instagram:'Instagram',waybill:'Waybill',lazada:'Lazada',shopee:'Shopee',tiktok:'TikTok Shop'};
 
+// ── PLATFORM CONFIG ───────────────────────────────────────────────────────────
+const PLAT_CONFIG={
+  lazada:{
+    name:'Lazada',sub:'Lazada Open Platform',
+    logoClass:'logo-lazada',logoIcon:'&#128722;',
+    docsUrl:'https://open.lazada.com',
+    docsHint:'My Apps &#8594; App Detail &#8594; API Access',
+    fields:[
+      {id:'appKey',    label:'App Key *',    type:'text',    placeholder:'123456',      half:true},
+      {id:'appSecret', label:'App Secret *', type:'password',placeholder:'&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:true},
+      {id:'region',    label:'Region',       type:'select',  placeholder:'',            half:true,
+        options:[{v:'MY',l:'Malaysia (MY)'},{v:'SG',l:'Singapore (SG)'},{v:'TH',l:'Thailand (TH)'},{v:'PH',l:'Philippines (PH)'},{v:'ID',l:'Indonesia (ID)'},{v:'VN',l:'Vietnam (VN)'}]},
+      {id:'storeName', label:'Store Name',   type:'text',    placeholder:'My Lazada Store',half:true},
+      {id:'accessToken',label:'Access Token (paste if you have one)',type:'password',placeholder:'Optional — or use OAuth below',half:false},
+    ],hasOAuth:true,
+  },
+  shopee:{
+    name:'Shopee',sub:'Shopee Open Platform v2',
+    logoClass:'logo-shopee',logoIcon:'&#129380;',
+    docsUrl:'https://open.shopee.com',
+    docsHint:'My Apps &#8594; App Detail &#8594; API Access Info',
+    fields:[
+      {id:'partnerId', label:'Partner ID *',  type:'text',    placeholder:'2007890',     half:true},
+      {id:'partnerKey',label:'Partner Key *', type:'password',placeholder:'&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:true},
+      {id:'shopId',    label:'Shop ID *',     type:'text',    placeholder:'123456789',   half:true},
+      {id:'storeName', label:'Store Name',    type:'text',    placeholder:'My Shopee Store',half:true},
+      {id:'accessToken',label:'Access Token (paste if you have one)',type:'password',placeholder:'Optional — or use OAuth below',half:false},
+    ],hasOAuth:true,
+  },
+  tiktok:{
+    name:'TikTok Shop',sub:'TikTok Shop Partner API',
+    logoClass:'logo-tiktok',logoIcon:'TT',
+    docsUrl:'https://partner.tiktokshop.com',
+    docsHint:'App Management &#8594; App Detail',
+    fields:[
+      {id:'appKey',    label:'App Key *',    type:'text',    placeholder:'abc123xyz',   half:true},
+      {id:'appSecret', label:'App Secret *', type:'password',placeholder:'&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:true},
+      {id:'storeName', label:'Store Name',   type:'text',    placeholder:'My TikTok Shop',half:false},
+      {id:'accessToken',label:'Access Token (paste if you have one)',type:'password',placeholder:'Optional — or use OAuth below',half:false},
+    ],hasOAuth:true,
+  },
+  shopify:{
+    name:'Shopify',sub:'Shopify Admin API',
+    logoClass:'logo-shopify',logoIcon:'&#127978;',
+    docsUrl:'https://partners.shopify.com',
+    docsHint:'Apps &#8594; Create App &#8594; API credentials',
+    fields:[
+      {id:'shopDomain',label:'Shop Domain *',type:'text',    placeholder:'mystore.myshopify.com',half:false},
+      {id:'apiKey',    label:'API Key *',    type:'text',    placeholder:'••••••••••••••••••••••••••••••••',half:true},
+      {id:'apiSecret', label:'API Secret *', type:'password',placeholder:'&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:true},
+      {id:'storeName', label:'Store Name',   type:'text',    placeholder:'My Shopify Store',half:false},
+      {id:'accessToken',label:'Admin API Access Token (shpat_…)',type:'password',placeholder:'shpat_&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:false},
+    ],hasOAuth:true,
+  },
+};
+const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
+
 // ── STORAGE ───────────────────────────────────────────────────────────────────
 let orders=(()=>{try{const s=localStorage.getItem('od');return s?JSON.parse(s):SEED.map(o=>({...o}));}catch{return SEED.map(o=>({...o}));}})();
 const save=()=>{try{localStorage.setItem('od',JSON.stringify(orders));}catch{}};
@@ -623,7 +617,7 @@ let localSyncLog=[];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 const F={client:null,channel:null,status:'',search:''};
-let activeTab='email',currentPage='dashboard',serverAvailable=false;
+let activeTab='email',currentPage='dashboard',serverAvailable=false,currentConnPlatform=null;
 const SERVER='http://localhost:3000';
 
 // ── SERVER CHECK ──────────────────────────────────────────────────────────────
@@ -713,115 +707,175 @@ function switchPage(page){
   closeSidebar();
 }
 
-// ── CONNECTIONS LOGIC ─────────────────────────────────────────────────────────
-const PLAT_FIELDS={
-  lazada:{appKey:'laz-appkey',appSecret:'laz-appsecret',region:'laz-region',storeName:'laz-storename',accessToken:'laz-token'},
-  shopee:{partnerId:'shop-partnerid',partnerKey:'shop-partnerkey',shopId:'shop-shopid',storeName:'shop-storename',accessToken:'shop-token'},
-  tiktok:{appKey:'ttk-appkey',appSecret:'ttk-appsecret',storeName:'ttk-storename',accessToken:'ttk-token'},
-};
-const PFX={lazada:'laz',shopee:'shop',tiktok:'ttk'};
+// ── CONNECTION TILES ──────────────────────────────────────────────────────────
+function updateTileStatus(platform,connected,lastSync,lastSyncCount){
+  const tile=document.querySelector(`.plat-tile[data-platform="${platform}"]`);
+  if(!tile)return;
+  tile.classList.toggle('connected',connected);
+  const stEl=$(`tile-${platform}-st`);
+  if(stEl){
+    const dotCol=connected?'#22c55e':'#cbd5e1';
+    stEl.className=`pt-status ${connected?'on':'off'}`;
+    stEl.innerHTML=`<span class="dot-sm" style="background:${dotCol}"></span>&ensp;${connected?'Connected':'Not Connected'}`;
+  }
+  if(lastSync){const el=$(`tile-${platform}-sync`);if(el)el.textContent=`Synced ${fmtT(lastSync)}`;}
+  // update modal if open for same platform
+  if(currentConnPlatform===platform){
+    $('cm-status').className='conn-status '+(connected?'status-on':'status-off');
+    $('cm-status-txt').textContent=connected?'Connected':'Not Connected';
+    $('cm-disconnect-btn').style.display=connected?'':'none';
+  }
+}
 
 async function refreshConnectionStatus(){
   const status=await checkServer();
   const banner=$('server-banner');
   if(serverAvailable&&status){
     banner.className='server-banner info';
-    banner.innerHTML='<span>&#9989;</span><span><strong>Server is running</strong> — OAuth auto-connect and live sync are fully available.</span>';
+    banner.innerHTML='<span>&#9989;</span><span><strong>Server is running</strong> &mdash; OAuth auto-connect and live sync are available.</span>';
     banner.classList.remove('hidden');
-    for(const[p,info]of Object.entries(status))updateCardStatus(p,info.connected,info.lastSync,info.lastSyncCount);
+    for(const[p,info]of Object.entries(status))updateTileStatus(p,info.connected,info.lastSync,info.lastSyncCount);
   }else{
     banner.className='server-banner warn';
     banner.innerHTML='<span>&#9888;</span><span><strong>Server not running.</strong> Credentials are saved in your browser. Start the server (double-click START.bat / START.command) to enable OAuth and live sync.</span>';
     banner.classList.remove('hidden');
-    for(const p of['lazada','shopee','tiktok']){const c=connCreds[p];if(c){updateCardStatus(p,!!c.accessToken,c.lastSync,c.lastSyncCount);}}
+    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!c.accessToken,c.lastSync,c.lastSyncCount);}
   }
 }
 
-function updateCardStatus(platform,connected,lastSync,lastSyncCount){
-  const pfx=PFX[platform];
-  const statusEl=$(pfx+'-status'),statusTxt=$(pfx+'-status-txt'),dbtn=$(pfx+'-disconnect-btn');
-  if(connected){statusEl.className='conn-status status-on';statusTxt.textContent='Connected';if(dbtn)dbtn.style.display='';}
-  else{statusEl.className='conn-status status-off';statusTxt.textContent='Not Connected';if(dbtn)dbtn.style.display='none';}
-  if(lastSync){const el=$(pfx+'-last-sync');if(el)el.textContent=`Last sync: ${fmtT(lastSync)}  ·  ${lastSyncCount??0} orders added`;}
+// ── CONNECTION MODAL ──────────────────────────────────────────────────────────
+function openConnModal(platform){
+  currentConnPlatform=platform;
+  const cfg=PLAT_CONFIG[platform];
+  const saved=connCreds[platform]||{};
+  // Set header
+  $('cm-logo').className=`cm-logo ${cfg.logoClass}`;
+  $('cm-logo').innerHTML=cfg.logoIcon;
+  $('cm-name').textContent=cfg.name;
+  $('cm-sub').textContent=cfg.sub;
+  const connected=!!(saved.accessToken);
+  $('cm-status').className='conn-status '+(connected?'status-on':'status-off');
+  $('cm-status-txt').textContent=connected?'Connected':'Not Connected';
+  $('cm-disconnect-btn').style.display=connected?'':'none';
+  // Render body
+  let openCols=false;
+  let html=`<div class="cm-info">Get credentials from <a href="${cfg.docsUrl}" target="_blank">${cfg.name} Developer Portal &#8599;</a> &mdash; ${cfg.docsHint}</div>`;
+  html+='<div class="cm-fields-grid">';
+  for(const f of cfg.fields){
+    const sv=saved[f.id]||'';
+    const masked=sv&&f.type==='password'?'••••••••':sv;
+    const cls=f.half?'':'cm-full';
+    if(f.type==='select'){
+      const opts=(f.options||[]).map(o=>`<option value="${o.v}"${sv===o.v?' selected':''}>${o.l}</option>`).join('');
+      html+=`<div class="fg ${cls}"><label>${f.label}</label><select id="cmf-${f.id}" class="inp">${opts}</select></div>`;
+    }else{
+      html+=`<div class="fg ${cls}"><label>${f.label}</label><input id="cmf-${f.id}" class="inp" type="${f.type}" placeholder="${f.placeholder}" value="${masked}"></div>`;
+    }
+  }
+  html+='</div>';
+  if(cfg.hasOAuth){
+    html+=`<div class="oauth-wrap">
+      <div class="oauth-lbl">OAuth Auto-Connect</div>
+      <div class="oauth-link-box">
+        <input id="cm-oauth-url" type="text" placeholder="Save credentials first, then click Generate" readonly>
+        <button class="btn-copy" onclick="generateConnOAuthUrl()">Generate</button>
+        <button class="btn-copy" id="cm-copy-btn" onclick="copyConnOAuthUrl()" style="display:none">Copy</button>
+      </div>
+      <div class="oauth-hint">Generate &#8594; open link in browser &#8594; authorize &#8594; tokens saved automatically (server must be running)</div>
+    </div>`;
+  }
+  if(saved.lastSync){
+    html+=`<div class="last-sync">Last sync: ${fmtT(saved.lastSync)} &middot; ${saved.lastSyncCount??0} orders added</div>`;
+  }
+  html+='<div id="cm-msg" class="conn-msg"></div>';
+  $('cm-body').innerHTML=html;
+  $('conn-modal').classList.remove('hidden');
+  $('conn-modal-ov').classList.remove('hidden');
 }
 
-function showConnMsg(platform,msg,isErr=true){
-  const el=$(PFX[platform]+'-msg');if(!el)return;
+function closeConnModal(){
+  $('conn-modal').classList.add('hidden');
+  $('conn-modal-ov').classList.add('hidden');
+  currentConnPlatform=null;
+}
+
+function showCMMsg(msg,isErr=true){
+  const el=$('cm-msg');if(!el)return;
   el.textContent=msg;el.className='conn-msg '+(isErr?'err':'ok');
 }
-function hideConnMsg(p){const el=$(PFX[p]+'-msg');if(el){el.textContent='';el.className='conn-msg';}}
 
-async function saveCredentials(platform){
-  hideConnMsg(platform);
-  const fields=PLAT_FIELDS[platform];
+async function saveConnCredentials(){
+  const platform=currentConnPlatform;if(!platform)return;
+  const cfg=PLAT_CONFIG[platform];
   const payload={};
-  for(const[key,elId]of Object.entries(fields)){
-    const val=$(elId)?.value?.trim();
-    if(val&&val!=='••••••'&&val!=='••••••••')payload[key]=val;
+  for(const f of cfg.fields){
+    const el=$('cmf-'+f.id);if(!el)continue;
+    const val=el.value.trim();
+    if(val&&!/^•+$/.test(val))payload[f.id]=val;
   }
-  if(Object.keys(payload).length===0){showConnMsg(platform,'Please fill in at least the required fields.');return;}
+  if(!Object.keys(payload).length){showCMMsg('Fill in at least the required fields.');return;}
   if(serverAvailable){
     try{
       const r=await fetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const j=await r.json();
-      if(!r.ok){showConnMsg(platform,j.error||'Save failed');return;}
-      showConnMsg(platform,'Credentials saved to server!',false);
-      updateCardStatus(platform,!!payload.accessToken,null,null);
-    }catch(e){showConnMsg(platform,'Server error: '+e.message);}
+      if(!r.ok){showCMMsg(j.error||'Save failed');return;}
+      connCreds[platform]={...connCreds[platform],...payload};saveCreds();
+      showCMMsg('Credentials saved to server!',false);
+      updateTileStatus(platform,!!payload.accessToken,null,null);
+    }catch(e){showCMMsg('Server error: '+e.message);}
   }else{
     connCreds[platform]={...connCreds[platform],...payload};saveCreds();
-    showConnMsg(platform,'Credentials saved (browser). Start the server for live sync.',false);
-    updateCardStatus(platform,!!payload.accessToken,null,null);
+    showCMMsg('Saved in browser. Start the server for live sync.',false);
+    updateTileStatus(platform,!!payload.accessToken,null,null);
   }
 }
 
-async function generateOAuthUrl(platform){
-  hideConnMsg(platform);
-  const pfx=PFX[platform];
-  const urlInput=$(pfx+'-oauth-url'),copyBtn=$(pfx+'-copy-btn');
-  if(!serverAvailable){showConnMsg(platform,'Start the server first, then click Generate.');return;}
+async function generateConnOAuthUrl(){
+  const platform=currentConnPlatform;if(!platform)return;
+  const urlInput=$('cm-oauth-url'),copyBtn=$('cm-copy-btn');
+  if(!serverAvailable){showCMMsg('Start the server first, then click Generate.');return;}
   try{
     const r=await fetch(`${SERVER}/api/connect/${platform}/oauth-url`);
     const j=await r.json();
-    if(!r.ok){showConnMsg(platform,j.error||'Could not generate. Save credentials first.');return;}
-    urlInput.value=j.url;copyBtn.style.display='';
+    if(!r.ok){showCMMsg(j.error||'Could not generate. Save credentials first.');return;}
+    urlInput.value=j.url;if(copyBtn)copyBtn.style.display='';
     window.open(j.url,'_blank');
-    showConnMsg(platform,'Authorization page opened. After you approve, the connection is saved automatically.',false);
-  }catch(e){showConnMsg(platform,'Server error: '+e.message);}
+    showCMMsg('Authorization page opened. Approve to auto-save connection.',false);
+  }catch(e){showCMMsg('Server error: '+e.message);}
 }
 
-function copyOAuthUrl(platform){
-  const url=$(PFX[platform]+'-oauth-url').value;
-  if(!url)return;
-  navigator.clipboard?.writeText(url).then(()=>showConnMsg(platform,'Link copied!',false));
+function copyConnOAuthUrl(){
+  const url=$('cm-oauth-url')?.value;if(!url)return;
+  navigator.clipboard?.writeText(url).then(()=>showCMMsg('Link copied!',false));
 }
 
-async function syncNow(platform){
-  hideConnMsg(platform);
-  if(!serverAvailable){showConnMsg(platform,'Start the server first, then sync.');return;}
-  showConnMsg(platform,'Syncing…',false);
+async function syncConnNow(){
+  const platform=currentConnPlatform;if(!platform)return;
+  if(!serverAvailable){showCMMsg('Start the server first, then sync.');return;}
+  showCMMsg('Syncing…',false);
   try{
     const r=await fetch(`${SERVER}/api/sync/${platform}`,{method:'POST'});
     const j=await r.json();
-    if(j.error){showConnMsg(platform,j.error);return;}
+    if(j.error){showCMMsg(j.error);return;}
     await loadOrdersFromServer();
-    updateCardStatus(platform,true,j.at,j.added);
-    showConnMsg(platform,`Done — fetched ${j.fetched}, added ${j.added} new orders.`,false);
+    connCreds[platform]={...connCreds[platform],lastSync:j.at,lastSyncCount:j.added};saveCreds();
+    updateTileStatus(platform,true,j.at,j.added);
+    showCMMsg(`Done — fetched ${j.fetched}, added ${j.added} new orders.`,false);
     localSyncLog.unshift(j);render();
-  }catch(e){showConnMsg(platform,'Server error: '+e.message);}
+  }catch(e){showCMMsg('Server error: '+e.message);}
+}
+
+async function disconnectConn(){
+  const platform=currentConnPlatform;if(!platform)return;
+  delete connCreds[platform];saveCreds();
+  if(serverAvailable)try{await fetch(`${SERVER}/api/connect/${platform}`,{method:'DELETE'});}catch{}
+  updateTileStatus(platform,false,null,null);
+  showCMMsg('Disconnected.',false);
 }
 
 async function loadOrdersFromServer(){
   if(!serverAvailable)return;
   try{const r=await fetch(`${SERVER}/api/orders`);if(r.ok){orders=await r.json();save();}}catch{}
-}
-
-async function disconnect(platform){
-  hideConnMsg(platform);
-  delete connCreds[platform];saveCreds();
-  if(serverAvailable)try{await fetch(`${SERVER}/api/connect/${platform}`,{method:'DELETE'});}catch{}
-  updateCardStatus(platform,false,null,null);
-  showConnMsg(platform,'Disconnected.',false);
 }
 
 // ── SYNC LOG ──────────────────────────────────────────────────────────────────
@@ -834,7 +888,7 @@ async function renderSyncLog(){
 }
 
 async function syncAll(){
-  const btn=$('sync-all-btn');btn.disabled=true;btn.textContent='⟳ Syncing…';
+  const btn=$('sync-all-btn');btn.disabled=true;btn.textContent='&#8635; Syncing…';
   if(serverAvailable){
     try{
       const r=await fetch(`${SERVER}/api/sync/all`,{method:'POST'});
@@ -843,7 +897,7 @@ async function syncAll(){
       Object.values(j).forEach(e=>{if(!e.error)localSyncLog.unshift(e);});
     }catch{}
   }
-  btn.disabled=false;btn.textContent='⟳ Sync All';
+  btn.disabled=false;btn.textContent='&#8635; Sync All';
 }
 
 // ── EMAIL PARSER ──────────────────────────────────────────────────────────────
@@ -859,7 +913,7 @@ function parseEmail(raw){
   for(const f of['ORDER_ID','CLIENT_ID','CLIENT_NAME','CHANNEL'])if(!h[f])throw new Error(`Missing: ${f}`);
   const itemLines=(secs.ITEMS||'').trim().split('\n').filter(Boolean);
   const items=itemLines.slice(1).map(l=>{const[sku,name,qty,up]=l.split('|').map(x=>x.trim());return{sku:sku||'',name:name||'',qty:parseInt(qty)||0,unitPrice:parseFloat(up)||0};}).filter(i=>i.sku);
-  return{id:h.ORDER_ID,clientId:h.CLIENT_ID,clientName:h.CLIENT_NAME,channel:h.CHANNEL.toLowerCase(),orderDate:h.ORDER_DATE||new Date().toISOString(),status:(h.STATUS||'pending').toLowerCase(),currency:h.CURRENCY||'USD',notes:h.NOTES||'',items,shipping:{recipient:sh.RECIPIENT||'',addressLine1:sh.ADDRESS_LINE1||'',addressLine2:sh.ADDRESS_LINE2||'',city:sh.CITY||'',state:sh.STATE||'',zip:sh.ZIP||'',country:sh.COUNTRY||'US'},subtotal:parseFloat(tot.SUBTOTAL)||0,shippingCost:parseFloat(tot.SHIPPING)||0,tax:parseFloat(tot.TAX)||0,total:parseFloat(tot.TOTAL)||0,source:{type:'email',ingestedAt:new Date().toISOString()}};
+  return{id:h.ORDER_ID,clientId:h.CLIENT_ID,clientName:h.CLIENT_NAME,channel:h.CHANNEL.toLowerCase(),orderDate:h.ORDER_DATE||new Date().toISOString(),status:(h.STATUS||'pending').toLowerCase(),currency:h.CURRENCY||'USD',notes:h.NOTES||'',items,shipping:{recipient:sh.RECIPIENT||'',addressLine1:sh.ADDRESS_LINE1||'',addressLine2:sh.ADDRESS_LINE2||'',city:sh.CITY||'',state:sh.STATE||'',zip:sh.ZIP||'',country:sh.COUNTRY||'MY'},subtotal:parseFloat(tot.SUBTOTAL)||0,shippingCost:parseFloat(tot.SHIPPING)||0,tax:parseFloat(tot.TAX)||0,total:parseFloat(tot.TOTAL)||0,source:{type:'email',ingestedAt:new Date().toISOString()}};
 }
 
 // ── WAYBILL PARSER ────────────────────────────────────────────────────────────
@@ -901,7 +955,7 @@ function parseWaybillAndFill(){
 
 function handleWaybillFile(file){
   if(!file)return;
-  const dz=$('drop-zone'),img=$('dz-img'),nm=$('dz-name');
+  const nm=$('dz-name'),img=$('dz-img');
   nm.textContent=file.name;nm.style.display='block';
   if(file.type.startsWith('image/')){const reader=new FileReader();reader.onload=e=>{img.src=e.target.result;img.style.display='block';};reader.readAsDataURL(file);}
   else img.style.display='none';
@@ -915,7 +969,7 @@ function populateClientDropdown(){
 }
 function handleClientChange(){$('wb-newclient-row').style.display=$('wb-client').value==='__new__'?'':'none';}
 
-// ── MODAL ─────────────────────────────────────────────────────────────────────
+// ── ADD ORDER MODAL ───────────────────────────────────────────────────────────
 function switchTab(tab){
   activeTab=tab;
   $('tab-email').classList.toggle('on',tab==='email');$('tab-waybill').classList.toggle('on',tab==='waybill');
@@ -930,7 +984,7 @@ CLIENT_NAME: Acme Corp
 CHANNEL: email
 ORDER_DATE: 2026-06-28T15:00:00Z
 STATUS: confirmed
-CURRENCY: USD
+CURRENCY: MYR
 NOTES: Sample order
 
 ---ITEMS---
@@ -942,16 +996,16 @@ DESK-PAD|Desk Pad XL|1|24.99
 RECIPIENT: Test Customer
 ADDRESS_LINE1: 1 Example Street
 ADDRESS_LINE2: Unit 7
-CITY: San Francisco
-STATE: CA
-ZIP: 94102
-COUNTRY: US
+CITY: Kuala Lumpur
+STATE: WP
+ZIP: 50450
+COUNTRY: MY
 
 ---TOTALS---
 SUBTOTAL: 84.97
 SHIPPING: 5.99
-TAX: 7.65
-TOTAL: 98.61
+TAX: 0
+TOTAL: 90.96
 ---ORDER-END---`;
 
 function openModal(){populateClientDropdown();$('modal').classList.remove('hidden');$('modal-ov').classList.remove('hidden');$('em-err').classList.add('hidden');}
@@ -980,7 +1034,7 @@ function submitWaybill(){
   if(orders.find(x=>x.id===orderId)){showErr(`Waybill ${orderId} already exists.`);return;}
   const courier=$('wb-courier').value,pieces=parseInt($('wb-pieces').value)||1,desc=$('wb-desc').value.trim()||'Shipment',weight=$('wb-weight').value.trim();
   const noteParts=[];if(courier)noteParts.push('Courier: '+courier);if(weight)noteParts.push('Weight: '+weight);
-  const o={id:orderId,clientId,clientName,channel:'waybill',orderDate:new Date().toISOString(),status:$('wb-status').value,currency:'USD',notes:noteParts.join(' | '),items:[{sku:trackNo.toUpperCase().slice(0,20),name:desc,qty:pieces,unitPrice:0}],shipping:{recipient,addressLine1:$('wb-addr1').value.trim(),addressLine2:$('wb-addr2').value.trim(),city:$('wb-city').value.trim(),state:$('wb-state').value.trim(),zip:$('wb-zip').value.trim(),country:$('wb-country').value.trim()||'US'},subtotal:0,shippingCost:0,tax:0,total:0,source:{type:'waybill',courier,trackingNo:trackNo,weight:weight||undefined,ingestedAt:new Date().toISOString()}};
+  const o={id:orderId,clientId,clientName,channel:'waybill',orderDate:new Date().toISOString(),status:$('wb-status').value,currency:'MYR',notes:noteParts.join(' | '),items:[{sku:trackNo.toUpperCase().slice(0,20),name:desc,qty:pieces,unitPrice:0}],shipping:{recipient,addressLine1:$('wb-addr1').value.trim(),addressLine2:$('wb-addr2').value.trim(),city:$('wb-city').value.trim(),state:$('wb-state').value.trim(),zip:$('wb-zip').value.trim(),country:$('wb-country').value.trim()||'MY'},subtotal:0,shippingCost:0,tax:0,total:0,source:{type:'waybill',courier,trackingNo:trackNo,weight:weight||undefined,ingestedAt:new Date().toISOString()}};
   orders.unshift(o);save();closeModal();render();openDetail(o.id);
 }
 

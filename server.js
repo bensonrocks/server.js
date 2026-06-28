@@ -10,6 +10,7 @@ const creds   = require('./lib/credentials');
 const lazada  = require('./lib/marketplace/lazada');
 const shopee  = require('./lib/marketplace/shopee');
 const tiktok  = require('./lib/marketplace/tiktok');
+const shopify = require('./lib/marketplace/shopify');
 const mapper  = require('./lib/marketplace/mapper');
 
 const app      = express();
@@ -52,7 +53,7 @@ app.get('/api/channels', (req, res) => res.json(store.getChannels()));
 
 // ── Marketplace Connections ───────────────────────────────────────────────────
 
-const PLATFORMS = ['lazada', 'shopee', 'tiktok'];
+const PLATFORMS = ['lazada', 'shopee', 'tiktok', 'shopify'];
 
 // Connection status for all platforms
 app.get('/api/connect/status', (req, res) => {
@@ -152,6 +153,27 @@ app.get('/api/connect/tiktok/callback', async (req, res) => {
   }
 });
 
+// Shopify
+app.get('/api/connect/shopify/oauth-url', (req, res) => {
+  const c = creds.get('shopify');
+  if (!c?.shopDomain) return res.status(400).json({ error: 'Save your Shopify shop domain first' });
+  if (!c?.apiKey) return res.status(400).json({ error: 'Save your Shopify API Key first' });
+  res.json({ url: shopify.buildAuthUrl(c.shopDomain, c.apiKey, `${BASE_URL}/api/connect/shopify/callback`) });
+});
+
+app.get('/api/connect/shopify/callback', async (req, res) => {
+  const { code, shop } = req.query;
+  if (!code) return res.status(400).send(errPage('Shopify', 'Missing authorization code'));
+  try {
+    const c      = creds.get('shopify');
+    const tokens = await shopify.exchangeCode(shop || c.shopDomain, c.apiKey, c.apiSecret, code);
+    creds.set('shopify', { ...tokens, connectedAt: new Date().toISOString() });
+    res.send(okPage('Shopify'));
+  } catch (e) {
+    res.status(500).send(errPage('Shopify', e.message));
+  }
+});
+
 // ── Order Sync ────────────────────────────────────────────────────────────────
 
 const syncLog = []; // in-memory — persists as long as server is running
@@ -207,12 +229,25 @@ app.post('/api/sync/tiktok', async (req, res) => {
   }
 });
 
+app.post('/api/sync/shopify', async (req, res) => {
+  try {
+    const entry = await syncPlatform('shopify', shopify.getOrders, mapper.fromShopify, req.body);
+    syncLog.push(entry);
+    res.json(entry);
+  } catch (e) {
+    const entry = { platform: 'shopify', at: new Date().toISOString(), error: e.message };
+    syncLog.push(entry);
+    res.status(500).json(entry);
+  }
+});
+
 // Sync all connected platforms at once
 app.post('/api/sync/all', async (req, res) => {
   const results = await Promise.allSettled([
     syncPlatform('lazada', lazada.getOrders, mapper.fromLazada),
     syncPlatform('shopee', shopee.getOrders, mapper.fromShopee),
     syncPlatform('tiktok', tiktok.getOrders, mapper.fromTikTok),
+    syncPlatform('shopify', shopify.getOrders, mapper.fromShopify),
   ]);
   const out = {};
   for (const [i, r] of results.entries()) {
