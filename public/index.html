@@ -58,13 +58,58 @@
     </div>
   </div>
 
+  <!-- ── Scan Overlay (full-screen, replaces Scanner tab) ── -->
+  <div id="scanOverlay" class="scan-overlay hidden">
+
+    <div class="scan-order-header">
+      <button class="back-btn" id="backToOrdersBtn">&#8592; Orders</button>
+      <div class="scan-order-title">
+        <span class="scan-order-no" id="scanOrderNo"></span>
+        <span class="scan-progress" id="scanProgress"></span>
+      </div>
+      <span id="scanTimer" class="scan-timer"></span>
+    </div>
+
+    <div class="scan-order-meta" id="scanOrderMeta"></div>
+
+    <div class="scan-items-scroll">
+      <table class="scan-items-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Description</th>
+            <th class="qty-col">Ordered</th>
+            <th class="qty-col">Scanned</th>
+            <th class="status-col"></th>
+          </tr>
+        </thead>
+        <tbody id="scanItemsTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="item-scan-dock">
+      <div class="item-scan-wrap">
+        <span class="scan-icon-prefix">&#9524;</span>
+        <input type="text" id="itemScanInput" class="big-scan-input"
+          placeholder="Scan item barcode / SKU&#8230;"
+          autocomplete="off" autocorrect="off" spellcheck="false" />
+      </div>
+      <div id="itemScanFeedback" class="scan-feedback hidden"></div>
+      <div class="dock-actions">
+        <button class="btn-danger"  id="cancelOrderBtn">&#10005; Cancel</button>
+        <button class="btn-pause"   id="pauseOrderBtn">&#9646;&#9646; Pause</button>
+        <button class="btn-success" id="completeOrderBtn">&#10003; Complete</button>
+      </div>
+    </div>
+
+  </div><!-- /scanOverlay -->
+
   <header>
     <div class="header-inner">
       <span class="logo">&#9679; Fulfillment Scanner</span>
       <nav>
         <button class="tab-btn active" data-tab="upload">Upload</button>
         <button class="tab-btn" data-tab="orders">Orders</button>
-        <button class="tab-btn" data-tab="scanner">Scanner</button>
         <button class="tab-btn" data-tab="log">Log</button>
       </nav>
       <div class="header-user">
@@ -89,110 +134,59 @@
 
       <div class="card">
         <h2>Upload Client Picklist</h2>
-        <p class="hint">Upload the client's XLSX or CSV picklist. The app will generate the WMS upload file and email it automatically.</p>
+        <p class="hint">Upload the client's XLSX or CSV picklist. Optionally attach the waybill PDF to split and match per order.</p>
+
+        <div class="form-group">
+          <label>Client Name</label>
+          <input type="text" id="clientNameInput" placeholder="e.g. Glowverse" autocomplete="off" />
+        </div>
+
         <div class="upload-area" id="dropZone">
           <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
           <div class="upload-icon">&#8679;</div>
           <p>Drag &amp; drop XLSX / CSV here or <button class="link-btn" id="browseBtn">browse</button></p>
         </div>
+
+        <div class="waybill-upload-row">
+          <label class="waybill-upload-label">
+            <span>&#128196; Waybill PDF <span class="hint-inline">(optional)</span></span>
+            <input type="file" id="waybillPdfInput" accept=".pdf" hidden />
+            <button class="btn-secondary btn-sm" id="browsePdfBtn">Attach PDF</button>
+          </label>
+          <span id="waybillPdfName" class="waybill-pdf-name"></span>
+        </div>
+
         <div id="uploadStatus" class="status-bar hidden"></div>
       </div>
 
       <div id="uploadOrdersSection" class="hidden">
         <div class="section-header">
           <h2>Loaded Orders <span id="orderCount" class="badge"></span></h2>
-          <button class="btn-primary" id="goScannerBtn">Proceed to Scanning &#8594;</button>
+          <button class="btn-primary" id="goOrdersBtn">View Orders &#8594;</button>
         </div>
         <div id="uploadOrdersList"></div>
       </div>
     </section>
 
-    <!-- ── TAB 2: Orders Dashboard ── -->
+    <!-- ── TAB 2: Orders ── -->
     <section id="tab-orders" class="tab">
       <div id="ordersEmpty" class="empty-state">
         No orders loaded. <button class="link-btn" data-tab-link="upload">Upload first.</button>
       </div>
       <div id="ordersDashboard" class="hidden">
         <div class="stats-bar" id="statsBar"></div>
+
+        <!-- Client filter -->
+        <div class="filter-row" id="clientFilterRow"></div>
+
+        <!-- Carrier filter -->
+        <div class="filter-row" id="carrierFilterRow"></div>
+
         <div id="ordersDashList"></div>
       </div>
     </section>
 
-    <!-- ── TAB 3: Scanner ── -->
-    <section id="tab-scanner" class="tab scanner-tab">
-
-      <div id="scannerEmpty" class="empty-state">
-        No orders loaded. <button class="link-btn" data-tab-link="upload">Upload first.</button>
-      </div>
-
-      <!-- Phase A: Scan waybill -->
-      <div id="phaseWaybill" class="hidden">
-        <div class="scanner-hero">
-          <h2>Scan Waybill Barcode</h2>
-          <p class="hint">Scan the waybill on the parcel, or select a pending order below.</p>
-          <div class="big-scan-wrap">
-            <span class="scan-icon-prefix">&#9524;</span>
-            <input type="text" id="waybillScanInput" class="big-scan-input"
-              placeholder="Scan or type waybill / tracking number&#8230;"
-              autocomplete="off" autocorrect="off" spellcheck="false" />
-          </div>
-          <div id="waybillError" class="scan-error hidden"></div>
-        </div>
-        <div class="pending-section-header">
-          <span>Pending Orders</span>
-          <span id="pendingCount" class="badge"></span>
-        </div>
-        <div id="pendingOrdersList"></div>
-      </div>
-
-      <!-- Phase B: Scan items -->
-      <div id="phaseItems" class="hidden phase-items">
-
-        <div class="scan-order-header">
-          <button class="back-btn" id="backToQueueBtn">&#8592; Queue</button>
-          <div class="scan-order-title">
-            <span class="scan-order-no" id="scanOrderNo"></span>
-            <span class="scan-progress" id="scanProgress"></span>
-          </div>
-          <span id="scanTimer" class="scan-timer"></span>
-        </div>
-
-        <div class="scan-order-meta" id="scanOrderMeta"></div>
-
-        <div class="scan-items-scroll">
-          <table class="scan-items-table">
-            <thead>
-              <tr>
-                <th>SKU</th>
-                <th>Description</th>
-                <th class="qty-col">Ordered</th>
-                <th class="qty-col">Scanned</th>
-                <th class="status-col"></th>
-              </tr>
-            </thead>
-            <tbody id="scanItemsTbody"></tbody>
-          </table>
-        </div>
-
-        <div class="item-scan-dock">
-          <div class="item-scan-wrap">
-            <span class="scan-icon-prefix">&#9524;</span>
-            <input type="text" id="itemScanInput" class="big-scan-input"
-              placeholder="Scan item barcode / SKU&#8230;"
-              autocomplete="off" autocorrect="off" spellcheck="false" />
-          </div>
-          <div id="itemScanFeedback" class="scan-feedback hidden"></div>
-          <div class="dock-actions">
-            <button class="btn-danger"  id="cancelOrderBtn">&#10005; Cancel</button>
-            <button class="btn-pause"   id="pauseOrderBtn">&#9646;&#9646; Pause</button>
-            <button class="btn-success" id="completeOrderBtn">&#10003; Complete</button>
-          </div>
-        </div>
-
-      </div><!-- /phaseItems -->
-    </section>
-
-    <!-- ── TAB 4: Log ── -->
+    <!-- ── TAB 3: Log ── -->
     <section id="tab-log" class="tab">
       <div class="log-header">
         <h2>Upload Log</h2>
@@ -221,6 +215,23 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="mismatchContinueBtn">Continue Scanning</button>
         <button class="btn-danger"    id="mismatchCancelBtn">Cancel Order &#8212; Mark Unprocessed</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Print Waybill Modal -->
+  <div id="printWaybillOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#128438;</div>
+      <div class="modal-title">Print Waybill?</div>
+      <p class="modal-desc">Order <strong id="printOrderNo"></strong> completed.</p>
+      <div class="print-countdown-wrap">
+        <div class="print-countdown-bar" id="printCountdownBar"></div>
+      </div>
+      <p class="hint" style="text-align:center;margin-top:.5rem">Auto-skipping in <span id="printCountdownNum">3</span>s&hellip;</p>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="printSkipBtn">Skip</button>
+        <button class="btn-primary"   id="printNowBtn">&#128438; Print Waybill</button>
       </div>
     </div>
   </div>

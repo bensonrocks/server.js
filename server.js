@@ -6,6 +6,9 @@ const path       = require('path');
 const fs         = require('fs');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
+const { PDFDocument } = require('pdf-lib');
+let pdfParse;
+try { pdfParse = require('pdf-parse'); } catch {}
 
 const app    = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -14,11 +17,13 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Persistent storage ──────────────────────────────────────────────────────
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const WMS_DIR  = path.join(DATA_DIR, 'wms');
-const DB_FILE  = path.join(DATA_DIR, 'db.json');
+const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
+const WMS_DIR     = path.join(DATA_DIR, 'wms');
+const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
+const DB_FILE     = path.join(DATA_DIR, 'db.json');
 
-fs.mkdirSync(WMS_DIR, { recursive: true });
+fs.mkdirSync(WMS_DIR,     { recursive: true });
+fs.mkdirSync(WAYBILL_DIR, { recursive: true });
 
 function readDb() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
@@ -67,7 +72,7 @@ const sessions = {};
 function getSession(id) {
   if (!sessions[id]) sessions[id] = {
     orders: [], scanStates: {}, batchId: null,
-    orderBatchMap: {},  // { [orderNumber]: batchId }
+    orderBatchMap: {},
   };
   return sessions[id];
 }
@@ -137,15 +142,66 @@ function summarizeOrders(lines) {
 }
 
 function ordersWithState(session) {
+  const db = readDb();
   return summarizeOrders(session.orders).map(ord => {
-    const state = getScanState(session, ord.order_number);
+    const state   = getScanState(session, ord.order_number);
+    const batchId = session.orderBatchMap[ord.order_number] || session.batchId;
+    const batch   = db.batches.find(b => b.id === batchId);
+    const waybillPath = path.join(WAYBILL_DIR, batchId || '', `${ord.order_number}.pdf`);
     return {
       ...ord,
-      scan_status: state.status,
-      scanned:     { ...state.scanned },
-      batchId:     session.orderBatchMap[ord.order_number] || session.batchId,
+      scan_status:  state.status,
+      scanned:      { ...state.scanned },
+      batchId,
+      client_name:  batch?.client_name || '',
+      has_waybill_pdf: fs.existsSync(waybillPath),
     };
   });
+}
+
+// ── PDF waybill splitting ───────────────────────────────────────────────────
+async function splitWaybillPdf(pdfBuffer, batchId, orders) {
+  const matched = {};
+  try {
+    const pdfDoc   = await PDFDocument.load(pdfBuffer);
+    const numPages = pdfDoc.getPageCount();
+    const dir      = path.join(WAYBILL_DIR, batchId);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const waybills = orders
+      .filter(o => o.waybill_number)
+      .map(o => ({ orderNumber: o.order_number, waybill: o.waybill_number.toUpperCase() }));
+
+    for (let i = 0; i < numPages; i++) {
+      const single = await PDFDocument.create();
+      const [pg]   = await single.copyPages(pdfDoc, [i]);
+      single.addPage(pg);
+      const buf = Buffer.from(await single.save());
+
+      let assignedOrder = null;
+
+      if (pdfParse && waybills.length) {
+        try {
+          const parsed = await pdfParse(buf);
+          const text   = (parsed.text || '').replace(/\s+/g, ' ').toUpperCase();
+          for (const w of waybills) {
+            if (!matched[w.orderNumber] && text.includes(w.waybill)) {
+              assignedOrder = w.orderNumber;
+              matched[w.orderNumber] = true;
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      // Save as order file if matched, otherwise by page number
+      const fname = assignedOrder ? `${assignedOrder}.pdf` : `_page_${i + 1}.pdf`;
+      fs.writeFileSync(path.join(dir, fname), buf);
+    }
+  } catch (err) {
+    console.error('[pdf-split]', err.message);
+  }
+  return matched;
 }
 
 // ── BETIME WMS XLSX ─────────────────────────────────────────────────────────
@@ -219,12 +275,19 @@ function persistState(session, orderNumber, status, scanned, extra = {}) {
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
+const uploadFields = upload.fields([
+  { name: 'orderFile',   maxCount: 1 },
+  { name: 'waybillPdf',  maxCount: 1 },
+]);
 
-app.post('/api/upload', upload.single('orderFile'), async (req, res) => {
+app.post('/api/upload', uploadFields, async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const orderFile  = req.files?.orderFile?.[0];
+    const waybillPdf = req.files?.waybillPdf?.[0];
 
-    const mapped = parseUploadedFile(req.file.buffer, req.file.originalname);
+    if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
+
+    const mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
@@ -232,14 +295,16 @@ app.post('/api/upload', upload.single('orderFile'), async (req, res) => {
     const orders    = summarizeOrders(mapped);
     const wmsBuffer = generateBeTimeXLSX(orders);
     const batchId   = uuidv4();
+    const clientName = (req.body?.client_name || '').trim();
 
     const batch = {
-      id: batchId, filename: req.file.originalname,
+      id: batchId, filename: orderFile.originalname,
       uploaded_at: new Date().toISOString(),
+      client_name: clientName,
       order_count: orders.length, row_count: mapped.length,
       orderStates: {},
-      orders,       // summarized orders (for all-pending & stats)
-      rawRows: mapped, // flat rows (for session restore)
+      orders,
+      rawRows: mapped,
     };
 
     const db = readDb();
@@ -281,6 +346,13 @@ app.post('/api/upload', upload.single('orderFile'), async (req, res) => {
     writeDb(db);
     fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
 
+    // Split waybill PDF if provided
+    if (waybillPdf) {
+      splitWaybillPdf(waybillPdf.buffer, batchId, orders).catch(err =>
+        console.error('[waybill-pdf]', err.message)
+      );
+    }
+
     sendWmsEmail(batch, wmsBuffer, orders).catch(err => console.error('[email]', err.message));
 
     res.json({ sessionId, batchId, rowCount: mapped.length, orders: ordersWithState(session) });
@@ -302,10 +374,20 @@ app.get('/api/download-wms/:batchId', (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
+app.get('/api/waybill-pdf/:batchId/:orderNumber', (req, res) => {
+  const { batchId, orderNumber } = req.params;
+  const filePath = path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Waybill PDF not found' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${orderNumber}_waybill.pdf"`);
+  fs.createReadStream(filePath).pipe(res);
+});
+
 app.get('/api/batches', (_req, res) => {
   const db = readDb();
   res.json(db.batches.map(b => ({
     id: b.id, filename: b.filename, uploaded_at: b.uploaded_at,
+    client_name: b.client_name || '',
     order_count: b.order_count, row_count: b.row_count, orderStates: b.orderStates,
   })));
 });

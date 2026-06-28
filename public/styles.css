@@ -725,6 +725,100 @@ tr:hover td { background: #f8fafc; }
 .chip-inprog { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
 
 /* ════════════════════════════════════════════════════
+   SCAN OVERLAY (full-screen, replaces Scanner tab)
+   ════════════════════════════════════════════════════ */
+.scan-overlay {
+  position: fixed;
+  inset: 0;
+  top: var(--header-h);
+  z-index: 500;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scan-overlay.hidden { display: none !important; }
+body.scan-open { overflow: hidden; }
+
+/* ════════════════════════════════════════════════════
+   FILTER ROW (client / carrier chips)
+   ════════════════════════════════════════════════════ */
+.filter-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .4rem;
+  padding: .55rem 0; margin-bottom: .35rem;
+}
+.filter-label {
+  font-size: .72rem; font-weight: 700; color: var(--text-light);
+  text-transform: uppercase; letter-spacing: .05em; margin-right: .25rem;
+  white-space: nowrap;
+}
+.filter-chip {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text-light); font-size: .78rem; font-weight: 500;
+  padding: .25em .75em; border-radius: 99px; cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+  white-space: nowrap;
+}
+.filter-chip:hover  { border-color: var(--primary); color: var(--primary); }
+.filter-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+
+/* ════════════════════════════════════════════════════
+   ORDER CARD additions
+   ════════════════════════════════════════════════════ */
+.dash-order-client {
+  font-size: .72rem; font-weight: 700; color: var(--primary);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.chip-client  { background: #eff6ff; color: var(--primary); border: 1px solid #bfdbfe; }
+.chip-carrier { background: #f0fdf4; color: var(--success);  border: 1px solid var(--success-border); font-size: .72rem; }
+
+.btn-waybill-pdf {
+  display: inline-flex; align-items: center;
+  background: #f8fafc; border: 1px solid var(--border);
+  border-radius: 5px; padding: .3rem .55rem;
+  font-size: .9rem; text-decoration: none; color: var(--text-light);
+  transition: background .12s;
+}
+.btn-waybill-pdf:hover { background: #eff6ff; color: var(--primary); }
+
+/* ════════════════════════════════════════════════════
+   UPLOAD: waybill pdf row + client name input
+   ════════════════════════════════════════════════════ */
+.waybill-upload-row {
+  display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  margin-top: .85rem;
+}
+.waybill-upload-label {
+  display: flex; align-items: center; gap: .6rem;
+  font-size: .82rem; font-weight: 600; color: var(--text-light);
+}
+.hint-inline { font-weight: 400; font-size: .75rem; }
+.btn-sm { padding: .3rem .7rem; font-size: .78rem; }
+.waybill-pdf-name {
+  font-size: .78rem; color: var(--primary); font-style: italic;
+  word-break: break-all;
+}
+
+/* ════════════════════════════════════════════════════
+   PRINT WAYBILL MODAL
+   ════════════════════════════════════════════════════ */
+.print-countdown-wrap {
+  height: 6px; background: var(--border); border-radius: 3px;
+  overflow: hidden; margin: .85rem 0 .25rem;
+}
+.print-countdown-bar {
+  height: 100%; background: var(--primary);
+  width: 100%;
+  border-radius: 3px;
+}
+
+/* Log: client name */
+.log-client {
+  font-size: .72rem; font-weight: 700; color: var(--primary);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+
+/* ════════════════════════════════════════════════════
    RESPONSIVE ADDITIONS — MOBILE
    ════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
@@ -743,4 +837,9 @@ tr:hover td { background: #f8fafc; }
   .dock-actions .btn-danger,
   .dock-actions .btn-pause,
   .dock-actions .btn-success { font-size: .78rem; padding: .55rem .4rem; }
+
+  .filter-row { gap: .3rem; padding: .4rem 0; }
+  .filter-chip { font-size: .72rem; padding: .2em .6em; }
+
+  .scan-overlay { top: var(--header-h); }
 }

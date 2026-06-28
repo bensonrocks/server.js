@@ -5,11 +5,12 @@
   let activeOrder  = null;
   let currentUser  = null;
   let timerInterval = null;
+  let activeClientFilter  = 'all';
+  let activeCarrierFilter = 'all';
+  let printWaybillTimer   = null;
 
-  // Persist order start times across page reloads
   let orderTimings = {};
   try { orderTimings = JSON.parse(sessionStorage.getItem('wms_timings') || '{}'); } catch {}
-
   function saveTimings() { sessionStorage.setItem('wms_timings', JSON.stringify(orderTimings)); }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -154,7 +155,7 @@
         document.getElementById('pinSubtitle').textContent = 'Choose a PIN to lock the app when you step away';
         pinMode = 'setup';
       }
-    } else { // unlock
+    } else {
       if (pinBuffer === getPin()) {
         closePinOverlay();
       } else {
@@ -190,14 +191,13 @@
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
     if (name === 'upload')  fetchAndRenderStats();
     if (name === 'orders')  renderOrdersDash();
-    if (name === 'scanner') renderScannerTab();
     if (name === 'log')     renderLogTab();
   }
 
   // ── Dashboard Stats ────────────────────────────────────────────────────────
   async function fetchAndRenderStats() {
     try {
-      const resp  = await fetch('/api/stats');
+      const resp = await fetch('/api/stats');
       if (!resp.ok) return;
       const s = await resp.json();
       document.getElementById('dashStatsGrid').innerHTML = `
@@ -230,22 +230,43 @@
   // ── Upload tab ─────────────────────────────────────────────────────────────
   const dropZone  = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
+  const waybillPdfInput = document.getElementById('waybillPdfInput');
 
-  document.getElementById('browseBtn').addEventListener('click', () => fileInput.click());
+  document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+  document.getElementById('browsePdfBtn').addEventListener('click', () => waybillPdfInput.click());
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', e => {
     e.preventDefault(); dropZone.classList.remove('dragover');
-    if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files[0]) handleOrderFile(e.dataTransfer.files[0]);
   });
-  fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
-  document.getElementById('goScannerBtn').addEventListener('click', () => switchTab('scanner'));
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleOrderFile(fileInput.files[0]); });
+  waybillPdfInput.addEventListener('change', () => {
+    const f = waybillPdfInput.files[0];
+    document.getElementById('waybillPdfName').textContent = f ? f.name : '';
+  });
 
-  async function uploadFile(file) {
+  document.getElementById('goOrdersBtn').addEventListener('click', () => switchTab('orders'));
+
+  let pendingOrderFile = null;
+
+  function handleOrderFile(file) {
+    pendingOrderFile = file;
+    uploadFiles();
+  }
+
+  async function uploadFiles() {
+    if (!pendingOrderFile) return;
+    const file = pendingOrderFile;
     setUploadStatus('loading', `Uploading ${file.name}…`);
     const form = new FormData();
     form.append('orderFile', file);
+    const pdfFile = waybillPdfInput.files[0];
+    if (pdfFile) form.append('waybillPdf', pdfFile);
+    const clientName = document.getElementById('clientNameInput').value.trim();
+    if (clientName) form.append('client_name', clientName);
+
     try {
       const resp = await fetch('/api/upload', {
         method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: form,
@@ -256,11 +277,13 @@
       sessionStorage.setItem('wms_session', SESSION_ID);
       loadedOrders = data.orders;
       activeOrder  = null;
+      const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       setUploadStatus('success',
-        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed.`
+        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed.${pdfMsg}`
       );
       renderUploadList(data.orders);
       fetchAndRenderStats();
+      pendingOrderFile = null;
     } catch (err) {
       setUploadStatus('error', err.message);
     }
@@ -281,6 +304,7 @@
         <div class="order-card-header">
           <span class="order-no">${esc(ord.order_number)}</span>
           <div class="order-meta-chips">
+            ${ord.client_name    ? `<span class="chip chip-client">${esc(ord.client_name)}</span>` : ''}
             ${ord.customer_name  ? `<span class="chip">${esc(ord.customer_name)}</span>` : ''}
             ${ord.waybill_number ? `<span class="chip waybill">${esc(ord.waybill_number)}</span>` : ''}
             ${ord.carrier        ? `<span class="chip">${esc(ord.carrier)}</span>` : ''}
@@ -323,137 +347,128 @@
       <div class="stat-box done"><div class="val">${c.done||0}</div><div class="lbl">Done</div></div>
       <div class="stat-box unprocessed"><div class="val">${c.unprocessed||0}</div><div class="lbl">Unprocessed</div></div>`;
 
+    // Build client filter
+    const clients = [...new Set(loadedOrders.map(o => o.client_name || '').filter(Boolean))];
+    const clientRow = document.getElementById('clientFilterRow');
+    if (clients.length > 0) {
+      clientRow.innerHTML = `
+        <span class="filter-label">Client:</span>
+        <button class="filter-chip ${activeClientFilter === 'all' ? 'active' : ''}" data-client="all">All</button>
+        ${clients.map(c => `<button class="filter-chip ${activeClientFilter === c ? 'active' : ''}" data-client="${esc(c)}">${esc(c)}</button>`).join('')}`;
+      clientRow.querySelectorAll('.filter-chip[data-client]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          activeClientFilter = btn.dataset.client;
+          renderOrdersList();
+          clientRow.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+      clientRow.classList.remove('hidden');
+    } else {
+      clientRow.innerHTML = '';
+    }
+
+    // Build carrier filter
+    const carriers = [...new Set(loadedOrders.map(o => o.carrier || ''))];
+    const carrierRow = document.getElementById('carrierFilterRow');
+    if (carriers.some(c => c)) {
+      carrierRow.innerHTML = `
+        <span class="filter-label">Carrier:</span>
+        <button class="filter-chip ${activeCarrierFilter === 'all' ? 'active' : ''}" data-carrier="all">All</button>
+        ${carriers.map(c => `<button class="filter-chip ${activeCarrierFilter === c ? 'active' : ''}" data-carrier="${esc(c)}">${esc(c) || 'Unspecified'}</button>`).join('')}`;
+      carrierRow.querySelectorAll('.filter-chip[data-carrier]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          activeCarrierFilter = btn.dataset.carrier;
+          renderOrdersList();
+          carrierRow.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+      carrierRow.classList.remove('hidden');
+    } else {
+      carrierRow.innerHTML = '';
+    }
+
+    renderOrdersList();
+  }
+
+  function renderOrdersList() {
+    let orders = loadedOrders;
+    if (activeClientFilter !== 'all')  orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
+    if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
+
     const sortPriority = { processing: 0, pending: 1, unprocessed: 2, done: 3 };
-    const sorted = [...loadedOrders].sort((a, b) =>
+    orders = [...orders].sort((a, b) =>
       (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
     );
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
 
-    document.getElementById('ordersDashList').innerHTML = sorted.map(ord => {
+    document.getElementById('ordersDashList').innerHTML = orders.length ? orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
       const canScan = ord.scan_status !== 'done';
       return `
         <div class="dash-order-card status-${ord.scan_status}" data-order="${esc(ord.order_number)}">
           <div class="dash-order-left">
             <span class="dash-order-no">${esc(ord.order_number)}</span>
+            ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
             ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
           </div>
           <div class="dash-order-right">
+            ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
             <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
-            <span class="dash-order-prog">${scannedTotal}/${ord.total_qty} scanned</span>
-            ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan →</button>` : ''}
+            <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
+            ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
+            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Open waybill PDF">&#128196;</a>` : ''}
           </div>
         </div>`;
-    }).join('');
+    }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>';
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
-      btn.addEventListener('click', e => { e.stopPropagation(); goToScanner(btn.dataset.order); })
+      btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
     );
     document.querySelectorAll('.dash-order-card').forEach(card =>
-      card.addEventListener('click', () => goToScanner(card.dataset.order))
+      card.addEventListener('click', () => {
+        const ord = loadedOrders.find(o => o.order_number === card.dataset.order);
+        if (ord && ord.scan_status !== 'done') openScanOverlay(card.dataset.order);
+      })
     );
   }
 
-  function goToScanner(orderNumber) {
-    activeOrder = loadedOrders.find(o => o.order_number === orderNumber) || null;
-    switchTab('scanner');
-  }
-
-  // ── Scanner tab ────────────────────────────────────────────────────────────
-  async function renderScannerTab() {
-    await refreshOrders();
-    const hasOrders = loadedOrders.length > 0;
-    document.getElementById('scannerEmpty').classList.toggle('hidden', hasOrders);
-    if (!hasOrders) {
-      document.getElementById('phaseWaybill').classList.add('hidden');
-      document.getElementById('phaseItems').classList.add('hidden');
-      return;
-    }
-    if (activeOrder) {
-      const fresh = loadedOrders.find(o => o.order_number === activeOrder.order_number);
-      if (fresh) activeOrder = fresh;
-      enterItemsPhase(activeOrder);
-    } else {
-      enterWaybillPhase();
-    }
-  }
-
-  // ── Phase A: Waybill ───────────────────────────────────────────────────────
-  function enterWaybillPhase() {
-    document.getElementById('phaseWaybill').classList.remove('hidden');
-    document.getElementById('phaseItems').classList.add('hidden');
-    activeOrder = null;
-    stopTimer();
-
-    const wbInput = document.getElementById('waybillScanInput');
-    wbInput.value = '';
-    document.getElementById('waybillError').classList.add('hidden');
-
-    const pending = loadedOrders.filter(o => o.scan_status === 'pending' || o.scan_status === 'processing');
-    document.getElementById('pendingCount').textContent = pending.length;
-
-    document.getElementById('pendingOrdersList').innerHTML = pending.length
-      ? pending.map(ord => {
-          const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
-          return `
-            <div class="pending-order-btn" data-order="${esc(ord.order_number)}">
-              <div class="pob-left">
-                <span class="pob-no">${esc(ord.order_number)}</span>
-                <span class="pob-customer">${esc(ord.customer_name || '')}</span>
-              </div>
-              <div class="pob-right">
-                ${ord.waybill_number ? `<span class="pob-waybill">${esc(ord.waybill_number)}</span>` : ''}
-                ${ord.scan_status === 'processing' ? '<span class="status-badge processing">In Progress</span>' : ''}
-                <span class="pob-items">${ord.lines.length} SKU${ord.lines.length !== 1 ? 's' : ''} · ${scannedTotal}/${ord.total_qty}</span>
-              </div>
-            </div>`;
-        }).join('')
-      : '<p class="empty-state" style="padding:1.5rem">All orders processed!</p>';
-
-    document.querySelectorAll('.pending-order-btn').forEach(btn =>
-      btn.addEventListener('click', () => startOrderScan(btn.dataset.order))
-    );
-
-    setTimeout(() => wbInput.focus(), 80);
-  }
-
-  document.getElementById('waybillScanInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      const val = e.target.value.trim();
-      if (val) handleWaybillScan(val);
-    }
-  });
-
-  async function handleWaybillScan(waybill) {
-    const errEl = document.getElementById('waybillError');
-    try {
-      const resp = await fetch('/api/waybill-lookup', {
-        method: 'POST', headers: hdrs(), body: JSON.stringify({ waybill }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        errEl.textContent = data.error;
-        errEl.classList.remove('hidden');
-        document.getElementById('waybillScanInput').value = '';
-        return;
-      }
-      errEl.classList.add('hidden');
-      const idx = loadedOrders.findIndex(o => o.order_number === data.order_number);
-      if (idx >= 0) loadedOrders[idx] = data; else loadedOrders.push(data);
-      enterItemsPhase(data);
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.classList.remove('hidden');
-    }
-  }
-
-  function startOrderScan(orderNumber) {
+  // ── Scan Overlay ───────────────────────────────────────────────────────────
+  function openScanOverlay(orderNumber) {
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
-    if (ord) enterItemsPhase(ord);
+    if (!ord) return;
+    activeOrder = ord;
+    enterItemsPhase(ord);
+    document.getElementById('scanOverlay').classList.remove('hidden');
+    document.body.classList.add('scan-open');
   }
 
-  // ── Phase B: Items ─────────────────────────────────────────────────────────
+  function closeScanOverlay() {
+    document.getElementById('scanOverlay').classList.add('hidden');
+    document.body.classList.remove('scan-open');
+    stopTimer();
+    activeOrder = null;
+  }
+
+  document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
+  document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
+
+  async function pauseAndGoToOrders() {
+    if (!activeOrder) return;
+    try {
+      await fetch('/api/scan/save', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      });
+    } catch {}
+    closeScanOverlay();
+    await refreshOrders();
+    renderOrdersList();
+  }
+
+  // ── Items phase ────────────────────────────────────────────────────────────
   function enterItemsPhase(order) {
     activeOrder = order;
     if (!orderTimings[order.order_number]) {
@@ -461,12 +476,10 @@
       saveTimings();
     }
 
-    document.getElementById('phaseWaybill').classList.add('hidden');
-    document.getElementById('phaseItems').classList.remove('hidden');
-
     document.getElementById('scanOrderNo').textContent = order.order_number;
     document.getElementById('scanOrderMeta').innerHTML = `
       <span><strong>Customer:</strong> ${esc(order.customer_name || '—')}</span>
+      ${order.client_name ? `<span><strong>Client:</strong> ${esc(order.client_name)}</span>` : ''}
       <span><strong>Carrier:</strong> ${esc(order.carrier || '—')}</span>
       <span class="${order.waybill_number ? 'waybill-ok' : ''}">
         <strong>Waybill:</strong>
@@ -629,39 +642,20 @@
         activeOrder.scan_status = 'done';
         mergeOrderState(activeOrder.order_number, 'done');
         stopTimer();
-        const btn = document.getElementById('completeOrderBtn');
-        btn.textContent = '✓ Done!'; btn.disabled = true;
-        setTimeout(() => {
-          btn.textContent = '✓ Complete'; btn.disabled = false;
-          activeOrder = null;
-          refreshOrders().then(enterWaybillPhase);
-          fetchAndRenderStats();
-        }, 1400);
+        const completedOrder = activeOrder;
+        closeScanOverlay();
+        await refreshOrders();
+        renderOrdersDash();
+        fetchAndRenderStats();
+        // Prompt to print waybill
+        if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
+          showPrintWaybillModal(completedOrder);
+        }
       } else {
         showMismatchModal(data.mismatches);
       }
     } catch (err) { alert(err.message); }
   });
-
-  // ── Pause order ────────────────────────────────────────────────────────────
-  document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToQueue);
-
-  async function pauseAndGoToQueue() {
-    if (!activeOrder) return;
-    try {
-      await fetch('/api/scan/save', {
-        method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
-      });
-    } catch {}
-    stopTimer();
-    activeOrder = null;
-    await refreshOrders();
-    enterWaybillPhase();
-  }
-
-  // ── Back to queue (also saves progress) ───────────────────────────────────
-  document.getElementById('backToQueueBtn').addEventListener('click', pauseAndGoToQueue);
 
   // ── Cancel order ───────────────────────────────────────────────────────────
   document.getElementById('cancelOrderBtn').addEventListener('click', () => {
@@ -685,11 +679,52 @@
       delete orderTimings[activeOrder.order_number];
       saveTimings();
       mergeOrderState(activeOrder.order_number, 'unprocessed', {});
-      stopTimer();
-      activeOrder = null;
+      closeScanOverlay();
       await refreshOrders();
-      enterWaybillPhase();
+      renderOrdersDash();
     } catch (err) { alert(err.message); }
+  }
+
+  // ── Print waybill modal ────────────────────────────────────────────────────
+  function showPrintWaybillModal(order) {
+    clearTimeout(printWaybillTimer);
+    document.getElementById('printOrderNo').textContent = order.order_number;
+    document.getElementById('printCountdownNum').textContent = '3';
+    document.getElementById('printWaybillOverlay').classList.remove('hidden');
+
+    const bar = document.getElementById('printCountdownBar');
+    bar.style.transition = 'none';
+    bar.style.width = '100%';
+    // Force reflow then animate
+    bar.getBoundingClientRect();
+    bar.style.transition = 'width 3s linear';
+    bar.style.width = '0%';
+
+    let remaining = 3;
+    const numEl = document.getElementById('printCountdownNum');
+    const tick = setInterval(() => {
+      remaining--;
+      numEl.textContent = remaining;
+      if (remaining <= 0) {
+        clearInterval(tick);
+        closePrintWaybillModal();
+      }
+    }, 1000);
+    printWaybillTimer = tick;
+
+    document.getElementById('printNowBtn').onclick = () => {
+      clearInterval(tick);
+      window.open(`/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}`, '_blank');
+      closePrintWaybillModal();
+    };
+    document.getElementById('printSkipBtn').onclick = () => {
+      clearInterval(tick);
+      closePrintWaybillModal();
+    };
+  }
+
+  function closePrintWaybillModal() {
+    document.getElementById('printWaybillOverlay').classList.add('hidden');
   }
 
   // ── Mismatch modal ─────────────────────────────────────────────────────────
@@ -737,6 +772,7 @@
           <div class="log-card">
             <div class="log-card-left">
               <span class="log-filename">${esc(b.filename)}</span>
+              ${b.client_name ? `<span class="log-client">${esc(b.client_name)}</span>` : ''}
               <span class="log-date">${date}</span>
               <div class="log-chips">
                 <span class="chip">${b.order_count} orders</span>
