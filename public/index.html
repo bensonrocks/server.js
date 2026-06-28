@@ -202,26 +202,89 @@
 
   </div><!-- /cameraScanOverlay -->
 
-  <!-- ── Log Overlay ── -->
+  <!-- ── Administrator Overlay ── -->
   <div id="logOverlay" class="log-overlay hidden">
     <div class="log-overlay-header">
       <div class="log-overlay-title">
         <svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>
-        <h2>Upload Log</h2>
+        <h2>Administrator</h2>
       </div>
       <button class="back-btn" id="closeLogBtn">&#10005; Close</button>
     </div>
-    <p class="hint" style="padding:.4rem 1.25rem .6rem">All uploaded batches. Click WMS to download.</p>
 
-    <!-- Master Actions (shown after password unlock) -->
+    <!-- Admin nav tabs (shown after unlock) -->
     <div id="masterActionsSection" class="master-actions hidden">
-      <div class="master-actions-title">&#128274; Master Actions</div>
-      <div class="master-actions-btns">
-        <button class="btn-secondary" id="masterExportBtn">&#8681; Export Status Report</button>
-        <button class="btn-danger"    id="masterResetBtn">&#128465; Master Reset</button>
+      <div class="admin-nav">
+        <button class="admin-nav-btn active" data-admin-tab="batches">&#128196; Upload History</button>
+        <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
+        <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
+        <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
+        <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
-      <div class="master-upload-wrap">
-        <div class="master-upload-label">Upload New Picklist</div>
+
+      <!-- Tab: Upload History -->
+      <div class="admin-tab active" id="adminTab-batches">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Upload History</div>
+            <div class="admin-section-sub">All picklists uploaded. Click WMS to download the converted file.</div>
+          </div>
+          <button class="btn-primary btn-sm" id="masterExportBtn">&#8681; Export Audit Trail</button>
+        </div>
+        <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>
+        <div id="logOverlayList"></div>
+      </div>
+
+      <!-- Tab: Users -->
+      <div class="admin-tab hidden" id="adminTab-users">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">System Users</div>
+            <div class="admin-section-sub">Manage who can access IdealScan and their role.</div>
+          </div>
+        </div>
+        <div id="userList" class="user-list-wrap"></div>
+        <div class="admin-add-card">
+          <div class="admin-add-title">Add New User</div>
+          <div class="user-add-row">
+            <input type="text"     id="newUserId"   placeholder="User ID"           autocomplete="off" />
+            <input type="text"     id="newUserName" placeholder="Display Name"       autocomplete="off" />
+            <input type="password" id="newUserPass" placeholder="Password"           autocomplete="new-password" />
+            <select id="newUserRole" class="user-role-select">
+              <option value="warehouse">Warehouse</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button class="btn-primary" id="addUserBtn">+ Add User</button>
+          </div>
+        </div>
+        <div id="userMgmtStatus" class="status-bar hidden"></div>
+      </div>
+
+      <!-- Tab: WMS Template -->
+      <div class="admin-tab hidden" id="adminTab-wms">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Keyfields Output Template</div>
+            <div class="admin-section-sub">Download to verify the WMS column format. Upload a custom template (row 1 = headers) to change the output columns.</div>
+          </div>
+        </div>
+        <div class="admin-action-row">
+          <a class="admin-action-link" id="kfDownloadTplBtn">&#8681; Download current template</a>
+          <a class="admin-action-link" id="kfResetTplBtn">&#8635; Reset to default</a>
+        </div>
+        <div class="master-upload-label" style="margin-top:1rem">Upload New Template</div>
+        <div class="upload-area upload-area-sm" id="kfTplDropZone">
+          <input type="file" id="kfTplFileInput" accept=".xlsx,.xls" hidden />
+          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
+          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="kfTplBrowseBtn">browse</button></p>
+        </div>
+        <div id="kfTplStatus" class="status-bar hidden"></div>
+        <div class="admin-section-header" style="margin-top:1.5rem">
+          <div>
+            <div class="admin-section-title">Upload New Picklist</div>
+            <div class="admin-section-sub">Upload an additional picklist without leaving the admin panel.</div>
+          </div>
+        </div>
         <div class="upload-area upload-area-sm" id="masterDropZone">
           <input type="file" id="masterFileInput" accept=".xlsx,.xls,.csv" hidden />
           <div class="upload-icon" style="font-size:1.4rem">&#8679;</div>
@@ -230,52 +293,21 @@
         <div id="masterUploadStatus" class="status-bar hidden"></div>
       </div>
 
-      <!-- Keyfields Output Template -->
-      <div class="kf-tpl-section">
-        <div class="kf-tpl-title">Keyfields Output Template</div>
-        <p class="kf-tpl-desc">Download to verify the WMS column format. Upload a new template (row&nbsp;1&nbsp;=&nbsp;headers) to change the output columns.</p>
-        <div class="kf-tpl-btns">
-          <button class="btn-secondary" id="kfDownloadTplBtn">&#8681; Download Template</button>
-          <button class="btn-secondary" id="kfResetTplBtn">&#8635; Reset to Default</button>
-        </div>
-        <div class="master-upload-label" style="margin-top:.75rem">Upload New Template</div>
-        <div class="upload-area upload-area-sm" id="kfTplDropZone">
-          <input type="file" id="kfTplFileInput" accept=".xlsx,.xls" hidden />
-          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
-          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="kfTplBrowseBtn">browse</button></p>
-        </div>
-        <div id="kfTplStatus" class="status-bar hidden"></div>
-      </div>
-
-      <!-- System Users -->
-      <div class="user-mgmt-section">
-        <div class="user-mgmt-title">&#128100; System Users</div>
-        <div id="userList" class="user-list-wrap"></div>
-        <div class="user-add-form">
-          <div class="user-add-row">
-            <input type="text"     id="newUserId"   placeholder="User ID"                 autocomplete="off" />
-            <input type="text"     id="newUserName" placeholder="Display Name (optional)" autocomplete="off" />
-            <input type="password" id="newUserPass" placeholder="Password"                autocomplete="new-password" />
-            <select id="newUserRole" class="user-role-select">
-              <option value="warehouse">Warehouse</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button class="btn-secondary" id="addUserBtn">+ Add User</button>
+      <!-- Tab: Email -->
+      <div class="admin-tab hidden" id="adminTab-email">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Email Settings</div>
+            <div class="admin-section-sub">Completion alerts are sent to the recipient below when warehouse marks an order done.</div>
           </div>
         </div>
-        <div id="userMgmtStatus" class="status-bar hidden"></div>
-      </div>
-
-      <!-- Email Settings -->
-      <div class="email-cfg-section">
-        <div class="email-cfg-title">&#9993; Email Settings</div>
         <div class="email-cfg-grid">
           <div class="form-group">
             <label>From Email <span class="cfg-req">*</span></label>
             <input type="email" id="cfgFromEmail" placeholder="your@gmail.com" autocomplete="off" />
           </div>
           <div class="form-group">
-            <label>Password <span class="cfg-note" id="cfgPassNote"></span></label>
+            <label>App Password <span class="cfg-note" id="cfgPassNote"></span></label>
             <input type="password" id="cfgPassword" placeholder="Leave blank to keep existing" autocomplete="new-password" />
           </div>
           <div class="form-group">
@@ -287,32 +319,51 @@
             <input type="number" id="cfgSmtpPort" placeholder="587" autocomplete="off" />
           </div>
           <div class="form-group cfg-full">
-            <label>Default Recipient (pre-fills upload form)</label>
+            <label>Default Alert Recipient</label>
             <input type="email" id="cfgToEmail" placeholder="wms@warehouse.com" autocomplete="off" />
           </div>
         </div>
         <div class="email-cfg-actions">
-          <button class="btn-secondary" id="saveEmailCfgBtn">&#10003; Save</button>
-          <button class="btn-secondary" id="testEmailCfgBtn">&#9993; Send Test Email</button>
+          <button class="btn-primary"    id="saveEmailCfgBtn">&#10003; Save Settings</button>
+          <button class="btn-secondary"  id="testEmailCfgBtn">&#9993; Send Test Email</button>
           <button class="btn-danger-sm"  id="clearEmailCfgBtn">&#215; Clear</button>
         </div>
         <div id="emailCfgStatus" class="status-bar hidden"></div>
       </div>
+
+      <!-- Tab: System / Danger zone -->
+      <div class="admin-tab hidden" id="adminTab-danger">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">System</div>
+            <div class="admin-section-sub">Destructive actions. These cannot be undone.</div>
+          </div>
+        </div>
+        <div class="danger-zone-card">
+          <div class="danger-zone-label">Master Reset</div>
+          <p class="danger-zone-desc">Deletes all uploaded batches, order states, and WMS files. Users and email settings are preserved.</p>
+          <button class="btn-danger" id="masterResetBtn">&#128465; Reset All Data</button>
+        </div>
+      </div>
     </div>
 
-    <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>
-    <div id="logOverlayList" style="padding:0 1.25rem 3rem"></div>
+    <!-- Locked state — shown before password unlock -->
+    <div id="adminLockedState" class="admin-locked-state">
+      <p class="hint" style="padding:.4rem 1.25rem .6rem">All uploaded batches. Click WMS to download.</p>
+      <div id="logOverlayEmptyLocked" class="empty-state hidden">No uploads yet.</div>
+      <div id="logOverlayListLocked" style="padding:0 1.25rem 3rem"></div>
+    </div>
   </div>
 
-  <!-- ── Log Password Modal ── -->
+  <!-- ── Administrator Access Modal ── -->
   <div id="logPasswordOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:340px">
       <div class="pin-logo-row" style="justify-content:center;margin-bottom:.75rem">
         <svg class="is-icon-sm" aria-hidden="true"><use href="#is-icon"/></svg>
         <span class="pin-brand-name">IDEALSCAN</span>
       </div>
-      <div class="modal-title">Log Access</div>
-      <p class="modal-desc">Enter the access password to view upload logs.</p>
+      <div class="modal-title">Administrator Access</div>
+      <p class="modal-desc">Enter the administrator password to unlock settings.</p>
       <div class="form-group">
         <label>Password</label>
         <input type="password" id="logPasswordInput" placeholder="Enter password" autocomplete="off" />
@@ -434,7 +485,7 @@
         <span class="footer-by">By Benson</span>
       </div>
     </div>
-    <button class="log-access-link" id="logAccessBtn">&#128196; Upload Log</button>
+    <button class="log-access-link" id="logAccessBtn">&#9881; Administrator</button>
   </footer>
 
   <!-- Upload Confirm Modal -->

@@ -1364,15 +1364,31 @@
   async function openLogOverlay() {
     document.getElementById('logOverlay').classList.remove('hidden');
     document.body.classList.add('log-open');
-    renderMasterActions();
-    await renderLogContent();
+    if (logUnlocked) {
+      renderMasterActions();
+      await renderLogContent();
+    } else {
+      await renderLogContent();
+    }
   }
 
   function renderMasterActions() {
     document.getElementById('masterActionsSection').classList.remove('hidden');
+    document.getElementById('adminLockedState').classList.add('hidden');
     loadUserList();
     loadEmailConfig();
   }
+
+  // Admin tab switching
+  document.querySelectorAll('.admin-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.admin-nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.admin-tab').forEach(t => t.classList.add('hidden'));
+      btn.classList.add('active');
+      document.getElementById(`adminTab-${btn.dataset.adminTab}`).classList.remove('hidden');
+      if (btn.dataset.adminTab === 'batches') renderLogContent();
+    });
+  });
 
   // ── User Management ─────────────────────────────────────────────────────────
   async function loadUserList() {
@@ -1690,7 +1706,7 @@
             <div class="log-card-left">
               <span class="log-filename">${esc(b.filename)}</span>
               ${b.client_name ? `<span class="log-client">${esc(b.client_name)}</span>` : ''}
-              <span class="log-date">${date}</span>
+              <span class="log-date">${date}${b.uploaded_by ? ` &nbsp;·&nbsp; <strong>${esc(b.uploaded_by)}</strong>` : ''}</span>
               <div class="log-chips">
                 <span class="chip">${b.order_count} orders</span>
                 <span class="chip">${b.row_count} lines</span>

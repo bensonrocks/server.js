@@ -450,6 +450,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const batch = {
       id: batchId, filename: orderFile.originalname,
       uploaded_at: new Date().toISOString(),
+      uploaded_by: req.userId || '',
       client_name: clientName,
       order_count: orders.length, row_count: mapped.length,
       orderStates: {},
@@ -806,7 +807,7 @@ function checkMaster(req, res) {
 app.get('/api/master/export-status', (req, res) => {
   if (!checkMaster(req, res)) return;
   const db   = readDb();
-  const rows = [['Batch File','Client','Uploaded','Order No','Customer','Carrier','Waybill','Total Qty','Status','Scanned Qty','Start Time','End Time','Operator']];
+  const rows = [['Batch File','Uploaded By','Client','Uploaded At','Order No','Customer','Carrier','Waybill','Total Qty','Status','Scanned Qty','Start Time','End Time','Operator']];
   for (const batch of db.batches) {
     const states  = batch.orderStates || {};
     const dateStr = new Date(batch.uploaded_at).toLocaleString();
@@ -814,7 +815,7 @@ app.get('/api/master/export-status', (req, res) => {
       const state        = states[ord.order_number] || {};
       const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
       rows.push([
-        batch.filename, batch.client_name || '', dateStr,
+        batch.filename, batch.uploaded_by || '', batch.client_name || '', dateStr,
         ord.order_number, ord.customer_name || '', ord.carrier || '', ord.waybill_number || '',
         ord.total_qty || 0, state.status || 'pending', scannedTotal,
         state.startTime || '', state.endTime || '', state.operator || '',
