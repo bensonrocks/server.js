@@ -8,6 +8,7 @@ const path       = require('path');
 const fs         = require('fs');
 const TICKER_DB  = require('./tickers');
 const { SEED, nextDrip } = require('./seed_articles');
+const { generateBrief, setTickerDB } = require('./brief');
 
 const app    = express();
 const server = http.createServer(app);
@@ -292,6 +293,11 @@ app.get('/api/status', (req, res) => {
   res.json({ articles: articles.length, watchlist, feeds: RSS_FEEDS.length });
 });
 
+app.get('/api/brief', (req, res) => {
+  const tz = req.query.tz || 'UTC';
+  res.json(generateBrief(articles, tz));
+});
+
 // ─── Seed Data ────────────────────────────────────────────────────────────────
 function loadSeedData() {
   console.log(`[SEED] Loading ${SEED.length} seed articles…`);
@@ -326,6 +332,7 @@ function startDripSimulation() {
 // ─── Start ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`\n🚀  MarketPulse running → http://localhost:${PORT}\n`);
+  setTickerDB(TICKER_DB); // Give brief generator access to validate tickers
   loadSeedData();
   startDripSimulation();
   // Also poll real feeds — they'll add articles if network allows
