@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0f172a">
+<title>IDEAL — OMS + SCAN</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;line-height:1.5}
+button{cursor:pointer;border:none;background:none;font:inherit}
+input,select,textarea{font:inherit}
+ul{list-style:none}
+a{color:#2563eb;text-decoration:none}
+
+/* ── SHELL ── */
+.app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* ── TOPBAR ── */
+.topbar{height:56px;background:#0f172a;display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:20}
+.tb-brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.tb-logo{width:36px;height:36px;border-radius:8px;background:#1d4ed8;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.tb-name{font-size:18px;font-weight:900;color:#fff;letter-spacing:-.4px}
+.tb-sep{width:1px;height:22px;background:rgba(255,255,255,.15);margin:0 2px}
+
+/* App-switcher pills */
+.app-switch{display:flex;gap:4px;background:rgba(255,255,255,.07);border-radius:10px;padding:3px}
+.asw{padding:5px 14px;border-radius:7px;font-size:12px;font-weight:700;color:rgba(255,255,255,.5);transition:all .15s;letter-spacing:.2px}
+.asw.on{background:#1d4ed8;color:#fff}
+.asw:hover:not(.on){background:rgba(255,255,255,.1);color:#fff}
+
+.tb-right{display:flex;align-items:center;gap:8px;margin-left:auto}
+.tb-search{padding:6px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.09);color:#fff;font-size:13px;width:200px}
+.tb-search::placeholder{color:rgba(255,255,255,.35)}
+.tb-search:focus{outline:none;border-color:rgba(255,255,255,.4)}
+.tb-btn{padding:5px 13px;border-radius:8px;font-size:12px;font-weight:700;transition:all .12s}
+.tb-btn-p{background:#2563eb;color:#fff}.tb-btn-p:hover{background:#1d4ed8}
+.tb-btn-o{border:1.5px solid rgba(255,255,255,.2);color:#fff;background:transparent}.tb-btn-o:hover{background:rgba(255,255,255,.1)}
+.tb-avatar{width:32px;height:32px;border-radius:50%;background:#334155;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#94a3b8;flex-shrink:0}
+
+/* ── LAYOUT ── */
+.layout{display:flex;flex:1;overflow:hidden}
+
+/* ── SIDEBAR ── */
+.sidebar{width:212px;flex-shrink:0;background:#0f172a;overflow-y:auto;padding:8px 0 16px;display:flex;flex-direction:column;gap:0}
+.sb-section{margin-bottom:4px}
+.sb-lbl{font-size:9.5px;font-weight:800;letter-spacing:.9px;color:#334155;padding:12px 14px 5px;text-transform:uppercase}
+.nav-li{display:flex;align-items:center;gap:8px;padding:7px 10px;margin:1px 6px;border-radius:8px;cursor:pointer;color:#94a3b8;font-size:13px;transition:background .12s,color .12s}
+.nav-li:hover{background:#1e293b;color:#e2e8f0}
+.nav-li.on{background:#1d4ed8;color:#fff;font-weight:600}
+.nav-li.on .nb{background:rgba(255,255,255,.2);color:#fff}
+.nav-li .ico{width:18px;text-align:center;font-size:14px;flex-shrink:0}
+.nav-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nb{font-size:10.5px;font-weight:700;background:rgba(255,255,255,.08);color:#475569;padding:1px 7px;border-radius:10px}
+
+/* scan module accent */
+.nav-li.scan-on{background:#0f766e;color:#fff;font-weight:600}
+.nav-li.scan-on .nb{background:rgba(255,255,255,.2);color:#fff}
+.sb-scan-lbl{color:#0d9488}
+
+.sb-divider{border:none;border-top:1px solid #1e293b;margin:6px 14px}
+
+/* ── MAIN ── */
+.main{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+
+/* ── PAGE DISPLAY ── */
+.page{display:none;flex-direction:column;gap:14px}
+.page.on{display:flex}
+
+/* ── STATS GRID ── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;flex-direction:column;gap:6px}
+.stat-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.stat-val{font-size:24px;font-weight:800;color:#0f172a;line-height:1}
+.stat-delta{font-size:11px;font-weight:600;color:#16a34a}
+.stat-icon{font-size:22px;margin-bottom:2px}
+
+/* combined stats strip */
+.dual-stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat-group{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.sg-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sg-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#64748b}
+.sg-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
+.sg-oms{background:#dbeafe;color:#1e40af}
+.sg-scan{background:#ccfbf1;color:#0f766e}
+.sg-inner{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sg-stat{display:flex;flex-direction:column;gap:2px}
+.sg-stat-val{font-size:20px;font-weight:800;color:#0f172a}
+.sg-stat-lbl{font-size:10px;font-weight:600;color:#94a3b8}
+
+/* ── SECTION HEADER ── */
+.sec-hdr{display:flex;align-items:center;justify-content:space-between}
+.sec-hdr h2{font-size:16px;font-weight:800}
+.sec-hdr p{font-size:12px;color:#64748b;margin-top:2px}
+
+/* ── FILTERS BAR ── */
+.filters{background:#fff;border-radius:10px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.flbl{font-size:12px;font-weight:600;color:#64748b;white-space:nowrap}
+.ch-tabs{display:flex;gap:5px;flex-wrap:wrap;flex:1}
+.ftab{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;border:1.5px solid #e2e8f0;color:#64748b;background:transparent;transition:all .12s}
+.ftab:hover{border-color:#2563eb;color:#2563eb}
+.ftab.on{background:#2563eb;border-color:#2563eb;color:#fff}
+.fsel{padding:5px 8px;border-radius:8px;border:1.5px solid #e2e8f0;color:#0f172a;background:#fff;font-size:13px}
+
+/* ── TABLE ── */
+.tbl-wrap{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}
+.tbl{width:100%;border-collapse:collapse}
+.tbl thead{background:#f8fafc;border-bottom:1.5px solid #e2e8f0;position:sticky;top:0;z-index:1}
+.tbl th{padding:9px 13px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.tbl td{padding:11px 13px;border-bottom:1px solid #f1f5f9;vertical-align:middle;font-size:13px}
+.tbl tbody tr:hover{background:#f8fafc;cursor:pointer}
+.tbl tbody tr:last-child td{border-bottom:none}
+.oid{font-family:monospace;font-size:12px;font-weight:700;color:#2563eb}
+
+/* ── BADGES ── */
+.bdg{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap}
+.b-shopify{background:#dcfce7;color:#16a34a}
+.b-lazada{background:#FFF3EC;color:#CC3C00}
+.b-shopee{background:#FFF0EE;color:#BF3010}
+.b-tiktok{background:#f0f0f0;color:#111}
+.b-email{background:#eef2ff;color:#4f46e5}
+.b-amazon{background:#fff7ed;color:#c2410c}
+.sts{display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700}
+.s-pending{background:#fef9c3;color:#854d0e}
+.s-confirmed{background:#dbeafe;color:#1e40af}
+.s-processing{background:#ede9fe;color:#5b21b6}
+.s-shipped{background:#cffafe;color:#155e75}
+.s-delivered{background:#dcfce7;color:#166534}
+.s-cancelled{background:#fee2e2;color:#991b1b}
+
+/* ── SCAN PAGE STYLES ── */
+.scan-hero{background:#0f172a;border-radius:14px;padding:28px 24px;color:#fff;display:flex;align-items:center;gap:24px}
+.scan-hero-left{flex:1}
+.scan-hero h2{font-size:22px;font-weight:900;margin-bottom:6px}
+.scan-hero p{font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:18px}
+.scan-input-row{display:flex;gap:8px}
+.scan-inp{flex:1;padding:10px 14px;border-radius:10px;border:2px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff;font-size:14px;font-family:monospace;letter-spacing:.5px}
+.scan-inp::placeholder{color:rgba(255,255,255,.3);font-family:inherit;letter-spacing:0}
+.scan-inp:focus{outline:none;border-color:#0d9488;background:rgba(255,255,255,.12)}
+.btn-scan{padding:10px 18px;border-radius:10px;background:#0d9488;color:#fff;font-size:13px;font-weight:700;white-space:nowrap;transition:background .12s}
+.btn-scan:hover{background:#0f766e}
+.scan-hero-right{text-align:center;flex-shrink:0}
+.scan-icon-big{font-size:72px;opacity:.6;line-height:1}
+.scan-mode-strip{display:flex;gap:8px;margin-top:14px}
+.scan-mode{padding:5px 14px;border-radius:20px;font-size:12px;font-weight:700;border:1.5px solid rgba(255,255,255,.2);color:rgba(255,255,255,.5);cursor:pointer;transition:all .12s}
+.scan-mode.on{background:#0d9488;border-color:#0d9488;color:#fff}
+.scan-mode:hover:not(.on){border-color:rgba(255,255,255,.4);color:#fff}
+
+.scan-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.scan-card{background:#fff;border-radius:12px;padding:18px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.sc-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#64748b;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.sc-label::after{content:'';flex:1;border-top:1px solid #f1f5f9}
+.scan-result-row{display:flex;align-items:flex-start;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;gap:8px}
+.scan-result-row:last-child{border-bottom:none}
+.sr-key{font-size:12px;color:#94a3b8;white-space:nowrap;flex-shrink:0}
+.sr-val{font-size:13px;font-weight:600;text-align:right;word-break:break-word}
+.sr-val.mono{font-family:monospace;font-size:12px;color:#2563eb}
+.scan-history-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9}
+.scan-history-item:last-child{border-bottom:none}
+.shi-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:#22c55e}
+.dot-warn{background:#f59e0b}
+.dot-err{background:#ef4444}
+.shi-info{flex:1;min-width:0}
+.shi-code{font-family:monospace;font-size:12px;font-weight:700;color:#2563eb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shi-sub{font-size:11px;color:#94a3b8}
+.shi-time{font-size:11px;color:#94a3b8;flex-shrink:0}
+
+/* Camera/scan animation area */
+.scan-viewport{background:#0f172a;border-radius:12px;height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;position:relative;overflow:hidden}
+.scan-line{position:absolute;left:10%;right:10%;height:2px;background:linear-gradient(90deg,transparent,#0d9488,transparent);animation:scanline 2s ease-in-out infinite}
+@keyframes scanline{0%,100%{top:20%}50%{top:78%}}
+.scan-corners::before,.scan-corners::after{content:'';position:absolute;width:28px;height:28px;border-color:#0d9488;border-style:solid}
+.scan-corners::before{top:14px;left:14px;border-width:3px 0 0 3px;border-radius:4px 0 0 0}
+.scan-corners::after{bottom:14px;right:14px;border-width:0 3px 3px 0;border-radius:0 0 4px 0}
+.scan-corners2::before,.scan-corners2::after{content:'';position:absolute;width:28px;height:28px;border-color:#0d9488;border-style:solid}
+.scan-corners2::before{top:14px;right:14px;border-width:3px 3px 0 0;border-radius:0 4px 0 0}
+.scan-corners2::after{bottom:14px;left:14px;border-width:0 0 3px 3px;border-radius:0 0 0 4px}
+.scan-vp-txt{font-size:12px;color:rgba(255,255,255,.4);margin-top:8px}
+.cam-icon{font-size:36px;opacity:.3}
+
+/* ── CONNECTIONS PAGE ── */
+.plat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.plat-tile{background:#fff;border-radius:14px;padding:20px 14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;flex-direction:column;align-items:center;gap:8px;border:2px solid transparent;text-align:center;cursor:pointer;transition:all .18s;user-select:none}
+.plat-tile:hover{box-shadow:0 8px 24px rgba(0,0,0,.1);transform:translateY(-2px)}
+.plat-tile.connected{border-color:#bbf7d0}
+.pt-logo{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;color:#fff;flex-shrink:0}
+.logo-lazada{background:#FF6000}.logo-shopee{background:#EE4D2D}.logo-tiktok{background:#111;font-size:13px;font-weight:900}.logo-shopify{background:#96bf48}.logo-amazon{background:#FF9900}.logo-email{background:#6366f1}
+.pt-name{font-size:14px;font-weight:700;color:#0f172a}
+.pt-status{font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px}
+.pt-on{color:#16a34a}.pt-off{color:#94a3b8}
+.dot-sm{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+
+/* ── COMBINED HOME PAGE ── */
+.home-grid{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+.module-card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.mc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.mc-title{font-size:14px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:7px}
+.mc-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
+.pill-oms{background:#dbeafe;color:#1e40af}
+.pill-scan{background:#ccfbf1;color:#0f766e}
+.mc-link{font-size:12px;color:#2563eb;font-weight:600}
+.mc-link:hover{text-decoration:underline}
+
+/* activity feed */
+.activity-item{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid #f1f5f9;align-items:flex-start}
+.activity-item:last-child{border-bottom:none}
+.act-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.act-oms{background:#eff6ff}
+.act-scan{background:#f0fdfa}
+.act-info{flex:1;min-width:0}
+.act-title{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.act-sub{font-size:11px;color:#94a3b8;margin-top:1px}
+.act-right{flex-shrink:0;text-align:right}
+.act-amt{font-size:13px;font-weight:700}
+.act-time{font-size:11px;color:#94a3b8}
+
+/* scan quick panel */
+.scan-quick{display:flex;flex-direction:column;gap:10px}
+.sq-inp-row{display:flex;gap:6px}
+.sq-inp{flex:1;padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;font-family:monospace;letter-spacing:.5px;color:#0f172a}
+.sq-inp:focus{outline:none;border-color:#0d9488}
+.sq-btn{padding:8px 12px;border-radius:8px;background:#0d9488;color:#fff;font-size:12px;font-weight:700}
+.sq-btn:hover{background:#0f766e}
+.sq-recent{display:flex;flex-direction:column;gap:6px}
+.sq-recent-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#94a3b8;margin-top:4px}
+.sq-item{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border-radius:8px;cursor:pointer;transition:background .1s}
+.sq-item:hover{background:#f1f5f9}
+.sq-code{font-family:monospace;font-size:12px;font-weight:700;color:#2563eb;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sq-sts{font-size:11px;font-weight:700}
+
+/* bulk scan table */
+.bulk-tbl-wrap{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}
+.bulk-toolbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #e2e8f0;flex-wrap:wrap}
+.bulk-counter{font-size:13px;font-weight:700;color:#0f172a}
+.bulk-counter span{color:#0d9488}
+.btn-sm{padding:5px 12px;border-radius:7px;font-size:12px;font-weight:700}
+.btn-teal{background:#0d9488;color:#fff}.btn-teal:hover{background:#0f766e}
+.btn-sec{background:#e2e8f0;color:#0f172a}.btn-sec:hover{background:#cbd5e1}
+.btn-blue{background:#2563eb;color:#fff}.btn-blue:hover{background:#1d4ed8}
+
+/* ── PAGE HEADER ── */
+.page-hdr{background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;align-items:center;justify-content:space-between}
+.page-hdr-left h2{font-size:17px;font-weight:800;margin-bottom:2px}
+.page-hdr-left p{font-size:12px;color:#64748b}
+
+/* ── RESPONSIVE ── */
+@media(max-width:1100px){.plat-grid{grid-template-columns:repeat(2,1fr)}.scan-grid{grid-template-columns:1fr 1fr}.home-grid{grid-template-columns:1fr}.stats-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:768px){.sidebar{display:none}.scan-hero{flex-direction:column}.scan-grid{grid-template-columns:1fr}.dual-stats{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ══════════ TOP BAR ══════════ -->
+  <header class="topbar">
+    <!-- Logo -->
+    <div class="tb-brand">
+      <div class="tb-logo">
+        <svg width="22" height="22" viewBox="0 0 38 38" fill="none">
+          <rect x="2" y="5" width="3" height="28" rx="1" fill="white"/>
+          <rect x="7" y="11" width="1.5" height="20" rx=".75" fill="white"/>
+          <rect x="10.5" y="5" width="3" height="28" rx="1" fill="white"/>
+          <rect x="16" y="9" width="1.5" height="20" rx=".75" fill="white"/>
+          <rect x="19.5" y="5" width="3" height="28" rx="1" fill="white"/>
+          <rect x="24.5" y="11" width="1.5" height="20" rx=".75" fill="white"/>
+          <rect x="28" y="5" width="3" height="28" rx="1" fill="white"/>
+          <rect x="33" y="9" width="2.5" height="20" rx="1" fill="white"/>
+        </svg>
+      </div>
+      <span class="tb-name">IDEAL</span>
+    </div>
+
+    <div class="tb-sep"></div>
+
+    <!-- App switcher -->
+    <div class="app-switch">
+      <button class="asw on" onclick="switchApp('home')">&#9646; Overview</button>
+      <button class="asw" onclick="switchApp('oms')">&#128230; OMS</button>
+      <button class="asw" onclick="switchApp('scan')">&#10010; SCAN</button>
+    </div>
+
+    <!-- Right -->
+    <div class="tb-right">
+      <input class="tb-search" placeholder="Search orders, tracking…" autocomplete="off">
+      <button class="tb-btn tb-btn-o" onclick="showScanQuick()">&#128247; Quick Scan</button>
+      <button class="tb-btn tb-btn-p" onclick="switchPage('oms','oms-orders')">+ Add Order</button>
+      <div class="tb-avatar">AD</div>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ══════════ SIDEBAR ══════════ -->
+    <aside class="sidebar" id="sidebar">
+
+      <!-- OMS section -->
+      <div class="sb-section" id="sb-oms">
+        <div class="sb-lbl">Order Management</div>
+        <li class="nav-li on" id="nav-home" onclick="switchPage('home','home')">
+          <span class="ico">&#9729;</span><span class="nav-name">Overview</span>
+        </li>
+        <li class="nav-li" id="nav-oms-dashboard" onclick="switchPage('oms','oms-dashboard')">
+          <span class="ico">&#128202;</span><span class="nav-name">Dashboard</span><span class="nb">7</span>
+        </li>
+        <li class="nav-li" id="nav-oms-orders" onclick="switchPage('oms','oms-orders')">
+          <span class="ico">&#128230;</span><span class="nav-name">All Orders</span><span class="nb">7</span>
+        </li>
+        <li class="nav-li" id="nav-oms-connections" onclick="switchPage('oms','oms-connections')">
+          <span class="ico">&#128279;</span><span class="nav-name">Connections</span>
+        </li>
+        <li class="nav-li" id="nav-oms-synclog" onclick="switchPage('oms','oms-synclog')">
+          <span class="ico">&#128260;</span><span class="nav-name">Sync Log</span>
+        </li>
+      </div>
+
+      <hr class="sb-divider">
+
+      <!-- SCAN section -->
+      <div class="sb-section" id="sb-scan">
+        <div class="sb-lbl sb-scan-lbl">Scan &amp; Track</div>
+        <li class="nav-li" id="nav-scan-scan" onclick="switchPage('scan','scan-scan')">
+          <span class="ico">&#128247;</span><span class="nav-name">Scan Waybill</span>
+        </li>
+        <li class="nav-li" id="nav-scan-bulk" onclick="switchPage('scan','scan-bulk')">
+          <span class="ico">&#9783;</span><span class="nav-name">Bulk Scan</span><span class="nb">12</span>
+        </li>
+        <li class="nav-li" id="nav-scan-history" onclick="switchPage('scan','scan-history')">
+          <span class="ico">&#128336;</span><span class="nav-name">Scan History</span>
+        </li>
+      </div>
+
+      <hr class="sb-divider">
+
+      <!-- Clients quick-filter -->
+      <div class="sb-section">
+        <div class="sb-lbl">Clients</div>
+        <li class="nav-li" onclick="filterClient(null)"><span class="nav-name">All Clients</span><span class="nb">7</span></li>
+        <li class="nav-li" onclick="filterClient('acme')"><span class="nav-name">Acme Corp</span><span class="nb">3</span></li>
+        <li class="nav-li" onclick="filterClient('techgear')"><span class="nav-name">TechGear Ltd</span><span class="nb">2</span></li>
+        <li class="nav-li" onclick="filterClient('fashion')"><span class="nav-name">Fashion House</span><span class="nb">2</span></li>
+      </div>
+
+    </aside>
+
+    <!-- ══════════ MAIN CONTENT ══════════ -->
+    <main class="main">
+
+      <!-- ──────────────────────────────────────
+           HOME / OVERVIEW PAGE
+      ────────────────────────────────────── -->
+      <div id="page-home" class="page on">
+
+        <!-- Dual stats strip -->
+        <div class="dual-stats">
+          <div class="stat-group">
+            <div class="sg-header">
+              <span class="sg-title">OMS Today</span>
+              <span class="sg-badge sg-oms">IDEALOMS</span>
+            </div>
+            <div class="sg-inner">
+              <div class="sg-stat"><div class="sg-stat-val">7</div><div class="sg-stat-lbl">Total Orders</div></div>
+              <div class="sg-stat"><div class="sg-stat-val">$1,427</div><div class="sg-stat-lbl">Revenue</div></div>
+              <div class="sg-stat"><div class="sg-stat-val">4</div><div class="sg-stat-lbl">Clients</div></div>
+              <div class="sg-stat"><div class="sg-stat-val">6</div><div class="sg-stat-lbl">Channels</div></div>
+            </div>
+          </div>
+          <div class="stat-group">
+            <div class="sg-header">
+              <span class="sg-title">SCAN Today</span>
+              <span class="sg-badge sg-scan">IDEALSCAN</span>
+            </div>
+            <div class="sg-inner">
+              <div class="sg-stat"><div class="sg-stat-val">23</div><div class="sg-stat-lbl">Scanned</div></div>
+              <div class="sg-stat"><div class="sg-stat-val">19</div><div class="sg-stat-lbl">Matched</div></div>
+              <div class="sg-stat"><div class="sg-stat-val">4</div><div class="sg-stat-lbl">Unmatched</div></div>
+              <div class="sg-stat"><div class="sg-stat-val">2</div><div class="sg-stat-lbl">Exceptions</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Combined home grid -->
+        <div class="home-grid">
+
+          <!-- Recent activity (OMS + SCAN interleaved) -->
+          <div class="module-card">
+            <div class="mc-header">
+              <div class="mc-title">&#128337; Live Activity</div>
+              <a class="mc-link" onclick="switchPage('oms','oms-orders')">All orders &rsaquo;</a>
+            </div>
+            <div>
+              <div class="activity-item">
+                <div class="act-icon act-scan">&#128247;</div>
+                <div class="act-info">
+                  <div class="act-title">Waybill scanned — 1Z999AA10123456784</div>
+                  <div class="act-sub"><span class="sts s-shipped" style="font-size:10px">Shipped</span> &middot; Matched to ORD-2026-002</div>
+                </div>
+                <div class="act-right"><div class="act-time">2 min ago</div></div>
+              </div>
+              <div class="activity-item">
+                <div class="act-icon act-oms">&#128230;</div>
+                <div class="act-info">
+                  <div class="act-title">New order — ORD-2026-007</div>
+                  <div class="act-sub"><span class="bdg b-amazon" style="font-size:10px;padding:2px 6px">Amazon</span> &middot; Outdoor World</div>
+                </div>
+                <div class="act-right"><div class="act-amt">$479</div><div class="act-time">18 min ago</div></div>
+              </div>
+              <div class="activity-item">
+                <div class="act-icon act-scan">&#128247;</div>
+                <div class="act-info">
+                  <div class="act-title">Bulk scan complete — 12 waybills</div>
+                  <div class="act-sub">11 matched &middot; 1 exception flagged</div>
+                </div>
+                <div class="act-right"><div class="act-time">35 min ago</div></div>
+              </div>
+              <div class="activity-item">
+                <div class="act-icon act-oms">&#128230;</div>
+                <div class="act-info">
+                  <div class="act-title">Shopee sync completed</div>
+                  <div class="act-sub">3 new orders imported</div>
+                </div>
+                <div class="act-right"><div class="act-time">1 hr ago</div></div>
+              </div>
+              <div class="activity-item">
+                <div class="act-icon act-oms">&#128230;</div>
+                <div class="act-info">
+                  <div class="act-title">New order — ORD-2026-005</div>
+                  <div class="act-sub"><span class="bdg b-shopee" style="font-size:10px;padding:2px 6px">Shopee</span> &middot; Fashion House</div>
+                </div>
+                <div class="act-right"><div class="act-amt">$136</div><div class="act-time">2 hr ago</div></div>
+              </div>
+              <div class="activity-item">
+                <div class="act-icon act-scan">&#128247;</div>
+                <div class="act-info">
+                  <div class="act-title">Waybill scanned — JT000123456MY</div>
+                  <div class="act-sub"><span class="sts s-delivered" style="font-size:10px">Delivered</span> &middot; Matched to ORD-2026-001</div>
+                </div>
+                <div class="act-right"><div class="act-time">3 hr ago</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick scan panel -->
+          <div class="module-card">
+            <div class="mc-header">
+              <div class="mc-title">&#128247; Quick Scan <span class="mc-pill pill-scan">SCAN</span></div>
+              <a class="mc-link" onclick="switchPage('scan','scan-scan')">Full scanner &rsaquo;</a>
+            </div>
+            <div class="scan-quick">
+              <div class="sq-inp-row">
+                <input class="sq-inp" placeholder="Scan or type waybill…" autocomplete="off" id="home-scan-inp">
+                <button class="sq-btn" onclick="doQuickScan()">&#9654;</button>
+              </div>
+              <div class="sq-recent">
+                <div class="sq-recent-lbl">Recent scans</div>
+                <div class="sq-item">
+                  <div class="dot-sm dot-ok"></div>
+                  <div class="sq-code">1Z999AA10123456784</div>
+                  <div class="sq-sts" style="color:#16a34a">Matched</div>
+                </div>
+                <div class="sq-item">
+                  <div class="dot-sm dot-ok"></div>
+                  <div class="sq-code">JT000123456MY</div>
+                  <div class="sq-sts" style="color:#16a34a">Matched</div>
+                </div>
+                <div class="sq-item">
+                  <div class="dot-sm dot-warn"></div>
+                  <div class="sq-code">SPX-PH-34871238</div>
+                  <div class="sq-sts" style="color:#d97706">Unknown</div>
+                </div>
+                <div class="sq-item">
+                  <div class="dot-sm dot-ok"></div>
+                  <div class="sq-code">LAZMY20240501ABC</div>
+                  <div class="sq-sts" style="color:#16a34a">Matched</div>
+                </div>
+                <div class="sq-item">
+                  <div class="dot-sm dot-err"></div>
+                  <div class="sq-code">NINJAMY99001234</div>
+                  <div class="sq-sts" style="color:#dc2626">Exception</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /page-home -->
+
+
+      <!-- ──────────────────────────────────────
+           OMS — DASHBOARD PAGE
+      ────────────────────────────────────── -->
+      <div id="page-oms-dashboard" class="page">
+        <div class="page-hdr">
+          <div class="page-hdr-left">
+            <h2>&#128202; OMS Dashboard</h2>
+            <p>All orders across channels and clients.</p>
+          </div>
+          <button class="tb-btn tb-btn-p" style="padding:6px 14px;font-size:13px">&#8635; Sync All</button>
+        </div>
+        <div class="stats-row">
+          <div class="stat"><div class="stat-icon">&#128230;</div><div class="stat-lbl">Total Orders</div><div class="stat-val">7</div><div class="stat-delta">&#8599; +3 today</div></div>
+          <div class="stat"><div class="stat-icon">&#128176;</div><div class="stat-lbl">Revenue</div><div class="stat-val">$1,427</div><div class="stat-delta">&#8599; +$479</div></div>
+          <div class="stat"><div class="stat-icon">&#128100;</div><div class="stat-lbl">Clients</div><div class="stat-val">4</div></div>
+          <div class="stat"><div class="stat-icon">&#128279;</div><div class="stat-lbl">Channels</div><div class="stat-val">6</div></div>
+        </div>
+        <div class="filters">
+          <span class="flbl">Channel:</span>
+          <div class="ch-tabs">
+            <button class="ftab on">All</button>
+            <button class="ftab">Shopify</button>
+            <button class="ftab">Amazon</button>
+            <button class="ftab">Shopee</button>
+            <button class="ftab">Lazada</button>
+            <button class="ftab">Email</button>
+          </div>
+          <span class="flbl">Status:</span>
+          <select class="fsel"><option>All</option><option>Pending</option><option>Processing</option><option>Shipped</option><option>Delivered</option></select>
+        </div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Order ID</th><th>Client</th><th>Channel</th><th>Date</th><th>Items</th><th>Total</th><th>Status</th><th>Waybill</th></tr></thead>
+            <tbody>
+              <tr><td><span class="oid">ORD-2026-001</span></td><td><b>Acme Corp</b></td><td><span class="bdg b-shopify">&#x2022; Shopify</span></td><td>Apr 25</td><td>2 items</td><td><b>$111.69</b></td><td><span class="sts s-delivered">Delivered</span></td><td><span style="font-family:monospace;font-size:11px;color:#0d9488">JT000123456MY</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-002</span></td><td><b>Acme Corp</b></td><td><span class="bdg b-email">&#x2022; Email</span></td><td>Apr 27</td><td>2 items</td><td><b>$146.21</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="font-family:monospace;font-size:11px;color:#0d9488">1Z999AA10123456784</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-003</span></td><td><b>Acme Corp</b></td><td><span class="bdg b-shopify">&#x2022; Shopify</span></td><td>Apr 30</td><td>1 item</td><td><b>$326.89</b></td><td><span class="sts s-processing">Processing</span></td><td><span style="color:#94a3b8;font-size:11px">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-004</span></td><td><b>TechGear Ltd</b></td><td><span class="bdg b-amazon">&#x2022; Amazon</span></td><td>Apr 26</td><td>1 item</td><td><b>$196.18</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#94a3b8;font-size:11px">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-005</span></td><td><b>Fashion House</b></td><td><span class="bdg b-shopee" style="background:#FFF0EE;color:#BF3010">&#x2022; Shopee</span></td><td>Apr 27</td><td>2 items</td><td><b>$136.23</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#94a3b8;font-size:11px">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-006</span></td><td><b>Home Goods Co</b></td><td><span class="bdg b-email">&#x2022; Email</span></td><td>Apr 26</td><td>2 items</td><td><b>$130.77</b></td><td><span class="sts s-delivered">Delivered</span></td><td><span style="color:#94a3b8;font-size:11px">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-007</span></td><td><b>Outdoor World</b></td><td><span class="bdg b-amazon">&#x2022; Amazon</span></td><td>Apr 29</td><td>2 items</td><td><b>$479.57</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#94a3b8;font-size:11px">—</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /oms-dashboard -->
+
+
+      <!-- ──────────────────────────────────────
+           OMS — ALL ORDERS (same view, alias)
+      ────────────────────────────────────── -->
+      <div id="page-oms-orders" class="page">
+        <div class="page-hdr">
+          <div class="page-hdr-left">
+            <h2>&#128230; All Orders</h2>
+            <p>7 orders across 4 clients and 6 channels.</p>
+          </div>
+          <button class="tb-btn tb-btn-p" style="padding:6px 14px;font-size:13px">+ Add Order</button>
+        </div>
+        <div class="filters">
+          <span class="flbl">Channel:</span>
+          <div class="ch-tabs">
+            <button class="ftab on">All</button>
+            <button class="ftab">Shopify</button>
+            <button class="ftab">Amazon</button>
+            <button class="ftab">Shopee</button>
+            <button class="ftab">Lazada</button>
+          </div>
+          <select class="fsel"><option>All Status</option><option>Shipped</option><option>Delivered</option></select>
+        </div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Order ID</th><th>Client</th><th>Channel</th><th>Date</th><th>Total</th><th>Status</th><th>Waybill / Tracking</th></tr></thead>
+            <tbody>
+              <tr><td><span class="oid">ORD-2026-007</span></td><td><b>Outdoor World</b></td><td><span class="bdg b-amazon">Amazon</span></td><td>Apr 29</td><td><b>$479.57</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#94a3b8;font-size:11px;font-family:monospace">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-003</span></td><td><b>Acme Corp</b></td><td><span class="bdg b-shopify">Shopify</span></td><td>Apr 30</td><td><b>$326.89</b></td><td><span class="sts s-processing">Processing</span></td><td><span style="color:#94a3b8;font-size:11px;font-family:monospace">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-004</span></td><td><b>TechGear Ltd</b></td><td><span class="bdg b-amazon">Amazon</span></td><td>Apr 26</td><td><b>$196.18</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#94a3b8;font-size:11px;font-family:monospace">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-002</span></td><td><b>Acme Corp</b></td><td><span class="bdg b-email">Email</span></td><td>Apr 27</td><td><b>$146.21</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="font-family:monospace;font-size:11px;color:#0d9488">1Z999AA10123456784</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-005</span></td><td><b>Fashion House</b></td><td><span class="bdg b-shopee" style="background:#FFF0EE;color:#BF3010">Shopee</span></td><td>Apr 27</td><td><b>$136.23</b></td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#94a3b8;font-size:11px;font-family:monospace">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-006</span></td><td><b>Home Goods Co</b></td><td><span class="bdg b-email">Email</span></td><td>Apr 26</td><td><b>$130.77</b></td><td><span class="sts s-delivered">Delivered</span></td><td><span style="color:#94a3b8;font-size:11px;font-family:monospace">—</span></td></tr>
+              <tr><td><span class="oid">ORD-2026-001</span></td><td><b>Acme Corp</b></td><td><span class="bdg b-shopify">Shopify</span></td><td>Apr 25</td><td><b>$111.69</b></td><td><span class="sts s-delivered">Delivered</span></td><td><span style="font-family:monospace;font-size:11px;color:#0d9488">JT000123456MY</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /oms-orders -->
+
+
+      <!-- ──────────────────────────────────────
+           OMS — CONNECTIONS PAGE
+      ────────────────────────────────────── -->
+      <div id="page-oms-connections" class="page">
+        <div class="page-hdr">
+          <div class="page-hdr-left">
+            <h2>&#128279; Marketplace Connections</h2>
+            <p>Click a platform to configure credentials and sync orders.</p>
+          </div>
+        </div>
+        <div class="plat-grid">
+          <div class="plat-tile connected">
+            <div class="pt-logo logo-lazada">&#128722;</div>
+            <div class="pt-name">Lazada</div>
+            <div class="pt-status pt-on"><span class="dot-sm" style="background:#22c55e"></span> Connected</div>
+            <div style="font-size:10px;color:#94a3b8">Synced 2 hr ago</div>
+          </div>
+          <div class="plat-tile connected">
+            <div class="pt-logo logo-shopee">&#129380;</div>
+            <div class="pt-name">Shopee</div>
+            <div class="pt-status pt-on"><span class="dot-sm" style="background:#22c55e"></span> Connected</div>
+            <div style="font-size:10px;color:#94a3b8">Synced 1 hr ago</div>
+          </div>
+          <div class="plat-tile">
+            <div class="pt-logo logo-tiktok">TT</div>
+            <div class="pt-name">TikTok Shop</div>
+            <div class="pt-status pt-off"><span class="dot-sm" style="background:#cbd5e1"></span> Not Connected</div>
+            <div style="font-size:10px;color:#94a3b8"></div>
+          </div>
+          <div class="plat-tile connected">
+            <div class="pt-logo logo-shopify">&#127978;</div>
+            <div class="pt-name">Shopify</div>
+            <div class="pt-status pt-on"><span class="dot-sm" style="background:#22c55e"></span> Connected</div>
+            <div style="font-size:10px;color:#94a3b8">Synced 30 min ago</div>
+          </div>
+          <div class="plat-tile">
+            <div class="pt-logo logo-amazon" style="background:#FF9900;font-size:20px">&#128722;</div>
+            <div class="pt-name">Amazon</div>
+            <div class="pt-status pt-off"><span class="dot-sm" style="background:#cbd5e1"></span> Not Connected</div>
+          </div>
+          <div class="plat-tile">
+            <div class="pt-logo logo-email" style="background:#6366f1;font-size:20px">&#9993;</div>
+            <div class="pt-name">Email Parser</div>
+            <div class="pt-status pt-on"><span class="dot-sm" style="background:#22c55e"></span> Active</div>
+            <div style="font-size:10px;color:#94a3b8">Inbox monitored</div>
+          </div>
+        </div>
+      </div><!-- /oms-connections -->
+
+
+      <!-- ──────────────────────────────────────
+           OMS — SYNC LOG
+      ────────────────────────────────────── -->
+      <div id="page-oms-synclog" class="page">
+        <div class="page-hdr">
+          <div class="page-hdr-left">
+            <h2>&#128260; Sync Log</h2>
+            <p>Recent marketplace sync history.</p>
+          </div>
+        </div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Platform</th><th>Time</th><th>Fetched</th><th>Added</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td><span class="bdg b-shopify">Shopify</span></td><td>Today 11:30</td><td>5</td><td>2</td><td><span style="color:#16a34a;font-weight:700">OK</span></td></tr>
+              <tr><td><span class="bdg b-shopee" style="background:#FFF0EE;color:#BF3010">Shopee</span></td><td>Today 10:15</td><td>8</td><td>3</td><td><span style="color:#16a34a;font-weight:700">OK</span></td></tr>
+              <tr><td><span class="bdg b-lazada" style="background:#FFF3EC;color:#CC3C00">Lazada</span></td><td>Today 09:00</td><td>3</td><td>1</td><td><span style="color:#16a34a;font-weight:700">OK</span></td></tr>
+              <tr><td><span class="bdg b-shopify">Shopify</span></td><td>Yesterday 18:00</td><td>2</td><td>0</td><td><span style="color:#16a34a;font-weight:700">OK</span></td></tr>
+              <tr><td><span class="bdg b-shopee" style="background:#FFF0EE;color:#BF3010">Shopee</span></td><td>Yesterday 17:00</td><td>0</td><td>0</td><td><span style="color:#dc2626;font-weight:700">Auth expired</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /oms-synclog -->
+
+
+      <!-- ──────────────────────────────────────
+           SCAN — SCAN WAYBILL PAGE
+      ────────────────────────────────────── -->
+      <div id="page-scan-scan" class="page">
+
+        <!-- Hero -->
+        <div class="scan-hero">
+          <div class="scan-hero-left">
+            <h2>&#128247; Scan Waybill</h2>
+            <p>Scan a barcode with your device camera, or type / paste a tracking number to look up the linked order instantly.</p>
+            <div class="scan-input-row">
+              <input class="scan-inp" id="scan-inp" placeholder="Scan barcode or type tracking number…" autocomplete="off">
+              <button class="btn-scan" onclick="doScan()">Look Up</button>
+            </div>
+            <div class="scan-mode-strip">
+              <div class="scan-mode on" onclick="setMode(this,'camera')">&#128247; Camera</div>
+              <div class="scan-mode" onclick="setMode(this,'manual')">&#9000; Manual</div>
+              <div class="scan-mode" onclick="setMode(this,'batch')">&#9783; Batch</div>
+            </div>
+          </div>
+          <div class="scan-hero-right">
+            <div class="scan-viewport scan-corners scan-corners2">
+              <div class="scan-line"></div>
+              <div class="cam-icon">&#128247;</div>
+              <div class="scan-vp-txt">Waiting for scan…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Result + history -->
+        <div class="scan-grid">
+
+          <!-- Last result -->
+          <div class="scan-card">
+            <div class="sc-label">Last Scan Result</div>
+            <div class="scan-result-row"><span class="sr-key">Tracking #</span><span class="sr-val mono">1Z999AA10123456784</span></div>
+            <div class="scan-result-row"><span class="sr-key">Courier</span><span class="sr-val">UPS</span></div>
+            <div class="scan-result-row"><span class="sr-key">Matched Order</span><span class="sr-val mono" style="color:#2563eb">ORD-2026-002</span></div>
+            <div class="scan-result-row"><span class="sr-key">Client</span><span class="sr-val">Acme Corp</span></div>
+            <div class="scan-result-row"><span class="sr-key">Status</span><span class="sr-val"><span class="sts s-shipped">Shipped</span></span></div>
+            <div class="scan-result-row"><span class="sr-key">Recipient</span><span class="sr-val">Bob Smith, New York NY</span></div>
+            <div style="margin-top:12px;display:flex;gap:6px">
+              <button class="tb-btn tb-btn-p btn-sm">&#128203; View Order</button>
+              <button class="tb-btn btn-sm" style="background:#e2e8f0;color:#0f172a">&#9998; Update Status</button>
+            </div>
+          </div>
+
+          <!-- Scan history -->
+          <div class="scan-card">
+            <div class="sc-label">Recent Scans</div>
+            <div class="scan-history-item"><div class="shi-dot dot-ok"></div><div class="shi-info"><div class="shi-code">1Z999AA10123456784</div><div class="shi-sub">Matched &rarr; ORD-2026-002</div></div><div class="shi-time">2 min</div></div>
+            <div class="scan-history-item"><div class="shi-dot dot-ok"></div><div class="shi-info"><div class="shi-code">JT000123456MY</div><div class="shi-sub">Matched &rarr; ORD-2026-001</div></div><div class="shi-time">3 hr</div></div>
+            <div class="scan-history-item"><div class="shi-dot dot-warn"></div><div class="shi-info"><div class="shi-code">SPX-PH-34871238</div><div class="shi-sub">No matching order found</div></div><div class="shi-time">4 hr</div></div>
+            <div class="scan-history-item"><div class="shi-dot dot-ok"></div><div class="shi-info"><div class="shi-code">LAZMY20240501ABC</div><div class="shi-sub">Matched &rarr; ORD-2026-004</div></div><div class="shi-time">5 hr</div></div>
+            <div class="scan-history-item"><div class="shi-dot dot-err"></div><div class="shi-info"><div class="shi-code">NINJAMY99001234</div><div class="shi-sub">Exception — order cancelled</div></div><div class="shi-time">6 hr</div></div>
+          </div>
+
+          <!-- Stats -->
+          <div class="scan-card">
+            <div class="sc-label">Today's Scan Stats</div>
+            <div class="scan-result-row"><span class="sr-key">Total Scanned</span><span class="sr-val" style="color:#0d9488;font-size:18px;font-weight:800">23</span></div>
+            <div class="scan-result-row"><span class="sr-key">Matched</span><span class="sr-val" style="color:#16a34a;font-weight:700">19</span></div>
+            <div class="scan-result-row"><span class="sr-key">Unmatched</span><span class="sr-val" style="color:#d97706;font-weight:700">3</span></div>
+            <div class="scan-result-row"><span class="sr-key">Exceptions</span><span class="sr-val" style="color:#dc2626;font-weight:700">1</span></div>
+            <div class="scan-result-row"><span class="sr-key">Status Updates Pushed</span><span class="sr-val">18</span></div>
+          </div>
+
+        </div>
+      </div><!-- /scan-scan -->
+
+
+      <!-- ──────────────────────────────────────
+           SCAN — BULK SCAN PAGE
+      ────────────────────────────────────── -->
+      <div id="page-scan-bulk" class="page">
+        <div class="page-hdr">
+          <div class="page-hdr-left">
+            <h2>&#9783; Bulk Scan</h2>
+            <p>Scan multiple waybills in one session. All results are matched to orders automatically.</p>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="tb-btn btn-sm btn-sec">&#128229; Export CSV</button>
+            <button class="tb-btn btn-sm btn-blue">&#9654; Start Session</button>
+          </div>
+        </div>
+
+        <div class="scan-hero" style="padding:18px 22px">
+          <div class="scan-hero-left">
+            <div style="font-size:13px;color:#94a3b8;margin-bottom:10px">Session active &mdash; scan waybills one by one or use the camera</div>
+            <div class="scan-input-row">
+              <input class="scan-inp" placeholder="Scan next waybill…" autocomplete="off">
+              <button class="btn-scan">Add</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;flex-shrink:0">
+            <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:#fff">12</div><div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Scanned</div></div>
+            <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:#0d9488">11</div><div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Matched</div></div>
+            <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:#f59e0b">1</div><div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Exception</div></div>
+          </div>
+        </div>
+
+        <div class="bulk-tbl-wrap">
+          <div class="bulk-toolbar">
+            <span class="bulk-counter"><span>12</span> items scanned</span>
+            <button class="tb-btn btn-sm btn-teal">&#9654; Push Status Updates</button>
+            <button class="tb-btn btn-sm btn-sec">&#128465; Clear Session</button>
+            <button class="tb-btn btn-sm btn-sec" style="margin-left:auto">&#9998; Flag Selected</button>
+          </div>
+          <table class="tbl">
+            <thead><tr><th><input type="checkbox"></th><th>Tracking #</th><th>Courier</th><th>Matched Order</th><th>Client</th><th>Status</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td><input type="checkbox" checked></td><td><span class="oid" style="font-size:11px">1Z999AA10123456784</span></td><td>UPS</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-002</span></td><td>Acme Corp</td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#16a34a;font-weight:700">&#10003; Matched</span></td></tr>
+              <tr><td><input type="checkbox" checked></td><td><span class="oid" style="font-size:11px">JT000123456MY</span></td><td>J&amp;T</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-001</span></td><td>Acme Corp</td><td><span class="sts s-delivered">Delivered</span></td><td><span style="color:#16a34a;font-weight:700">&#10003; Matched</span></td></tr>
+              <tr><td><input type="checkbox" checked></td><td><span class="oid" style="font-size:11px">LAZMY20240501ABC</span></td><td>Lazada</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-005</span></td><td>Fashion House</td><td><span class="sts s-shipped">Shipped</span></td><td><span style="color:#16a34a;font-weight:700">&#10003; Matched</span></td></tr>
+              <tr style="background:#fffbeb"><td><input type="checkbox"></td><td><span class="oid" style="font-size:11px;color:#d97706">NINJAMY99001234</span></td><td>Ninja</td><td><span style="color:#94a3b8">—</span></td><td>—</td><td>—</td><td><span style="color:#dc2626;font-weight:700">&#9888; Exception</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /scan-bulk -->
+
+
+      <!-- ──────────────────────────────────────
+           SCAN — HISTORY
+      ────────────────────────────────────── -->
+      <div id="page-scan-history" class="page">
+        <div class="page-hdr">
+          <div class="page-hdr-left">
+            <h2>&#128336; Scan History</h2>
+            <p>All waybill scans, matched orders, and exceptions.</p>
+          </div>
+          <button class="tb-btn btn-sm btn-sec">&#128229; Export</button>
+        </div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Time</th><th>Tracking #</th><th>Courier</th><th>Matched Order</th><th>Client</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td style="color:#94a3b8">Today 14:02</td><td><span class="oid" style="font-size:11px">1Z999AA10123456784</span></td><td>UPS</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-002</span></td><td>Acme Corp</td><td><span style="color:#16a34a;font-weight:700">Matched</span></td></tr>
+              <tr><td style="color:#94a3b8">Today 11:20</td><td><span class="oid" style="font-size:11px">JT000123456MY</span></td><td>J&amp;T</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-001</span></td><td>Acme Corp</td><td><span style="color:#16a34a;font-weight:700">Matched</span></td></tr>
+              <tr><td style="color:#94a3b8">Today 10:58</td><td><span class="oid" style="font-size:11px">SPX-PH-34871238</span></td><td>Shopee Xpress</td><td><span style="color:#94a3b8">—</span></td><td>—</td><td><span style="color:#d97706;font-weight:700">Unmatched</span></td></tr>
+              <tr><td style="color:#94a3b8">Today 10:15</td><td><span class="oid" style="font-size:11px">LAZMY20240501ABC</span></td><td>Lazada</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-005</span></td><td>Fashion House</td><td><span style="color:#16a34a;font-weight:700">Matched</span></td></tr>
+              <tr><td style="color:#94a3b8">Today 09:30</td><td><span class="oid" style="font-size:11px">NINJAMY99001234</span></td><td>Ninja Van</td><td><span style="color:#94a3b8">—</span></td><td>—</td><td><span style="color:#dc2626;font-weight:700">Exception</span></td></tr>
+              <tr><td style="color:#94a3b8">Yesterday</td><td><span class="oid" style="font-size:11px">MY00000012345</span></td><td>Pos Malaysia</td><td><span style="color:#2563eb;font-weight:700">ORD-2026-006</span></td><td>Home Goods Co</td><td><span style="color:#16a34a;font-weight:700">Matched</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /scan-history -->
+
+    </main>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const ALL_PAGES = ['home','oms-dashboard','oms-orders','oms-connections','oms-synclog','scan-scan','scan-bulk','scan-history'];
+const ALL_NAVS  = ['home','oms-dashboard','oms-orders','oms-connections','oms-synclog','scan-scan','scan-bulk','scan-history'];
+
+function switchPage(appModule, pageId) {
+  // hide all pages
+  ALL_PAGES.forEach(p => {
+    const el = document.getElementById('page-' + p);
+    if (el) el.classList.remove('on');
+  });
+  // clear all nav active states
+  ALL_NAVS.forEach(n => {
+    const el = document.getElementById('nav-' + n);
+    if (el) el.classList.remove('on', 'scan-on');
+  });
+  // show target
+  const page = document.getElementById('page-' + pageId);
+  if (page) page.classList.add('on');
+  const nav = document.getElementById('nav-' + pageId);
+  if (nav) nav.classList.add(appModule === 'scan' ? 'scan-on' : 'on');
+  // update app switcher
+  document.querySelectorAll('.asw').forEach(b => b.classList.remove('on'));
+  const modMap = {home:'Overview',oms:'OMS',scan:'SCAN'};
+  document.querySelectorAll('.asw').forEach(b => {
+    if ((appModule === 'home' && b.textContent.includes('Overview')) ||
+        (appModule === 'oms'  && b.textContent.includes('OMS')) ||
+        (appModule === 'scan' && b.textContent.includes('SCAN'))) {
+      b.classList.add('on');
+    }
+  });
+}
+
+function switchApp(app) {
+  const defaults = { home:'home', oms:'oms-dashboard', scan:'scan-scan' };
+  switchPage(app, defaults[app]);
+}
+
+function setMode(el, mode) {
+  document.querySelectorAll('.scan-mode').forEach(m => m.classList.remove('on'));
+  el.classList.add('on');
+}
+
+function doScan() {
+  const val = document.getElementById('scan-inp')?.value.trim();
+  if (!val) return;
+  alert('Looked up: ' + val + '\n→ Matched to ORD-2026-002 (demo)');
+}
+
+function doQuickScan() {
+  const val = document.getElementById('home-scan-inp')?.value.trim();
+  if (!val) return;
+  alert('Quick scan: ' + val + '\n→ Matched to ORD-2026-002 (demo)');
+}
+
+function showScanQuick() {
+  switchPage('scan','scan-scan');
+  document.getElementById('scan-inp')?.focus();
+}
+
+function filterClient(id) {}
+</script>
+</body>
+</html>
