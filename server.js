@@ -23,11 +23,7 @@ const store    = require('./lib/store');
 const emailP   = require('./lib/email-parser');
 const creds    = require('./lib/credentials');
 const syncLog  = require('./lib/sync-log');
-const lazada   = require('./lib/marketplace/lazada');
-const shopee   = require('./lib/marketplace/shopee');
-const tiktok   = require('./lib/marketplace/tiktok');
-const shopify  = require('./lib/marketplace/shopify');
-const mapper   = require('./lib/marketplace/mapper');
+const registry = require('./lib/connector-registry');
 const auth     = require('./lib/auth');
 const importer = require('./lib/file-importer');
 const db       = require('./lib/db');
@@ -185,206 +181,103 @@ app.get('/api/stats',    (req, res) => res.json(store.getStats()));
 app.get('/api/clients',  (req, res) => res.json(store.getClients()));
 app.get('/api/channels', (req, res) => res.json(store.getChannels()));
 
-// ── Marketplace Connections ───────────────────────────────────────────────────
+// ── Connector registry — all platforms discovered from lib/connectors/ ─────────
 
-const PLATFORMS = ['lazada', 'shopee', 'tiktok', 'shopify'];
+const PLATFORMS = Object.keys(registry);
 
-// Connection status for all platforms
+// Connection status for all registered platforms
 app.get('/api/connect/status', (req, res) => {
   const all    = creds.getAll();
   const result = {};
-  for (const p of PLATFORMS) {
-    const c = all[p] || {};
-    result[p] = {
+  for (const id of PLATFORMS) {
+    const conn = registry[id];
+    const c    = all[id] || {};
+    result[id] = {
       connected:      !!c.accessToken,
-      hasCredentials: !!(c.appKey || c.partnerId),
-      storeName:      c.storeName  || null,
+      hasCredentials: !!(c.appKey || c.partnerId || c.apiKey),
+      storeName:      c.storeName   || conn.meta.defaultStoreName || null,
       connectedAt:    c.connectedAt || null,
-      lastSync:       c.lastSync   || null,
+      lastSync:       c.lastSync    || null,
       lastSyncCount:  c.lastSyncCount ?? null,
+      meta:           { type: conn.meta.type, authType: conn.meta.authType },
     };
   }
   res.json(result);
 });
 
-// Save credentials (app key/secret/token) for a platform
+// Save credentials for a platform
 app.post('/api/connect/:platform', (req, res) => {
   const { platform } = req.params;
-  if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Unknown platform' });
+  if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
   const saved = creds.set(platform, req.body);
-  // Strip secrets from the response
-  const { appSecret, partnerKey, ...safe } = saved;
+  const { appSecret, partnerKey, apiSecret, ...safe } = saved;
   res.json({ ok: true, ...safe });
 });
 
 // Disconnect a platform
 app.delete('/api/connect/:platform', (req, res) => {
   const { platform } = req.params;
-  if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Unknown platform' });
+  if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
   creds.remove(platform);
   res.json({ ok: true });
 });
 
-// ── OAuth flows ───────────────────────────────────────────────────────────────
+// ── Generic OAuth — works for any connector that exports buildAuthUrl / exchangeCode
 
-// Lazada
-app.get('/api/connect/lazada/oauth-url', (req, res) => {
-  const c = creds.get('lazada');
-  if (!c?.appKey) return res.status(400).json({ error: 'Save your Lazada App Key first' });
-  res.json({ url: lazada.buildAuthUrl(c.appKey, `${BASE_URL}/api/connect/lazada/callback`) });
+app.get('/api/connect/:platform/oauth-url', (req, res) => {
+  const { platform } = req.params;
+  const conn = registry[platform];
+  if (!conn)              return res.status(400).json({ error: 'Unknown platform' });
+  if (!conn.buildAuthUrl) return res.status(400).json({ error: `${conn.meta.name} does not use OAuth` });
+  const c = creds.get(platform) || {};
+  for (const field of conn.meta.requiredForOAuth || []) {
+    if (!c[field]) return res.status(400).json({ error: `Save your ${conn.meta.name} ${field} first` });
+  }
+  res.json({ url: conn.buildAuthUrl(c, `${BASE_URL}/api/connect/${platform}/callback`) });
 });
 
-app.get('/api/connect/lazada/callback', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).send(errPage('Lazada', 'Missing authorization code'));
+app.get('/api/connect/:platform/callback', async (req, res) => {
+  const { platform } = req.params;
+  const conn = registry[platform];
+  if (!conn) return res.status(400).send(errPage('Unknown', 'Unknown platform'));
   try {
-    const c      = creds.get('lazada');
-    const tokens = await lazada.exchangeCode(c.appKey, c.appSecret, code);
-    creds.set('lazada', { ...tokens, connectedAt: new Date().toISOString() });
-    res.send(okPage('Lazada'));
+    const tokens = await conn.exchangeCode(creds.get(platform) || {}, req.query);
+    creds.set(platform, { ...tokens, connectedAt: new Date().toISOString() });
+    res.send(okPage(conn.meta.name));
   } catch (e) {
-    res.status(500).send(errPage('Lazada', e.message));
+    res.status(500).send(errPage(conn.meta.name, e.message));
   }
 });
 
-// Shopee
-app.get('/api/connect/shopee/oauth-url', (req, res) => {
-  const c = creds.get('shopee');
-  if (!c?.partnerId) return res.status(400).json({ error: 'Save your Shopee Partner ID first' });
-  res.json({ url: shopee.buildAuthUrl(c.partnerId, c.partnerKey, `${BASE_URL}/api/connect/shopee/callback`) });
-});
-
-app.get('/api/connect/shopee/callback', async (req, res) => {
-  const { code, shop_id } = req.query;
-  if (!code || !shop_id) return res.status(400).send(errPage('Shopee', 'Missing code or shop_id'));
-  try {
-    const c      = creds.get('shopee');
-    const tokens = await shopee.exchangeCode(c.partnerId, c.partnerKey, code, shop_id);
-    creds.set('shopee', { ...tokens, connectedAt: new Date().toISOString() });
-    res.send(okPage('Shopee'));
-  } catch (e) {
-    res.status(500).send(errPage('Shopee', e.message));
-  }
-});
-
-// TikTok Shop
-app.get('/api/connect/tiktok/oauth-url', (req, res) => {
-  const c = creds.get('tiktok');
-  if (!c?.appKey) return res.status(400).json({ error: 'Save your TikTok App Key first' });
-  res.json({ url: tiktok.buildAuthUrl(c.appKey, `${BASE_URL}/api/connect/tiktok/callback`) });
-});
-
-app.get('/api/connect/tiktok/callback', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).send(errPage('TikTok Shop', 'Missing authorization code'));
-  try {
-    const c      = creds.get('tiktok');
-    const tokens = await tiktok.exchangeCode(c.appKey, c.appSecret, code);
-    creds.set('tiktok', { ...tokens, connectedAt: new Date().toISOString() });
-    res.send(okPage('TikTok Shop'));
-  } catch (e) {
-    res.status(500).send(errPage('TikTok Shop', e.message));
-  }
-});
-
-// Shopify
-app.get('/api/connect/shopify/oauth-url', (req, res) => {
-  const c = creds.get('shopify');
-  if (!c?.shopDomain) return res.status(400).json({ error: 'Save your Shopify shop domain first' });
-  if (!c?.apiKey) return res.status(400).json({ error: 'Save your Shopify API Key first' });
-  res.json({ url: shopify.buildAuthUrl(c.shopDomain, c.apiKey, `${BASE_URL}/api/connect/shopify/callback`) });
-});
-
-app.get('/api/connect/shopify/callback', async (req, res) => {
-  const { code, shop } = req.query;
-  if (!code) return res.status(400).send(errPage('Shopify', 'Missing authorization code'));
-  try {
-    const c      = creds.get('shopify');
-    const tokens = await shopify.exchangeCode(shop || c.shopDomain, c.apiKey, c.apiSecret, code);
-    creds.set('shopify', { ...tokens, connectedAt: new Date().toISOString() });
-    res.send(okPage('Shopify'));
-  } catch (e) {
-    res.status(500).send(errPage('Shopify', e.message));
-  }
-});
-
-// ── Order Sync ────────────────────────────────────────────────────────────────
+// ── Generic Order Sync ────────────────────────────────────────────────────────
 
 app.get('/api/sync/log', (req, res) => res.json(syncLog.recent(100)));
 
-async function syncPlatform(platform, fetchFn, mapFn, opts = {}) {
+async function syncPlatform(platform, opts = {}) {
+  const conn = registry[platform];
+  if (!conn)             throw new Error(`Unknown platform: ${platform}`);
+  if (!conn.fetchOrders) throw new Error(`${conn.meta.name} does not support order sync`);
   const c = creds.get(platform);
-  if (!c?.accessToken) throw new Error(`${platform} not connected — save credentials first`);
-  const storeName = c.storeName || { lazada: 'Lazada Store', shopee: 'Shopee Store', tiktok: 'TikTok Shop' }[platform];
-  const raw       = await fetchFn(c, opts);
+  if (!c?.accessToken)   throw new Error(`${conn.meta.name} not connected — save credentials first`);
+  const storeName = c.storeName || conn.meta.defaultStoreName || conn.meta.name;
+  const raw       = await conn.fetchOrders(c, opts);
   let added = 0;
   for (const item of raw) {
-    try { store.addOrder(mapFn(item, storeName)); added++; } catch { /* skip duplicates */ }
+    try { store.addOrder(conn.mapOrder(item, storeName)); added++; } catch { /* skip duplicates */ }
   }
   creds.set(platform, { lastSync: new Date().toISOString(), lastSyncCount: added });
   return { platform, at: new Date().toISOString(), fetched: raw.length, added };
 }
 
-app.post('/api/sync/lazada', async (req, res) => {
-  try {
-    const entry = await syncPlatform('lazada', lazada.getOrders, mapper.fromLazada, req.body);
-    syncLog.push(entry);
-    res.json(entry);
-  } catch (e) {
-    const entry = { platform: 'lazada', at: new Date().toISOString(), error: e.message };
-    syncLog.push(entry);
-    res.status(500).json(entry);
-  }
-});
-
-app.post('/api/sync/shopee', async (req, res) => {
-  try {
-    const entry = await syncPlatform('shopee', shopee.getOrders, mapper.fromShopee, req.body);
-    syncLog.push(entry);
-    res.json(entry);
-  } catch (e) {
-    const entry = { platform: 'shopee', at: new Date().toISOString(), error: e.message };
-    syncLog.push(entry);
-    res.status(500).json(entry);
-  }
-});
-
-app.post('/api/sync/tiktok', async (req, res) => {
-  try {
-    const entry = await syncPlatform('tiktok', tiktok.getOrders, mapper.fromTikTok, req.body);
-    syncLog.push(entry);
-    res.json(entry);
-  } catch (e) {
-    const entry = { platform: 'tiktok', at: new Date().toISOString(), error: e.message };
-    syncLog.push(entry);
-    res.status(500).json(entry);
-  }
-});
-
-app.post('/api/sync/shopify', async (req, res) => {
-  try {
-    const entry = await syncPlatform('shopify', shopify.getOrders, mapper.fromShopify, req.body);
-    syncLog.push(entry);
-    res.json(entry);
-  } catch (e) {
-    const entry = { platform: 'shopify', at: new Date().toISOString(), error: e.message };
-    syncLog.push(entry);
-    res.status(500).json(entry);
-  }
-});
-
-// Sync all connected platforms at once
+// Sync all connected platforms — must be registered before /:platform route
 app.post('/api/sync/all', async (req, res) => {
-  const results = await Promise.allSettled([
-    syncPlatform('lazada', lazada.getOrders, mapper.fromLazada),
-    syncPlatform('shopee', shopee.getOrders, mapper.fromShopee),
-    syncPlatform('tiktok', tiktok.getOrders, mapper.fromTikTok),
-    syncPlatform('shopify', shopify.getOrders, mapper.fromShopify),
-  ]);
+  const results = await Promise.allSettled(PLATFORMS.map(p => syncPlatform(p)));
   const out = {};
   for (const [i, r] of results.entries()) {
-    const p = PLATFORMS[i];
-    const entry = r.status === 'fulfilled' ? r.value : { platform: p, at: new Date().toISOString(), error: r.reason.message };
+    const p     = PLATFORMS[i];
+    const entry = r.status === 'fulfilled'
+      ? r.value
+      : { platform: p, at: new Date().toISOString(), error: r.reason.message };
     syncLog.push(entry);
     out[p] = entry;
   }
@@ -576,16 +469,30 @@ app.get('/api/leads/sessions', (req, res) => {
   res.json(db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
 });
 
-// ── Webhooks (for real-time push from Shopee / Lazada) ────────────────────────
-
-app.post('/webhook/shopee', (req, res) => {
-  // TODO: verify HMAC signature before processing
-  const { code, data } = req.body || {};
-  // code 3 = ORDER_STATUS_UPDATE, 15 = ORDER_TRACKING_NUMBER_UPDATE, etc.
-  res.json({ ok: true });
+// Sync a single platform
+app.post('/api/sync/:platform', async (req, res) => {
+  const { platform } = req.params;
+  if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
+  try {
+    const entry = await syncPlatform(platform, req.body);
+    syncLog.push(entry);
+    res.json(entry);
+  } catch (e) {
+    const entry = { platform, at: new Date().toISOString(), error: e.message };
+    syncLog.push(entry);
+    res.status(500).json(entry);
+  }
 });
 
-app.post('/webhook/lazada', (req, res) => {
+// ── Generic Webhooks — route to connector's handleWebhook if it has one ───────
+
+app.post('/webhook/:platform', (req, res) => {
+  const { platform } = req.params;
+  const conn = registry[platform];
+  if (!conn) return res.status(400).json({ error: 'Unknown platform' });
+  if (conn.handleWebhook) {
+    try { conn.handleWebhook(req.body, req.headers, creds.get(platform) || {}); } catch {}
+  }
   res.json({ ok: true });
 });
 
