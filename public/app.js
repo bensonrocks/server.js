@@ -682,6 +682,16 @@
       <div class="stat-box done"><div class="val">${c.done||0}</div><div class="lbl">Done</div></div>
       <div class="stat-box unprocessed"><div class="val">${c.unprocessed||0}</div><div class="lbl">Unprocessed</div></div>`;
 
+    const isAdmin = (currentUser?.role || 'admin') === 'admin';
+    const pendingKf = loadedOrders.filter(o => o.scan_status === 'done' && !o.keyfields_closed).length;
+    const kfBanner = document.getElementById('kfClosureBanner');
+    if (isAdmin && pendingKf > 0) {
+      kfBanner.innerHTML = `&#9888;&#65039; <strong>${pendingKf} order${pendingKf > 1 ? 's' : ''} completed</strong> — please close in Keyfields WMS, then acknowledge below.`;
+      kfBanner.classList.remove('hidden');
+    } else {
+      kfBanner.classList.add('hidden');
+    }
+
     // Build client filter
     const clients = [...new Set(loadedOrders.map(o => o.client_name || '').filter(Boolean))];
     const clientRow = document.getElementById('clientFilterRow');
@@ -735,6 +745,7 @@
       (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
     );
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
+    const isAdminView = (currentUser?.role || 'admin') === 'admin';
 
     document.getElementById('ordersDashList').innerHTML = orders.length ? orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
@@ -744,8 +755,13 @@
       const slipUrl      = ord.batchId
         ? `/api/completion-slip/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}`
         : null;
+      const kfBtn = isDone && isAdminView
+        ? ord.keyfields_closed
+          ? `<span class="kf-closed-badge">&#10003; Keyfields closed</span>`
+          : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Acknowledge closed in Keyfields WMS">Close in Keyfields</button>`
+        : '';
       return `
-        <div class="dash-order-card status-${ord.scan_status}" data-order="${esc(ord.order_number)}">
+        <div class="dash-order-card status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
           <div class="dash-order-left">
             <span class="dash-order-no">${esc(ord.order_number)}</span>
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
@@ -763,6 +779,7 @@
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
             ${isDone && slipUrl ? `<a class="btn-slip" href="${esc(slipUrl)}" download title="Download completion slip">&#128196; Slip</a>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Print waybill PDF">&#128438; Print</a>` : ''}
+            ${kfBtn}
             ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
         </div>`;
@@ -788,6 +805,23 @@
           if (!r.ok) throw new Error(d.error || 'Delete failed');
           await refreshOrders(); renderOrdersList();
         } catch (err) { alert(err.message); }
+      });
+    });
+
+    document.querySelectorAll('.btn-kf-close').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        btn.disabled = true;
+        try {
+          const r = await fetch('/api/scan/keyfields-close', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderNumber: btn.dataset.order }),
+          });
+          if (!r.ok) throw new Error((await r.json()).error || 'Failed');
+          const idx = loadedOrders.findIndex(o => o.order_number === btn.dataset.order);
+          if (idx >= 0) loadedOrders[idx].keyfields_closed = true;
+          renderOrdersDash();
+        } catch (err) { btn.disabled = false; alert(err.message); }
       });
     });
   }

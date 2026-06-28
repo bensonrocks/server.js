@@ -101,6 +101,30 @@ function readEmailConfig() {
 }
 
 // ── Email ───────────────────────────────────────────────────────────────────
+async function sendCompletionAlert(orderNumber, ord, operator) {
+  const conf = readEmailConfig();
+  if (!conf.from_email || !conf.password || !conf.to_email) return; // silently skip if not configured
+  const transporter = nodemailer.createTransport({
+    host: conf.smtp_host, port: conf.smtp_port, secure: false,
+    auth: { user: conf.from_email, pass: conf.password },
+  });
+  const opLine = operator ? `Operator: ${operator}\n` : '';
+  await transporter.sendMail({
+    from: conf.from_email, to: conf.to_email,
+    subject: `[IdealScan] Order ${orderNumber} completed — please close in Keyfields`,
+    text: [
+      `Order ${orderNumber} has been fully scanned and marked completed.`,
+      '',
+      `Customer: ${ord.customer_name || ''}`,
+      `Waybill:  ${ord.waybill_number || ''}`,
+      opLine,
+      'Please log into Keyfields WMS and close this order.',
+      '',
+      'Once closed, acknowledge it in IdealScan under the Orders tab.',
+    ].join('\n'),
+  });
+}
+
 async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
   const conf = readEmailConfig();
   const recipient = emailTo || conf.to_email;
@@ -192,15 +216,16 @@ function globalOrdersWithState() {
       const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
       out.push({
         ...ord,
-        scan_status:     state.status     || 'pending',
-        scanned:         { ...state.scanned },
-        mismatches:      state.mismatches || [],
-        startTime:       state.startTime  || null,
-        endTime:         state.endTime    || null,
-        operator:        state.operator   || null,
-        batchId:         batch.id,
-        client_name:     batch.client_name || '',
-        has_waybill_pdf: fs.existsSync(waybillPath),
+        scan_status:      state.status          || 'pending',
+        scanned:          { ...state.scanned },
+        mismatches:       state.mismatches       || [],
+        startTime:        state.startTime        || null,
+        endTime:          state.endTime          || null,
+        operator:         state.operator         || null,
+        keyfields_closed: state.keyfields_closed || false,
+        batchId:          batch.id,
+        client_name:      batch.client_name      || '',
+        has_waybill_pdf:  fs.existsSync(waybillPath),
       });
     }
   }
@@ -556,6 +581,7 @@ app.post('/api/scan/complete', (req, res) => {
     if (operator)  state.operator  = operator;
     batch.orderStates[orderNumber] = state;
     writeDb(db);
+    sendCompletionAlert(orderNumber, ord, operator).catch(() => {});
     return res.json({ ok: true, mismatches: [] });
   }
   res.json({ ok: false, mismatches });
@@ -590,6 +616,21 @@ app.post('/api/scan/reset', (req, res) => {
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   if (!batch.orderStates) batch.orderStates = {};
   batch.orderStates[orderNumber] = { status: 'pending', scanned: {}, updated_at: new Date().toISOString() };
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/scan/keyfields-close', (req, res) => {
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  state.keyfields_closed    = true;
+  state.keyfields_closed_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({ ok: true });
 });

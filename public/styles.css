@@ -1582,3 +1582,42 @@ body.log-open { overflow: hidden; }
   transition: background .12s;
 }
 .btn-slip:hover { background: #dbeafe; }
+
+/* ════════════════════════════════════════════════════
+   KEYFIELDS CLOSURE BANNER + CONTROLS
+   ════════════════════════════════════════════════════ */
+.kf-closure-banner {
+  display: flex; align-items: center; gap: .5rem;
+  background: #fffbeb; border: 1px solid #fbbf24;
+  border-left: 4px solid #f59e0b;
+  border-radius: 7px; padding: .65rem 1rem;
+  margin: .6rem 0; font-size: .88rem; color: #92400e;
+}
+.kf-closure-banner strong { color: #78350f; }
+
+/* Card highlight — done but not yet acknowledged */
+.dash-order-card.kf-pending {
+  border-left: 3px solid #f59e0b;
+}
+
+/* Acknowledge button */
+.btn-kf-close {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .73rem; font-weight: 600;
+  padding: .3rem .65rem;
+  background: #fffbeb; border: 1.5px solid #f59e0b;
+  border-radius: 5px; color: #92400e;
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.btn-kf-close:hover    { background: #fef3c7; border-color: #d97706; }
+.btn-kf-close:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Confirmed badge */
+.kf-closed-badge {
+  display: inline-flex; align-items: center; gap: .2rem;
+  font-size: .72rem; font-weight: 600;
+  padding: .25rem .55rem;
+  background: #f0fdf4; border: 1px solid #86efac;
+  border-radius: 5px; color: #166534;
+}
