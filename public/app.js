@@ -621,11 +621,15 @@
     enterItemsPhase(ord);
     document.getElementById('scanOverlay').classList.remove('hidden');
     document.body.classList.add('scan-open');
+    attachGlobalScanCapture();
   }
 
   function closeScanOverlay() {
     document.getElementById('scanOverlay').classList.add('hidden');
     document.body.classList.remove('scan-open');
+    detachGlobalScanCapture();
+    _scanQueue.length = 0;
+    _scanBusy = false;
     stopTimer();
     activeOrder = null;
   }
@@ -733,46 +737,130 @@
     el.className    = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
   }
 
-  // ── Item barcode scan ──────────────────────────────────────────────────────
-  document.getElementById('itemScanInput').addEventListener('keydown', async e => {
-    if (e.key !== 'Enter') return;
-    const val = e.target.value.trim();
-    e.target.value = '';
-    if (val && activeOrder) await handleItemScan(val);
+  // ── Global barcode capture ─────────────────────────────────────────────────
+  // Physical barcode scanners send characters + Enter as keyboard events.
+  // We intercept every keystroke document-wide while the scan overlay is open
+  // so focus location doesn't matter. Characters build a buffer; Enter fires.
+  // A 120 ms idle timeout also fires (handles scanners that omit Enter).
+  let _scanBuf = '';
+  let _scanFlushTimer = null;
+  const SCAN_IDLE_MS = 120;
+
+  function _flushScanBuf() {
+    clearTimeout(_scanFlushTimer);
+    _scanFlushTimer = null;
+    const val = _scanBuf.trim();
+    _scanBuf  = '';
+    const inp = document.getElementById('itemScanInput');
+    inp.value = '';
+    if (val && activeOrder) handleItemScan(val);
+  }
+
+  function _globalScanKeydown(e) {
+    // Let normal input inside qty fields or modal inputs work uninterrupted
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      // Only intercept the dedicated scan input; pass everything else through
+      if (document.activeElement.id !== 'itemScanInput') return;
+    }
+
+    if (e.key === 'Enter') {
+      // Add whatever is in the visible input field too (manual typing path)
+      const inp = document.getElementById('itemScanInput');
+      if (document.activeElement.id === 'itemScanInput' && inp.value) {
+        _scanBuf += inp.value;
+      }
+      _flushScanBuf();
+      e.preventDefault();
+      return;
+    }
+
+    // Printable characters only — ignore modifier-only, arrow, Escape, Tab, etc.
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      // If focus is NOT on the scan input, redirect the character there
+      if (document.activeElement?.id !== 'itemScanInput') {
+        document.getElementById('itemScanInput').focus();
+        _scanBuf += e.key;
+        // Keep the visible input in sync so user can see what the scanner typed
+        const inp = document.getElementById('itemScanInput');
+        inp.value = _scanBuf;
+        e.preventDefault();
+      } else {
+        // Focus IS on itemScanInput — let the browser handle insertion naturally,
+        // mirror into buffer on next tick so value is updated
+        setTimeout(() => { _scanBuf = document.getElementById('itemScanInput').value; }, 0);
+      }
+      // Reset the idle timer
+      clearTimeout(_scanFlushTimer);
+      _scanFlushTimer = setTimeout(_flushScanBuf, SCAN_IDLE_MS);
+    }
+  }
+
+  function attachGlobalScanCapture() {
+    _scanBuf = ''; clearTimeout(_scanFlushTimer); _scanFlushTimer = null;
+    document.addEventListener('keydown', _globalScanKeydown);
+  }
+  function detachGlobalScanCapture() {
+    document.removeEventListener('keydown', _globalScanKeydown);
+    _scanBuf = ''; clearTimeout(_scanFlushTimer); _scanFlushTimer = null;
+    document.getElementById('itemScanInput').value = '';
+  }
+
+  // Keep the visible input as a fallback / status display; Enter still works there
+  document.getElementById('itemScanInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      // handled by global capture above — just prevent double-fire
+      e.preventDefault();
+    }
   });
 
-  async function handleItemScan(sku) {
-    const feedback = document.getElementById('itemScanFeedback');
-    try {
-      const resp = await fetch('/api/scan/increment', {
-        method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ orderNumber: activeOrder.order_number, sku }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
-        return;
+  // Scan queue — serialises rapid back-to-back scans so none are dropped
+  const _scanQueue = [];
+  let   _scanBusy  = false;
+
+  function handleItemScan(sku) {
+    _scanQueue.push(sku);
+    if (!_scanBusy) _drainScanQueue();
+  }
+
+  async function _drainScanQueue() {
+    if (_scanBusy || !_scanQueue.length) return;
+    _scanBusy = true;
+    while (_scanQueue.length) {
+      const sku      = _scanQueue.shift();
+      const feedback = document.getElementById('itemScanFeedback');
+      try {
+        const resp = await fetch('/api/scan/increment', {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ orderNumber: activeOrder.order_number, sku }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
+          continue;
+        }
+        if (!activeOrder.scanned) activeOrder.scanned = {};
+        activeOrder.scanned[data.sku] = data.scanned_qty;
+        activeOrder.scan_status = 'processing';
+        renderItemsTable(activeOrder);
+        updateProgress(activeOrder);
+
+        const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
+        if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
+
+        const overBy = data.scanned_qty - data.ordered_qty;
+        showFeedback(feedback, overBy > 0 ? 'error' : 'success',
+          overBy > 0
+            ? `${data.sku}: OVER by ${overBy} (scanned ${data.scanned_qty}, ordered ${data.ordered_qty})`
+            : data.scanned_qty === data.ordered_qty
+              ? `${data.sku}: ✓ Complete (${data.scanned_qty}/${data.ordered_qty})`
+              : `${data.sku}: ${data.scanned_qty}/${data.ordered_qty} scanned`
+        );
+      } catch (err) {
+        showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
       }
-      if (!activeOrder.scanned) activeOrder.scanned = {};
-      activeOrder.scanned[data.sku] = data.scanned_qty;
-      activeOrder.scan_status = 'processing';
-      renderItemsTable(activeOrder);
-      updateProgress(activeOrder);
-
-      const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
-      if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
-
-      const overBy = data.scanned_qty - data.ordered_qty;
-      showFeedback(feedback, overBy > 0 ? 'error' : 'success',
-        overBy > 0
-          ? `${data.sku}: OVER by ${overBy} (scanned ${data.scanned_qty}, ordered ${data.ordered_qty})`
-          : data.scanned_qty === data.ordered_qty
-            ? `${data.sku}: ✓ Complete (${data.scanned_qty}/${data.ordered_qty})`
-            : `${data.sku}: ${data.scanned_qty}/${data.ordered_qty} scanned`
-      );
-    } catch (err) {
-      showFeedback(feedback, 'error', err.message);
     }
+    _scanBusy = false;
     document.getElementById('itemScanInput').focus();
   }
 
