@@ -4,6 +4,7 @@ const { parse }  = require('csv-parse/sync');
 const { v4: uuidv4 } = require('uuid');
 const path       = require('path');
 const fs         = require('fs');
+const crypto     = require('crypto');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
 const { PDFDocument } = require('pdf-lib');
@@ -36,9 +37,28 @@ const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 const DB_FILE     = path.join(DATA_DIR, 'db.json');
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
+const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 
 fs.mkdirSync(WMS_DIR,     { recursive: true });
 fs.mkdirSync(WAYBILL_DIR, { recursive: true });
+
+// ── User credentials ─────────────────────────────────────────────────────────
+function readUsers() {
+  try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return []; }
+}
+function writeUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+function hashPass(password, salt) {
+  return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+// Create default demo user on first run
+;(function initUsers() {
+  if (!fs.existsSync(USERS_FILE)) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    writeUsers([{ id: 'demo', name: 'Demo', salt, passwordHash: hashPass('demo', salt) }]);
+  }
+})();
 
 function loadCustomHeaders() {
   try {
@@ -521,6 +541,16 @@ app.post('/api/scan/reset', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Auth ─────────────────────────────────────────────────────────────────────
+app.post('/api/auth/login', (req, res) => {
+  const { id, password } = req.body;
+  if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
+  const user = readUsers().find(u => u.id === String(id).trim());
+  if (!user || hashPass(password, user.salt) !== user.passwordHash)
+    return res.status(401).json({ error: 'Invalid credentials' });
+  res.json({ id: user.id, name: user.name || user.id });
+});
+
 // ── Public stats (no auth needed) ──────────────────────────────────────────
 // /api/stats already has no auth — it's used on page load before login.
 
@@ -655,6 +685,47 @@ app.delete('/api/master/keyfields-template', (req, res) => {
     fs.unlinkSync(KEYFIELDS_TEMPLATE_FILE);
   } catch {}
   res.json({ ok: true, headers: KEYFIELDS_HEADERS });
+});
+
+// ── Master: User management ──────────────────────────────────────────────────
+app.get('/api/master/users', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(readUsers().map(({ id, name }) => ({ id, name })));
+});
+
+app.post('/api/master/users', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id, name, password } = req.body;
+  if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
+  const users = readUsers();
+  if (users.find(u => u.id === id)) return res.status(409).json({ error: `User "${id}" already exists` });
+  const salt = crypto.randomBytes(16).toString('hex');
+  users.push({ id: String(id).trim(), name: String(name || id).trim(), salt, passwordHash: hashPass(password, salt) });
+  writeUsers(users);
+  res.json({ ok: true });
+});
+
+app.put('/api/master/users/:id/password', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const users = readUsers();
+  const idx   = users.findIndex(u => u.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: 'User not found' });
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: 'New password required' });
+  const salt = crypto.randomBytes(16).toString('hex');
+  users[idx].salt         = salt;
+  users[idx].passwordHash = hashPass(password, salt);
+  writeUsers(users);
+  res.json({ ok: true });
+});
+
+app.delete('/api/master/users/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const users = readUsers();
+  if (!users.find(u => u.id === req.params.id)) return res.status(404).json({ error: 'User not found' });
+  if (users.length <= 1) return res.status(400).json({ error: 'Cannot delete the only user' });
+  writeUsers(users.filter(u => u.id !== req.params.id));
+  res.json({ ok: true });
 });
 
 // ── Completion slip ──────────────────────────────────────────────────────────

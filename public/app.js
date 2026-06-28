@@ -56,21 +56,27 @@
     fetchAndRenderStats(); // always load stats — visible without login
     const stored = localStorage.getItem('wms_user');
     if (stored) {
-      currentUser = JSON.parse(stored);
-      showUserInHeader();
-      refreshOrders().then(() => {
-        if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
-      });
-    } else {
-      document.getElementById('loginOverlay').classList.remove('hidden');
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.id) { // new credential-backed format only
+          currentUser = parsed;
+          showUserInHeader();
+          refreshOrders().then(() => {
+            if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
+          });
+          return;
+        }
+      } catch {}
+      localStorage.removeItem('wms_user'); // old format — require re-login
     }
+    document.getElementById('loginOverlay').classList.remove('hidden');
   }
 
   function showUserInHeader() {
     document.getElementById('loginOverlay').classList.add('hidden');
     if (!currentUser) return;
     const chip = document.getElementById('userDisplay');
-    chip.textContent = `${currentUser.name} ···${currentUser.icLast4}`;
+    chip.textContent = currentUser.name || currentUser.id;
     chip.classList.remove('hidden');
     document.getElementById('lockBtn').classList.remove('hidden');
   }
@@ -83,27 +89,38 @@
   });
   document.getElementById('loginBtn').addEventListener('click', doLogin);
 
-  function doLogin() {
-    const name  = document.getElementById('loginName').value.trim();
-    const ic    = document.getElementById('loginIC').value.trim();
-    const errEl = document.getElementById('loginError');
-    if (!name) {
-      errEl.textContent = 'Please enter your name.';
-      errEl.classList.remove('hidden'); return;
-    }
-    if (!/^\d{4}$/.test(ic)) {
-      errEl.textContent = 'Enter exactly 4 digits for IC / FIN.';
+  async function doLogin() {
+    const id     = document.getElementById('loginName').value.trim();
+    const pass   = document.getElementById('loginIC').value.trim();
+    const errEl  = document.getElementById('loginError');
+    if (!id || !pass) {
+      errEl.textContent = 'Enter your User ID and password.';
       errEl.classList.remove('hidden'); return;
     }
     errEl.classList.add('hidden');
-    currentUser = { name, icLast4: ic };
-    localStorage.setItem('wms_user', JSON.stringify(currentUser));
-    showUserInHeader();
-    fetchAndRenderStats();
-    refreshOrders().then(() => {
-      if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
-    });
-    if (_loginCallback) { const fn = _loginCallback; _loginCallback = null; fn(); }
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, password: pass }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        errEl.textContent = data.error || 'Login failed';
+        errEl.classList.remove('hidden'); return;
+      }
+      currentUser = { id: data.id, name: data.name };
+      localStorage.setItem('wms_user', JSON.stringify(currentUser));
+      showUserInHeader();
+      fetchAndRenderStats();
+      refreshOrders().then(() => {
+        if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
+      });
+      if (_loginCallback) { const fn = _loginCallback; _loginCallback = null; fn(); }
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
   }
 
   // ── PIN Lock ───────────────────────────────────────────────────────────────
@@ -970,7 +987,7 @@
           orderNumber: activeOrder.order_number,
           startTime:   orderTimings[activeOrder.order_number] || null,
           endTime:     new Date().toISOString(),
-          operator:    currentUser ? `${currentUser.name} (···${currentUser.icLast4})` : null,
+          operator:    currentUser ? (currentUser.name || currentUser.id) : null,
         }),
       });
       const data = await resp.json();
@@ -1009,7 +1026,7 @@
           orderNumber: activeOrder.order_number,
           startTime:   orderTimings[activeOrder.order_number] || null,
           endTime:     new Date().toISOString(),
-          operator:    currentUser ? `${currentUser.name} (···${currentUser.icLast4})` : null,
+          operator:    currentUser ? (currentUser.name || currentUser.id) : null,
           mismatches:  currentMismatches,
         }),
       });
@@ -1134,6 +1151,83 @@
 
   function renderMasterActions() {
     document.getElementById('masterActionsSection').classList.remove('hidden');
+    loadUserList();
+  }
+
+  // ── User Management ─────────────────────────────────────────────────────────
+  async function loadUserList() {
+    const listEl = document.getElementById('userList');
+    try {
+      const resp  = await fetch('/api/master/users', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const users = await resp.json();
+      listEl.innerHTML = users.map(u => `
+        <div class="user-row" data-id="${esc(u.id)}">
+          <span class="user-id">${esc(u.id)}</span>
+          <span class="user-name">${esc(u.name || u.id)}</span>
+          <div class="user-row-actions">
+            <button class="btn-chpass" data-id="${esc(u.id)}" title="Change password">&#128273; Password</button>
+            <button class="btn-del-user" data-id="${esc(u.id)}" title="Delete user">&#128465;</button>
+          </div>
+        </div>`).join('');
+
+      listEl.querySelectorAll('.btn-chpass').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const newPass = prompt(`New password for "${btn.dataset.id}":`);
+          if (!newPass) return;
+          const r = await fetch(`/api/master/users/${encodeURIComponent(btn.dataset.id)}/password`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+            body: JSON.stringify({ password: newPass }),
+          });
+          const d = await r.json();
+          if (!r.ok) { alert(d.error); return; }
+          showUserStatus('Password updated.', 'success');
+        });
+      });
+
+      listEl.querySelectorAll('.btn-del-user').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm(`Delete user "${btn.dataset.id}"? They will no longer be able to log in.`)) return;
+          const r = await fetch(`/api/master/users/${encodeURIComponent(btn.dataset.id)}`, {
+            method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) { alert(d.error); return; }
+          loadUserList();
+        });
+      });
+    } catch (err) {
+      listEl.innerHTML = `<p class="scan-error" style="font-size:.8rem">${esc(err.message)}</p>`;
+    }
+  }
+
+  document.getElementById('addUserBtn').addEventListener('click', async () => {
+    const id   = document.getElementById('newUserId').value.trim();
+    const name = document.getElementById('newUserName').value.trim();
+    const pass = document.getElementById('newUserPass').value.trim();
+    if (!id || !pass) { showUserStatus('User ID and password are required.', 'error'); return; }
+    try {
+      const r = await fetch('/api/master/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ id, name, password: pass }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showUserStatus(d.error || 'Failed', 'error'); return; }
+      document.getElementById('newUserId').value   = '';
+      document.getElementById('newUserName').value = '';
+      document.getElementById('newUserPass').value = '';
+      showUserStatus(`User "${id}" added.`, 'success');
+      loadUserList();
+    } catch (err) { showUserStatus(err.message, 'error'); }
+  });
+
+  function showUserStatus(msg, type) {
+    const el = document.getElementById('userMgmtStatus');
+    el.textContent  = msg;
+    el.className    = `status-bar ${type}`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 4000);
   }
 
   // Master: export status report
