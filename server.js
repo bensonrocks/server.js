@@ -785,6 +785,32 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Profile — per-user settings (printer, label size) ───────────────────────
+const VALID_LABEL_SIZES = ['100x160', '100x150', '4x6'];
+
+app.get('/api/profile', requireAuth, (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({
+    id:          user.id,
+    name:        user.name,
+    role:        user.role || 'admin',
+    printerName: user.printerName || '',
+    labelSize:   user.labelSize   || '100x160',
+  });
+});
+
+app.put('/api/profile/printer', requireAuth, (req, res) => {
+  const { printerName, labelSize } = req.body || {};
+  const users = readUsers();
+  const idx   = users.findIndex(u => u.id === req.userId);
+  if (idx < 0) return res.status(404).json({ error: 'User not found' });
+  users[idx].printerName = String(printerName || '').trim().slice(0, 120);
+  users[idx].labelSize   = VALID_LABEL_SIZES.includes(labelSize) ? labelSize : '100x160';
+  writeUsers(users);
+  res.json({ ok: true, printerName: users[idx].printerName, labelSize: users[idx].labelSize });
+});
+
 // ── Public stats (no auth needed) ──────────────────────────────────────────
 // /api/stats already has no auth — it's used on page load before login.
 

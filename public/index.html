@@ -157,6 +157,33 @@
     <span class="plt-countdown" id="pltCountdown">3</span>
   </div>
 
+  <!-- ── Printer Settings Modal ── -->
+  <div id="printerSettingsOverlay" class="modal-overlay hidden">
+    <div class="modal ps-modal">
+      <div class="ps-modal-header">
+        <h3 class="ps-modal-title">&#128438; Printer Settings</h3>
+        <button id="printerSettingsClose" class="ps-close-btn">&times;</button>
+      </div>
+      <p class="printer-settings-hint">These settings apply to your account only. Each user can connect to a different printer.</p>
+      <label class="ps-label">Printer Name
+        <input id="psNameInput" type="text" class="ps-input" placeholder="e.g. ZEBRA ZD420, DYMO 4XL…" maxlength="120"/>
+        <span class="ps-hint">Shown as a reminder in the print window so you know which printer to select.</span>
+      </label>
+      <label class="ps-label">Label Size
+        <select id="psLabelSize" class="ps-input">
+          <option value="100x160">100 × 160 mm (default)</option>
+          <option value="100x150">100 × 150 mm</option>
+          <option value="4x6">4" × 6"  (101.6 × 152.4 mm)</option>
+        </select>
+      </label>
+      <div class="ps-footer">
+        <button id="psSaveBtn" class="btn-primary">Save</button>
+        <button id="psCancelBtn" class="btn-ghost">Cancel</button>
+        <span id="psSaveStatus" class="ps-save-status"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Camera Scan Overlay ── -->
   <div id="cameraScanOverlay" class="camera-scan-overlay hidden">
 
@@ -399,6 +426,7 @@
       </nav>
       <div class="header-user">
         <span id="userDisplay" class="user-chip hidden"></span>
+        <button id="printerSettingsBtn" class="printer-settings-btn hidden" title="Printer settings">&#128438;</button>
         <button id="lockBtn" class="lock-btn hidden" title="Lock app">&#128274;</button>
       </div>
     </div>

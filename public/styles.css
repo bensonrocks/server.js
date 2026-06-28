@@ -113,6 +113,36 @@ nav { display: flex; gap: 2px; }
 }
 .lock-btn:hover { background: var(--bg); color: var(--text); }
 
+.printer-settings-btn {
+  background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: .22rem .5rem; cursor: pointer; font-size: .9rem; line-height: 1;
+  transition: background .15s; flex-shrink: 0; color: var(--text-light);
+}
+.printer-settings-btn:hover { background: var(--bg); color: var(--primary); }
+
+/* ── Printer Settings Modal ─────────────────────────────────────────────── */
+.ps-modal { max-width: 420px; }
+.ps-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .85rem; }
+.ps-modal-title  { font-size: 1rem; font-weight: 700; margin: 0; }
+.ps-close-btn    { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-light); padding: .15rem .4rem; border-radius: var(--radius-sm); }
+.ps-close-btn:hover { background: var(--bg); color: var(--text); }
+.printer-settings-hint { font-size: .82rem; color: var(--text-light); margin-bottom: 1.1rem; line-height: 1.4; }
+.ps-label {
+  display: flex; flex-direction: column; gap: .3rem;
+  font-size: .84rem; font-weight: 600; color: var(--text);
+  margin-bottom: 1rem;
+}
+.ps-input {
+  width: 100%; padding: .5rem .7rem;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: .9rem; color: var(--text); background: var(--surface);
+  transition: border-color .15s;
+}
+.ps-input:focus { outline: none; border-color: var(--primary); }
+.ps-hint { font-size: .76rem; color: var(--text-light); font-weight: 400; line-height: 1.35; }
+.ps-footer { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; }
+.ps-save-status { font-size: .82rem; color: var(--success); margin-left: .25rem; }
+
 /* ================================================================
    MAIN LAYOUT
    ================================================================ */

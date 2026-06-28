@@ -90,6 +90,7 @@
           // Ensure role is present (sessions stored before role feature default to admin)
           if (!parsed.role) parsed.role = 'admin';
           currentUser = parsed;
+          fetchUserProfile();
           showUserInHeader();
           refreshOrders().then(() => {
             if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
@@ -109,9 +110,72 @@
     const chip = document.getElementById('userDisplay');
     chip.textContent = currentUser.name || currentUser.id;
     chip.classList.remove('hidden');
+    document.getElementById('printerSettingsBtn').classList.remove('hidden');
     document.getElementById('lockBtn').classList.remove('hidden');
     applyRoleUI();
   }
+
+  // ── Per-user profile (printer settings) ──────────────────────────────────
+  async function fetchUserProfile() {
+    if (!currentUser) return;
+    try {
+      const r = await fetch('/api/profile', { headers: hdrs() });
+      if (!r.ok) return;
+      const p = await r.json();
+      currentUser.printerName = p.printerName || '';
+      currentUser.labelSize   = p.labelSize   || '100x160';
+    } catch {}
+  }
+
+  const LABEL_SIZE_MAP = {
+    '100x160': { w: 100,   h: 160   },
+    '100x150': { w: 100,   h: 150   },
+    '4x6':     { w: 101.6, h: 152.4 },
+  };
+
+  // ── Printer Settings Modal ────────────────────────────────────────────────
+  document.getElementById('printerSettingsBtn').addEventListener('click', openPrinterSettings);
+  document.getElementById('printerSettingsClose').addEventListener('click', closePrinterSettings);
+  document.getElementById('psCancelBtn').addEventListener('click', closePrinterSettings);
+  document.getElementById('printerSettingsOverlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('printerSettingsOverlay')) closePrinterSettings();
+  });
+
+  function openPrinterSettings() {
+    document.getElementById('psNameInput').value  = currentUser?.printerName || '';
+    document.getElementById('psLabelSize').value  = currentUser?.labelSize   || '100x160';
+    document.getElementById('psSaveStatus').textContent = '';
+    document.getElementById('printerSettingsOverlay').classList.remove('hidden');
+    setTimeout(() => document.getElementById('psNameInput').focus(), 80);
+  }
+
+  function closePrinterSettings() {
+    document.getElementById('printerSettingsOverlay').classList.add('hidden');
+  }
+
+  document.getElementById('psSaveBtn').addEventListener('click', async () => {
+    const name = document.getElementById('psNameInput').value.trim();
+    const size = document.getElementById('psLabelSize').value;
+    const statusEl = document.getElementById('psSaveStatus');
+    statusEl.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/profile/printer', {
+        method: 'PUT',
+        headers: { ...hdrs(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printerName: name, labelSize: size }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed');
+      if (currentUser) {
+        currentUser.printerName = d.printerName;
+        currentUser.labelSize   = d.labelSize;
+      }
+      statusEl.textContent = 'Saved ✓';
+      setTimeout(closePrinterSettings, 800);
+    } catch (err) {
+      statusEl.textContent = '✗ ' + err.message;
+    }
+  });
 
   function applyRoleUI() {
     const isWarehouse = (currentUser?.role || 'admin') === 'warehouse';
@@ -166,6 +230,7 @@
       currentUser = { id: data.id, name: data.name, role: data.role || 'admin' };
       localStorage.setItem('wms_user', JSON.stringify(currentUser));
       if (data.token) localStorage.setItem('wms_token', data.token);
+      fetchUserProfile();
       showUserInHeader();
       fetchAndRenderStats();
       refreshOrders().then(() => {
@@ -999,15 +1064,20 @@
   document.getElementById('pltSkipBtn').addEventListener('click', dismissPrintLabelPrompt);
 
   function printWaybillLabel(order) {
-    const carrier  = (order.carrier || '').trim();
-    const header   = carrier || 'IDEALOMS';
-    const customer = order.customer_name    || '—';
-    const address  = order.delivery_address || '—';
-    const platform = order.platform
+    const carrier     = (order.carrier || '').trim();
+    const header      = carrier || 'IDEALOMS';
+    const customer    = order.customer_name    || '—';
+    const address     = order.delivery_address || '—';
+    const platform    = order.platform
       ? (order.shop_name ? `${order.platform} / ${order.shop_name}` : order.platform)
       : (order.shop_name || '');
-    const waybill  = (order.waybill_number || '').trim();
-    const tel      = order.tel || '';
+    const waybill     = (order.waybill_number || '').trim();
+    const tel         = order.tel || '';
+    const printerName = (currentUser?.printerName || '').trim();
+    const sizeKey     = currentUser?.labelSize || '100x160';
+    const labelDim    = LABEL_SIZE_MAP[sizeKey] || LABEL_SIZE_MAP['100x160'];
+    const lw          = labelDim.w;
+    const lh          = labelDim.h;
 
     const itemRows = (order.lines || []).map(l =>
       `<tr><td>${esc(String(l.sku))}</td><td class="qty">${l.qty}</td></tr>`
@@ -1020,6 +1090,10 @@
     <div class="barcode-text">${esc(waybill)}</div>
   </div>` : '';
 
+    const printerHint = printerName
+      ? `<div class="printer-hint">&#128438; Print to: <strong>${esc(printerName)}</strong></div>`
+      : '';
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -1027,9 +1101,11 @@
 <title>Label ${esc(order.order_number)}</title>
 <script src="/vendor/jsbarcode.min.js"><\/script>
 <style>
-  @page { size: 100mm 160mm; margin: 0; }
+  @page { size: ${lw}mm ${lh}mm; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; }
-  body { width: 100mm; padding: 3mm; font-size: 9pt; }
+  body { width: ${lw}mm; padding: 3mm; font-size: 9pt; }
+  .printer-hint { text-align:center; padding: 3px 0 5px; font-size: 8pt; color: #555; }
+  @media print { .printer-hint { display: none !important; } }
   .label-header {
     background: #000; color: #fff;
     text-align: center; font-size: 17pt; font-weight: 900;
@@ -1054,6 +1130,7 @@
 </style>
 </head>
 <body>
+  ${printerHint}
   <div class="label-header">${esc(header)}</div>
 
   ${barcodeSection}
