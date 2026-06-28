@@ -18,7 +18,13 @@ const {
 } = require('./lib/keyfields');
 
 const app    = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
+const UPLOAD_MAX_ROWS  = 5000;
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: UPLOAD_MAX_BYTES },
+});
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -239,6 +245,9 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       skipped = all.length - allRows.length;
     }
 
+    if (allRows.length > UPLOAD_MAX_ROWS) {
+      return res.json({ rowCount: allRows.length, orderCount: 0, errors: [`File has ${allRows.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.`], converted: false });
+    }
     const orders    = summarizeOrders(allRows);
     const errors    = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
@@ -262,6 +271,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     const mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
+    if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const orders    = summarizeOrders(mapped);
