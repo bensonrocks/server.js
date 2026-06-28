@@ -2,9 +2,10 @@
   // ── State ──────────────────────────────────────────────────────────────────
   let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
   let loadedOrders = [];
-  let activeOrder  = null;
-  let currentUser  = null;
-  let timerInterval = null;
+  let activeOrder      = null;
+  let currentUser      = null;
+  let timerInterval    = null;
+  let currentMismatches = [];
   let activeClientFilter  = 'all';
   let activeCarrierFilter = 'all';
   let printWaybillTimer   = null;
@@ -30,6 +31,15 @@
     if (h > 0) return `${h}h ${m % 60}m`;
     if (m > 0) return `${m}m ${s % 60}s`;
     return `${s}s`;
+  }
+  function fmtElapsed(startISO, endISO) {
+    if (!startISO || !endISO) return null;
+    const ms = new Date(endISO) - new Date(startISO);
+    return ms > 0 ? fmtMs(ms) : null;
+  }
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString();
   }
 
   // ── Login ──────────────────────────────────────────────────────────────────
@@ -584,7 +594,12 @@
 
     document.getElementById('ordersDashList').innerHTML = orders.length ? orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
-      const canScan = ord.scan_status !== 'done';
+      const canScan      = ord.scan_status !== 'done';
+      const elapsed      = fmtElapsed(ord.startTime, ord.endTime);
+      const isDone       = ord.scan_status === 'done';
+      const slipUrl      = ord.batchId
+        ? `/api/completion-slip/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}`
+        : null;
       return `
         <div class="dash-order-card status-${ord.scan_status}" data-order="${esc(ord.order_number)}">
           <div class="dash-order-left">
@@ -593,12 +608,16 @@
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
             ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
             ${ord.has_waybill_pdf ? `<span class="chip chip-waybill">&#128196; with waybill</span>` : ''}
+            ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
+            ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
+            ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
           </div>
           <div class="dash-order-right">
             ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
             <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
             <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
+            ${isDone && slipUrl ? `<a class="btn-slip" href="${esc(slipUrl)}" download title="Download completion slip">&#128196; Slip</a>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Print waybill PDF">&#128438; Print</a>` : ''}
             ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
@@ -654,6 +673,24 @@
   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
   document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
 
+  document.getElementById('clearAndRestartBtn').addEventListener('click', async () => {
+    if (!activeOrder) return;
+    if (!confirm(`Clear all scanned quantities for ${activeOrder.order_number} and restart from zero?`)) return;
+    try {
+      const resp = await fetch('/api/scan/reset', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      });
+      if (!resp.ok) { const d = await resp.json(); alert(d.error); return; }
+      // Reset local timing so elapsed starts fresh
+      orderTimings[activeOrder.order_number] = new Date().toISOString();
+      saveTimings();
+      await refreshOrders();
+      const updated = loadedOrders.find(o => o.order_number === activeOrder.order_number);
+      if (updated) enterItemsPhase(updated);
+    } catch (err) { alert(err.message); }
+  });
+
   async function pauseAndGoToOrders() {
     if (!activeOrder) return;
     try {
@@ -669,7 +706,25 @@
 
   // ── Items phase ────────────────────────────────────────────────────────────
   function enterItemsPhase(order) {
-    activeOrder = order;
+    activeOrder      = order;
+    currentMismatches = [];
+
+    // Show unprocessed banner when re-opening a previously cancelled order
+    const banner = document.getElementById('unprocessedBanner');
+    if (order.scan_status === 'unprocessed' && Array.isArray(order.mismatches) && order.mismatches.length) {
+      document.getElementById('unprocessedMismatchTbody').innerHTML = order.mismatches.map(m => `
+        <tr>
+          <td><code>${esc(m.sku)}</code></td>
+          <td>${esc(m.description || '—')}</td>
+          <td>${m.ordered}</td>
+          <td class="${m.scanned > m.ordered ? 'over' : 'short'}">${m.scanned}</td>
+          <td class="${m.gap > 0 ? 'over' : 'short'}">${m.gap > 0 ? '+' : ''}${m.gap}</td>
+        </tr>`).join('');
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+
     if (!orderTimings[order.order_number]) {
       orderTimings[order.order_number] = new Date().toISOString();
       saveTimings();
@@ -955,13 +1010,13 @@
           startTime:   orderTimings[activeOrder.order_number] || null,
           endTime:     new Date().toISOString(),
           operator:    currentUser ? `${currentUser.name} (···${currentUser.icLast4})` : null,
+          mismatches:  currentMismatches,
         }),
       });
       const data = await resp.json();
       if (!resp.ok) { alert(data.error); return; }
-      delete orderTimings[activeOrder.order_number];
-      saveTimings();
-      mergeOrderState(activeOrder.order_number, 'unprocessed', {});
+      // Keep timing so re-open shows how long they already spent
+      mergeOrderState(activeOrder.order_number, 'unprocessed', activeOrder.scanned || {});
       closeScanOverlay();
       await refreshOrders();
       renderOrdersDash();
@@ -1008,6 +1063,7 @@
 
   // ── Mismatch modal ─────────────────────────────────────────────────────────
   function showMismatchModal(mismatches) {
+    currentMismatches = mismatches;
     document.getElementById('mismatchTbody').innerHTML = mismatches.map(m => `
       <tr>
         <td><code>${esc(m.sku)}</code></td>
@@ -1026,6 +1082,7 @@
 
   document.getElementById('mismatchCancelBtn').addEventListener('click', async () => {
     document.getElementById('mismatchOverlay').classList.add('hidden');
+    // currentMismatches already set by showMismatchModal — doCancel will send them
     await doCancel();
   });
 

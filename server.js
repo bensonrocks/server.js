@@ -140,8 +140,12 @@ function globalOrdersWithState() {
       const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
       out.push({
         ...ord,
-        scan_status:     state.status  || 'pending',
+        scan_status:     state.status     || 'pending',
         scanned:         { ...state.scanned },
+        mismatches:      state.mismatches || [],
+        startTime:       state.startTime  || null,
+        endTime:         state.endTime    || null,
+        operator:        state.operator   || null,
         batchId:         batch.id,
         client_name:     batch.client_name || '',
         has_waybill_pdf: fs.existsSync(waybillPath),
@@ -485,14 +489,17 @@ app.post('/api/scan/complete', (req, res) => {
 });
 
 app.post('/api/scan/cancel', (req, res) => {
-  const { orderNumber, startTime, endTime, operator } = req.body;
+  const { orderNumber, startTime, endTime, operator, mismatches } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   if (!batch.orderStates) batch.orderStates = {};
+  const prevState = batch.orderStates[orderNumber] || { scanned: {} };
   batch.orderStates[orderNumber] = {
-    status: 'unprocessed', scanned: {},
+    status:     'unprocessed',
+    scanned:    prevState.scanned || {},
+    mismatches: Array.isArray(mismatches) ? mismatches : [],
     updated_at: new Date().toISOString(),
     ...(startTime && { startTime }),
     ...(endTime   && { endTime }),
@@ -648,6 +655,54 @@ app.delete('/api/master/keyfields-template', (req, res) => {
     fs.unlinkSync(KEYFIELDS_TEMPLATE_FILE);
   } catch {}
   res.json({ ok: true, headers: KEYFIELDS_HEADERS });
+});
+
+// ── Completion slip ──────────────────────────────────────────────────────────
+app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
+  const { batchId, orderNumber } = req.params;
+  const db    = readDb();
+  const batch = db.batches.find(b => b.id === batchId);
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+  const ord = (batch.orders || []).find(o => o.order_number === orderNumber);
+  if (!ord) return res.status(404).json({ error: 'Order not found' });
+  const state = (batch.orderStates || {})[orderNumber] || {};
+
+  const startTime = state.startTime ? new Date(state.startTime) : null;
+  const endTime   = state.endTime   ? new Date(state.endTime)   : null;
+  const elapsedSec = (startTime && endTime) ? Math.round((endTime - startTime) / 1000) : null;
+  const elapsedStr = elapsedSec !== null
+    ? `${Math.floor(elapsedSec / 3600)}h ${Math.floor((elapsedSec % 3600) / 60)}m ${elapsedSec % 60}s`
+    : '—';
+
+  const aoa = [
+    ['IDEALSCAN Completion Slip'],
+    [],
+    ['Order Number', orderNumber],
+    ['Customer',     ord.customer_name || '—'],
+    ['Client',       ord.client_name   || '—'],
+    ['Carrier',      ord.carrier       || '—'],
+    ['Waybill No.',  ord.waybill_number || '—'],
+    [],
+    ['Operator',     state.operator || '—'],
+    ['Start Time',   startTime || '—'],
+    ['End Time',     endTime   || '—'],
+    ['Elapsed',      elapsedStr],
+    [],
+    ['SKU', 'Description', 'Ordered Qty', 'Scanned Qty', 'Result'],
+    ...ord.lines.map(l => {
+      const s  = (state.scanned || {})[l.sku] || 0;
+      const ok = s === l.qty;
+      return [l.sku, l.description || '', l.qty, s, ok ? 'OK' : s > l.qty ? 'Over-scanned' : 'Short'];
+    }),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa, { cellDates: true }), 'Completion Slip');
+  const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const date = (endTime || new Date()).toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Slip_${orderNumber}_${date}.xlsx"`);
+  res.end(buf);
 });
 
 const PORT = process.env.PORT || 3000;

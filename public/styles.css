@@ -1327,3 +1327,60 @@ body.log-open { overflow: hidden; }
   .bkd-grid { grid-template-columns: 1fr; }
   .bkd-row-label { min-width: 80px; max-width: 100px; }
 }
+
+/* ════════════════════════════════════════════════════
+   UNPROCESSED BANNER (re-opening a cancelled order)
+   ════════════════════════════════════════════════════ */
+.unprocessed-banner {
+  background: #fff8e1;
+  border: 1.5px solid #f59e0b;
+  border-radius: 8px;
+  margin: .6rem 1rem .4rem;
+  padding: .65rem .85rem;
+  font-size: .82rem;
+}
+.unproc-header {
+  display: flex; align-items: center; gap: .55rem; margin-bottom: .5rem;
+  flex-wrap: wrap;
+}
+.unproc-icon { font-size: 1rem; color: #d97706; }
+.unproc-title { font-weight: 600; color: #92400e; flex: 1; }
+.btn-clear-restart {
+  background: #fff3cd; border: 1px solid #d97706; color: #92400e;
+  border-radius: 5px; padding: .3rem .7rem; font-size: .78rem;
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s;
+}
+.btn-clear-restart:hover { background: #fde68a; }
+.unproc-mismatch-table {
+  width: 100%; border-collapse: collapse; font-size: .78rem;
+}
+.unproc-mismatch-table th,
+.unproc-mismatch-table td {
+  padding: .2rem .45rem; text-align: left;
+  border-bottom: 1px solid #fde68a;
+}
+.unproc-mismatch-table th { font-weight: 600; color: #78350f; }
+.unproc-mismatch-table td.over  { color: #b45309; font-weight: 600; }
+.unproc-mismatch-table td.short { color: #dc2626; font-weight: 600; }
+
+/* ════════════════════════════════════════════════════
+   DONE ORDER CARD — elapsed time, operator, slip
+   ════════════════════════════════════════════════════ */
+.done-meta {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .72rem; color: var(--text-light);
+  margin-top: .1rem;
+}
+.done-elapsed { color: #2563eb; font-weight: 600; }
+.done-time    { color: #64748b; }
+
+.btn-slip {
+  display: inline-flex; align-items: center; gap: .2rem;
+  font-size: .73rem; padding: .28rem .55rem;
+  background: #eff6ff; border: 1px solid #93c5fd;
+  border-radius: 5px; color: #1d4ed8; text-decoration: none;
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s;
+}
+.btn-slip:hover { background: #dbeafe; }

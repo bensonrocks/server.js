@@ -103,6 +103,19 @@
 
     <div class="scan-order-meta" id="scanOrderMeta"></div>
 
+    <!-- shown only when re-opening an unprocessed order -->
+    <div id="unprocessedBanner" class="unprocessed-banner hidden">
+      <div class="unproc-header">
+        <span class="unproc-icon">&#9888;</span>
+        <span class="unproc-title">Previously cancelled &mdash; mismatches recorded</span>
+        <button class="btn-clear-restart" id="clearAndRestartBtn">&#8635; Clear &amp; restart from zero</button>
+      </div>
+      <table class="unproc-mismatch-table">
+        <thead><tr><th>SKU</th><th>Description</th><th>Ordered</th><th>Scanned</th><th>Gap</th></tr></thead>
+        <tbody id="unprocessedMismatchTbody"></tbody>
+      </table>
+    </div>
+
     <div class="scan-items-scroll">
       <table class="scan-items-table">
         <thead>
