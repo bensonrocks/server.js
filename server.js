@@ -450,7 +450,7 @@ app.post('/api/leads/search', async (req, res) => {
   if (size)      payload.organization_num_employees_ranges = [size];
 
   try {
-    const data    = await apolloRequest('/mixed_people/search', payload);
+    const data    = await apolloRequest('/mixed_people/api_search', payload);
     const rawList = data.people || [];
 
     // Create session record
@@ -541,10 +541,11 @@ app.post('/api/leads/enrich', async (req, res) => {
 
 // Mark a lead as contacted (toggle + timestamp + optional note)
 app.patch('/api/leads/:id/contact', (req, res) => {
-  const { contacted, note = '' } = req.body || {};
+  const { contacted, contact_note = '', note = '' } = req.body || {};
+  const resolvedNote = contact_note || note;
   const now = contacted ? new Date().toISOString() : '';
   db.prepare(`UPDATE leads SET contacted=?, contacted_at=?, contact_note=? WHERE apollo_id=?`)
-    .run(contacted ? 1 : 0, now, note, req.params.id);
+    .run(contacted ? 1 : 0, now, resolvedNote, req.params.id);
   const lead = db.prepare('SELECT * FROM leads WHERE apollo_id=?').get(req.params.id);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
   res.json({ ok: true, contacted: !!lead.contacted, contacted_at: lead.contacted_at });
