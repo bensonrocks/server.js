@@ -350,45 +350,47 @@
     <!-- ── TAB 1: Upload / Dashboard ── -->
     <section id="tab-upload" class="tab active">
 
-      <div id="dashStatsSection" class="dash-stats-section hidden">
-        <div class="dash-stats-header">
-          <h3>Dashboard</h3>
-          <button class="link-btn" id="refreshStatsBtn">&#8635; Refresh</button>
-        </div>
-        <div id="dashStatsGrid" class="dash-stats-grid"></div>
-      </div>
-
-      <div class="card">
-        <h2>Upload Client Picklist</h2>
-        <p class="hint">Upload the client's XLSX or CSV picklist. Optionally attach the waybill PDF to split and match per order.</p>
-
-        <div class="form-group">
-          <label>Client Name</label>
-          <input type="text" id="clientNameInput" placeholder="e.g. Glowverse" autocomplete="off" />
+      <div class="upload-two-col">
+        <div id="dashStatsSection" class="dash-stats-section hidden">
+          <div class="dash-stats-header">
+            <h3>Dashboard</h3>
+            <button class="link-btn" id="refreshStatsBtn">&#8635; Refresh</button>
+          </div>
+          <div id="dashStatsGrid" class="dash-stats-grid"></div>
         </div>
 
-        <div class="upload-area" id="dropZone">
-          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
-          <div class="upload-icon">&#8679;</div>
-          <p>Drag &amp; drop or <button class="link-btn" id="browseBtn">browse</button></p>
-        </div>
-        <p class="upload-cap-hint">
-          XLSX &nbsp;·&nbsp; XLS &nbsp;·&nbsp; CSV &nbsp;&nbsp;|&nbsp;&nbsp; up to <strong>10 MB</strong> &nbsp;·&nbsp; up to <strong>5,000 rows</strong> per file
-          &nbsp;&nbsp;|&nbsp;&nbsp; Column names are <strong>auto-detected</strong> — any layout converts to Keyfields
-        </p>
+        <div class="card">
+          <h2>Upload Client Picklist</h2>
+          <p class="hint">Upload the client's XLSX or CSV picklist. Optionally attach the waybill PDF to split and match per order.</p>
 
-        <div class="waybill-upload-row">
-          <label class="waybill-upload-label">
-            <span>&#128196; Waybill PDF <span class="hint-inline">(optional)</span></span>
-            <input type="file" id="waybillPdfInput" accept=".pdf" hidden />
-            <button class="btn-secondary btn-sm" id="browsePdfBtn">Attach PDF</button>
-          </label>
-          <span id="waybillPdfName" class="waybill-pdf-name"></span>
-        </div>
+          <div class="form-group">
+            <label>Client Name</label>
+            <input type="text" id="clientNameInput" placeholder="e.g. Glowverse" autocomplete="off" />
+          </div>
 
-        <div id="uploadStatus" class="status-bar hidden"></div>
-        <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
-          <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
+          <div class="upload-area" id="dropZone">
+            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
+            <div class="upload-icon">&#8679;</div>
+            <p>Drag &amp; drop or <button class="link-btn" id="browseBtn">browse</button></p>
+          </div>
+          <p class="upload-cap-hint">
+            XLSX &nbsp;·&nbsp; XLS &nbsp;·&nbsp; CSV &nbsp;&nbsp;|&nbsp;&nbsp; up to <strong>10 MB</strong> &nbsp;·&nbsp; up to <strong>5,000 rows</strong> per file
+            &nbsp;&nbsp;|&nbsp;&nbsp; Column names are <strong>auto-detected</strong> — any layout converts to Keyfields
+          </p>
+
+          <div class="waybill-upload-row">
+            <label class="waybill-upload-label">
+              <span>&#128196; Waybill PDF <span class="hint-inline">(optional)</span></span>
+              <input type="file" id="waybillPdfInput" accept=".pdf" hidden />
+              <button class="btn-secondary btn-sm" id="browsePdfBtn">Attach PDF</button>
+            </label>
+            <span id="waybillPdfName" class="waybill-pdf-name"></span>
+          </div>
+
+          <div id="uploadStatus" class="status-bar hidden"></div>
+          <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
+            <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
+          </div>
         </div>
       </div>
 
