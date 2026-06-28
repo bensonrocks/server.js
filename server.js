@@ -15,7 +15,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT          = process.env.PORT || 3000;
-const POLL_INTERVAL = 2 * 60 * 1000; // 2 min
+const POLL_INTERVAL = 90 * 1000; // 90 sec
 const MAX_ARTICLES  = 600;
 const DATA_FILE     = path.join(__dirname, 'data.json');
 
@@ -251,11 +251,13 @@ const DRIP_QUEUE = [
 ];
 
 let dripIndex = 0;
+let dripCycle = 0;
 function nextDrip() {
-  if (dripIndex >= DRIP_QUEUE.length) dripIndex = 0;
+  if (dripIndex >= DRIP_QUEUE.length) { dripIndex = 0; dripCycle++; }
   const a = { ...DRIP_QUEUE[dripIndex++] };
   a.publishedAt = new Date().toISOString();
-  a.id = a.url;
+  // Include cycle so each pass gets a fresh unique ID and passes the seenUrls check
+  a.id = `${a.url}#c${dripCycle}`;
   return a;
 }
 
@@ -867,18 +869,24 @@ function loadSeedData() {
   console.log(`[SEED] ${articles.length} articles ready`);
 }
 
+function drip() {
+  const raw = nextDrip();
+  if (seenUrls.has(raw.id)) return;
+  seenUrls.add(raw.id);
+  const processed = processArticle(raw);
+  if (processed) {
+    articles.unshift(processed);
+    if (articles.length > MAX_ARTICLES) articles = articles.slice(0, MAX_ARTICLES);
+    console.log(`[DRIP] ${raw.title.slice(0, 60)}…`);
+    broadcast({ type: 'new_articles', data: [processed] });
+  }
+}
+
 function startDripSimulation() {
-  setInterval(() => {
-    const raw = nextDrip();
-    if (seenUrls.has(raw.id)) return;
-    seenUrls.add(raw.id);
-    const processed = processArticle(raw);
-    if (processed) {
-      articles.unshift(processed);
-      console.log(`[DRIP] New article: ${raw.title.slice(0, 60)}…`);
-      broadcast({ type: 'new_articles', data: [processed] });
-    }
-  }, 90 * 1000);
+  // Burst: push a few articles quickly after boot so the feed feels live immediately
+  [5, 20, 45, 90, 150].forEach(s => setTimeout(drip, s * 1000));
+  // Then sustain one article per minute continuously
+  setInterval(drip, 60 * 1000);
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
