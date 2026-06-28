@@ -1,4 +1,24 @@
 (() => {
+  // ── Auth token — injected into every /api/ request automatically ───────────
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function (url, opts = {}) {
+    if (typeof url === 'string' && url.startsWith('/api/')) {
+      const token = localStorage.getItem('wms_token');
+      if (token) {
+        opts = { ...opts, headers: { ...opts.headers, 'x-auth-token': token } };
+      }
+    }
+    return _origFetch(url, opts).then(resp => {
+      if (resp.status === 401 && typeof url === 'string' && url.startsWith('/api/')) {
+        // Session invalidated (e.g. logged in elsewhere) — force re-login
+        localStorage.removeItem('wms_user');
+        localStorage.removeItem('wms_token');
+        location.reload();
+      }
+      return resp;
+    });
+  };
+
   // ── State ──────────────────────────────────────────────────────────────────
   let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
   let loadedOrders = [];
@@ -77,7 +97,8 @@
           return;
         }
       } catch {}
-      localStorage.removeItem('wms_user'); // old format — require re-login
+      localStorage.removeItem('wms_user');
+      localStorage.removeItem('wms_token'); // old format — require re-login
     }
     document.getElementById('loginOverlay').classList.remove('hidden');
   }
@@ -144,6 +165,7 @@
       }
       currentUser = { id: data.id, name: data.name, role: data.role || 'admin' };
       localStorage.setItem('wms_user', JSON.stringify(currentUser));
+      if (data.token) localStorage.setItem('wms_token', data.token);
       showUserInHeader();
       fetchAndRenderStats();
       refreshOrders().then(() => {
@@ -247,7 +269,9 @@
 
   document.getElementById('pinLogoutBtn').addEventListener('click', () => {
     if (confirm('Sign out? Your current session will be cleared.')) {
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
       localStorage.removeItem('wms_user');
+      localStorage.removeItem('wms_token');
       localStorage.removeItem(PIN_KEY);
       sessionStorage.clear();
       location.reload();

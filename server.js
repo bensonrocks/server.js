@@ -325,6 +325,21 @@ function parseUploadedFile(buffer, filename) {
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
+// Global auth guard — all /api/ routes require a valid session token except
+// the explicit public list below.
+const AUTH_PUBLIC = new Set([
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/stats',
+  '/api/public/orders',
+  '/api/public/config',
+]);
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/')) return next();
+  requireAuth(req, res, next);
+});
+
 // Parse-only preview — returns stats without saving anything
 app.post('/api/preview', upload.single('orderFile'), (req, res) => {
   try {
@@ -700,14 +715,38 @@ app.post('/api/scan/keyfields-close', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Auth ─────────────────────────────────────────────────────────────────────
+// ── Auth / session enforcement ───────────────────────────────────────────────
+// One active session per user. Logging in from a new device invalidates the old one.
+const activeSessions = new Map(); // userId → token
+
+function requireAuth(req, res, next) {
+  const token = req.headers['x-auth-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorised' });
+  for (const [userId, t] of activeSessions) {
+    if (t === token) { req.userId = userId; return next(); }
+  }
+  res.status(401).json({ error: 'Session expired' });
+}
+
 app.post('/api/auth/login', (req, res) => {
   const { id, password } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
   const user = readUsers().find(u => u.id === String(id).trim());
   if (!user || hashPass(password, user.salt) !== user.passwordHash)
     return res.status(401).json({ error: 'Invalid credentials' });
-  res.json({ id: user.id, name: user.name || user.id, role: user.role || 'admin' });
+  const token = uuidv4();
+  activeSessions.set(user.id, token); // replaces any existing session for this user
+  res.json({ id: user.id, name: user.name || user.id, role: user.role || 'admin', token });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = req.headers['x-auth-token'];
+  if (token) {
+    for (const [userId, t] of activeSessions) {
+      if (t === token) { activeSessions.delete(userId); break; }
+    }
+  }
+  res.json({ ok: true });
 });
 
 // ── Public stats (no auth needed) ──────────────────────────────────────────
