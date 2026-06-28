@@ -2,10 +2,11 @@
   // ── State ──────────────────────────────────────────────────────────────────
   let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
   let loadedOrders = [];
-  let activeOrder      = null;
-  let currentUser      = null;
-  let timerInterval    = null;
-  let currentMismatches = [];
+  let activeOrder          = null;
+  let currentUser          = null;
+  let timerInterval        = null;
+  let currentMismatches    = [];
+  let defaultRecipientEmail = '';
   let activeClientFilter  = 'all';
   let activeCarrierFilter = 'all';
   let printWaybillTimer   = null;
@@ -353,7 +354,7 @@
     document.getElementById('confirmEmailError').classList.add('hidden');
     document.getElementById('confirmApproveBtn').disabled    = false;
     document.getElementById('confirmApproveBtn').textContent = 'Approve & Upload →';
-    document.getElementById('confirmEmail').value = '';
+    document.getElementById('confirmEmail').value = defaultRecipientEmail;
     document.getElementById('uploadConfirmOverlay').classList.remove('hidden');
     setTimeout(() => document.getElementById('confirmEmail').focus(), 150);
   }
@@ -1152,6 +1153,7 @@
   function renderMasterActions() {
     document.getElementById('masterActionsSection').classList.remove('hidden');
     loadUserList();
+    loadEmailConfig();
   }
 
   // ── User Management ─────────────────────────────────────────────────────────
@@ -1229,6 +1231,82 @@
     el.classList.remove('hidden');
     setTimeout(() => el.classList.add('hidden'), 4000);
   }
+
+  // ── Email Configuration ──────────────────────────────────────────────────────
+  async function loadEmailConfig() {
+    try {
+      const resp = await fetch('/api/master/email-config', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!resp.ok) return;
+      const conf = await resp.json();
+      document.getElementById('cfgFromEmail').value = conf.from_email || '';
+      document.getElementById('cfgPassword').value  = '';  // never pre-fill password
+      document.getElementById('cfgPassNote').textContent = conf.has_password ? '(saved — leave blank to keep)' : '';
+      document.getElementById('cfgSmtpHost').value  = conf.smtp_host || 'smtp.gmail.com';
+      document.getElementById('cfgSmtpPort').value  = conf.smtp_port || 587;
+      document.getElementById('cfgToEmail').value   = conf.to_email  || '';
+      defaultRecipientEmail = conf.to_email || '';
+    } catch {}
+  }
+
+  function showEmailStatus(msg, type) {
+    const el = document.getElementById('emailCfgStatus');
+    el.textContent = msg; el.className = `status-bar ${type}`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 5000);
+  }
+
+  document.getElementById('saveEmailCfgBtn').addEventListener('click', async () => {
+    const from_email = document.getElementById('cfgFromEmail').value.trim();
+    const password   = document.getElementById('cfgPassword').value.trim();
+    const smtp_host  = document.getElementById('cfgSmtpHost').value.trim();
+    const smtp_port  = document.getElementById('cfgSmtpPort').value.trim();
+    const to_email   = document.getElementById('cfgToEmail').value.trim();
+    if (!from_email) { showEmailStatus('From Email is required.', 'error'); return; }
+    try {
+      const r = await fetch('/api/master/email-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ from_email, password, smtp_host, smtp_port, to_email }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showEmailStatus(d.error, 'error'); return; }
+      showEmailStatus('Email settings saved.', 'success');
+      document.getElementById('cfgPassNote').textContent = '(saved — leave blank to keep)';
+      document.getElementById('cfgPassword').value = '';
+      defaultRecipientEmail = to_email;
+    } catch (err) { showEmailStatus(err.message, 'error'); }
+  });
+
+  document.getElementById('testEmailCfgBtn').addEventListener('click', async () => {
+    const to = document.getElementById('cfgToEmail').value.trim() ||
+               document.getElementById('cfgFromEmail').value.trim();
+    if (!to) { showEmailStatus('Enter a recipient in Default Recipient field first.', 'error'); return; }
+    showEmailStatus('Sending test email…', '');
+    try {
+      const r = await fetch('/api/master/email-config/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ to }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showEmailStatus(`Failed: ${d.error}`, 'error'); return; }
+      showEmailStatus(`Test email sent to ${to}`, 'success');
+    } catch (err) { showEmailStatus(err.message, 'error'); }
+  });
+
+  document.getElementById('clearEmailCfgBtn').addEventListener('click', async () => {
+    if (!confirm('Clear all saved email settings? You will need to re-enter credentials.')) return;
+    try {
+      await fetch('/api/master/email-config', { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+      document.getElementById('cfgFromEmail').value = '';
+      document.getElementById('cfgPassword').value  = '';
+      document.getElementById('cfgPassNote').textContent = '';
+      document.getElementById('cfgSmtpHost').value  = 'smtp.gmail.com';
+      document.getElementById('cfgSmtpPort').value  = '587';
+      document.getElementById('cfgToEmail').value   = '';
+      showEmailStatus('Email settings cleared.', 'success');
+    } catch (err) { showEmailStatus(err.message, 'error'); }
+  });
 
   // Master: export status report
   document.getElementById('masterExportBtn').addEventListener('click', async () => {

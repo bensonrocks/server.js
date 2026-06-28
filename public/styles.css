@@ -1382,6 +1382,41 @@ body.log-open { overflow: hidden; }
 .user-add-row input:focus { outline: none; border-color: var(--accent); }
 
 /* ════════════════════════════════════════════════════
+   EMAIL CONFIGURATION (master panel)
+   ════════════════════════════════════════════════════ */
+.email-cfg-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.email-cfg-title {
+  font-weight: 700; font-size: .82rem; color: var(--text-main);
+  text-transform: uppercase; letter-spacing: .04em;
+  margin-bottom: .75rem;
+}
+.email-cfg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .55rem .75rem;
+}
+.cfg-full { grid-column: 1 / -1; }
+.email-cfg-grid .form-group { margin: 0; }
+.email-cfg-grid label { font-size: .78rem; }
+.cfg-req { color: #dc2626; }
+.cfg-note { font-weight: 400; font-size: .72rem; color: var(--text-light); }
+.email-cfg-actions {
+  display: flex; gap: .5rem; align-items: center;
+  margin-top: .75rem; flex-wrap: wrap;
+}
+.btn-danger-sm {
+  background: none; border: 1px solid #fca5a5;
+  border-radius: 5px; padding: .32rem .7rem;
+  font-size: .78rem; cursor: pointer; color: #dc2626;
+  transition: background .12s;
+}
+.btn-danger-sm:hover { background: #fee2e2; }
+
+/* ════════════════════════════════════════════════════
    UNPROCESSED BANNER (re-opening a cancelled order)
    ════════════════════════════════════════════════════ */
 .unprocessed-banner {

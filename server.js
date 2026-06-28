@@ -38,6 +38,7 @@ const DB_FILE     = path.join(DATA_DIR, 'db.json');
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
+const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
 
 fs.mkdirSync(WMS_DIR,     { recursive: true });
 fs.mkdirSync(WAYBILL_DIR, { recursive: true });
@@ -76,18 +77,32 @@ function writeDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
+// ── Email config ─────────────────────────────────────────────────────────────
+function readEmailConfig() {
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(EMAIL_CONFIG_FILE, 'utf8')); } catch {}
+  return {
+    from_email: saved.from_email || process.env.EMAIL_USER || '',
+    password:   saved.password   || process.env.EMAIL_PASS  || '',
+    smtp_host:  saved.smtp_host  || process.env.SMTP_HOST   || 'smtp.gmail.com',
+    smtp_port:  saved.smtp_port  || parseInt(process.env.SMTP_PORT || '587', 10),
+    to_email:   saved.to_email   || process.env.EMAIL_TO    || '',
+  };
+}
+
 // ── Email ───────────────────────────────────────────────────────────────────
 async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
-  const { EMAIL_USER, EMAIL_PASS, SMTP_HOST, SMTP_PORT } = process.env;
-  const recipient = emailTo || process.env.EMAIL_TO;
-  if (!EMAIL_USER || !EMAIL_PASS) throw new Error('Email not configured — set EMAIL_USER and EMAIL_PASS env vars');
+  const conf = readEmailConfig();
+  const recipient = emailTo || conf.to_email;
+  if (!conf.from_email || !conf.password)
+    throw new Error('Email not configured — add credentials in the Master panel (Upload Log → Email Settings)');
   if (!recipient) throw new Error('No recipient email address provided');
 
   const transporter = nodemailer.createTransport({
-    host: SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(SMTP_PORT || '587', 10),
+    host: conf.smtp_host,
+    port: conf.smtp_port,
     secure: false,
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+    auth: { user: conf.from_email, pass: conf.password },
   });
 
   const orderList = orders.map(o =>
@@ -97,7 +112,7 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
   const wmsName = `WMS_${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`;
 
   await transporter.sendMail({
-    from: EMAIL_USER, to: recipient,
+    from: conf.from_email, to: recipient,
     subject: `WMS Upload Ready — ${batch.filename} (${batch.order_count} orders)`,
     text: [
       `New order batch uploaded on ${new Date(batch.uploaded_at).toLocaleString()}.`,
@@ -725,6 +740,66 @@ app.delete('/api/master/users/:id', (req, res) => {
   if (!users.find(u => u.id === req.params.id)) return res.status(404).json({ error: 'User not found' });
   if (users.length <= 1) return res.status(400).json({ error: 'Cannot delete the only user' });
   writeUsers(users.filter(u => u.id !== req.params.id));
+  res.json({ ok: true });
+});
+
+// ── Master: Email configuration ──────────────────────────────────────────────
+app.get('/api/master/email-config', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const conf = readEmailConfig();
+  res.json({
+    from_email: conf.from_email,
+    password:   conf.password ? '••••••••' : '',   // never expose the real password
+    smtp_host:  conf.smtp_host,
+    smtp_port:  conf.smtp_port,
+    to_email:   conf.to_email,
+    has_password: !!conf.password,
+  });
+});
+
+app.post('/api/master/email-config', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { from_email, password, smtp_host, smtp_port, to_email } = req.body;
+  if (!from_email) return res.status(400).json({ error: 'From email is required' });
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(EMAIL_CONFIG_FILE, 'utf8')); } catch {}
+  const updated = {
+    from_email: from_email.trim(),
+    password:   password ? password.trim() : (saved.password || ''),  // keep existing if blank
+    smtp_host:  (smtp_host || 'smtp.gmail.com').trim(),
+    smtp_port:  parseInt(smtp_port || 587, 10),
+    to_email:   (to_email || '').trim(),
+  };
+  fs.writeFileSync(EMAIL_CONFIG_FILE, JSON.stringify(updated, null, 2));
+  res.json({ ok: true });
+});
+
+app.post('/api/master/email-config/test', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const conf = readEmailConfig();
+  if (!conf.from_email || !conf.password)
+    return res.status(400).json({ error: 'Email credentials not configured yet' });
+  const to = (req.body?.to || conf.to_email || '').trim();
+  if (!to) return res.status(400).json({ error: 'No recipient address — enter one or set Default Recipient' });
+  try {
+    const transporter = nodemailer.createTransport({
+      host: conf.smtp_host, port: conf.smtp_port, secure: false,
+      auth: { user: conf.from_email, pass: conf.password },
+    });
+    await transporter.sendMail({
+      from: conf.from_email, to,
+      subject: 'IDEALSCAN — Email Test',
+      text: `This is a test email from IDEALSCAN Fulfillment Scanner.\n\nSMTP: ${conf.smtp_host}:${conf.smtp_port}\nFrom: ${conf.from_email}\nSent: ${new Date().toLocaleString()}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/master/email-config', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  try { fs.unlinkSync(EMAIL_CONFIG_FILE); } catch {}
   res.json({ ok: true });
 });
 

@@ -261,6 +261,39 @@
         </div>
         <div id="userMgmtStatus" class="status-bar hidden"></div>
       </div>
+
+      <!-- Email Settings -->
+      <div class="email-cfg-section">
+        <div class="email-cfg-title">&#9993; Email Settings</div>
+        <div class="email-cfg-grid">
+          <div class="form-group">
+            <label>From Email <span class="cfg-req">*</span></label>
+            <input type="email" id="cfgFromEmail" placeholder="your@gmail.com" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label>Password <span class="cfg-note" id="cfgPassNote"></span></label>
+            <input type="password" id="cfgPassword" placeholder="Leave blank to keep existing" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label>SMTP Host</label>
+            <input type="text" id="cfgSmtpHost" placeholder="smtp.gmail.com" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label>SMTP Port</label>
+            <input type="number" id="cfgSmtpPort" placeholder="587" autocomplete="off" />
+          </div>
+          <div class="form-group cfg-full">
+            <label>Default Recipient (pre-fills upload form)</label>
+            <input type="email" id="cfgToEmail" placeholder="wms@warehouse.com" autocomplete="off" />
+          </div>
+        </div>
+        <div class="email-cfg-actions">
+          <button class="btn-secondary" id="saveEmailCfgBtn">&#10003; Save</button>
+          <button class="btn-secondary" id="testEmailCfgBtn">&#9993; Send Test Email</button>
+          <button class="btn-danger-sm"  id="clearEmailCfgBtn">&#215; Clear</button>
+        </div>
+        <div id="emailCfgStatus" class="status-bar hidden"></div>
+      </div>
     </div>
 
     <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>
