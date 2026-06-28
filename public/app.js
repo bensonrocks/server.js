@@ -600,6 +600,7 @@
             <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Print waybill PDF">&#128438; Print</a>` : ''}
+            ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
         </div>`;
     }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>';
@@ -613,6 +614,19 @@
         if (ord && ord.scan_status !== 'done') openScanOverlay(card.dataset.order);
       })
     );
+    document.querySelectorAll('.btn-del-order').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const orderNumber = btn.dataset.order, batchId = btn.dataset.batchid;
+        if (!confirm(`Delete order ${orderNumber}?\nThis cannot be undone.`)) return;
+        try {
+          const r = await fetch(`/api/master/order/${encodeURIComponent(batchId)}/${encodeURIComponent(orderNumber)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Delete failed');
+          await refreshOrders(); renderOrdersList();
+        } catch (err) { alert(err.message); }
+      });
+    });
   }
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
@@ -1218,9 +1232,28 @@
                 ${unproc ? `<span class="chip chip-unproc">${unproc} unprocessed</span>` : ''}
               </div>
             </div>
-            <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>&#8681; WMS</a>
+            <div class="log-card-actions">
+              <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>&#8681; WMS</a>
+              <button class="btn-del-batch" data-id="${esc(b.id)}" data-name="${esc(b.filename)}" title="Delete entire batch">&#128465; Delete Batch</button>
+            </div>
           </div>`;
       }).join('');
+
+      listEl.querySelectorAll('.btn-del-batch').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          e.stopPropagation();
+          const batchId = btn.dataset.id, fname = btn.dataset.name;
+          if (!confirm(`Delete entire batch "${fname}" and ALL its orders?\nThis cannot be undone.`)) return;
+          if (!confirm(`Confirm: permanently delete "${fname}"?`)) return;
+          try {
+            const r = await fetch(`/api/master/batch/${encodeURIComponent(batchId)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Delete failed');
+            await refreshOrders(); renderOrdersList();
+            await renderLogContent();
+          } catch (err) { alert(err.message); }
+        });
+      });
     } catch (err) {
       listEl.innerHTML = `<p class="scan-error" style="padding:.5rem 0">${esc(err.message)}</p>`;
     }

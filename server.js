@@ -563,6 +563,46 @@ app.post('/api/master/reset', (req, res) => {
   }
 });
 
+// ── Master: delete batch / delete single order ───────────────────────────────
+
+app.delete('/api/master/batch/:batchId', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { batchId } = req.params;
+  try {
+    const db  = readDb();
+    const idx = db.batches.findIndex(b => b.id === batchId);
+    if (idx === -1) return res.status(404).json({ error: 'Batch not found' });
+    db.batches.splice(idx, 1);
+    writeDb(db);
+    try { fs.unlinkSync(path.join(WMS_DIR, `${batchId}.xlsx`)); } catch {}
+    try { fs.rmSync(path.join(WAYBILL_DIR, batchId), { recursive: true, force: true }); } catch {}
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { batchId, orderNumber } = req.params;
+  try {
+    const db    = readDb();
+    const batch = db.batches.find(b => b.id === batchId);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const before  = (batch.orders || []).length;
+    batch.orders  = (batch.orders || []).filter(o => o.order_number !== orderNumber);
+    if (batch.orders.length === before) return res.status(404).json({ error: 'Order not found in batch' });
+    batch.order_count = batch.orders.length;
+    if (batch.rawRows) batch.rawRows = batch.rawRows.filter(r => r.order_number !== orderNumber);
+    if (batch.orderStates) delete batch.orderStates[orderNumber];
+    try { fs.unlinkSync(path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`)); } catch {}
+    writeDb(db);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Master: Keyfields template download / upload / reset ────────────────────
 
 app.get('/api/master/keyfields-template', (req, res) => {

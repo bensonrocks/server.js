@@ -417,7 +417,7 @@ tr:hover td { background: #f8fafc; }
 .log-header h2 { margin-bottom: .25rem; }
 
 .log-card {
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 1rem 1.25rem; margin: 0 0 .75rem;
   box-shadow: var(--shadow);
@@ -428,6 +428,25 @@ tr:hover td { background: #f8fafc; }
 .log-chips      { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .15rem; }
 .chip-done  { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .chip-unproc{ background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
+
+.log-card-actions {
+  display: flex; flex-direction: column; align-items: flex-end; gap: .45rem; flex-shrink: 0;
+}
+.btn-del-batch {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: none; border: 1px solid var(--danger); color: var(--danger);
+  border-radius: 6px; padding: .3rem .65rem; font-size: .78rem;
+  cursor: pointer; white-space: nowrap; transition: background .15s, color .15s;
+}
+.btn-del-batch:hover { background: var(--danger); color: #fff; }
+
+.btn-del-order {
+  background: none; border: 1px solid var(--danger); color: var(--danger);
+  border-radius: 5px; padding: .2rem .45rem; font-size: .78rem;
+  cursor: pointer; line-height: 1; transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+.btn-del-order:hover { background: var(--danger); color: #fff; }
 
 .btn-download {
   display: inline-flex; align-items: center; gap: .35rem;
