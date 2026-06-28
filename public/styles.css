@@ -1621,3 +1621,21 @@ body.log-open { overflow: hidden; }
   background: #f0fdf4; border: 1px solid #86efac;
   border-radius: 5px; color: #166534;
 }
+
+/* ── Completion alert email status ── */
+.alert-email-ok {
+  display: inline-flex; align-items: center; gap: .2rem;
+  font-size: .7rem; color: #16a34a; font-weight: 600;
+}
+.alert-email-fail {
+  display: inline-flex; align-items: center; gap: .2rem;
+  font-size: .7rem; color: #dc2626; font-weight: 600;
+}
+.btn-resend-alert {
+  font-size: .7rem; padding: .18rem .45rem;
+  background: #fef2f2; border: 1px solid #fca5a5;
+  border-radius: 4px; color: #b91c1c; cursor: pointer;
+  transition: background .12s;
+}
+.btn-resend-alert:hover    { background: #fee2e2; }
+.btn-resend-alert:disabled { opacity: .5; cursor: not-allowed; }

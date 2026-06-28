@@ -103,7 +103,10 @@ function readEmailConfig() {
 // ── Email ───────────────────────────────────────────────────────────────────
 async function sendCompletionAlert(orderNumber, ord, operator) {
   const conf = readEmailConfig();
-  if (!conf.from_email || !conf.password || !conf.to_email) return; // silently skip if not configured
+  if (!conf.from_email || !conf.password || !conf.to_email) {
+    console.warn(`[IdealScan] Completion alert for ${orderNumber} skipped — email not configured.`);
+    return { sent: false, reason: 'not_configured' };
+  }
   const transporter = nodemailer.createTransport({
     host: conf.smtp_host, port: conf.smtp_port, secure: false,
     auth: { user: conf.from_email, pass: conf.password },
@@ -123,6 +126,8 @@ async function sendCompletionAlert(orderNumber, ord, operator) {
       'Once closed, acknowledge it in IdealScan under the Orders tab.',
     ].join('\n'),
   });
+  console.log(`[IdealScan] Completion alert sent to ${conf.to_email} for order ${orderNumber}.`);
+  return { sent: true };
 }
 
 async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
@@ -222,8 +227,10 @@ function globalOrdersWithState() {
         startTime:        state.startTime        || null,
         endTime:          state.endTime          || null,
         operator:         state.operator         || null,
-        keyfields_closed: state.keyfields_closed || false,
-        batchId:          batch.id,
+        keyfields_closed:  state.keyfields_closed   || false,
+        alert_email_sent:  state.alert_email_sent   ?? null,
+        alert_email_error: state.alert_email_error  || null,
+        batchId:           batch.id,
         client_name:      batch.client_name      || '',
         has_waybill_pdf:  fs.existsSync(waybillPath),
       });
@@ -581,7 +588,30 @@ app.post('/api/scan/complete', (req, res) => {
     if (operator)  state.operator  = operator;
     batch.orderStates[orderNumber] = state;
     writeDb(db);
-    sendCompletionAlert(orderNumber, ord, operator).catch(() => {});
+    sendCompletionAlert(orderNumber, ord, operator).then(result => {
+      const db2    = readDb();
+      const batch2 = findBatchForOrder(db2, orderNumber);
+      if (batch2) {
+        if (!batch2.orderStates) batch2.orderStates = {};
+        const s2 = batch2.orderStates[orderNumber] || {};
+        s2.alert_email_sent   = result?.sent ?? false;
+        s2.alert_email_at     = new Date().toISOString();
+        batch2.orderStates[orderNumber] = s2;
+        writeDb(db2);
+      }
+    }).catch(err => {
+      console.error(`[IdealScan] Completion alert FAILED for order ${orderNumber}:`, err.message);
+      const db2    = readDb();
+      const batch2 = findBatchForOrder(db2, orderNumber);
+      if (batch2) {
+        if (!batch2.orderStates) batch2.orderStates = {};
+        const s2 = batch2.orderStates[orderNumber] || {};
+        s2.alert_email_sent  = false;
+        s2.alert_email_error = err.message;
+        batch2.orderStates[orderNumber] = s2;
+        writeDb(db2);
+      }
+    });
     return res.json({ ok: true, mismatches: [] });
   }
   res.json({ ok: false, mismatches });
@@ -618,6 +648,29 @@ app.post('/api/scan/reset', (req, res) => {
   batch.orderStates[orderNumber] = { status: 'pending', scanned: {}, updated_at: new Date().toISOString() };
   writeDb(db);
   res.json({ ok: true });
+});
+
+app.post('/api/scan/resend-completion-alert', async (req, res) => {
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord = batch.orders.find(o => o.order_number === orderNumber);
+  const state = (batch.orderStates || {})[orderNumber] || {};
+  try {
+    await sendCompletionAlert(orderNumber, ord, state.operator);
+    if (!batch.orderStates) batch.orderStates = {};
+    const s = batch.orderStates[orderNumber] || {};
+    s.alert_email_sent  = true;
+    s.alert_email_at    = new Date().toISOString();
+    delete s.alert_email_error;
+    batch.orderStates[orderNumber] = s;
+    writeDb(db);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/scan/keyfields-close', (req, res) => {

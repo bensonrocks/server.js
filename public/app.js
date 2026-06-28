@@ -755,6 +755,12 @@
       const slipUrl      = ord.batchId
         ? `/api/completion-slip/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}`
         : null;
+      const emailIndicator = isDone && isAdminView && ord.alert_email_sent !== null
+        ? ord.alert_email_sent
+          ? `<span class="alert-email-ok" title="Completion alert sent">&#128231; Sent</span>`
+          : `<span class="alert-email-fail" title="${esc(ord.alert_email_error || 'Email failed')}">&#9888; Email failed</span>
+             <button class="btn-resend-alert" data-order="${esc(ord.order_number)}" title="Resend completion alert">Resend</button>`
+        : '';
       const kfBtn = isDone && isAdminView
         ? ord.keyfields_closed
           ? `<span class="kf-closed-badge">&#10003; Keyfields closed</span>`
@@ -771,6 +777,7 @@
             ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
             ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
             ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
+            ${emailIndicator}
           </div>
           <div class="dash-order-right">
             ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
@@ -805,6 +812,24 @@
           if (!r.ok) throw new Error(d.error || 'Delete failed');
           await refreshOrders(); renderOrdersList();
         } catch (err) { alert(err.message); }
+      });
+    });
+
+    document.querySelectorAll('.btn-resend-alert').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        btn.disabled = true; btn.textContent = 'Sending…';
+        try {
+          const r = await fetch('/api/scan/resend-completion-alert', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderNumber: btn.dataset.order }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Failed');
+          const idx = loadedOrders.findIndex(o => o.order_number === btn.dataset.order);
+          if (idx >= 0) { loadedOrders[idx].alert_email_sent = true; loadedOrders[idx].alert_email_error = null; }
+          renderOrdersList();
+        } catch (err) { btn.disabled = false; btn.textContent = 'Resend'; alert('Resend failed: ' + err.message); }
       });
     });
 
