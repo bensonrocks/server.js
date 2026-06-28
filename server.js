@@ -34,9 +34,10 @@ function writeDb(data) {
 }
 
 // ── Email ───────────────────────────────────────────────────────────────────
-async function sendWmsEmail(batch, wmsBuffer, orders) {
-  const { EMAIL_USER, EMAIL_PASS, EMAIL_TO, SMTP_HOST, SMTP_PORT } = process.env;
-  if (!EMAIL_USER || !EMAIL_PASS || !EMAIL_TO) return;
+async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
+  const { EMAIL_USER, EMAIL_PASS, SMTP_HOST, SMTP_PORT } = process.env;
+  const recipient = emailTo || process.env.EMAIL_TO;
+  if (!EMAIL_USER || !EMAIL_PASS || !recipient) return;
 
   const transporter = nodemailer.createTransport({
     host: SMTP_HOST || 'smtp.gmail.com',
@@ -52,7 +53,7 @@ async function sendWmsEmail(batch, wmsBuffer, orders) {
   const wmsName = `WMS_${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`;
 
   await transporter.sendMail({
-    from: EMAIL_USER, to: EMAIL_TO,
+    from: EMAIL_USER, to: recipient,
     subject: `WMS Upload Ready — ${batch.filename} (${batch.order_count} orders)`,
     text: [
       `New order batch uploaded on ${new Date(batch.uploaded_at).toLocaleString()}.`,
@@ -275,6 +276,35 @@ function persistState(session, orderNumber, status, scanned, extra = {}) {
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
+
+// Parse-only preview — returns stats without saving anything
+app.post('/api/preview', upload.single('orderFile'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    if (!['.xlsx', '.xls', '.csv'].includes(ext)) {
+      return res.json({ rowCount: 0, orderCount: 0, errors: ['Unsupported file type. Upload XLSX or CSV.'], converted: false });
+    }
+
+    let allRows = [], skipped = 0;
+    if (ext === '.csv') {
+      allRows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true }).map(mapClientRow);
+    } else {
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const all = XLSX.utils.sheet_to_json(ws, { defval: null }).map(mapClientRow);
+      allRows = all.filter(r => r.sku && r.order_number !== 'UNKNOWN');
+      skipped = all.length - allRows.length;
+    }
+
+    const orders = summarizeOrders(allRows);
+    const errors = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
+    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0 });
+  } catch (err) {
+    res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
+  }
+});
+
 const uploadFields = upload.fields([
   { name: 'orderFile',   maxCount: 1 },
   { name: 'waybillPdf',  maxCount: 1 },
@@ -296,6 +326,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const wmsBuffer = generateBeTimeXLSX(orders);
     const batchId   = uuidv4();
     const clientName = (req.body?.client_name || '').trim();
+    const emailTo    = (req.body?.email_to    || '').trim();
 
     const batch = {
       id: batchId, filename: orderFile.originalname,
@@ -353,7 +384,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    sendWmsEmail(batch, wmsBuffer, orders).catch(err => console.error('[email]', err.message));
+    sendWmsEmail(batch, wmsBuffer, orders, emailTo).catch(err => console.error('[email]', err.message));
 
     res.json({ sessionId, batchId, rowCount: mapped.length, orders: ordersWithState(session) });
   } catch (err) {

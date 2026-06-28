@@ -8,6 +8,8 @@
   let activeClientFilter  = 'all';
   let activeCarrierFilter = 'all';
   let printWaybillTimer   = null;
+  let pendingOrderFile    = null;
+  let logUnlocked         = false;
 
   let orderTimings = {};
   try { orderTimings = JSON.parse(sessionStorage.getItem('wms_timings') || '{}'); } catch {}
@@ -189,9 +191,8 @@
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
-    if (name === 'upload')  fetchAndRenderStats();
-    if (name === 'orders')  renderOrdersDash();
-    if (name === 'log')     renderLogTab();
+    if (name === 'upload') fetchAndRenderStats();
+    if (name === 'orders') renderOrdersDash();
   }
 
   // ── Dashboard Stats ────────────────────────────────────────────────────────
@@ -228,8 +229,8 @@
   document.getElementById('refreshStatsBtn').addEventListener('click', fetchAndRenderStats);
 
   // ── Upload tab ─────────────────────────────────────────────────────────────
-  const dropZone  = document.getElementById('dropZone');
-  const fileInput = document.getElementById('fileInput');
+  const dropZone        = document.getElementById('dropZone');
+  const fileInput       = document.getElementById('fileInput');
   const waybillPdfInput = document.getElementById('waybillPdfInput');
 
   document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
@@ -239,9 +240,9 @@
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', e => {
     e.preventDefault(); dropZone.classList.remove('dragover');
-    if (e.dataTransfer.files[0]) handleOrderFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files[0]) previewOrderFile(e.dataTransfer.files[0]);
   });
-  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleOrderFile(fileInput.files[0]); });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) previewOrderFile(fileInput.files[0]); });
   waybillPdfInput.addEventListener('change', () => {
     const f = waybillPdfInput.files[0];
     document.getElementById('waybillPdfName').textContent = f ? f.name : '';
@@ -249,42 +250,123 @@
 
   document.getElementById('goOrdersBtn').addEventListener('click', () => switchTab('orders'));
 
-  let pendingOrderFile = null;
-
-  function handleOrderFile(file) {
+  // ── Step 1: Preview (parse only) ───────────────────────────────────────────
+  async function previewOrderFile(file) {
     pendingOrderFile = file;
-    uploadFiles();
-  }
+    setUploadStatus('loading', `Parsing ${file.name}…`);
 
-  async function uploadFiles() {
-    if (!pendingOrderFile) return;
-    const file = pendingOrderFile;
-    setUploadStatus('loading', `Uploading ${file.name}…`);
     const form = new FormData();
     form.append('orderFile', file);
-    const pdfFile = waybillPdfInput.files[0];
-    if (pdfFile) form.append('waybillPdf', pdfFile);
+
+    try {
+      const resp = await fetch('/api/preview', {
+        method: 'POST',
+        headers: { 'x-session-id': SESSION_ID },
+        body: form,
+      });
+      const data = await resp.json();
+      document.getElementById('uploadStatus').classList.add('hidden');
+      showUploadConfirmModal(file.name, data);
+    } catch (err) {
+      setUploadStatus('error', err.message);
+    }
+  }
+
+  // ── Step 2: Confirm modal ──────────────────────────────────────────────────
+  function showUploadConfirmModal(filename, preview) {
     const clientName = document.getElementById('clientNameInput').value.trim();
-    if (clientName) form.append('client_name', clientName);
+    document.getElementById('confirmFileName').textContent    = filename;
+    document.getElementById('confirmClientName').textContent  = clientName || '(not specified)';
+    document.getElementById('confirmOrderCount').textContent  = preview.orderCount;
+    document.getElementById('confirmLineCount').textContent   = preview.rowCount;
+    document.getElementById('confirmConverted').innerHTML     = preview.converted
+      ? '<span style="color:var(--success)">&#10003; Converted to WMS format</span>'
+      : '<span style="color:var(--danger)">&#10007; Conversion failed</span>';
+
+    const errEl = document.getElementById('confirmErrors');
+    if (preview.errors && preview.errors.length) {
+      errEl.innerHTML = preview.errors.map(e => `<li>${esc(e)}</li>`).join('');
+      errEl.classList.remove('hidden');
+    } else {
+      errEl.classList.add('hidden');
+    }
+
+    document.getElementById('confirmEmailError').classList.add('hidden');
+    document.getElementById('confirmApproveBtn').disabled    = false;
+    document.getElementById('confirmApproveBtn').textContent = 'Approve & Upload →';
+    document.getElementById('confirmEmail').value = '';
+    document.getElementById('uploadConfirmOverlay').classList.remove('hidden');
+    setTimeout(() => document.getElementById('confirmEmail').focus(), 150);
+  }
+
+  document.getElementById('confirmCancelBtn').addEventListener('click', () => {
+    document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+    pendingOrderFile = null;
+    fileInput.value = '';
+  });
+
+  document.getElementById('confirmEmail').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('confirmApproveBtn').click();
+  });
+
+  document.getElementById('confirmApproveBtn').addEventListener('click', async () => {
+    const email  = document.getElementById('confirmEmail').value.trim();
+    const errEl  = document.getElementById('confirmEmailError');
+    if (!email) {
+      errEl.textContent = 'Please enter an email address.';
+      errEl.classList.remove('hidden'); return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errEl.textContent = 'Please enter a valid email address.';
+      errEl.classList.remove('hidden'); return;
+    }
+    errEl.classList.add('hidden');
+    document.getElementById('confirmApproveBtn').disabled    = true;
+    document.getElementById('confirmApproveBtn').textContent = 'Uploading…';
+    await doUpload(email);
+  });
+
+  // ── Step 3: Actual upload ──────────────────────────────────────────────────
+  async function doUpload(emailTo) {
+    if (!pendingOrderFile) return;
+    const file       = pendingOrderFile;
+    const clientName = document.getElementById('clientNameInput').value.trim();
+    const pdfFile    = waybillPdfInput.files[0];
+
+    const form = new FormData();
+    form.append('orderFile', file);
+    if (pdfFile)     form.append('waybillPdf', pdfFile);
+    if (clientName)  form.append('client_name', clientName);
+    if (emailTo)     form.append('email_to', emailTo);
 
     try {
       const resp = await fetch('/api/upload', {
-        method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: form,
+        method: 'POST',
+        headers: { 'x-session-id': SESSION_ID },
+        body: form,
       });
       const data = await resp.json();
-      if (!resp.ok) { setUploadStatus('error', data.error || 'Upload failed'); return; }
+      document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+
+      if (!resp.ok) {
+        setUploadStatus('error', data.error || 'Upload failed');
+        return;
+      }
       SESSION_ID = data.sessionId;
       sessionStorage.setItem('wms_session', SESSION_ID);
       loadedOrders = data.orders;
       activeOrder  = null;
+
       const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       setUploadStatus('success',
-        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed.${pdfMsg}`
+        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed to ${emailTo}.${pdfMsg}`
       );
       renderUploadList(data.orders);
       fetchAndRenderStats();
       pendingOrderFile = null;
+      fileInput.value  = '';
     } catch (err) {
+      document.getElementById('uploadConfirmOverlay').classList.add('hidden');
       setUploadStatus('error', err.message);
     }
   }
@@ -363,7 +445,6 @@
           btn.classList.add('active');
         });
       });
-      clientRow.classList.remove('hidden');
     } else {
       clientRow.innerHTML = '';
     }
@@ -384,7 +465,6 @@
           btn.classList.add('active');
         });
       });
-      carrierRow.classList.remove('hidden');
     } else {
       carrierRow.innerHTML = '';
     }
@@ -394,7 +474,7 @@
 
   function renderOrdersList() {
     let orders = loadedOrders;
-    if (activeClientFilter !== 'all')  orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
+    if (activeClientFilter  !== 'all') orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
 
     const sortPriority = { processing: 0, pending: 1, unprocessed: 2, done: 3 };
@@ -647,7 +727,6 @@
         await refreshOrders();
         renderOrdersDash();
         fetchAndRenderStats();
-        // Prompt to print waybill
         if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
           showPrintWaybillModal(completedOrder);
         }
@@ -695,20 +774,16 @@
     const bar = document.getElementById('printCountdownBar');
     bar.style.transition = 'none';
     bar.style.width = '100%';
-    // Force reflow then animate
     bar.getBoundingClientRect();
     bar.style.transition = 'width 3s linear';
     bar.style.width = '0%';
 
     let remaining = 3;
     const numEl = document.getElementById('printCountdownNum');
-    const tick = setInterval(() => {
+    const tick  = setInterval(() => {
       remaining--;
       numEl.textContent = remaining;
-      if (remaining <= 0) {
-        clearInterval(tick);
-        closePrintWaybillModal();
-      }
+      if (remaining <= 0) { clearInterval(tick); closePrintWaybillModal(); }
     }, 1000);
     printWaybillTimer = tick;
 
@@ -750,11 +825,55 @@
     await doCancel();
   });
 
-  // ── Log tab ────────────────────────────────────────────────────────────────
-  async function renderLogTab() {
-    const listEl  = document.getElementById('logList');
-    const emptyEl = document.getElementById('logEmpty');
-    listEl.innerHTML = '<p class="hint" style="padding:1rem">Loading…</p>';
+  // ── Log (password-protected, footer link) ─────────────────────────────────
+  const LOG_PASSWORD = atob('MjAxNDMyNTQ3RQ=='); // 201432547E
+
+  document.getElementById('logAccessBtn').addEventListener('click', () => {
+    if (logUnlocked) {
+      openLogOverlay();
+    } else {
+      document.getElementById('logPasswordInput').value = '';
+      document.getElementById('logPasswordError').classList.add('hidden');
+      document.getElementById('logPasswordOverlay').classList.remove('hidden');
+      setTimeout(() => document.getElementById('logPasswordInput').focus(), 100);
+    }
+  });
+
+  document.getElementById('logPasswordInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('logPasswordSubmitBtn').click();
+  });
+
+  document.getElementById('logPasswordSubmitBtn').addEventListener('click', () => {
+    const val = document.getElementById('logPasswordInput').value;
+    if (val === LOG_PASSWORD) {
+      logUnlocked = true;
+      document.getElementById('logPasswordOverlay').classList.add('hidden');
+      openLogOverlay();
+    } else {
+      document.getElementById('logPasswordError').classList.remove('hidden');
+      document.getElementById('logPasswordInput').select();
+    }
+  });
+
+  document.getElementById('logPasswordCancelBtn').addEventListener('click', () => {
+    document.getElementById('logPasswordOverlay').classList.add('hidden');
+  });
+
+  document.getElementById('closeLogBtn').addEventListener('click', () => {
+    document.getElementById('logOverlay').classList.add('hidden');
+    document.body.classList.remove('log-open');
+  });
+
+  async function openLogOverlay() {
+    document.getElementById('logOverlay').classList.remove('hidden');
+    document.body.classList.add('log-open');
+    await renderLogContent();
+  }
+
+  async function renderLogContent() {
+    const listEl  = document.getElementById('logOverlayList');
+    const emptyEl = document.getElementById('logOverlayEmpty');
+    listEl.innerHTML = '<p class="hint" style="padding:.5rem 0">Loading…</p>';
     try {
       const resp    = await fetch('/api/batches');
       const batches = await resp.json();
@@ -786,7 +905,7 @@
           </div>`;
       }).join('');
     } catch (err) {
-      listEl.innerHTML = `<p class="scan-error" style="padding:1rem">${esc(err.message)}</p>`;
+      listEl.innerHTML = `<p class="scan-error" style="padding:.5rem 0">${esc(err.message)}</p>`;
     }
   }
 

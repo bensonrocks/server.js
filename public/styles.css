@@ -819,6 +819,79 @@ body.scan-open { overflow: hidden; }
 }
 
 /* ════════════════════════════════════════════════════
+   LOG OVERLAY (full-screen, password-protected)
+   ════════════════════════════════════════════════════ */
+.log-overlay {
+  position: fixed;
+  inset: 0;
+  top: var(--header-h);
+  z-index: 400;
+  background: var(--bg);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.log-overlay.hidden { display: none !important; }
+body.log-open { overflow: hidden; }
+
+.log-overlay-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.1rem 1.25rem .5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky; top: 0; z-index: 1;
+}
+.log-overlay-header h2 { font-size: 1.05rem; font-weight: 700; }
+
+/* ════════════════════════════════════════════════════
+   FOOTER
+   ════════════════════════════════════════════════════ */
+.app-footer {
+  text-align: center;
+  padding: 1.5rem 1rem calc(1.5rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  margin-top: 2rem;
+}
+.log-access-link {
+  background: none; border: none;
+  color: var(--text-light); font-size: .78rem;
+  cursor: pointer; text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: .3rem .5rem;
+}
+.log-access-link:hover { color: var(--primary); }
+
+@media (max-width: 640px) {
+  .app-footer { margin-bottom: var(--bottom-nav-h); }
+}
+
+/* ════════════════════════════════════════════════════
+   UPLOAD CONFIRM MODAL
+   ════════════════════════════════════════════════════ */
+.confirm-summary {
+  border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; margin-top: .75rem;
+}
+.confirm-row {
+  display: flex; align-items: baseline; gap: .75rem;
+  padding: .55rem .85rem; border-bottom: 1px solid #f1f5f9;
+  font-size: .875rem;
+}
+.confirm-row:last-child { border-bottom: none; }
+.confirm-lbl {
+  font-size: .72rem; font-weight: 700; color: var(--text-light);
+  text-transform: uppercase; letter-spacing: .04em;
+  min-width: 76px; flex-shrink: 0;
+}
+.confirm-val { color: var(--text); word-break: break-all; }
+.confirm-big { font-size: 1.1rem; font-weight: 800; color: var(--primary); }
+.confirm-errors {
+  background: var(--warning-bg); border: 1px solid var(--warning-border);
+  border-radius: 6px; padding: .6rem .85rem;
+  font-size: .82rem; color: var(--warning); margin-top: .75rem;
+  list-style: disc inside;
+}
+
+/* ════════════════════════════════════════════════════
    RESPONSIVE ADDITIONS — MOBILE
    ════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
