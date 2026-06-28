@@ -661,14 +661,14 @@ async function unlockSyncLog(){
   if(!pw){setSyncLogErr('Enter your password.');return;}
   const btn=$('synclog-unlock-btn');btn.disabled=true;btn.textContent='Checking…';
   try{
-    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw}),signal:AbortSignal.timeout(5000)});
+    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
     const j=await r.json();
     if(!r.ok){setSyncLogErr(j.error||'Incorrect password.');return;}
     authToken=j.token;localStorage.setItem('idealoms_token',authToken);
+    serverAvailable=true;
     showSyncLogContent();await renderSyncLog();
   }catch(e){
-    if(e.name==='TimeoutError'||e.name==='AbortError')setSyncLogErr('Server not responding.');
-    else setSyncLogErr('Cannot connect to server.');
+    setSyncLogErr('Cannot reach server — make sure it is running.');
   }finally{btn.disabled=false;btn.textContent='Unlock';}
 }
 
@@ -682,21 +682,24 @@ function showSyncLogContent(){
   $('synclog-content').style.display='';
 }
 
-function showSyncLogLock(msg){
+function showSyncLogLock(){
   $('synclog-lock').style.display='';
   $('synclog-content').style.display='none';
-  const e=$('synclog-err');
-  if(msg){e.textContent=msg;e.style.display='block';}else e.style.display='none';
+  $('synclog-err').style.display='none';
   $('synclog-pw').value='';
 }
 
 async function initSyncLogPage(){
-  if(!serverAvailable){showSyncLogLock('Server offline — start the server to view the audit log.');return;}
+  // If we have a stored token, check it is still valid before unlocking
   if(authToken){
     try{
-      const r=await fetch(`${SERVER}/api/auth/status`,{headers:{'Authorization':`Bearer ${authToken}`},signal:AbortSignal.timeout(2000)});
-      if(r.ok){const j=await r.json();if(j.authenticated){showSyncLogContent();await renderSyncLog();return;}}
+      const r=await fetch(`${SERVER}/api/auth/status`,{headers:{'Authorization':`Bearer ${authToken}`}});
+      if(r.ok){
+        const j=await r.json();
+        if(j.authenticated){serverAvailable=true;showSyncLogContent();await renderSyncLog();return;}
+      }
     }catch{}
+    // Token invalid or server unreachable — clear it and show lock
     authToken=null;localStorage.removeItem('idealoms_token');
   }
   showSyncLogLock();
@@ -1147,7 +1150,7 @@ $('synclog-unlock-btn').onclick=unlockSyncLog;
 $('synclog-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockSyncLog();});
 
 (async()=>{
-  try{const r=await fetch(`${SERVER}/api/auth/status`,{signal:AbortSignal.timeout(1500)});if(r.ok)serverAvailable=true;}catch{}
+  try{const r=await fetch(`${SERVER}/api/auth/status`);if(r.ok)serverAvailable=true;}catch{}
   if(serverAvailable)await loadOrdersFromServer();
   render();
 })();
