@@ -31,6 +31,7 @@ const mapper   = require('./lib/marketplace/mapper');
 const auth     = require('./lib/auth');
 const importer = require('./lib/file-importer');
 const db       = require('./lib/db');
+const ldb      = require('./lib/leads-db');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -456,13 +457,13 @@ app.post('/api/leads/search', async (req, res) => {
 
     // Create session record
     const sessionId = randomUUID();
-    db.prepare(`INSERT INTO lead_sessions (id, vertical, location, seniority, company_size, total_found, lead_count)
+    ldb.prepare(`INSERT INTO lead_sessions (id, vertical, location, seniority, company_size, total_found, lead_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(sessionId, vertical, location, seniority, size,
            data.pagination?.total_entries || rawList.length, rawList.length);
 
     // Upsert each lead (skip if already saved from a previous search)
-    const insertLead = db.prepare(`
+    const insertLead = ldb.prepare(`
       INSERT INTO leads (apollo_id, session_id, vertical, first_name, last_name_masked,
         title, company, location, linkedin_url, photo_url, has_email, has_phone)
       VALUES (@apollo_id, @session_id, @vertical, @first_name, @last_name_masked,
@@ -531,7 +532,7 @@ app.post('/api/leads/enrich', async (req, res) => {
     const email = p.email || '';
     const phone = p.sanitized_phone || p.phone_numbers?.[0]?.sanitized_number || '';
 
-    db.prepare(`UPDATE leads SET email=?, phone=?, enriched=1, enriched_at=datetime('now')
+    ldb.prepare(`UPDATE leads SET email=?, phone=?, enriched=1, enriched_at=datetime('now')
                 WHERE apollo_id=?`).run(email, phone, id);
 
     res.json({ email, phone, email_status: p.email_status || '' });
@@ -545,9 +546,9 @@ app.patch('/api/leads/:id/contact', (req, res) => {
   const { contacted, contact_note = '', note = '' } = req.body || {};
   const resolvedNote = contact_note || note;
   const now = contacted ? new Date().toISOString() : '';
-  db.prepare(`UPDATE leads SET contacted=?, contacted_at=?, contact_note=? WHERE apollo_id=?`)
+  ldb.prepare(`UPDATE leads SET contacted=?, contacted_at=?, contact_note=? WHERE apollo_id=?`)
     .run(contacted ? 1 : 0, now, resolvedNote, req.params.id);
-  const lead = db.prepare('SELECT * FROM leads WHERE apollo_id=?').get(req.params.id);
+  const lead = ldb.prepare('SELECT * FROM leads WHERE apollo_id=?').get(req.params.id);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
   res.json({ ok: true, contacted: !!lead.contacted, contacted_at: lead.contacted_at });
 });
@@ -555,7 +556,7 @@ app.patch('/api/leads/:id/contact', (req, res) => {
 // Update contact note on a lead
 app.patch('/api/leads/:id/note', (req, res) => {
   const { note = '' } = req.body || {};
-  db.prepare('UPDATE leads SET contact_note=? WHERE apollo_id=?').run(note, req.params.id);
+  ldb.prepare('UPDATE leads SET contact_note=? WHERE apollo_id=?').run(note, req.params.id);
   res.json({ ok: true });
 });
 
@@ -568,12 +569,12 @@ app.get('/api/leads', (req, res) => {
   if (session_id) { sql += ' AND l.session_id=?'; args.push(session_id); }
   if (contacted !== undefined) { sql += ' AND l.contacted=?'; args.push(contacted === 'true' ? 1 : 0); }
   sql += ' ORDER BY l.dug_at DESC';
-  res.json(db.prepare(sql).all(...args));
+  res.json(ldb.prepare(sql).all(...args));
 });
 
 // Get all past search sessions
 app.get('/api/leads/sessions', (req, res) => {
-  res.json(db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
+  res.json(ldb.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
 });
 
 // ── Webhooks (for real-time push from Shopee / Lazada) ────────────────────────
