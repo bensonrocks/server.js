@@ -86,12 +86,12 @@ function readEmailConfig() {
     password:   saved.password   || process.env.EMAIL_PASS  || '',
     smtp_host:  saved.smtp_host  || process.env.SMTP_HOST   || 'smtp.gmail.com',
     smtp_port:  saved.smtp_port  || parseInt(process.env.SMTP_PORT || '587', 10),
-    to_email:   saved.to_email   || process.env.EMAIL_TO    || '',
+    to_email:   saved.to_email   || process.env.EMAIL_TO    || 'opsgroup-sg@uldgroup.net',
   };
 }
 
 // ── Email ───────────────────────────────────────────────────────────────────
-async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
+async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
   const conf = readEmailConfig();
   const recipient = emailTo || conf.to_email;
   if (!conf.from_email || !conf.password)
@@ -111,12 +111,19 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
 
   const wmsName = `WMS_${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`;
 
+  const uploadDate  = new Date(batch.uploaded_at);
+  const dateStr     = uploadDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const clientLabel = batch.client_name || orders[0]?.customer_name || 'General';
+  const dirLabel    = direction === 'Inbound' ? 'Inbound' : 'Outbound';
+  const subject     = `${dateStr} / ${clientLabel} / ${dirLabel} Upload`;
+
   await transporter.sendMail({
     from: conf.from_email, to: recipient,
-    subject: `WMS Upload Ready — ${batch.filename} (${batch.order_count} orders)`,
+    subject,
     text: [
-      `New order batch uploaded on ${new Date(batch.uploaded_at).toLocaleString()}.`,
-      '', `File: ${batch.filename}`, `Orders: ${batch.order_count}`, `Lines: ${batch.row_count}`,
+      `New ${dirLabel.toLowerCase()} order batch uploaded on ${uploadDate.toLocaleString()}.`,
+      '', `File: ${batch.filename}`, `Client: ${clientLabel}`,
+      `Orders: ${batch.order_count}`, `Lines: ${batch.row_count}`,
       '', orderList, '', 'WMS file attached.',
     ].join('\n'),
     attachments: [{
@@ -318,7 +325,8 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
-    const emailTo    = (req.body?.email_to || '').trim();
+    const emailTo    = (req.body?.email_to   || '').trim();
+    const direction  = req.body?.direction === 'Inbound' ? 'Inbound' : 'Outbound';
 
     const batch = {
       id: batchId, filename: orderFile.originalname,
@@ -344,7 +352,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     let emailSent = false, emailError = '';
     try {
-      await sendWmsEmail(batch, wmsBuffer, orders, emailTo);
+      await sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction);
       emailSent = true;
     } catch (err) {
       console.error('[email]', err.message);

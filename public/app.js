@@ -11,6 +11,7 @@
   let activeCarrierFilter = 'all';
   let printWaybillTimer   = null;
   let pendingOrderFile    = null;
+  let uploadDirection     = 'Outbound';
   let logUnlocked         = false;
 
   let orderTimings = {};
@@ -355,6 +356,9 @@
     document.getElementById('confirmApproveBtn').disabled    = false;
     document.getElementById('confirmApproveBtn').textContent = 'Approve & Upload →';
     document.getElementById('confirmEmail').value = defaultRecipientEmail;
+    // Reset direction toggle to Outbound
+    uploadDirection = 'Outbound';
+    document.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'Outbound'));
     document.getElementById('uploadConfirmOverlay').classList.remove('hidden');
     setTimeout(() => document.getElementById('confirmEmail').focus(), 150);
   }
@@ -363,6 +367,15 @@
     document.getElementById('uploadConfirmOverlay').classList.add('hidden');
     pendingOrderFile = null;
     fileInput.value = '';
+  });
+
+  // Inbound / Outbound toggle
+  document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      uploadDirection = btn.dataset.dir;
+      document.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
   });
 
   document.getElementById('confirmEmail').addEventListener('keydown', e => {
@@ -394,6 +407,7 @@
     if (pdfFile)     form.append('waybillPdf', pdfFile);
     if (clientName)  form.append('client_name', clientName);
     if (emailTo)     form.append('email_to', emailTo);
+    form.append('direction', uploadDirection);
 
     try {
       const resp = await fetch('/api/upload', {

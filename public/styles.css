@@ -1382,6 +1382,27 @@ body.log-open { overflow: hidden; }
 .user-add-row input:focus { outline: none; border-color: var(--accent); }
 
 /* ════════════════════════════════════════════════════
+   INBOUND / OUTBOUND TOGGLE (upload confirm dialog)
+   ════════════════════════════════════════════════════ */
+.direction-toggle {
+  display: flex; gap: 0;
+  border: 1px solid var(--border); border-radius: 7px;
+  overflow: hidden; width: fit-content;
+}
+.dir-btn {
+  padding: .4rem 1.1rem; font-size: .83rem; font-weight: 500;
+  border: none; background: #f8fafc; color: var(--text-light);
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.dir-btn + .dir-btn { border-left: 1px solid var(--border); }
+.dir-btn.active {
+  background: var(--accent); color: #fff;
+}
+.dir-btn.active[data-dir="Inbound"] {
+  background: #0ea5e9;
+}
+
+/* ════════════════════════════════════════════════════
    EMAIL CONFIGURATION (master panel)
    ════════════════════════════════════════════════════ */
 .email-cfg-section {

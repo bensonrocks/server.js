@@ -458,6 +458,14 @@
       <div id="confirmErrors" class="confirm-errors hidden"></div>
 
       <div class="form-group" style="margin-top:1.1rem">
+        <label>Upload Type</label>
+        <div class="direction-toggle">
+          <button class="dir-btn active" id="dirOutboundBtn" data-dir="Outbound">Outbound</button>
+          <button class="dir-btn"        id="dirInboundBtn"  data-dir="Inbound">Inbound</button>
+        </div>
+      </div>
+
+      <div class="form-group">
         <label>Send WMS file to email <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
         <input type="email" id="confirmEmail" placeholder="recipient@example.com — leave blank to skip" autocomplete="email" />
       </div>
