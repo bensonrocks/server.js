@@ -540,6 +540,12 @@ a:hover{text-decoration:underline}
               </div>
             </div>
 
+            <!-- auto-advance toggle -->
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #1e293b">
+              <input type="checkbox" id="scan-auto-advance" checked style="accent-color:#0d9488;width:15px;height:15px;cursor:pointer">
+              <label for="scan-auto-advance" style="font-size:12px;color:#94a3b8;cursor:pointer;user-select:none">Auto-advance status on scan</label>
+            </div>
+
             <!-- session counter -->
             <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #1e293b;padding-top:10px">
               <span style="font-size:11px;color:#475569">Session scans</span>
@@ -568,6 +574,11 @@ a:hover{text-decoration:underline}
               <div class="sess-toolbar">
                 <span class="sess-count">Scan history — <span id="scan-hist-count">0</span> scans</span>
                 <span id="scan-dupe-label" style="font-size:12px;color:#d97706;display:none"></span>
+              </div>
+              <div id="scan-bulk-bar" style="display:none;padding:8px 14px;background:#f0fdf4;border-bottom:1px solid #bbf7d0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <span style="font-size:12px;color:#166534;font-weight:600">Bulk actions:</span>
+                <button class="scan-btn scan-btn-teal" style="font-size:11px;padding:4px 10px" onclick="scanBulkFulfill('shipped')">&#9658; Mark All Shipped</button>
+                <button class="scan-btn" style="font-size:11px;padding:4px 10px;background:#475569;color:#fff;border-radius:6px;cursor:pointer;border:none" onclick="scanBulkFulfill(null)">&#8635; Auto-Advance All</button>
               </div>
               <div class="sess-body">
                 <table class="tbl">
@@ -1353,14 +1364,34 @@ async function _scanLookup(code, source) {
 
   let order = null;
   let matched = false;
+  let previousStatus = null;
+  let newStatus = null;
+  let platformPush = null;
+  let trackingAttached = false;
+  const autoAdvance = document.getElementById('scan-auto-advance')?.checked !== false;
 
-  // Try server first; fall back to local orders array
   try {
     if (serverAvailable) {
-      const res = await fetch(`${SERVER}/api/orders/lookup?q=${encodeURIComponent(code)}`);
-      if (res.ok) { order = await res.json(); matched = true; }
+      if (autoAdvance) {
+        // scan-fulfill: lookup + auto-advance status + platform push in one call
+        const res = await fetch(`${SERVER}/api/orders/scan-fulfill`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, pushPlatform: true }),
+        });
+        if (res.ok) {
+          const result = await res.json();
+          order = result.order; matched = true;
+          previousStatus = result.previousStatus; newStatus = result.newStatus;
+          platformPush = result.platformPush; trackingAttached = result.trackingAttached;
+          await loadOrdersFromServer(); render();
+        }
+      } else {
+        // read-only lookup
+        const res = await fetch(`${SERVER}/api/orders/lookup?q=${encodeURIComponent(code)}`);
+        if (res.ok) { order = await res.json(); matched = true; newStatus = order.status; }
+      }
     } else {
-      // offline: search local orders
       const q = code.toLowerCase();
       order = orders.find(o =>
         o.id.toLowerCase() === q ||
@@ -1368,12 +1399,11 @@ async function _scanLookup(code, source) {
         (o.source?.trackingNo && o.source.trackingNo.toLowerCase() === q)
       ) || null;
       matched = !!order;
+      if (order) newStatus = order.status;
     }
-  } catch (e) {
-    // network error — fall through to no-match
-  }
+  } catch (e) { /* fall through to no-match */ }
 
-  const entry = { code, at: new Date(), source, orderId: order?.id || null, orderStatus: order?.status || null, matched };
+  const entry = { code, at: new Date(), source, orderId: order?.id || null, orderStatus: newStatus, previousStatus, matched };
   _scanSession.push(entry);
   _scanRenderRow(entry, _scanSession.length);
 
@@ -1384,9 +1414,17 @@ async function _scanLookup(code, source) {
   const empty = document.getElementById('scan-empty-row');
   if (empty) empty.remove();
 
+  // show bulk bar once session has items
+  const bulkBar = document.getElementById('scan-bulk-bar');
+  if (bulkBar && _scanSession.some(s => s.matched)) bulkBar.style.display = 'flex';
+
   if (matched && order) {
-    _scanShowOrder(order);
-    _scanFlash('&#10003; Matched → ' + _esc(order.id), true);
+    _scanShowOrder(order, { previousStatus, newStatus, platformPush, trackingAttached });
+    if (autoAdvance && previousStatus !== newStatus) {
+      _scanFlash('&#10003; ' + _esc(order.id) + ' → ' + newStatus + (trackingAttached ? ' (tracking attached)' : ''), true);
+    } else {
+      _scanFlash('&#10003; Matched → ' + _esc(order.id), true);
+    }
   } else {
     _scanShowNoMatch(code);
     _scanFlash('&#10007; No order found for ' + _esc(code), false);
@@ -1394,7 +1432,7 @@ async function _scanLookup(code, source) {
 }
 
 // ── Render order detail card — mirrors android OrderDetailScreen ──────────────
-function _scanShowOrder(o) {
+function _scanShowOrder(o, meta = {}) {
   const card = document.getElementById('scan-result-card');
   const nm   = document.getElementById('scan-nomatch');
   if (!card) return;
@@ -1425,8 +1463,11 @@ function _scanShowOrder(o) {
         <div class="src-date">${new Date(o.orderDate).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-        ${stBdg(o.status)}
+        ${meta.previousStatus && meta.previousStatus !== meta.newStatus
+          ? `<div style="display:flex;align-items:center;gap:4px">${stBdg(meta.previousStatus)}<span style="color:#94a3b8;font-size:11px">&#8594;</span>${stBdg(o.status)}</div>`
+          : stBdg(o.status)}
         ${chBdg(o.channel)}
+        ${meta.platformPush ? `<div style="font-size:10px;${meta.platformPush.ok && !meta.platformPush.skipped ? 'color:#16a34a' : meta.platformPush.ok ? 'color:#94a3b8' : 'color:#dc2626'}">&#9632; Platform: ${meta.platformPush.ok ? (meta.platformPush.skipped ? 'skipped' : 'pushed ✓') : 'push failed'}</div>` : ''}
       </div>
     </div>
 
@@ -1527,6 +1568,38 @@ async function scanUpdateStatus(orderId) {
   }
 }
 
+// ── Bulk fulfill all matched orders in session ────────────────────────────────
+async function scanBulkFulfill(targetStatus) {
+  const matched = _scanSession.filter(s => s.matched && s.orderId);
+  if (!matched.length) { _scanFlash('No matched orders in session', false); return; }
+  const label = targetStatus ? ('mark ' + matched.length + ' orders as ' + targetStatus) : ('auto-advance ' + matched.length + ' orders');
+  if (!confirm(label.charAt(0).toUpperCase() + label.slice(1) + '?')) return;
+  _scanFlash('&#8987; Updating ' + matched.length + ' orders…', null);
+  try {
+    const res = await fetch(`${SERVER}/api/orders/bulk-fulfill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: matched.map(s => s.orderId), targetStatus: targetStatus || undefined }),
+    });
+    const j = await res.json();
+    for (const r of j.results) {
+      if (r.ok) {
+        const entry = _scanSession.find(s => s.orderId === r.id);
+        if (entry) {
+          entry.previousStatus = entry.orderStatus;
+          entry.orderStatus    = r.newStatus;
+          const tr = document.querySelector(`#scan-sess-tbody tr[data-id="${CSS.escape(r.id)}"]`);
+          if (tr) { const sts = tr.querySelector('.scan-sess-sts'); if (sts) sts.innerHTML = stBdg(r.newStatus); }
+        }
+      }
+    }
+    await loadOrdersFromServer(); render();
+    _scanFlash('&#10003; Bulk done: ' + j.succeeded + ' updated' + (j.failed ? ', ' + j.failed + ' failed' : ''), j.failed === 0);
+  } catch (e) {
+    _scanFlash('&#9888; Bulk failed: ' + e.message, false);
+  }
+}
+
 // ── Session history row ───────────────────────────────────────────────────────
 function _scanRenderRow(e, idx) {
   const tbody = document.getElementById('scan-sess-tbody');
@@ -1538,7 +1611,9 @@ function _scanRenderRow(e, idx) {
     <td style="color:#94a3b8;font-size:12px">${idx}</td>
     <td><span style="font-family:monospace;font-size:12px;font-weight:700;color:#0d9488">${_esc(e.code)}</span></td>
     <td>${e.orderId ? `<span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563eb;cursor:pointer" onclick="openDetail('${_esc(e.orderId)}')">${_esc(e.orderId)}</span>` : '<span style="color:#94a3b8;font-size:12px">—</span>'}</td>
-    <td class="scan-sess-sts">${e.orderStatus ? stBdg(e.orderStatus) : (e.matched ? '' : '<span style="font-size:11px;color:#d97706;font-weight:700">Not found</span>')}</td>
+    <td class="scan-sess-sts">${e.previousStatus && e.previousStatus !== e.orderStatus
+      ? `<span style="display:flex;align-items:center;gap:3px">${stBdg(e.previousStatus)}<span style="color:#94a3b8;font-size:10px">&#8594;</span>${stBdg(e.orderStatus)}</span>`
+      : e.orderStatus ? stBdg(e.orderStatus) : (e.matched ? '' : '<span style="font-size:11px;color:#d97706;font-weight:700">Not found</span>')}</td>
     <td style="font-size:12px;color:#64748b">${t}</td>
     <td><button onclick="this.closest('tr').remove();_scanSession=_scanSession.filter(s=>s.code!=='${_esc(e.code)}');" style="font-size:12px;color:#94a3b8;padding:2px 6px;border-radius:4px;cursor:pointer;border:none;background:none">&#10005;</button></td>`;
   tbody.insertBefore(tr, tbody.firstChild);
@@ -1553,6 +1628,7 @@ function scanClear() {
   const lbl = document.getElementById('scan-dupe-label');
   if (lbl) { lbl.textContent = ''; lbl.style.display = 'none'; }
   document.getElementById('scan-sess-tbody').innerHTML = '<tr id="scan-empty-row"><td colspan="6" style="text-align:center;padding:32px;color:#94a3b8">Start the camera or type a code — results appear here.</td></tr>';
+  const bb = document.getElementById('scan-bulk-bar'); if (bb) bb.style.display = 'none';
   document.getElementById('scan-result-card').classList.remove('show');
   document.getElementById('scan-nomatch').classList.remove('show');
 }

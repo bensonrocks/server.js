@@ -12,7 +12,8 @@ const lazada  = require('./lib/marketplace/lazada');
 const shopee  = require('./lib/marketplace/shopee');
 const tiktok  = require('./lib/marketplace/tiktok');
 const shopify = require('./lib/marketplace/shopify');
-const mapper  = require('./lib/marketplace/mapper');
+const mapper      = require('./lib/marketplace/mapper');
+const fulfillment = require('./lib/fulfillment');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -51,6 +52,55 @@ app.post('/api/orders/ingest-email', (req, res) => {
 app.get('/api/stats',    (req, res) => res.json(store.getStats()));
 app.get('/api/clients',  (req, res) => res.json(store.getClients()));
 app.get('/api/channels', (req, res) => res.json(store.getChannels()));
+
+// ── Fulfillment ───────────────────────────────────────────────────────────────
+
+// Scan + auto-advance: lookup by barcode, advance status, push to platform
+app.post('/api/orders/scan-fulfill', async (req, res) => {
+  const { code, trackingNo, pushPlatform = true } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'code is required' });
+  try {
+    const result = await fulfillment.scanFulfill(code, { pushPlatform, trackingNo });
+    if (!result) return res.status(404).json({ error: 'No matching order found', code });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// Fulfill a single order: advance status + attach tracking + push to platform
+app.post('/api/orders/:id/fulfill', async (req, res) => {
+  const { trackingNo, courier, autoAdvance = true, pushPlatform = true, targetStatus } = req.body || {};
+  try {
+    const result = await fulfillment.fulfill(req.params.id, { trackingNo, courier, autoAdvance, pushPlatform, targetStatus });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// Bulk fulfill: update multiple orders at once
+app.post('/api/orders/bulk-fulfill', async (req, res) => {
+  const { ids, targetStatus, trackingNumbers = {}, pushPlatform = true } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+  const VALID = ['pending','confirmed','processing','shipped','delivered','cancelled'];
+  if (targetStatus && !VALID.includes(targetStatus)) return res.status(400).json({ error: 'Invalid targetStatus' });
+  const results = await Promise.allSettled(
+    ids.map(id => fulfillment.fulfill(id, {
+      targetStatus:  targetStatus || undefined,
+      autoAdvance:   !targetStatus,
+      trackingNo:    trackingNumbers[id] || null,
+      pushPlatform,
+    }))
+  );
+  const out = ids.map((id, i) => {
+    const r = results[i];
+    return r.status === 'fulfilled'
+      ? { id, ok: true,  ...r.value }
+      : { id, ok: false, error: r.reason.message };
+  });
+  res.json({ results: out, succeeded: out.filter(r => r.ok).length, failed: out.filter(r => !r.ok).length });
+});
 
 // Scan lookup — search by order ID, tracking number, order ID prefix, or recipient
 app.get('/api/orders/lookup', (req, res) => {
