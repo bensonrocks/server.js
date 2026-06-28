@@ -1,5 +1,17 @@
 'use strict';
 
+// Load .env file without requiring dotenv package
+try {
+  const fs = require('fs'), path = require('path');
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+    }
+  }
+} catch {}
+
 const express  = require('express');
 const path     = require('path');
 const { exec } = require('child_process');
