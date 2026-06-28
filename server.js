@@ -62,11 +62,16 @@ function writeUsers(users) {
 function hashPass(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
-// Seed / migrate users on first run
+// Seed / migrate users on startup
+// SEED_USERS env var (JSON array) defines fixed accounts that are always
+// recreated if missing. Existing passwords are never overwritten so
+// admin-set passwords survive server restarts.
+// Format: [{"id":"Admin1","name":"Admin One","role":"admin","password":"secret"}, ...]
 ;(function initUsers() {
   const db = readDb();
+
+  // Migrate from legacy users.json if db.users doesn't exist yet
   if (!Array.isArray(db.users)) {
-    // Migrate from legacy users.json if it exists
     let users = [];
     try { users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch {}
     if (!users.length) {
@@ -76,6 +81,32 @@ function hashPass(password, salt) {
     db.users = users;
     writeDb(db);
   }
+
+  // Apply SEED_USERS — add any missing accounts, never touch existing ones
+  let seedList = [];
+  try { seedList = JSON.parse(process.env.SEED_USERS || '[]'); } catch {}
+  if (seedList.length) {
+    const users  = readUsers();
+    let changed  = false;
+    for (const seed of seedList) {
+      if (!seed.id || !seed.password) continue;
+      const exists = users.find(u => u.id === String(seed.id));
+      if (!exists) {
+        const salt = crypto.randomBytes(16).toString('hex');
+        users.push({
+          id:           String(seed.id),
+          name:         String(seed.name || seed.id),
+          role:         seed.role === 'warehouse' ? 'warehouse' : 'admin',
+          salt,
+          passwordHash: hashPass(String(seed.password), salt),
+        });
+        changed = true;
+        console.log(`[IdealScan] Seeded user: ${seed.id} (${seed.role || 'admin'})`);
+      }
+    }
+    if (changed) writeUsers(users);
+  }
+
   // Migrate existing users that pre-date the role field
   const users = readUsers();
   let changed = false;
