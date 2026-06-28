@@ -33,6 +33,9 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/vendor/jsbarcode.min.js', (_req, res) =>
+  res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
+);
 
 // ── Persistent storage ──────────────────────────────────────────────────────
 const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');

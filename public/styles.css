@@ -530,10 +530,42 @@ body.scan-open { overflow: hidden; }
 .btn-pause { background: #f0f9ff; color: #0369a1; border: 1px solid #bae6fd; padding: .6rem .9rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .875rem; font-weight: 600; transition: background .15s; flex: 1; }
 .btn-pause:hover { background: #e0f2fe; }
 
-.scan-header-right { display: flex; align-items: center; gap: .5rem; flex-shrink: 0; }
-.btn-print-label { background: none; border: 1px solid var(--border); padding: .28rem .65rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .76rem; font-weight: 600; color: var(--text-light); white-space: nowrap; transition: background .12s, color .12s; }
-.btn-print-label:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
 .scan-timer { font-size: .8rem; font-weight: 700; font-family: monospace; background: var(--bg); border: 1px solid var(--border); padding: .2em .6em; border-radius: var(--radius-sm); color: var(--text-muted); flex-shrink: 0; white-space: nowrap; min-width: 42px; text-align: center; }
+
+/* Print label toast — fixed bottom banner after successful scan completion */
+.print-label-toast {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 900;
+  display: flex; align-items: center; gap: .75rem;
+  padding: .85rem 1.25rem;
+  background: #1e3a5f; color: #fff;
+  font-size: .9rem; font-weight: 600;
+  box-shadow: 0 -2px 12px rgba(0,0,0,.25);
+}
+.print-label-toast.hidden { display: none; }
+.plt-text { flex: 1; }
+.plt-btn-print {
+  background: #fff; color: #1e3a5f; border: none;
+  padding: .35rem .85rem; border-radius: var(--radius-sm);
+  font-size: .84rem; font-weight: 700; cursor: pointer;
+}
+.plt-btn-skip {
+  background: transparent; color: rgba(255,255,255,.75); border: 1px solid rgba(255,255,255,.3);
+  padding: .35rem .7rem; border-radius: var(--radius-sm);
+  font-size: .84rem; cursor: pointer;
+}
+.plt-countdown {
+  font-size: .78rem; color: rgba(255,255,255,.55);
+  min-width: 1.2em; text-align: right; font-variant-numeric: tabular-nums;
+}
+
+/* Reprint label button on completed order cards */
+.btn-reprint-label {
+  background: none; border: 1px solid var(--border);
+  color: var(--text-light); font-size: .74rem; font-weight: 600;
+  padding: .22rem .6rem; border-radius: var(--radius-sm);
+  cursor: pointer; white-space: nowrap; transition: background .12s, color .12s;
+}
+.btn-reprint-label:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
 .scan-error { max-width: 520px; margin: .5rem auto 0; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); border-radius: var(--radius-sm); padding: .5rem .85rem; font-size: .85rem; }
 
 .pending-section-header { display: flex; align-items: center; gap: .5rem; padding: .6rem 1.25rem; font-size: .73rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: .06em; border-top: 1px solid var(--border); margin-top: .5rem; }

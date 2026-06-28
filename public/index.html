@@ -98,10 +98,7 @@
         <span class="scan-order-no" id="scanOrderNo"></span>
         <span class="scan-progress" id="scanProgress"></span>
       </div>
-      <div class="scan-header-right">
-        <button class="btn-print-label" id="printLabelBtn" title="Print waybill label">&#128438; Print Label</button>
-        <span id="scanTimer" class="scan-timer"></span>
-      </div>
+      <span id="scanTimer" class="scan-timer"></span>
     </div>
 
     <div class="scan-order-meta" id="scanOrderMeta"></div>
@@ -151,6 +148,14 @@
     </div>
 
   </div><!-- /scanOverlay -->
+
+  <!-- Print label prompt — floats over the orders list for 3 s after completion -->
+  <div id="printLabelToast" class="print-label-toast hidden">
+    <span class="plt-text">Print waybill label?</span>
+    <button class="plt-btn-print" id="pltPrintBtn">&#128438; Print</button>
+    <button class="plt-btn-skip"  id="pltSkipBtn">Skip</button>
+    <span class="plt-countdown" id="pltCountdown">3</span>
+  </div>
 
   <!-- ── Camera Scan Overlay ── -->
   <div id="cameraScanOverlay" class="camera-scan-overlay hidden">
