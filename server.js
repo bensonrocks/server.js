@@ -85,23 +85,6 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
   });
 }
 
-// ── Session state ───────────────────────────────────────────────────────────
-const sessions = {};
-
-function getSession(id) {
-  if (!sessions[id]) sessions[id] = {
-    orders: [], scanStates: {}, batchId: null,
-    orderBatchMap: {},
-  };
-  return sessions[id];
-}
-
-function getScanState(session, orderNumber) {
-  if (!session.scanStates[orderNumber])
-    session.scanStates[orderNumber] = { status: 'pending', scanned: {} };
-  return session.scanStates[orderNumber];
-}
-
 // Column mapping and format generation live in lib/keyfields.js
 
 function summarizeOrders(lines) {
@@ -136,22 +119,38 @@ function summarizeOrders(lines) {
   return Object.values(map);
 }
 
-function ordersWithState(session) {
-  const db = readDb();
-  return summarizeOrders(session.orders).map(ord => {
-    const state   = getScanState(session, ord.order_number);
-    const batchId = session.orderBatchMap[ord.order_number] || session.batchId;
-    const batch   = db.batches.find(b => b.id === batchId);
-    const waybillPath = path.join(WAYBILL_DIR, batchId || '', `${ord.order_number}.pdf`);
-    return {
-      ...ord,
-      scan_status:  state.status,
-      scanned:      { ...state.scanned },
-      batchId,
-      client_name:  batch?.client_name || '',
-      has_waybill_pdf: fs.existsSync(waybillPath),
-    };
-  });
+// Global shared view — reads all orders and their scan states directly from DB.
+// Every browser/device sees the same data; no per-session isolation.
+function globalOrdersWithState() {
+  const db   = readDb();
+  const seen = new Set();
+  const out  = [];
+  for (const batch of db.batches) {
+    const states = batch.orderStates || {};
+    for (const ord of (batch.orders || [])) {
+      if (seen.has(ord.order_number)) continue; // newest batch wins
+      seen.add(ord.order_number);
+      const state       = states[ord.order_number] || { status: 'pending', scanned: {} };
+      const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
+      out.push({
+        ...ord,
+        scan_status:     state.status  || 'pending',
+        scanned:         { ...state.scanned },
+        batchId:         batch.id,
+        client_name:     batch.client_name || '',
+        has_waybill_pdf: fs.existsSync(waybillPath),
+      });
+    }
+  }
+  return out;
+}
+
+// Find which batch holds a given order number (newest batch first).
+function findBatchForOrder(db, orderNumber) {
+  for (const batch of db.batches) {
+    if ((batch.orders || []).some(o => o.order_number === orderNumber)) return batch;
+  }
+  return null;
 }
 
 // ── PDF waybill splitting ───────────────────────────────────────────────────
@@ -217,21 +216,6 @@ function parseUploadedFile(buffer, filename) {
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
 
-// ── Persist scan state ──────────────────────────────────────────────────────
-function persistStateToBatch(batchId, orderNumber, status, scanned, extra = {}) {
-  if (!batchId) return;
-  const db    = readDb();
-  const batch = db.batches.find(b => b.id === batchId);
-  if (!batch) return;
-  if (!batch.orderStates) batch.orderStates = {};
-  batch.orderStates[orderNumber] = { status, scanned, ...extra, updated_at: new Date().toISOString() };
-  writeDb(db);
-}
-
-function persistState(session, orderNumber, status, scanned, extra = {}) {
-  const batchId = session.orderBatchMap[orderNumber] || session.batchId;
-  persistStateToBatch(batchId, orderNumber, status, scanned, extra);
-}
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
@@ -280,7 +264,6 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
-    const session   = getSession(sessionId);
     const orders    = summarizeOrders(mapped);
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
     const batchId    = uuidv4();
@@ -299,40 +282,6 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     };
 
     const db = readDb();
-
-    // Pull incomplete orders from previous batches into this session
-    const prevRawRows  = [];
-    const prevBatchMap = {};
-    for (const prev of db.batches) {
-      const prevStates = prev.orderStates || {};
-      const prevOrders = prev.orders      || [];
-      const prevRows   = prev.rawRows     || [];
-      for (const prevOrd of prevOrders) {
-        const state = prevStates[prevOrd.order_number];
-        if (!state || state.status === 'pending' || state.status === 'processing') {
-          if (!mapped.some(r => r.order_number === prevOrd.order_number)) {
-            prevRawRows.push(...prevRows.filter(r => r.order_number === prevOrd.order_number));
-            prevBatchMap[prevOrd.order_number] = prev.id;
-          }
-        }
-      }
-    }
-
-    session.orders        = [...mapped, ...prevRawRows];
-    session.scanStates    = {};
-    session.batchId       = batchId;
-    session.orderBatchMap = prevBatchMap;
-
-    // Restore scan states for carried-over orders
-    for (const prev of db.batches) {
-      const prevStates = prev.orderStates || {};
-      for (const [orderNum, state] of Object.entries(prevStates)) {
-        if (prevBatchMap[orderNum] && (state.status === 'pending' || state.status === 'processing')) {
-          session.scanStates[orderNum] = { status: state.status, scanned: state.scanned || {} };
-        }
-      }
-    }
-
     db.batches.unshift(batch);
     writeDb(db);
     fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
@@ -353,7 +302,8 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       emailError = err.message;
     }
 
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: ordersWithState(session), emailSent, emailError });
+    // Return the global view so every client immediately sees the same data
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState(), emailSent, emailError });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -430,17 +380,14 @@ app.get('/api/stats', (_req, res) => {
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0 });
 });
 
-app.get('/api/orders', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
-  if (!session.orders.length) return res.json([]);
-  res.json(ordersWithState(session));
+app.get('/api/orders', (_req, res) => {
+  res.json(globalOrdersWithState());
 });
 
 app.post('/api/waybill-lookup', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { waybill } = req.body;
   if (!waybill) return res.status(400).json({ error: 'waybill required' });
-  const order = ordersWithState(session).find(o =>
+  const order = globalOrdersWithState().find(o =>
     o.waybill_number && o.waybill_number.trim().toLowerCase() === waybill.trim().toLowerCase()
   );
   if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });
@@ -448,104 +395,120 @@ app.post('/api/waybill-lookup', (req, res) => {
 });
 
 app.post('/api/scan/increment', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { orderNumber, sku } = req.body;
   if (!orderNumber || !sku) return res.status(400).json({ error: 'orderNumber and sku required' });
-  const order = summarizeOrders(session.orders).find(o => o.order_number === orderNumber);
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-  const item = order.lines.find(l => l.sku.trim().toLowerCase() === sku.trim().toLowerCase());
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord  = batch.orders.find(o => o.order_number === orderNumber);
+  const item = ord.lines.find(l => l.sku.trim().toLowerCase() === sku.trim().toLowerCase());
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
-  const state = getScanState(session, orderNumber);
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
 });
 
 app.post('/api/scan/setqty', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { orderNumber, sku, qty } = req.body;
   if (!orderNumber || !sku) return res.status(400).json({ error: 'orderNumber and sku required' });
-  const order = summarizeOrders(session.orders).find(o => o.order_number === orderNumber);
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-  const item = order.lines.find(l => l.sku === sku);
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord  = batch.orders.find(o => o.order_number === orderNumber);
+  const item = ord.lines.find(l => l.sku === sku);
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not found` });
-  const state = getScanState(session, orderNumber);
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
   state.scanned[item.sku] = Math.max(0, parseInt(qty, 10) || 0);
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
 });
 
 app.post('/api/scan/save', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { orderNumber } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
-  const state = getScanState(session, orderNumber);
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   if (state.status !== 'done' && state.status !== 'unprocessed') state.status = 'processing';
-  persistState(session, orderNumber, state.status, state.scanned);
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
   res.json({ ok: true });
 });
 
 app.post('/api/scan/complete', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { orderNumber, startTime, endTime, operator } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
-  const order = summarizeOrders(session.orders).find(o => o.order_number === orderNumber);
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-  const state = getScanState(session, orderNumber);
-  const mismatches = order.lines
-    .map(item => {
-      const s = state.scanned[item.sku] || 0;
-      return s !== item.qty ? { sku: item.sku, description: item.description, ordered: item.qty, scanned: s, gap: s - item.qty } : null;
-    }).filter(Boolean);
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord   = batch.orders.find(o => o.order_number === orderNumber);
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const mismatches = ord.lines.map(item => {
+    const s = state.scanned[item.sku] || 0;
+    return s !== item.qty ? { sku: item.sku, description: item.description, ordered: item.qty, scanned: s, gap: s - item.qty } : null;
+  }).filter(Boolean);
 
   if (!mismatches.length) {
-    state.status = 'done';
-    persistState(session, orderNumber, 'done', state.scanned, { startTime, endTime, operator });
+    state.status     = 'done';
+    state.updated_at = new Date().toISOString();
+    if (startTime) state.startTime = startTime;
+    if (endTime)   state.endTime   = endTime;
+    if (operator)  state.operator  = operator;
+    batch.orderStates[orderNumber] = state;
+    writeDb(db);
     return res.json({ ok: true, mismatches: [] });
   }
   res.json({ ok: false, mismatches });
 });
 
 app.post('/api/scan/cancel', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { orderNumber, startTime, endTime, operator } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
-  session.scanStates[orderNumber] = { status: 'unprocessed', scanned: {} };
-  persistState(session, orderNumber, 'unprocessed', {}, { startTime, endTime, operator });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  batch.orderStates[orderNumber] = {
+    status: 'unprocessed', scanned: {},
+    updated_at: new Date().toISOString(),
+    ...(startTime && { startTime }),
+    ...(endTime   && { endTime }),
+    ...(operator  && { operator }),
+  };
+  writeDb(db);
   res.json({ ok: true });
 });
 
 app.post('/api/scan/reset', (req, res) => {
-  const session = getSession(req.headers['x-session-id'] || '');
   const { orderNumber } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
-  session.scanStates[orderNumber] = { status: 'pending', scanned: {} };
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  batch.orderStates[orderNumber] = { status: 'pending', scanned: {}, updated_at: new Date().toISOString() };
+  writeDb(db);
   res.json({ ok: true });
 });
 
 // ── Public stats (no auth needed) ──────────────────────────────────────────
 // /api/stats already has no auth — it's used on page load before login.
 
-// ── Public orders (no auth) — read-only snapshot from DB ───────────────────
-app.get('/api/public/orders', (_req, res) => {
-  const db = readDb();
-  const result = [];
-  for (const batch of db.batches) {
-    const states = batch.orderStates || {};
-    for (const ord of (batch.orders || [])) {
-      const state = states[ord.order_number] || { status: 'pending', scanned: {} };
-      result.push({
-        ...ord,
-        client_name: batch.client_name || '',
-        scan_status: state.status || 'pending',
-        scanned: state.scanned || {},
-        batchId: batch.id,
-        has_waybill_pdf: fs.existsSync(path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`)),
-      });
-    }
-  }
-  res.json(result);
-});
+// /api/public/orders — same as /api/orders, kept for backward compat
+app.get('/api/public/orders', (_req, res) => res.json(globalOrdersWithState()));
 
 // ── Master endpoints (password-protected) ───────────────────────────────────
 const MASTER_PASS = process.env.MASTER_KEY || '201432547E';

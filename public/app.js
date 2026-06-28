@@ -90,6 +90,9 @@
     localStorage.setItem('wms_user', JSON.stringify(currentUser));
     showUserInHeader();
     fetchAndRenderStats();
+    refreshOrders().then(() => {
+      if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
+    });
     if (_loginCallback) { const fn = _loginCallback; _loginCallback = null; fn(); }
   }
 
@@ -1225,9 +1228,8 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   async function refreshOrders() {
-    if (!SESSION_ID) return;
     try {
-      const resp = await fetch('/api/orders', { headers: { 'x-session-id': SESSION_ID } });
+      const resp = await fetch('/api/orders');
       const data = await resp.json();
       if (Array.isArray(data)) loadedOrders = data;
     } catch {}
