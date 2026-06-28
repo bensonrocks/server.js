@@ -1,5 +1,17 @@
 'use strict';
 
+// Load .env file without requiring dotenv package
+try {
+  const fs = require('fs'), path = require('path');
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+    }
+  }
+} catch {}
+
 const express    = require('express');
 const path       = require('path');
 const os         = require('os');
@@ -376,6 +388,190 @@ app.post('/api/sync/all', async (req, res) => {
     out[p] = entry;
   }
   res.json(out);
+});
+
+// ── Sales Lead Digger — Apollo proxy + persistence ────────────────────────────
+
+const APOLLO_BASE = 'https://api.apollo.io/api/v1';
+const { randomUUID } = require('crypto');
+
+const VERTICAL_PARAMS = {
+  logistics: {
+    person_titles: [
+      'Logistics Manager', 'Supply Chain Manager', 'Operations Director',
+      'Freight Manager', 'Procurement Manager', 'Warehouse Manager',
+      'Import Export Manager', 'General Manager', 'CEO', 'Managing Director',
+      'Head of Logistics', 'VP Operations', 'Freight Forwarder',
+    ],
+    q_organization_keyword_tags: ['logistics', 'freight forwarding', 'supply chain', 'warehousing', '3PL', 'shipping'],
+    description: 'Freight Forwarders, 3PL Providers & Direct Clients (warehousing/transport/freight)',
+  },
+  interior: {
+    person_titles: [
+      'Interior Designer', 'Architect', 'Interior Decorator',
+      'Principal Architect', 'Design Director', 'Creative Director',
+      'Interior Design Consultant', 'Senior Interior Designer',
+      'Project Architect', 'Renovation Consultant',
+    ],
+    q_organization_keyword_tags: ['interior design', 'architecture', 'furniture', 'home decor', 'interior styling', 'design studio'],
+    description: 'Interior Designers, Architects & Homeowners (interior styling & custom furnishings)',
+  },
+};
+
+async function apolloRequest(path, body) {
+  const key = process.env.APOLLO_API_KEY;
+  if (!key) throw new Error('APOLLO_API_KEY not configured — set it in your environment variables');
+  const res = await fetch(`${APOLLO_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`Apollo API error ${res.status}: ${txt}`);
+  }
+  return res.json();
+}
+
+// Search + auto-save session and all leads to DB
+app.post('/api/leads/search', async (req, res) => {
+  const { vertical = 'logistics', location = '', seniority = '', size = '', page = 1 } = req.body || {};
+  const vp = VERTICAL_PARAMS[vertical];
+  if (!vp) return res.status(400).json({ error: 'Unknown vertical. Use "logistics" or "interior".' });
+
+  const payload = {
+    per_page: 10,
+    page,
+    person_titles: vp.person_titles,
+    q_organization_keyword_tags: vp.q_organization_keyword_tags,
+  };
+  if (location)  payload.organization_locations = [location];
+  if (seniority) payload.person_seniorities     = [seniority.toLowerCase()];
+  if (size)      payload.organization_num_employees_ranges = [size];
+
+  try {
+    const data    = await apolloRequest('/mixed_people/search', payload);
+    const rawList = data.people || [];
+
+    // Create session record
+    const sessionId = randomUUID();
+    db.prepare(`INSERT INTO lead_sessions (id, vertical, location, seniority, company_size, total_found, lead_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(sessionId, vertical, location, seniority, size,
+           data.pagination?.total_entries || rawList.length, rawList.length);
+
+    // Upsert each lead (skip if already saved from a previous search)
+    const insertLead = db.prepare(`
+      INSERT INTO leads (apollo_id, session_id, vertical, first_name, last_name_masked,
+        title, company, location, linkedin_url, photo_url, has_email, has_phone)
+      VALUES (@apollo_id, @session_id, @vertical, @first_name, @last_name_masked,
+        @title, @company, @location, @linkedin_url, @photo_url, @has_email, @has_phone)
+      ON CONFLICT(apollo_id) DO NOTHING
+    `);
+
+    const people = rawList.map(p => {
+      const company  = p.organization?.name || '';
+      const location = [p.city, p.state, p.country].filter(Boolean).join(', ');
+      const lead = {
+        apollo_id:       p.id,
+        session_id:      sessionId,
+        vertical,
+        first_name:      p.first_name || '',
+        last_name_masked: p.last_name_obfuscated || p.last_name || '',
+        title:           p.title || '',
+        company,
+        location,
+        linkedin_url:    p.linkedin_url || '',
+        photo_url:       p.photo_url || '',
+        has_email:       p.has_email ? 1 : 0,
+        has_phone:       p.has_direct_phone === 'Yes' ? 1 : 0,
+      };
+      insertLead.run(lead);
+      return {
+        id:           p.id,
+        session_id:   sessionId,
+        first_name:   p.first_name || '',
+        last_name:    p.last_name_obfuscated || '',
+        name:         `${p.first_name || ''} ${p.last_name_obfuscated || ''}`.trim(),
+        title:        p.title || '',
+        company,
+        location,
+        linkedin_url: p.linkedin_url || '',
+        photo_url:    p.photo_url || '',
+        has_email:    !!p.has_email,
+        has_phone:    p.has_direct_phone === 'Yes',
+        enriched:     false,
+        contacted:    false,
+      };
+    });
+
+    res.json({
+      session_id: sessionId,
+      people,
+      total:       data.pagination?.total_entries || rawList.length,
+      vertical,
+      description: vp.description,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Enrich a lead — saves email/phone to DB
+app.post('/api/leads/enrich', async (req, res) => {
+  const { id, first_name, last_name, organization_name } = req.body || {};
+  if (!id && !first_name) return res.status(400).json({ error: 'Provide Apollo id or first_name' });
+  try {
+    const data = await apolloRequest('/people/match', {
+      id, first_name, last_name, organization_name,
+      reveal_personal_emails: false,
+    });
+    const p     = data.person || {};
+    const email = p.email || '';
+    const phone = p.sanitized_phone || p.phone_numbers?.[0]?.sanitized_number || '';
+
+    db.prepare(`UPDATE leads SET email=?, phone=?, enriched=1, enriched_at=datetime('now')
+                WHERE apollo_id=?`).run(email, phone, id);
+
+    res.json({ email, phone, email_status: p.email_status || '' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Mark a lead as contacted (toggle + timestamp + optional note)
+app.patch('/api/leads/:id/contact', (req, res) => {
+  const { contacted, note = '' } = req.body || {};
+  const now = contacted ? new Date().toISOString() : '';
+  db.prepare(`UPDATE leads SET contacted=?, contacted_at=?, contact_note=? WHERE apollo_id=?`)
+    .run(contacted ? 1 : 0, now, note, req.params.id);
+  const lead = db.prepare('SELECT * FROM leads WHERE apollo_id=?').get(req.params.id);
+  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+  res.json({ ok: true, contacted: !!lead.contacted, contacted_at: lead.contacted_at });
+});
+
+// Update contact note on a lead
+app.patch('/api/leads/:id/note', (req, res) => {
+  const { note = '' } = req.body || {};
+  db.prepare('UPDATE leads SET contact_note=? WHERE apollo_id=?').run(note, req.params.id);
+  res.json({ ok: true });
+});
+
+// Get all saved leads (optionally filter by vertical / contacted)
+app.get('/api/leads', (req, res) => {
+  const { vertical, contacted, session_id } = req.query;
+  let sql    = 'SELECT l.*, s.dug_at as session_dug_at FROM leads l JOIN lead_sessions s ON l.session_id=s.id WHERE 1=1';
+  const args = [];
+  if (vertical)   { sql += ' AND l.vertical=?';   args.push(vertical); }
+  if (session_id) { sql += ' AND l.session_id=?'; args.push(session_id); }
+  if (contacted !== undefined) { sql += ' AND l.contacted=?'; args.push(contacted === 'true' ? 1 : 0); }
+  sql += ' ORDER BY l.dug_at DESC';
+  res.json(db.prepare(sql).all(...args));
+});
+
+// Get all past search sessions
+app.get('/api/leads/sessions', (req, res) => {
+  res.json(db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
 });
 
 // ── Webhooks (for real-time push from Shopee / Lazada) ────────────────────────

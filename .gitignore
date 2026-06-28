@@ -3,3 +3,4 @@ data/credentials.json
 data/*.db
 data/*.db-wal
 data/*.db-shm
+.env
