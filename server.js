@@ -130,6 +130,7 @@ function summarizeOrders(lines) {
       map[key] = {
         order_number: key, customer_name: line.customer_name,
         carrier: line.carrier, waybill_number: line.waybill_number,
+        platform: line.platform || '', shop_name: line.shop_name || '',
         date: line.date, lines: [], total_qty: 0,
       };
     }

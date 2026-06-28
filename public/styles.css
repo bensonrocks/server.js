@@ -973,6 +973,92 @@ body.log-open { overflow: hidden; }
 }
 
 /* ════════════════════════════════════════════════════
+   DASHBOARD BREAKDOWN — Platforms & Carriers
+   ════════════════════════════════════════════════════ */
+.bkd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.bkd-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.1rem;
+}
+.bkd-title {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-light);
+  margin-bottom: .75rem;
+}
+.bkd-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: .55rem;
+}
+.bkd-row:last-child { margin-bottom: 0; }
+.bkd-row-label {
+  min-width: 90px;
+  max-width: 120px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.bkd-name {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bkd-shops {
+  font-size: .67rem;
+  color: var(--text-light);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bkd-bar-wrap {
+  flex: 1;
+  background: #eef2f7;
+  border-radius: 99px;
+  height: 8px;
+  overflow: hidden;
+}
+.bkd-bar {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--primary);
+  min-width: 4px;
+  transition: width .3s ease;
+}
+.bkd-bar-carrier {
+  background: var(--success);
+}
+.bkd-nums {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 54px;
+  flex-shrink: 0;
+}
+.bkd-count {
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.bkd-units {
+  font-size: .67rem;
+  color: var(--text-light);
+}
+
+/* ════════════════════════════════════════════════════
    RESPONSIVE ADDITIONS — MOBILE
    ════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
@@ -996,4 +1082,7 @@ body.log-open { overflow: hidden; }
   .filter-chip { font-size: .72rem; padding: .2em .6em; }
 
   .scan-overlay { top: var(--header-h); }
+
+  .bkd-grid { grid-template-columns: 1fr; }
+  .bkd-row-label { min-width: 80px; max-width: 100px; }
 }

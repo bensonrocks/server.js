@@ -191,7 +191,7 @@
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
-    if (name === 'upload') fetchAndRenderStats();
+    if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') renderOrdersDash();
   }
 
@@ -226,7 +226,11 @@
     } catch {}
   }
 
-  document.getElementById('refreshStatsBtn').addEventListener('click', fetchAndRenderStats);
+  document.getElementById('refreshStatsBtn').addEventListener('click', async () => {
+    await fetchAndRenderStats();
+    if (!loadedOrders.length) await refreshOrders();
+    renderBreakdowns(loadedOrders);
+  });
 
   // ── Upload tab ─────────────────────────────────────────────────────────────
   const dropZone        = document.getElementById('dropZone');
@@ -362,6 +366,7 @@
         `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed to ${emailTo}.${pdfMsg}`
       );
       renderUploadList(data.orders);
+      renderBreakdowns(data.orders);
       fetchAndRenderStats();
       pendingOrderFile = null;
       fileInput.value  = '';
@@ -406,6 +411,69 @@
           </table>
         </div>
       </div>`).join('');
+  }
+
+  // ── Breakdown: platforms + carriers ───────────────────────────────────────
+  function renderBreakdowns(orders) {
+    const section = document.getElementById('dashBreakdownSection');
+    if (!orders || !orders.length) { section.classList.add('hidden'); return; }
+
+    const platforms = {};
+    const carriers  = {};
+
+    for (const ord of orders) {
+      const plat = (ord.platform  || '').trim() || 'Unspecified';
+      const carr = (ord.carrier   || '').trim() || 'Unspecified';
+      const shop = (ord.shop_name || '').trim();
+
+      if (!platforms[plat]) platforms[plat] = { orders: 0, units: 0, shops: new Set() };
+      platforms[plat].orders++;
+      platforms[plat].units += ord.total_qty || 0;
+      if (shop) platforms[plat].shops.add(shop);
+
+      if (!carriers[carr]) carriers[carr] = { orders: 0, units: 0 };
+      carriers[carr].orders++;
+      carriers[carr].units += ord.total_qty || 0;
+    }
+
+    const maxP = Math.max(...Object.values(platforms).map(d => d.orders), 1);
+    const maxC = Math.max(...Object.values(carriers).map(d => d.orders),  1);
+
+    function rows(map, max, isCarrier) {
+      return Object.entries(map)
+        .sort((a, b) => b[1].orders - a[1].orders)
+        .map(([name, d]) => {
+          const pct   = Math.round((d.orders / max) * 100);
+          const shops = (!isCarrier && d.shops.size) ? `<span class="bkd-shops">${[...d.shops].map(esc).join(', ')}</span>` : '';
+          return `
+            <div class="bkd-row">
+              <div class="bkd-row-label">
+                <span class="bkd-name">${esc(name)}</span>
+                ${shops}
+              </div>
+              <div class="bkd-bar-wrap">
+                <div class="bkd-bar ${isCarrier ? 'bkd-bar-carrier' : ''}" style="width:${pct}%"></div>
+              </div>
+              <div class="bkd-nums">
+                <span class="bkd-count">${d.orders}</span>
+                <span class="bkd-units">${d.units} units</span>
+              </div>
+            </div>`;
+        }).join('');
+    }
+
+    section.innerHTML = `
+      <div class="bkd-grid">
+        <div class="bkd-card">
+          <div class="bkd-title">&#128250; Selling Platforms</div>
+          ${rows(platforms, maxP, false)}
+        </div>
+        <div class="bkd-card">
+          <div class="bkd-title">&#128666; Delivery Carriers</div>
+          ${rows(carriers, maxC, true)}
+        </div>
+      </div>`;
+    section.classList.remove('hidden');
   }
 
   // ── Orders Dashboard ───────────────────────────────────────────────────────
