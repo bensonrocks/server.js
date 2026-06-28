@@ -54,6 +54,11 @@
     setTimeout(() => document.getElementById('loginName').focus(), 100);
   }
 
+  // Load non-sensitive public config (default recipient) on every page load
+  fetch('/api/public/config').then(r => r.json()).then(c => {
+    if (c.default_email) defaultRecipientEmail = c.default_email;
+  }).catch(() => {});
+
   function initLogin() {
     fetchAndRenderStats(); // always load stats — visible without login
     const stored = localStorage.getItem('wms_user');
@@ -429,11 +434,12 @@
 
       const pdfMsg   = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       const emailMsg = data.emailSent
-        ? ` WMS emailed to ${emailTo}.`
-        : emailTo
-          ? ` Email not sent: ${data.emailError || 'unknown error'}.`
+        ? ` WMS emailed to ${data.emailTo || emailTo}.`
+        : data.emailError
+          ? ` Email not sent: ${data.emailError}`
           : '';
-      setUploadStatus(data.emailSent ? 'success' : emailTo ? 'warning' : 'success',
+      const statusType = data.emailSent ? 'success' : data.emailError ? 'warning' : 'success';
+      setUploadStatus(statusType,
         `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
       );
       renderUploadList(data.orders);

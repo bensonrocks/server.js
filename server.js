@@ -350,8 +350,10 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    let emailSent = false, emailError = '';
+    let emailSent = false, emailError = '', actualRecipient = '';
     try {
+      const conf = readEmailConfig();
+      actualRecipient = emailTo || conf.to_email;
       await sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction);
       emailSent = true;
     } catch (err) {
@@ -360,7 +362,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     }
 
     // Return the global view so every client immediately sees the same data
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState(), emailSent, emailError });
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState(), emailSent, emailError, emailTo: actualRecipient });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -579,6 +581,12 @@ app.post('/api/auth/login', (req, res) => {
 
 // /api/public/orders — same as /api/orders, kept for backward compat
 app.get('/api/public/orders', (_req, res) => res.json(globalOrdersWithState()));
+
+// Public: non-sensitive config (default recipient address only — no credentials)
+app.get('/api/public/config', (_req, res) => {
+  const conf = readEmailConfig();
+  res.json({ default_email: conf.to_email || '' });
+});
 
 // ── Master endpoints (password-protected) ───────────────────────────────────
 const MASTER_PASS = process.env.MASTER_KEY || '201432547E';
