@@ -13,7 +13,8 @@ try { pdfParse = require('pdf-parse'); } catch {}
 // Keyfields WMS format — edit lib/keyfields.js to change column mappings or output
 const {
   mapRow, normalizeKey, dateVal,
-  generateKeyfieldsXLSX,
+  generateKeyfieldsXLSX, generateTemplateSampleXLSX,
+  KEYFIELDS_HEADERS,
 } = require('./lib/keyfields');
 
 const app    = express();
@@ -28,8 +29,18 @@ const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 const DB_FILE     = path.join(DATA_DIR, 'db.json');
 
+const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
+
 fs.mkdirSync(WMS_DIR,     { recursive: true });
 fs.mkdirSync(WAYBILL_DIR, { recursive: true });
+
+function loadCustomHeaders() {
+  try {
+    const data = JSON.parse(fs.readFileSync(KEYFIELDS_TEMPLATE_FILE, 'utf8'));
+    if (Array.isArray(data.headers) && data.headers.length > 0) return data.headers;
+  } catch {}
+  return null;
+}
 
 function readDb() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
@@ -271,7 +282,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const session   = getSession(sessionId);
     const orders    = summarizeOrders(mapped);
-    const wmsBuffer  = generateKeyfieldsXLSX(orders);
+    const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
@@ -587,6 +598,43 @@ app.post('/api/master/reset', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Master: Keyfields template download / upload / reset ────────────────────
+
+app.get('/api/master/keyfields-template', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const customHeaders = loadCustomHeaders();
+  const buf = generateTemplateSampleXLSX(customHeaders);
+  const tag = customHeaders ? 'custom' : 'default';
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Keyfields_Template_${tag}_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.end(buf);
+});
+
+app.post('/api/master/keyfields-template', upload.single('templateFile'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return res.status(400).json({ error: 'Empty workbook' });
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const headers = (aoa[0] || []).map(h => String(h).trim()).filter(Boolean);
+    if (headers.length === 0) return res.status(400).json({ error: 'No headers found in row 1' });
+    fs.writeFileSync(KEYFIELDS_TEMPLATE_FILE, JSON.stringify({ headers, uploadedAt: new Date().toISOString() }, null, 2));
+    res.json({ ok: true, headers, count: headers.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/master/keyfields-template', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  try {
+    fs.unlinkSync(KEYFIELDS_TEMPLATE_FILE);
+  } catch {}
+  res.json({ ok: true, headers: KEYFIELDS_HEADERS });
 });
 
 const PORT = process.env.PORT || 3000;

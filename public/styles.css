@@ -1024,6 +1024,26 @@ body.log-open { overflow: hidden; }
 }
 
 /* ════════════════════════════════════════════════════
+   KEYFIELDS TEMPLATE SECTION
+   ════════════════════════════════════════════════════ */
+.kf-tpl-section {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.kf-tpl-title {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--primary); margin-bottom: .3rem;
+}
+.kf-tpl-desc {
+  font-size: .78rem; color: var(--muted); margin: 0 0 .65rem;
+  line-height: 1.45;
+}
+.kf-tpl-btns {
+  display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .5rem;
+}
+
+/* ════════════════════════════════════════════════════
    DASHBOARD BREAKDOWN — Platforms & Carriers
    ════════════════════════════════════════════════════ */
 .bkd-grid {

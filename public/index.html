@@ -216,6 +216,23 @@
         </div>
         <div id="masterUploadStatus" class="status-bar hidden"></div>
       </div>
+
+      <!-- Keyfields Output Template -->
+      <div class="kf-tpl-section">
+        <div class="kf-tpl-title">Keyfields Output Template</div>
+        <p class="kf-tpl-desc">Download to verify the WMS column format. Upload a new template (row&nbsp;1&nbsp;=&nbsp;headers) to change the output columns.</p>
+        <div class="kf-tpl-btns">
+          <button class="btn-secondary" id="kfDownloadTplBtn">&#8681; Download Template</button>
+          <button class="btn-secondary" id="kfResetTplBtn">&#8635; Reset to Default</button>
+        </div>
+        <div class="master-upload-label" style="margin-top:.75rem">Upload New Template</div>
+        <div class="upload-area upload-area-sm" id="kfTplDropZone">
+          <input type="file" id="kfTplFileInput" accept=".xlsx,.xls" hidden />
+          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
+          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="kfTplBrowseBtn">browse</button></p>
+        </div>
+        <div id="kfTplStatus" class="status-bar hidden"></div>
+      </div>
     </div>
 
     <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>

@@ -1123,6 +1123,67 @@
     }
   }
 
+  // ── Keyfields template: download ─────────────────────────────────────────
+  document.getElementById('kfDownloadTplBtn').addEventListener('click', async () => {
+    try {
+      const resp = await fetch('/api/master/keyfields-template', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!resp.ok) { alert('Download failed'); return; }
+      const blob = await resp.blob();
+      const cd   = resp.headers.get('content-disposition') || '';
+      const fname = (cd.match(/filename="([^"]+)"/) || [])[1] || 'Keyfields_Template.xlsx';
+      const url  = URL.createObjectURL(blob);
+      Object.assign(document.createElement('a'), { href: url, download: fname }).click();
+      URL.revokeObjectURL(url);
+    } catch (err) { alert(err.message); }
+  });
+
+  // ── Keyfields template: reset to default ─────────────────────────────────
+  document.getElementById('kfResetTplBtn').addEventListener('click', async () => {
+    if (!confirm('Reset Keyfields output template to default (39-column layout)?')) return;
+    const statusEl = document.getElementById('kfTplStatus');
+    try {
+      const resp = await fetch('/api/master/keyfields-template', { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Reset failed');
+      statusEl.className = 'status-bar success';
+      statusEl.textContent = `Reset to default (${data.headers.length} columns).`;
+      statusEl.classList.remove('hidden');
+    } catch (err) {
+      statusEl.className = 'status-bar error';
+      statusEl.textContent = err.message;
+      statusEl.classList.remove('hidden');
+    }
+  });
+
+  // ── Keyfields template: upload new ───────────────────────────────────────
+  const kfTplFileInput = document.getElementById('kfTplFileInput');
+
+  document.getElementById('kfTplBrowseBtn').addEventListener('click', e => { e.stopPropagation(); kfTplFileInput.click(); });
+  document.getElementById('kfTplDropZone').addEventListener('click', () => kfTplFileInput.click());
+  document.getElementById('kfTplDropZone').addEventListener('dragover', e => { e.preventDefault(); document.getElementById('kfTplDropZone').classList.add('dragover'); });
+  document.getElementById('kfTplDropZone').addEventListener('dragleave', () => document.getElementById('kfTplDropZone').classList.remove('dragover'));
+  document.getElementById('kfTplDropZone').addEventListener('drop', e => {
+    e.preventDefault(); document.getElementById('kfTplDropZone').classList.remove('dragover');
+    if (e.dataTransfer.files[0]) uploadKeyfieldsTpl(e.dataTransfer.files[0]);
+  });
+  kfTplFileInput.addEventListener('change', () => { if (kfTplFileInput.files[0]) uploadKeyfieldsTpl(kfTplFileInput.files[0]); kfTplFileInput.value = ''; });
+
+  async function uploadKeyfieldsTpl(file) {
+    const statusEl = document.getElementById('kfTplStatus');
+    statusEl.className = 'status-bar loading'; statusEl.textContent = `Uploading ${file.name}…`; statusEl.classList.remove('hidden');
+    const form = new FormData(); form.append('templateFile', file);
+    try {
+      const resp = await fetch('/api/master/keyfields-template', { method: 'POST', headers: { 'x-master-key': LOG_PASSWORD }, body: form });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      statusEl.className = 'status-bar success';
+      statusEl.textContent = `Template saved — ${data.count} columns: ${data.headers.slice(0, 5).join(', ')}${data.count > 5 ? '…' : ''}`;
+    } catch (err) {
+      statusEl.className = 'status-bar error';
+      statusEl.textContent = err.message;
+    }
+  }
+
   async function renderLogContent() {
     const listEl  = document.getElementById('logOverlayList');
     const emptyEl = document.getElementById('logOverlayEmpty');
