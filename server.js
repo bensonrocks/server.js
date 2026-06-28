@@ -394,10 +394,11 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
     if (allRows.length > UPLOAD_MAX_ROWS) {
       return res.json({ rowCount: allRows.length, orderCount: 0, errors: [`File has ${allRows.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.`], converted: false });
     }
-    const orders    = summarizeOrders(allRows);
-    const errors    = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
+    const orders     = summarizeOrders(allRows);
+    const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
-    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName });
+    const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
+    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames });
   } catch (err) {
     res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
   }

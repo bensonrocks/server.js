@@ -424,6 +424,15 @@
       ? '<span style="color:var(--success)">&#10003; Converted to WMS format</span>'
       : '<span style="color:var(--danger)">&#10007; Conversion failed</span>';
 
+    const names = preview.customerNames || [];
+    const custRow = document.getElementById('confirmCustomersRow');
+    if (names.length) {
+      document.getElementById('confirmCustomers').textContent = names.join(', ');
+      custRow.classList.remove('hidden');
+    } else {
+      custRow.classList.add('hidden');
+    }
+
     const errEl = document.getElementById('confirmErrors');
     if (preview.errors && preview.errors.length) {
       errEl.innerHTML = preview.errors.map(e => `<li>${esc(e)}</li>`).join('');
