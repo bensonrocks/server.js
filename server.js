@@ -146,6 +146,28 @@ const TICKER_DB = {
   'G13':     { name: 'Genting Singapore', market: 'stocks', exchange: 'SGX', terms: ['genting singapore', 'resorts world sentosa', 'rws casino'] },
   'BN4':     { name: 'Keppel Corp',       market: 'stocks', exchange: 'SGX', terms: ['keppel', 'keppel corporation', 'keppel offshore'] },
   'F34':     { name: 'Wilmar International',market:'stocks', exchange: 'SGX', terms: ['wilmar', 'wilmar international', 'kuok group', 'palm oil wilmar'] },
+
+  // ── ASX (AUSTRALIA) ────────────────────────────────────────────────────────
+  'BHP':     { name: 'BHP Group',          market: 'stocks', exchange: 'ASX', terms: ['bhp', 'bhp group', 'bhp billiton', 'mike henry bhp', 'bhp iron ore'] },
+  'CBA':     { name: 'CommonWealth Bank',  market: 'stocks', exchange: 'ASX', terms: ['commonwealth bank', 'commbank', 'cba bank', 'matt comyn'] },
+  'CSL':     { name: 'CSL Limited',        market: 'stocks', exchange: 'ASX', terms: ['csl limited', 'csl behring', 'csl plasma', 'paul mckenzie csl'] },
+  'RIO':     { name: 'Rio Tinto',          market: 'stocks', exchange: 'ASX', terms: ['rio tinto', 'jakob stausholm', 'iron ore rio tinto'] },
+  'ANZ':     { name: 'ANZ Banking',        market: 'stocks', exchange: 'ASX', terms: ['anz bank', 'anz banking', 'shayne elliott anz', 'australia new zealand bank'] },
+  'NAB':     { name: 'Natl Australia Bank',market: 'stocks', exchange: 'ASX', terms: ['national australia bank', 'nab bank', 'andrew irvine nab'] },
+  'WBC':     { name: 'Westpac Banking',    market: 'stocks', exchange: 'ASX', terms: ['westpac', 'westpac bank', 'anthony miller westpac'] },
+  'WOW':     { name: 'Woolworths Group',   market: 'stocks', exchange: 'ASX', terms: ['woolworths', 'woolworths australia', 'woolworths group'] },
+  'MQG':     { name: 'Macquarie Group',    market: 'stocks', exchange: 'ASX', terms: ['macquarie', 'macquarie group', 'shemara wikramanayake', 'macquarie bank'] },
+  'FMG':     { name: 'Fortescue Metals',   market: 'stocks', exchange: 'ASX', terms: ['fortescue', 'fmg', 'andrew forrest', 'fortescue metals', 'iron ore fortescue'] },
+
+  // ── HKEX (HONG KONG) ───────────────────────────────────────────────────────
+  '0700':    { name: 'Tencent',            market: 'stocks', exchange: 'HKEX', terms: ['tencent', 'pony ma', 'wechat', 'weixin', 'tencent games', 'tencent cloud', 'tencent music'] },
+  '9988':    { name: 'Alibaba (HK)',        market: 'stocks', exchange: 'HKEX', terms: ['alibaba', 'taobao', 'tmall', 'eddie wu alibaba', 'alicloud', 'alibaba cloud', 'alibaba hong kong'] },
+  '0005':    { name: 'HSBC Holdings',       market: 'stocks', exchange: 'HKEX', terms: ['hsbc', 'noel quinn hsbc', 'hsbc holdings', 'hong kong shanghai banking'] },
+  '1299':    { name: 'AIA Group',           market: 'stocks', exchange: 'HKEX', terms: ['aia group', 'aia insurance', 'lee yuan siong', 'aia hong kong'] },
+  '3690':    { name: 'Meituan',             market: 'stocks', exchange: 'HKEX', terms: ['meituan', 'wang xing meituan', 'meituan dianping', 'food delivery china'] },
+  '9618':    { name: 'JD.com (HK)',         market: 'stocks', exchange: 'HKEX', terms: ['jd.com', 'jingdong', 'richard liu jd', 'jd logistics'] },
+  '2318':    { name: 'Ping An Insurance',   market: 'stocks', exchange: 'HKEX', terms: ['ping an', 'ping an insurance', 'peter ma ping an', 'ping an bank'] },
+  '1398':    { name: 'ICBC',                market: 'stocks', exchange: 'HKEX', terms: ['icbc', 'industrial commercial bank china', 'icbc hong kong'] },
 };
 
 // ─── Seed Articles ────────────────────────────────────────────────────────────
@@ -304,37 +326,37 @@ function getSessionContext(now) {
 }
 
 const SIGNAL_PLAYS = {
-  'earnings':           { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'EARNINGS BEAT', note: 'Gap-open pullback entry. Wait for first 15-min candle.' },
-  'eps beat':           { dir: 'LONG',  upMin: 4,  upMax: 10, stars: 5, tag: 'EPS BEAT',      note: 'Buy dip to VWAP post-open gap.' },
-  'beats estimates':    { dir: 'LONG',  upMin: 4,  upMax: 9,  stars: 5, tag: 'BEAT ESTIMATE', note: 'Momentum entry on confirmation.' },
-  'guidance raised':    { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'GUIDANCE ▲',    note: 'Strongest fundamental signal. Add on first dip.' },
-  'upgrade':            { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'ANALYST UPGRADE',note: 'Buy at open. Upgrades hold for 2–5 days.' },
-  'price target':       { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 4, tag: 'PT RAISED',     note: 'Confirm direction with volume.' },
-  'all-time high':      { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'ATH BREAKOUT',  note: 'ATH = no overhead resistance. Ride momentum.' },
-  'breakout':           { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'BREAKOUT',      note: 'Enter on volume confirmation above key level.' },
-  'short squeeze':      { dir: 'LONG',  upMin: 10, upMax: 30, stars: 5, tag: '⚡ SHORT SQUEEZE',note: 'High risk/reward. Size down. Fast moves.' },
-  'insider buying':     { dir: 'LONG',  upMin: 3,  upMax: 8,  stars: 5, tag: '🔍 INSIDER BUY', note: 'CEO/Director open-market buy = highest conviction signal.' },
-  'merger':             { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'M&A',           note: 'Risk-arb: buy target, short acquirer.' },
-  'acquisition':        { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'ACQUISITION',   note: 'Immediate spike to deal price. Buy at discount to bid.' },
-  'deal':               { dir: 'LONG',  upMin: 4,  upMax: 12, stars: 4, tag: 'MAJOR DEAL',    note: 'Revenue visibility catalyst.' },
-  'buyback':            { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 3, tag: 'BUYBACK',       note: 'Slow burn upside. Good for options.' },
-  'dividend':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'DIVIDEND',      note: 'Yield support. Defensive hold.' },
-  'misses estimates':   { dir: 'SHORT', upMin: 4,  upMax: 10, stars: 4, tag: '🔴 MISS',        note: 'Sell the gap-up open if any. Target support.' },
-  'guidance lowered':   { dir: 'SHORT', upMin: 6,  upMax: 15, stars: 5, tag: '🔴 GUIDE DOWN',  note: 'Strongest short signal. Multi-day downtrend.' },
-  'downgrade':          { dir: 'SHORT', upMin: 3,  upMax: 7,  stars: 4, tag: '🔴 DOWNGRADE',   note: 'Sell rallies. Cascading downgrades often follow.' },
-  'insider selling':    { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 3, tag: '🔴 INSIDER SELL',note: 'Caution — could be routine. Check Form 4 size.' },
-  'secondary offering': { dir: 'SHORT', upMin: 5,  upMax: 10, stars: 4, tag: '🔴 DILUTION',    note: 'Priced at discount = forced selling pressure.' },
-  'short interest':     { dir: 'SHORT', upMin: 3,  upMax: 8,  stars: 3, tag: '🔴 HIGH SHORT',  note: 'Either squeeze setup OR crowd is right. Read macro.' },
-  'opec':               { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 4, tag: 'OPEC SUPPLY',   note: 'Output hike = bearish crude. Short WTI/XOM/CVX.' },
-  'rate cut':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE CUT',      note: 'Broad lift: growth stocks, gold, crypto benefit.' },
-  'rate hike':          { dir: 'SHORT', upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE HIKE',     note: 'Pressure on growth/tech. Banks may benefit.' },
-  'cpi':                { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'CPI COOL',      note: 'Dovish pivot narrative strengthens. Risk-on.' },
-  'jobs report':        { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'JOBS DATA',     note: 'Strong jobs = soft landing. Equities + crypto bid.' },
-  'nonfarm payroll':    { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'NFP',           note: 'Watch wage growth — if cool, even more bullish.' },
-  'gdp':                { dir: 'LONG',  upMin: 1,  upMax: 2,  stars: 2, tag: 'GDP',           note: 'Revision up = economic resilience confirmed.' },
-  'resistance':         { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'RESISTANCE BREAK', note: 'Clean level cleared = next resistance becomes target.' },
-  'support':            { dir: 'LONG',  upMin: 1,  upMax: 4,  stars: 3, tag: 'SUPPORT HOLD',  note: 'Bouncing off key level = risk defined entry.' },
-  'ipo':                { dir: 'LONG',  upMin: 5,  upMax: 20, stars: 3, tag: 'IPO',           note: 'First day pop possible. Size small. Wide spreads.' },
+  'earnings':           { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'EARNINGS BEAT', note: 'Buy gap-open pullback. Set 2hr exit alert.' },
+  'eps beat':           { dir: 'LONG',  upMin: 4,  upMax: 10, stars: 5, tag: 'EPS BEAT',      note: 'Buy VWAP dip at open. 2hr target, then exit.' },
+  'beats estimates':    { dir: 'LONG',  upMin: 4,  upMax: 9,  stars: 5, tag: 'BEAT ESTIMATE', note: 'Momentum entry at open. Exit within 2hrs.' },
+  'guidance raised':    { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'GUIDANCE ▲',    note: 'Strongest signal. Buy premarket, exit 2hrs after open.' },
+  'upgrade':            { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'ANALYST UPGRADE',note: 'Buy at open. 2hr window captures initial surge.' },
+  'price target':       { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 4, tag: 'PT RAISED',     note: 'Enter on volume spike. 2hr momentum play.' },
+  'all-time high':      { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'ATH BREAKOUT',  note: 'No overhead resistance. Ride 2hr momentum.' },
+  'breakout':           { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'BREAKOUT',      note: 'Enter on volume confirmation. 2hr hold max.' },
+  'short squeeze':      { dir: 'LONG',  upMin: 10, upMax: 30, stars: 5, tag: '⚡ SHORT SQUEEZE',note: 'Fast 2hr move. Size small — extreme volatility.' },
+  'insider buying':     { dir: 'LONG',  upMin: 3,  upMax: 8,  stars: 5, tag: '🔍 INSIDER BUY', note: 'CEO/Director buy = highest conviction. Enter early.' },
+  'merger':             { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'M&A',           note: 'Buy target at open, 2hr spike to deal price.' },
+  'acquisition':        { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'ACQUISITION',   note: 'Gap to bid price within 2hrs. Buy at discount.' },
+  'deal':               { dir: 'LONG',  upMin: 4,  upMax: 12, stars: 4, tag: 'MAJOR DEAL',    note: 'Revenue catalyst. 2hr entry on the news pop.' },
+  'buyback':            { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 3, tag: 'BUYBACK',       note: '2hr momentum pop on buyback announcement.' },
+  'dividend':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'DIVIDEND',      note: 'Modest 2hr lift. Defensive intraday play.' },
+  'misses estimates':   { dir: 'SHORT', upMin: 4,  upMax: 10, stars: 4, tag: '🔴 MISS',        note: 'Short any gap-up open. 2hr downside target.' },
+  'guidance lowered':   { dir: 'SHORT', upMin: 6,  upMax: 15, stars: 5, tag: '🔴 GUIDE DOWN',  note: 'Strongest short. Sell at open, cover 2hrs later.' },
+  'downgrade':          { dir: 'SHORT', upMin: 3,  upMax: 7,  stars: 4, tag: '🔴 DOWNGRADE',   note: 'Sell rallies in 2hr window.' },
+  'insider selling':    { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 3, tag: '🔴 INSIDER SELL',note: 'Check Form 4 size. Short on volume confirmation.' },
+  'secondary offering': { dir: 'SHORT', upMin: 5,  upMax: 10, stars: 4, tag: '🔴 DILUTION',    note: 'Discount to market = 2hr selling pressure.' },
+  'short interest':     { dir: 'SHORT', upMin: 3,  upMax: 8,  stars: 3, tag: '🔴 HIGH SHORT',  note: 'High short = squeeze or cascade. Read the macro.' },
+  'opec':               { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 4, tag: 'OPEC SUPPLY',   note: 'Output hike = 2hr crude sell. Short OIL/XOM/CVX.' },
+  'rate cut':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE CUT',      note: '2hr risk-on. Growth stocks, gold, crypto lift.' },
+  'rate hike':          { dir: 'SHORT', upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE HIKE',     note: '2hr pressure on growth/tech.' },
+  'cpi':                { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'CPI COOL',      note: 'Dovish pivot. 2hr risk-on trade.' },
+  'jobs report':        { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'JOBS DATA',     note: 'Strong jobs = soft landing. 2hr equity/crypto bid.' },
+  'nonfarm payroll':    { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'NFP',           note: 'Cool wage growth = bullish. 2hr momentum.' },
+  'gdp':                { dir: 'LONG',  upMin: 1,  upMax: 2,  stars: 2, tag: 'GDP',           note: 'Upward revision = 2hr confidence bounce.' },
+  'resistance':         { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'RESISTANCE BREAK', note: 'Level cleared. 2hr ride to next resistance.' },
+  'support':            { dir: 'LONG',  upMin: 1,  upMax: 4,  stars: 3, tag: 'SUPPORT HOLD',  note: 'Risk-defined 2hr bounce from key level.' },
+  'ipo':                { dir: 'LONG',  upMin: 5,  upMax: 20, stars: 3, tag: 'IPO',           note: 'First 2hr pop possible. Size small, wide spreads.' },
 };
 
 const PRIORITY_SIGNALS = ['guidance raised','earnings','eps beat','beats estimates','short squeeze','merger','acquisition','insider buying','guidance lowered','all-time high','breakout','upgrade'];
@@ -429,8 +451,10 @@ function generatePlay(article) {
 
   const tickers = extractTickerFromArticle(article);
 
+  const primaryTicker = tickers[0] || '—';
   return {
-    ticker:    tickers[0] || '—',
+    ticker:    primaryTicker,
+    exchange:  TICKER_DB[primaryTicker]?.exchange || '',
     allTickers: tickers,
     direction: dir,
     tag:       bestPlay.tag,
@@ -449,6 +473,21 @@ function generatePlay(article) {
   };
 }
 
+function getPrimaryMarket(now) {
+  const sgtH = parseInt(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Singapore', hour: 'numeric', hour12: false,
+  }).format(now));
+  if (sgtH >= 20) return 'us';
+  if (sgtH >= 9)  return 'hk_sg';
+  return 'au';
+}
+
+const PRIMARY_EXCHANGES = {
+  us:    ['NYSE', 'NASDAQ'],
+  hk_sg: ['HKEX', 'SGX'],
+  au:    ['ASX'],
+};
+
 function generateBrief(articles, tz) {
   const now = new Date();
   const cutoff24h = new Date(now.getTime() - 24 * 3600 * 1000);
@@ -463,6 +502,8 @@ function generateBrief(articles, tz) {
   }));
 
   const session = getSessionContext(now);
+  const primaryMarket = getPrimaryMarket(now);
+  const priorityExchanges = PRIMARY_EXCHANGES[primaryMarket] || [];
 
   const macroSignals = ['cpi', 'rate cut', 'rate hike', 'jobs report', 'nonfarm payroll', 'gdp', 'federal reserve', 'interest rate'];
   const macroArticles = recent.filter(a =>
@@ -472,15 +513,26 @@ function generateBrief(articles, tz) {
   const swingArticles = recent.filter(a => a.isSwingRelevant);
   const rawPlays = swingArticles.map(a => generatePlay(a)).filter(Boolean);
 
+  // Allow up to 2 plays per ticker (top 2 by stars)
   const playMap = {};
   for (const p of rawPlays) {
     const key = p.ticker;
-    if (!playMap[key] || p.stars > playMap[key].stars) playMap[key] = p;
+    if (!playMap[key]) playMap[key] = [];
+    playMap[key].push(p);
+    playMap[key].sort((a, b) => b.stars - a.stars);
+    if (playMap[key].length > 2) playMap[key].pop();
   }
-  const allPlays = Object.values(playMap).sort((a, b) => b.stars - a.stars || b.upMax - a.upMax);
 
-  const longs  = allPlays.filter(p => p.direction === 'LONG').slice(0, 7);
-  const shorts = allPlays.filter(p => p.direction === 'SHORT').slice(0, 4);
+  // Sort: primary-market tickers first, then by stars
+  const allPlays = Object.values(playMap).flat().sort((a, b) => {
+    const ap = priorityExchanges.includes(a.exchange) ? 1 : 0;
+    const bp = priorityExchanges.includes(b.exchange) ? 1 : 0;
+    if (bp !== ap) return bp - ap;
+    return b.stars - a.stars || parseFloat(b.upMax) - parseFloat(a.upMax);
+  });
+
+  const longs  = allPlays.filter(p => p.direction === 'LONG').slice(0, 10);
+  const shorts = allPlays.filter(p => p.direction === 'SHORT').slice(0, 6);
 
   const macroKeyPoints = macroArticles.map(a => ({
     title:   a.title,
@@ -494,6 +546,8 @@ function generateBrief(articles, tz) {
     timezone:     tz,
     session,
     marketStatus,
+    primaryMarket,
+    primaryExchanges: priorityExchanges,
     macroBackdrop: macroKeyPoints,
     longs,
     shorts,
@@ -532,18 +586,28 @@ const RSS_FEEDS = [
 // ─── State ────────────────────────────────────────────────────────────────────
 let articles  = [];
 let seenUrls  = new Set();
-let watchlist = loadWatchlist();
+let watchlist = [];
+let customTickers = {};
 
-function loadWatchlist() {
+function loadData() {
   try {
     const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    return Array.isArray(d.watchlist) ? d.watchlist : [];
-  } catch { return []; }
+    watchlist = Array.isArray(d.watchlist) ? d.watchlist : [];
+    customTickers = d.customTickers || {};
+    for (const [sym, info] of Object.entries(customTickers)) {
+      TICKER_DB[sym] = info;
+    }
+  } catch {
+    watchlist = [];
+    customTickers = {};
+  }
 }
 
-function saveWatchlist() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({ watchlist }, null, 2));
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify({ watchlist, customTickers }, null, 2));
 }
+
+loadData();
 
 // ─── Swing-trade signal keywords ─────────────────────────────────────────────
 const SWING_SIGNALS = [
@@ -728,7 +792,7 @@ app.post('/api/watchlist', (req, res) => {
   if (!TICKER_DB[t]) return res.status(404).json({ error: 'Ticker not in database' });
   if (!watchlist.includes(t)) {
     watchlist.push(t);
-    saveWatchlist();
+    saveData();
     articles = articles.map(a => processArticle({ ...a, matches: undefined, matchType: undefined, swingSignals: undefined, isSwingRelevant: undefined })).filter(Boolean);
     broadcast({ type: 'refresh', data: articles.slice(0, 150) });
   }
@@ -738,10 +802,26 @@ app.post('/api/watchlist', (req, res) => {
 app.delete('/api/watchlist/:ticker', (req, res) => {
   const t = req.params.ticker.toUpperCase();
   watchlist = watchlist.filter(x => x !== t);
-  saveWatchlist();
+  saveData();
   articles = articles.map(a => processArticle({ ...a, matches: undefined, matchType: undefined, swingSignals: undefined, isSwingRelevant: undefined })).filter(Boolean);
   broadcast({ type: 'refresh', data: articles.slice(0, 150) });
   res.json({ ok: true });
+});
+
+app.post('/api/tickers/custom', (req, res) => {
+  const { ticker, name, market, exchange } = req.body;
+  if (!ticker || !name || !market) return res.status(400).json({ error: 'ticker, name, market required' });
+  const t = ticker.toUpperCase();
+  const entry = {
+    name,
+    market,
+    exchange: exchange || '',
+    terms: [name.toLowerCase(), t.toLowerCase()],
+  };
+  TICKER_DB[t] = entry;
+  customTickers[t] = entry;
+  saveData();
+  res.json({ ok: true, ticker: t, info: entry });
 });
 
 app.get('/api/tickers', (req, res) => {
