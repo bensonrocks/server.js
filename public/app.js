@@ -493,13 +493,14 @@
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
             ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
+            ${ord.has_waybill_pdf ? `<span class="chip chip-waybill">&#128196; with waybill</span>` : ''}
           </div>
           <div class="dash-order-right">
             ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
             <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
             <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
-            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Open waybill PDF">&#128196;</a>` : ''}
+            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Print waybill PDF">&#128438; Print</a>` : ''}
           </div>
         </div>`;
     }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>';
@@ -564,7 +565,8 @@
       <span class="${order.waybill_number ? 'waybill-ok' : ''}">
         <strong>Waybill:</strong>
         ${order.waybill_number ? `${esc(order.waybill_number)} &#10003;` : 'Not provided'}
-      </span>`;
+      </span>
+      ${order.has_waybill_pdf ? `<span class="meta-waybill-note">&#128196; Waybill PDF ready</span>` : ''}`;
 
     renderItemsTable(order);
     updateProgress(order);

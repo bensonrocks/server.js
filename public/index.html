@@ -3,15 +3,41 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fulfillment Scanner</title>
+  <title>IDEALSCAN — United Logistics &amp; Distribution</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
+  <!-- ── SVG symbol library ── -->
+  <svg style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <!-- IDEALSCAN logo icon: barcode + scan beam in blue square -->
+      <symbol id="is-icon" viewBox="0 0 44 44">
+        <rect width="44" height="44" rx="9" fill="#1e40af"/>
+        <!-- Barcode bars -->
+        <rect x="6"  y="10" width="2.5" height="24" rx="1" fill="white"/>
+        <rect x="11" y="10" width="4"   height="24" rx="1" fill="white"/>
+        <rect x="17" y="10" width="2"   height="24" rx="1" fill="white"/>
+        <rect x="21" y="10" width="3"   height="24" rx="1" fill="white"/>
+        <rect x="26" y="10" width="1.5" height="24" rx="1" fill="white"/>
+        <rect x="30" y="10" width="4"   height="24" rx="1" fill="white"/>
+        <rect x="36" y="10" width="2"   height="24" rx="1" fill="white"/>
+        <!-- Scan beam -->
+        <rect x="4" y="20.5" width="36" height="3" rx="1.5" fill="#22c55e"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <!-- ── Login Overlay ── -->
   <div id="loginOverlay" class="login-overlay">
     <div class="login-box">
-      <div class="login-logo">&#9679; Fulfillment Scanner</div>
+      <div class="login-logo-wrap">
+        <svg class="is-icon-lg" aria-hidden="true"><use href="#is-icon"/></svg>
+        <div class="login-brand-text">
+          <div class="login-brand-name">IDEALSCAN</div>
+          <div class="login-brand-sub">United Logistics &amp; Distribution</div>
+        </div>
+      </div>
       <h2>Sign In</h2>
       <p class="hint">Enter your details to continue</p>
       <div class="form-group">
@@ -30,6 +56,10 @@
   <!-- ── PIN Lock Overlay ── -->
   <div id="pinOverlay" class="pin-overlay hidden">
     <div class="pin-box">
+      <div class="pin-logo-row">
+        <svg class="is-icon-sm" aria-hidden="true"><use href="#is-icon"/></svg>
+        <span class="pin-brand-name">IDEALSCAN</span>
+      </div>
       <div class="pin-icon">&#128274;</div>
       <h2 id="pinTitle">App Locked</h2>
       <p class="hint" id="pinSubtitle">Enter your PIN to continue</p>
@@ -58,7 +88,7 @@
     </div>
   </div>
 
-  <!-- ── Scan Overlay (full-screen, replaces Scanner tab) ── -->
+  <!-- ── Scan Overlay ── -->
   <div id="scanOverlay" class="scan-overlay hidden">
 
     <div class="scan-order-header">
@@ -107,18 +137,24 @@
   <!-- ── Log Overlay ── -->
   <div id="logOverlay" class="log-overlay hidden">
     <div class="log-overlay-header">
-      <h2>Upload Log</h2>
+      <div class="log-overlay-title">
+        <svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>
+        <h2>Upload Log</h2>
+      </div>
       <button class="back-btn" id="closeLogBtn">&#10005; Close</button>
     </div>
-    <p class="hint" style="padding:0 1.25rem .5rem">All uploaded batches. Click to download the WMS file.</p>
+    <p class="hint" style="padding:.4rem 1.25rem .6rem">All uploaded batches. Click WMS to download.</p>
     <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>
-    <div id="logOverlayList" style="padding:0 1.25rem 2rem"></div>
+    <div id="logOverlayList" style="padding:0 1.25rem 3rem"></div>
   </div>
 
   <!-- ── Log Password Modal ── -->
   <div id="logPasswordOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:340px">
-      <div class="modal-icon" style="font-size:1.5rem">&#128274;</div>
+      <div class="pin-logo-row" style="justify-content:center;margin-bottom:.75rem">
+        <svg class="is-icon-sm" aria-hidden="true"><use href="#is-icon"/></svg>
+        <span class="pin-brand-name">IDEALSCAN</span>
+      </div>
       <div class="modal-title">Log Access</div>
       <p class="modal-desc">Enter the access password to view upload logs.</p>
       <div class="form-group">
@@ -135,7 +171,13 @@
 
   <header>
     <div class="header-inner">
-      <span class="logo">&#9679; Fulfillment Scanner</span>
+      <a class="header-logo" href="#" onclick="return false">
+        <svg class="is-icon-hdr" aria-hidden="true"><use href="#is-icon"/></svg>
+        <div class="header-brand-text">
+          <span class="header-brand-name">IDEALSCAN</span>
+          <span class="header-brand-sub">United Logistics &amp; Distribution</span>
+        </div>
+      </a>
       <nav>
         <button class="tab-btn active" data-tab="upload">Upload</button>
         <button class="tab-btn" data-tab="orders">Orders</button>
@@ -203,13 +245,8 @@
       </div>
       <div id="ordersDashboard" class="hidden">
         <div class="stats-bar" id="statsBar"></div>
-
-        <!-- Client filter -->
         <div class="filter-row" id="clientFilterRow"></div>
-
-        <!-- Carrier filter -->
         <div class="filter-row" id="carrierFilterRow"></div>
-
         <div id="ordersDashList"></div>
       </div>
     </section>
@@ -218,6 +255,16 @@
 
   <!-- ── Footer ── -->
   <footer class="app-footer">
+    <div class="footer-brand">
+      <svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>
+      <div class="footer-brand-text">
+        <span class="footer-app-name">IDEALSCAN</span>
+        <span class="footer-divider">&#183;</span>
+        <span class="footer-company">United Logistics &amp; Distribution</span>
+        <span class="footer-divider">&#183;</span>
+        <span class="footer-by">By Benson</span>
+      </div>
+    </div>
     <button class="log-access-link" id="logAccessBtn">&#128196; Upload Log</button>
   </footer>
 

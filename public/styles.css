@@ -30,6 +30,14 @@ body {
   line-height: 1.5;
 }
 
+/* ════════════════════════════════════════════════════
+   IDEALSCAN LOGO ICON — size variants
+   ════════════════════════════════════════════════════ */
+.is-icon-xs  { width: 22px;  height: 22px;  flex-shrink: 0; }
+.is-icon-sm  { width: 28px;  height: 28px;  flex-shrink: 0; }
+.is-icon-hdr { width: 32px;  height: 32px;  flex-shrink: 0; }
+.is-icon-lg  { width: 56px;  height: 56px;  flex-shrink: 0; }
+
 /* ── Header ── */
 header {
   background: var(--surface);
@@ -45,9 +53,27 @@ header {
   padding: 0 1.25rem;
   display: flex;
   align-items: center;
-  gap: 2rem;
+  gap: 1.5rem;
   height: 100%;
 }
+.header-logo {
+  display: flex; align-items: center; gap: .55rem;
+  text-decoration: none; flex-shrink: 0;
+}
+.header-brand-text {
+  display: flex; flex-direction: column;
+  line-height: 1.1;
+}
+.header-brand-name {
+  font-size: .95rem; font-weight: 900; letter-spacing: .03em;
+  color: #1e40af;
+}
+.header-brand-sub {
+  font-size: .62rem; color: var(--text-light); white-space: nowrap;
+  letter-spacing: .02em;
+}
+
+/* legacy .logo kept for fallback */
 .logo { font-weight: 700; font-size: 1rem; color: var(--primary); white-space: nowrap; }
 nav { display: flex; gap: 4px; }
 .tab-btn {
@@ -423,8 +449,10 @@ tr:hover td { background: #f8fafc; }
   }
 
   /* ── Header: logo only, nav moves to bottom ── */
-  .header-inner { gap: 0; justify-content: center; }
+  .header-inner { gap: .5rem; justify-content: space-between; }
   .logo { font-size: .95rem; }
+  .header-brand-sub { display: none; }
+  .header-brand-name { font-size: .82rem; }
 
   header nav {
     position: fixed;
@@ -565,9 +593,16 @@ tr:hover td { background: #f8fafc; }
   width: 100%; max-width: 400px;
   box-shadow: 0 8px 32px rgba(0,0,0,.1);
 }
-.login-logo {
-  font-size: 1rem; font-weight: 800; color: var(--primary);
-  text-align: center; margin-bottom: 1.25rem;
+.login-logo-wrap {
+  display: flex; align-items: center; justify-content: center;
+  gap: .85rem; margin-bottom: 1.5rem;
+}
+.login-brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+.login-brand-name {
+  font-size: 1.4rem; font-weight: 900; letter-spacing: .04em; color: #1e40af;
+}
+.login-brand-sub {
+  font-size: .75rem; color: var(--text-light); letter-spacing: .02em;
 }
 .login-box h2 { text-align: center; font-size: 1.4rem; margin-bottom: .25rem; }
 .login-box .hint { text-align: center; margin-bottom: 1.5rem; }
@@ -607,6 +642,13 @@ tr:hover td { background: #f8fafc; }
   width: 100%; max-width: 300px;
   text-align: center;
   box-shadow: 0 24px 80px rgba(0,0,0,.4);
+}
+.pin-logo-row {
+  display: flex; align-items: center; gap: .5rem;
+  margin-bottom: .85rem;
+}
+.pin-brand-name {
+  font-size: .9rem; font-weight: 900; letter-spacing: .04em; color: #1e40af;
 }
 .pin-icon { font-size: 2.25rem; margin-bottom: .6rem; }
 .pin-box h2 { font-size: 1.15rem; margin-bottom: .2rem; }
@@ -846,14 +888,28 @@ body.log-open { overflow: hidden; }
    FOOTER
    ════════════════════════════════════════════════════ */
 .app-footer {
-  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: .65rem;
   padding: 1.5rem 1rem calc(1.5rem + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   margin-top: 2rem;
+  text-align: center;
 }
+.footer-brand {
+  display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; justify-content: center;
+}
+.footer-brand-text {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .25rem;
+  font-size: .72rem; color: var(--text-light);
+}
+.footer-app-name {
+  font-weight: 900; letter-spacing: .04em; color: #1e40af; font-size: .78rem;
+}
+.footer-company { color: var(--text-light); }
+.footer-by      { color: var(--text-light); font-style: italic; }
+.footer-divider { color: var(--border); font-size: .8rem; }
 .log-access-link {
   background: none; border: none;
-  color: var(--text-light); font-size: .78rem;
+  color: var(--text-light); font-size: .75rem;
   cursor: pointer; text-decoration: underline;
   text-underline-offset: 3px;
   padding: .3rem .5rem;
@@ -862,6 +918,31 @@ body.log-open { overflow: hidden; }
 
 @media (max-width: 640px) {
   .app-footer { margin-bottom: var(--bottom-nav-h); }
+  .footer-brand-text { font-size: .68rem; }
+}
+
+/* ════════════════════════════════════════════════════
+   WITH WAYBILL chip & print button
+   ════════════════════════════════════════════════════ */
+.chip-waybill {
+  background: #f0fdf4; color: #15803d;
+  border: 1px solid #86efac;
+  font-size: .72rem; font-weight: 600;
+  border-radius: 99px; padding: .15em .6em;
+  white-space: nowrap; display: inline-block;
+}
+.btn-waybill-pdf {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: #f0fdf4; border: 1px solid #86efac;
+  border-radius: 5px; padding: .3rem .65rem;
+  font-size: .78rem; font-weight: 600;
+  text-decoration: none; color: #15803d;
+  white-space: nowrap;
+  transition: background .12s;
+}
+.btn-waybill-pdf:hover { background: #dcfce7; }
+.meta-waybill-note {
+  color: #15803d; font-weight: 600; font-size: .8rem;
 }
 
 /* ════════════════════════════════════════════════════
