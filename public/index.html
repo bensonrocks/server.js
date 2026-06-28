@@ -165,6 +165,41 @@ a:hover{text-decoration:underline}
 /* ── PAGES ── */
 .page{display:none;flex-direction:column;gap:14px}
 .page.on{display:flex}
+
+/* ── SCAN PAGE ── */
+.scan-wrap{display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start}
+.scan-panel{background:#0f172a;border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.scan-panel h3{font-size:14px;font-weight:800;color:#fff}
+.scan-cam-box{position:relative;border-radius:10px;overflow:hidden;background:#000;aspect-ratio:4/3}
+.scan-cam-box video{width:100%;height:100%;object-fit:cover;display:block}
+.scan-corners-tl,.scan-corners-tr,.scan-corners-bl,.scan-corners-br{position:absolute;width:22px;height:22px;border-color:#0d9488;border-style:solid}
+.scan-corners-tl{top:10px;left:10px;border-width:3px 0 0 3px;border-radius:3px 0 0 0}
+.scan-corners-tr{top:10px;right:10px;border-width:3px 3px 0 0;border-radius:0 3px 0 0}
+.scan-corners-bl{bottom:10px;left:10px;border-width:0 0 3px 3px;border-radius:0 0 0 3px}
+.scan-corners-br{bottom:10px;right:10px;border-width:0 3px 3px 0;border-radius:0 0 3px 0}
+.scan-sweep{position:absolute;left:6%;right:6%;height:2px;background:linear-gradient(90deg,transparent,#0d9488,transparent);display:none;animation:scanline 1.8s ease-in-out infinite}
+@keyframes scanline{0%,100%{top:15%}50%{top:82%}}
+.scan-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:12px;gap:6px}
+.scan-cam-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#475569;margin-bottom:3px}
+.scan-cam-select{width:100%;padding:7px 9px;border-radius:8px;border:1.5px solid #334155;background:#1e293b;color:#e2e8f0;font-size:12px}
+.scan-cam-select:focus{outline:none;border-color:#0d9488}
+.scan-manual-row{display:flex;gap:6px}
+.scan-manual-inp{flex:1;padding:8px 10px;border-radius:8px;border:1.5px solid #334155;background:#1e293b;color:#e2e8f0;font-size:13px;font-family:monospace;letter-spacing:.4px}
+.scan-manual-inp::placeholder{color:#475569;font-family:inherit;letter-spacing:0}
+.scan-manual-inp:focus{outline:none;border-color:#0d9488}
+.scan-btn{padding:8px 13px;border-radius:8px;font-size:12px;font-weight:700;transition:background .12s;cursor:pointer;border:none}
+.scan-btn-teal{background:#0d9488;color:#fff}.scan-btn-teal:hover{background:#0f766e}
+.scan-btn-grey{background:#334155;color:#e2e8f0}.scan-btn-grey:hover{background:#475569}
+.scan-btn-red{background:#7f1d1d;color:#fca5a5}.scan-btn-red:hover{background:#991b1b}
+.scan-controls{display:flex;gap:6px;flex-wrap:wrap}
+.scan-status{font-size:11px;font-weight:600;min-height:18px}
+.scan-flash{padding:6px 10px;border-radius:7px;font-size:12px;font-weight:700;text-align:center;min-height:30px;transition:background .15s,color .15s}
+.sess-tbl-wrap{background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;display:flex;flex-direction:column}
+.sess-toolbar{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #e2e8f0;flex-wrap:wrap}
+.sess-count{font-size:13px;font-weight:700;color:#0f172a}
+.sess-count span{color:#0d9488}
+.sess-body{flex:1;overflow-y:auto;max-height:calc(100vh - 240px)}
+@media(max-width:860px){.scan-wrap{grid-template-columns:1fr}.scan-panel{order:1}.sess-tbl-wrap{order:2}.sess-body{max-height:300px}}
 .page-hdr{background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
 .page-hdr h2{font-size:17px;font-weight:800;margin-bottom:3px}
 .page-hdr p{font-size:13px;color:#64748b}
@@ -305,6 +340,9 @@ a:hover{text-decoration:underline}
         <li class="nav-li" id="nav-synclog" onclick="switchPage('synclog')">
           <span>&#128260;</span><span class="nav-name">Sync Log</span>
         </li>
+        <li class="nav-li" id="nav-scan" onclick="switchPage('scan')">
+          <span>&#128247;</span><span class="nav-name">Scan Waybills</span>
+        </li>
       </ul>
       <div class="sb-label" style="margin-top:8px">Clients</div>
       <ul id="client-list"></ul>
@@ -419,6 +457,82 @@ a:hover{text-decoration:underline}
           </table>
         </div>
       </div>
+
+      <!-- ═══════════════════════════════════════
+           SCAN PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-scan" class="page">
+        <div class="scan-wrap">
+
+          <!-- Left: camera + controls -->
+          <div class="scan-panel">
+            <h3>&#128247; IDEALSCAN</h3>
+
+            <!-- camera viewport -->
+            <div class="scan-cam-box" id="scan-cam-box">
+              <video id="scan-video" playsinline muted></video>
+              <div class="scan-corners-tl"></div>
+              <div class="scan-corners-tr"></div>
+              <div class="scan-corners-bl"></div>
+              <div class="scan-corners-br"></div>
+              <div class="scan-sweep" id="scan-sweep"></div>
+              <div class="scan-placeholder" id="scan-placeholder">
+                <div style="font-size:32px">&#128247;</div>
+                <div>Click Start Camera</div>
+              </div>
+            </div>
+
+            <!-- camera picker -->
+            <div>
+              <div class="scan-cam-lbl">Camera</div>
+              <select id="scan-cam-sel" class="scan-cam-select" onchange="scanChangeCamera()">
+                <option value="">— select —</option>
+              </select>
+            </div>
+
+            <!-- camera buttons -->
+            <div class="scan-controls">
+              <button id="scan-start-btn" class="scan-btn scan-btn-teal" onclick="scanStart()">&#9654; Start</button>
+              <button id="scan-stop-btn" class="scan-btn scan-btn-grey" onclick="scanStop()" style="display:none">&#9646;&#9646; Stop</button>
+            </div>
+            <div id="scan-status" class="scan-status" style="color:#475569">Camera stopped.</div>
+
+            <!-- flash feedback -->
+            <div id="scan-flash" class="scan-flash"></div>
+
+            <!-- manual / paste entry -->
+            <div>
+              <div class="scan-cam-lbl">Manual / Paste</div>
+              <div class="scan-manual-row">
+                <input id="scan-manual" class="scan-manual-inp" placeholder="Type or paste tracking number…" autocomplete="off"
+                  onkeydown="if(event.key==='Enter')scanAddManual()">
+                <button class="scan-btn scan-btn-teal" onclick="scanAddManual()">Add</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: live session table -->
+          <div class="sess-tbl-wrap">
+            <div class="sess-toolbar">
+              <span class="sess-count">Session: <span id="scan-sess-count">0</span> scanned</span>
+              <span id="scan-dupe-label" style="font-size:12px;color:#d97706;display:none"></span>
+              <div style="margin-left:auto;display:flex;gap:6px">
+                <button class="scan-btn scan-btn-teal" onclick="scanExportCSV()">&#128229; Export CSV</button>
+                <button class="scan-btn scan-btn-red" onclick="scanClear()">&#128465; Clear</button>
+              </div>
+            </div>
+            <div class="sess-body">
+              <table class="tbl">
+                <thead><tr><th>#</th><th>Barcode / Tracking</th><th>Format</th><th>Time</th><th>Source</th><th></th></tr></thead>
+                <tbody id="scan-sess-tbody">
+                  <tr id="scan-empty-row"><td colspan="6" style="text-align:center;padding:40px;color:#94a3b8">Start the camera or paste a tracking number — every scan appears here instantly.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /scan -->
 
     </main>
   </div>
@@ -707,9 +821,10 @@ function closeDetail(){$('dp').classList.remove('open');$('dp-ov').classList.add
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','scan'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')renderSyncLog();
+  if(page!=='scan')scanStop();
   closeSidebar();
 }
 
@@ -1078,6 +1193,208 @@ $('search').oninput=onSearch;$('search-mob').oninput=onSearch;
   if(serverAvailable)await loadOrdersFromServer();
   render();
 })();
+</script>
+
+<!-- ZXing barcode library -->
+<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
+<script>
+'use strict';
+// ── IDEALSCAN — inbuilt barcode scanner ───────────────────────────────────────
+
+let _scanReader   = null;
+let _scanRunning  = false;
+let _scanSession  = [];   // { code, format, at, source }
+let _scanDupes    = 0;
+let _scanTimer    = null;
+let _scanSecs     = 0;
+
+// init camera list when ZXing is ready
+window.addEventListener('load', async () => {
+  if (!window.ZXingBrowser) return;
+  const sel = document.getElementById('scan-cam-sel');
+  if (!sel) return;
+  try {
+    const tmp = new ZXingBrowser.BrowserMultiFormatReader();
+    const devs = await tmp.listVideoInputDevices();
+    sel.innerHTML = '';
+    if (!devs.length) { sel.innerHTML = '<option>No cameras found</option>'; return; }
+    devs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Camera ' + (i + 1));
+      if (/back|rear|environment/i.test(d.label)) o.selected = true;
+      sel.appendChild(o);
+    });
+  } catch { sel.innerHTML = '<option>Camera permission needed</option>'; }
+});
+
+async function scanStart() {
+  if (_scanRunning) return;
+  const video   = document.getElementById('scan-video');
+  const sweep   = document.getElementById('scan-sweep');
+  const ph      = document.getElementById('scan-placeholder');
+  const startB  = document.getElementById('scan-start-btn');
+  const stopB   = document.getElementById('scan-stop-btn');
+  const camSel  = document.getElementById('scan-cam-sel');
+  _scanSetStatus('Starting…', '#94a3b8');
+  try {
+    _scanReader = new ZXingBrowser.BrowserMultiFormatReader();
+    const deviceId = camSel?.value || undefined;
+    await _scanReader.decodeFromVideoDevice(deviceId || undefined, video, (result, err) => {
+      if (result) _scanAdd(result.getText(), result.getBarcodeFormat().toString(), 'camera');
+    });
+    _scanRunning = true;
+    ph.style.display    = 'none';
+    sweep.style.display = 'block';
+    startB.style.display = 'none';
+    stopB.style.display  = '';
+    _scanStartTimer();
+  } catch (e) {
+    _scanSetStatus('&#9888; ' + (e.message || 'Cannot access camera — check browser permission.'), '#dc2626');
+  }
+}
+
+function scanStop() {
+  if (_scanReader) { try { _scanReader.reset(); } catch {} _scanReader = null; }
+  _scanRunning = false;
+  const sweep  = document.getElementById('scan-sweep');
+  const ph     = document.getElementById('scan-placeholder');
+  const startB = document.getElementById('scan-start-btn');
+  const stopB  = document.getElementById('scan-stop-btn');
+  if (sweep)  sweep.style.display  = 'none';
+  if (ph)     ph.style.display     = '';
+  if (startB) startB.style.display = '';
+  if (stopB)  stopB.style.display  = 'none';
+  _scanStopTimer();
+  _scanSetStatus('Camera stopped.', '#475569');
+}
+
+function scanChangeCamera() {
+  if (_scanRunning) { scanStop(); scanStart(); }
+}
+
+function scanAddManual() {
+  const inp = document.getElementById('scan-manual');
+  const val = (inp?.value || '').trim();
+  if (!val) return;
+  _scanAdd(val, 'manual', 'manual');
+  inp.value = '';
+  inp.focus();
+}
+
+function _scanAdd(code, format, source) {
+  code = code.trim();
+  if (!code) return;
+  if (_scanSession.some(s => s.code === code)) {
+    _scanDupes++;
+    const lbl = document.getElementById('scan-dupe-label');
+    if (lbl) { lbl.textContent = _scanDupes + ' dupe' + (_scanDupes !== 1 ? 's' : '') + ' skipped'; lbl.style.display = ''; }
+    _scanFlash('Duplicate — already scanned', false);
+    return;
+  }
+  const entry = { code, format: format || 'manual', at: new Date(), source };
+  _scanSession.push(entry);
+  _scanRenderRow(entry, _scanSession.length);
+  const cnt = document.getElementById('scan-sess-count');
+  if (cnt) cnt.textContent = _scanSession.length;
+  const empty = document.getElementById('scan-empty-row');
+  if (empty) empty.remove();
+  _scanFlash('&#10003; ' + _esc(code), true);
+  _beep();
+}
+
+function _scanRenderRow(e, idx) {
+  const tbody = document.getElementById('scan-sess-tbody');
+  if (!tbody) return;
+  const tr = document.createElement('tr');
+  tr.dataset.code = e.code;
+  const t = e.at.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  tr.innerHTML = `
+    <td style="color:#94a3b8;font-size:12px">${idx}</td>
+    <td><span style="font-family:monospace;font-size:12px;font-weight:700;color:#0d9488">${_esc(e.code)}</span></td>
+    <td><span style="font-size:10px;background:#f0fdfa;color:#0f766e;padding:2px 7px;border-radius:8px;font-weight:700">${_esc(e.format)}</span></td>
+    <td style="font-size:12px;color:#64748b">${t}</td>
+    <td style="font-size:12px;color:#94a3b8">${_esc(e.source)}</td>
+    <td><button onclick="_scanRemove(this,'${_esc(e.code)}')" style="font-size:12px;color:#94a3b8;padding:2px 6px;border-radius:4px;cursor:pointer;border:none;background:none" title="Remove">&#10005;</button></td>`;
+  tbody.insertBefore(tr, tbody.firstChild);
+}
+
+function _scanRemove(btn, code) {
+  _scanSession = _scanSession.filter(s => s.code !== code);
+  btn.closest('tr').remove();
+  const cnt = document.getElementById('scan-sess-count');
+  if (cnt) cnt.textContent = _scanSession.length;
+  if (!_scanSession.length) {
+    const tbody = document.getElementById('scan-sess-tbody');
+    if (tbody) tbody.innerHTML = '<tr id="scan-empty-row"><td colspan="6" style="text-align:center;padding:40px;color:#94a3b8">Start the camera or paste a tracking number — every scan appears here instantly.</td></tr>';
+  }
+}
+
+function scanClear() {
+  if (_scanSession.length && !confirm('Clear all ' + _scanSession.length + ' scan(s)?')) return;
+  _scanSession = []; _scanDupes = 0;
+  const cnt = document.getElementById('scan-sess-count');
+  const lbl = document.getElementById('scan-dupe-label');
+  const tbody = document.getElementById('scan-sess-tbody');
+  if (cnt) cnt.textContent = '0';
+  if (lbl) { lbl.textContent = ''; lbl.style.display = 'none'; }
+  if (tbody) tbody.innerHTML = '<tr id="scan-empty-row"><td colspan="6" style="text-align:center;padding:40px;color:#94a3b8">Start the camera or paste a tracking number — every scan appears here instantly.</td></tr>';
+}
+
+function scanExportCSV() {
+  if (!_scanSession.length) { alert('No scans to export yet.'); return; }
+  const rows = [['#','Barcode / Tracking','Format','Scanned At','Source']];
+  _scanSession.forEach((e, i) => rows.push([i+1, e.code, e.format, e.at.toISOString(), e.source]));
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'idealscan-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+function _scanFlash(msg, ok) {
+  const el = document.getElementById('scan-flash');
+  if (!el) return;
+  el.innerHTML = msg;
+  el.style.background = ok ? '#064e3b' : '#7f1d1d';
+  el.style.color = ok ? '#6ee7b7' : '#fca5a5';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.innerHTML = ''; el.style.background = 'transparent'; el.style.color = ''; }, 2000);
+}
+
+function _scanStartTimer() {
+  _scanSecs = 0;
+  clearInterval(_scanTimer);
+  _scanTimer = setInterval(() => {
+    _scanSecs++;
+    const m = String(Math.floor(_scanSecs / 60)).padStart(2,'0');
+    const s = String(_scanSecs % 60).padStart(2,'0');
+    _scanSetStatus('&#9679; Active &mdash; ' + m + ':' + s + ' &middot; ' + _scanSession.length + ' scanned', '#0d9488');
+  }, 1000);
+}
+
+function _scanStopTimer() { clearInterval(_scanTimer); _scanTimer = null; _scanSecs = 0; }
+
+function _scanSetStatus(msg, color) {
+  const el = document.getElementById('scan-status');
+  if (el) { el.innerHTML = msg; el.style.color = color || '#475569'; }
+}
+
+function _beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.1);
+  } catch {}
+}
+
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 </script>
 </body>
 </html>
