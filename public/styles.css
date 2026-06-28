@@ -1110,6 +1110,152 @@ body.log-open { overflow: hidden; }
 }
 
 /* ════════════════════════════════════════════════════
+   CAMERA SCAN BUTTON (inside scan dock input)
+   ════════════════════════════════════════════════════ */
+.item-scan-wrap { display: flex; align-items: center; gap: .4rem; }
+.btn-camera-open {
+  flex-shrink: 0;
+  width: 44px; height: 44px;
+  background: var(--primary); color: #fff;
+  border: none; border-radius: 8px;
+  font-size: 1.25rem; cursor: pointer; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.btn-camera-open:hover { background: var(--primary-hover); }
+
+/* ════════════════════════════════════════════════════
+   CAMERA SCAN OVERLAY — full-screen above scan overlay
+   ════════════════════════════════════════════════════ */
+.camera-scan-overlay {
+  position: fixed; inset: 0; z-index: 700;
+  background: #000;
+  display: flex; flex-direction: column;
+}
+.camera-scan-overlay.hidden { display: none !important; }
+
+.camera-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .65rem 1rem;
+  background: rgba(0,0,0,.75);
+  flex-shrink: 0;
+  gap: .75rem;
+}
+.camera-header-left { display: flex; align-items: center; gap: .75rem; }
+.camera-title { color: #fff; font-weight: 700; font-size: .92rem; }
+.camera-close-btn { color: rgba(255,255,255,.85); border-color: rgba(255,255,255,.3); }
+.camera-close-btn:hover { background: rgba(255,255,255,.1); }
+
+.camera-mode-toggle {
+  display: flex; border-radius: 6px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.25);
+}
+.cmode-btn {
+  padding: .3rem .75rem; font-size: .78rem; font-weight: 600;
+  background: transparent; color: rgba(255,255,255,.55);
+  border: none; cursor: pointer; transition: background .12s, color .12s;
+}
+.cmode-btn.active { background: var(--primary); color: #fff; }
+
+/* Viewfinder */
+.camera-viewfinder-wrap {
+  flex: 1; position: relative; overflow: hidden;
+  background: #111;
+  min-height: 0;
+}
+.camera-video {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+
+/* Corner aim markers */
+.camera-aim {
+  position: absolute; inset: 0;
+  pointer-events: none;
+}
+.aim-corner {
+  position: absolute; width: 32px; height: 32px;
+  border-color: #22c55e; border-style: solid;
+}
+.aim-corner.tl { top: 18%; left:  8%; border-width: 3px 0 0 3px; border-radius: 3px 0 0 0; }
+.aim-corner.tr { top: 18%; right: 8%; border-width: 3px 3px 0 0; border-radius: 0 3px 0 0; }
+.aim-corner.bl { bottom: 18%; left:  8%; border-width: 0 0 3px 3px; border-radius: 0 0 0 3px; }
+.aim-corner.br { bottom: 18%; right: 8%; border-width: 0 3px 3px 0; border-radius: 0 0 3px 0; }
+.aim-scan-line {
+  position: absolute; left: 8%; right: 8%;
+  height: 2px; background: rgba(34,197,94,.7);
+  top: 50%;
+  animation: scanLine 2s ease-in-out infinite;
+}
+@keyframes scanLine {
+  0%   { top: 18%; opacity: 1; }
+  50%  { top: 82%; opacity: 1; }
+  100% { top: 18%; opacity: 1; }
+}
+
+/* Single mode flash result */
+.camera-single-result {
+  position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
+  background: rgba(22,163,74,.92); color: #fff;
+  padding: .45rem 1.25rem; border-radius: 99px;
+  font-size: .9rem; font-weight: 700; white-space: nowrap;
+  animation: fadeSlideUp .2s ease;
+}
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.camera-hint-pill {
+  position: absolute; top: .75rem; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,.55); color: rgba(255,255,255,.85);
+  padding: .3rem .85rem; border-radius: 99px;
+  font-size: .75rem; white-space: nowrap; pointer-events: none;
+}
+
+/* Batch panel */
+.camera-batch-panel {
+  background: var(--surface);
+  border-top: 2px solid var(--border);
+  flex-shrink: 0;
+  max-height: 42vh;
+  display: flex; flex-direction: column;
+}
+.camera-batch-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: .55rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.camera-batch-title { font-weight: 700; font-size: .85rem; }
+.camera-batch-list {
+  flex: 1; overflow-y: auto;
+  padding: .5rem .75rem; display: flex; flex-wrap: wrap; gap: .35rem;
+}
+.camera-batch-empty { font-size: .8rem; color: var(--text-light); padding: .25rem 0; }
+.camera-batch-chip {
+  display: flex; align-items: center; gap: .3rem;
+  background: #f1f5f9; border: 1px solid var(--border);
+  border-radius: 7px; padding: .3rem .6rem;
+  font-size: .8rem; cursor: pointer; user-select: none;
+  transition: background .12s, border-color .12s;
+}
+.camera-batch-chip.checked {
+  background: #dcfce7; border-color: #86efac; color: #166534;
+}
+.chip-check { font-size: .9rem; line-height: 1; }
+.camera-batch-actions {
+  display: flex; gap: .5rem; padding: .6rem 1rem;
+  border-top: 1px solid var(--border); flex-shrink: 0;
+}
+
+/* No support message */
+.camera-no-support {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  color: #fff; text-align: center; padding: 2rem; gap: .9rem;
+}
+.camera-no-support-icon { font-size: 3rem; }
+
+/* ════════════════════════════════════════════════════
    RESPONSIVE ADDITIONS — MOBILE
    ════════════════════════════════════════════════════ */
 @media (max-width: 640px) {

@@ -124,6 +124,7 @@
         <input type="text" id="itemScanInput" class="big-scan-input"
           placeholder="Scan item barcode / SKU&#8230;"
           autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button class="btn-camera-open" id="openCameraBtn" title="Camera scan">&#128247;</button>
       </div>
       <div id="itemScanFeedback" class="scan-feedback hidden"></div>
       <div class="dock-actions">
@@ -134,6 +135,59 @@
     </div>
 
   </div><!-- /scanOverlay -->
+
+  <!-- ── Camera Scan Overlay ── -->
+  <div id="cameraScanOverlay" class="camera-scan-overlay hidden">
+
+    <div class="camera-header">
+      <div class="camera-header-left">
+        <span class="camera-title">&#128247; Camera Scan</span>
+        <div class="camera-mode-toggle">
+          <button class="cmode-btn active" id="cmodeSingle">Single</button>
+          <button class="cmode-btn"        id="cmodeBatch">Batch</button>
+        </div>
+      </div>
+      <button class="back-btn camera-close-btn" id="closeCameraBtn">&#10005; Close</button>
+    </div>
+
+    <!-- Video viewfinder -->
+    <div class="camera-viewfinder-wrap" id="cameraViewfinderWrap">
+      <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+      <!-- Corner aim markers -->
+      <div class="camera-aim">
+        <div class="aim-corner tl"></div><div class="aim-corner tr"></div>
+        <div class="aim-corner bl"></div><div class="aim-corner br"></div>
+        <div class="aim-scan-line"></div>
+      </div>
+      <!-- Single mode: flash result -->
+      <div id="cameraSingleResult" class="camera-single-result hidden"></div>
+      <!-- Single mode hint -->
+      <div id="cameraSingleHint" class="camera-hint-pill">Point at a barcode — it scans instantly</div>
+    </div>
+
+    <!-- Batch panel (shown in batch mode) -->
+    <div id="cameraBatchPanel" class="camera-batch-panel hidden">
+      <div class="camera-batch-header">
+        <span class="camera-batch-title">Detected Barcodes</span>
+        <button class="link-btn" id="cameraClearBtn">Clear all</button>
+      </div>
+      <div id="cameraBatchList" class="camera-batch-list">
+        <span class="hint camera-batch-empty">Point camera at barcodes to collect them&hellip;</span>
+      </div>
+      <div class="camera-batch-actions">
+        <button class="btn-secondary btn-sm" id="cameraSelectAllBtn">&#9745; All</button>
+        <button class="btn-primary"          id="cameraScanSelectedBtn">&#10003; Scan Selected (<span id="cameraBatchCount">0</span>)</button>
+      </div>
+    </div>
+
+    <!-- Unsupported browser message -->
+    <div id="cameraNoSupport" class="camera-no-support hidden">
+      <div class="camera-no-support-icon">&#128483;</div>
+      <p><strong>Camera scanning not available</strong></p>
+      <p class="hint">Requires Chrome or Edge on Android.<br>Use a physical scanner or type SKU manually on other devices.</p>
+    </div>
+
+  </div><!-- /cameraScanOverlay -->
 
   <!-- ── Log Overlay ── -->
   <div id="logOverlay" class="log-overlay hidden">

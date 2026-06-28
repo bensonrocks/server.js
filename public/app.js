@@ -1179,6 +1179,155 @@
     if (scanned !== undefined) loadedOrders[idx].scanned = scanned;
   }
 
+  // ── Camera Barcode Scanner ─────────────────────────────────────────────────
+  let cameraStream    = null;
+  let cameraAnimFrame = null;
+  let barcodeDetector = null;
+  let cameraScanMode  = 'single'; // 'single' | 'batch'
+  const batchMap      = new Map(); // rawValue → { checked: bool }
+  const lastSingleHit = {};        // rawValue → timestamp (cooldown)
+  const SINGLE_COOLDOWN_MS = 1800;
+
+  document.getElementById('openCameraBtn').addEventListener('click', openCameraScanner);
+  document.getElementById('closeCameraBtn').addEventListener('click', closeCameraScanner);
+  document.getElementById('cmodeSingle').addEventListener('click', () => setCameraMode('single'));
+  document.getElementById('cmodeBatch').addEventListener('click',  () => setCameraMode('batch'));
+  document.getElementById('cameraClearBtn').addEventListener('click', () => { batchMap.clear(); renderBatchChips(); });
+  document.getElementById('cameraSelectAllBtn').addEventListener('click', () => {
+    batchMap.forEach(v => { v.checked = true; }); renderBatchChips();
+  });
+  document.getElementById('cameraScanSelectedBtn').addEventListener('click', () => {
+    const selected = [...batchMap.entries()].filter(([, v]) => v.checked).map(([k]) => k);
+    if (!selected.length) return;
+    selected.forEach(val => handleItemScan(val));
+    closeCameraScanner();
+  });
+
+  function setCameraMode(mode) {
+    cameraScanMode = mode;
+    document.getElementById('cmodeSingle').classList.toggle('active', mode === 'single');
+    document.getElementById('cmodeBatch').classList.toggle('active',  mode === 'batch');
+    document.getElementById('cameraBatchPanel').classList.toggle('hidden', mode === 'single');
+    document.getElementById('cameraSingleHint').classList.toggle('hidden', mode === 'batch');
+    document.getElementById('cameraSingleResult').classList.add('hidden');
+    if (mode === 'batch') { batchMap.clear(); renderBatchChips(); }
+  }
+
+  async function openCameraScanner() {
+    document.getElementById('cameraScanOverlay').classList.remove('hidden');
+    document.getElementById('cameraNoSupport').classList.add('hidden');
+    document.getElementById('cameraViewfinderWrap').classList.remove('hidden');
+
+    if (!('BarcodeDetector' in window)) {
+      document.getElementById('cameraViewfinderWrap').classList.add('hidden');
+      document.getElementById('cameraBatchPanel').classList.add('hidden');
+      document.getElementById('cameraNoSupport').classList.remove('hidden');
+      return;
+    }
+
+    if (!barcodeDetector) {
+      let fmts;
+      try { fmts = await BarcodeDetector.getSupportedFormats(); }
+      catch { fmts = ['code_128', 'ean_13', 'ean_8', 'qr_code', 'upc_a', 'upc_e', 'code_39', 'itf', 'data_matrix']; }
+      barcodeDetector = new BarcodeDetector({ formats: fmts });
+    }
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+      const video = document.getElementById('cameraVideo');
+      video.srcObject = cameraStream;
+      await new Promise(r => { video.onloadedmetadata = r; });
+      await video.play();
+      setCameraMode(cameraScanMode);
+      startCameraLoop();
+    } catch (err) {
+      document.getElementById('cameraViewfinderWrap').classList.add('hidden');
+      document.getElementById('cameraBatchPanel').classList.add('hidden');
+      const el = document.getElementById('cameraNoSupport');
+      el.querySelector('p').textContent = 'Camera error: ' + err.message;
+      el.classList.remove('hidden');
+    }
+  }
+
+  function closeCameraScanner() {
+    if (cameraAnimFrame) { cancelAnimationFrame(cameraAnimFrame); cameraAnimFrame = null; }
+    if (cameraStream)    { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+    document.getElementById('cameraScanOverlay').classList.add('hidden');
+    batchMap.clear();
+    document.getElementById('itemScanInput').focus();
+  }
+
+  function startCameraLoop() {
+    const video = document.getElementById('cameraVideo');
+    async function loop() {
+      if (!cameraStream) return;
+      try {
+        if (video.readyState >= 2) {
+          const results = await barcodeDetector.detect(video);
+          if (results.length) processDetected(results);
+        }
+      } catch {}
+      cameraAnimFrame = requestAnimationFrame(loop);
+    }
+    cameraAnimFrame = requestAnimationFrame(loop);
+  }
+
+  function processDetected(barcodes) {
+    const now = Date.now();
+    for (const bc of barcodes) {
+      const val = (bc.rawValue || '').trim();
+      if (!val) continue;
+
+      if (cameraScanMode === 'single') {
+        const last = lastSingleHit[val] || 0;
+        if (now - last > SINGLE_COOLDOWN_MS) {
+          lastSingleHit[val] = now;
+          handleItemScan(val);
+          showCameraFlash(val);
+        }
+      } else {
+        if (!batchMap.has(val)) {
+          batchMap.set(val, { checked: true });
+          renderBatchChips();
+        }
+      }
+    }
+  }
+
+  function showCameraFlash(val) {
+    const el = document.getElementById('cameraSingleResult');
+    el.textContent = `✓ ${val}`;
+    el.classList.remove('hidden');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.add('hidden'), 1600);
+  }
+
+  function renderBatchChips() {
+    const list    = document.getElementById('cameraBatchList');
+    const countEl = document.getElementById('cameraBatchCount');
+    const entries = [...batchMap.entries()];
+    if (!entries.length) {
+      list.innerHTML = '<span class="hint camera-batch-empty">Point camera at barcodes to collect them…</span>';
+      countEl.textContent = '0';
+      return;
+    }
+    const checkedCount = entries.filter(([, v]) => v.checked).length;
+    countEl.textContent = checkedCount;
+    list.innerHTML = entries.map(([val, { checked }]) => `
+      <div class="camera-batch-chip ${checked ? 'checked' : ''}" data-val="${esc(val)}">
+        <span class="chip-check">${checked ? '&#9745;' : '&#9744;'}</span>
+        <code>${esc(val)}</code>
+      </div>`).join('');
+    list.querySelectorAll('.camera-batch-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const v = batchMap.get(chip.dataset.val);
+        if (v) { v.checked = !v.checked; renderBatchChips(); }
+      });
+    });
+  }
+
   // ── Init ───────────────────────────────────────────────────────────────────
   initLogin();
 })();
