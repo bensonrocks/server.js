@@ -52,6 +52,25 @@ app.get('/api/stats',    (req, res) => res.json(store.getStats()));
 app.get('/api/clients',  (req, res) => res.json(store.getClients()));
 app.get('/api/channels', (req, res) => res.json(store.getChannels()));
 
+// Scan lookup — search by order ID, tracking number, order ID prefix, or recipient
+app.get('/api/orders/lookup', (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  const order = store.lookupByCode(q);
+  if (!order) return res.status(404).json({ error: 'No matching order found', code: q });
+  res.json(order);
+});
+
+// Update order status
+app.patch('/api/orders/:id/status', (req, res) => {
+  const { status } = req.body || {};
+  const VALID = ['pending','confirmed','processing','shipped','delivered','cancelled'];
+  if (!VALID.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const order = store.updateStatus(req.params.id, status);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  res.json(order);
+});
+
 // ── Marketplace Connections ───────────────────────────────────────────────────
 
 const PLATFORMS = ['lazada', 'shopee', 'tiktok', 'shopify'];
