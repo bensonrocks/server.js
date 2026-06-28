@@ -372,12 +372,8 @@
   document.getElementById('confirmApproveBtn').addEventListener('click', async () => {
     const email  = document.getElementById('confirmEmail').value.trim();
     const errEl  = document.getElementById('confirmEmailError');
-    if (!email) {
-      errEl.textContent = 'Please enter an email address.';
-      errEl.classList.remove('hidden'); return;
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errEl.textContent = 'Please enter a valid email address.';
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errEl.textContent = 'Please enter a valid email address, or leave blank to skip.';
       errEl.classList.remove('hidden'); return;
     }
     errEl.classList.add('hidden');
@@ -420,8 +416,10 @@
       const pdfMsg   = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       const emailMsg = data.emailSent
         ? ` WMS emailed to ${emailTo}.`
-        : ` Email not sent: ${data.emailError || 'unknown error'}.`;
-      setUploadStatus(data.emailSent ? 'success' : 'warning',
+        : emailTo
+          ? ` Email not sent: ${data.emailError || 'unknown error'}.`
+          : '';
+      setUploadStatus(data.emailSent ? 'success' : emailTo ? 'warning' : 'success',
         `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
       );
       renderUploadList(data.orders);
