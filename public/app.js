@@ -317,6 +317,7 @@
   // ── Step 1: Preview (parse only) ───────────────────────────────────────────
   async function previewOrderFile(file) {
     pendingOrderFile = file;
+    document.getElementById('uploadDownloadWrap').classList.add('hidden');
     setUploadStatus('loading', `Parsing ${file.name}…`);
 
     const form = new FormData();
@@ -365,7 +366,6 @@
     uploadDirection = 'Outbound';
     document.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'Outbound'));
     document.getElementById('uploadConfirmOverlay').classList.remove('hidden');
-    setTimeout(() => document.getElementById('confirmEmail').focus(), 150);
   }
 
   document.getElementById('confirmCancelBtn').addEventListener('click', () => {
@@ -383,9 +383,6 @@
     });
   });
 
-  document.getElementById('confirmEmail').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('confirmApproveBtn').click();
-  });
 
   document.getElementById('confirmApproveBtn').addEventListener('click', async () => {
     const email  = document.getElementById('confirmEmail').value.trim();
@@ -433,15 +430,18 @@
       activeOrder  = null;
 
       const pdfMsg   = pdfFile ? ' Waybill PDF is being split in the background.' : '';
-      const emailMsg = data.emailSent
-        ? ` WMS emailed to ${data.emailTo || emailTo}.`
-        : data.emailError
-          ? ` Email not sent: ${data.emailError}`
-          : '';
-      const statusType = data.emailSent ? 'success' : data.emailError ? 'warning' : 'success';
-      setUploadStatus(statusType,
-        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
+      const emailMsg = data.emailSent ? ` Also emailed to ${data.emailTo}.` : '';
+      setUploadStatus('success',
+        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
       );
+
+      // Show download button immediately
+      const dlBtn  = document.getElementById('uploadDownloadBtn');
+      const dlWrap = document.getElementById('uploadDownloadWrap');
+      dlBtn.href   = `/api/download-wms/${data.batchId}`;
+      dlBtn.setAttribute('download', `WMS_${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+      dlWrap.classList.remove('hidden');
+
       renderUploadList(data.orders);
       renderBreakdowns(data.orders);
       fetchAndRenderStats();

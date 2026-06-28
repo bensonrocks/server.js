@@ -383,6 +383,9 @@
         </div>
 
         <div id="uploadStatus" class="status-bar hidden"></div>
+        <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
+          <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
+        </div>
       </div>
 
       <!-- Breakdown: platforms + carriers -->
@@ -465,10 +468,7 @@
         </div>
       </div>
 
-      <div class="form-group">
-        <label>Send WMS file to email <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
-        <input type="email" id="confirmEmail" placeholder="recipient@example.com — leave blank to skip" autocomplete="email" />
-      </div>
+      <input type="hidden" id="confirmEmail" />
       <div id="confirmEmailError" class="login-error hidden"></div>
 
       <div class="modal-actions" style="margin-top:1rem">
