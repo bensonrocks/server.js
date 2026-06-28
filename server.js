@@ -1,23 +1,29 @@
 'use strict';
 
-const express  = require('express');
-const path     = require('path');
-const { exec } = require('child_process');
+const express    = require('express');
+const path       = require('path');
+const os         = require('os');
+const fs         = require('fs');
+const { exec }   = require('child_process');
+const multer     = require('multer');
 
-const store   = require('./lib/store');
-const emailP  = require('./lib/email-parser');
-const creds   = require('./lib/credentials');
-const syncLog = require('./lib/sync-log');
-const lazada  = require('./lib/marketplace/lazada');
-const shopee  = require('./lib/marketplace/shopee');
-const tiktok  = require('./lib/marketplace/tiktok');
-const shopify = require('./lib/marketplace/shopify');
-const mapper  = require('./lib/marketplace/mapper');
-const auth    = require('./lib/auth');
+const store    = require('./lib/store');
+const emailP   = require('./lib/email-parser');
+const creds    = require('./lib/credentials');
+const syncLog  = require('./lib/sync-log');
+const lazada   = require('./lib/marketplace/lazada');
+const shopee   = require('./lib/marketplace/shopee');
+const tiktok   = require('./lib/marketplace/tiktok');
+const shopify  = require('./lib/marketplace/shopify');
+const mapper   = require('./lib/marketplace/mapper');
+const auth     = require('./lib/auth');
+const importer = require('./lib/file-importer');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -68,6 +74,99 @@ app.post('/api/orders/ingest-email', (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+// ── File import — extract orders from an uploaded file ────────────────────────
+
+function extractedToOrder(data, index) {
+  const now   = new Date().toISOString();
+  const refNo = data.trackingNumber || data.orderNumber;
+  const orderId = refNo
+    ? 'IMP-' + refNo.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 18)
+    : 'IMP-' + Date.now().toString(36).toUpperCase() + String(index).padStart(3, '0');
+
+  const clientName = (data.clientName || 'Imported').trim();
+  const clientId   = clientName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 40);
+
+  const items = Array.isArray(data.items) && data.items.length
+    ? data.items.map(i => ({ sku: String(i.sku || 'ITEM'), name: String(i.name || 'Item'), qty: parseInt(i.qty) || 1, unitPrice: parseFloat(i.unitPrice) || 0 }))
+    : [{ sku: 'ITEM', name: 'Imported Item', qty: 1, unitPrice: 0 }];
+
+  const subtotal = items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+
+  return {
+    id: orderId, clientId, clientName,
+    channel: 'waybill', orderDate: now, status: 'pending', currency: 'MYR',
+    notes: data.notes || '', items,
+    shipping: {
+      recipient:    data.recipientName || '',
+      addressLine1: data.addressLine1  || '',
+      addressLine2: data.addressLine2  || '',
+      city:         data.city          || '',
+      state:        data.state         || '',
+      zip:          data.zip           || '',
+      country:      data.country       || 'MY',
+    },
+    subtotal, shippingCost: 0, tax: 0, total: subtotal,
+    source: {
+      type: 'import',
+      courier:    data.courier       || undefined,
+      trackingNo: data.trackingNumber|| undefined,
+      ingestedAt: now,
+    },
+  };
+}
+
+app.post('/api/orders/extract', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { mimetype, path: filePath, originalname } = req.file;
+  const ext = (originalname.split('.').pop() || '').toLowerCase();
+
+  try {
+    let extracted;
+
+    if (mimetype.startsWith('image/')) {
+      extracted = await importer.extractFromImage(filePath, mimetype);
+    } else if (mimetype === 'application/pdf' || ext === 'pdf') {
+      extracted = await importer.extractFromPDF(filePath);
+    } else if (ext === 'csv' || mimetype === 'text/csv' || ext === 'xlsx' || ext === 'xls' || mimetype.includes('spreadsheet') || mimetype.includes('excel')) {
+      extracted = importer.extractFromSpreadsheet(filePath);
+    } else if (ext === 'docx' || mimetype.includes('wordprocessingml')) {
+      const mammoth = require('mammoth');
+      const { value: text } = await mammoth.extractRawText({ path: filePath });
+      extracted = await importer.extractFromDocxText(text);
+    } else {
+      return res.status(400).json({ error: `Unsupported file type: ${ext || mimetype}. Supported: JPG, PNG, PDF, CSV, Excel (.xlsx/.xls), Word (.docx)` });
+    }
+
+    res.json({ orders: extracted || [], count: (extracted || []).length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    try { fs.unlinkSync(filePath); } catch {}
+  }
+});
+
+app.post('/api/orders/bulk-import', (req, res) => {
+  const { orders: raw } = req.body || {};
+  if (!Array.isArray(raw) || !raw.length) return res.status(400).json({ error: 'No orders provided' });
+
+  let imported = 0, skipped = 0;
+  const errors = [];
+
+  raw.forEach((data, i) => {
+    try {
+      store.addOrder(extractedToOrder(data, i));
+      imported++;
+    } catch (err) {
+      if (err.message.includes('already exists')) skipped++;
+      else errors.push(err.message);
+    }
+  });
+
+  res.json({ imported, skipped, errors });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.get('/api/stats',    (req, res) => res.json(store.getStats()));
 app.get('/api/clients',  (req, res) => res.json(store.getClients()));

@@ -466,6 +466,7 @@ a:hover{text-decoration:underline}
     <div class="modal-tabs">
       <button class="mtab on" id="tab-email" onclick="switchTab('email')">&#9993; Email</button>
       <button class="mtab" id="tab-waybill" onclick="switchTab('waybill')">&#128230; Waybill</button>
+      <button class="mtab" id="tab-import" onclick="switchTab('import')">&#128196; Import File</button>
     </div>
     <div class="modal-b">
       <!-- EMAIL TAB -->
@@ -528,6 +529,34 @@ a:hover{text-decoration:underline}
           <div class="fg"><label>No. of Pieces</label><input id="wb-pieces" class="inp" type="number" min="1" placeholder="1"></div>
         </div>
       </div>
+      <!-- IMPORT FILE TAB -->
+      <div id="sec-import" class="tab-section">
+        <p class="hint">Upload a waybill image/PDF, CSV, Excel, or Word file — AI will extract the order data automatically.</p>
+        <div class="drop-zone" id="import-dz">
+          <input type="file" id="import-file" accept="image/*,.pdf,.csv,.xlsx,.xls,.docx">
+          <div class="dz-txt" id="import-dz-txt">&#128196; Click or drag file here<br><span style="font-size:11px;opacity:.7">JPG &middot; PNG &middot; PDF &middot; CSV &middot; Excel &middot; Word (.docx)</span></div>
+        </div>
+        <div id="import-err" class="err hidden"></div>
+        <div id="import-info" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-size:12px;color:#1e40af"></div>
+        <div id="import-preview-wrap" style="display:none">
+          <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:6px" id="import-count-lbl"></div>
+          <div style="overflow-x:auto;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">
+            <table class="tbl" style="font-size:11px">
+              <thead><tr>
+                <th style="width:28px"><input type="checkbox" id="import-check-all"></th>
+                <th>Ref / Tracking</th><th>Client</th><th>Recipient</th><th>Items</th><th>City</th>
+              </tr></thead>
+              <tbody id="import-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="btn-extract" class="btn btn-s" onclick="extractOrders()">&#128269; Extract Orders</button>
+          <button id="btn-import-sel" class="btn btn-p" style="display:none" onclick="importSelected()">&#10003; Import Selected</button>
+          <span id="import-spinner" style="display:none;font-size:12px;color:#64748b">&#9203; Extracting&hellip;</span>
+        </div>
+      </div>
+
       <div id="em-err" class="err hidden"></div>
     </div>
     <div class="modal-f">
@@ -1040,6 +1069,90 @@ function handleWaybillFile(file){
   else img.style.display='none';
 }
 
+// ── FILE IMPORT ────────────────────────────────────────────────────────────────
+let importFile=null,importedOrders=[];
+
+function handleImportFile(file){
+  if(!file)return;
+  importFile=file;
+  $('import-dz-txt').innerHTML=`&#128196; <strong>${file.name}</strong><br><span style="font-size:11px;opacity:.7">${(file.size/1024).toFixed(1)}&thinsp;KB &mdash; ready to extract</span>`;
+  $('import-dz').style.borderColor='#2563eb';$('import-dz').style.background='#eff6ff';
+  $('import-err').classList.add('hidden');
+  $('import-info').style.display='none';
+  $('import-preview-wrap').style.display='none';
+  $('btn-import-sel').style.display='none';
+  importedOrders=[];
+}
+
+async function extractOrders(){
+  if(!importFile){showImportErr('Select a file first.');return;}
+  if(!serverAvailable){showImportErr('Server must be running to extract orders. Start IdealOMS server and try again.');return;}
+  const btn=$('btn-extract'),spin=$('import-spinner');
+  btn.disabled=true;spin.style.display='';
+  $('import-err').classList.add('hidden');$('import-preview-wrap').style.display='none';$('btn-import-sel').style.display='none';$('import-info').style.display='none';
+  try{
+    const fd=new FormData();fd.append('file',importFile);
+    const r=await fetch(`${SERVER}/api/orders/extract`,{method:'POST',body:fd});
+    const j=await r.json();
+    if(!r.ok){showImportErr(j.error||'Extraction failed.');return;}
+    if(!j.orders||!j.orders.length){showImportErr('No order data found in this file. Try a different file or check the format.');return;}
+    importedOrders=j.orders;
+    renderImportPreview(j.orders);
+    $('import-info').textContent=`${j.count} order${j.count!==1?'s':''} extracted — review below, then click Import Selected.`;
+    $('import-info').style.display='';
+  }catch(e){showImportErr('Server error: '+e.message);}
+  finally{btn.disabled=false;spin.style.display='none';}
+}
+
+function renderImportPreview(orders){
+  const tbody=$('import-tbody');
+  $('import-count-lbl').textContent=`${orders.length} order${orders.length!==1?'s':''} found — select which to import:`;
+  tbody.innerHTML=orders.map((o,i)=>{
+    const ref=o.trackingNumber||o.orderNumber||'—';
+    const items=(o.items||[]).map(it=>`${it.qty}× ${it.name||it.sku}`).join(', ')||'—';
+    return `<tr><td><input type="checkbox" class="import-cb" data-idx="${i}" checked></td><td style="font-family:monospace;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis">${ref}</td><td>${o.clientName||'—'}</td><td>${o.recipientName||'—'}</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${items}</td><td>${o.city||'—'}</td></tr>`;
+  }).join('');
+  $('import-check-all').checked=true;
+  $('import-check-all').onchange=()=>document.querySelectorAll('.import-cb').forEach(cb=>cb.checked=$('import-check-all').checked);
+  $('import-preview-wrap').style.display='';
+  $('btn-import-sel').style.display='';
+}
+
+async function importSelected(){
+  const checked=[...document.querySelectorAll('.import-cb:checked')];
+  if(!checked.length){showImportErr('Select at least one order to import.');return;}
+  const toImport=checked.map(cb=>importedOrders[parseInt(cb.dataset.idx)]).filter(Boolean);
+  const btn=$('btn-import-sel');btn.disabled=true;btn.textContent='Importing…';
+  try{
+    if(serverAvailable){
+      const r=await fetch(`${SERVER}/api/orders/bulk-import`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orders:toImport})});
+      const j=await r.json();
+      if(!r.ok){showImportErr(j.error||'Import failed.');return;}
+      await loadOrdersFromServer();render();closeModal();
+      const msg=`Imported ${j.imported} order${j.imported!==1?'s':''}${j.skipped?` (${j.skipped} duplicate${j.skipped!==1?'s':''} skipped)`:''}${j.errors.length?`\n${j.errors.length} error(s): ${j.errors.join('; ')}`:''}`;
+      alert(msg);
+    }else{
+      let imported=0,skipped=0;
+      toImport.forEach((data,i)=>{
+        const refNo=data.trackingNumber||data.orderNumber;
+        const oid=refNo?'IMP-'+refNo.replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,18):'IMP-'+Date.now().toString(36).toUpperCase()+i;
+        if(orders.find(x=>x.id===oid)){skipped++;return;}
+        const cn=(data.clientName||'Imported').trim();
+        const ci=cn.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40);
+        const its=Array.isArray(data.items)&&data.items.length?data.items:[{sku:'ITEM',name:'Imported Item',qty:1,unitPrice:0}];
+        const sub=its.reduce((s,it)=>s+it.qty*it.unitPrice,0);
+        orders.unshift({id:oid,clientId:ci,clientName:cn,channel:'waybill',orderDate:new Date().toISOString(),status:'pending',currency:'MYR',notes:data.notes||'',items:its,shipping:{recipient:data.recipientName||'',addressLine1:data.addressLine1||'',addressLine2:data.addressLine2||'',city:data.city||'',state:data.state||'',zip:data.zip||'',country:data.country||'MY'},subtotal:sub,shippingCost:0,tax:0,total:sub,source:{type:'import',courier:data.courier,trackingNo:data.trackingNumber,ingestedAt:new Date().toISOString()}});
+        imported++;
+      });
+      save();render();closeModal();
+      alert(`Imported ${imported} order${imported!==1?'s':''}${skipped?` (${skipped} skipped as duplicate${skipped!==1?'s':''})`:''}.`);
+    }
+  }catch(e){showImportErr('Import error: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='✓ Import Selected';}
+}
+
+function showImportErr(msg){const el=$('import-err');el.textContent=msg;el.classList.remove('hidden');}
+
 function populateClientDropdown(){
   const sel=$('wb-client');while(sel.options.length>1)sel.remove(1);
   const last=document.createElement('option');last.value='__new__';last.textContent='+ New client…';
@@ -1051,9 +1164,12 @@ function handleClientChange(){$('wb-newclient-row').style.display=$('wb-client')
 // ── ADD ORDER MODAL ───────────────────────────────────────────────────────────
 function switchTab(tab){
   activeTab=tab;
-  $('tab-email').classList.toggle('on',tab==='email');$('tab-waybill').classList.toggle('on',tab==='waybill');
-  $('sec-email').classList.toggle('on',tab==='email');$('sec-waybill').classList.toggle('on',tab==='waybill');
-  $('btn-submit').textContent=tab==='email'?'Parse & Add Order':'Add Waybill Order';
+  ['email','waybill','import'].forEach(t=>{
+    $('tab-'+t).classList.toggle('on',t===tab);
+    $('sec-'+t).classList.toggle('on',t===tab);
+  });
+  $('btn-submit').style.display=tab==='import'?'none':'';
+  if(tab!=='import')$('btn-submit').textContent=tab==='email'?'Parse & Add Order':'Add Waybill Order';
   $('em-err').classList.add('hidden');
 }
 const SAMPLE=`---ORDER-START---
@@ -1087,7 +1203,19 @@ TAX: 0
 TOTAL: 90.96
 ---ORDER-END---`;
 
-function openModal(){populateClientDropdown();$('modal').classList.remove('hidden');$('modal-ov').classList.remove('hidden');$('em-err').classList.add('hidden');}
+function openModal(){
+  populateClientDropdown();
+  $('modal').classList.remove('hidden');$('modal-ov').classList.remove('hidden');$('em-err').classList.add('hidden');
+  // reset import tab
+  importFile=null;importedOrders=[];
+  $('import-file').value='';
+  $('import-dz-txt').innerHTML='&#128196; Click or drag file here<br><span style="font-size:11px;opacity:.7">JPG &middot; PNG &middot; PDF &middot; CSV &middot; Excel &middot; Word (.docx)</span>';
+  $('import-dz').style.borderColor='';$('import-dz').style.background='';
+  $('import-err').classList.add('hidden');
+  $('import-info').style.display='none';
+  $('import-preview-wrap').style.display='none';
+  $('btn-import-sel').style.display='none';
+}
 function closeModal(){$('modal').classList.add('hidden');$('modal-ov').classList.add('hidden');}
 
 function submitEmail(){
@@ -1122,11 +1250,22 @@ function showErr(m){$('em-err').textContent=m;$('em-err').classList.remove('hidd
 
 // ── DRAG & DROP ───────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',()=>{
-  const dz=$('drop-zone');if(!dz)return;
-  dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag');});
-  dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
-  dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)handleWaybillFile(f);});
-  $('wb-file').addEventListener('change',e=>handleWaybillFile(e.target.files[0]));
+  // waybill drop zone
+  const dz=$('drop-zone');
+  if(dz){
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag');});
+    dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)handleWaybillFile(f);});
+    $('wb-file').addEventListener('change',e=>handleWaybillFile(e.target.files[0]));
+  }
+  // import drop zone
+  const idz=$('import-dz');
+  if(idz){
+    idz.addEventListener('dragover',e=>{e.preventDefault();idz.classList.add('drag');});
+    idz.addEventListener('dragleave',()=>idz.classList.remove('drag'));
+    idz.addEventListener('drop',e=>{e.preventDefault();idz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)handleImportFile(f);});
+    $('import-file').addEventListener('change',e=>{if(e.target.files[0])handleImportFile(e.target.files[0]);});
+  }
 });
 
 // ── HAMBURGER ─────────────────────────────────────────────────────────────────
