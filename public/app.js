@@ -13,6 +13,7 @@
   let pendingOrderFile    = null;
   let uploadDirection     = 'Outbound';
   let logUnlocked         = false;
+  let pendingDownload     = false;
 
   let orderTimings = {};
   try { orderTimings = JSON.parse(sessionStorage.getItem('wms_timings') || '{}'); } catch {}
@@ -237,12 +238,33 @@
   );
 
   function switchTab(name) {
+    if (pendingDownload && name === 'orders') {
+      const dlWrap = document.getElementById('uploadDownloadWrap');
+      dlWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      dlWrap.classList.remove('download-shake');
+      void dlWrap.offsetWidth; // reflow to restart animation
+      dlWrap.classList.add('download-shake');
+      setTimeout(() => dlWrap.classList.remove('download-shake'), 400);
+      return;
+    }
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') renderOrdersDash();
+  }
+
+  function lockTabsForDownload() {
+    pendingDownload = true;
+    document.querySelector('.tab-btn[data-tab="orders"]').classList.add('tab-locked');
+  }
+
+  function unlockTabsAfterDownload() {
+    pendingDownload = false;
+    document.querySelector('.tab-btn[data-tab="orders"]').classList.remove('tab-locked');
+    const noteEl = document.getElementById('downloadLockNote');
+    if (noteEl) noteEl.remove();
   }
 
   // ── Dashboard Stats ────────────────────────────────────────────────────────
@@ -317,6 +339,7 @@
   // ── Step 1: Preview (parse only) ───────────────────────────────────────────
   async function previewOrderFile(file) {
     pendingOrderFile = file;
+    unlockTabsAfterDownload();
     document.getElementById('uploadDownloadWrap').classList.add('hidden');
     setUploadStatus('loading', `Parsing ${file.name}…`);
 
@@ -435,12 +458,23 @@
         `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
       );
 
-      // Show download button immediately
+      // Show download button immediately and lock tabs until downloaded
       const dlBtn  = document.getElementById('uploadDownloadBtn');
       const dlWrap = document.getElementById('uploadDownloadWrap');
       dlBtn.href   = `/api/download-wms/${data.batchId}`;
       dlBtn.setAttribute('download', `WMS_${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+      // Add lock note if not already present
+      let noteEl = document.getElementById('downloadLockNote');
+      if (!noteEl) {
+        noteEl = document.createElement('span');
+        noteEl.id        = 'downloadLockNote';
+        noteEl.className = 'download-lock-note';
+        noteEl.innerHTML = '&#128274; Download the WMS file above before scanning orders';
+        dlWrap.appendChild(noteEl);
+      }
       dlWrap.classList.remove('hidden');
+      lockTabsForDownload();
+      dlBtn.addEventListener('click', unlockTabsAfterDownload, { once: true });
 
       renderUploadList(data.orders);
       renderBreakdowns(data.orders);

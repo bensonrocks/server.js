@@ -6,6 +6,7 @@
   --border: #dde2ea;
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
+  --accent: #2563eb;
   --success: #16a34a;
   --success-bg: #f0fdf4;
   --success-border: #86efac;
@@ -84,6 +85,8 @@ nav { display: flex; gap: 4px; }
 }
 .tab-btn:hover  { background: var(--bg); color: var(--text); }
 .tab-btn.active { background: #eff6ff; color: var(--primary); font-weight: 600; }
+.tab-btn:disabled,
+.tab-btn.tab-locked { opacity: .38; cursor: not-allowed; }
 
 /* ── Main layout ── */
 main { max-width: 1100px; margin: 0 auto; padding: 1.25rem; }
@@ -1386,17 +1389,30 @@ body.log-open { overflow: hidden; }
    ════════════════════════════════════════════════════ */
 .upload-download-wrap {
   margin-top: .65rem;
+  display: flex; flex-direction: column; gap: .4rem;
 }
 .btn-download-wms {
   display: inline-flex; align-items: center; gap: .4rem;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: #fff !important;
   border: none; border-radius: 7px;
   padding: .55rem 1.1rem; font-size: .88rem; font-weight: 600;
   text-decoration: none; cursor: pointer;
   transition: background .13s, box-shadow .13s;
   box-shadow: 0 1px 4px rgba(0,0,0,.12);
+  align-self: flex-start;
 }
 .btn-download-wms:hover { background: #1d4ed8; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+.download-lock-note {
+  font-size: .78rem; color: var(--warning); font-weight: 600;
+  display: flex; align-items: center; gap: .3rem;
+}
+
+@keyframes dlShake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60%  { transform: translateX(-5px); }
+  40%, 80%  { transform: translateX(5px); }
+}
+.download-shake { animation: dlShake .35s ease; }
 
 /* ════════════════════════════════════════════════════
    INBOUND / OUTBOUND TOGGLE (upload confirm dialog)
