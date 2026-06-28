@@ -272,6 +272,66 @@ a:hover{text-decoration:underline}
 .slk-btn{padding:10px 32px;border-radius:9px;background:#2563eb;color:#fff;font-size:14px;font-weight:700;border:none;cursor:pointer;transition:background .15s}
 .slk-btn:hover{background:#1d4ed8}
 .slk-btn:disabled{opacity:.6;cursor:not-allowed}
+
+/* ── SALES LEADS PAGE ── */
+.leads-top{display:flex;flex-direction:column;gap:12px}
+.vert-tabs{display:flex;gap:10px}
+.vert-tab{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 16px;border-radius:12px;border:2px solid #e2e8f0;background:#fff;cursor:pointer;transition:all .15s;text-align:left}
+.vert-tab:hover{border-color:#93c5fd;background:#eff6ff}
+.vert-tab.on{border-color:#2563eb;background:#eff6ff}
+.vert-tab-title{font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:7px}
+.vert-tab.on .vert-tab-title{color:#1d4ed8}
+.vert-tab-sub{font-size:11px;color:#64748b;font-weight:500}
+.leads-filters-bar{background:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.lf-group{display:flex;flex-direction:column;gap:4px;min-width:140px}
+.lf-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.leads-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:900px){.leads-grid{grid-template-columns:1fr}}
+.lead-card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px;border:1.5px solid transparent;transition:all .15s}
+.lead-card:hover{border-color:#dbeafe;box-shadow:0 4px 16px rgba(37,99,235,.1)}
+.lead-card.approved{border-color:#bbf7d0}
+.lc-top{display:flex;align-items:flex-start;gap:11px}
+.lc-avatar{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#2563eb,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden}
+.lc-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.lc-info{flex:1;min-width:0}
+.lc-name{font-size:14px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lc-title{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lc-company{font-size:12px;font-weight:600;color:#2563eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lc-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lc-loc{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:3px}
+.lc-li{font-size:11px;color:#2563eb;text-decoration:none;display:flex;align-items:center;gap:3px}
+.lc-li:hover{text-decoration:underline}
+.lc-contact{background:#f8fafc;border-radius:8px;padding:9px 11px;font-size:12px;display:flex;flex-direction:column;gap:4px}
+.lc-contact-row{display:flex;align-items:center;gap:6px;color:#374151}
+.lc-contact-row .ck{font-weight:600;color:#64748b;min-width:44px}
+.lc-contact-row .cv{word-break:break-all}
+.lc-actions{display:flex;gap:7px;align-items:center}
+.btn-approve{padding:7px 14px;border-radius:8px;background:#16a34a;color:#fff;font-size:12px;font-weight:700;transition:all .12s;display:flex;align-items:center;gap:5px}
+.btn-approve:hover{background:#15803d}
+.btn-approve:disabled{background:#9ca3af;cursor:not-allowed}
+.lc-approved-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#16a34a;background:#dcfce7;border-radius:8px;padding:4px 8px}
+.leads-empty{background:#fff;border-radius:12px;padding:52px 24px;text-align:center;color:#94a3b8;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.leads-empty-icon{font-size:40px;margin-bottom:12px}
+.leads-empty-title{font-size:16px;font-weight:700;color:#475569;margin-bottom:6px}
+.leads-empty-sub{font-size:13px;line-height:1.6}
+.leads-loading{display:flex;align-items:center;justify-content:center;gap:10px;padding:48px;background:#fff;border-radius:12px;color:#64748b;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.leads-spinner{width:22px;height:22px;border:3px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.leads-banner{border-radius:10px;padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:8px;margin-bottom:2px}
+.leads-banner.info{background:#dbeafe;border:1px solid #93c5fd;color:#1e40af}
+.leads-banner.warn{background:#fef9c3;border:1px solid #fde047;color:#854d0e}
+.leads-banner.err{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
+/* Approve modal */
+.approve-modal{position:fixed;top:50%;left:50%;z-index:400;transform:translate(-50%,-50%);background:#fff;border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,.26);width:440px;max-width:95vw;padding:28px;display:flex;flex-direction:column;gap:18px}
+.approve-modal.hidden{display:none}
+.am-icon{font-size:36px;text-align:center}
+.am-title{font-size:17px;font-weight:800;color:#0f172a;text-align:center}
+.am-sub{font-size:13px;color:#64748b;text-align:center;line-height:1.6}
+.am-person{background:#f8fafc;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:3px}
+.am-person-name{font-size:14px;font-weight:700;color:#0f172a}
+.am-person-detail{font-size:12px;color:#64748b}
+.am-credit{background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:9px 12px;font-size:12px;color:#854d0e;font-weight:600;text-align:center}
+.am-actions{display:flex;gap:8px;justify-content:flex-end}
 </style>
 </head>
 <body>
@@ -316,6 +376,9 @@ a:hover{text-decoration:underline}
         </li>
         <li class="nav-li" id="nav-synclog" onclick="switchPage('synclog')">
           <span>&#128260;</span><span class="nav-name">Sync Log</span>
+        </li>
+        <li class="nav-li" id="nav-leads" onclick="switchPage('leads')">
+          <span>&#127919;</span><span class="nav-name">Sales Lead Digger</span>
         </li>
       </ul>
       <div class="sb-label" style="margin-top:8px">Clients</div>
@@ -444,6 +507,74 @@ a:hover{text-decoration:underline}
         </div>
       </div>
 
+      <!-- ═══════════════════════════════════════
+           SALES LEAD DIGGER PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-leads" class="page">
+        <div class="page-hdr">
+          <h2>&#127919; Sales Lead Digger</h2>
+          <p>Find 10 qualified prospects per search. Approve individually to reveal email &amp; phone. Powered by Apollo.</p>
+        </div>
+
+        <div id="leads-top-banner" class="leads-banner info" style="display:none"></div>
+
+        <div class="leads-top">
+          <!-- Vertical selector -->
+          <div class="vert-tabs">
+            <button class="vert-tab on" id="vert-logistics" onclick="setLeadVertical('logistics')">
+              <span class="vert-tab-title">&#128666; Logistics</span>
+              <span class="vert-tab-sub">Freight Forwarders &middot; 3PL &middot; Warehousing &middot; Transport</span>
+            </button>
+            <button class="vert-tab" id="vert-interior" onclick="setLeadVertical('interior')">
+              <span class="vert-tab-title">&#128717; Interior Styling</span>
+              <span class="vert-tab-sub">Interior Designers &middot; Architects &middot; Custom Furnishings</span>
+            </button>
+          </div>
+
+          <!-- Filters + search button -->
+          <div class="leads-filters-bar">
+            <div class="lf-group">
+              <span class="lf-label">Location</span>
+              <input id="ld-location" class="inp" style="min-width:160px" placeholder="e.g. Malaysia, Singapore">
+            </div>
+            <div class="lf-group">
+              <span class="lf-label">Seniority</span>
+              <select id="ld-seniority" class="inp">
+                <option value="">Any Level</option>
+                <option value="manager">Manager</option>
+                <option value="director">Director</option>
+                <option value="vp">VP</option>
+                <option value="c_suite">C-Suite / Owner</option>
+                <option value="senior">Senior</option>
+              </select>
+            </div>
+            <div class="lf-group">
+              <span class="lf-label">Company Size</span>
+              <select id="ld-size" class="inp">
+                <option value="">Any Size</option>
+                <option value="1,10">1–10</option>
+                <option value="11,50">11–50</option>
+                <option value="51,200">51–200</option>
+                <option value="201,500">201–500</option>
+                <option value="501,1000">500+</option>
+              </select>
+            </div>
+            <button id="leads-search-btn" class="btn btn-p" onclick="searchLeads()" style="align-self:flex-end;padding:8px 20px">
+              &#128269; Find 10 Leads
+            </button>
+          </div>
+        </div>
+
+        <!-- Results area -->
+        <div id="leads-results">
+          <div class="leads-empty">
+            <div class="leads-empty-icon">&#127919;</div>
+            <div class="leads-empty-title">Ready to Hunt</div>
+            <p class="leads-empty-sub">Select your vertical, set your filters, and click <strong>Find 10 Leads</strong>.<br>Each result requires your approval before contact details are revealed.</p>
+          </div>
+        </div>
+      </div>
+
     </main>
   </div>
 
@@ -563,6 +694,20 @@ a:hover{text-decoration:underline}
     </div>
   </div>
   <div id="conn-modal-ov" class="overlay conn-ov hidden" onclick="closeConnModal()"></div>
+
+  <!-- ── Lead Approval Modal ── -->
+  <div id="approve-modal" class="approve-modal hidden">
+    <div class="am-icon">&#128274;</div>
+    <div class="am-title">Approve Contact Reveal</div>
+    <p class="am-sub">You are about to use <strong>1 Apollo credit</strong> to reveal the email and phone number for this prospect.</p>
+    <div class="am-person" id="am-person-info"></div>
+    <div class="am-credit">&#9888; This action consumes 1 Apollo credit and cannot be undone.</div>
+    <div class="am-actions">
+      <button class="btn btn-g" onclick="closeApproveModal()">Cancel</button>
+      <button class="btn btn-p" id="am-confirm-btn" onclick="confirmEnrich()">Yes, Reveal Contact</button>
+    </div>
+  </div>
+  <div id="approve-modal-ov" class="overlay hidden" style="z-index:390" onclick="closeApproveModal()"></div>
 
 </div>
 
@@ -775,9 +920,10 @@ function closeDetail(){$('dp').classList.remove('open');$('dp-ov').classList.add
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','leads'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')initSyncLogPage();
+  if(page==='leads')initLeadsPage();
   closeSidebar();
 }
 
@@ -1144,6 +1290,157 @@ $('btn-sample').onclick=()=>{$('em-body').value=SAMPLE;$('em-from').value='order
 $('status-sel').onchange=e=>{F.status=e.target.value;render();};
 let st;const onSearch=e=>{clearTimeout(st);st=setTimeout(()=>{F.search=e.target.value.trim().toLowerCase();render();},220);};
 $('search').oninput=onSearch;$('search-mob').oninput=onSearch;
+
+// ── SALES LEAD DIGGER ─────────────────────────────────────────────────────────
+
+const LD = {
+  vertical: 'logistics',
+  pendingEnrichId: null,
+  pendingPerson: null,
+  results: [],
+};
+
+function initLeadsPage(){
+  const banner=$('leads-top-banner');
+  if(!serverAvailable){
+    banner.className='leads-banner warn';
+    banner.innerHTML='&#9888; <strong>Server required</strong> &mdash; start the server and set <code>APOLLO_API_KEY</code> in your environment to use the Lead Digger.';
+    banner.style.display='flex';
+  }else{
+    banner.style.display='none';
+  }
+}
+
+function setLeadVertical(v){
+  LD.vertical=v;
+  $('vert-logistics').classList.toggle('on',v==='logistics');
+  $('vert-interior').classList.toggle('on',v==='interior');
+}
+
+async function searchLeads(){
+  if(!serverAvailable){showLeadsBanner('warn','Start the server first, then search.');return;}
+  const btn=$('leads-search-btn');
+  btn.disabled=true;btn.textContent='Searching…';
+  $('leads-results').innerHTML='<div class="leads-loading"><div class="leads-spinner"></div><span>Digging for your best 10 leads via Apollo…</span></div>';
+  const location=$('ld-location').value.trim();
+  const seniority=$('ld-seniority').value;
+  const size=$('ld-size').value;
+  try{
+    const r=await fetch(`${SERVER}/api/leads/search`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({vertical:LD.vertical,location,seniority,size}),
+    });
+    const j=await r.json();
+    if(!r.ok){$('leads-results').innerHTML=renderLeadsError(j.error||'Search failed');return;}
+    LD.results=j.people||[];
+    renderLeadsGrid(j);
+  }catch(e){
+    $('leads-results').innerHTML=renderLeadsError(e.message);
+  }finally{
+    btn.disabled=false;btn.innerHTML='&#128269; Find 10 Leads';
+  }
+}
+
+function renderLeadsGrid(data){
+  const people=data.people||[],total=data.total||0,description=data.description||'';
+  if(!people.length){
+    $('leads-results').innerHTML='<div class="leads-empty"><div class="leads-empty-icon">&#128269;</div><div class="leads-empty-title">No leads found</div><p class="leads-empty-sub">Try broadening your filters — remove the location or seniority filter.</p></div>';
+    return;
+  }
+  const meta='<div style="font-size:12px;color:#64748b;margin-bottom:6px">Showing <strong>'+people.length+'</strong> of '+total.toLocaleString()+' prospects — '+description+'</div>';
+  const cards=people.map((p,i)=>renderLeadCard(p,i)).join('');
+  $('leads-results').innerHTML=meta+'<div class="leads-grid">'+cards+'</div>';
+}
+
+function initials(name){
+  return (name||'?').split(' ').filter(Boolean).slice(0,2).map(function(w){return w[0].toUpperCase();}).join('');
+}
+
+function renderLeadCard(p,i){
+  const init=initials(p.name);
+  const avatar=p.photo_url?'<img src="'+p.photo_url+'" alt="" onerror="this.style.display=\'none\';this.parentNode.querySelector(\'span\').style.display=\'flex\'">':'';
+  const li=p.linkedin_url?'<a href="'+p.linkedin_url+'" target="_blank" class="lc-li" rel="noopener">&#128279; LinkedIn</a>':'';
+  const loc=p.location?'<span class="lc-loc">&#128205; '+p.location+'</span>':'';
+  return '<div class="lead-card" id="lcard-'+i+'">'
+    +'<div class="lc-top">'
+    +'<div class="lc-avatar">'+avatar+'<span style="'+(p.photo_url?'display:none':'')+'">'+init+'</span></div>'
+    +'<div class="lc-info">'
+    +'<div class="lc-name">'+(p.name||'—')+'</div>'
+    +'<div class="lc-title">'+(p.title||'—')+'</div>'
+    +'<div class="lc-company">'+(p.company||'—')+'</div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lc-meta">'+loc+li+'</div>'
+    +'<div id="lcard-contact-'+i+'" class="lc-contact" style="display:none"></div>'
+    +'<div class="lc-actions">'
+    +'<button class="btn-approve" id="lcard-btn-'+i+'" onclick="openApproveModal('+i+')">&#128275; Approve &amp; Reveal Contact</button>'
+    +'</div>'
+    +'</div>';
+}
+
+function renderLeadsError(msg){
+  return '<div class="leads-empty"><div class="leads-empty-icon">&#10060;</div><div class="leads-empty-title">Search Failed</div><p class="leads-empty-sub">'+msg+'</p></div>';
+}
+
+function showLeadsBanner(type,msg){
+  const b=$('leads-top-banner');
+  b.className='leads-banner '+type;b.innerHTML=msg;b.style.display='flex';
+}
+
+function openApproveModal(idx){
+  const p=LD.results[idx];if(!p)return;
+  LD.pendingEnrichId=idx;LD.pendingPerson=p;
+  $('am-person-info').innerHTML='<div class="am-person-name">'+p.name+'</div>'
+    +'<div class="am-person-detail">'+(p.title||'')+(p.company?' · '+p.company:'')+'</div>'
+    +(p.location?'<div class="am-person-detail">&#128205; '+p.location+'</div>':'');
+  $('approve-modal').classList.remove('hidden');
+  $('approve-modal-ov').classList.remove('hidden');
+}
+
+function closeApproveModal(){
+  $('approve-modal').classList.add('hidden');
+  $('approve-modal-ov').classList.add('hidden');
+  LD.pendingEnrichId=null;LD.pendingPerson=null;
+}
+
+async function confirmEnrich(){
+  const idx=LD.pendingEnrichId,p=LD.pendingPerson;
+  if(idx===null||!p)return;
+  closeApproveModal();
+  const btn=$('lcard-btn-'+idx);
+  if(btn){btn.disabled=true;btn.innerHTML='&#8987; Fetching…';}
+  try{
+    const r=await fetch(`${SERVER}/api/leads/enrich`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:p.id,first_name:p.first_name,last_name:p.last_name,organization_name:p.company}),
+    });
+    const j=await r.json();
+    if(!r.ok){
+      if(btn){btn.disabled=false;btn.innerHTML='&#128275; Approve &amp; Reveal Contact';}
+      alert('Enrichment failed: '+(j.error||'Unknown error'));return;
+    }
+    const card=$('lcard-'+idx);if(card)card.classList.add('approved');
+    const contactDiv=$('lcard-contact-'+idx);
+    if(contactDiv){
+      const emailRow=j.email
+        ?'<div class="lc-contact-row"><span class="ck">Email</span><span class="cv">'+j.email+'</span></div>'
+        :'<div class="lc-contact-row"><span class="ck">Email</span><span class="cv" style="color:#94a3b8">Not available</span></div>';
+      const phoneRow=j.phone
+        ?'<div class="lc-contact-row"><span class="ck">Phone</span><span class="cv">'+j.phone+'</span></div>'
+        :'<div class="lc-contact-row"><span class="ck">Phone</span><span class="cv" style="color:#94a3b8">Not available</span></div>';
+      contactDiv.innerHTML=emailRow+phoneRow;
+      contactDiv.style.display='';
+    }
+    if(btn)btn.outerHTML='<span class="lc-approved-badge">&#9989; Contact Revealed</span>';
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='&#128275; Approve &amp; Reveal Contact';}
+    alert('Error: '+e.message);
+  }
+}
+
+$('am-confirm-btn').onclick=confirmEnrich;
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 $('synclog-unlock-btn').onclick=unlockSyncLog;

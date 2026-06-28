@@ -279,6 +279,102 @@ app.post('/api/sync/all', async (req, res) => {
   res.json(out);
 });
 
+// ── Sales Lead Digger — Apollo proxy ─────────────────────────────────────────
+
+const APOLLO_BASE = 'https://api.apollo.io/api/v1';
+
+const VERTICAL_PARAMS = {
+  logistics: {
+    person_titles: [
+      'Logistics Manager', 'Supply Chain Manager', 'Operations Director',
+      'Freight Manager', 'Procurement Manager', 'Warehouse Manager',
+      'Import Export Manager', 'General Manager', 'CEO', 'Managing Director',
+      'Head of Logistics', 'VP Operations', 'Freight Forwarder',
+    ],
+    q_organization_keyword_tags: ['logistics', 'freight forwarding', 'supply chain', 'warehousing', '3PL', 'shipping'],
+    description: 'Freight Forwarders, 3PL Providers & Direct Clients (warehousing/transport/freight)',
+  },
+  interior: {
+    person_titles: [
+      'Interior Designer', 'Architect', 'Interior Decorator',
+      'Principal Architect', 'Design Director', 'Creative Director',
+      'Interior Design Consultant', 'Senior Interior Designer',
+      'Project Architect', 'Renovation Consultant',
+    ],
+    q_organization_keyword_tags: ['interior design', 'architecture', 'furniture', 'home decor', 'interior styling', 'design studio'],
+    description: 'Interior Designers, Architects & Homeowners (interior styling & custom furnishings)',
+  },
+};
+
+async function apolloRequest(path, body) {
+  const key = process.env.APOLLO_API_KEY;
+  if (!key) throw new Error('APOLLO_API_KEY not configured — set it in your environment variables');
+  const res = await fetch(`${APOLLO_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`Apollo API error ${res.status}: ${txt}`);
+  }
+  return res.json();
+}
+
+app.post('/api/leads/search', async (req, res) => {
+  const { vertical = 'logistics', location = '', seniority = '', page = 1 } = req.body || {};
+  const vp = VERTICAL_PARAMS[vertical];
+  if (!vp) return res.status(400).json({ error: 'Unknown vertical. Use "logistics" or "interior".' });
+
+  const payload = {
+    per_page: 10,
+    page,
+    person_titles: vp.person_titles,
+    q_organization_keyword_tags: vp.q_organization_keyword_tags,
+  };
+
+  if (location) payload.organization_locations = [location];
+  if (seniority) payload.person_seniorities = [seniority.toLowerCase()];
+
+  try {
+    const data = await apolloRequest('/mixed_people/search', payload);
+    const people = (data.people || []).map(p => ({
+      id:           p.id,
+      name:         `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+      first_name:   p.first_name || '',
+      last_name:    p.last_name  || '',
+      title:        p.title || '',
+      company:      p.organization?.name || p.employment_history?.[0]?.organization_name || '',
+      location:     [p.city, p.state, p.country].filter(Boolean).join(', '),
+      linkedin_url: p.linkedin_url || '',
+      photo_url:    p.photo_url || '',
+      email_status: p.email_status || '',
+    }));
+    res.json({ people, total: data.pagination?.total_entries || people.length, vertical, description: vp.description });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/leads/enrich', async (req, res) => {
+  const { id, first_name, last_name, organization_name } = req.body || {};
+  if (!id && !first_name) return res.status(400).json({ error: 'Provide Apollo id or first_name' });
+  try {
+    const data = await apolloRequest('/people/match', {
+      id, first_name, last_name, organization_name,
+      reveal_personal_emails: false,
+    });
+    const p = data.person || {};
+    res.json({
+      email:  p.email || '',
+      phone:  p.sanitized_phone || p.phone_numbers?.[0]?.sanitized_number || '',
+      email_status: p.email_status || '',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Webhooks (for real-time push from Shopee / Lazada) ────────────────────────
 
 app.post('/webhook/shopee', (req, res) => {
