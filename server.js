@@ -42,14 +42,6 @@ app.get('/api/auth/status', (req, res) => {
   res.json({ authenticated: auth.validateToken(token) });
 });
 
-// ── Auth middleware — protects all /api/* routes below ────────────────────────
-
-app.use('/api', (req, res, next) => {
-  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  if (!auth.validateToken(token)) return res.status(401).json({ error: 'Unauthorized' });
-  next();
-});
-
 // ── Orders ────────────────────────────────────────────────────────────────────
 
 app.get('/api/orders', (req, res) => {
