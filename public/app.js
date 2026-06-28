@@ -33,12 +33,24 @@
   }
 
   // ── Login ──────────────────────────────────────────────────────────────────
+  let _loginCallback = null;
+
+  function requireLogin(cb) {
+    if (currentUser) { cb(); return; }
+    _loginCallback = cb;
+    document.getElementById('loginOverlay').classList.remove('hidden');
+    setTimeout(() => document.getElementById('loginName').focus(), 100);
+  }
+
   function initLogin() {
+    fetchAndRenderStats(); // always load stats — visible without login
     const stored = localStorage.getItem('wms_user');
     if (stored) {
       currentUser = JSON.parse(stored);
       showUserInHeader();
-      fetchAndRenderStats();
+      refreshOrders().then(() => {
+        if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
+      });
     } else {
       document.getElementById('loginOverlay').classList.remove('hidden');
     }
@@ -78,6 +90,7 @@
     localStorage.setItem('wms_user', JSON.stringify(currentUser));
     showUserInHeader();
     fetchAndRenderStats();
+    if (_loginCallback) { const fn = _loginCallback; _loginCallback = null; fn(); }
   }
 
   // ── PIN Lock ───────────────────────────────────────────────────────────────
@@ -223,6 +236,16 @@
           <div class="dstat-lbl">Avg Scan Time</div>
         </div>`;
       document.getElementById('dashStatsSection').classList.remove('hidden');
+      // Show live numbers on the login overlay for anyone who hasn't signed in yet
+      const liveEl = document.getElementById('loginLiveStats');
+      if (liveEl && s.totalOrders > 0) {
+        liveEl.innerHTML = `
+          <div class="llive-item"><span class="llive-val">${s.totalOrders}</span><span class="llive-lbl">Orders</span></div>
+          <div class="llive-item"><span class="llive-val">${s.todayPending}</span><span class="llive-lbl">Pending Today</span></div>
+          <div class="llive-item"><span class="llive-val">${s.yesterdayDone}</span><span class="llive-lbl">Done Yesterday</span></div>
+          <div class="llive-item"><span class="llive-val">${fmtMs(s.avgScanMs)}</span><span class="llive-lbl">Avg Scan Time</span></div>`;
+        liveEl.classList.remove('hidden');
+      }
     } catch {}
   }
 
@@ -278,7 +301,9 @@
 
   // ── Step 2: Confirm modal ──────────────────────────────────────────────────
   function showUploadConfirmModal(filename, preview) {
-    const clientName = document.getElementById('clientNameInput').value.trim();
+    const fromFile = (preview.clientName || '').trim();
+    if (fromFile) document.getElementById('clientNameInput').value = fromFile;
+    const clientName = fromFile || document.getElementById('clientNameInput').value.trim();
     document.getElementById('confirmFileName').textContent    = filename;
     document.getElementById('confirmClientName').textContent  = clientName || '(not specified)';
     document.getElementById('confirmOrderCount').textContent  = preview.orderCount;
@@ -361,9 +386,12 @@
       loadedOrders = data.orders;
       activeOrder  = null;
 
-      const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
-      setUploadStatus('success',
-        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}". WMS file emailed to ${emailTo}.${pdfMsg}`
+      const pdfMsg   = pdfFile ? ' Waybill PDF is being split in the background.' : '';
+      const emailMsg = data.emailSent
+        ? ` WMS emailed to ${emailTo}.`
+        : ` Email not sent: ${data.emailError || 'unknown error'}.`;
+      setUploadStatus(data.emailSent ? 'success' : 'warning',
+        `Loaded ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
       );
       renderUploadList(data.orders);
       renderBreakdowns(data.orders);
@@ -586,6 +614,7 @@
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
   function openScanOverlay(orderNumber) {
+    if (!currentUser) { requireLogin(() => openScanOverlay(orderNumber)); return; }
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
     if (!ord) return;
     activeOrder = ord;
@@ -937,7 +966,73 @@
   async function openLogOverlay() {
     document.getElementById('logOverlay').classList.remove('hidden');
     document.body.classList.add('log-open');
+    renderMasterActions();
     await renderLogContent();
+  }
+
+  function renderMasterActions() {
+    document.getElementById('masterActionsSection').classList.remove('hidden');
+  }
+
+  // Master: export status report
+  document.getElementById('masterExportBtn').addEventListener('click', async () => {
+    try {
+      const resp = await fetch('/api/master/export-status', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!resp.ok) { alert('Export failed'); return; }
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = `IDEALSCAN_Status_${new Date().toISOString().slice(0,10)}.xlsx`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch (err) { alert(err.message); }
+  });
+
+  // Master: reset all data
+  document.getElementById('masterResetBtn').addEventListener('click', async () => {
+    if (!confirm('MASTER RESET — permanently delete ALL batches, orders, and WMS files?')) return;
+    if (!confirm('This cannot be undone. Confirm?')) return;
+    try {
+      const resp = await fetch('/api/master/reset', { method: 'POST', headers: { 'x-master-key': LOG_PASSWORD } });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error); return; }
+      loadedOrders = [];
+      SESSION_ID   = '';
+      sessionStorage.clear();
+      document.getElementById('logOverlay').classList.add('hidden');
+      document.body.classList.remove('log-open');
+      fetchAndRenderStats();
+      renderOrdersDash();
+      alert('All data cleared.');
+    } catch (err) { alert(err.message); }
+  });
+
+  // Master: upload new picklist
+  const masterFileInput = document.getElementById('masterFileInput');
+  document.getElementById('masterBrowseBtn').addEventListener('click', e => { e.stopPropagation(); masterFileInput.click(); });
+  document.getElementById('masterDropZone').addEventListener('click', () => masterFileInput.click());
+  document.getElementById('masterDropZone').addEventListener('dragover', e => { e.preventDefault(); document.getElementById('masterDropZone').classList.add('dragover'); });
+  document.getElementById('masterDropZone').addEventListener('dragleave', () => document.getElementById('masterDropZone').classList.remove('dragover'));
+  document.getElementById('masterDropZone').addEventListener('drop', e => {
+    e.preventDefault(); document.getElementById('masterDropZone').classList.remove('dragover');
+    if (e.dataTransfer.files[0]) masterPreviewFile(e.dataTransfer.files[0]);
+  });
+  masterFileInput.addEventListener('change', () => { if (masterFileInput.files[0]) masterPreviewFile(masterFileInput.files[0]); });
+
+  async function masterPreviewFile(file) {
+    const statusEl = document.getElementById('masterUploadStatus');
+    statusEl.className = 'status-bar loading'; statusEl.textContent = `Parsing ${file.name}…`; statusEl.classList.remove('hidden');
+    const form = new FormData(); form.append('orderFile', file);
+    try {
+      const resp    = await fetch('/api/preview', { method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: form });
+      const preview = await resp.json();
+      statusEl.classList.add('hidden');
+      // Reuse main confirm modal
+      pendingOrderFile = file;
+      document.getElementById('clientNameInput').value = '';
+      showUploadConfirmModal(file.name, preview);
+    } catch (err) {
+      statusEl.className = 'status-bar error'; statusEl.textContent = err.message;
+    }
   }
 
   async function renderLogContent() {

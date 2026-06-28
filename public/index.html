@@ -38,6 +38,7 @@
           <div class="login-brand-sub">United Logistics &amp; Distribution</div>
         </div>
       </div>
+      <div id="loginLiveStats" class="login-live-stats hidden"></div>
       <h2>Sign In</h2>
       <p class="hint">Enter your details to continue</p>
       <div class="form-group">
@@ -144,6 +145,25 @@
       <button class="back-btn" id="closeLogBtn">&#10005; Close</button>
     </div>
     <p class="hint" style="padding:.4rem 1.25rem .6rem">All uploaded batches. Click WMS to download.</p>
+
+    <!-- Master Actions (shown after password unlock) -->
+    <div id="masterActionsSection" class="master-actions hidden">
+      <div class="master-actions-title">&#128274; Master Actions</div>
+      <div class="master-actions-btns">
+        <button class="btn-secondary" id="masterExportBtn">&#8681; Export Status Report</button>
+        <button class="btn-danger"    id="masterResetBtn">&#128465; Master Reset</button>
+      </div>
+      <div class="master-upload-wrap">
+        <div class="master-upload-label">Upload New Picklist</div>
+        <div class="upload-area upload-area-sm" id="masterDropZone">
+          <input type="file" id="masterFileInput" accept=".xlsx,.xls,.csv" hidden />
+          <div class="upload-icon" style="font-size:1.4rem">&#8679;</div>
+          <p style="font-size:.82rem">Drag &amp; drop XLSX / CSV or <button class="link-btn" id="masterBrowseBtn">browse</button></p>
+        </div>
+        <div id="masterUploadStatus" class="status-bar hidden"></div>
+      </div>
+    </div>
+
     <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>
     <div id="logOverlayList" style="padding:0 1.25rem 3rem"></div>
   </div>

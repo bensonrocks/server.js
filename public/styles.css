@@ -132,6 +132,7 @@ code { background: #f1f5f9; padding: .1em .35em; border-radius: 4px; font-size: 
 .status-bar.success { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .status-bar.error   { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
 .status-bar.loading { background: #eff6ff; color: var(--primary); border: 1px solid #bfdbfe; }
+.status-bar.warning { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
 
 /* ── Buttons ── */
 .btn-primary {
@@ -970,6 +971,56 @@ body.log-open { overflow: hidden; }
   border-radius: 6px; padding: .6rem .85rem;
   font-size: .82rem; color: var(--warning); margin-top: .75rem;
   list-style: disc inside;
+}
+
+/* ════════════════════════════════════════════════════
+   LOGIN LIVE STATS — shown on the login box before sign-in
+   ════════════════════════════════════════════════════ */
+.login-live-stats {
+  display: flex;
+  justify-content: space-around;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: .6rem .5rem;
+  margin-bottom: 1.1rem;
+  gap: .25rem;
+}
+.llive-item {
+  display: flex; flex-direction: column; align-items: center; flex: 1;
+}
+.llive-val {
+  font-size: 1.15rem; font-weight: 800; color: var(--primary); line-height: 1.2;
+}
+.llive-lbl {
+  font-size: .6rem; color: var(--text-light); text-align: center;
+  text-transform: uppercase; letter-spacing: .04em; margin-top: .1rem;
+}
+
+/* ════════════════════════════════════════════════════
+   MASTER ACTIONS — inside log overlay
+   ════════════════════════════════════════════════════ */
+.master-actions {
+  margin: 0 1.25rem .75rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+.master-actions-title {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--danger); margin-bottom: .75rem;
+}
+.master-actions-btns {
+  display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .9rem;
+}
+.master-upload-wrap { margin-top: .75rem; }
+.master-upload-label {
+  font-size: .75rem; font-weight: 600; color: var(--text); margin-bottom: .4rem;
+}
+.upload-area-sm {
+  padding: .8rem 1rem;
+  min-height: unset;
 }
 
 /* ════════════════════════════════════════════════════

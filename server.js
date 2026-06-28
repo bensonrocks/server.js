@@ -37,7 +37,8 @@ function writeDb(data) {
 async function sendWmsEmail(batch, wmsBuffer, orders, emailTo) {
   const { EMAIL_USER, EMAIL_PASS, SMTP_HOST, SMTP_PORT } = process.env;
   const recipient = emailTo || process.env.EMAIL_TO;
-  if (!EMAIL_USER || !EMAIL_PASS || !recipient) return;
+  if (!EMAIL_USER || !EMAIL_PASS) throw new Error('Email not configured — set EMAIL_USER and EMAIL_PASS env vars');
+  if (!recipient) throw new Error('No recipient email address provided');
 
   const transporter = nodemailer.createTransport({
     host: SMTP_HOST || 'smtp.gmail.com',
@@ -106,6 +107,7 @@ function mapClientRow(row) {
   return {
     order_number:     String(n.ref ?? n.order_number ?? n.order_no ?? 'UNKNOWN'),
     customer_name:    String(n.customer_name ?? ''),
+    client_name:      String(n.client_name ?? n.client ?? n.merchant ?? ''),
     tel:              String(n.tel ?? ''),
     delivery_address: String(n.delivery_address ?? ''),
     waybill_number:   String(n.tracking_number ?? n.waybill_number ?? n.waybill ?? ''),
@@ -298,9 +300,10 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       skipped = all.length - allRows.length;
     }
 
-    const orders = summarizeOrders(allRows);
-    const errors = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
-    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0 });
+    const orders    = summarizeOrders(allRows);
+    const errors    = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
+    const clientName = allRows.find(r => r.client_name)?.client_name || '';
+    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName });
   } catch (err) {
     res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
   }
@@ -324,10 +327,11 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const session   = getSession(sessionId);
     const orders    = summarizeOrders(mapped);
-    const wmsBuffer = generateBeTimeXLSX(orders);
-    const batchId   = uuidv4();
-    const clientName = (req.body?.client_name || '').trim();
-    const emailTo    = (req.body?.email_to    || '').trim();
+    const wmsBuffer  = generateBeTimeXLSX(orders);
+    const batchId    = uuidv4();
+    const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
+    const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
+    const emailTo    = (req.body?.email_to || '').trim();
 
     const batch = {
       id: batchId, filename: orderFile.originalname,
@@ -385,9 +389,16 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    sendWmsEmail(batch, wmsBuffer, orders, emailTo).catch(err => console.error('[email]', err.message));
+    let emailSent = false, emailError = '';
+    try {
+      await sendWmsEmail(batch, wmsBuffer, orders, emailTo);
+      emailSent = true;
+    } catch (err) {
+      console.error('[email]', err.message);
+      emailError = err.message;
+    }
 
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: ordersWithState(session) });
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: ordersWithState(session), emailSent, emailError });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -555,6 +566,83 @@ app.post('/api/scan/reset', (req, res) => {
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
   session.scanStates[orderNumber] = { status: 'pending', scanned: {} };
   res.json({ ok: true });
+});
+
+// ── Public stats (no auth needed) ──────────────────────────────────────────
+// /api/stats already has no auth — it's used on page load before login.
+
+// ── Public orders (no auth) — read-only snapshot from DB ───────────────────
+app.get('/api/public/orders', (_req, res) => {
+  const db = readDb();
+  const result = [];
+  for (const batch of db.batches) {
+    const states = batch.orderStates || {};
+    for (const ord of (batch.orders || [])) {
+      const state = states[ord.order_number] || { status: 'pending', scanned: {} };
+      result.push({
+        ...ord,
+        client_name: batch.client_name || '',
+        scan_status: state.status || 'pending',
+        scanned: state.scanned || {},
+        batchId: batch.id,
+        has_waybill_pdf: fs.existsSync(path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`)),
+      });
+    }
+  }
+  res.json(result);
+});
+
+// ── Master endpoints (password-protected) ───────────────────────────────────
+const MASTER_PASS = process.env.MASTER_KEY || '201432547E';
+
+function checkMaster(req, res) {
+  if (req.headers['x-master-key'] !== MASTER_PASS) {
+    res.status(403).json({ error: 'Forbidden' }); return false;
+  }
+  return true;
+}
+
+app.get('/api/master/export-status', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db   = readDb();
+  const rows = [['Batch File','Client','Uploaded','Order No','Customer','Carrier','Waybill','Total Qty','Status','Scanned Qty','Start Time','End Time','Operator']];
+  for (const batch of db.batches) {
+    const states  = batch.orderStates || {};
+    const dateStr = new Date(batch.uploaded_at).toLocaleString();
+    for (const ord of (batch.orders || [])) {
+      const state        = states[ord.order_number] || {};
+      const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+      rows.push([
+        batch.filename, batch.client_name || '', dateStr,
+        ord.order_number, ord.customer_name || '', ord.carrier || '', ord.waybill_number || '',
+        ord.total_qty || 0, state.status || 'pending', scannedTotal,
+        state.startTime || '', state.endTime || '', state.operator || '',
+      ]);
+    }
+  }
+  const wb  = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Status');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="IDEALSCAN_Status_${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.end(buf);
+});
+
+app.post('/api/master/reset', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  try {
+    writeDb({ batches: [] });
+    for (const k of Object.keys(sessions)) delete sessions[k];
+    for (const f of fs.readdirSync(WMS_DIR))
+      try { fs.unlinkSync(path.join(WMS_DIR, f)); } catch {}
+    for (const d of fs.readdirSync(WAYBILL_DIR)) {
+      const dp = path.join(WAYBILL_DIR, d);
+      try { fs.rmSync(dp, { recursive: true, force: true }); } catch {}
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
