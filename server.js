@@ -6,9 +6,6 @@ const Parser     = require('rss-parser');
 const http       = require('http');
 const path       = require('path');
 const fs         = require('fs');
-const TICKER_DB  = require('./tickers');
-const { SEED, nextDrip } = require('./seed_articles');
-const { generateBrief, setTickerDB } = require('./brief');
 
 const app    = express();
 const server = http.createServer(app);
@@ -21,6 +18,490 @@ const PORT          = process.env.PORT || 3000;
 const POLL_INTERVAL = 2 * 60 * 1000; // 2 min
 const MAX_ARTICLES  = 600;
 const DATA_FILE     = path.join(__dirname, 'data.json');
+
+// ─── Ticker Database ──────────────────────────────────────────────────────────
+const TICKER_DB = {
+  // ── US TECH ──────────────────────────────────────────────────────────────
+  'AAPL':    { name: 'Apple',            market: 'stocks', exchange: 'NASDAQ', terms: ['apple', 'iphone', 'ipad', 'macbook', 'app store', 'tim cook', 'airpods', 'apple watch', 'vision pro', 'cupertino'] },
+  'MSFT':    { name: 'Microsoft',        market: 'stocks', exchange: 'NASDAQ', terms: ['microsoft', 'azure', 'windows', 'xbox', 'satya nadella', 'openai', 'copilot', 'bing', 'teams', 'linkedin'] },
+  'GOOGL':   { name: 'Alphabet/Google',  market: 'stocks', exchange: 'NASDAQ', terms: ['google', 'alphabet', 'youtube', 'android', 'gemini', 'sundar pichai', 'waymo', 'deepmind', 'google cloud'] },
+  'AMZN':    { name: 'Amazon',           market: 'stocks', exchange: 'NASDAQ', terms: ['amazon', 'aws', 'andy jassy', 'prime', 'alexa', 'amazon web services'] },
+  'NVDA':    { name: 'Nvidia',           market: 'stocks', exchange: 'NASDAQ', terms: ['nvidia', 'gpu', 'jensen huang', 'cuda', 'h100', 'blackwell', 'hopper', 'geforce', 'rtx', 'ai chip', 'data center chip'] },
+  'META':    { name: 'Meta',             market: 'stocks', exchange: 'NASDAQ', terms: ['meta', 'facebook', 'instagram', 'whatsapp', 'mark zuckerberg', 'metaverse', 'threads', 'oculus'] },
+  'TSLA':    { name: 'Tesla',            market: 'stocks', exchange: 'NASDAQ', terms: ['tesla', 'elon musk', 'electric vehicle', 'ev', 'cybertruck', 'autopilot', 'full self driving', 'gigafactory', 'powerwall'] },
+  'AMD':     { name: 'AMD',              market: 'stocks', exchange: 'NASDAQ', terms: ['amd', 'advanced micro devices', 'ryzen', 'radeon', 'lisa su', 'epyc', 'instinct'] },
+  'INTC':    { name: 'Intel',            market: 'stocks', exchange: 'NASDAQ', terms: ['intel', 'pat gelsinger', 'intel foundry', 'core processor', 'gaudi'] },
+  'NFLX':    { name: 'Netflix',          market: 'stocks', exchange: 'NASDAQ', terms: ['netflix', 'streaming service', 'reed hastings', 'ted sarandos'] },
+  'ORCL':    { name: 'Oracle',           market: 'stocks', exchange: 'NYSE',   terms: ['oracle', 'larry ellison', 'oracle cloud', 'java', 'oracle database'] },
+  'CRM':     { name: 'Salesforce',       market: 'stocks', exchange: 'NYSE',   terms: ['salesforce', 'marc benioff', 'slack', 'salesforce crm'] },
+  'ADBE':    { name: 'Adobe',            market: 'stocks', exchange: 'NASDAQ', terms: ['adobe', 'photoshop', 'creative cloud', 'firefly ai', 'acrobat'] },
+  'PLTR':    { name: 'Palantir',         market: 'stocks', exchange: 'NYSE',   terms: ['palantir', 'alex karp', 'gotham', 'foundry platform', 'aip palantir'] },
+  'COIN':    { name: 'Coinbase',         market: 'stocks', exchange: 'NASDAQ', terms: ['coinbase', 'brian armstrong', 'base network coinbase'] },
+  'SNOW':    { name: 'Snowflake',        market: 'stocks', exchange: 'NYSE',   terms: ['snowflake', 'sridhar ramaswamy', 'snowflake cloud', 'data cloud'] },
+  'UBER':    { name: 'Uber',             market: 'stocks', exchange: 'NYSE',   terms: ['uber', 'dara khosrowshahi', 'rideshare', 'uber eats'] },
+  'ABNB':    { name: 'Airbnb',           market: 'stocks', exchange: 'NASDAQ', terms: ['airbnb', 'brian chesky', 'short-term rental', 'vacation rental'] },
+  'RBLX':    { name: 'Roblox',           market: 'stocks', exchange: 'NYSE',   terms: ['roblox', 'david baszucki', 'roblox platform'] },
+  'SNAP':    { name: 'Snap',             market: 'stocks', exchange: 'NYSE',   terms: ['snap', 'snapchat', 'evan spiegel', 'spectacles snap'] },
+
+  // ── US FINANCE ────────────────────────────────────────────────────────────
+  'JPM':     { name: 'JPMorgan Chase',   market: 'stocks', exchange: 'NYSE',   terms: ['jpmorgan', 'jp morgan', 'jamie dimon', 'chase bank'] },
+  'BAC':     { name: 'Bank of America',  market: 'stocks', exchange: 'NYSE',   terms: ['bank of america', 'bofa', 'brian moynihan'] },
+  'GS':      { name: 'Goldman Sachs',    market: 'stocks', exchange: 'NYSE',   terms: ['goldman sachs', 'david solomon', 'goldman'] },
+  'MS':      { name: 'Morgan Stanley',   market: 'stocks', exchange: 'NYSE',   terms: ['morgan stanley', 'ted pick', 'james gorman'] },
+  'V':       { name: 'Visa',             market: 'stocks', exchange: 'NYSE',   terms: ['visa', 'visa card', 'visa payments', 'ryan mcinerney'] },
+  'MA':      { name: 'Mastercard',       market: 'stocks', exchange: 'NYSE',   terms: ['mastercard', 'master card', 'michael miebach'] },
+  'PYPL':    { name: 'PayPal',           market: 'stocks', exchange: 'NASDAQ', terms: ['paypal', 'venmo', 'alex chriss', 'buy now pay later'] },
+  'SQ':      { name: 'Block/Square',     market: 'stocks', exchange: 'NYSE',   terms: ['block inc', 'square payments', 'jack dorsey', 'cash app', 'afterpay'] },
+
+  // ── US ENERGY ──────────────────────────────────────────────────────────────
+  'XOM':     { name: 'ExxonMobil',       market: 'stocks', exchange: 'NYSE',   terms: ['exxon', 'exxonmobil', 'darren woods'] },
+  'CVX':     { name: 'Chevron',          market: 'stocks', exchange: 'NYSE',   terms: ['chevron', 'mike wirth', 'chevron corp'] },
+
+  // ── US EV / AUTO ──────────────────────────────────────────────────────────
+  'F':       { name: 'Ford',             market: 'stocks', exchange: 'NYSE',   terms: ['ford motor', 'mustang', 'f-150', 'jim farley ford'] },
+  'GM':      { name: 'General Motors',   market: 'stocks', exchange: 'NYSE',   terms: ['general motors', 'mary barra', 'chevy', 'chevrolet', 'cadillac'] },
+  'RIVN':    { name: 'Rivian',           market: 'stocks', exchange: 'NASDAQ', terms: ['rivian', 'rj scaringe', 'rivian truck'] },
+
+  // ── MEME / POPULAR ─────────────────────────────────────────────────────────
+  'GME':     { name: 'GameStop',         market: 'stocks', exchange: 'NYSE',   terms: ['gamestop', 'gme', 'roaring kitty', 'ryan cohen', 'meme stock'] },
+  'AMC':     { name: 'AMC Entertainment',market: 'stocks', exchange: 'NYSE',   terms: ['amc entertainment', 'adam aron', 'amc theaters'] },
+  'HOOD':    { name: 'Robinhood',        market: 'stocks', exchange: 'NASDAQ', terms: ['robinhood', 'vlad tenev', 'robinhood markets'] },
+
+  // ── US HEALTHCARE ──────────────────────────────────────────────────────────
+  'MRNA':    { name: 'Moderna',          market: 'stocks', exchange: 'NASDAQ', terms: ['moderna', 'mrna vaccine', 'stephane bancel'] },
+  'PFE':     { name: 'Pfizer',           market: 'stocks', exchange: 'NYSE',   terms: ['pfizer', 'albert bourla', 'paxlovid'] },
+  'JNJ':     { name: 'J&J',             market: 'stocks', exchange: 'NYSE',   terms: ['johnson & johnson', 'j&j', 'joaquin duato'] },
+  'LLY':     { name: 'Eli Lilly',        market: 'stocks', exchange: 'NYSE',   terms: ['eli lilly', 'ozempic', 'mounjaro', 'tirzepatide', 'glp-1', 'weight loss drug', 'david ricks'] },
+  'NVO':     { name: 'Novo Nordisk',     market: 'stocks', exchange: 'NYSE',   terms: ['novo nordisk', 'ozempic', 'wegovy', 'semaglutide', 'glp-1'] },
+
+  // ── US DEFENSE ─────────────────────────────────────────────────────────────
+  'BA':      { name: 'Boeing',           market: 'stocks', exchange: 'NYSE',   terms: ['boeing', 'kelly ortberg', '737 max', '787 dreamliner'] },
+  'LMT':     { name: 'Lockheed Martin',  market: 'stocks', exchange: 'NYSE',   terms: ['lockheed martin', 'f-35', 'james taiclet'] },
+  'RTX':     { name: 'RTX Corp',         market: 'stocks', exchange: 'NYSE',   terms: ['rtx', 'raytheon', 'pratt & whitney', 'collins aerospace'] },
+
+  // ── CRYPTO ────────────────────────────────────────────────────────────────
+  'BTC':     { name: 'Bitcoin',          market: 'crypto', terms: ['bitcoin', 'btc', 'satoshi', 'halving', 'lightning network', 'cryptocurrency', 'digital gold', 'spot bitcoin etf', 'bitcoin etf'] },
+  'ETH':     { name: 'Ethereum',         market: 'crypto', terms: ['ethereum', 'eth', 'defi', 'vitalik buterin', 'smart contract', 'staking ethereum', 'layer 2', 'eip ethereum'] },
+  'BNB':     { name: 'BNB/Binance',      market: 'crypto', terms: ['bnb', 'binance', 'cz binance', 'richard teng', 'bsc', 'binance smart chain'] },
+  'SOL':     { name: 'Solana',           market: 'crypto', terms: ['solana', 'sol crypto', 'anatoly yakovenko', 'solana network'] },
+  'XRP':     { name: 'XRP/Ripple',       market: 'crypto', terms: ['xrp', 'ripple', 'brad garlinghouse', 'ripple labs', 'ripple sec'] },
+  'ADA':     { name: 'Cardano',          market: 'crypto', terms: ['cardano', 'ada crypto', 'charles hoskinson'] },
+  'DOGE':    { name: 'Dogecoin',         market: 'crypto', terms: ['dogecoin', 'doge', 'meme coin'] },
+  'AVAX':    { name: 'Avalanche',        market: 'crypto', terms: ['avalanche', 'avax', 'emin gün sirer', 'avalanche blockchain'] },
+  'MATIC':   { name: 'Polygon',          market: 'crypto', terms: ['polygon', 'matic', 'sandeep nailwal', 'polygon network'] },
+  'DOT':     { name: 'Polkadot',         market: 'crypto', terms: ['polkadot', 'dot crypto', 'gavin wood', 'parachain'] },
+  'LINK':    { name: 'Chainlink',        market: 'crypto', terms: ['chainlink', 'link crypto', 'sergey nazarov', 'oracle network chainlink'] },
+  'TON':     { name: 'Toncoin',          market: 'crypto', terms: ['toncoin', 'ton crypto', 'telegram open network'] },
+  'SHIB':    { name: 'Shiba Inu',        market: 'crypto', terms: ['shiba inu', 'shib', 'shibarium'] },
+  'LTC':     { name: 'Litecoin',         market: 'crypto', terms: ['litecoin', 'ltc', 'charlie lee litecoin'] },
+  'UNI':     { name: 'Uniswap',          market: 'crypto', terms: ['uniswap', 'uni crypto', 'dex swap', 'decentralized exchange uniswap'] },
+  'APT':     { name: 'Aptos',            market: 'crypto', terms: ['aptos', 'apt crypto', 'aptos blockchain'] },
+  'ARB':     { name: 'Arbitrum',         market: 'crypto', terms: ['arbitrum', 'arb crypto', 'layer 2 arbitrum'] },
+  'OP':      { name: 'Optimism',         market: 'crypto', terms: ['optimism', 'op crypto', 'optimism network'] },
+
+  // ── FOREX ─────────────────────────────────────────────────────────────────
+  'EURUSD':  { name: 'EUR/USD',          market: 'forex', terms: ['eur/usd', 'eurusd', 'euro dollar', 'european central bank', 'ecb rate', 'ecb decision', 'eurozone inflation', 'lagarde ecb', 'eurozone gdp'] },
+  'GBPUSD':  { name: 'GBP/USD',          market: 'forex', terms: ['gbp/usd', 'gbpusd', 'pound dollar', 'sterling', 'bank of england', 'boe rate', 'uk inflation', 'andrew bailey', 'uk economy'] },
+  'USDJPY':  { name: 'USD/JPY',          market: 'forex', terms: ['usd/jpy', 'usdjpy', 'dollar yen', 'yen', 'bank of japan', 'boj rate', 'japan inflation', 'ueda boj', 'forex intervention', 'yen weakens', 'yen strengthens'] },
+  'AUDUSD':  { name: 'AUD/USD',          market: 'forex', terms: ['aud/usd', 'audusd', 'aussie dollar', 'australian dollar', 'rba rate', 'reserve bank australia', 'australia inflation', 'australia gdp'] },
+  'USDCAD':  { name: 'USD/CAD',          market: 'forex', terms: ['usd/cad', 'usdcad', 'loonie', 'canadian dollar', 'bank of canada', 'boc rate', 'canada economy'] },
+  'USDCHF':  { name: 'USD/CHF',          market: 'forex', terms: ['usd/chf', 'usdchf', 'swiss franc', 'snb rate', 'swiss national bank'] },
+  'NZDUSD':  { name: 'NZD/USD',          market: 'forex', terms: ['nzd/usd', 'nzdusd', 'kiwi dollar', 'new zealand dollar', 'rbnz rate'] },
+  'USDSGD':  { name: 'USD/SGD',          market: 'forex', terms: ['usd/sgd', 'singapore dollar', 'mas rate', 'monetary authority singapore', 'sgd exchange'] },
+  'GBPJPY':  { name: 'GBP/JPY',          market: 'forex', terms: ['gbp/jpy', 'gbpjpy', 'pound yen', 'sterling yen'] },
+  'USDHKD':  { name: 'USD/HKD',          market: 'forex', terms: ['usd/hkd', 'hong kong dollar', 'hkma', 'hkd peg'] },
+  'USDCNH':  { name: 'USD/CNH',          market: 'forex', terms: ['usd/cnh', 'yuan', 'renminbi', 'pboc', 'peoples bank of china', 'china currency'] },
+
+  // ── COMMODITIES ────────────────────────────────────────────────────────────
+  'GOLD':    { name: 'Gold (XAU)',        market: 'commodities', terms: ['gold price', 'xau', 'precious metal', 'safe haven gold', 'bullion', 'spot gold', 'comex gold', 'gold futures', 'gold rally'] },
+  'SILVER':  { name: 'Silver (XAG)',      market: 'commodities', terms: ['silver price', 'xag', 'silver futures', 'silver rally', 'comex silver'] },
+  'OIL':     { name: 'WTI Crude Oil',     market: 'commodities', terms: ['crude oil', 'wti crude', 'oil price', 'opec', 'opec+', 'petroleum', 'barrel oil', 'oil futures', 'energy prices', 'brent crude'] },
+  'NATGAS':  { name: 'Natural Gas',       market: 'commodities', terms: ['natural gas', 'lng', 'natgas', 'henry hub', 'gas prices', 'liquefied natural gas'] },
+  'COPPER':  { name: 'Copper',            market: 'commodities', terms: ['copper price', 'comex copper', 'dr copper', 'copper demand'] },
+  'WHEAT':   { name: 'Wheat',             market: 'commodities', terms: ['wheat price', 'wheat futures', 'grain prices', 'cbot wheat'] },
+  'CORN':    { name: 'Corn',              market: 'commodities', terms: ['corn price', 'corn futures', 'maize', 'cbot corn'] },
+  'PLATINUM':{ name: 'Platinum',          market: 'commodities', terms: ['platinum price', 'pgm', 'platinum group metals', 'palladium'] },
+
+  // ── INDICES ────────────────────────────────────────────────────────────────
+  'SPX':     { name: 'S&P 500',           market: 'indices', terms: ['s&p 500', 'sp500', 's&p500', 'spx', 'spy etf', 'wall street rally', 'us stocks rally', 'federal reserve', 'fed rate', 'powell fed', 'us economy', 'american economy', 'inflation data us'] },
+  'NDX':     { name: 'Nasdaq 100',        market: 'indices', terms: ['nasdaq 100', 'ndx', 'qqq', 'tech stocks rally', 'nasdaq composite', 'nasdaq rally'] },
+  'DJI':     { name: 'Dow Jones',         market: 'indices', terms: ['dow jones', 'dow', 'djia', 'blue chip stocks'] },
+  'RUT':     { name: 'Russell 2000',      market: 'indices', terms: ['russell 2000', 'small cap stocks', 'iwm', 'small caps'] },
+  'VIX':     { name: 'VIX Volatility',    market: 'indices', terms: ['vix', 'volatility index', 'fear index', 'market volatility', 'cboe vix'] },
+  'FTSE':    { name: 'FTSE 100',          market: 'indices', terms: ['ftse 100', 'ftse100', 'london stock exchange', 'uk stocks', 'footsie'] },
+  'DAX':     { name: 'DAX',               market: 'indices', terms: ['dax index', 'german stocks', 'frankfurt stock', 'germany economy'] },
+  'N225':    { name: 'Nikkei 225',        market: 'indices', terms: ['nikkei', 'nikkei 225', 'japan stocks', 'topix', 'tokyo stock exchange'] },
+  'HSI':     { name: 'Hang Seng',         market: 'indices', terms: ['hang seng', 'hsi', 'hong kong stocks', 'hkex', 'hong kong market'] },
+  'STI':     { name: 'STI (Singapore)',   market: 'indices', terms: ['sti index', 'straits times index', 'sgx', 'singapore exchange', 'singapore stocks', 'singapore market'] },
+  'ASX200':  { name: 'ASX 200',           market: 'indices', terms: ['asx 200', 'asx200', 'australia stocks', 'australian market', 'asx market'] },
+  'CSI300':  { name: 'CSI 300 (China)',   market: 'indices', terms: ['csi 300', 'china stocks', 'a-shares', 'shanghai composite', 'shenzhen', 'chinese market'] },
+
+  // ── SGX STOCKS ─────────────────────────────────────────────────────────────
+  'D05':     { name: 'DBS Bank',          market: 'stocks', exchange: 'SGX', terms: ['dbs bank', 'dbs group', 'piyush gupta', 'dbs digital'] },
+  'O39':     { name: 'OCBC Bank',         market: 'stocks', exchange: 'SGX', terms: ['ocbc', 'ocbc bank', 'helen wong ocbc', 'great eastern life'] },
+  'U11':     { name: 'UOB Bank',          market: 'stocks', exchange: 'SGX', terms: ['uob', 'united overseas bank', 'wee ee cheong'] },
+  'C6L':     { name: 'Singapore Airlines',market: 'stocks', exchange: 'SGX', terms: ['singapore airlines', 'sia', 'scoot airline', 'sia engineering'] },
+  'Z74':     { name: 'Singtel',           market: 'stocks', exchange: 'SGX', terms: ['singtel', 'singapore telecommunications', 'optus', 'airtel india'] },
+  'C31':     { name: 'CapitaLand Invest.',market: 'stocks', exchange: 'SGX', terms: ['capitaland', 'cli', 'capitaland investment'] },
+  'G13':     { name: 'Genting Singapore', market: 'stocks', exchange: 'SGX', terms: ['genting singapore', 'resorts world sentosa', 'rws casino'] },
+  'BN4':     { name: 'Keppel Corp',       market: 'stocks', exchange: 'SGX', terms: ['keppel', 'keppel corporation', 'keppel offshore'] },
+  'F34':     { name: 'Wilmar International',market:'stocks', exchange: 'SGX', terms: ['wilmar', 'wilmar international', 'kuok group', 'palm oil wilmar'] },
+};
+
+// ─── Seed Articles ────────────────────────────────────────────────────────────
+function ago(minutes) {
+  return new Date(Date.now() - minutes * 60 * 1000).toISOString();
+}
+
+const SEED = [
+  // ── MACRO / FED ────────────────────────────────────────────────────────────
+  { title: "Fed Minutes Signal Rate Cut Possible in September If Inflation Keeps Cooling", summary: "Federal Reserve minutes released Wednesday show officials see conditions for a rate cut building, contingent on two more months of declining CPI data. Powell emphasized the committee is 'not in a hurry' but noted risks have become 'more balanced.' Markets are pricing in a 68% chance of a September cut.", source: "MarketWatch", sourceMkt: "general", url: "https://marketwatch.com/fed-minutes-sept-cut", publishedAt: ago(18) },
+  { title: "US CPI April: Inflation Cools to 2.8% YoY, Core at 3.1% — Below Expectations", summary: "April CPI came in at 2.8% year-over-year, below the 2.9% consensus. Core CPI at 3.1% also beat expectations. Shelter costs rose 0.3% MoM, the slowest pace in two years. The dollar weakened and Treasuries rallied on the print.", source: "CNBC", sourceMkt: "general", url: "https://cnbc.com/cpi-april-2026", publishedAt: ago(6) },
+  { title: "US GDP Q1 Final Revision: Economy Grew 2.4%, Better Than Preliminary 2.1%", summary: "The final Q1 GDP revision showed the US economy expanded at a 2.4% annualized pace, upgraded from the preliminary 2.1% estimate. Consumer spending and business investment were the primary drivers. Recession fears fade further after the upward revision.", source: "Reuters Business", sourceMkt: "general", url: "https://reuters.com/gdp-q1-final", publishedAt: ago(54) },
+  { title: "Nonfarm Payrolls Add 215K Jobs in April, Unemployment Holds at 3.9%", summary: "April jobs report came in slightly above consensus of 200K. Wage growth eased to 3.8% YoY from 4.1% previously, a development welcomed by the Fed. Healthcare and construction led gains. The report reinforces a soft-landing narrative.", source: "WSJ Markets", sourceMkt: "general", url: "https://wsj.com/jobs-april-2026", publishedAt: ago(120) },
+
+  // ── US EQUITIES — EARNINGS & MOVERS ────────────────────────────────────────
+  { title: "Nvidia Q1 Revenue Surges 78% to $47.2B, EPS Beats by 23 Cents — Stock Rallies 8%", summary: "Nvidia reported Q1 2026 revenue of $47.2B, up 78% YoY, crushing the $44.8B consensus. Data Center segment alone generated $39.1B. CEO Jensen Huang said Blackwell GPU demand 'far exceeds supply' and raised full-year guidance. Shares jumped 8% in after-hours trading.", source: "CNBC", sourceMkt: "stocks", url: "https://cnbc.com/nvda-q1-2026", publishedAt: ago(9) },
+  { title: "Apple Unveils AI-Enhanced iPhone 18 Pro With On-Device LLM, Shares Up 4%", summary: "Apple's WWDC keynote revealed iPhone 18 Pro will feature a dedicated Neural Engine running a 7B parameter on-device language model, enabling offline AI tasks. Analysts at Morgan Stanley raised their price target to $265. Shares gained 4% on the news.", source: "Bloomberg", sourceMkt: "stocks", url: "https://bloomberg.com/aapl-iphone-18", publishedAt: ago(27) },
+  { title: "Tesla Deliveries Miss Estimate for Third Consecutive Quarter; Stock Falls 6%", summary: "Tesla delivered 412,000 vehicles in Q1, below the 425,000 analyst consensus. The shortfall was attributed to factory retooling in Fremont and logistics delays in Europe. Elon Musk's distraction with political activities was cited by multiple analysts as a governance concern.", source: "Reuters Business", sourceMkt: "stocks", url: "https://reuters.com/tsla-deliveries-q1", publishedAt: ago(45) },
+  { title: "Meta AI Monetisation Surprises: Ad Revenue Up 19%, Llama Licensing Revenue $1.2B", summary: "Meta Q1 earnings showed ad revenue growth of 19% YoY with AI-optimised ad targeting credited for the beat. The company also disclosed $1.2B in enterprise Llama 3 licensing deals. Daily active users across the family of apps hit 3.4B. Stock rose 6.5% after-hours.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/meta-q1-2026", publishedAt: ago(63) },
+  { title: "AMD Gains Ground in AI Accelerator Market: Instinct MI400 Wins Microsoft Azure Deal", summary: "AMD announced Microsoft Azure will deploy 50,000 Instinct MI400 GPUs in its new AI training clusters, marking AMD's largest hyperscaler win to date. Analysts at JPMorgan upgraded AMD to Overweight with a $220 price target, citing accelerating data center adoption.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/amd-azure-deal", publishedAt: ago(81) },
+  { title: "Goldman Sachs Upgrades S&P 500 Year-End Target to 6,200 on Earnings Resilience", summary: "Goldman Sachs chief equity strategist David Kostin raised the S&P 500 year-end target from 5,800 to 6,200, citing stronger-than-expected Q1 earnings season with 78% of companies beating EPS estimates. The bank sees AI capex driving durable margin expansion in tech.", source: "WSJ Markets", sourceMkt: "stocks", url: "https://wsj.com/gs-sp500-target", publishedAt: ago(97) },
+  { title: "Microsoft Azure Revenue Grows 31% as AI Copilot Adoption Drives Enterprise Spending", summary: "Microsoft fiscal Q3 results showed Azure revenue growth of 31%, above the 28% consensus. CEO Satya Nadella noted more than 85% of the Fortune 500 now use Microsoft AI products. Operating income reached $28.1B. Shares rose 5.2% after-hours on the beat.", source: "CNBC Earnings", sourceMkt: "stocks", url: "https://cnbc.com/msft-q3-2026", publishedAt: ago(114) },
+  { title: "Boeing 737 MAX Receives FAA Approval for Extended Range Variant; Shares Jump 5%", summary: "The FAA granted Boeing certification for the 737 MAX 10ER, the extended-range variant sought by multiple airlines for transatlantic routes. Delta and United have combined orders for 120 aircraft. The approval removes a major near-term regulatory overhang for Boeing.", source: "Reuters Business", sourceMkt: "stocks", url: "https://reuters.com/ba-737-faa", publishedAt: ago(130) },
+  { title: "Palantir Secures $3.2B US Army AI Contract Extension, Stock Hits All-Time High", summary: "Palantir's AIP platform received a three-year, $3.2B extension on its AI battlefield intelligence contract with the US Army. CEO Alex Karp said this cements Palantir as 'the spine of American military AI.' PLTR shares hit an all-time high of $88.40.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/pltr-army-contract", publishedAt: ago(148) },
+  { title: "Morgan Stanley Raises Eli Lilly Price Target to $1,000 on GLP-1 Market Dominance", summary: "Morgan Stanley analysts upgraded their Eli Lilly 12-month price target to $1,000 per share, citing GLP-1 drugs (Mounjaro, Zepbound) capturing 62% market share in the obesity and diabetes segment. They forecast Mounjaro alone reaching $28B annual revenue by 2028.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/lly-upgrade-ms", publishedAt: ago(165) },
+  { title: "Coinbase Q1 Revenue Doubles on Crypto Bull Market; Institutional Trading Up 180%", summary: "Coinbase reported Q1 revenue of $2.4B, up 102% YoY, with net income of $1.1B. Institutional trading volume jumped 180% quarter-over-quarter. CEO Brian Armstrong noted spot Bitcoin and Ethereum ETF launches have brought in a new wave of institutional capital.", source: "The Block", sourceMkt: "stocks", url: "https://theblock.co/coinbase-q1", publishedAt: ago(182) },
+
+  // ── CRYPTO ─────────────────────────────────────────────────────────────────
+  { title: "Bitcoin Breaks $105,000 Resistance; Eyes $110K as ETF Inflows Hit Record $2.1B Weekly", summary: "Bitcoin surged past the $105,000 resistance level on high volume, with spot Bitcoin ETF inflows hitting a record $2.1B in the week. Analysts at Standard Chartered see BTC targeting $115,000 in Q2 driven by continued institutional demand and constrained post-halving supply.", source: "CoinDesk", sourceMkt: "crypto", url: "https://coindesk.com/btc-105k-breakout", publishedAt: ago(12) },
+  { title: "Ethereum ETF AUM Crosses $20B as Staking Yield Drives Institutional Demand", summary: "Spot Ethereum ETFs in the US now manage $20.4B in assets, crossing the milestone amid growing institutional interest in ETH's 4.1% staking yield. BlackRock's ETHA fund alone accounts for $7.8B. Ethereum is up 12% month-to-date as the ETF demand narrative builds.", source: "CoinTelegraph", sourceMkt: "crypto", url: "https://cointelegraph.com/eth-etf-20b", publishedAt: ago(34) },
+  { title: "Solana DeFi TVL Tops $18B; 'Super App' Ecosystem Drives SOL to 6-Month High", summary: "Solana's Total Value Locked in DeFi protocols reached $18B, a new record, supported by the launch of three major DEX aggregators and a new liquid staking protocol. SOL/USD rose 18% this week, hitting a 6-month high of $198 as developer activity remains elevated.", source: "Decrypt", sourceMkt: "crypto", url: "https://decrypt.co/sol-tvl-record", publishedAt: ago(52) },
+  { title: "XRP Wins Final Legal Battle: SEC Appeal Denied, Ripple CEO Says 'Crypto Legal Clarity Arrives'", summary: "A US appeals court denied the SEC's attempt to appeal the Ripple decision, confirming XRP sales on secondary markets do not constitute securities transactions. XRP surged 22% on the news to $2.84. CEO Brad Garlinghouse called it a 'watershed moment for the entire crypto industry.'", source: "The Block", sourceMkt: "crypto", url: "https://theblock.co/xrp-sec-final", publishedAt: ago(70) },
+  { title: "Binance Launches Regulated EU Exchange; BNB Gains 9% on Regulatory Clarity", summary: "Binance received regulatory approval to operate a fully-regulated exchange in Germany under EU's MiCA framework, a landmark move that could unlock institutional European capital. BNB rose 9% to $712 as investors bet on Binance regaining market dominance in Europe.", source: "CoinDesk", sourceMkt: "crypto", url: "https://coindesk.com/binance-eu-approved", publishedAt: ago(89) },
+  { title: "Bitcoin Mining Difficulty Hits All-Time High as Hash Rate Surpasses 800 EH/s", summary: "Bitcoin's network difficulty adjusted upward by 4.2% to a new all-time high, with hash rate surpassing 800 exahashes per second for the first time. The metric signals miner confidence in sustained profitability, a historically bullish indicator for BTC price.", source: "Decrypt", sourceMkt: "crypto", url: "https://decrypt.co/btc-hashrate-ath", publishedAt: ago(107) },
+  { title: "Dogecoin Surges 35% as Elon Musk Announces X Payments Integration, 'DOGE Accepted'", summary: "Dogecoin jumped 35% to $0.42 after Elon Musk announced X (formerly Twitter) will accept DOGE payments for premium subscriptions and content creator tipping, effective next quarter. On-chain activity spiked with active addresses rising 180% in 24 hours.", source: "CoinTelegraph", sourceMkt: "crypto", url: "https://cointelegraph.com/doge-x-payments", publishedAt: ago(124) },
+  { title: "Avalanche Foundation Deploys $300M Ecosystem Fund; AVAX Up 14%", summary: "The Avalanche Foundation unveiled a $300M development fund targeting DeFi, gaming, and enterprise blockchain projects building on Avalanche's C-Chain. AVAX/USD rose 14% to $52 on the news, with analysts citing improving fundamentals and upcoming Durango upgrade.", source: "Decrypt", sourceMkt: "crypto", url: "https://decrypt.co/avax-ecosystem-fund", publishedAt: ago(141) },
+
+  // ── FOREX ──────────────────────────────────────────────────────────────────
+  { title: "EUR/USD Rallies to 1.1250 After ECB Signals Pause; Lagarde Cites Sticky Services Inflation", summary: "The euro strengthened to 1.1250 vs the dollar after ECB President Lagarde signalled the bank would pause its rate-cutting cycle pending further evidence of services disinflation. The ECB has cut rates three times since June 2025. EUR/USD is up 1.2% on the week.", source: "ForexLive", sourceMkt: "forex", url: "https://forexlive.com/eurusd-ecb-pause", publishedAt: ago(22) },
+  { title: "USD/JPY Falls Below 148 as Bank of Japan Hints at July Rate Hike", summary: "The yen strengthened sharply, with USD/JPY breaking below the 148 handle after BoJ Governor Ueda indicated conditions may be ripe for a rate increase at the July meeting. Japan's core inflation at 2.6% exceeds the BoJ's 2% target for the 24th consecutive month.", source: "FX Street", sourceMkt: "forex", url: "https://fxstreet.com/usdjpy-boj-july", publishedAt: ago(41) },
+  { title: "GBP/USD Hits 1.3450 Ahead of UK Inflation Data; Bank of England Meeting in Focus", summary: "Sterling pushed to 1.3450 against the dollar as traders positioned for a potentially hawkish Bank of England meeting next week. UK wage growth remains above 4% despite slowing overall inflation, complicating the BoE's path toward rate cuts.", source: "ForexLive", sourceMkt: "forex", url: "https://forexlive.com/gbpusd-uk-cpi", publishedAt: ago(59) },
+  { title: "AUD/USD Jumps to 0.6720 as Australia Employment Surges; RBA Rate Cut Bets Fade", summary: "The Australian dollar rose sharply after Australia added 58,500 jobs in April, roughly triple the 20,000 consensus estimate. The unemployment rate held at 3.8%. Markets pushed back RBA rate cut expectations from August to November, driving AUD/USD to its highest since January.", source: "FX Street", sourceMkt: "forex", url: "https://fxstreet.com/audusd-jobs", publishedAt: ago(77) },
+  { title: "Dollar Index (DXY) Slides to 102.80 on Fed Dovish Pivot Expectations", summary: "The US Dollar Index fell to 102.80, a four-week low, as soft CPI data reinforced expectations of Fed rate cuts beginning in September. Dollar weakness is broad-based, with EUR, GBP, and AUD all gaining. Gold and commodities benefit from the weaker dollar backdrop.", source: "Investing.com", sourceMkt: "forex", url: "https://investing.com/dxy-102", publishedAt: ago(93) },
+
+  // ── COMMODITIES ────────────────────────────────────────────────────────────
+  { title: "Gold Breaks $3,400/oz — Safe-Haven Demand Surges on Middle East Tensions", summary: "Spot gold surged past $3,400 per troy ounce for the first time, driven by Middle East geopolitical tensions and dollar weakness following soft US CPI. Central bank buying from China and India remains robust. Analysts at Goldman Sachs target $3,600 by year-end.", source: "Investing Commodities", sourceMkt: "commodities", url: "https://investing.com/gold-3400", publishedAt: ago(14) },
+  { title: "WTI Crude Falls to $74.20 as OPEC+ Surprise Output Hike Overwhelms Demand", summary: "WTI crude oil dropped 3.4% to $74.20 per barrel after OPEC+ announced an unexpected 600,000 bpd production increase beginning June. Saudi Arabia reversed its May output cut, citing the need to defend market share amid rising non-OPEC supply from the US and Guyana.", source: "Reuters Business", sourceMkt: "commodities", url: "https://reuters.com/opec-output-hike", publishedAt: ago(32) },
+  { title: "Silver Outperforms Gold, Rises 4.2% to $43.80 on Industrial Demand and Solar Boom", summary: "Silver surged 4.2% to $43.80/oz, outperforming gold on a combination of investment demand and strong industrial buying. Solar panel manufacturers have boosted silver purchasing amid record panel installations globally. The gold/silver ratio tightened to 77.6.", source: "Investing.com", sourceMkt: "commodities", url: "https://investing.com/silver-solar", publishedAt: ago(50) },
+  { title: "Natural Gas Spikes 12% on Unexpected Cold Snap Forecast; Inventories Below 5-Year Average", summary: "US natural gas futures rose 12% to $3.48/MMBtu as weather models shifted toward a colder-than-expected June across the US Midwest and Northeast. EIA inventories stand 8.2% below the 5-year seasonal average, raising concerns about summer storage adequacy.", source: "MarketWatch", sourceMkt: "commodities", url: "https://marketwatch.com/natgas-spike", publishedAt: ago(68) },
+  { title: "Copper Hits $11,200/tonne on China Stimulus Bets and Supply Deficit Fears", summary: "LME copper reached $11,200 per tonne, a 14-month high, as traders anticipate a major Chinese fiscal stimulus package targeting infrastructure. Chile's Codelco simultaneously flagged a 7% production shortfall due to mine disruptions, tightening the global supply outlook.", source: "Investing Commodities", sourceMkt: "commodities", url: "https://investing.com/copper-stimulus", publishedAt: ago(86) },
+
+  // ── INDICES ────────────────────────────────────────────────────────────────
+  { title: "S&P 500 Hits New All-Time High at 5,942 — AI Earnings Season Fuels the Rally", summary: "The S&P 500 closed at a new all-time high of 5,942, up 1.4% on the session, as Nvidia's blowout earnings drove broad tech buying. The index has gained 14.2% year-to-date. The Nasdaq 100 added 2.1%, while the VIX dropped to 12.3, the lowest since February.", source: "CNBC Markets", sourceMkt: "indices", url: "https://cnbc.com/sp500-ath-5942", publishedAt: ago(20) },
+  { title: "VIX Falls to 12.3 — 'Fear Gauge' at Multi-Month Low as Earnings Season Outperforms", summary: "The CBOE Volatility Index (VIX) fell to 12.3, a 4-month low, signalling extreme complacency among options traders. Historically, VIX below 13 often precedes short-term market volatility as investors become over-positioned. 78% of S&P 500 companies have beaten Q1 EPS estimates.", source: "MarketWatch", sourceMkt: "indices", url: "https://marketwatch.com/vix-1230", publishedAt: ago(38) },
+  { title: "Nikkei 225 Rises 1.8% as Yen Weakness Boosts Exporters; Sony and Toyota Lead", summary: "Japan's Nikkei 225 gained 1.8% to close at 38,840 as a weakening yen boosted export-oriented companies. Sony rallied 4.1% after raising its profit forecast, while Toyota added 2.7% on record-high US sales projections. Bank of Japan policy uncertainty remains the key macro risk.", source: "Reuters Business", sourceMkt: "indices", url: "https://reuters.com/nikkei-exporters", publishedAt: ago(56) },
+  { title: "Hang Seng Surges 3.1% on China Stimulus Hopes; Tech Giants Lead Gains", summary: "Hong Kong's Hang Seng Index surged 3.1% to 22,450 following reports of an imminent $1 trillion Chinese fiscal stimulus package targeting technology and infrastructure. Alibaba rose 6%, Tencent gained 4.8%. The CSI 300 on the mainland added 2.4%.", source: "Reuters Business", sourceMkt: "indices", url: "https://reuters.com/hsi-china-stimulus", publishedAt: ago(74) },
+  { title: "DAX Hits Record 22,800 as German Industrial Output Beats; ECB Pause Lifts Sentiment", summary: "Germany's DAX index set a new all-time high at 22,800, driven by better-than-expected April industrial output data (+1.8% MoM vs +0.6% expected) and the ECB's signal to pause rate cuts, reducing near-term uncertainty for European corporates.", source: "Investing.com", sourceMkt: "indices", url: "https://investing.com/dax-record", publishedAt: ago(92) },
+
+  // ── SGX STOCKS ─────────────────────────────────────────────────────────────
+  { title: "DBS Bank Q1 Profit Rises 8% to S$2.96B; NIM Holds at 2.13% Despite Rate Pressures", summary: "DBS Group's Q1 2026 net profit climbed 8% year-on-year to S$2.96B, slightly ahead of consensus. Net interest margin held at 2.13% as the bank successfully managed deposit repricing. CEO Piyush Gupta flagged strong loan growth in India and Indonesia. Dividend maintained at S$0.54.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/dbs-q1-2026", publishedAt: ago(103) },
+  { title: "Singapore Airlines Reports Record Full-Year Profit of S$3.2B on Premium Travel Demand", summary: "SIA posted a record annual profit of S$3.2B for FY2026, up 11% from the prior year. Passenger load factor reached 88.1%, the highest in the airline's history. Management guided for continued double-digit revenue growth as premium cabin demand remains strong.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/sia-record-profit", publishedAt: ago(158) },
+  { title: "Singtel Surges 6% After Announcing S$2B Share Buyback and Optus Sale Completion", summary: "Singtel shares jumped 6% after the company completed the sale of a 10% stake in Optus for A$1.8B and announced a S$2B share buyback programme. The capital return comes alongside strong Airtel India performance, which contributed S$890M in equity income for the year.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/singtel-buyback", publishedAt: ago(175) },
+
+  // ── ADDITIONAL SWING-SIGNAL ARTICLES ──────────────────────────────────────
+  { title: "Short Interest in Tesla Reaches 18-Month High at $16B — Largest Short Position on Record", summary: "Tesla bears have accumulated $16B in short positions, the largest on record, ahead of the next quarterly deliveries report. Short interest represents 4.9% of the float. Options market shows elevated put buying, with the 30-day implied volatility at 62%.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/tsla-short-interest", publishedAt: ago(200) },
+  { title: "Insider Buying Alert: PLTR CEO Alex Karp Buys $12M in Shares at Open Market", summary: "SEC Form 4 filings show Palantir CEO Alex Karp purchased 150,000 shares at an average of $80.20, totalling approximately $12M, in open-market transactions over three days. Insider buying at this scale is typically considered a strong bullish signal by market practitioners.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/pltr-insider-buy", publishedAt: ago(215) },
+  { title: "NVDA Options Activity Explodes: $2B in Calls Bought Ahead of Earnings — Largest Ever", summary: "Nvidia options activity reached a historic level with $2B in call options purchased in the three sessions prior to earnings, the largest pre-earnings options buy in market history. The most popular strike is the $1,200 call expiring next Friday. IV crush risk is extreme post-earnings.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/nvda-options-record", publishedAt: ago(232) },
+  { title: "BTC Technical: Golden Cross Forms on Weekly Chart — Historically Signals 40%+ Rally", summary: "Bitcoin's 50-week moving average crossed above the 200-week moving average for the first time since November 2023, forming a 'Golden Cross' on the weekly chart. This pattern preceded 40%+ rallies in all previous occurrences (2019, 2020, 2023). Current price: $103,800.", source: "CoinDesk", sourceMkt: "crypto", url: "https://coindesk.com/btc-golden-cross", publishedAt: ago(248) },
+  { title: "Secondary Offering: Rivian Prices $1.2B Stock Sale at $12.40, Shares Fall 8%", summary: "Rivian priced a $1.2B secondary share offering at $12.40 per share, a 7% discount to the prior day's close. The company said proceeds will fund Volkswagen joint venture ramp-up costs. Shares fell 8% on the dilution announcement, bringing RIVN's YTD decline to -32%.", source: "Reuters Business", sourceMkt: "stocks", url: "https://reuters.com/rivn-secondary", publishedAt: ago(263) },
+];
+
+const DRIP_QUEUE = [
+  { title: "Bitcoin Spot ETF Net Inflows Hit $420M Today — BlackRock IBIT Leads", summary: "Spot Bitcoin ETF net inflows reached $420M on Friday, led by BlackRock's IBIT with $238M. Total US spot BTC ETF AUM now stands at $112B. The sustained inflow pace continues to compress available spot BTC supply on exchanges.", source: "CoinDesk", sourceMkt: "crypto", url: "https://coindesk.com/btc-etf-inflow-420m", publishedAt: null },
+  { title: "FOMC: Fed Holds Rates at 4.25%-4.5%, Dots Show Two Cuts in 2026", summary: "The Federal Open Market Committee voted unanimously to hold rates at 4.25%-4.5%. The updated dot plot shows the median expectation of two 25bp cuts in 2026, both in H2. Chair Powell noted the labour market remains 'robust' but inflation progress is 'encouraging.'", source: "CNBC", sourceMkt: "general", url: "https://cnbc.com/fomc-hold-dots-2026", publishedAt: null },
+  { title: "Gold Futures Hit New Record $3,450 Intraday — Geopolitical Risk Premium Expanding", summary: "COMEX gold futures briefly touched $3,450/oz intraday before settling at $3,428. Analysts attribute the move to escalating Middle East tensions and accelerating central bank diversification away from dollar-denominated assets. WGC data shows 1,136 tonnes of central bank buying in 2025.", source: "Investing.com", sourceMkt: "commodities", url: "https://investing.com/gold-3450", publishedAt: null },
+  { title: "Nvidia H200 GPU Backlog Extends to 18 Months — Supply Crunch Deepens", summary: "Industry sources tell CNBC that Nvidia H200 GPU delivery times have extended to 18 months, up from 12 months in Q4 2025. TSMC's CoWoS packaging capacity, a critical bottleneck, is fully allocated through 2027. AMD sees opportunity with MI400 ramp-up but supply is also constrained.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/nvda-h200-backlog", publishedAt: null },
+  { title: "EUR/USD Drops to 1.1180 as German Retail Sales Miss; Eurozone Growth Doubts Return", summary: "The euro pulled back to 1.1180 after German retail sales contracted 0.8% in April, well below the +0.3% forecast. Weak consumer spending in the eurozone's largest economy raises doubts about ECB's forecast of a 2026 growth rebound. EUR/USD support seen at 1.1100.", source: "ForexLive", sourceMkt: "forex", url: "https://forexlive.com/eurusd-german-retail", publishedAt: null },
+  { title: "Tesla Cybertruck Production Ramp: 1,200 Units/Week Achieved, On Track for 2026 Target", summary: "Tesla confirmed Cybertruck production hit 1,200 units per week at Gigafactory Texas, on a run-rate to meet the 80,000-unit 2026 delivery target. Gross margin for Cybertruck is now positive for the first time at 8.4%. Backlog stands at 180,000 reservations.", source: "Reuters Business", sourceMkt: "stocks", url: "https://reuters.com/tsla-cybertruck-ramp", publishedAt: null },
+  { title: "Ethereum Layer-2 Ecosystem Hits $35B TVL — Base, Arbitrum, Optimism Lead", summary: "The combined TVL across all Ethereum Layer-2 networks surpassed $35B for the first time. Coinbase's Base leads with $12.4B, followed by Arbitrum ($9.8B) and Optimism ($7.2B). Lower fees and faster settlement are attracting DeFi activity away from Ethereum mainnet.", source: "Decrypt", sourceMkt: "crypto", url: "https://decrypt.co/eth-l2-35b", publishedAt: null },
+  { title: "WTI Oil Rebounds to $76.80 as US Strategic Reserve Drawdown Halted", summary: "WTI crude recovered to $76.80/barrel after the US Department of Energy announced it would pause Strategic Petroleum Reserve sales, removing a key source of supply overhang. OPEC+ compliance reportedly improved to 94% according to secondary source data.", source: "Reuters Business", sourceMkt: "commodities", url: "https://reuters.com/wti-spr-halt", publishedAt: null },
+];
+
+let dripIndex = 0;
+function nextDrip() {
+  if (dripIndex >= DRIP_QUEUE.length) dripIndex = 0;
+  const a = { ...DRIP_QUEUE[dripIndex++] };
+  a.publishedAt = new Date().toISOString();
+  a.id = a.url;
+  return a;
+}
+
+// ─── Market Sessions & Brief Generation ──────────────────────────────────────
+const EXCHANGES = [
+  { id: 'NYSE',     name: 'NYSE/NASDAQ', tz: 'America/New_York',  open: [9,30],  close: [16,0],  icon: '🇺🇸', color: '#00d4ff' },
+  { id: 'SGX',      name: 'SGX',         tz: 'Asia/Singapore',    open: [9,0],   close: [17,30], icon: '🇸🇬', color: '#ff9500' },
+  { id: 'LSE',      name: 'LSE',         tz: 'Europe/London',     open: [8,0],   close: [16,30], icon: '🇬🇧', color: '#aa88ff' },
+  { id: 'TSE',      name: 'Nikkei/TSE',  tz: 'Asia/Tokyo',        open: [9,0],   close: [15,30], icon: '🇯🇵', color: '#ff6b6b' },
+  { id: 'HKEX',     name: 'HKEX',        tz: 'Asia/Hong_Kong',    open: [9,30],  close: [16,0],  icon: '🇭🇰', color: '#ffd700' },
+  { id: 'ASX',      name: 'ASX',         tz: 'Australia/Sydney',  open: [10,0],  close: [16,0],  icon: '🇦🇺', color: '#00e676' },
+  { id: 'EURONEXT', name: 'Euronext/DAX',tz: 'Europe/Paris',      open: [9,0],   close: [17,30], icon: '🇪🇺', color: '#aa88ff' },
+  { id: 'CRYPTO',   name: 'Crypto',      tz: 'UTC',               open: [0,0],   close: [24,0],  icon: '₿',   color: '#ffd700', always: true },
+  { id: 'FOREX',    name: 'FX',          tz: 'UTC',               open: [0,0],   close: [24,0],  icon: '💱',  color: '#00e676', forexClosed: true },
+];
+
+function getExchangeLocalTime(now, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric', minute: 'numeric', second: 'numeric',
+    hour12: false, weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric',
+  }).formatToParts(now);
+  const get = t => parseInt(parts.find(p => p.type === t)?.value || '0');
+  const weekday = parts.find(p => p.type === 'weekday')?.value;
+  return {
+    hour: get('hour'),
+    minute: get('minute'),
+    second: get('second'),
+    weekday,
+    isWeekend: weekday === 'Sun' || weekday === 'Sat',
+  };
+}
+
+function getMarketStatus(ex, now) {
+  if (ex.always) return { open: true, label: '24/7' };
+  if (ex.forexClosed) {
+    const utcDay = now.getUTCDay();
+    const utcHour = now.getUTCHours();
+    const closedPeriod = (utcDay === 6) || (utcDay === 5 && utcHour >= 22) || (utcDay === 0 && utcHour < 22);
+    return { open: !closedPeriod, label: closedPeriod ? 'Weekend Close' : '24h FX' };
+  }
+  const local = getExchangeLocalTime(now, ex.tz);
+  if (local.isWeekend) return { open: false, label: 'Weekend' };
+  const mins = local.hour * 60 + local.minute;
+  const openMins  = ex.open[0]  * 60 + ex.open[1];
+  const closeMins = ex.close[0] * 60 + ex.close[1];
+  const open = mins >= openMins && mins < closeMins;
+  const preMarket = !open && mins >= openMins - 90 && mins < openMins;
+  const label = preMarket ? 'Pre-Market' : open ? 'Open' : (mins < openMins ? 'Pre-Market' : 'Closed');
+  return { open, preMarket, label };
+}
+
+function getSessionContext(now) {
+  const utcH = now.getUTCHours();
+  const utcDay = now.getUTCDay();
+  const isWknd = utcDay === 0 || utcDay === 6;
+
+  if (isWknd) return { name: 'Weekend', emoji: '🌙', desc: 'Markets closed · Crypto & FX active · Plan your week' };
+  if (utcH >= 22 || utcH < 3)  return { name: 'Sydney / Tokyo Open',   emoji: '🌏', desc: 'Asia-Pacific session opening · SGX pre-market soon' };
+  if (utcH >= 1  && utcH < 9)  return { name: 'Asia Session',           emoji: '🌏', desc: 'SGX · HKEX · TSE active · European pre-market building' };
+  if (utcH >= 7  && utcH < 9)  return { name: 'European Pre-Market',    emoji: '🌍', desc: 'LSE & Euronext opening · US futures watch' };
+  if (utcH >= 8  && utcH < 13) return { name: 'European Session',       emoji: '🌍', desc: 'LSE · Euronext · DAX active · US market opening soon' };
+  if (utcH >= 13 && utcH < 14) return { name: 'US Pre-Market / London', emoji: '⚡', desc: 'High volatility window · US futures + Europe overlap' };
+  if (utcH >= 14 && utcH < 20) return { name: 'US Session 🔥',          emoji: '🔥', desc: 'NYSE · NASDAQ live · Peak liquidity window' };
+  if (utcH >= 20 && utcH < 21) return { name: 'US Market Close',        emoji: '🔔', desc: 'Final hour volatility · Watch for MOC orders' };
+  if (utcH >= 21 && utcH < 22) return { name: 'US After-Hours',         emoji: '🌆', desc: 'AH earnings reaction · Lower liquidity' };
+  return { name: 'Inter-Session', emoji: '🌙', desc: 'Quiet period · Review positions · Plan next move' };
+}
+
+const SIGNAL_PLAYS = {
+  'earnings':           { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'EARNINGS BEAT', note: 'Gap-open pullback entry. Wait for first 15-min candle.' },
+  'eps beat':           { dir: 'LONG',  upMin: 4,  upMax: 10, stars: 5, tag: 'EPS BEAT',      note: 'Buy dip to VWAP post-open gap.' },
+  'beats estimates':    { dir: 'LONG',  upMin: 4,  upMax: 9,  stars: 5, tag: 'BEAT ESTIMATE', note: 'Momentum entry on confirmation.' },
+  'guidance raised':    { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'GUIDANCE ▲',    note: 'Strongest fundamental signal. Add on first dip.' },
+  'upgrade':            { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'ANALYST UPGRADE',note: 'Buy at open. Upgrades hold for 2–5 days.' },
+  'price target':       { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 4, tag: 'PT RAISED',     note: 'Confirm direction with volume.' },
+  'all-time high':      { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'ATH BREAKOUT',  note: 'ATH = no overhead resistance. Ride momentum.' },
+  'breakout':           { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'BREAKOUT',      note: 'Enter on volume confirmation above key level.' },
+  'short squeeze':      { dir: 'LONG',  upMin: 10, upMax: 30, stars: 5, tag: '⚡ SHORT SQUEEZE',note: 'High risk/reward. Size down. Fast moves.' },
+  'insider buying':     { dir: 'LONG',  upMin: 3,  upMax: 8,  stars: 5, tag: '🔍 INSIDER BUY', note: 'CEO/Director open-market buy = highest conviction signal.' },
+  'merger':             { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'M&A',           note: 'Risk-arb: buy target, short acquirer.' },
+  'acquisition':        { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'ACQUISITION',   note: 'Immediate spike to deal price. Buy at discount to bid.' },
+  'deal':               { dir: 'LONG',  upMin: 4,  upMax: 12, stars: 4, tag: 'MAJOR DEAL',    note: 'Revenue visibility catalyst.' },
+  'buyback':            { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 3, tag: 'BUYBACK',       note: 'Slow burn upside. Good for options.' },
+  'dividend':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'DIVIDEND',      note: 'Yield support. Defensive hold.' },
+  'misses estimates':   { dir: 'SHORT', upMin: 4,  upMax: 10, stars: 4, tag: '🔴 MISS',        note: 'Sell the gap-up open if any. Target support.' },
+  'guidance lowered':   { dir: 'SHORT', upMin: 6,  upMax: 15, stars: 5, tag: '🔴 GUIDE DOWN',  note: 'Strongest short signal. Multi-day downtrend.' },
+  'downgrade':          { dir: 'SHORT', upMin: 3,  upMax: 7,  stars: 4, tag: '🔴 DOWNGRADE',   note: 'Sell rallies. Cascading downgrades often follow.' },
+  'insider selling':    { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 3, tag: '🔴 INSIDER SELL',note: 'Caution — could be routine. Check Form 4 size.' },
+  'secondary offering': { dir: 'SHORT', upMin: 5,  upMax: 10, stars: 4, tag: '🔴 DILUTION',    note: 'Priced at discount = forced selling pressure.' },
+  'short interest':     { dir: 'SHORT', upMin: 3,  upMax: 8,  stars: 3, tag: '🔴 HIGH SHORT',  note: 'Either squeeze setup OR crowd is right. Read macro.' },
+  'opec':               { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 4, tag: 'OPEC SUPPLY',   note: 'Output hike = bearish crude. Short WTI/XOM/CVX.' },
+  'rate cut':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE CUT',      note: 'Broad lift: growth stocks, gold, crypto benefit.' },
+  'rate hike':          { dir: 'SHORT', upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE HIKE',     note: 'Pressure on growth/tech. Banks may benefit.' },
+  'cpi':                { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'CPI COOL',      note: 'Dovish pivot narrative strengthens. Risk-on.' },
+  'jobs report':        { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'JOBS DATA',     note: 'Strong jobs = soft landing. Equities + crypto bid.' },
+  'nonfarm payroll':    { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'NFP',           note: 'Watch wage growth — if cool, even more bullish.' },
+  'gdp':                { dir: 'LONG',  upMin: 1,  upMax: 2,  stars: 2, tag: 'GDP',           note: 'Revision up = economic resilience confirmed.' },
+  'resistance':         { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'RESISTANCE BREAK', note: 'Clean level cleared = next resistance becomes target.' },
+  'support':            { dir: 'LONG',  upMin: 1,  upMax: 4,  stars: 3, tag: 'SUPPORT HOLD',  note: 'Bouncing off key level = risk defined entry.' },
+  'ipo':                { dir: 'LONG',  upMin: 5,  upMax: 20, stars: 3, tag: 'IPO',           note: 'First day pop possible. Size small. Wide spreads.' },
+};
+
+const PRIORITY_SIGNALS = ['guidance raised','earnings','eps beat','beats estimates','short squeeze','merger','acquisition','insider buying','guidance lowered','all-time high','breakout','upgrade'];
+
+let _tickerDB = {};
+function setTickerDB(db) { _tickerDB = db; }
+
+const TITLE_TICKER_MAP = {
+  'bitcoin': 'BTC', 'btc': 'BTC', 'ethereum': 'ETH', 'solana': 'SOL',
+  'ripple': 'XRP', 'xrp': 'XRP', 'dogecoin': 'DOGE', 'binance': 'BNB',
+  'gold': 'GOLD', 'silver': 'SILVER', 'crude oil': 'OIL', 'wti': 'OIL',
+  'brent': 'BRENT', 'natural gas': 'NATGAS', 'copper': 'COPPER',
+  's&p 500': 'SPX', 'sp500': 'SPX', 'nasdaq': 'NDX', 'dow jones': 'DJI',
+  'vix': 'VIX', 'nikkei': 'N225', 'hang seng': 'HSI', 'dax': 'DAX',
+  'eur/usd': 'EURUSD', 'eurusd': 'EURUSD', 'usd/jpy': 'USDJPY',
+  'gbp/usd': 'GBPUSD', 'aud/usd': 'AUDUSD', 'dollar index': 'DXY',
+  'dxy': 'DXY',
+  'nvidia': 'NVDA', 'apple': 'AAPL', 'microsoft': 'MSFT', 'tesla': 'TSLA',
+  'amazon': 'AMZN', 'meta': 'META', 'google': 'GOOGL', 'alphabet': 'GOOGL',
+  'amd': 'AMD', 'intel': 'INTC', 'palantir': 'PLTR', 'coinbase': 'COIN',
+  'goldman sachs': 'GS', 'jpmorgan': 'JPM', 'boeing': 'BA', 'rivian': 'RIVN',
+  'eli lilly': 'LLY', 'moderna': 'MRNA', 'pfizer': 'PFE',
+  'dbs bank': 'D05', 'singapore airlines': 'C6L', 'singtel': 'Z74',
+  'opec': 'OIL',
+};
+
+function extractTickerFromArticle(article) {
+  if (article.matches && article.matches.length > 0) {
+    return article.matches.map(m => m.ticker);
+  }
+  const titleLow = (article.title   || '').toLowerCase();
+  const summLow  = (article.summary || '').toLowerCase();
+  const combined = titleLow + ' ' + summLow;
+
+  const found = [];
+  for (const [kw, sym] of Object.entries(TITLE_TICKER_MAP)) {
+    if (combined.includes(kw) && !found.includes(sym)) found.push(sym);
+  }
+  if (found.length) return found.slice(0, 3);
+
+  const dollarMatch = article.title.match(/\$([A-Z]{2,5})\b/g);
+  if (dollarMatch) {
+    const valid = dollarMatch.map(m => m.slice(1)).filter(t => _tickerDB[t]);
+    if (valid.length) return valid.slice(0, 2);
+  }
+
+  const upperMatch = article.title.match(/\b([A-Z]{2,5})\b/g) || [];
+  const dbMatch = upperMatch.filter(t => _tickerDB[t]);
+  if (dbMatch.length) return dbMatch.slice(0, 2);
+
+  return ['MKT'];
+}
+
+function getSentimentFromTitle(title) {
+  const t = title.toLowerCase();
+  const bearWords = ['falls','drops','tumbles','slides','sinks','miss','misses','warning','cut','lose','loss','plunges','slumps','declines'];
+  const bullWords = ['surges','rises','jumps','rallies','beats','record','gains','upgrades','higher','tops','breaks','hits'];
+  const bull = bullWords.filter(w => t.includes(w)).length;
+  const bear = bearWords.filter(w => t.includes(w)).length;
+  return bull > bear ? 'bull' : bear > bull ? 'bear' : 'neutral';
+}
+
+function generatePlay(article) {
+  const signals = article.swingSignals || [];
+  if (!signals.length) return null;
+
+  let bestSignal = null;
+  let bestPlay = null;
+  for (const sig of PRIORITY_SIGNALS) {
+    if (signals.includes(sig) && SIGNAL_PLAYS[sig]) {
+      bestSignal = sig;
+      bestPlay = SIGNAL_PLAYS[sig];
+      break;
+    }
+  }
+  if (!bestPlay) {
+    for (const sig of signals) {
+      if (SIGNAL_PLAYS[sig]) { bestSignal = sig; bestPlay = SIGNAL_PLAYS[sig]; break; }
+    }
+  }
+  if (!bestPlay) return null;
+
+  const sentiment = getSentimentFromTitle(article.title);
+  let dir = bestPlay.dir;
+  if (sentiment === 'bear' && dir === 'LONG') dir = 'SHORT';
+  if (sentiment === 'bull' && dir === 'SHORT') dir = 'LONG';
+
+  const sigBoost = Math.min(signals.length - 1, 3) * 1.5;
+  const upMin = (bestPlay.upMin + sigBoost).toFixed(1);
+  const upMax = (bestPlay.upMax + sigBoost * 1.5).toFixed(1);
+  const stars = Math.min(5, bestPlay.stars + (signals.length > 2 ? 1 : 0));
+
+  const tickers = extractTickerFromArticle(article);
+
+  return {
+    ticker:    tickers[0] || '—',
+    allTickers: tickers,
+    direction: dir,
+    tag:       bestPlay.tag,
+    note:      bestPlay.note,
+    upMin,
+    upMax,
+    stars,
+    signal:    bestSignal,
+    signals,
+    title:     article.title,
+    summary:   article.summary,
+    source:    article.source,
+    publishedAt: article.publishedAt,
+    articleUrl: article.url,
+    matchType: article.matchType,
+  };
+}
+
+function generateBrief(articles, tz) {
+  const now = new Date();
+  const cutoff24h = new Date(now.getTime() - 24 * 3600 * 1000);
+
+  const recent = articles
+    .filter(a => new Date(a.publishedAt) >= cutoff24h)
+    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+
+  const marketStatus = EXCHANGES.map(ex => ({
+    ...ex,
+    status: getMarketStatus(ex, now),
+  }));
+
+  const session = getSessionContext(now);
+
+  const macroSignals = ['cpi', 'rate cut', 'rate hike', 'jobs report', 'nonfarm payroll', 'gdp', 'federal reserve', 'interest rate'];
+  const macroArticles = recent.filter(a =>
+    (a.swingSignals || []).some(s => macroSignals.includes(s))
+  ).slice(0, 4);
+
+  const swingArticles = recent.filter(a => a.isSwingRelevant);
+  const rawPlays = swingArticles.map(a => generatePlay(a)).filter(Boolean);
+
+  const playMap = {};
+  for (const p of rawPlays) {
+    const key = p.ticker;
+    if (!playMap[key] || p.stars > playMap[key].stars) playMap[key] = p;
+  }
+  const allPlays = Object.values(playMap).sort((a, b) => b.stars - a.stars || b.upMax - a.upMax);
+
+  const longs  = allPlays.filter(p => p.direction === 'LONG').slice(0, 7);
+  const shorts = allPlays.filter(p => p.direction === 'SHORT').slice(0, 4);
+
+  const macroKeyPoints = macroArticles.map(a => ({
+    title:   a.title,
+    source:  a.source,
+    signals: a.swingSignals,
+    publishedAt: a.publishedAt,
+  }));
+
+  return {
+    generatedAt:  now.toISOString(),
+    timezone:     tz,
+    session,
+    marketStatus,
+    macroBackdrop: macroKeyPoints,
+    longs,
+    shorts,
+    articleCount:  recent.length,
+    totalArticles: articles.length,
+    nextRefresh:   new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+  };
+}
 
 // ─── RSS Feeds ────────────────────────────────────────────────────────────────
 const RSS_FEEDS = [
@@ -95,17 +576,14 @@ function scoreArticle(article, ticker) {
   let matchType = null;
   const matchedTerms = [];
 
-  // Exact ticker symbol in title → highest confidence
   const symRe = new RegExp(`(?<![a-zA-Z])${ticker.replace('/', '\\/')}(?![a-zA-Z])`, 'i');
-  if (symRe.test(article.title))   { score += 120; matchType = 'direct'; }
-  else if (symRe.test(article.summary)) { score += 80; matchType = 'direct'; }
+  if (symRe.test(article.title))        { score += 120; matchType = 'direct'; }
+  else if (symRe.test(article.summary)) { score += 80;  matchType = 'direct'; }
 
-  // Company name in title
   const nameL = db.name.toLowerCase();
-  if (titleLower.includes(nameL))   { score += 100; matchType = 'direct'; }
-  else if (summaryLower.includes(nameL)) { score += 65; if (!matchType) matchType = 'direct'; }
+  if (titleLower.includes(nameL))        { score += 100; matchType = 'direct'; }
+  else if (summaryLower.includes(nameL)) { score += 65;  if (!matchType) matchType = 'direct'; }
 
-  // Related keyword terms
   for (const term of db.terms) {
     if (titleLower.includes(term)) {
       score += 45;
@@ -135,7 +613,6 @@ function processArticle(raw) {
     if (m) matches.push(m);
   }
 
-  // If watchlist is set but nothing matched, skip
   if (watchlist.length > 0 && matches.length === 0) return null;
 
   matches.sort((a, b) => b.score - a.score);
@@ -198,13 +675,11 @@ async function pollFeeds() {
     }
   }
 
-  // Keep seenUrls from growing unbounded
   if (seenUrls.size > 10000) {
     const arr = [...seenUrls].slice(-5000);
     seenUrls = new Set(arr);
   }
 
-  // Trim memory
   if (articles.length > MAX_ARTICLES) articles = articles.slice(0, MAX_ARTICLES);
 
   if (newArticles.length > 0) {
@@ -254,7 +729,6 @@ app.post('/api/watchlist', (req, res) => {
   if (!watchlist.includes(t)) {
     watchlist.push(t);
     saveWatchlist();
-    // Re-score existing articles with new watchlist
     articles = articles.map(a => processArticle({ ...a, matches: undefined, matchType: undefined, swingSignals: undefined, isSwingRelevant: undefined })).filter(Boolean);
     broadcast({ type: 'refresh', data: articles.slice(0, 150) });
   }
@@ -309,12 +783,10 @@ function loadSeedData() {
       if (processed) articles.push(processed);
     }
   }
-  // Sort by date
   articles.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
   console.log(`[SEED] ${articles.length} articles ready`);
 }
 
-// Push one drip article every 90 seconds to simulate live feed
 function startDripSimulation() {
   setInterval(() => {
     const raw = nextDrip();
@@ -332,10 +804,9 @@ function startDripSimulation() {
 // ─── Start ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`\n🚀  MarketPulse running → http://localhost:${PORT}\n`);
-  setTickerDB(TICKER_DB); // Give brief generator access to validate tickers
+  setTickerDB(TICKER_DB);
   loadSeedData();
   startDripSimulation();
-  // Also poll real feeds — they'll add articles if network allows
   pollFeeds();
   setInterval(pollFeeds, POLL_INTERVAL);
 });
