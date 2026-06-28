@@ -313,7 +313,7 @@ a{color:inherit;text-decoration:none}
     </div>
     <div class="tcf-row">
       <span class="tcf-lbl">Tiger Web Base URL</span>
-      <input class="tcf-in" id="tigerBaseUrl" placeholder="https://broker.tiger.com"/>
+      <input class="tcf-in" id="tigerBaseUrl" placeholder="https://www.tigerbrokers.com.sg"/>
     </div>
     <div class="tcf-row">
       <span class="tcf-lbl">Account # (optional)</span>
@@ -405,12 +405,11 @@ const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const TIGER_MARKET = { NYSE:'US', NASDAQ:'US', HKEX:'HK', SGX:'SG', ASX:'AU' };
 
 function tigerBase() {
-  return localStorage.getItem('tigerBase') || 'https://broker.tiger.com';
+  return localStorage.getItem('tigerBase') || 'https://www.tigerbrokers.com.sg';
 }
 
 function tigerUrl(ticker, exchange) {
   const market = TIGER_MARKET[exchange] || 'US';
-  // Tiger Trade web: broker.tiger.com/#/trade?symbol=AAPL&market=US
   return `${tigerBase()}/#/trade?symbol=${encodeURIComponent(ticker)}&market=${market}`;
 }
 
