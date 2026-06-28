@@ -48,27 +48,39 @@ fs.mkdirSync(WMS_DIR,     { recursive: true });
 fs.mkdirSync(WAYBILL_DIR, { recursive: true });
 
 // ── User credentials ─────────────────────────────────────────────────────────
+// Users are stored inside db.json under the "users" key so all app data lives
+// in one file. On first boot, existing users.json is migrated automatically.
 function readUsers() {
-  try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return []; }
+  const db = readDb();
+  return Array.isArray(db.users) ? db.users : [];
 }
 function writeUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  const db = readDb();
+  db.users = users;
+  writeDb(db);
 }
 function hashPass(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
-// Create default demo user on first run
+// Seed / migrate users on first run
 ;(function initUsers() {
-  if (!fs.existsSync(USERS_FILE)) {
-    const salt = crypto.randomBytes(16).toString('hex');
-    writeUsers([{ id: 'demo', name: 'Demo', role: 'admin', salt, passwordHash: hashPass('demo', salt) }]);
-  } else {
-    // Migrate existing users that pre-date the role field
-    const users = readUsers();
-    let changed = false;
-    for (const u of users) { if (!u.role) { u.role = 'admin'; changed = true; } }
-    if (changed) writeUsers(users);
+  const db = readDb();
+  if (!Array.isArray(db.users)) {
+    // Migrate from legacy users.json if it exists
+    let users = [];
+    try { users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch {}
+    if (!users.length) {
+      const salt = crypto.randomBytes(16).toString('hex');
+      users = [{ id: 'demo', name: 'Demo', role: 'admin', salt, passwordHash: hashPass('demo', salt) }];
+    }
+    db.users = users;
+    writeDb(db);
   }
+  // Migrate existing users that pre-date the role field
+  const users = readUsers();
+  let changed = false;
+  for (const u of users) { if (!u.role) { u.role = 'admin'; changed = true; } }
+  if (changed) writeUsers(users);
 })();
 
 function loadCustomHeaders() {
