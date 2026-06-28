@@ -10,6 +10,11 @@
   --cyan:#00d4ff;--gold:#ffd700;--orange:#ff9500;--green:#00e676;--red:#ff4c4c;--purple:#aa88ff;
   --muted:#44445a;--text:#d0d0ee;--dim:#7777aa;--brad:10px;
 }
+[data-theme="light"] {
+  --bg:#f4f4f8;--surface:#ffffff;--card:#ffffff;--card2:#eeeef5;--border:#d8d8e8;
+  --cyan:#0077aa;--gold:#b38600;--orange:#c85a00;--green:#008844;--red:#cc2222;--purple:#6644bb;
+  --muted:#b0b0c8;--text:#111128;--dim:#55557a;
+}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;font-size:14px}
 a{color:inherit;text-decoration:none}
@@ -307,6 +312,7 @@ button,a{touch-action:manipulation}
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <span class="notif-label">Notify</span>
   </button>
+  <button class="notif-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle light/dark theme" style="font-size:14px;padding:5px 8px">🌙</button>
 </header>
 
 <!-- TABS -->
@@ -458,6 +464,18 @@ button,a{touch-action:manipulation}
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
+// ─── Theme ───────────────────────────────────────────────────────────────────
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('themeBtn').textContent = t === 'light' ? '☀️' : '🌙';
+}
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  localStorage.setItem('theme', next);
+  applyTheme(next);
+}
+applyTheme(localStorage.getItem('theme') || 'dark');
+
 // ─── State ───────────────────────────────────────────────────────────────────
 let allArticles = [], watchlist = [], tickerMkt = {};
 let curFil = 'all', swingOnly = false, notifOn = false;
