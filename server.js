@@ -30,6 +30,7 @@ const shopify  = require('./lib/marketplace/shopify');
 const mapper   = require('./lib/marketplace/mapper');
 const auth     = require('./lib/auth');
 const importer = require('./lib/file-importer');
+const db       = require('./lib/db');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
