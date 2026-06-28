@@ -420,9 +420,14 @@ const VERTICAL_PARAMS = {
   },
 };
 
+function getApolloKey() {
+  const row = ldb.prepare("SELECT value FROM leads_settings WHERE key='apollo_api_key'").get();
+  return row?.value || process.env.APOLLO_API_KEY || '';
+}
+
 async function apolloRequest(path, body) {
-  const key = process.env.APOLLO_API_KEY;
-  if (!key) throw new Error('APOLLO_API_KEY not configured — set it in your environment variables');
+  const key = getApolloKey();
+  if (!key) throw new Error('Apollo API key not set. Connect Apollo from the Lead Digger settings.');
   const res = await fetch(`${APOLLO_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
@@ -434,6 +439,24 @@ async function apolloRequest(path, body) {
   }
   return res.json();
 }
+
+// Apollo connection — save/get/delete API key
+app.get('/api/leads/apollo-status', (req, res) => {
+  const key = getApolloKey();
+  res.json({ connected: !!key, masked: key ? key.slice(0, 4) + '••••••••' + key.slice(-4) : null });
+});
+
+app.post('/api/leads/apollo-connect', (req, res) => {
+  const { api_key } = req.body || {};
+  if (!api_key || api_key.trim().length < 8) return res.status(400).json({ error: 'Invalid API key' });
+  ldb.prepare("INSERT OR REPLACE INTO leads_settings (key, value) VALUES ('apollo_api_key', ?)").run(api_key.trim());
+  res.json({ ok: true });
+});
+
+app.delete('/api/leads/apollo-connect', (req, res) => {
+  ldb.prepare("DELETE FROM leads_settings WHERE key='apollo_api_key'").run();
+  res.json({ ok: true });
+});
 
 // Search + auto-save session and all leads to DB
 app.post('/api/leads/search', async (req, res) => {

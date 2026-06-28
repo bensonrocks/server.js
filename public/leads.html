@@ -137,6 +137,22 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
 .am-person-detail{font-size:12px;color:#64748b}
 .am-credit{background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:9px 12px;font-size:12px;color:#854d0e;font-weight:600;text-align:center}
 .am-actions{display:flex;gap:8px;justify-content:flex-end}
+
+/* ── CONNECT SCREEN ── */
+.connect-screen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:0}
+.connect-screen.on{display:flex}
+.connect-card{background:#fff;border-radius:20px;box-shadow:0 4px 32px rgba(0,0,0,.10);padding:40px 36px;max-width:440px;width:100%;display:flex;flex-direction:column;gap:20px;text-align:center}
+.connect-icon{font-size:48px}
+.connect-title{font-size:22px;font-weight:900;color:#0f172a}
+.connect-sub{font-size:13px;color:#64748b;line-height:1.7}
+.connect-input-wrap{display:flex;flex-direction:column;gap:8px;text-align:left}
+.connect-label{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.connect-status{display:flex;align-items:center;gap:10px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:10px;padding:11px 14px}
+.connect-status-dot{width:10px;height:10px;border-radius:50%;background:#16a34a;flex-shrink:0}
+.connect-status-txt{font-size:13px;font-weight:700;color:#15803d;flex:1}
+.hdr-connect-btn{margin-left:auto;padding:5px 14px;border-radius:8px;font-size:12px;font-weight:700;background:rgba(255,255,255,.12);color:#fff;border:1.5px solid rgba(255,255,255,.25);cursor:pointer;transition:all .12s}
+.hdr-connect-btn:hover{background:rgba(255,255,255,.22)}
+.hdr-connect-btn.connected{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.4);color:#86efac}
 </style>
 </head>
 <body>
@@ -149,14 +165,36 @@ code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:4px;
       <div class="brand-sub">POWERED BY APOLLO.IO</div>
     </div>
   </div>
+  <button id="hdr-conn-btn" class="hdr-connect-btn" onclick="toggleConnectScreen()">&#128279; Connect Apollo</button>
 </header>
 
 <div class="wrap">
 
+  <!-- ── CONNECT SCREEN ── -->
+  <div id="connect-screen" class="connect-screen">
+    <div class="connect-card">
+      <div class="connect-icon">&#128273;</div>
+      <div class="connect-title">Connect Apollo.io</div>
+      <p class="connect-sub">Enter your Apollo API key to start digging leads. Your key is stored securely on the server — never shared or logged.</p>
+      <div id="conn-status-row" style="display:none" class="connect-status">
+        <div class="connect-status-dot"></div>
+        <span class="connect-status-txt" id="conn-status-txt">Connected</span>
+        <button class="btn btn-g btn-sm" onclick="disconnectApollo()">Disconnect</button>
+      </div>
+      <div class="connect-input-wrap">
+        <label class="connect-label">Apollo API Key</label>
+        <input id="apollo-key-input" class="inp" type="password" placeholder="Paste your Apollo API key here…" autocomplete="off">
+      </div>
+      <button class="btn btn-p" onclick="saveApolloKey()" style="width:100%;padding:11px">Save &amp; Connect</button>
+      <div id="conn-err" style="font-size:12px;color:#dc2626;display:none"></div>
+      <p style="font-size:11px;color:#94a3b8">Find your API key at <strong>apollo.io → Settings → Integrations → API</strong></p>
+    </div>
+  </div>
+
   <div id="top-banner" class="leads-banner info" style="display:none"></div>
 
   <!-- Sub-tabs -->
-  <div class="page-tabs">
+  <div id="page-tabs-wrap" class="page-tabs">
     <button class="page-tab on" id="ltab-dig"   onclick="switchTab('dig')">&#128269; Dig Leads</button>
     <button class="page-tab"    id="ltab-saved" onclick="switchTab('saved')">&#128190; Saved Leads</button>
   </div>
@@ -540,15 +578,63 @@ async function toggleContactedHist(apolloId,btn){
   }catch(e){alert('Error: '+e.message);}
 }
 
+// ── APOLLO CONNECTION ─────────────────────────────────────────────────────────
+
+let apolloConnected = false;
+const MAIN_UI = ()=>['top-banner','page-tabs-wrap','lsec-dig','lsec-saved'].map(id=>{const el=$(id);if(el)el.style.display='';});
+const HIDE_UI = ()=>['page-tabs-wrap','lsec-dig','lsec-saved'].map(id=>{const el=$(id);if(el)el.style.display='none';});
+
+async function checkApolloStatus(){
+  try{
+    const r=await fetch('/api/leads/apollo-status');
+    const j=await r.json();
+    apolloConnected=!!j.connected;
+    const btn=$('hdr-conn-btn');
+    if(apolloConnected){
+      btn.textContent='&#10003; Apollo Connected';
+      btn.classList.add('connected');
+      $('connect-screen').classList.remove('on');
+      $('conn-status-row').style.display='flex';
+      $('conn-status-txt').textContent='Connected — key: '+j.masked;
+      MAIN_UI();
+    }else{
+      btn.textContent='&#128279; Connect Apollo';
+      btn.classList.remove('connected');
+      $('connect-screen').classList.add('on');
+      HIDE_UI();
+    }
+  }catch{
+    showBanner('warn','&#9888; Server not reachable.');
+  }
+}
+
+function toggleConnectScreen(){
+  const cs=$('connect-screen');
+  cs.classList.toggle('on');
+}
+
+async function saveApolloKey(){
+  const key=$('apollo-key-input').value.trim();
+  $('conn-err').style.display='none';
+  if(!key){$('conn-err').textContent='Please enter your API key.';$('conn-err').style.display='';return;}
+  try{
+    const r=await fetch('/api/leads/apollo-connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key})});
+    const j=await r.json();
+    if(!r.ok){$('conn-err').textContent=j.error||'Failed to save key.';$('conn-err').style.display='';return;}
+    $('apollo-key-input').value='';
+    await checkApolloStatus();
+  }catch(e){$('conn-err').textContent=e.message;$('conn-err').style.display='';}
+}
+
+async function disconnectApollo(){
+  if(!confirm('Disconnect Apollo? You will need to re-enter your API key to search for leads.'))return;
+  await fetch('/api/leads/apollo-connect',{method:'DELETE'});
+  await checkApolloStatus();
+}
+
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 (async()=>{
-  try{
-    const r=await fetch('/api/auth/status');
-    if(r.ok)serverAvailable=true;
-  }catch{}
-  if(!serverAvailable){
-    showBanner('warn','&#9888; <strong>Server not reachable.</strong> Make sure the server is running and <code>APOLLO_API_KEY</code> is set in your <code>.env</code> file.');
-  }
+  await checkApolloStatus();
 })();
 </script>
 </body>
