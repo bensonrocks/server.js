@@ -57,7 +57,13 @@ function hashPass(password, salt) {
 ;(function initUsers() {
   if (!fs.existsSync(USERS_FILE)) {
     const salt = crypto.randomBytes(16).toString('hex');
-    writeUsers([{ id: 'demo', name: 'Demo', salt, passwordHash: hashPass('demo', salt) }]);
+    writeUsers([{ id: 'demo', name: 'Demo', role: 'admin', salt, passwordHash: hashPass('demo', salt) }]);
+  } else {
+    // Migrate existing users that pre-date the role field
+    const users = readUsers();
+    let changed = false;
+    for (const u of users) { if (!u.role) { u.role = 'admin'; changed = true; } }
+    if (changed) writeUsers(users);
   }
 })();
 
@@ -573,7 +579,7 @@ app.post('/api/auth/login', (req, res) => {
   const user = readUsers().find(u => u.id === String(id).trim());
   if (!user || hashPass(password, user.salt) !== user.passwordHash)
     return res.status(401).json({ error: 'Invalid credentials' });
-  res.json({ id: user.id, name: user.name || user.id });
+  res.json({ id: user.id, name: user.name || user.id, role: user.role || 'admin' });
 });
 
 // ── Public stats (no auth needed) ──────────────────────────────────────────
@@ -721,17 +727,18 @@ app.delete('/api/master/keyfields-template', (req, res) => {
 // ── Master: User management ──────────────────────────────────────────────────
 app.get('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
-  res.json(readUsers().map(({ id, name }) => ({ id, name })));
+  res.json(readUsers().map(({ id, name, role }) => ({ id, name, role: role || 'admin' })));
 });
 
 app.post('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
-  const { id, name, password } = req.body;
+  const { id, name, password, role } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
   const users = readUsers();
   if (users.find(u => u.id === id)) return res.status(409).json({ error: `User "${id}" already exists` });
-  const salt = crypto.randomBytes(16).toString('hex');
-  users.push({ id: String(id).trim(), name: String(name || id).trim(), salt, passwordHash: hashPass(password, salt) });
+  const salt     = crypto.randomBytes(16).toString('hex');
+  const userRole = role === 'warehouse' ? 'warehouse' : 'admin';
+  users.push({ id: String(id).trim(), name: String(name || id).trim(), role: userRole, salt, passwordHash: hashPass(password, salt) });
   writeUsers(users);
   res.json({ ok: true });
 });
@@ -746,6 +753,18 @@ app.put('/api/master/users/:id/password', (req, res) => {
   const salt = crypto.randomBytes(16).toString('hex');
   users[idx].salt         = salt;
   users[idx].passwordHash = hashPass(password, salt);
+  writeUsers(users);
+  res.json({ ok: true });
+});
+
+app.put('/api/master/users/:id/role', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const users = readUsers();
+  const idx   = users.findIndex(u => u.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: 'User not found' });
+  const { role } = req.body;
+  if (!['admin', 'warehouse'].includes(role)) return res.status(400).json({ error: 'Role must be admin or warehouse' });
+  users[idx].role = role;
   writeUsers(users);
   res.json({ ok: true });
 });

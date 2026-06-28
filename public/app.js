@@ -67,6 +67,8 @@
       try {
         const parsed = JSON.parse(stored);
         if (parsed.id) { // new credential-backed format only
+          // Ensure role is present (sessions stored before role feature default to admin)
+          if (!parsed.role) parsed.role = 'admin';
           currentUser = parsed;
           showUserInHeader();
           refreshOrders().then(() => {
@@ -87,6 +89,29 @@
     chip.textContent = currentUser.name || currentUser.id;
     chip.classList.remove('hidden');
     document.getElementById('lockBtn').classList.remove('hidden');
+    applyRoleUI();
+  }
+
+  function applyRoleUI() {
+    const isWarehouse = (currentUser?.role || 'admin') === 'warehouse';
+
+    // Upload tab button — hidden for warehouse
+    const uploadTabBtn = document.querySelector('.tab-btn[data-tab="upload"]');
+    if (uploadTabBtn) uploadTabBtn.classList.toggle('hidden', isWarehouse);
+
+    // Upload Log footer button — hidden for warehouse
+    const logBtn = document.getElementById('logAccessBtn');
+    if (logBtn) logBtn.classList.toggle('hidden', isWarehouse);
+
+    // If warehouse user lands on Upload tab, redirect to Orders
+    if (isWarehouse && document.getElementById('tab-upload').classList.contains('active')) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-orders').classList.add('active');
+      const ordersBtn = document.querySelector('.tab-btn[data-tab="orders"]');
+      if (ordersBtn) ordersBtn.classList.add('active');
+      renderOrdersDash();
+    }
   }
 
   document.getElementById('loginName').addEventListener('keydown', e => {
@@ -117,7 +142,7 @@
         errEl.textContent = data.error || 'Login failed';
         errEl.classList.remove('hidden'); return;
       }
-      currentUser = { id: data.id, name: data.name };
+      currentUser = { id: data.id, name: data.name, role: data.role || 'admin' };
       localStorage.setItem('wms_user', JSON.stringify(currentUser));
       showUserInHeader();
       fetchAndRenderStats();
@@ -238,6 +263,8 @@
   );
 
   function switchTab(name) {
+    // Warehouse users cannot access the upload tab
+    if (name === 'upload' && (currentUser?.role || 'admin') === 'warehouse') return;
     if (pendingDownload && name === 'orders') {
       const dlWrap = document.getElementById('uploadDownloadWrap');
       dlWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1218,11 +1245,30 @@
         <div class="user-row" data-id="${esc(u.id)}">
           <span class="user-id">${esc(u.id)}</span>
           <span class="user-name">${esc(u.name || u.id)}</span>
+          <span class="role-badge ${esc(u.role || 'admin')}">${u.role === 'warehouse' ? 'Warehouse' : 'Admin'}</span>
           <div class="user-row-actions">
+            <button class="btn-role-toggle" data-id="${esc(u.id)}" data-role="${esc(u.role || 'admin')}" title="Toggle role">
+              ${u.role === 'warehouse' ? '&#8593; Make Admin' : '&#8595; Warehouse'}
+            </button>
             <button class="btn-chpass" data-id="${esc(u.id)}" title="Change password">&#128273; Password</button>
             <button class="btn-del-user" data-id="${esc(u.id)}" title="Delete user">&#128465;</button>
           </div>
         </div>`).join('');
+
+      listEl.querySelectorAll('.btn-role-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const newRole = btn.dataset.role === 'warehouse' ? 'admin' : 'warehouse';
+          const r = await fetch(`/api/master/users/${encodeURIComponent(btn.dataset.id)}/role`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+            body: JSON.stringify({ role: newRole }),
+          });
+          const d = await r.json();
+          if (!r.ok) { alert(d.error); return; }
+          showUserStatus(`Role updated to ${newRole}.`, 'success');
+          loadUserList();
+        });
+      });
 
       listEl.querySelectorAll('.btn-chpass').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -1259,19 +1305,20 @@
     const id   = document.getElementById('newUserId').value.trim();
     const name = document.getElementById('newUserName').value.trim();
     const pass = document.getElementById('newUserPass').value.trim();
+    const role = document.getElementById('newUserRole').value;
     if (!id || !pass) { showUserStatus('User ID and password are required.', 'error'); return; }
     try {
       const r = await fetch('/api/master/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
-        body: JSON.stringify({ id, name, password: pass }),
+        body: JSON.stringify({ id, name, password: pass, role }),
       });
       const d = await r.json();
       if (!r.ok) { showUserStatus(d.error || 'Failed', 'error'); return; }
       document.getElementById('newUserId').value   = '';
       document.getElementById('newUserName').value = '';
       document.getElementById('newUserPass').value = '';
-      showUserStatus(`User "${id}" added.`, 'success');
+      showUserStatus(`User "${id}" added as ${role}.`, 'success');
       loadUserList();
     } catch (err) { showUserStatus(err.message, 'error'); }
   });

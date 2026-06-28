@@ -1372,6 +1372,21 @@ body.log-open { overflow: hidden; }
 }
 .btn-del-user:hover { background: #fee2e2; }
 
+.role-badge {
+  display: inline-block; font-size: .68rem; font-weight: 700;
+  padding: .15em .55em; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em;
+}
+.role-badge.admin     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.role-badge.warehouse { background: #f0fdf4; color: #15803d; border: 1px solid #86efac; }
+
+.btn-role-toggle {
+  background: none; border: 1px solid var(--border);
+  border-radius: 5px; padding: .22rem .55rem; font-size: .74rem;
+  cursor: pointer; color: var(--text-light);
+  transition: background .12s;
+}
+.btn-role-toggle:hover { background: var(--bg); }
+
 .user-add-form { margin-top: .25rem; }
 .user-add-row {
   display: flex; flex-wrap: wrap; gap: .45rem; align-items: center;
@@ -1383,6 +1398,11 @@ body.log-open { overflow: hidden; }
   background: #fff; color: var(--text-main);
 }
 .user-add-row input:focus { outline: none; border-color: var(--accent); }
+.user-role-select {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .38rem .5rem; font-size: .82rem;
+  background: #fff; color: var(--text); cursor: pointer;
+}
 
 /* ════════════════════════════════════════════════════
    POST-UPLOAD DOWNLOAD BUTTON
