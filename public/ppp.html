@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IDEALPICK · Scan-Pack Station</title>
+<title>IDEALPICK · PPP Station</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -137,7 +137,7 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
 <div class="topbar">
   <a href="/">&#8592; IdealOMS</a>
   <a href="/pick.html">IDEALPICK</a>
-  <span class="title">Scan-Pack Station</span>
+  <span class="title">PPP Station</span>
   <span class="badge">SCAN</span>
   <div style="flex:1"></div>
   <span id="sessionStatus" class="status status-none"><span class="dot"></span>No Session</span>
@@ -147,7 +147,7 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
 <div id="startScreen" style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 52px)">
   <div class="order-pick">
     <div style="font-size:40px">&#128230;</div>
-    <h2>Start a Scan-Pack Session</h2>
+    <h2>Start a PPP Session</h2>
     <p>Select an order to begin packing. Scan HU labels to open/close cartons,<br>then scan products to add them.</p>
     <select class="order-sel" id="orderSel">
       <option value="">Loading orders…</option>
@@ -248,7 +248,7 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
 <div id="sessionsScreen" style="display:none;padding:20px;max-width:900px;margin:0 auto">
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
     <button class="btn btn-gray" onclick="showStart()">&#8592; Back</button>
-    <h2 style="font-size:16px;font-weight:800">Past Scan-Pack Sessions</h2>
+    <h2 style="font-size:16px;font-weight:800">Past PPP Sessions</h2>
   </div>
   <div id="sessionsList"></div>
 </div>
@@ -292,7 +292,7 @@ async function init() {
 async function startSession() {
   const orderId = document.getElementById('orderSel').value;
   if (!orderId) return alert('Select an order first');
-  const data = await api('POST', '/api/scan-pack/sessions', { orderId });
+  const data = await api('POST', '/api/ppp/sessions', { orderId });
   if (data.error) return alert(data.error);
   session = data;
   enterStation();
@@ -307,7 +307,7 @@ function enterStation() {
 
 async function refreshSession() {
   if (!session) return;
-  const data = await api('GET', `/api/scan-pack/sessions/${session.id}`);
+  const data = await api('GET', `/api/ppp/sessions/${session.id}`);
   if (data.error) return;
   session = data;
   renderSidebar();
@@ -323,7 +323,7 @@ async function closeSession() {
   if (!session) return;
   const cartonCount = (session.cartons || []).length;
   if (!confirm(`Close this session? ${cartonCount} carton(s) will be finalized.`)) return;
-  const data = await api('POST', `/api/scan-pack/sessions/${session.id}/close`);
+  const data = await api('POST', `/api/ppp/sessions/${session.id}/close`);
   if (data.error) return alert(data.error);
   session = data;
   renderSidebar();
@@ -340,7 +340,7 @@ document.getElementById('huInput').addEventListener('keydown', async (e) => {
   e.target.value = '';
 
   setZone('hu', 'active');
-  const data = await api('POST', `/api/scan-pack/sessions/${session.id}/scan-hu`, { huCode });
+  const data = await api('POST', `/api/ppp/sessions/${session.id}/scan-hu`, { huCode });
   if (data.error) {
     setZone('hu', 'error');
     setFeedback('hu', data.error, 'err');
@@ -378,7 +378,7 @@ document.getElementById('itemInput').addEventListener('keydown', async (e) => {
   const expiry_date = document.getElementById('expiryInput').value.trim();
 
   setZone('item', 'active');
-  const data = await api('POST', `/api/scan-pack/sessions/${session.id}/scan-item`, { sku, qty, lot_number, expiry_date });
+  const data = await api('POST', `/api/ppp/sessions/${session.id}/scan-item`, { sku, qty, lot_number, expiry_date });
   if (data.error) {
     setZone('item', 'error');
     setFeedback('item', data.error, 'err');
@@ -395,7 +395,7 @@ document.getElementById('itemInput').addEventListener('keydown', async (e) => {
 
 // ── Remove item ───────────────────────────────────────────────────────────────
 async function removeItem(itemId) {
-  const data = await api('DELETE', `/api/scan-pack/items/${itemId}`);
+  const data = await api('DELETE', `/api/ppp/items/${itemId}`);
   if (data.error) return alert(data.error);
   await refreshSession();
 }
@@ -413,7 +413,7 @@ function openDimsModal() {
 function closeDimsModal() { document.getElementById('dimsOverlay').classList.add('hidden'); }
 async function saveDims() {
   if (!openCarton) return;
-  const data = await api('PATCH', `/api/scan-pack/cartons/${openCarton.id}`, {
+  const data = await api('PATCH', `/api/ppp/cartons/${openCarton.id}`, {
     weight_kg:  parseFloat(document.getElementById('dWeight').value) || 0,
     length_cm:  parseFloat(document.getElementById('dLength').value) || 0,
     width_cm:   parseFloat(document.getElementById('dWidth').value)  || 0,
@@ -445,7 +445,7 @@ function printCartonById(cartonId) {
 async function showSessions() {
   document.getElementById('startScreen').style.display = 'none';
   document.getElementById('sessionsScreen').style.display = 'block';
-  const sessions = await api('GET', '/api/scan-pack/sessions');
+  const sessions = await api('GET', '/api/ppp/sessions');
   const el = document.getElementById('sessionsList');
   if (!sessions || !sessions.length) {
     el.innerHTML = '<div class="empty-state"><div class="ico">&#128230;</div><p>No sessions yet.</p></div>';
@@ -469,7 +469,7 @@ async function showSessions() {
 }
 
 async function resumeSession(sessionId) {
-  const data = await api('GET', `/api/scan-pack/sessions/${sessionId}`);
+  const data = await api('GET', `/api/ppp/sessions/${sessionId}`);
   if (data.error) return alert(data.error);
   session = data;
   enterStation();

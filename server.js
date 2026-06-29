@@ -34,7 +34,7 @@ const db       = require('./lib/db');
 const ldb      = require('./lib/leads-db');
 const pick     = require('./lib/pick');
 const pack     = require('./lib/pack');
-const scanPack = require('./lib/scan-pack');
+const ppp      = require('./lib/ppp');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -744,51 +744,51 @@ app.patch('/api/ship/shipments/:id', (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// ── IDEALPICK — Scan-Pack (HU scan station) ───────────────────────────────────
+// ── PPP — Pick Plus Pack (HU scan station) ────────────────────────────────────
 
-app.get('/api/scan-pack/sessions', (req, res) => {
-  res.json(scanPack.listSessions({ status: req.query.status, orderId: req.query.orderId }));
+app.get('/api/ppp/sessions', (req, res) => {
+  res.json(ppp.listSessions({ status: req.query.status, orderId: req.query.orderId }));
 });
 
-app.get('/api/scan-pack/sessions/:id', (req, res) => {
-  const s = scanPack.getSession(req.params.id);
+app.get('/api/ppp/sessions/:id', (req, res) => {
+  const s = ppp.getSession(req.params.id);
   if (!s) return res.status(404).json({ error: 'Session not found' });
   res.json(s);
 });
 
-app.post('/api/scan-pack/sessions', (req, res) => {
-  try { res.json(scanPack.openSession(req.body.orderId, req.body.operatorId)); }
+app.post('/api/ppp/sessions', (req, res) => {
+  try { res.json(ppp.openSession(req.body.orderId, req.body.operatorId)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.post('/api/scan-pack/sessions/:id/close', (req, res) => {
-  try { res.json(scanPack.closeSession(req.params.id)); }
+app.post('/api/ppp/sessions/:id/close', (req, res) => {
+  try { res.json(ppp.closeSession(req.params.id)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.post('/api/scan-pack/sessions/:id/scan-hu', (req, res) => {
-  try { res.json(scanPack.scanHU(req.params.id, req.body.huCode)); }
+app.post('/api/ppp/sessions/:id/scan-hu', (req, res) => {
+  try { res.json(ppp.scanHU(req.params.id, req.body.huCode)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.post('/api/scan-pack/sessions/:id/scan-item', (req, res) => {
-  try { res.json(scanPack.scanItem(req.params.id, req.body)); }
+app.post('/api/ppp/sessions/:id/scan-item', (req, res) => {
+  try { res.json(ppp.scanItem(req.params.id, req.body)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.delete('/api/scan-pack/items/:itemId', (req, res) => {
-  try { res.json(scanPack.removeItem(req.params.itemId)); }
+app.delete('/api/ppp/items/:itemId', (req, res) => {
+  try { res.json(ppp.removeItem(req.params.itemId)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.patch('/api/scan-pack/cartons/:cartonId', (req, res) => {
-  try { res.json(scanPack.updateCartonDimensions(req.params.cartonId, req.body)); }
+app.patch('/api/ppp/cartons/:cartonId', (req, res) => {
+  try { res.json(ppp.updateCartonDimensions(req.params.cartonId, req.body)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/print/carton/:cartonId', (req, res) => {
   try {
-    const data = scanPack.getCartonPackingListData(req.params.cartonId);
+    const data = ppp.getCartonPackingListData(req.params.cartonId);
     res.setHeader('Content-Type', 'text/html');
     res.send(renderCartonPackingList(data));
   } catch (e) { res.status(404).send(e.message); }
@@ -796,7 +796,7 @@ app.get('/print/carton/:cartonId', (req, res) => {
 
 app.get('/print/master-packing-list/:sessionId', (req, res) => {
   try {
-    const data = scanPack.getMasterPackingListData(req.params.sessionId);
+    const data = ppp.getMasterPackingListData(req.params.sessionId);
     res.setHeader('Content-Type', 'text/html');
     res.send(renderMasterPackingList(data));
   } catch (e) { res.status(404).send(e.message); }
