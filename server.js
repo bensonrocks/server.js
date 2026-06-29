@@ -894,7 +894,7 @@ app.post('/api/master/reset', (req, res) => {
   if (!checkMaster(req, res)) return;
   try {
     writeDb({ batches: [] });
-    for (const k of Object.keys(sessions)) delete sessions[k];
+    activeSessions.clear();
     for (const f of fs.readdirSync(WMS_DIR))
       try { fs.unlinkSync(path.join(WMS_DIR, f)); } catch {}
     for (const d of fs.readdirSync(WAYBILL_DIR)) {
