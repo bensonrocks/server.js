@@ -232,6 +232,8 @@ function summarizeOrders(lines) {
         delivery_address: line.delivery_address || '',
         carrier:          line.carrier,
         waybill_number:   line.waybill_number,
+        issue_no:         line.issue_no         || '',
+        pick_ticket:      line.pick_ticket       || '',
         platform:         line.platform         || '',
         shop_name:        line.shop_name        || '',
         date:             line.date,
@@ -305,12 +307,17 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
     const dir      = path.join(WAYBILL_DIR, batchId);
     fs.mkdirSync(dir, { recursive: true });
 
-    // Build two lookup maps: normalized waybill/order number → orderNumber
-    const byWaybill = new Map();
-    const byOrder   = new Map();
+    // Build lookup maps: normalized identifier → orderNumber
+    // Priority 1: waybill number  2: order number  3: issue no  4: pick ticket
+    const byWaybill    = new Map();
+    const byOrder      = new Map();
+    const byIssueNo    = new Map();
+    const byPickTicket = new Map();
     for (const o of orders) {
-      if (o.waybill_number) byWaybill.set(normStr(o.waybill_number), o.order_number);
-      if (o.order_number)   byOrder.set(normStr(o.order_number),   o.order_number);
+      if (o.waybill_number) byWaybill.set(normStr(o.waybill_number),  o.order_number);
+      if (o.order_number)   byOrder.set(normStr(o.order_number),      o.order_number);
+      if (o.issue_no)       byIssueNo.set(normStr(o.issue_no),        o.order_number);
+      if (o.pick_ticket)    byPickTicket.set(normStr(o.pick_ticket),   o.order_number);
     }
 
     for (let i = 0; i < numPages; i++) {
@@ -321,7 +328,7 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
 
       let assignedOrder = null;
 
-      if (pdfParse && (byWaybill.size || byOrder.size)) {
+      if (pdfParse && (byWaybill.size || byOrder.size || byIssueNo.size || byPickTicket.size)) {
         try {
           const parsed   = await pdfParse(buf);
           const rawText  = (parsed.text || '').toUpperCase();
@@ -333,9 +340,25 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
               assignedOrder = orderNo; matched[orderNo] = true; break;
             }
           }
-          // Priority 2: match by order number as fallback
+          // Priority 2: match by order number
           if (!assignedOrder) {
             for (const [key, orderNo] of byOrder) {
+              if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
+                assignedOrder = orderNo; matched[orderNo] = true; break;
+              }
+            }
+          }
+          // Priority 3: match by Issue No (Betime / WMS internal ref)
+          if (!assignedOrder) {
+            for (const [key, orderNo] of byIssueNo) {
+              if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
+                assignedOrder = orderNo; matched[orderNo] = true; break;
+              }
+            }
+          }
+          // Priority 4: match by PickTicket number (Betime / WMS internal ref)
+          if (!assignedOrder) {
+            for (const [key, orderNo] of byPickTicket) {
               if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
                 assignedOrder = orderNo; matched[orderNo] = true; break;
               }
