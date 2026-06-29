@@ -1332,3 +1332,16 @@ body.bs-open { overflow: hidden; }
 }
 .btn-batch-scan:hover  { background: #334155; border-color: #475569; }
 .btn-batch-scan:active { background: #475569; }
+
+/* Photo upload button inside the drop zone */
+.btn-photo-upload {
+  margin-top: .65rem;
+  padding: .45rem 1.1rem;
+  background: #0f172a; color: #cbd5e1;
+  border: 1.5px solid #334155; border-radius: 999px;
+  font-size: .8rem; font-weight: 600;
+  cursor: pointer; display: inline-flex; align-items: center; gap: .4rem;
+  transition: background .15s, border-color .15s;
+}
+.btn-photo-upload:hover  { background: #1e293b; border-color: #475569; }
+.btn-photo-upload:active { background: #334155; }

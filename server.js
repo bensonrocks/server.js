@@ -23,6 +23,11 @@ const {
 // Upload validation ruleset — edit lib/validation.js to change rules
 const { validateRows } = require('./lib/validation');
 
+// OCR parser for photo-based picklist upload
+const { parseOcrPicklist } = require('./lib/ocr-parse');
+let Tesseract;
+try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
+
 const app    = express();
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
 const UPLOAD_MAX_ROWS  = 5000;
@@ -395,27 +400,31 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
 
 // Keyfields XLSX generation → see lib/keyfields.js
 
+// Returns true when a mapped row is an embedded metadata/label row from a
+// picking list — e.g. a row where the first column cycles through label
+// phrases like "Pick Ticket", "Issuing Date/Time", "Delivery Date".
+// Such rows have a multi-word, digit-free order_number and no valid SKU.
+function isMetadataRow(r) {
+  const on = String(r.order_number || '').trim();
+  if (!on || on === 'UNKNOWN') return true;
+  // Multi-word phrase starting with a letter and containing no digits
+  return /\s/.test(on) && !/\d/.test(on) && /^[A-Za-z]/.test(on);
+}
+
 // ── File parsing ────────────────────────────────────────────────────────────
 function parseUploadedFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.csv') {
     const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
     const detected = detectColumnMap(records);
-    return records.map(r => mapRow(r, detected));
+    return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
   }
   if (ext === '.xlsx' || ext === '.xls') {
-    const wb       = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-    const ws       = wb.Sheets[wb.SheetNames[0]];
-    const records  = XLSX.utils.sheet_to_json(ws, { defval: null });
+    const wb      = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const ws      = wb.Sheets[wb.SheetNames[0]];
+    const records = XLSX.utils.sheet_to_json(ws, { defval: null });
     const detected = detectColumnMap(records);
-    const mapped   = records.map(r => mapRow(r, detected));
-    // When AI detected the order or SKU column, relax filtering to rows that
-    // at least have a non-UNKNOWN order number.  Otherwise keep the strict filter.
-    return mapped.filter(r =>
-      (detected.order_key || detected.sku_key)
-        ? r.order_number !== 'UNKNOWN'
-        : r.sku && r.order_number !== 'UNKNOWN'
-    );
+    return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -451,18 +460,16 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
     if (ext === '.csv') {
       const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
       const detected = detectColumnMap(records);
-      allRows = records.map(r => mapRow(r, detected));
+      const all      = records.map(r => mapRow(r, detected));
+      allRows = all.filter(r => r.sku && !isMetadataRow(r));
+      skipped = all.length - allRows.length;
     } else {
-      const wb       = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
-      const ws       = wb.Sheets[wb.SheetNames[0]];
-      const records  = XLSX.utils.sheet_to_json(ws, { defval: null });
+      const wb      = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const ws      = wb.Sheets[wb.SheetNames[0]];
+      const records = XLSX.utils.sheet_to_json(ws, { defval: null });
       const detected = detectColumnMap(records);
       const all      = records.map(r => mapRow(r, detected));
-      allRows = all.filter(r =>
-        (detected.order_key || detected.sku_key)
-          ? r.order_number !== 'UNKNOWN'
-          : r.sku && r.order_number !== 'UNKNOWN'
-      );
+      allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = records.length - allRows.length;
     }
 
@@ -476,6 +483,67 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
     res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames });
   } catch (err) {
     res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
+  }
+});
+
+// ── OCR preview — photo → text → order parse (no save) ──────────────────────
+app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  if (!Tesseract) {
+    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
+  }
+  try {
+    const { data: { text } } = await Tesseract.recognize(req.file.buffer, 'eng', { logger: () => {} });
+    const rows   = parseOcrPicklist(text);
+    const orders = summarizeOrders(rows);
+    if (!rows.length) {
+      return res.json({ rowCount: 0, orderCount: 0, errors: ['No order items detected in photo. Ensure the picking list is clearly visible and in focus.'], converted: false, ocrText: text.slice(0, 500) });
+    }
+    res.json({ rowCount: rows.length, orderCount: orders.length, errors: [], converted: true, clientName: '', customerNames: [], ocrRows: rows });
+  } catch (err) {
+    res.json({ rowCount: 0, orderCount: 0, errors: [`OCR error: ${err.message}`], converted: false });
+  }
+});
+
+// ── OCR upload — submit parsed photo rows as a batch ───────────────────────
+app.post('/api/ocr/upload', express.json(), async (req, res) => {
+  try {
+    const { rows, client_name = '', direction = 'Outbound' } = req.body || {};
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows provided' });
+
+    const orders    = summarizeOrders(rows);
+    const wmsRows   = [];
+    let vLine = 1;
+    for (const order of orders) {
+      for (const line of order.lines) wmsRows.push(buildRow(vLine++, order, line));
+    }
+    const validation = validateRows(wmsRows);
+    if (!validation.passed) {
+      return res.status(422).json({ error: validation.abortMessage, validation });
+    }
+
+    const wmsBuffer = generateKeyfieldsXLSX(orders, loadCustomHeaders());
+    const batchId   = uuidv4();
+    const batch = {
+      id: batchId,
+      filename:    `photo-scan-${new Date().toISOString().slice(0, 10)}.jpg`,
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: req.userId || '',
+      client_name: client_name.trim(),
+      order_count: orders.length,
+      row_count:   rows.length,
+      orderStates: {},
+      orders,
+      rawRows: rows,
+    };
+    const db = readDb();
+    db.batches.unshift(batch);
+    writeDb(db);
+    fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
+
+    res.json({ batchId, orders, rowCount: rows.length, sessionId: uuidv4() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

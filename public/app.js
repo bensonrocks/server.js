@@ -31,6 +31,7 @@
   let activeCarrierFilter = 'all';
   let printWaybillTimer   = null;
   let pendingOrderFile    = null;
+  let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
   let uploadDirection     = 'Outbound';
   let logUnlocked         = false;
   let pendingDownload     = false;
@@ -436,8 +437,11 @@
   const fileInput       = document.getElementById('fileInput');
   const waybillPdfInput = document.getElementById('waybillPdfInput');
 
+  const photoInput = document.getElementById('photoInput');
+
   document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
   document.getElementById('browsePdfBtn').addEventListener('click', () => waybillPdfInput.click());
+  document.getElementById('photoUploadBtn').addEventListener('click', e => { e.stopPropagation(); photoInput.click(); });
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -446,6 +450,7 @@
     if (e.dataTransfer.files[0]) previewOrderFile(e.dataTransfer.files[0]);
   });
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) previewOrderFile(fileInput.files[0]); });
+  photoInput.addEventListener('change', () => { if (photoInput.files[0]) previewPhotoFile(photoInput.files[0]); });
   waybillPdfInput.addEventListener('change', () => {
     const f = waybillPdfInput.files[0];
     document.getElementById('waybillPdfName').textContent = f ? f.name : '';
@@ -453,9 +458,10 @@
 
   document.getElementById('goOrdersBtn').addEventListener('click', () => switchTab('orders'));
 
-  // ── Step 1: Preview (parse only) ───────────────────────────────────────────
+  // ── Step 1a: Preview from file (XLSX/CSV) ──────────────────────────────────
   async function previewOrderFile(file) {
     pendingOrderFile = file;
+    pendingOcrRows   = null;
     unlockTabsAfterDownload();
     document.getElementById('uploadDownloadWrap').classList.add('hidden');
     setUploadStatus('loading', `Parsing ${file.name}…`);
@@ -472,6 +478,32 @@
       const data = await resp.json();
       document.getElementById('uploadStatus').classList.add('hidden');
       showUploadConfirmModal(file.name, data);
+    } catch (err) {
+      setUploadStatus('error', err.message);
+    }
+  }
+
+  // ── Step 1b: Preview from photo (OCR) ──────────────────────────────────────
+  async function previewPhotoFile(file) {
+    pendingOrderFile = null;
+    pendingOcrRows   = null;
+    unlockTabsAfterDownload();
+    document.getElementById('uploadDownloadWrap').classList.add('hidden');
+    setUploadStatus('loading', 'Reading photo… (OCR may take a few seconds)');
+
+    const form = new FormData();
+    form.append('image', file);
+
+    try {
+      const resp = await fetch('/api/ocr/preview', {
+        method: 'POST',
+        headers: { 'x-session-id': SESSION_ID },
+        body: form,
+      });
+      const data = await resp.json();
+      document.getElementById('uploadStatus').classList.add('hidden');
+      if (data.ocrRows && data.ocrRows.length) pendingOcrRows = data.ocrRows;
+      showUploadConfirmModal('📷 ' + file.name, data);
     } catch (err) {
       setUploadStatus('error', err.message);
     }
@@ -548,6 +580,42 @@
 
   // ── Step 3: Actual upload ──────────────────────────────────────────────────
   async function doUpload(emailTo) {
+    if (!pendingOrderFile && !pendingOcrRows) return;
+
+    // OCR path — upload the pre-parsed rows as JSON
+    if (pendingOcrRows) {
+      const clientName = document.getElementById('clientNameInput').value.trim();
+      try {
+        const resp = await fetch('/api/ocr/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-session-id': SESSION_ID },
+          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection }),
+        });
+        const data = await resp.json();
+        document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+        if (!resp.ok) { setUploadStatus('error', data.error || 'Upload failed'); return; }
+        SESSION_ID = data.sessionId || SESSION_ID;
+        sessionStorage.setItem('wms_session', SESSION_ID);
+        loadedOrders = data.orders; activeOrder = null;
+        setUploadStatus('success', `Scanned ${data.rowCount} line(s) across ${data.orders.length} order(s) from photo.`);
+        const dlBtn  = document.getElementById('uploadDownloadBtn');
+        const dlWrap = document.getElementById('uploadDownloadWrap');
+        dlBtn.href = `/api/download-wms/${data.batchId}`;
+        dlBtn.setAttribute('download', `WMS_PhotoScan_${new Date().toISOString().slice(0,10)}.xlsx`);
+        dlWrap.classList.remove('hidden');
+        lockTabsForDownload();
+        dlBtn.addEventListener('click', unlockTabsAfterDownload, { once: true });
+        renderUploadList(data.orders);
+        renderBreakdowns(data.orders);
+        fetchAndRenderStats();
+        pendingOcrRows = null; photoInput.value = '';
+      } catch (err) {
+        document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+        setUploadStatus('error', err.message);
+      }
+      return;
+    }
+
     if (!pendingOrderFile) return;
     const file       = pendingOrderFile;
     const clientName = document.getElementById('clientNameInput').value.trim();
