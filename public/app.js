@@ -354,6 +354,7 @@
   function switchTab(name) {
     // Warehouse users cannot access the upload tab
     if (name === 'upload' && (currentUser?.role || 'admin') === 'warehouse') return;
+    if (!document.getElementById(`tab-${name}`)) return;
     if (pendingDownload && name === 'orders') {
       const dlWrap = document.getElementById('uploadDownloadWrap');
       dlWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });

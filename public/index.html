@@ -423,6 +423,7 @@
       <nav>
         <button class="tab-btn active" data-tab="upload">Upload</button>
         <button class="tab-btn" data-tab="orders">Orders</button>
+        <button class="tab-btn" data-tab="about">About</button>
       </nav>
       <div class="header-user">
         <span id="userDisplay" class="user-chip hidden"></span>
@@ -515,6 +516,124 @@
         <div class="filter-row" id="clientFilterRow"></div>
         <div class="filter-row" id="carrierFilterRow"></div>
         <div id="ordersDashList"></div>
+      </div>
+    </section>
+
+    <!-- ── TAB 3: About ── -->
+    <section id="tab-about" class="tab about-tab">
+      <div class="about-hero">
+        <div class="about-hero-inner">
+          <div class="about-logo-mark">&#128269;</div>
+          <div>
+            <h1 class="about-title">IDEALSCAN</h1>
+            <p class="about-subtitle">Fulfillment Scanning System</p>
+          </div>
+        </div>
+        <p class="about-tagline">Replacing paper-based pick verification with a live, real-time scan workflow — from order upload to printed shipping label, all in one place.</p>
+        <a href="/idealscan-overview.html" target="_blank" class="about-download-btn">&#128196; Download Overview Document</a>
+      </div>
+
+      <div class="about-body">
+
+        <div class="about-section">
+          <h2 class="about-section-title">Why This Exists</h2>
+          <div class="about-why-grid">
+            <div class="about-why-card">
+              <div class="about-why-num">1</div>
+              <div>
+                <strong>No single source of truth</strong>
+                <p>Order data arrives by email, spreadsheet, and WhatsApp — not in one system staff can act on.</p>
+              </div>
+            </div>
+            <div class="about-why-card">
+              <div class="about-why-num">2</div>
+              <div>
+                <strong>Manual verification fails at scale</strong>
+                <p>Counting by hand and ticking paper tally sheets is slow, inconsistent, and doesn't scale.</p>
+              </div>
+            </div>
+            <div class="about-why-card">
+              <div class="about-why-num">3</div>
+              <div>
+                <strong>No audit trail</strong>
+                <p>When a wrong item ships or a quantity is disputed, there's no record of who verified what and when.</p>
+              </div>
+            </div>
+            <div class="about-why-card">
+              <div class="about-why-num">4</div>
+              <div>
+                <strong>Labels require a separate system</strong>
+                <p>Producing shipping labels means switching apps, copying order details manually, and risking errors.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-section">
+          <h2 class="about-section-title">What You Can Do</h2>
+          <div class="about-feature-grid">
+            <div class="about-feature">
+              <div class="about-feature-icon">📤</div>
+              <div class="about-feature-name">Upload order files</div>
+              <div class="about-feature-desc">CSV or XLSX from any client — auto-mapped to WMS format instantly.</div>
+            </div>
+            <div class="about-feature">
+              <div class="about-feature-icon">🔍</div>
+              <div class="about-feature-name">Scan &amp; verify orders</div>
+              <div class="about-feature-desc">Live barcode scan with instant pass/fail per item and per order.</div>
+            </div>
+            <div class="about-feature">
+              <div class="about-feature-icon">📦</div>
+              <div class="about-feature-name">Scan waybill to jump to order</div>
+              <div class="about-feature-desc">Point a barcode gun at any parcel — lands on that order's scan screen.</div>
+            </div>
+            <div class="about-feature">
+              <div class="about-feature-icon">📍</div>
+              <div class="about-feature-name">See full delivery details</div>
+              <div class="about-feature-desc">Address, phone, and platform shown during scanning for every order.</div>
+            </div>
+            <div class="about-feature">
+              <div class="about-feature-icon">🖨</div>
+              <div class="about-feature-name">Print waybill labels</div>
+              <div class="about-feature-desc">One click after verification — carrier, buyer, items, and barcode on one label.</div>
+            </div>
+            <div class="about-feature">
+              <div class="about-feature-icon">📊</div>
+              <div class="about-feature-name">Export audit reports</div>
+              <div class="about-feature-desc">Full XLSX export: who scanned what, when, how long, and whether it was correct.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-section">
+          <h2 class="about-section-title">User Roles</h2>
+          <div class="about-roles">
+            <div class="about-role-card">
+              <span class="about-role-badge admin-badge">Admin</span>
+              <ul>
+                <li>Upload and manage order batches</li>
+                <li>Manage user accounts and roles</li>
+                <li>Configure WMS template and email</li>
+                <li>Export audit trail</li>
+              </ul>
+            </div>
+            <div class="about-role-card">
+              <span class="about-role-badge warehouse-badge">Warehouse</span>
+              <ul>
+                <li>Scan and verify orders</li>
+                <li>Scan waybill to find an order instantly</li>
+                <li>Print and reprint waybill labels</li>
+                <li>Configure personal printer settings</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /about-body -->
+
+      <div class="about-footer">
+        <span>IDEALSCAN &nbsp;·&nbsp; United Logistics &amp; Distribution &nbsp;·&nbsp; Built by Benson</span>
+        <a href="/idealscan-overview.html" target="_blank" class="about-dl-link">&#128196; Full overview document</a>
       </div>
     </section>
 

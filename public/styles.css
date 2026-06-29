@@ -871,6 +871,102 @@ body.log-open { overflow: hidden; }
 .log-access-link:hover { color: var(--primary); }
 
 /* ================================================================
+   ABOUT TAB
+   ================================================================ */
+.about-tab { padding: 0; max-width: none; }
+
+.about-hero {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  color: #fff;
+  padding: 2.5rem 2rem 2rem;
+  text-align: center;
+}
+.about-hero-inner {
+  display: flex; align-items: center; justify-content: center;
+  gap: .85rem; margin-bottom: 1rem;
+}
+.about-logo-mark {
+  font-size: 2rem; background: rgba(255,255,255,.15);
+  border-radius: 12px; width: 52px; height: 52px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.about-title    { font-size: 1.6rem; font-weight: 900; letter-spacing: 2px; margin: 0; }
+.about-subtitle { font-size: .75rem; opacity: .7; letter-spacing: .5px; text-transform: uppercase; margin: .15rem 0 0; }
+.about-tagline  { font-size: .9rem; opacity: .85; max-width: 520px; margin: 0 auto 1.25rem; line-height: 1.6; }
+.about-download-btn {
+  display: inline-block;
+  background: #fff; color: #1e3a5f;
+  padding: .5rem 1.2rem; border-radius: 6px;
+  font-size: .82rem; font-weight: 700;
+  text-decoration: none;
+  transition: background .15s;
+}
+.about-download-btn:hover { background: #e0e9f5; }
+
+.about-body { padding: 1.75rem 1.5rem; max-width: 860px; margin: 0 auto; }
+
+.about-section { margin-bottom: 2rem; }
+.about-section-title {
+  font-size: .68rem; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--primary);
+  margin-bottom: 1rem; padding-bottom: .4rem;
+  border-bottom: 2px solid var(--primary-light);
+}
+
+/* Why grid */
+.about-why-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+.about-why-card {
+  display: flex; gap: .75rem; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .9rem 1rem;
+}
+.about-why-num {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--primary); color: #fff;
+  font-size: .72rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.about-why-card strong { display: block; font-size: .84rem; margin-bottom: .25rem; color: var(--text); }
+.about-why-card p { font-size: .78rem; color: var(--text-light); margin: 0; line-height: 1.45; }
+
+/* Feature grid */
+.about-feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .85rem; }
+.about-feature {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .9rem 1rem;
+}
+.about-feature-icon { font-size: 1.3rem; margin-bottom: .35rem; }
+.about-feature-name { font-size: .84rem; font-weight: 700; color: var(--text); margin-bottom: .3rem; }
+.about-feature-desc { font-size: .78rem; color: var(--text-light); line-height: 1.45; }
+
+/* Roles */
+.about-roles { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+.about-role-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .9rem 1rem;
+}
+.about-role-badge {
+  display: inline-block; font-size: .68rem; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase;
+  padding: .2em .65em; border-radius: 4px; margin-bottom: .65rem;
+}
+.admin-badge     { background: #eff6ff; color: #1e40af; }
+.warehouse-badge { background: #f0fdf4; color: #166534; }
+.about-role-card ul { padding-left: 1.1rem; }
+.about-role-card ul li { font-size: .8rem; color: var(--text-light); margin-bottom: .25rem; }
+
+/* Footer */
+.about-footer {
+  border-top: 1px solid var(--border); padding: 1rem 1.5rem;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: .74rem; color: var(--text-muted);
+}
+.about-dl-link { color: var(--primary); text-decoration: none; font-weight: 600; }
+.about-dl-link:hover { text-decoration: underline; }
+
+/* ================================================================
    RESPONSIVE — MOBILE  (≤ 640px)
    ================================================================ */
 @media (max-width: 640px) {
@@ -946,6 +1042,11 @@ body.log-open { overflow: hidden; }
 
   .app-footer { margin-bottom: var(--bottom-nav-h); }
   .footer-brand-text { font-size: .65rem; }
+
+  .about-why-grid    { grid-template-columns: 1fr; }
+  .about-feature-grid { grid-template-columns: 1fr 1fr; }
+  .about-roles       { grid-template-columns: 1fr; }
+  .about-footer      { flex-direction: column; gap: .5rem; text-align: center; }
 
   .log-card { flex-direction: column; align-items: flex-start; padding: .85rem; }
   .btn-download { width: 100%; justify-content: center; margin-top: .35rem; }
