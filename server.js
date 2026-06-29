@@ -548,6 +548,9 @@ function isMetadataRow(r) {
   if (/\s/.test(sku)) return true;
   // SKU is a known label word (Status, Account, Reference, …)
   if (_LABEL_WORDS.has(sku.toLowerCase())) return true;
+  // Warehouse bin/location address pattern (e.g. AC-007-003-B, A-01-02-C)
+  // Format: [1-4 letters]-[2-5 digits]-[2-5 digits][-optional 1-2 alphanum]
+  if (/^[A-Z]{1,4}-\d{2,5}-\d{2,5}(-[A-Z0-9]{1,2})?$/i.test(sku)) return true;
   return false;
 }
 
