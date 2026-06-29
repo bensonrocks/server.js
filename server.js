@@ -424,7 +424,48 @@ function _detectHeaderRow(aoa) {
   return bestIdx;
 }
 
+// Scan rows BEFORE the table header for vertical key-value metadata pairs
+// (col A = label, col B = value) and return them keyed for mapRow injection.
+// e.g. "Reference | 1004643709" → { reference: "1004643709" }
+const _KV_MAP = {
+  'reference':        'reference',
+  'ref':              'reference',
+  'order no':         'order_no',
+  'order number':     'order_number',
+  'po number':        'po_number',
+  'po no':            'po_number',
+  'invoice no':       'order_number',
+  'invoice number':   'order_number',
+  'pick ticket':      'pick_ticket',
+  'pick ticket no':   'pick_ticket',
+  'pt no':            'pt_no',
+  'issue no':         'issue_no',
+  'issue number':     'issue_no',
+  'consignee':        'consignee',
+  'consignee name':   'consignee',
+  'account':          'account',
+  'client':           'client_name',
+  'client name':      'client_name',
+  'delivery date':    'delivery_date',
+  'ship date':        'ship_date',
+};
+function _extractKVMeta(aoa, headerIdx) {
+  const meta = {};
+  for (let i = 0; i < headerIdx; i++) {
+    const row = aoa[i] || [];
+    const key = row[0] != null ? String(row[0]).trim().toLowerCase() : '';
+    const val = row[1] != null ? String(row[1]).trim() : '';
+    if (!key || !val) continue;
+    const mapped = _KV_MAP[key];
+    if (mapped && !meta[mapped]) meta[mapped] = val;
+  }
+  return meta;
+}
+
 // Build column-keyed record objects starting from the detected header row.
+// When the sheet has a vertical KV section before the table (e.g. picking list
+// exports), the extracted metadata (Reference, Issue No, etc.) is injected into
+// every data record so mapRow can resolve the order number.
 function _parseExcelSheet(ws) {
   const aoa     = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
   const hdrIdx  = _detectHeaderRow(aoa);
@@ -439,6 +480,19 @@ function _parseExcelSheet(ws) {
       headers.forEach((h, i) => { obj[h] = (row[i] !== undefined ? row[i] : null); });
       return obj;
     });
+
+  // Inject KV metadata so mapRow can find the order number and consignee
+  const kvMeta = _extractKVMeta(aoa, hdrIdx);
+  if (Object.keys(kvMeta).length > 0) {
+    for (const rec of records) {
+      for (const [k, v] of Object.entries(kvMeta)) {
+        if (rec[k] === null || rec[k] === undefined || String(rec[k]).trim() === '') {
+          rec[k] = v;
+        }
+      }
+    }
+  }
+
   return { records, headers };
 }
 
@@ -490,11 +544,19 @@ function isMetadataRow(r) {
   if (on === sku && on !== '') return true;
   // Multi-word phrase with no digits (e.g. "Pick Ticket", "Issuing Date/Time")
   if (/\s/.test(on) && !/\d/.test(on) && /^[A-Za-z]/.test(on)) return true;
+  // SKU with spaces → a summary label like "Total Whole Qty", "Grand Total Loose"
+  if (/\s/.test(sku)) return true;
   // SKU is a known label word (Status, Account, Reference, …)
   if (_LABEL_WORDS.has(sku.toLowerCase())) return true;
-  // SKU is a purely alphabetic short word that is never a product code
-  if (/^[A-Za-z]{2,8}$/.test(sku) && _LABEL_WORDS.has(sku.toLowerCase())) return true;
   return false;
+}
+
+// Quick pre-filter: strip obvious footer/total rows before column-map detection
+// so they don't skew AI scoring of the real data columns.
+function _isFooterRow(rec) {
+  const first = Object.values(rec).find(v => v != null && String(v).trim() !== '');
+  if (!first) return false;
+  return /^(total\s+whole|total\s+loose|grand\s+total|subtotal|remarks?[\s:]|picked\s+by|checked\s+by|released\s+by)/i.test(String(first).trim());
 }
 
 // ── File parsing ────────────────────────────────────────────────────────────
@@ -506,13 +568,14 @@ function parseUploadedFile(buffer, filename) {
     return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
   }
   if (ext === '.xlsx' || ext === '.xls') {
-    const wb                  = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-    const ws                  = wb.Sheets[wb.SheetNames[0]];
+    const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const ws                   = wb.Sheets[wb.SheetNames[0]];
     const { records, headers } = _parseExcelSheet(ws);
-    const melted              = _tryMeltWide(records, headers);
-    const finalRecs           = melted || records;
-    const detected            = detectColumnMap(finalRecs);
-    return finalRecs.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const melted               = _tryMeltWide(records, headers);
+    const finalRecs            = melted || records;
+    const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
+    const detected             = detectColumnMap(cleanRecs);
+    return cleanRecs.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -557,10 +620,11 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       const { records, headers } = _parseExcelSheet(ws);
       const melted               = _tryMeltWide(records, headers);
       const finalRecs            = melted || records;
-      const detected             = detectColumnMap(finalRecs);
-      const all                  = finalRecs.map(r => mapRow(r, detected));
+      const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
+      const detected             = detectColumnMap(cleanRecs);
+      const all                  = cleanRecs.map(r => mapRow(r, detected));
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
-      skipped = finalRecs.length - allRows.length;
+      skipped = cleanRecs.length - allRows.length;
     }
 
     if (allRows.length > UPLOAD_MAX_ROWS) {
