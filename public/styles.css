@@ -1345,3 +1345,139 @@ body.bs-open { overflow: hidden; }
 }
 .btn-photo-upload:hover  { background: #1e293b; border-color: #475569; }
 .btn-photo-upload:active { background: #334155; }
+
+/* ── Label Scan button in scan dock ──────────────────────────────────────── */
+.btn-label-scan {
+  padding: .38rem .85rem;
+  background: #0f172a; color: #a3e635;
+  border: 1.5px solid #365314; border-radius: var(--radius-sm);
+  font-size: .78rem; font-weight: 700; letter-spacing: .02em;
+  cursor: pointer; display: flex; align-items: center; gap: .35rem;
+  transition: background .15s, border-color .15s;
+}
+.btn-label-scan:hover  { background: #1a2e05; border-color: #4d7c0f; }
+.btn-label-scan:active { background: #365314; }
+
+/* ── Label Scan Overlay ───────────────────────────────────────────────────── */
+.ls-overlay {
+  position: fixed; inset: 0; z-index: 9900;
+  background: #000;
+  display: flex; flex-direction: column;
+  font-family: inherit;
+}
+.ls-overlay.hidden { display: none !important; }
+body.ls-open { overflow: hidden; }
+
+.ls-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .6rem 1rem;
+  background: #0f172a; border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+.ls-header-left { display: flex; align-items: center; gap: .5rem; }
+.ls-hdr-icon { width: 1.5rem; height: 1.1rem; color: #94a3b8; }
+.ls-hdr-title { font-size: .9rem; font-weight: 700; color: #e2e8f0; letter-spacing: .03em; }
+.ls-close-btn {
+  padding: .3rem .8rem; background: #1e293b; color: #94a3b8;
+  border: 1px solid #334155; border-radius: 999px;
+  font-size: .78rem; cursor: pointer;
+}
+.ls-close-btn:hover { background: #334155; color: #e2e8f0; }
+
+.ls-viewfinder {
+  flex: 1; position: relative; overflow: hidden; background: #000;
+}
+#lsVideo {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+
+/* Targeting frame */
+.ls-aim {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 78%; max-width: 340px;
+  height: 38%; max-height: 160px;
+  pointer-events: none;
+}
+.ls-aim-corner {
+  position: absolute;
+  width: 20px; height: 20px;
+  border-color: #a3e635; border-style: solid;
+}
+.ls-aim-tl { top: 0; left: 0;  border-width: 3px 0 0 3px; }
+.ls-aim-tr { top: 0; right: 0; border-width: 3px 3px 0 0; }
+.ls-aim-bl { bottom: 0; left: 0;  border-width: 0 0 3px 3px; }
+.ls-aim-br { bottom: 0; right: 0; border-width: 0 3px 3px 0; }
+.ls-aim-label {
+  position: absolute; bottom: -1.5rem; left: 50%; transform: translateX(-50%);
+  color: #a3e635; font-size: .72rem; font-weight: 600; white-space: nowrap;
+  text-shadow: 0 1px 3px #000;
+}
+
+.ls-capturing {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .75rem; background: rgba(0,0,0,.65); color: #e2e8f0;
+  font-size: .9rem; font-weight: 600;
+}
+.ls-capturing.hidden { display: none; }
+.ls-spinner {
+  width: 36px; height: 36px;
+  border: 3px solid #334155; border-top-color: #a3e635;
+  border-radius: 50%; animation: ls-spin .8s linear infinite;
+}
+@keyframes ls-spin { to { transform: rotate(360deg); } }
+
+.ls-capture-bar {
+  flex-shrink: 0; padding: .75rem 1rem;
+  background: #0f172a; border-top: 1px solid #1e293b;
+  display: flex; flex-direction: column; align-items: center; gap: .5rem;
+}
+.ls-hint { margin: 0; font-size: .78rem; color: #94a3b8; text-align: center; }
+.ls-capture-btn {
+  padding: .55rem 2rem; background: #166534; color: #dcfce7;
+  border: none; border-radius: 999px;
+  font-size: .9rem; font-weight: 700; cursor: pointer;
+  transition: background .15s;
+}
+.ls-capture-btn:hover:not(:disabled) { background: #15803d; }
+.ls-capture-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.ls-result {
+  flex-shrink: 0; padding: .75rem 1rem;
+  background: #0f172a; border-top: 1px solid #1e293b;
+}
+.ls-result.hidden { display: none; }
+.ls-result-fields {
+  display: flex; gap: .75rem; justify-content: center;
+  margin-bottom: .65rem;
+}
+.ls-field {
+  display: flex; flex-direction: column; align-items: center;
+  background: #1e293b; border-radius: 8px; padding: .45rem .75rem; min-width: 5rem;
+}
+.ls-field-lbl { font-size: .65rem; color: #64748b; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .15rem; }
+.ls-field-val { font-size: .9rem; font-weight: 700; color: #e2e8f0; }
+.ls-review {
+  text-align: center; font-size: .78rem; color: #fbbf24; font-weight: 600;
+  margin-bottom: .5rem;
+}
+.ls-review.hidden { display: none; }
+.ls-result-btns {
+  display: flex; gap: .6rem; justify-content: center;
+}
+.ls-retry-btn {
+  padding: .4rem 1.2rem; background: #1e293b; color: #94a3b8;
+  border: 1px solid #334155; border-radius: 999px;
+  font-size: .82rem; cursor: pointer;
+}
+.ls-retry-btn:hover { background: #334155; }
+.ls-use-btn {
+  padding: .4rem 1.5rem; background: #166534; color: #dcfce7;
+  border: none; border-radius: 999px;
+  font-size: .82rem; font-weight: 700; cursor: pointer;
+}
+.ls-use-btn:hover:not(:disabled) { background: #15803d; }
+.ls-use-btn:disabled { opacity: .4; cursor: not-allowed; }

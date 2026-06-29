@@ -400,15 +400,101 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
 
 // Keyfields XLSX generation → see lib/keyfields.js
 
-// Returns true when a mapped row is an embedded metadata/label row from a
-// picking list — e.g. a row where the first column cycles through label
-// phrases like "Pick Ticket", "Issuing Date/Time", "Delivery Date".
-// Such rows have a multi-word, digit-free order_number and no valid SKU.
+// ── Header-row detection ─────────────────────────────────────────────────────
+// Some files have title/blank rows before the real column headers.
+// Scan the first 15 rows and pick the one that looks most like headers.
+const _HEADER_TERMS = /^(s[._\/]?n\.?|seq\.?|no\.?|status|account|reference|consign|address|remarks?|order|sku|item|code|qty|quantity|name|desc|date|product|part|material|batch|expiry|price|amount|total|uom|unit|barcode|pick|ticket|deliver|waybill|carrier|tel|phone|weight|pcs|pieces|line|ref|invoice|dispatch|pick_ticket)$/i;
+
+function _detectHeaderRow(aoa) {
+  let bestIdx = 0, bestScore = -1;
+  for (let i = 0; i < Math.min(aoa.length, 15); i++) {
+    const row = aoa[i] || [];
+    let score = 0;
+    let strCells = 0;
+    for (const cell of row) {
+      if (cell === null || cell === undefined) continue;
+      const s = String(cell).trim();
+      if (_HEADER_TERMS.test(s)) score += 3;
+      if (typeof cell === 'string' && /[A-Za-z]/.test(s) && s.length >= 2) { score += 0.5; strCells++; }
+    }
+    // Prefer rows with several string cells (header rows are mostly text)
+    if (strCells >= 3) score += 1;
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+// Build column-keyed record objects starting from the detected header row.
+function _parseExcelSheet(ws) {
+  const aoa     = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const hdrIdx  = _detectHeaderRow(aoa);
+  const rawHdrs = aoa[hdrIdx] || [];
+  const headers = rawHdrs.map((h, i) =>
+    (h !== null && h !== undefined && String(h).trim() !== '') ? String(h).trim() : `_col${i}`
+  );
+  const records = aoa.slice(hdrIdx + 1)
+    .filter(row => row && row.some(v => v !== null && v !== undefined && String(v).trim() !== ''))
+    .map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = (row[i] !== undefined ? row[i] : null); });
+      return obj;
+    });
+  return { records, headers };
+}
+
+// ── Wide-format (pivot) detection & melt ────────────────────────────────────
+// Wide-format files have SKUs as COLUMN NAMES (one column per SKU, one row
+// per order).  Detect and convert to long format (one row per order+SKU pair).
+function _tryMeltWide(records, headers) {
+  // A column is SKU-like if it has digits OR hyphens (e.g. AC-007-003-B, 100ML)
+  // and is not a known metadata field name.
+  const META_PAT = /^(s[._\/]?n|no\.?|seq|status|account|ref|address|remarks?|date|name|consign|line|uom|unit|total|grand|deliver|print|day|rite|amount|price|weight)$/i;
+  const skuCols  = headers.filter(h => (/\d/.test(h) || /[-_]/.test(h)) && /^[A-Z0-9][A-Z0-9_\-]{1,}$/i.test(h) && !META_PAT.test(h));
+  if (skuCols.length < 2) return null;
+  if (skuCols.length / headers.length < 0.25) return null;
+
+  // Find the best order-identifier column
+  const orderCol = headers.find(h => /ref(?:erence)?|order|consign|invoice|doc(?:ument)?|account/i.test(h))
+    || headers.find(h => !META_PAT.test(h) && !/\d/.test(h) && h.length >= 3);
+  if (!orderCol) return null;
+
+  const melted = [];
+  for (const rec of records) {
+    const orderVal = (rec[orderCol] !== null && rec[orderCol] !== undefined) ? String(rec[orderCol]).trim() : '';
+    if (!orderVal || orderVal === '') continue;
+    for (const sku of skuCols) {
+      const qty = Number(rec[sku]);
+      if (!isNaN(qty) && qty > 0) {
+        melted.push({ ...rec, [orderCol]: orderVal, __sku__: sku, __qty__: qty });
+      }
+    }
+  }
+  return melted.length > 0 ? melted : null;
+}
+
+// ── Metadata-row filter ──────────────────────────────────────────────────────
+// Known single-word labels that are never valid SKUs.
+const _LABEL_WORDS = new Set([
+  'status','account','reference','consignee','address','line','remarks','remark',
+  'note','notes','total','subtotal','grand','delivery','date','time','name',
+  'description','type','category','price','amount','value','cost','no','number',
+  'print','rite','day','item','product','qty','quantity','uom','unit','header',
+  'footer','serial','sequence','count','sum','balance','debit','credit',
+]);
+
 function isMetadataRow(r) {
-  const on = String(r.order_number || '').trim();
+  const on  = String(r.order_number || '').trim();
+  const sku = String(r.sku          || '').trim();
   if (!on || on === 'UNKNOWN') return true;
-  // Multi-word phrase starting with a letter and containing no digits
-  return /\s/.test(on) && !/\d/.test(on) && /^[A-Za-z]/.test(on);
+  // Same value for both order and sku → same column detected for both → wrong
+  if (on === sku && on !== '') return true;
+  // Multi-word phrase with no digits (e.g. "Pick Ticket", "Issuing Date/Time")
+  if (/\s/.test(on) && !/\d/.test(on) && /^[A-Za-z]/.test(on)) return true;
+  // SKU is a known label word (Status, Account, Reference, …)
+  if (_LABEL_WORDS.has(sku.toLowerCase())) return true;
+  // SKU is a purely alphabetic short word that is never a product code
+  if (/^[A-Za-z]{2,8}$/.test(sku) && _LABEL_WORDS.has(sku.toLowerCase())) return true;
+  return false;
 }
 
 // ── File parsing ────────────────────────────────────────────────────────────
@@ -420,11 +506,13 @@ function parseUploadedFile(buffer, filename) {
     return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
   }
   if (ext === '.xlsx' || ext === '.xls') {
-    const wb      = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-    const ws      = wb.Sheets[wb.SheetNames[0]];
-    const records = XLSX.utils.sheet_to_json(ws, { defval: null });
-    const detected = detectColumnMap(records);
-    return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const wb                  = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const ws                  = wb.Sheets[wb.SheetNames[0]];
+    const { records, headers } = _parseExcelSheet(ws);
+    const melted              = _tryMeltWide(records, headers);
+    const finalRecs           = melted || records;
+    const detected            = detectColumnMap(finalRecs);
+    return finalRecs.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -464,13 +552,15 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = all.length - allRows.length;
     } else {
-      const wb      = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
-      const ws      = wb.Sheets[wb.SheetNames[0]];
-      const records = XLSX.utils.sheet_to_json(ws, { defval: null });
-      const detected = detectColumnMap(records);
-      const all      = records.map(r => mapRow(r, detected));
+      const wb                   = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const ws                   = wb.Sheets[wb.SheetNames[0]];
+      const { records, headers } = _parseExcelSheet(ws);
+      const melted               = _tryMeltWide(records, headers);
+      const finalRecs            = melted || records;
+      const detected             = detectColumnMap(finalRecs);
+      const all                  = finalRecs.map(r => mapRow(r, detected));
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
-      skipped = records.length - allRows.length;
+      skipped = finalRecs.length - allRows.length;
     }
 
     if (allRows.length > UPLOAD_MAX_ROWS) {
@@ -544,6 +634,55 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     res.json({ batchId, orders, rowCount: rows.length, sessionId: uuidv4() });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── OCR label scan — photo of white product label → {sku, batch, expiry} ──────
+function parseLabelLines(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let sku = null, batch = null, expiry = null;
+
+  for (const line of lines) {
+    // SKU: 4–8 digit numeric code
+    if (!sku && /^\d{4,8}$/.test(line)) { sku = line; continue; }
+    // Expiry: MM/YYYY or MM-YYYY
+    if (!expiry && /^\d{2}[\/\-]\d{4}$/.test(line)) { expiry = line.replace('-', '/'); continue; }
+    // Batch: alphanumeric, 3–20 chars, not already used
+    if (!batch && /^[A-Z0-9][A-Z0-9\-_]{2,19}$/i.test(line) && line !== sku) { batch = line; continue; }
+  }
+
+  // Looser pass: try inline extraction if line-per-field failed
+  if (!sku) {
+    const m = text.match(/\b(\d{4,8})\b/);
+    if (m) sku = m[1];
+  }
+  if (!expiry) {
+    const m = text.match(/\b(\d{2}[\/\-]\d{4})\b/);
+    if (m) expiry = m[1].replace('-', '/');
+  }
+  if (!batch) {
+    const m = text.match(/\b([A-Z]{2,4}\d{4,10}[A-Z0-9\-]*)\b/i);
+    if (m && m[1] !== sku) batch = m[1];
+  }
+
+  const confidence = (sku ? 50 : 0) + (batch ? 25 : 0) + (expiry ? 25 : 0);
+  return { sku: sku || null, batch: batch || null, expiry: expiry || null, confidence, needs_review: !sku || confidence < 75 };
+}
+
+app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  if (!Tesseract) {
+    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
+  }
+  try {
+    const { data: { text } } = await Tesseract.recognize(req.file.buffer, 'eng', {
+      logger: () => {},
+      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_/',
+    });
+    const result = parseLabelLines(text);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message, sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
   }
 });
 

@@ -2167,6 +2167,15 @@
     }
   });
 
+  document.getElementById('openLabelScanBtn').addEventListener('click', () => {
+    if (cameraStream) closeCameraScanner();
+    if (window.LabelScan) {
+      window.LabelScan.open(result => {
+        if (result && result.sku) handleItemScan(result.sku);
+      });
+    }
+  });
+
   document.getElementById('cameraClearBtn').addEventListener('click', () => { batchMap.clear(); renderBatchChips(); });
   document.getElementById('cameraSelectAllBtn').addEventListener('click', () => {
     batchMap.forEach(v => { v.checked = true; }); renderBatchChips();
