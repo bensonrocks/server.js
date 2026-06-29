@@ -32,6 +32,7 @@ const auth     = require('./lib/auth');
 const importer = require('./lib/file-importer');
 const db       = require('./lib/db');
 const ldb      = require('./lib/leads-db');
+const pick     = require('./lib/pick');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -598,6 +599,84 @@ app.get('/api/leads', (req, res) => {
 // Get all past search sessions
 app.get('/api/leads/sessions', (req, res) => {
   res.json(ldb.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
+});
+
+// ── IDEALPICK ─────────────────────────────────────────────────────────────────
+
+// Stats
+app.get('/api/pick/stats', (req, res) => res.json(pick.getPickStats()));
+
+// Inventory
+app.get('/api/pick/inventory', (req, res) => res.json(pick.listInventory()));
+
+app.get('/api/pick/inventory/:sku', (req, res) => {
+  const item = pick.getInventoryItem(req.params.sku);
+  if (!item) return res.status(404).json({ error: 'SKU not found' });
+  res.json(item);
+});
+
+app.post('/api/pick/inventory', (req, res) => {
+  try { res.status(201).json(pick.upsertInventoryItem(req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.patch('/api/pick/inventory/:sku/receive', (req, res) => {
+  const { qty, location, received_at } = req.body || {};
+  if (!qty || qty <= 0) return res.status(400).json({ error: 'qty must be positive' });
+  try { res.json(pick.receiveStock(req.params.sku, qty, location, received_at)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/pick/inventory/:sku', (req, res) => {
+  try { res.json(pick.upsertInventoryItem({ ...req.body, sku: req.params.sku })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/pick/inventory/:sku', (req, res) => {
+  try { pick.removeInventoryItem(req.params.sku); res.json({ ok: true }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Market availability check
+app.post('/api/pick/availability', (req, res) => {
+  const { orderIds } = req.body || {};
+  if (!Array.isArray(orderIds) || !orderIds.length) return res.status(400).json({ error: 'orderIds array required' });
+  try { res.json(pick.checkAvailability(orderIds)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Waves
+app.get('/api/pick/waves', (req, res) => {
+  const { status } = req.query;
+  res.json(pick.listWaves(status ? { status } : {}));
+});
+
+app.get('/api/pick/waves/:id', (req, res) => {
+  const wave = pick.getWave(req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  res.json(wave);
+});
+
+app.post('/api/pick/waves', (req, res) => {
+  const { orderIds, strategy, notes, skipUnavailable } = req.body || {};
+  try { res.status(201).json(pick.createWave({ orderIds, strategy, notes, skipUnavailable })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/pick/waves/:id/complete', (req, res) => {
+  try { res.json(pick.completeWave(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/pick/waves/:id', (req, res) => {
+  try { pick.cancelWave(req.params.id); res.json({ ok: true }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Tasks
+app.patch('/api/pick/tasks/:taskId', (req, res) => {
+  try { res.json(pick.updateTask(req.params.taskId, req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ── Webhooks (for real-time push from Shopee / Lazada) ────────────────────────
