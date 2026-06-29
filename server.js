@@ -810,19 +810,28 @@ app.get('/api/stats', (_req, res) => {
 
   let todayPending = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
   let totalOrders  = 0, totalLines   = 0;
+  const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
 
   for (const batch of db.batches) {
     const batchDate   = batch.uploaded_at.split('T')[0];
     const states      = batch.orderStates || {};
     const batchOrders = batch.orders      || [];
+    const cname       = (batch.client_name || 'General').trim();
+
+    if (!clientMap[cname]) clientMap[cname] = { todayUploaded: 0, todayPending: 0, yesterdayBalance: 0 };
+    const cs = clientMap[cname];
 
     totalOrders += batch.order_count || 0;
     totalLines  += batch.row_count   || 0;
 
     for (const ord of batchOrders) {
-      const state = states[ord.order_number];
-      if ((!state || state.status === 'pending' || state.status === 'processing') && batchDate === todayStr) {
-        todayPending++;
+      const state  = states[ord.order_number];
+      const isPending = !state || state.status === 'pending' || state.status === 'processing';
+      if (batchDate === todayStr) {
+        cs.todayUploaded++;
+        if (isPending) { cs.todayPending++; todayPending++; }
+      } else if (batchDate === yesterdayStr && isPending) {
+        cs.yesterdayBalance++;
       }
     }
 
@@ -838,8 +847,14 @@ app.get('/api/stats', (_req, res) => {
     }
   }
 
+  // Only include clients that have activity today or a yesterday balance
+  const clientStats = Object.entries(clientMap)
+    .filter(([, v]) => v.todayUploaded > 0 || v.yesterdayBalance > 0)
+    .sort((a, b) => (b[1].todayUploaded - a[1].todayUploaded) || a[0].localeCompare(b[0]))
+    .map(([name, v]) => ({ name, ...v }));
+
   res.json({ todayPending, yesterdayDone, totalOrders, totalLines,
-    avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0 });
+    avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats });
 });
 
 app.get('/api/orders', (_req, res) => {

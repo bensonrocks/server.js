@@ -391,6 +391,18 @@
       const resp = await fetch('/api/stats');
       if (!resp.ok) return;
       const s = await resp.json();
+      const clientRows = (s.clientStats || []).map(c => {
+        const balCell = c.yesterdayBalance > 0
+          ? `<td class="dcs-bal warn">${c.yesterdayBalance} left</td>`
+          : `<td class="dcs-bal ok">—</td>`;
+        return `<tr>
+          <td class="dcs-name">${esc(c.name)}</td>
+          <td class="dcs-today">${c.todayUploaded}</td>
+          <td class="dcs-pend ${c.todayPending > 0 ? 'warn' : 'ok'}">${c.todayPending}</td>
+          ${balCell}
+        </tr>`;
+      }).join('');
+
       document.getElementById('dashStatsGrid').innerHTML = `
         <div class="dstat pending">
           <div class="dstat-val">${s.todayPending}</div>
@@ -411,7 +423,19 @@
         <div class="dstat avg">
           <div class="dstat-val">${fmtMs(s.avgScanMs)}</div>
           <div class="dstat-lbl">Avg Scan Time</div>
-        </div>`;
+        </div>
+        ${clientRows.length ? `
+        <div class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr>
+              <th>Client</th>
+              <th>Uploaded Today</th>
+              <th>Pending Today</th>
+              <th>Balance Yesterday</th>
+            </tr></thead>
+            <tbody>${clientRows}</tbody>
+          </table>
+        </div>` : ''}`;
       document.getElementById('dashStatsSection').classList.remove('hidden');
       // Show live numbers on the login overlay for anyone who hasn't signed in yet
       const liveEl = document.getElementById('loginLiveStats');

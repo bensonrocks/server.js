@@ -335,6 +335,28 @@ main { max-width: var(--content-max); margin: 0 auto; padding: 1.25rem var(--pad
 .dstat.done    .dstat-val { color: var(--success); }
 .dstat.avg     .dstat-val { color: var(--warning); font-size: 1.1rem; }
 
+/* Client breakdown table inside dashboard */
+.dcs-wrap {
+  grid-column: 1 / -1;
+  margin-top: .35rem; overflow-x: auto;
+}
+.dcs-table {
+  width: 100%; border-collapse: collapse;
+  font-size: .75rem;
+}
+.dcs-table thead th {
+  text-align: left; padding: .3rem .6rem;
+  color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .04em; font-weight: 600; font-size: .65rem;
+  border-bottom: 1px solid var(--border);
+}
+.dcs-table tbody tr:hover { background: rgba(255,255,255,.03); }
+.dcs-table td { padding: .35rem .6rem; border-bottom: 1px solid var(--border); color: var(--text); }
+.dcs-name { font-weight: 700; }
+.dcs-today, .dcs-pend, .dcs-bal { text-align: center; font-weight: 700; }
+.dcs-pend.warn, .dcs-bal.warn { color: #f59e0b; }
+.dcs-pend.ok,   .dcs-bal.ok   { color: var(--text-muted); font-weight: 400; }
+
 /* ================================================================
    STATS BAR (orders tab)
    ================================================================ */
@@ -1028,6 +1050,8 @@ body.log-open { overflow: hidden; }
   .dstat { padding: .5rem .2rem; }
   .dstat-val { font-size: 1.2rem; }
   .dstat.avg .dstat-val { font-size: .95rem; }
+  .dcs-table { font-size: .7rem; }
+  .dcs-table thead th { font-size: .6rem; }
 
   .login-box { padding: 1.5rem 1.25rem 1.75rem; }
   .pin-keypad { gap: .4rem; }
@@ -1333,17 +1357,23 @@ body.bs-open { overflow: hidden; }
 .btn-batch-scan:hover  { background: #334155; border-color: #475569; }
 .btn-batch-scan:active { background: #475569; }
 
-/* Photo upload button inside the drop zone */
+/* Take Photo — row below the drop zone */
+.upload-or-photo-row {
+  display: flex; align-items: center; gap: .65rem;
+  margin-top: .55rem; padding: 0 .1rem;
+}
+.upload-or-sep {
+  font-size: .72rem; color: var(--text-muted); white-space: nowrap;
+}
 .btn-photo-upload {
-  margin-top: .65rem;
-  padding: .45rem 1.1rem;
-  background: #0f172a; color: #cbd5e1;
-  border: 1.5px solid #334155; border-radius: 999px;
+  padding: .42rem 1.05rem;
+  background: transparent; color: #94a3b8;
+  border: 1.5px dashed #334155; border-radius: 999px;
   font-size: .8rem; font-weight: 600;
   cursor: pointer; display: inline-flex; align-items: center; gap: .4rem;
-  transition: background .15s, border-color .15s;
+  transition: background .15s, border-color .15s, color .15s;
 }
-.btn-photo-upload:hover  { background: #1e293b; border-color: #475569; }
+.btn-photo-upload:hover  { background: #1e293b; border-color: #475569; color: #e2e8f0; border-style: solid; }
 .btn-photo-upload:active { background: #334155; }
 
 /* ── Label Scan button in scan dock ──────────────────────────────────────── */
