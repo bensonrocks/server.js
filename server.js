@@ -34,6 +34,7 @@ const db       = require('./lib/db');
 const ldb      = require('./lib/leads-db');
 const pick     = require('./lib/pick');
 const pack     = require('./lib/pack');
+const scanPack = require('./lib/scan-pack');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -743,6 +744,64 @@ app.patch('/api/ship/shipments/:id', (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// ── IDEALPICK — Scan-Pack (HU scan station) ───────────────────────────────────
+
+app.get('/api/scan-pack/sessions', (req, res) => {
+  res.json(scanPack.listSessions({ status: req.query.status, orderId: req.query.orderId }));
+});
+
+app.get('/api/scan-pack/sessions/:id', (req, res) => {
+  const s = scanPack.getSession(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Session not found' });
+  res.json(s);
+});
+
+app.post('/api/scan-pack/sessions', (req, res) => {
+  try { res.json(scanPack.openSession(req.body.orderId, req.body.operatorId)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/scan-pack/sessions/:id/close', (req, res) => {
+  try { res.json(scanPack.closeSession(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/scan-pack/sessions/:id/scan-hu', (req, res) => {
+  try { res.json(scanPack.scanHU(req.params.id, req.body.huCode)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/scan-pack/sessions/:id/scan-item', (req, res) => {
+  try { res.json(scanPack.scanItem(req.params.id, req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/scan-pack/items/:itemId', (req, res) => {
+  try { res.json(scanPack.removeItem(req.params.itemId)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.patch('/api/scan-pack/cartons/:cartonId', (req, res) => {
+  try { res.json(scanPack.updateCartonDimensions(req.params.cartonId, req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/print/carton/:cartonId', (req, res) => {
+  try {
+    const data = scanPack.getCartonPackingListData(req.params.cartonId);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(renderCartonPackingList(data));
+  } catch (e) { res.status(404).send(e.message); }
+});
+
+app.get('/print/master-packing-list/:sessionId', (req, res) => {
+  try {
+    const data = scanPack.getMasterPackingListData(req.params.sessionId);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(renderMasterPackingList(data));
+  } catch (e) { res.status(404).send(e.message); }
+});
+
 // ── IDEALPICK — Print templates (server-rendered HTML) ───────────────────────
 
 app.get('/print/pick/:waveId', (req, res) => {
@@ -1046,6 +1105,183 @@ function renderDeliveryNote(s) {
 </div>
 ${s.notes ? `<div class="section" style="margin-top:14px"><h2>Notes</h2><div style="border:1px solid #e5e7eb;border-radius:4px;padding:9px 12px">${s.notes}</div></div>` : ''}
 <div class="footer"><span>Shipment: ${s.shipment_number} · Order: ${s.order_id} · ${fmtDt(new Date().toISOString())}</span><span>IdealOMS · IDEALPICK</span></div>
+</body></html>`;
+}
+
+// ── Scan-Pack print renderers ─────────────────────────────────────────────────
+
+function renderCartonPackingList({ carton, session, order, totalCartons }) {
+  const ship = order.shipping || {};
+  const addr = [ship.addressLine1, ship.addressLine2, ship.city, ship.state, ship.zip, ship.country].filter(Boolean).join(', ');
+  const ctnLabel = `CTN ${carton.carton_seq} of ${totalCartons}`;
+  const rows = carton.items.map(i => `
+    <tr>
+      <td>${i.sku}</td>
+      <td>${i.item_name}</td>
+      <td style="text-align:center">${i.qty}</td>
+      <td>${i.lot_number || ''}</td>
+      <td>${i.expiry_date || ''}</td>
+    </tr>`).join('');
+  const totalQty = carton.items.reduce((s, i) => s + i.qty, 0);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Packing List – ${ctnLabel}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11pt;color:#111;padding:20px}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:14px}
+.co-name{font-size:18pt;font-weight:900;letter-spacing:-0.5px}
+.doc-title{text-align:right}
+.doc-title h1{font-size:16pt;font-weight:800}
+.doc-title .ctn-badge{display:inline-block;background:#1d4ed8;color:#fff;border-radius:6px;padding:4px 14px;font-size:13pt;font-weight:800;margin-top:4px;letter-spacing:1px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.info-box{border:1px solid #d1d5db;border-radius:4px;padding:10px 12px}
+.info-box h3{font-size:8pt;text-transform:uppercase;color:#6b7280;letter-spacing:.5px;margin-bottom:6px}
+.info-box p{font-size:10pt;line-height:1.5}
+.hu-box{font-family:monospace;font-size:14pt;font-weight:700;letter-spacing:2px;background:#f3f4f6;border-radius:4px;padding:8px 12px;margin:2px 0}
+table{width:100%;border-collapse:collapse;margin-bottom:14px}
+th{background:#f3f4f6;font-size:9pt;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;text-align:left;border-bottom:2px solid #d1d5db}
+td{padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:10pt}
+.total-row td{font-weight:700;border-top:2px solid #111;border-bottom:none}
+.footer{display:flex;justify-content:space-between;font-size:8pt;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:10px;margin-top:12px}
+.dims{font-size:9pt;color:#374151;margin-top:4px}
+@media print{body{padding:0}@page{size:A4;margin:15mm}}
+</style></head><body>
+<div class="header">
+  <div><div class="co-name">IdealOMS</div><div style="color:#6b7280;font-size:9pt;margin-top:2px">PACKING LIST</div></div>
+  <div class="doc-title"><h1>Packing List</h1><div class="ctn-badge">${ctnLabel}</div></div>
+</div>
+<div class="grid">
+  <div class="info-box">
+    <h3>Order</h3>
+    <p><strong>#${order.order_number || order.id}</strong><br>
+    ${order.client_name || ''}<br>
+    Session: ${session.id.slice(0,8)}</p>
+  </div>
+  <div class="info-box">
+    <h3>Ship To</h3>
+    <p>${ship.recipient || order.client_name || ''}<br>${addr}</p>
+  </div>
+  <div class="info-box">
+    <h3>HU / Waybill Code</h3>
+    <div class="hu-box">${carton.hu_code}</div>
+    ${carton.weight_kg ? `<div class="dims">Weight: ${carton.weight_kg} kg${carton.length_cm ? ` · ${carton.length_cm}×${carton.width_cm}×${carton.height_cm} cm` : ''}</div>` : ''}
+  </div>
+  <div class="info-box">
+    <h3>Dates</h3>
+    <p>Opened: ${fmtDt(carton.opened_at)}<br>Closed: ${carton.closed_at ? fmtDt(carton.closed_at) : '—'}<br>Printed: ${fmtDt(new Date().toISOString())}</p>
+  </div>
+</div>
+<table>
+  <thead><tr><th>SKU</th><th>Description</th><th style="text-align:center">Qty</th><th>Lot No.</th><th>Expiry</th></tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr class="total-row"><td colspan="2">TOTAL</td><td style="text-align:center">${totalQty}</td><td colspan="2"></td></tr></tfoot>
+</table>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+  <div class="info-box"><h3>Packed By</h3><div style="height:36px"></div></div>
+  <div class="info-box"><h3>Checked By</h3><div style="height:36px"></div></div>
+</div>
+<div class="footer"><span>${ctnLabel} · Order ${order.order_number || order.id} · HU: ${carton.hu_code}</span><span>IdealOMS · IDEALPICK</span></div>
+</body></html>`;
+}
+
+function renderMasterPackingList({ session, cartons, totalCartons, order }) {
+  const ship = order.shipping || {};
+  const addr = [ship.addressLine1, ship.addressLine2, ship.city, ship.state, ship.zip, ship.country].filter(Boolean).join(', ');
+  const grandTotal = cartons.reduce((s, c) => s + c.item_count, 0);
+
+  const cartonRows = cartons.map(c => {
+    const itemSummary = c.items.map(i =>
+      `<span style="display:inline-block;background:#f3f4f6;border-radius:3px;padding:1px 6px;margin:1px;font-size:9pt">${i.sku} × ${i.qty}</span>`
+    ).join(' ');
+    return `
+    <tr>
+      <td style="text-align:center;font-weight:700">CTN ${c.carton_seq}</td>
+      <td style="font-family:monospace;font-size:10pt;font-weight:600">${c.hu_code}</td>
+      <td style="text-align:center">${c.item_count}</td>
+      <td>${itemSummary}</td>
+      <td style="text-align:center">${c.weight_kg ? c.weight_kg + ' kg' : '—'}</td>
+      <td style="font-size:9pt;color:#6b7280">${c.closed_at ? fmtDt(c.closed_at) : '<span style="color:#dc2626">OPEN</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const detailSections = cartons.map(c => {
+    const rows = c.items.map(i => `
+      <tr>
+        <td>${i.sku}</td>
+        <td>${i.item_name}</td>
+        <td style="text-align:center">${i.qty}</td>
+        <td>${i.lot_number || ''}</td>
+        <td>${i.expiry_date || ''}</td>
+      </tr>`).join('');
+    return `
+    <div style="margin-top:18px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+        <span style="background:#1d4ed8;color:#fff;border-radius:4px;padding:2px 12px;font-weight:800;font-size:10pt">CTN ${c.carton_seq} of ${totalCartons}</span>
+        <span style="font-family:monospace;font-weight:700;font-size:10pt">${c.hu_code}</span>
+        ${c.weight_kg ? `<span style="font-size:9pt;color:#6b7280">${c.weight_kg} kg${c.length_cm ? ` · ${c.length_cm}×${c.width_cm}×${c.height_cm} cm` : ''}</span>` : ''}
+      </div>
+      <table><thead><tr><th>SKU</th><th>Description</th><th style="text-align:center">Qty</th><th>Lot No.</th><th>Expiry</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Master Packing List – ${order.order_number || order.id}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11pt;color:#111;padding:20px}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:14px}
+.co-name{font-size:18pt;font-weight:900;letter-spacing:-0.5px}
+.doc-title h1{font-size:16pt;font-weight:800;text-align:right}
+.doc-title .sub{font-size:9pt;color:#6b7280;text-align:right}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px}
+.info-box{border:1px solid #d1d5db;border-radius:4px;padding:10px 12px}
+.info-box h3{font-size:8pt;text-transform:uppercase;color:#6b7280;letter-spacing:.5px;margin-bottom:6px}
+.info-box p{font-size:10pt;line-height:1.5}
+.summary-stat{text-align:center}
+.summary-stat .n{font-size:22pt;font-weight:900;color:#1d4ed8}
+.summary-stat .lbl{font-size:8pt;text-transform:uppercase;color:#6b7280}
+table{width:100%;border-collapse:collapse;margin-bottom:8px}
+th{background:#f3f4f6;font-size:9pt;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;text-align:left;border-bottom:2px solid #d1d5db}
+td{padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:10pt}
+.total-row td{font-weight:700;border-top:2px solid #111;border-bottom:none}
+.section-title{font-size:12pt;font-weight:800;border-bottom:2px solid #111;padding-bottom:6px;margin:18px 0 10px}
+.footer{display:flex;justify-content:space-between;font-size:8pt;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:10px;margin-top:16px}
+@media print{body{padding:0}.page-break{page-break-before:always}@page{size:A4;margin:15mm}}
+</style></head><body>
+<div class="header">
+  <div><div class="co-name">IdealOMS</div><div style="color:#6b7280;font-size:9pt;margin-top:2px">MASTER PACKING LIST</div></div>
+  <div class="doc-title"><h1>Master Packing List</h1><div class="sub">Order #${order.order_number || order.id} · ${totalCartons} Carton${totalCartons !== 1 ? 's' : ''}</div></div>
+</div>
+<div class="grid">
+  <div class="info-box">
+    <h3>Order / Customer</h3>
+    <p><strong>#${order.order_number || order.id}</strong><br>${order.client_name || ''}</p>
+  </div>
+  <div class="info-box">
+    <h3>Ship To</h3>
+    <p>${ship.recipient || order.client_name || ''}<br>${addr}</p>
+  </div>
+  <div class="info-box" style="display:flex;gap:0">
+    <div class="summary-stat" style="flex:1"><div class="n">${totalCartons}</div><div class="lbl">Cartons</div></div>
+    <div class="summary-stat" style="flex:1"><div class="n">${grandTotal}</div><div class="lbl">Total Units</div></div>
+  </div>
+</div>
+
+<div class="section-title">Carton Summary</div>
+<table>
+  <thead><tr><th style="text-align:center">Carton</th><th>HU / Waybill</th><th style="text-align:center">Units</th><th>Contents</th><th style="text-align:center">Weight</th><th>Closed</th></tr></thead>
+  <tbody>${cartonRows}</tbody>
+  <tfoot><tr class="total-row"><td colspan="2">TOTAL</td><td style="text-align:center">${grandTotal}</td><td colspan="3"></td></tr></tfoot>
+</table>
+
+<div class="section-title">Detailed Contents by Carton</div>
+${detailSections}
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px">
+  <div class="info-box"><h3>Packed By</h3><div style="height:36px"></div></div>
+  <div class="info-box"><h3>Checked By</h3><div style="height:36px"></div></div>
+  <div class="info-box"><h3>Authorized By</h3><div style="height:36px"></div></div>
+</div>
+<div class="footer"><span>Master Packing List · Order ${order.order_number || order.id} · ${totalCartons} ctns · ${grandTotal} units</span><span>IdealOMS · IDEALPICK · ${fmtDt(new Date().toISOString())}</span></div>
 </body></html>`;
 }
 

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IDEALPICK · Scan-Pack Station</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f8fafc; --card: #fff; --border: #e2e8f0;
+  --blue: #1d4ed8; --blue-l: #eff6ff; --blue-d: #1e3a8a;
+  --green: #16a34a; --green-l: #f0fdf4;
+  --red: #dc2626; --red-l: #fef2f2;
+  --amber: #d97706; --amber-l: #fffbeb;
+  --gray: #64748b; --gray-l: #f1f5f9;
+  --text: #0f172a; --text2: #475569;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* ── Top bar ── */
+.topbar { background: #0f172a; color: #fff; padding: 0 20px; display: flex; align-items: center; gap: 16px; height: 52px; position: sticky; top: 0; z-index: 100; }
+.topbar a { color: #94a3b8; text-decoration: none; font-size: 13px; }
+.topbar a:hover { color: #fff; }
+.topbar .title { font-weight: 800; font-size: 16px; color: #fff; letter-spacing: -0.3px; }
+.topbar .badge { background: #1d4ed8; color: #fff; font-size: 10px; padding: 2px 7px; border-radius: 99px; font-weight: 700; }
+
+/* ── Layout ── */
+.layout { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 52px); }
+.sidebar { background: var(--card); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.main { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Cards ── */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+.card-hd { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-hd h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--gray); }
+.card-body { padding: 16px; }
+
+/* ── Scan input ── */
+.scan-zone { border: 2px dashed var(--border); border-radius: 10px; padding: 16px; transition: border-color .2s, background .2s; }
+.scan-zone.active { border-color: var(--blue); background: var(--blue-l); }
+.scan-zone.success { border-color: var(--green); background: var(--green-l); }
+.scan-zone.error { border-color: var(--red); background: var(--red-l); }
+.scan-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--gray); margin-bottom: 8px; }
+.scan-input { width: 100%; font-size: 18px; font-weight: 700; font-family: monospace; border: none; outline: none; background: transparent; color: var(--text); letter-spacing: 1px; }
+.scan-input::placeholder { color: #94a3b8; font-weight: 400; font-size: 14px; font-family: inherit; }
+.scan-feedback { font-size: 12px; margin-top: 8px; min-height: 18px; font-weight: 600; }
+.scan-feedback.ok { color: var(--green); }
+.scan-feedback.err { color: var(--red); }
+
+/* ── Status badges ── */
+.status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.status-open   { background: #dbeafe; color: #1e40af; }
+.status-closed { background: #dcfce7; color: #166534; }
+.status-warn   { background: #fef9c3; color: #854d0e; }
+.status-none   { background: var(--gray-l); color: var(--gray); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* ── Carton header ── */
+.ctn-header { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); color: #fff; border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; }
+.ctn-header.empty { background: var(--gray-l); color: var(--gray); }
+.ctn-num { font-size: 28px; font-weight: 900; }
+.ctn-hu { font-family: monospace; font-size: 14px; letter-spacing: 1px; opacity: .85; margin-top: 2px; }
+.ctn-count { text-align: right; }
+.ctn-count .n { font-size: 28px; font-weight: 900; }
+.ctn-count .lbl { font-size: 11px; opacity: .8; }
+
+/* ── Item list ── */
+.item-list { display: flex; flex-direction: column; gap: 6px; }
+.item-row { display: flex; align-items: center; gap: 10px; background: var(--gray-l); border-radius: 7px; padding: 9px 12px; }
+.item-sku { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--blue); min-width: 90px; }
+.item-name { flex: 1; font-size: 13px; }
+.item-qty { background: var(--blue); color: #fff; border-radius: 99px; padding: 2px 10px; font-size: 12px; font-weight: 700; min-width: 32px; text-align: center; }
+.item-del { border: none; background: none; cursor: pointer; color: #94a3b8; font-size: 16px; padding: 2px 4px; border-radius: 4px; }
+.item-del:hover { color: var(--red); background: var(--red-l); }
+.item-lot { font-size: 10px; color: var(--gray); margin-top: 1px; }
+
+/* ── Carton list (sidebar) ── */
+.ctn-list { display: flex; flex-direction: column; gap: 8px; }
+.ctn-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: border-color .15s; }
+.ctn-item:hover { border-color: var(--blue); }
+.ctn-item.active { border-color: var(--blue); background: var(--blue-l); }
+.ctn-item-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+.ctn-item-num { font-weight: 800; font-size: 13px; }
+.ctn-item-hu { font-family: monospace; font-size: 11px; color: var(--gray); }
+.ctn-item-meta { font-size: 11px; color: var(--gray); display: flex; gap: 8px; }
+
+/* ── Buttons ── */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 700; cursor: pointer; border: none; transition: opacity .15s; }
+.btn:hover { opacity: .88; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-blue  { background: var(--blue); color: #fff; }
+.btn-green { background: var(--green); color: #fff; }
+.btn-red   { background: var(--red); color: #fff; }
+.btn-gray  { background: var(--gray-l); color: var(--text); border: 1px solid var(--border); }
+.btn-sm    { padding: 5px 11px; font-size: 12px; }
+
+/* ── Order selector ── */
+.order-pick { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.order-pick h2 { font-size: 16px; font-weight: 800; }
+.order-pick p { color: var(--gray); font-size: 13px; }
+select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 14px; background: var(--card); }
+
+/* ── Session info ── */
+.session-info { background: var(--gray-l); border-radius: 8px; padding: 12px 14px; font-size: 12px; color: var(--gray); }
+.session-info strong { color: var(--text); }
+
+/* ── Flash ── */
+@keyframes flashIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+.flash { animation: flashIn .25s ease; }
+
+/* ── Empty state ── */
+.empty-state { text-align: center; padding: 32px; color: var(--gray); }
+.empty-state .ico { font-size: 32px; margin-bottom: 8px; }
+.empty-state p { font-size: 13px; }
+
+/* ── Print actions ── */
+.print-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Dim overlay (dimensions modal) ── */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200; display: flex; align-items: center; justify-content: center; }
+.overlay.hidden { display: none; }
+.modal { background: #fff; border-radius: 12px; padding: 24px; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+.modal h2 { font-size: 15px; font-weight: 800; margin-bottom: 16px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.form-group label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray); margin-bottom: 4px; }
+.form-group input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+@media (max-width: 700px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/">&#8592; IdealOMS</a>
+  <a href="/pick.html">IDEALPICK</a>
+  <span class="title">Scan-Pack Station</span>
+  <span class="badge">SCAN</span>
+  <div style="flex:1"></div>
+  <span id="sessionStatus" class="status status-none"><span class="dot"></span>No Session</span>
+</div>
+
+<!-- Order selection / session start screen -->
+<div id="startScreen" style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 52px)">
+  <div class="order-pick">
+    <div style="font-size:40px">&#128230;</div>
+    <h2>Start a Scan-Pack Session</h2>
+    <p>Select an order to begin packing. Scan HU labels to open/close cartons,<br>then scan products to add them.</p>
+    <select class="order-sel" id="orderSel">
+      <option value="">Loading orders…</option>
+    </select>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-blue" onclick="startSession()">&#9654; Start Session</button>
+      <button class="btn btn-gray" onclick="showSessions()">&#9776; Past Sessions</button>
+    </div>
+  </div>
+</div>
+
+<!-- Main scan station -->
+<div id="stationScreen" class="layout" style="display:none">
+
+  <!-- LEFT: sidebar with carton list -->
+  <div class="sidebar">
+    <div class="session-info" id="sessionInfo">No session</div>
+
+    <div class="card">
+      <div class="card-hd">
+        <h2>Cartons</h2>
+        <span id="cartonCount" class="status status-open">0</span>
+      </div>
+      <div class="card-body">
+        <div class="ctn-list" id="cartonList">
+          <div class="empty-state"><div class="ico">&#128230;</div><p>No cartons yet.<br>Scan a HU label to open the first carton.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-green" onclick="openMasterPrint()" id="btnMasterPrint" disabled>&#128196; Master Packing List</button>
+      <button class="btn btn-red" onclick="closeSession()" id="btnCloseSession" disabled>&#9632; Close Session</button>
+      <button class="btn btn-gray" onclick="location.reload()">&#8592; New Session</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: main scan area -->
+  <div class="main">
+
+    <!-- Current carton header -->
+    <div class="ctn-header empty" id="cartonHeader">
+      <div>
+        <div class="ctn-num" id="cartonNum">No Open Carton</div>
+        <div class="ctn-hu" id="cartonHU">Scan a HU label to open one</div>
+      </div>
+      <div class="ctn-count">
+        <div class="n" id="cartonItemCount">—</div>
+        <div class="lbl">items</div>
+      </div>
+    </div>
+
+    <!-- HU scan -->
+    <div class="card">
+      <div class="card-hd"><h2>HU / Waybill Scan</h2><span id="huStatus" class="status status-none">Idle</span></div>
+      <div class="card-body">
+        <div class="scan-zone" id="huZone">
+          <div class="scan-label">Scan Handling Unit / Waybill Barcode</div>
+          <input id="huInput" class="scan-input" placeholder="Scan or type HU code…" autocomplete="off" spellcheck="false">
+          <div class="scan-feedback" id="huFeedback"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product scan -->
+    <div class="card" id="productCard">
+      <div class="card-hd">
+        <h2>Product Scan</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-gray btn-sm" onclick="openDimsModal()" id="btnDims" disabled>&#9633; Dimensions</button>
+          <button class="btn btn-gray btn-sm" onclick="printCarton()" id="btnCartonPrint" disabled>&#128196; Packing List</button>
+        </div>
+      </div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+        <div class="scan-zone" id="itemZone">
+          <div class="scan-label">Scan Product Barcode / SKU</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="itemInput" class="scan-input" placeholder="Scan or type SKU…" autocomplete="off" spellcheck="false" style="flex:1" disabled>
+            <input id="qtyInput" type="number" min="1" value="1" style="width:60px;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-weight:700" title="Qty per scan">
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="lotInput" class="scan-input" placeholder="Lot # (optional)" style="font-size:13px;font-weight:400" disabled>
+            <input id="expiryInput" class="scan-input" placeholder="Expiry (optional)" style="font-size:13px;font-weight:400;width:140px" disabled>
+          </div>
+          <div class="scan-feedback" id="itemFeedback"></div>
+        </div>
+
+        <div id="itemListWrap">
+          <div class="empty-state" style="padding:20px"><div class="ico">&#128269;</div><p>Open a carton, then scan products.</p></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Sessions list screen -->
+<div id="sessionsScreen" style="display:none;padding:20px;max-width:900px;margin:0 auto">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+    <button class="btn btn-gray" onclick="showStart()">&#8592; Back</button>
+    <h2 style="font-size:16px;font-weight:800">Past Scan-Pack Sessions</h2>
+  </div>
+  <div id="sessionsList"></div>
+</div>
+
+<!-- Dimensions modal -->
+<div class="overlay hidden" id="dimsOverlay">
+  <div class="modal">
+    <h2>Carton Dimensions</h2>
+    <div class="form-row">
+      <div class="form-group"><label>Weight (kg)</label><input id="dWeight" type="number" step="0.01" placeholder="0.00"></div>
+      <div class="form-group"><label>Length (cm)</label><input id="dLength" type="number" step="0.1" placeholder="0.0"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Width (cm)</label><input id="dWidth" type="number" step="0.1" placeholder="0.0"></div>
+      <div class="form-group"><label>Height (cm)</label><input id="dHeight" type="number" step="0.1" placeholder="0.0"></div>
+    </div>
+    <div class="form-group"><label>Notes</label><input id="dNotes" type="text" placeholder="Optional notes"></div>
+    <div class="modal-footer">
+      <button class="btn btn-gray" onclick="closeDimsModal()">Cancel</button>
+      <button class="btn btn-blue" onclick="saveDims()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let session = null;
+let openCarton = null;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  const orders = await api('GET', '/api/orders');
+  const sel = document.getElementById('orderSel');
+  sel.innerHTML = '<option value="">-- Select an order --</option>' +
+    (orders || [])
+      .filter(o => o.status !== 'cancelled')
+      .map(o => `<option value="${o.id}">#${o.order_number || o.id.slice(0,8)} – ${o.client_name || 'Unknown'} (${o.status})</option>`)
+      .join('');
+}
+
+// ── Session management ────────────────────────────────────────────────────────
+async function startSession() {
+  const orderId = document.getElementById('orderSel').value;
+  if (!orderId) return alert('Select an order first');
+  const data = await api('POST', '/api/scan-pack/sessions', { orderId });
+  if (data.error) return alert(data.error);
+  session = data;
+  enterStation();
+}
+
+function enterStation() {
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('sessionsScreen').style.display = 'none';
+  document.getElementById('stationScreen').style.display = 'grid';
+  refreshSession();
+}
+
+async function refreshSession() {
+  if (!session) return;
+  const data = await api('GET', `/api/scan-pack/sessions/${session.id}`);
+  if (data.error) return;
+  session = data;
+  renderSidebar();
+  // find currently open carton
+  openCarton = (session.cartons || []).find(c => c.status === 'open') || null;
+  renderCartonHeader();
+  renderItemList();
+  updateUIState();
+  updateSessionStatus();
+}
+
+async function closeSession() {
+  if (!session) return;
+  const cartonCount = (session.cartons || []).length;
+  if (!confirm(`Close this session? ${cartonCount} carton(s) will be finalized.`)) return;
+  const data = await api('POST', `/api/scan-pack/sessions/${session.id}/close`);
+  if (data.error) return alert(data.error);
+  session = data;
+  renderSidebar();
+  updateUIState();
+  updateSessionStatus();
+  alert('Session closed. You can now print the master packing list.');
+}
+
+// ── HU scanning ───────────────────────────────────────────────────────────────
+document.getElementById('huInput').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  const huCode = e.target.value.trim();
+  if (!huCode) return;
+  e.target.value = '';
+
+  setZone('hu', 'active');
+  const data = await api('POST', `/api/scan-pack/sessions/${session.id}/scan-hu`, { huCode });
+  if (data.error) {
+    setZone('hu', 'error');
+    setFeedback('hu', data.error, 'err');
+    return;
+  }
+
+  if (data.action === 'opened') {
+    openCarton = data.carton;
+    setZone('hu', 'success');
+    setFeedback('hu', `Opened CTN – HU: ${huCode}`, 'ok');
+  } else {
+    openCarton = null;
+    setZone('hu', 'success');
+    setFeedback('hu', `Closed CTN ${data.carton.carton_seq} – ${data.carton.item_count} items packed`, 'ok');
+  }
+
+  await refreshSession();
+  setTimeout(() => setZone('hu', ''), 1800);
+});
+
+// ── Product scanning ──────────────────────────────────────────────────────────
+document.getElementById('itemInput').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  const sku = e.target.value.trim();
+  if (!sku) return;
+  e.target.value = '';
+
+  if (!openCarton) {
+    setFeedback('item', 'No open carton. Scan a HU label first.', 'err');
+    return;
+  }
+
+  const qty = parseFloat(document.getElementById('qtyInput').value) || 1;
+  const lot_number  = document.getElementById('lotInput').value.trim();
+  const expiry_date = document.getElementById('expiryInput').value.trim();
+
+  setZone('item', 'active');
+  const data = await api('POST', `/api/scan-pack/sessions/${session.id}/scan-item`, { sku, qty, lot_number, expiry_date });
+  if (data.error) {
+    setZone('item', 'error');
+    setFeedback('item', data.error, 'err');
+    return;
+  }
+
+  setZone('item', 'success');
+  setFeedback('item', `Added ${qty} × ${data.item.item_name || sku}`, 'ok');
+  openCarton = data.carton;
+  renderCartonHeader();
+  renderItemList();
+  setTimeout(() => { setZone('item', ''); setFeedback('item', '', ''); }, 1400);
+});
+
+// ── Remove item ───────────────────────────────────────────────────────────────
+async function removeItem(itemId) {
+  const data = await api('DELETE', `/api/scan-pack/items/${itemId}`);
+  if (data.error) return alert(data.error);
+  await refreshSession();
+}
+
+// ── Dimensions modal ──────────────────────────────────────────────────────────
+function openDimsModal() {
+  if (!openCarton) return;
+  document.getElementById('dWeight').value = openCarton.weight_kg || '';
+  document.getElementById('dLength').value = openCarton.length_cm || '';
+  document.getElementById('dWidth').value  = openCarton.width_cm || '';
+  document.getElementById('dHeight').value = openCarton.height_cm || '';
+  document.getElementById('dNotes').value  = openCarton.notes || '';
+  document.getElementById('dimsOverlay').classList.remove('hidden');
+}
+function closeDimsModal() { document.getElementById('dimsOverlay').classList.add('hidden'); }
+async function saveDims() {
+  if (!openCarton) return;
+  const data = await api('PATCH', `/api/scan-pack/cartons/${openCarton.id}`, {
+    weight_kg:  parseFloat(document.getElementById('dWeight').value) || 0,
+    length_cm:  parseFloat(document.getElementById('dLength').value) || 0,
+    width_cm:   parseFloat(document.getElementById('dWidth').value)  || 0,
+    height_cm:  parseFloat(document.getElementById('dHeight').value) || 0,
+    notes:      document.getElementById('dNotes').value,
+  });
+  if (data.error) { alert(data.error); return; }
+  openCarton = { ...openCarton, ...data };
+  closeDimsModal();
+  await refreshSession();
+}
+
+// ── Print ─────────────────────────────────────────────────────────────────────
+function printCarton() {
+  if (!openCarton) return;
+  window.open(`/print/carton/${openCarton.id}`, '_blank');
+}
+function openMasterPrint() {
+  if (!session) return;
+  window.open(`/print/master-packing-list/${session.id}`, '_blank');
+}
+
+// Print a specific closed carton from sidebar
+function printCartonById(cartonId) {
+  window.open(`/print/carton/${cartonId}`, '_blank');
+}
+
+// ── Sessions list ─────────────────────────────────────────────────────────────
+async function showSessions() {
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('sessionsScreen').style.display = 'block';
+  const sessions = await api('GET', '/api/scan-pack/sessions');
+  const el = document.getElementById('sessionsList');
+  if (!sessions || !sessions.length) {
+    el.innerHTML = '<div class="empty-state"><div class="ico">&#128230;</div><p>No sessions yet.</p></div>';
+    return;
+  }
+  el.innerHTML = sessions.map(s => `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="display:flex;align-items:center;gap:16px">
+        <div style="flex:1">
+          <div style="font-weight:800">${s.order_number || s.order_id.slice(0,8)} – ${s.client_name || ''}</div>
+          <div style="font-size:12px;color:var(--gray);margin-top:2px">${s.id.slice(0,8)} · ${s.carton_count} cartons · ${s.item_count} items · ${fmtDt(s.created_at)}</div>
+        </div>
+        <span class="status ${s.status === 'open' ? 'status-open' : 'status-closed'}"><span class="dot"></span>${s.status}</span>
+        <div style="display:flex;gap:6px">
+          ${s.status === 'open' ? `<button class="btn btn-blue btn-sm" onclick="resumeSession('${s.id}')">&#9654; Resume</button>` : ''}
+          <button class="btn btn-gray btn-sm" onclick="window.open('/print/master-packing-list/${s.id}','_blank')">&#128196; MPL</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function resumeSession(sessionId) {
+  const data = await api('GET', `/api/scan-pack/sessions/${sessionId}`);
+  if (data.error) return alert(data.error);
+  session = data;
+  enterStation();
+}
+
+function showStart() {
+  document.getElementById('sessionsScreen').style.display = 'none';
+  document.getElementById('startScreen').style.display = 'flex';
+}
+
+// ── Render helpers ────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const cartons = session.cartons || [];
+  const el = document.getElementById('cartonList');
+  document.getElementById('cartonCount').textContent = cartons.length;
+
+  if (!cartons.length) {
+    el.innerHTML = '<div class="empty-state"><div class="ico">&#128230;</div><p>No cartons yet.</p></div>';
+    return;
+  }
+  const total = cartons.length;
+  el.innerHTML = cartons.map(c => `
+    <div class="ctn-item ${openCarton && c.id === openCarton.id ? 'active' : ''}">
+      <div class="ctn-item-top">
+        <span class="ctn-item-num">CTN ${c.carton_seq} of ${total}</span>
+        <span class="status ${c.status === 'open' ? 'status-open' : 'status-closed'}">${c.status}</span>
+      </div>
+      <div class="ctn-item-hu">${c.hu_code}</div>
+      <div class="ctn-item-meta">
+        <span>${c.item_count} items</span>
+        ${c.weight_kg ? `<span>${c.weight_kg} kg</span>` : ''}
+        ${c.status === 'closed' ? `<a href="#" onclick="printCartonById('${c.id}');return false" style="color:var(--blue)">&#128196;</a>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderCartonHeader() {
+  const hdr = document.getElementById('cartonHeader');
+  const total = (session.cartons || []).length;
+  if (!openCarton) {
+    hdr.className = 'ctn-header empty';
+    document.getElementById('cartonNum').textContent = 'No Open Carton';
+    document.getElementById('cartonHU').textContent = 'Scan a HU label to open one';
+    document.getElementById('cartonItemCount').textContent = '—';
+  } else {
+    hdr.className = 'ctn-header';
+    document.getElementById('cartonNum').textContent = `CTN ${openCarton.carton_seq} of ${total}`;
+    document.getElementById('cartonHU').textContent = openCarton.hu_code;
+    document.getElementById('cartonItemCount').textContent = openCarton.item_count || 0;
+  }
+}
+
+function renderItemList() {
+  const wrap = document.getElementById('itemListWrap');
+  const items = openCarton ? (openCarton.items || []) : [];
+  if (!items.length) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:20px"><div class="ico">&#128269;</div><p>' +
+      (openCarton ? 'Scan products to add them to this carton.' : 'Open a carton, then scan products.') +
+      '</p></div>';
+    return;
+  }
+  wrap.innerHTML = `<div class="item-list">${items.map(i => `
+    <div class="item-row flash">
+      <div class="item-sku">${i.sku}</div>
+      <div style="flex:1">
+        <div class="item-name">${i.item_name || i.sku}</div>
+        ${i.lot_number ? `<div class="item-lot">Lot: ${i.lot_number}${i.expiry_date ? ' · Exp: ' + i.expiry_date : ''}</div>` : ''}
+      </div>
+      <span class="item-qty">${i.qty}</span>
+      <button class="item-del" onclick="removeItem('${i.id}')" title="Remove">&#215;</button>
+    </div>`).join('')}
+  </div>`;
+}
+
+function updateUIState() {
+  const hasSession = !!session;
+  const sessionOpen = hasSession && session.status === 'open';
+  const hasCartons = hasSession && (session.cartons || []).length > 0;
+  const hasOpenCarton = !!openCarton;
+
+  document.getElementById('btnCloseSession').disabled = !sessionOpen || hasOpenCarton;
+  document.getElementById('btnMasterPrint').disabled = !hasCartons;
+  document.getElementById('btnDims').disabled = !hasOpenCarton;
+  document.getElementById('btnCartonPrint').disabled = !hasOpenCarton;
+  document.getElementById('itemInput').disabled = !hasOpenCarton;
+  document.getElementById('lotInput').disabled = !hasOpenCarton;
+  document.getElementById('expiryInput').disabled = !hasOpenCarton;
+}
+
+function updateSessionStatus() {
+  const el = document.getElementById('sessionStatus');
+  if (!session) { el.className = 'status status-none'; el.innerHTML = '<span class="dot"></span>No Session'; return; }
+  if (session.status === 'open') {
+    el.className = 'status status-open';
+    el.innerHTML = `<span class="dot"></span>${session.order?.order_number || session.order_id.slice(0,8)} · Open`;
+  } else {
+    el.className = 'status status-closed';
+    el.innerHTML = `<span class="dot"></span>${session.order?.order_number || session.order_id.slice(0,8)} · Closed`;
+  }
+  document.getElementById('sessionInfo').innerHTML =
+    `<strong>Session</strong>: ${session.id.slice(0,8)}<br>` +
+    `<strong>Order</strong>: ${session.order?.order_number || session.order_id.slice(0,8)} · ${session.order?.client_name || ''}<br>` +
+    `<strong>Status</strong>: ${session.status}<br>` +
+    `<strong>Started</strong>: ${fmtDt(session.created_at)}`;
+}
+
+function setZone(zone, state) {
+  const el = document.getElementById(zone === 'hu' ? 'huZone' : 'itemZone');
+  el.className = 'scan-zone' + (state ? ' ' + state : '');
+}
+function setFeedback(zone, msg, type) {
+  const el = document.getElementById(zone === 'hu' ? 'huFeedback' : 'itemFeedback');
+  el.textContent = msg;
+  el.className = 'scan-feedback' + (type ? ' ' + type : '');
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const r = await fetch(path, opts);
+    return r.json();
+  } catch (e) { return { error: e.message }; }
+}
+
+function fmtDt(s) {
+  if (!s) return '—';
+  return new Date(s).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+}
+
+// Auto-focus HU input when station is active
+document.getElementById('huInput').addEventListener('blur', () => {
+  if (document.getElementById('stationScreen').style.display !== 'none') {
+    setTimeout(() => document.getElementById('huInput').focus(), 100);
+  }
+});
+
+init();
+</script>
+</body>
+</html>
