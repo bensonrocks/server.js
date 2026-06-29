@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0f172a">
+<title>IDEALPICK</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;line-height:1.5}
+button{cursor:pointer;border:none;background:none;font:inherit}
+input,select,textarea{font:inherit}
+a{color:#2563eb;text-decoration:none}
+
+/* ── Shell ── */
+.app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.header{display:flex;align-items:center;gap:12px;height:56px;padding:0 18px;background:#0f172a;color:#fff;flex-shrink:0}
+.header a{color:#94a3b8;font-size:13px;text-decoration:none;padding:4px 8px;border-radius:6px;transition:background .12s}
+.header a:hover{background:rgba(255,255,255,.1);color:#fff}
+.brand{display:flex;align-items:center;gap:10px;flex:1}
+.brand-name{font-size:17px;font-weight:900;letter-spacing:-.3px;color:#fff}
+.brand-sub{font-size:9.5px;font-weight:700;color:#fb923c;letter-spacing:.2px}
+.brand-stack{display:flex;flex-direction:column;gap:1px}
+.main{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+
+/* ── Pipeline header ── */
+.pipeline{display:flex;gap:0;background:#fff;border-radius:10px;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;flex-shrink:0}
+.pipe-step{flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 6px 8px;position:relative;cursor:pointer;transition:background .12s;border-right:1px solid #f1f5f9}
+.pipe-step:last-child{border-right:none}
+.pipe-step:hover{background:#f8fafc}
+.pipe-step.on{background:#eff6ff}
+.pipe-step.on .pipe-label{color:#1d4ed8;font-weight:700}
+.pipe-step.on .pipe-num{background:#1d4ed8;color:#fff}
+.pipe-num{width:24px;height:24px;border-radius:50%;background:#e2e8f0;color:#64748b;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-bottom:4px}
+.pipe-label{font-size:11px;font-weight:600;color:#64748b;text-align:center;white-space:nowrap}
+.pipe-count{font-size:18px;font-weight:800;color:#0f172a;margin-bottom:2px}
+.pipe-sub{font-size:10px;color:#94a3b8}
+
+/* ── Stats ── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.stat-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.stat-val{font-size:24px;font-weight:800;color:#0f172a}
+.stat-sub{font-size:11px;color:#94a3b8;margin-top:2px}
+
+/* ── Panel ── */
+.panel{display:none;flex-direction:column;gap:12px}
+.panel.on{display:flex}
+
+/* ── Card ── */
+.card{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #f1f5f9}
+.card-title{font-size:14px;font-weight:700;color:#0f172a}
+.card-body{padding:14px 16px}
+
+/* ── Table ── */
+.tbl-wrap{overflow-x:auto}
+.tbl{width:100%;border-collapse:collapse}
+.tbl thead{background:#f8fafc;border-bottom:1.5px solid #e2e8f0}
+.tbl th{padding:9px 13px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.tbl td{padding:10px 13px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:#f8fafc}
+.tbl-empty{text-align:center;padding:32px;color:#94a3b8;font-size:13px}
+
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+.badge-open{background:#dbeafe;color:#1d4ed8}
+.badge-in_progress,.badge-packing{background:#fef9c3;color:#a16207}
+.badge-completed,.badge-packed{background:#dcfce7;color:#166534}
+.badge-cancelled{background:#f1f5f9;color:#64748b}
+.badge-pending{background:#f1f5f9;color:#64748b}
+.badge-picked{background:#dcfce7;color:#166534}
+.badge-short{background:#fee2e2;color:#991b1b}
+.badge-skipped{background:#f1f5f9;color:#94a3b8}
+.badge-picking{background:#fef9c3;color:#a16207}
+.badge-ok{background:#dcfce7;color:#166534}
+.badge-nok{background:#fee2e2;color:#991b1b}
+.badge-shipped{background:#e0f2fe;color:#0369a1}
+.badge-in_transit{background:#ede9fe;color:#5b21b6}
+.badge-delivered{background:#dcfce7;color:#166534}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;transition:all .12s;cursor:pointer}
+.btn-primary{background:#1d4ed8;color:#fff}
+.btn-primary:hover{background:#1e40af}
+.btn-success{background:#16a34a;color:#fff}
+.btn-success:hover{background:#15803d}
+.btn-danger{background:#dc2626;color:#fff}
+.btn-danger:hover{background:#b91c1c}
+.btn-warning{background:#d97706;color:#fff}
+.btn-warning:hover{background:#b45309}
+.btn-ghost{border:1.5px solid #e2e8f0;color:#64748b}
+.btn-ghost:hover{border-color:#cbd5e1;background:#f8fafc;color:#0f172a}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ── Form ── */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-full{grid-column:1/-1}
+.form-group{display:flex;flex-direction:column;gap:5px}
+.form-label{font-size:12px;font-weight:600;color:#374151}
+.form-input{padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;color:#0f172a;background:#fff;transition:border-color .12s}
+.form-input:focus{outline:none;border-color:#2563eb}
+.form-input::placeholder{color:#94a3b8}
+select.form-input{cursor:pointer}
+.form-help{font-size:11px;color:#94a3b8}
+
+/* ── Strategy Picker ── */
+.strategy-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.strategy-card{border:2px solid #e2e8f0;border-radius:10px;padding:12px;cursor:pointer;transition:all .12s;text-align:center}
+.strategy-card:hover{border-color:#93c5fd;background:#eff6ff}
+.strategy-card.on{border-color:#1d4ed8;background:#eff6ff}
+.strategy-icon{font-size:24px;margin-bottom:6px}
+.strategy-name{font-size:12px;font-weight:700;color:#0f172a;margin-bottom:3px}
+.strategy-desc{font-size:11px;color:#64748b;line-height:1.4}
+
+/* ── Order Selector ── */
+.order-list{display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto}
+.order-check{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;cursor:pointer;transition:all .12s}
+.order-check:hover{border-color:#93c5fd;background:#f8fafc}
+.order-check input[type=checkbox]{width:16px;height:16px;accent-color:#1d4ed8;flex-shrink:0;cursor:pointer}
+.order-check.selected{border-color:#1d4ed8;background:#eff6ff}
+.order-info{flex:1;min-width:0}
+.order-id{font-size:12px;font-weight:700;color:#0f172a}
+.order-meta{font-size:11px;color:#64748b}
+
+/* ── Availability ── */
+.avail-order{border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:8px}
+.avail-order-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;cursor:pointer}
+.avail-order-body{padding:12px 14px;display:none;flex-direction:column;gap:6px}
+.avail-order.open .avail-order-body{display:flex}
+.avail-item{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px}
+.avail-item:last-child{border-bottom:none}
+.avail-bar-wrap{flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden}
+.avail-bar{height:100%;border-radius:4px;background:#22c55e;transition:width .3s}
+.avail-bar.short{background:#ef4444}
+
+/* ── Wave rows ── */
+.wave-row{border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:8px}
+.wave-head{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;background:#fff;transition:background .12s}
+.wave-head:hover{background:#f8fafc}
+.wave-number{font-size:14px;font-weight:800;color:#0f172a}
+.wave-info{flex:1;min-width:0}
+.wave-meta{font-size:12px;color:#64748b;margin-top:2px}
+.wave-actions{display:flex;gap:6px;flex-shrink:0}
+.progress-wrap{height:6px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin-top:6px}
+.progress-bar{height:100%;border-radius:4px;background:#22c55e;transition:width .3s}
+
+/* ── Pack order rows ── */
+.pack-row{border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:8px;background:#fff}
+.pack-head{display:flex;align-items:center;gap:10px;padding:12px 14px}
+.pack-info{flex:1;min-width:0}
+.pack-number{font-size:13px;font-weight:800;color:#0f172a}
+.pack-meta{font-size:12px;color:#64748b;margin-top:2px}
+.pack-actions{display:flex;gap:6px;flex-shrink:0}
+
+/* ── Ship rows ── */
+.ship-row{border:1.5px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#fff;display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.ship-icon{width:36px;height:36px;border-radius:8px;background:#ede9fe;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.ship-info{flex:1;min-width:0}
+.ship-number{font-size:13px;font-weight:800;color:#0f172a}
+.ship-meta{font-size:12px;color:#64748b;margin-top:2px}
+.ship-actions{display:flex;gap:6px;flex-shrink:0}
+
+/* ── Modal ── */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:none;align-items:center;justify-content:center;padding:16px}
+.modal-bg.on{display:flex}
+.modal{background:#fff;border-radius:14px;width:100%;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #f1f5f9}
+.modal-title{font-size:15px;font-weight:700}
+.modal-close{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;color:#64748b;font-size:18px}
+.modal-close:hover{background:#f1f5f9;color:#0f172a}
+.modal-body{padding:18px;max-height:60vh;overflow-y:auto}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid #f1f5f9}
+
+/* ── Toast ── */
+.toast-wrap{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:200}
+.toast{padding:10px 16px;border-radius:10px;font-size:13px;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,.18);animation:slide-in .2s ease;max-width:300px}
+.toast-ok{background:#166534;color:#fff}
+.toast-err{background:#991b1b;color:#fff}
+@keyframes slide-in{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ── Misc ── */
+.qty-input{width:70px;padding:4px 6px;border:1.5px solid #e2e8f0;border-radius:6px;font-size:12px;text-align:center}
+.qty-input:focus{outline:none;border-color:#2563eb}
+.text-muted{color:#94a3b8}
+.font-mono{font-family:monospace;font-size:12px}
+.flex{display:flex}.items-center{align-items:center}.gap-6{gap:6px}.gap-10{gap:10px}
+.chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:#f1f5f9;color:#64748b}
+.chip-strategy{background:#ede9fe;color:#6d28d9}
+.chip-pack{background:#dcfce7;color:#166534}
+.chip-ship{background:#e0f2fe;color:#0369a1}
+.sscc{font-family:monospace;font-size:11px;color:#64748b;letter-spacing:.5px}
+.box-card{border:1.5px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.box-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+
+@media(max-width:680px){
+  .stats-row{grid-template-columns:1fr 1fr}
+  .strategy-grid{grid-template-columns:1fr 1fr}
+  .form-grid{grid-template-columns:1fr}
+  .pipeline{overflow-x:auto}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- Header -->
+<header class="header">
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="192" height="192" rx="36" fill="#1d4ed8"/>
+      <rect x="22"  y="42" width="18"  height="108" rx="5" fill="white"/>
+      <rect x="48"  y="64" width="10"  height="86"  rx="4" fill="white"/>
+      <rect x="66"  y="42" width="18"  height="108" rx="5" fill="white"/>
+      <rect x="93"  y="54" width="10"  height="84"  rx="4" fill="white"/>
+      <rect x="111" y="42" width="18"  height="108" rx="5" fill="white"/>
+      <rect x="138" y="64" width="10"  height="86"  rx="4" fill="white"/>
+      <rect x="156" y="42" width="14"  height="108" rx="5" fill="white"/>
+    </svg>
+    <div class="brand-stack">
+      <span class="brand-name">IDEALPICK</span>
+      <span class="brand-sub">PICK → PACK → SHIP</span>
+    </div>
+  </div>
+  <div style="display:flex;gap:12px;align-items:center">
+    <a href="/ppp.html" style="background:#1d4ed8;color:#fff;padding:6px 14px;border-radius:7px;font-size:12px;font-weight:700;text-decoration:none">&#128247; PPP</a>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- Pipeline nav (Odoo-aligned stages) -->
+  <div class="pipeline" id="pipelineNav">
+    <div class="pipe-step on" onclick="switchTab('waves')">
+      <div class="pipe-num">1</div>
+      <div class="pipe-count" id="pWavesOpen">–</div>
+      <div class="pipe-label">Pick Waves</div>
+      <div class="pipe-sub">open + in progress</div>
+    </div>
+    <div class="pipe-step" onclick="switchTab('create')">
+      <div class="pipe-num">+</div>
+      <div class="pipe-count" style="font-size:22px">+</div>
+      <div class="pipe-label">New Wave</div>
+      <div class="pipe-sub">create pick wave</div>
+    </div>
+    <div class="pipe-step" onclick="switchTab('pack')">
+      <div class="pipe-num">2</div>
+      <div class="pipe-count" id="pPackPending">–</div>
+      <div class="pipe-label">Pack</div>
+      <div class="pipe-sub">box &amp; carton</div>
+    </div>
+    <div class="pipe-step" onclick="switchTab('ship')">
+      <div class="pipe-num">3</div>
+      <div class="pipe-count" id="pShipPending">–</div>
+      <div class="pipe-label">Ship</div>
+      <div class="pipe-sub">carrier &amp; tracking</div>
+    </div>
+    <div class="pipe-step" onclick="switchTab('availability')">
+      <div class="pipe-num">&#10003;</div>
+      <div class="pipe-count" id="pSkus">–</div>
+      <div class="pipe-label">Availability</div>
+      <div class="pipe-sub">market check</div>
+    </div>
+    <div class="pipe-step" onclick="switchTab('inventory')">
+      <div class="pipe-num">&#9632;</div>
+      <div class="pipe-count" id="pOnHand">–</div>
+      <div class="pipe-label">Inventory</div>
+      <div class="pipe-sub">on-hand stock</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ PICK WAVES ═══════════════ -->
+  <div class="panel on" id="panelWaves">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Pick Waves</span>
+        <div class="flex gap-6">
+          <select class="form-input btn-sm" id="waveFilter" onchange="loadWaves()">
+            <option value="">All Status</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="switchTab('create')">+ New Wave</button>
+        </div>
+      </div>
+      <div id="waveList" style="padding:8px 12px"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ CREATE WAVE ═══════════════ -->
+  <div class="panel" id="panelCreate">
+    <div class="card">
+      <div class="card-head"><span class="card-title">Create Pick Wave</span></div>
+      <div class="card-body">
+        <div class="form-group" style="margin-bottom:16px">
+          <div class="form-label">Pick Strategy</div>
+          <div class="strategy-grid" id="strategyGrid">
+            <div class="strategy-card on" data-strategy="fifo" onclick="selectStrategy(this)">
+              <div class="strategy-icon">⏳</div>
+              <div class="strategy-name">FIFO</div>
+              <div class="strategy-desc">First In, First Out — oldest stock consumed first</div>
+            </div>
+            <div class="strategy-card" data-strategy="lifo" onclick="selectStrategy(this)">
+              <div class="strategy-icon">🔄</div>
+              <div class="strategy-name">LIFO</div>
+              <div class="strategy-desc">Last In, First Out — newest stock consumed first</div>
+            </div>
+            <div class="strategy-card" data-strategy="batch" onclick="selectStrategy(this)">
+              <div class="strategy-icon">📦</div>
+              <div class="strategy-name">Batch Pick</div>
+              <div class="strategy-desc">Sort by location/SKU — one picker, minimal travel</div>
+            </div>
+            <div class="strategy-card" data-strategy="wave" onclick="selectStrategy(this)">
+              <div class="strategy-icon">🌊</div>
+              <div class="strategy-name">Wave Pick</div>
+              <div class="strategy-desc">Group by order — multi-picker zone-based flow</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <div class="form-label">Select Orders</div>
+          <div class="flex gap-6" style="margin-bottom:8px">
+            <input class="form-input" id="orderSearch" placeholder="Filter orders…" oninput="renderOrderList()" style="flex:1">
+            <button class="btn btn-ghost btn-sm" onclick="checkSelectedAvailability()">Check Availability</button>
+            <button class="btn btn-ghost btn-sm" onclick="selectAllOrders()">All</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearOrderSelection()">Clear</button>
+          </div>
+          <div class="order-list" id="orderList"></div>
+        </div>
+        <div class="form-grid" style="margin-bottom:14px">
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <input class="form-input" id="waveNotes" placeholder="Optional wave notes…">
+          </div>
+          <div class="form-group" style="justify-content:flex-end;padding-top:20px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500">
+              <input type="checkbox" id="skipUnavail" style="width:15px;height:15px;accent-color:#1d4ed8">
+              Skip orders with insufficient stock
+            </label>
+          </div>
+        </div>
+        <div id="inlineAvailResult" style="margin-bottom:12px;display:none"></div>
+        <div class="flex gap-6" style="justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="clearOrderSelection()">Clear</button>
+          <button class="btn btn-primary" id="createWaveBtn" onclick="createWave()">Generate Pick Wave</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ PACK ═══════════════ -->
+  <div class="panel" id="panelPack">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Pack Orders</span>
+        <div class="flex gap-6">
+          <select class="form-input btn-sm" id="packFilter" onchange="loadPackOrders()">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="packing">Packing</option>
+            <option value="packed">Packed</option>
+            <option value="shipped">Shipped</option>
+          </select>
+        </div>
+      </div>
+      <div id="packList" style="padding:8px 12px"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ SHIP ═══════════════ -->
+  <div class="panel" id="panelShip">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Shipments</span>
+        <select class="form-input btn-sm" id="shipFilter" onchange="loadShipments()">
+          <option value="">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="in_transit">In Transit</option>
+          <option value="delivered">Delivered</option>
+        </select>
+      </div>
+      <div id="shipList" style="padding:8px 12px"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ AVAILABILITY ═══════════════ -->
+  <div class="panel" id="panelAvailability">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Market Availability Check</span>
+        <button class="btn btn-primary btn-sm" onclick="runAvailCheck()">Check Selected</button>
+      </div>
+      <div class="card-body">
+        <div class="flex gap-6" style="margin-bottom:10px">
+          <input class="form-input" id="availSearch" placeholder="Filter orders…" oninput="renderAvailList()" style="flex:1">
+          <button class="btn btn-ghost btn-sm" onclick="availSelectAll()">Select All</button>
+          <button class="btn btn-ghost btn-sm" onclick="availClearAll()">Clear</button>
+        </div>
+        <div class="order-list" id="availOrderList" style="margin-bottom:14px;max-height:200px"></div>
+        <div id="availResult"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ INVENTORY ═══════════════ -->
+  <div class="panel" id="panelInventory">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Inventory</span>
+        <div class="flex gap-6">
+          <input class="form-input btn-sm" id="invSearch" placeholder="Filter SKU / name…" oninput="filterInventory()" style="width:180px">
+          <button class="btn btn-ghost btn-sm" onclick="openAddSkuModal()">+ Add SKU</button>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>SKU</th><th>Name</th><th>Location</th>
+            <th>On Hand</th><th>Reserved</th><th>Available</th>
+            <th>Received</th><th></th>
+          </tr></thead>
+          <tbody id="invBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<!-- ══════════════════════ MODALS ══════════════════════ -->
+
+<!-- Receive Stock -->
+<div class="modal-bg" id="receiveModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Receive Stock</span><button class="modal-close" onclick="closeModal('receiveModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group form-full"><label class="form-label">SKU</label><input class="form-input" id="rcvSku" readonly></div>
+        <div class="form-group form-full"><label class="form-label">Name</label><input class="form-input" id="rcvName" readonly></div>
+        <div class="form-group"><label class="form-label">Qty to Receive</label><input class="form-input" id="rcvQty" type="number" min="1" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Location (optional)</label><input class="form-input" id="rcvLoc" placeholder="A-01-03"></div>
+        <div class="form-group form-full">
+          <label class="form-label">Received At (optional)</label>
+          <input class="form-input" id="rcvDate" type="datetime-local">
+          <span class="form-help">Leave blank for now. Affects FIFO/LIFO ordering.</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('receiveModal')">Cancel</button>
+      <button class="btn btn-success" onclick="submitReceive()">Receive Stock</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add SKU -->
+<div class="modal-bg" id="addSkuModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Add / Update SKU</span><button class="modal-close" onclick="closeModal('addSkuModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">SKU *</label><input class="form-input" id="newSku" placeholder="WIDGET-001"></div>
+        <div class="form-group"><label class="form-label">Name *</label><input class="form-input" id="newSkuName" placeholder="Blue Widget"></div>
+        <div class="form-group"><label class="form-label">Qty on Hand</label><input class="form-input" id="newQty" type="number" min="0" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Location</label><input class="form-input" id="newLoc" placeholder="A-01-01"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('addSkuModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAddSku()">Save SKU</button>
+    </div>
+  </div>
+</div>
+
+<!-- Wave Detail (task list) -->
+<div class="modal-bg" id="waveDetailModal">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-head">
+      <span class="modal-title" id="waveDetailTitle">Wave Tasks</span>
+      <button class="modal-close" onclick="closeModal('waveDetailModal')">&#10005;</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div class="tbl-wrap" style="max-height:440px;overflow-y:auto">
+        <table class="tbl">
+          <thead><tr><th>Order</th><th>SKU</th><th>Item</th><th>Location</th><th>Required</th><th>Picked</th><th>Status</th><th></th></tr></thead>
+          <tbody id="waveDetailBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer" id="waveDetailFooter"></div>
+  </div>
+</div>
+
+<!-- Pack Order Detail -->
+<div class="modal-bg" id="packDetailModal">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-head">
+      <span class="modal-title" id="packDetailTitle">Pack Order</span>
+      <button class="modal-close" onclick="closeModal('packDetailModal')">&#10005;</button>
+    </div>
+    <div class="modal-body" id="packDetailBody"></div>
+    <div class="modal-footer" id="packDetailFooter"></div>
+  </div>
+</div>
+
+<!-- Add Box -->
+<div class="modal-bg" id="addBoxModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Add Box / Carton</span><button class="modal-close" onclick="closeModal('addBoxModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="boxPackOrderId">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Weight (kg)</label><input class="form-input" id="boxWeight" type="number" min="0" step="0.1" placeholder="0.0"></div>
+        <div class="form-group"><label class="form-label">Length (cm)</label><input class="form-input" id="boxLen" type="number" min="0" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Width (cm)</label><input class="form-input" id="boxW" type="number" min="0" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Height (cm)</label><input class="form-input" id="boxH" type="number" min="0" placeholder="0"></div>
+      </div>
+      <p class="form-help" style="margin-top:8px">SSCC (GS1 Serial Shipping Container Code) will be auto-generated.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('addBoxModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAddBox()">Add Box</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Shipment -->
+<div class="modal-bg" id="shipModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Create Shipment</span><button class="modal-close" onclick="closeModal('shipModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="shipPackOrderId">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Carrier</label><input class="form-input" id="shipCarrier" placeholder="DHL, FedEx, Pos Laju…"></div>
+        <div class="form-group"><label class="form-label">Service</label><input class="form-input" id="shipService" placeholder="Express, Standard…"></div>
+        <div class="form-group form-full"><label class="form-label">Tracking Number</label><input class="form-input" id="shipTracking" placeholder="Tracking / waybill number"></div>
+        <div class="form-group"><label class="form-label">Est. Delivery</label><input class="form-input" id="shipEst" type="date"></div>
+        <div class="form-group form-full"><label class="form-label">Notes</label><input class="form-input" id="shipNotes" placeholder="Optional notes…"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('shipModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitShipment()">Create Shipment</button>
+    </div>
+  </div>
+</div>
+
+<!-- Update Shipment -->
+<div class="modal-bg" id="updateShipModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Update Shipment</span><button class="modal-close" onclick="closeModal('updateShipModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="updateShipId">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Carrier</label><input class="form-input" id="updCarrier" placeholder="DHL, FedEx…"></div>
+        <div class="form-group"><label class="form-label">Service</label><input class="form-input" id="updService"></div>
+        <div class="form-group form-full"><label class="form-label">Tracking Number</label><input class="form-input" id="updTracking"></div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-input" id="updStatus">
+            <option value="pending">Pending</option>
+            <option value="in_transit">In Transit</option>
+            <option value="delivered">Delivered</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Est. Delivery</label><input class="form-input" id="updEst" type="date"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('updateShipModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitUpdateShipment()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let allOrders = [];
+let allInventory = [];
+let selectedStrategy = 'fifo';
+let currentWaveId = null;
+let currentPackOrderId = null;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  await Promise.all([loadStats(), loadOrders(), loadWaves(), loadInventory(), loadPackOrders(), loadShipments()]);
+})();
+
+// ── Tab / pipeline switching ──────────────────────────────────────────────────
+const TAB_NAMES = ['waves','create','pack','ship','availability','inventory'];
+function switchTab(name) {
+  document.querySelectorAll('.pipe-step').forEach((el, i) => el.classList.toggle('on', TAB_NAMES[i] === name));
+  document.querySelectorAll('.panel').forEach(el => el.classList.remove('on'));
+  const panel = document.getElementById('panel' + name.charAt(0).toUpperCase() + name.slice(1));
+  if (panel) panel.classList.add('on');
+  if (name === 'inventory') filterInventory();
+  if (name === 'availability') renderAvailList();
+  if (name === 'pack') loadPackOrders();
+  if (name === 'ship') loadShipments();
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body != null) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const [ps, pks] = await Promise.all([
+    api('GET', '/api/pick/stats'),
+    api('GET', '/api/pack/stats'),
+  ]);
+  document.getElementById('pWavesOpen').textContent = ps.waves.open + ps.waves.in_progress;
+  document.getElementById('pPackPending').textContent = pks.packOrders.pending + pks.packOrders.packing;
+  document.getElementById('pShipPending').textContent = pks.shipments.pending + pks.shipments.in_transit;
+  document.getElementById('pSkus').textContent = ps.inventory.skus;
+  document.getElementById('pOnHand').textContent = ps.inventory.total_on_hand.toLocaleString();
+}
+
+// ── Orders ────────────────────────────────────────────────────────────────────
+async function loadOrders() {
+  allOrders = await api('GET', '/api/orders');
+  renderOrderList();
+}
+
+function renderOrderList() {
+  const q = (document.getElementById('orderSearch')?.value || '').toLowerCase();
+  const sel = new Set([...document.querySelectorAll('#orderList .order-check.selected')].map(el => el.dataset.id));
+  const visible = allOrders.filter(o => !q || o.id.toLowerCase().includes(q) || o.clientName.toLowerCase().includes(q) || o.channel.toLowerCase().includes(q));
+  document.getElementById('orderList').innerHTML = visible.length ? visible.map(o => `
+    <label class="order-check ${sel.has(o.id) ? 'selected' : ''}" data-id="${o.id}" onclick="toggleOrder(this)">
+      <input type="checkbox" ${sel.has(o.id) ? 'checked' : ''} onclick="event.stopPropagation();toggleOrder(this.closest('.order-check'))">
+      <div class="order-info"><div class="order-id">${o.id}</div><div class="order-meta">${o.clientName} · ${o.channel} · ${o.items.length} line${o.items.length===1?'':'s'}</div></div>
+      <span class="badge badge-${o.status}">${o.status}</span>
+    </label>`).join('') : '<div class="tbl-empty">No orders match</div>';
+}
+
+function toggleOrder(el) {
+  el.classList.toggle('selected');
+  el.querySelector('input[type=checkbox]').checked = el.classList.contains('selected');
+}
+function selectAllOrders() { document.querySelectorAll('#orderList .order-check').forEach(el => { el.classList.add('selected'); el.querySelector('input').checked = true; }); }
+function clearOrderSelection() {
+  document.querySelectorAll('#orderList .order-check').forEach(el => { el.classList.remove('selected'); el.querySelector('input').checked = false; });
+  document.getElementById('inlineAvailResult').style.display = 'none';
+}
+function getSelectedOrderIds() { return [...document.querySelectorAll('#orderList .order-check.selected')].map(el => el.dataset.id); }
+
+function selectStrategy(el) {
+  document.querySelectorAll('.strategy-card').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+  selectedStrategy = el.dataset.strategy;
+}
+
+// ── Inline availability check ─────────────────────────────────────────────────
+async function checkSelectedAvailability() {
+  const ids = getSelectedOrderIds();
+  if (!ids.length) { toast('Select at least one order', true); return; }
+  const div = document.getElementById('inlineAvailResult');
+  div.style.display = 'block'; div.innerHTML = '<div style="color:#64748b;font-size:13px">Checking…</div>';
+  try { div.innerHTML = renderAvailabilityResult(await api('POST', '/api/pick/availability', { orderIds: ids })); }
+  catch (e) { div.innerHTML = `<div style="color:#991b1b">${e.message}</div>`; }
+}
+
+// ── Create Wave ───────────────────────────────────────────────────────────────
+async function createWave() {
+  const orderIds = getSelectedOrderIds();
+  if (!orderIds.length) { toast('Select at least one order', true); return; }
+  const btn = document.getElementById('createWaveBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const res = await api('POST', '/api/pick/waves', {
+      orderIds, strategy: selectedStrategy,
+      notes: document.getElementById('waveNotes').value,
+      skipUnavailable: document.getElementById('skipUnavail').checked,
+    });
+    toast(`Wave ${res.waveNumber} created — ${res.taskCount} tasks`);
+    clearOrderSelection();
+    document.getElementById('waveNotes').value = '';
+    await Promise.all([loadStats(), loadWaves()]);
+    switchTab('waves');
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = 'Generate Pick Wave'; }
+}
+
+// ── Waves ─────────────────────────────────────────────────────────────────────
+async function loadWaves() {
+  const status = document.getElementById('waveFilter')?.value || '';
+  const waves  = await api('GET', '/api/pick/waves' + (status ? `?status=${status}` : ''));
+  const container = document.getElementById('waveList');
+  if (!waves.length) { container.innerHTML = '<div class="tbl-empty">No waves yet — create one above</div>'; return; }
+  container.innerHTML = waves.map(w => {
+    const total  = w.task_count || 0;
+    const picked = w.picked_count || 0;
+    const pct    = total ? Math.round((picked / total) * 100) : 0;
+    const sl     = { fifo:'FIFO', lifo:'LIFO', batch:'Batch', wave:'Wave' }[w.strategy] || w.strategy;
+    const isPrint = w.status === 'open' || w.status === 'in_progress' || w.status === 'completed';
+    return `<div class="wave-row">
+      <div class="wave-head">
+        <div class="wave-info">
+          <div class="flex items-center gap-6">
+            <span class="wave-number">${w.wave_number}</span>
+            <span class="badge badge-${w.status}">${w.status.replace('_',' ')}</span>
+            <span class="chip chip-strategy">${sl}</span>
+          </div>
+          <div class="wave-meta">${total} tasks · ${picked} picked (${pct}%) · ${fmtDate(w.created_at)}${w.notes ? ' · ' + w.notes : ''}</div>
+          <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
+        </div>
+        <div class="wave-actions">
+          <button class="btn btn-ghost btn-sm" onclick="openWaveDetail('${w.id}')">Tasks</button>
+          ${isPrint ? `<a class="btn btn-ghost btn-sm" href="/print/pick/${w.id}" target="_blank">Print</a>` : ''}
+          ${w.status === 'open' || w.status === 'in_progress' ? `
+            <button class="btn btn-success btn-sm" onclick="completeWave('${w.id}')">Complete</button>
+            <button class="btn btn-danger btn-sm" onclick="cancelWave('${w.id}')">Cancel</button>
+          ` : ''}
+          ${w.status === 'completed' ? `<button class="btn btn-warning btn-sm" onclick="createPackOrders('${w.id}')">→ Pack</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function completeWave(id) {
+  if (!confirm('Complete this wave? Stock will be consumed.')) return;
+  try { await api('POST', `/api/pick/waves/${id}/complete`); toast('Wave completed'); await Promise.all([loadStats(), loadWaves()]); }
+  catch (e) { toast(e.message, true); }
+}
+async function cancelWave(id) {
+  if (!confirm('Cancel wave? Reserved stock will be released.')) return;
+  try { await api('DELETE', `/api/pick/waves/${id}`); toast('Wave cancelled'); await Promise.all([loadStats(), loadWaves()]); }
+  catch (e) { toast(e.message, true); }
+}
+async function createPackOrders(waveId) {
+  try {
+    const res = await api('POST', `/api/pack/from-wave/${waveId}`);
+    toast(`${res.length} pack order${res.length===1?'':'s'} created`);
+    await Promise.all([loadStats(), loadPackOrders()]);
+    switchTab('pack');
+  } catch (e) { toast(e.message, true); }
+}
+
+// Wave detail modal
+let currentWaveModalId = null;
+async function openWaveDetail(id) {
+  currentWaveModalId = id;
+  const wave = await api('GET', `/api/pick/waves/${id}`);
+  document.getElementById('waveDetailTitle').textContent = `${wave.wave_number} · ${wave.strategy.toUpperCase()} · ${wave.status}`;
+  document.getElementById('waveDetailBody').innerHTML = wave.tasks.map(t => `
+    <tr>
+      <td class="font-mono">${t.order_id.length>14?t.order_id.slice(0,13)+'…':t.order_id}</td>
+      <td class="font-mono">${t.sku}</td>
+      <td>${t.item_name}</td>
+      <td class="font-mono" style="color:#64748b">${t.location||'—'}</td>
+      <td style="text-align:center">${t.qty_required}</td>
+      <td style="text-align:center">
+        ${wave.status!=='completed'&&wave.status!=='cancelled'
+          ?`<input class="qty-input" type="number" min="0" max="${t.qty_required}" value="${t.qty_picked}" onchange="patchTask('${t.id}',+this.value)">`
+          :t.qty_picked}
+      </td>
+      <td><span class="badge badge-${t.status}">${t.status}</span></td>
+      <td>${wave.status!=='completed'&&wave.status!=='cancelled'
+        ?`<button class="btn btn-ghost btn-sm" onclick="markPicked('${t.id}',${t.qty_required})">✓</button>`:''}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="8" class="tbl-empty">No tasks</td></tr>';
+
+  document.getElementById('waveDetailFooter').innerHTML = `
+    <a class="btn btn-ghost" href="/print/pick/${id}" target="_blank">Print Pick List</a>
+    <button class="btn btn-ghost" onclick="closeModal('waveDetailModal')">Close</button>
+    ${wave.status==='open'||wave.status==='in_progress'?`<button class="btn btn-success" onclick="completeWave('${id}');closeModal('waveDetailModal')">Complete Wave</button>`:''}
+    ${wave.status==='completed'?`<button class="btn btn-warning" onclick="createPackOrders('${id}');closeModal('waveDetailModal')">→ Create Pack Orders</button>`:''}
+  `;
+  openModal('waveDetailModal');
+}
+async function patchTask(taskId, qty) {
+  try { await api('PATCH', `/api/pick/tasks/${taskId}`, { qty_picked: qty }); await loadStats(); }
+  catch (e) { toast(e.message, true); }
+}
+async function markPicked(taskId, qty) {
+  try { await api('PATCH', `/api/pick/tasks/${taskId}`, { qty_picked: qty, status: 'picked' }); await openWaveDetail(currentWaveModalId); await loadStats(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ── Pack ──────────────────────────────────────────────────────────────────────
+async function loadPackOrders() {
+  const status = document.getElementById('packFilter')?.value || '';
+  const orders = await api('GET', '/api/pack/orders' + (status ? `?status=${status}` : ''));
+  const container = document.getElementById('packList');
+  if (!orders.length) { container.innerHTML = '<div class="tbl-empty">No pack orders — complete a wave then click "→ Pack"</div>'; return; }
+  container.innerHTML = orders.map(po => `
+    <div class="pack-row">
+      <div class="pack-head">
+        <div class="pack-info">
+          <div class="flex items-center gap-6">
+            <span class="pack-number">${po.pack_number}</span>
+            <span class="badge badge-${po.status}">${po.status}</span>
+            <span class="chip chip-pack">${po.channel}</span>
+          </div>
+          <div class="pack-meta">${po.order_id} · ${po.client_name} · ${po.box_count} box${po.box_count===1?'':'es'} · ${fmtDate(po.created_at)}</div>
+        </div>
+        <div class="pack-actions">
+          <button class="btn btn-ghost btn-sm" onclick="openPackDetail('${po.id}')">Manage</button>
+          <a class="btn btn-ghost btn-sm" href="/print/packing-slip/${po.id}" target="_blank">Packing Slip</a>
+          ${po.status!=='shipped'&&po.status!=='packed'?`<button class="btn btn-success btn-sm" onclick="completePackOrder('${po.id}')">Mark Packed</button>`:''}
+          ${po.status==='packed'?`<button class="btn btn-warning btn-sm" onclick="openShipModal('${po.id}')">→ Ship</button>`:''}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+async function openPackDetail(packOrderId) {
+  currentPackOrderId = packOrderId;
+  const po = await api('GET', `/api/pack/orders/${packOrderId}`);
+  document.getElementById('packDetailTitle').textContent = `${po.pack_number} · ${po.order_id}`;
+
+  const itemRows = (po.pickedItems || []).map(i => `
+    <tr><td class="font-mono">${i.sku}</td><td>${i.item_name}</td>
+    <td style="text-align:center">${i.qty_required}</td><td style="text-align:center">${i.qty_picked}</td>
+    <td><span class="badge badge-${i.qty_picked>=i.qty_required?'ok':'nok'}">${i.qty_picked>=i.qty_required?'FULL':'SHORT'}</span></td>
+    </tr>`).join('');
+
+  const boxHtml = (po.boxes || []).map(b => {
+    const items = (b.items || []).map(i => `<div style="font-size:12px">• ${i.qty}× ${i.item_name} (${i.sku})${i.lot_number?' lot:'+i.lot_number:''}</div>`).join('');
+    const dims = [b.length_cm,b.width_cm,b.height_cm].every(v=>v>0)?`${b.length_cm}×${b.width_cm}×${b.height_cm}cm`:'—';
+    return `<div class="box-card">
+      <div class="box-card-head">
+        <div><strong>Box ${b.box_number}</strong> <span class="sscc">(00)${b.sscc}</span></div>
+        <div style="font-size:12px;color:#64748b">${b.weight_kg>0?b.weight_kg+'kg ':''} ${dims}</div>
+      </div>
+      ${items||'<div style="font-size:12px;color:#94a3b8">Empty — add items below</div>'}
+      <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="openAddItemToBox('${b.id}','${packOrderId}')">+ Add Items</button>
+    </div>`;
+  }).join('');
+
+  document.getElementById('packDetailBody').innerHTML = `
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Picked Items</div>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>SKU</th><th>Item</th><th>Ordered</th><th>Picked</th><th>Status</th></tr></thead>
+        <tbody>${itemRows||'<tr><td colspan="5" class="tbl-empty">No items</td></tr>'}</tbody>
+      </table></div>
+    </div>
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px">Boxes / Cartons</div>
+        ${po.status!=='shipped'?`<button class="btn btn-ghost btn-sm" onclick="openAddBoxModal('${packOrderId}')">+ Add Box</button>`:''}
+      </div>
+      ${boxHtml||'<div style="color:#94a3b8;font-size:13px">No boxes yet — click "+ Add Box" to start packing</div>'}
+    </div>
+  `;
+
+  document.getElementById('packDetailFooter').innerHTML = `
+    <a class="btn btn-ghost" href="/print/packing-slip/${packOrderId}" target="_blank">Packing Slip</a>
+    <button class="btn btn-ghost" onclick="closeModal('packDetailModal')">Close</button>
+    ${po.status!=='shipped'&&po.status!=='packed'?`<button class="btn btn-success" onclick="completePackOrder('${packOrderId}')">Mark Packed</button>`:''}
+    ${po.status==='packed'?`<button class="btn btn-warning" onclick="openShipModal('${packOrderId}')">→ Create Shipment</button>`:''}
+  `;
+  openModal('packDetailModal');
+}
+
+function openAddBoxModal(packOrderId) {
+  document.getElementById('boxPackOrderId').value = packOrderId;
+  document.getElementById('boxWeight').value = '';
+  document.getElementById('boxLen').value = '';
+  document.getElementById('boxW').value = '';
+  document.getElementById('boxH').value = '';
+  openModal('addBoxModal');
+}
+
+async function submitAddBox() {
+  const packOrderId = document.getElementById('boxPackOrderId').value;
+  try {
+    await api('POST', `/api/pack/orders/${packOrderId}/boxes`, {
+      weight_kg: +document.getElementById('boxWeight').value || 0,
+      length_cm: +document.getElementById('boxLen').value || 0,
+      width_cm: +document.getElementById('boxW').value || 0,
+      height_cm: +document.getElementById('boxH').value || 0,
+    });
+    toast('Box added');
+    closeModal('addBoxModal');
+    await openPackDetail(packOrderId);
+    await Promise.all([loadStats(), loadPackOrders()]);
+  } catch (e) { toast(e.message, true); }
+}
+
+// In-modal "Add Items to Box" — simple prompt approach
+let addItemBoxId = null; let addItemPackId = null;
+function openAddItemToBox(boxId, packOrderId) {
+  addItemBoxId = boxId; addItemPackId = packOrderId;
+  const sku  = prompt('SKU:'); if (!sku) return;
+  const name = prompt('Item name:') || sku;
+  const qty  = parseFloat(prompt('Qty:') || '0');
+  const lot  = prompt('Lot # (optional):') || '';
+  if (qty <= 0) { toast('Invalid qty', true); return; }
+  api('POST', `/api/pack/boxes/${boxId}/items`, { sku: sku.toUpperCase(), item_name: name, qty, lot_number: lot })
+    .then(() => { toast('Item added to box'); openPackDetail(addItemPackId); })
+    .catch(e => toast(e.message, true));
+}
+
+async function completePackOrder(packOrderId) {
+  try { await api('POST', `/api/pack/orders/${packOrderId}/complete`); toast('Pack order marked as packed'); closeModal('packDetailModal'); await Promise.all([loadStats(), loadPackOrders()]); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ── Ship ──────────────────────────────────────────────────────────────────────
+async function loadShipments() {
+  const status = document.getElementById('shipFilter')?.value || '';
+  const ships  = await api('GET', '/api/ship/shipments' + (status ? `?status=${status}` : ''));
+  const container = document.getElementById('shipList');
+  if (!ships.length) { container.innerHTML = '<div class="tbl-empty">No shipments yet — complete packing then create a shipment</div>'; return; }
+  container.innerHTML = ships.map(s => {
+    const statusIcons = { pending:'⏳', in_transit:'🚚', delivered:'✅' };
+    return `<div class="ship-row">
+      <div class="ship-icon">${statusIcons[s.status]||'📦'}</div>
+      <div class="ship-info">
+        <div class="ship-number">${s.shipment_number}</div>
+        <div class="ship-meta">${s.order_id} · ${s.client_name} · ${s.carrier||'Carrier TBD'} ${s.tracking_no?'· #'+s.tracking_no:''} · ${s.box_count} box${s.box_count===1?'':'es'} · ${s.weight_kg.toFixed(2)}kg</div>
+        <div style="margin-top:4px">${[s.recipient_name,s.city,s.country].filter(Boolean).join(', ')}</div>
+      </div>
+      <div class="ship-actions">
+        <span class="badge badge-${s.status}">${s.status.replace('_',' ')}</span>
+        <a class="btn btn-ghost btn-sm" href="/print/delivery-note/${s.id}" target="_blank">Delivery Note</a>
+        <button class="btn btn-ghost btn-sm" onclick="openUpdateShipModal('${s.id}','${s.carrier}','${s.service}','${s.tracking_no}','${s.status}','${s.est_delivery||''}')">Edit</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openShipModal(packOrderId) {
+  document.getElementById('shipPackOrderId').value = packOrderId;
+  ['shipCarrier','shipService','shipTracking','shipNotes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('shipEst').value = '';
+  closeModal('packDetailModal');
+  openModal('shipModal');
+}
+async function submitShipment() {
+  const packOrderId = document.getElementById('shipPackOrderId').value;
+  try {
+    await api('POST', `/api/ship/from-pack/${packOrderId}`, {
+      carrier: document.getElementById('shipCarrier').value,
+      service: document.getElementById('shipService').value,
+      tracking_no: document.getElementById('shipTracking').value,
+      est_delivery: document.getElementById('shipEst').value,
+      notes: document.getElementById('shipNotes').value,
+    });
+    toast('Shipment created');
+    closeModal('shipModal');
+    await Promise.all([loadStats(), loadPackOrders(), loadShipments()]);
+    switchTab('ship');
+  } catch (e) { toast(e.message, true); }
+}
+
+function openUpdateShipModal(id, carrier, service, tracking, status, est) {
+  document.getElementById('updateShipId').value = id;
+  document.getElementById('updCarrier').value = carrier;
+  document.getElementById('updService').value = service;
+  document.getElementById('updTracking').value = tracking;
+  document.getElementById('updStatus').value = status;
+  document.getElementById('updEst').value = est;
+  openModal('updateShipModal');
+}
+async function submitUpdateShipment() {
+  const id = document.getElementById('updateShipId').value;
+  try {
+    await api('PATCH', `/api/ship/shipments/${id}`, {
+      carrier: document.getElementById('updCarrier').value,
+      service: document.getElementById('updService').value,
+      tracking_no: document.getElementById('updTracking').value,
+      status: document.getElementById('updStatus').value,
+      est_delivery: document.getElementById('updEst').value,
+    });
+    toast('Shipment updated');
+    closeModal('updateShipModal');
+    await Promise.all([loadStats(), loadShipments()]);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ── Availability ──────────────────────────────────────────────────────────────
+function renderAvailList() {
+  const q = (document.getElementById('availSearch')?.value || '').toLowerCase();
+  const sel = new Set([...document.querySelectorAll('#availOrderList .order-check.selected')].map(el => el.dataset.id));
+  const visible = allOrders.filter(o => !q || o.id.toLowerCase().includes(q) || o.clientName.toLowerCase().includes(q));
+  document.getElementById('availOrderList').innerHTML = visible.map(o => `
+    <label class="order-check ${sel.has(o.id)?'selected':''}" data-id="${o.id}" onclick="toggleAvailOrder(this)">
+      <input type="checkbox" ${sel.has(o.id)?'checked':''} onclick="event.stopPropagation();toggleAvailOrder(this.closest('.order-check'))">
+      <div class="order-info"><div class="order-id">${o.id}</div><div class="order-meta">${o.clientName} · ${o.channel}</div></div>
+    </label>`).join('') || '<div class="tbl-empty">No orders</div>';
+}
+function toggleAvailOrder(el) { el.classList.toggle('selected'); el.querySelector('input').checked = el.classList.contains('selected'); }
+function availSelectAll() { document.querySelectorAll('#availOrderList .order-check').forEach(el => { el.classList.add('selected'); el.querySelector('input').checked=true; }); }
+function availClearAll() { document.querySelectorAll('#availOrderList .order-check').forEach(el => { el.classList.remove('selected'); el.querySelector('input').checked=false; }); document.getElementById('availResult').innerHTML=''; }
+
+async function runAvailCheck() {
+  const ids = [...document.querySelectorAll('#availOrderList .order-check.selected')].map(el => el.dataset.id);
+  if (!ids.length) { toast('Select at least one order', true); return; }
+  const div = document.getElementById('availResult');
+  div.innerHTML = '<div style="color:#64748b;font-size:13px">Checking market availability…</div>';
+  try { div.innerHTML = renderAvailabilityResult(await api('POST', '/api/pick/availability', { orderIds: ids })); }
+  catch (e) { div.innerHTML = `<div style="color:#991b1b">${e.message}</div>`; }
+}
+
+function renderAvailabilityResult(data) {
+  const orders = Object.values(data.orders);
+  const summary = data.allAvailable
+    ? '<div style="padding:8px 12px;background:#dcfce7;border-radius:8px;color:#166534;font-weight:600;margin-bottom:10px;font-size:13px">✓ All items are available to pick</div>'
+    : '<div style="padding:8px 12px;background:#fee2e2;border-radius:8px;color:#991b1b;font-weight:600;margin-bottom:10px;font-size:13px">⚠ Some items have insufficient stock</div>';
+  const orderRows = orders.map(o => {
+    if (o.error) return `<div class="avail-order"><div class="avail-order-head">${o.orderId||''}: <span style="color:#991b1b">${o.error}</span></div></div>`;
+    const itemRows = o.items.map(i => {
+      const pct = Math.min(100, i.available/Math.max(i.required,1)*100);
+      return `<div class="avail-item">
+        <div style="width:90px;font-family:monospace;font-size:11px;color:#64748b">${i.sku}</div>
+        <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;margin-bottom:4px">${i.name}</div>
+          <div class="avail-bar-wrap"><div class="avail-bar ${i.sufficient?'':'short'}" style="width:${pct}%"></div></div></div>
+        <div style="text-align:right;width:120px;font-size:12px">
+          <span style="color:${i.sufficient?'#166534':'#991b1b'};font-weight:700">${i.available}</span>
+          <span style="color:#94a3b8"> / ${i.required}</span>
+          ${!i.sufficient?`<div style="color:#991b1b;font-size:11px">Short ${i.shortfall}</div>`:''}
+        </div>
+        <span class="badge badge-${i.sufficient?'ok':'nok'}" style="margin-left:8px">${i.sufficient?'OK':'SHORT'}</span>
+      </div>`;
+    }).join('');
+    return `<div class="avail-order">
+      <div class="avail-order-head" onclick="this.parentElement.classList.toggle('open')">
+        <div><span style="font-weight:700;font-size:13px">${o.orderId}</span><span style="color:#64748b;font-size:12px;margin-left:8px">${o.clientName} · ${o.channel}</span></div>
+        <span class="badge badge-${o.available?'ok':'nok'}">${o.available?'Available':'Insufficient Stock'}</span>
+      </div>
+      <div class="avail-order-body">${itemRows}</div>
+    </div>`;
+  }).join('');
+  return summary + orderRows;
+}
+
+// ── Inventory ─────────────────────────────────────────────────────────────────
+async function loadInventory() {
+  allInventory = await api('GET', '/api/pick/inventory');
+  filterInventory();
+}
+function filterInventory() {
+  const q = (document.getElementById('invSearch')?.value || '').toLowerCase();
+  const visible = allInventory.filter(i => !q || i.sku.toLowerCase().includes(q) || i.name.toLowerCase().includes(q) || (i.location||'').toLowerCase().includes(q));
+  document.getElementById('invBody').innerHTML = visible.length ? visible.map(i => `
+    <tr>
+      <td class="font-mono" style="font-weight:600">${i.sku}</td>
+      <td>${i.name}</td>
+      <td class="font-mono" style="color:#64748b">${i.location||'—'}</td>
+      <td style="text-align:right;font-weight:700">${i.qty_on_hand}</td>
+      <td style="text-align:right;color:#f59e0b">${i.qty_reserved}</td>
+      <td style="text-align:right;font-weight:700;color:${i.qty_available>0?'#166534':'#991b1b'}">${i.qty_available}</td>
+      <td style="color:#94a3b8;font-size:12px">${fmtDate(i.received_at)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openReceiveModal('${i.sku}','${i.name.replace(/'/g,'\\'')}')">Receive</button></td>
+    </tr>`).join('') : `<tr><td colspan="8" class="tbl-empty">No inventory matches filter</td></tr>`;
+}
+
+// ── Modal helpers ─────────────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add('on'); }
+function closeModal(id) { document.getElementById(id).classList.remove('on'); }
+
+function openReceiveModal(sku, name) {
+  document.getElementById('rcvSku').value = sku;
+  document.getElementById('rcvName').value = name;
+  ['rcvQty','rcvLoc','rcvDate'].forEach(id => document.getElementById(id).value = '');
+  openModal('receiveModal');
+}
+async function submitReceive() {
+  const sku = document.getElementById('rcvSku').value;
+  const qty = +document.getElementById('rcvQty').value;
+  if (!qty || qty <= 0) { toast('Enter a positive qty', true); return; }
+  try {
+    await api('PATCH', `/api/pick/inventory/${sku}/receive`, {
+      qty, location: document.getElementById('rcvLoc').value || undefined,
+      received_at: document.getElementById('rcvDate').value ? new Date(document.getElementById('rcvDate').value).toISOString() : undefined,
+    });
+    toast(`Received ${qty}× ${sku}`);
+    closeModal('receiveModal');
+    await Promise.all([loadStats(), loadInventory()]);
+  } catch (e) { toast(e.message, true); }
+}
+
+function openAddSkuModal() {
+  ['newSku','newSkuName','newQty','newLoc'].forEach(id => document.getElementById(id).value = '');
+  openModal('addSkuModal');
+}
+async function submitAddSku() {
+  const sku  = document.getElementById('newSku').value.trim().toUpperCase();
+  const name = document.getElementById('newSkuName').value.trim();
+  if (!sku || !name) { toast('SKU and Name required', true); return; }
+  try {
+    await api('POST', '/api/pick/inventory', { sku, name, qty_on_hand: +document.getElementById('newQty').value||0, location: document.getElementById('newLoc').value });
+    toast(`SKU ${sku} saved`);
+    closeModal('addSkuModal');
+    await Promise.all([loadStats(), loadInventory()]);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+}
+function toast(msg, isError = false) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (isError ? 'toast-err' : 'toast-ok');
+  el.textContent = msg;
+  document.getElementById('toastWrap').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+document.querySelectorAll('.modal-bg').forEach(bg => bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('on'); }));
+</script>
+</body>
+</html>
