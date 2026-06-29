@@ -121,6 +121,19 @@ button,a{touch-action:manipulation}
 .starget{font-size:12px;font-weight:700;color:var(--red);margin-left:auto}
 .stitle{font-size:11px;color:var(--dim);line-height:1.4}
 
+/* ── ENTRY / EXIT BAR ── */
+.pentry{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);border-radius:7px;overflow:hidden;margin-top:9px}
+.pe-col{background:var(--card2);padding:7px 8px;text-align:center}
+.pe-lbl{font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;font-weight:700}
+.pe-val{font-size:12px;font-weight:800;margin-bottom:1px;font-family:'SF Mono',monospace}
+.pe-sub{font-size:8px;color:var(--dim);line-height:1.3}
+.pe-val.entry{color:var(--cyan)}
+.pe-val.profit{color:var(--green)}
+.pe-val.stop{color:var(--orange)}
+.pe-val.short-entry{color:var(--red)}
+.pe-val.short-profit{color:var(--red)}
+.pe-val.short-stop{color:var(--orange)}
+
 .refresh-bar{display:flex;align-items:center;gap:7px;padding:7px 11px;background:var(--card);border:1px solid var(--border);border-radius:var(--brad);font-size:11px;color:var(--dim);margin-top:14px}
 .rdot{width:5px;height:5px;border-radius:50%;background:var(--cyan);animation:pulse 2s infinite}
 .rbtn{margin-left:auto;padding:3px 10px;background:none;border:1px solid var(--border);border-radius:5px;color:var(--dim);cursor:pointer;font-size:11px;transition:.15s}
@@ -594,11 +607,26 @@ function renderBrief(b) {
             <span class="ptarget long">▲ +${p.upMin}–${p.upMax}% · 2hr target</span>
             <span class="pnote">${esc(p.note)}</span>
           </div>
-          <div class="psigs" style="margin-top:6px;justify-content:space-between">
-            <div style="display:flex;gap:4px;flex-wrap:wrap">${(p.signals||[]).map(s=>`<span class="psig${s.includes('insider')?' insider':''}">${esc(s)}</span>`).join('')}</div>
-            <div style="margin-top:4px">
-              <a href="${p.articleUrl||'#'}" target="_blank" rel="noopener" style="font-size:10px;color:var(--dim);text-decoration:none" onclick="event.stopPropagation()">Read full story →</a>
+          <div class="pentry">
+            <div class="pe-col">
+              <div class="pe-lbl">ENTRY</div>
+              <div class="pe-val entry">${esc(p.entryZone||'At open')}</div>
+              <div class="pe-sub">${esc(p.entryMethod||'Enter at open')}</div>
             </div>
+            <div class="pe-col">
+              <div class="pe-lbl">TARGET · SELL</div>
+              <div class="pe-val profit">+${p.upMax}%</div>
+              <div class="pe-sub">2hr take-profit exit</div>
+            </div>
+            <div class="pe-col">
+              <div class="pe-lbl">STOP LOSS</div>
+              <div class="pe-val stop">−${p.stopPct}%</div>
+              <div class="pe-sub">R:R&nbsp;${p.rrRatio}:1</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">${(p.signals||[]).map(s=>`<span class="psig${s.includes('insider')?' insider':''}">${esc(s)}</span>`).join('')}</div>
+          <div style="margin-top:5px">
+            <a href="${p.articleUrl||'#'}" target="_blank" rel="noopener" style="font-size:10px;color:var(--dim);text-decoration:none" onclick="event.stopPropagation()">Read full story →</a>
           </div>
         </div>
       </div>`;
@@ -619,7 +647,24 @@ function renderBrief(b) {
           <span class="starget">▼ ${p.upMin}–${p.upMax}% · 2hr</span>
         </div>
         <div class="stitle">${esc(p.title)}</div>
-        <div style="margin-top:6px">
+        <div class="pentry" style="margin-top:7px">
+          <div class="pe-col">
+            <div class="pe-lbl">SHORT ENTRY</div>
+            <div class="pe-val short-entry">${esc(p.entryZone||'At open')}</div>
+            <div class="pe-sub">${esc(p.entryMethod||'Short at open')}</div>
+          </div>
+          <div class="pe-col">
+            <div class="pe-lbl">COVER · BUY BACK</div>
+            <div class="pe-val short-profit">−${p.upMax}%</div>
+            <div class="pe-sub">2hr cover target</div>
+          </div>
+          <div class="pe-col">
+            <div class="pe-lbl">STOP LOSS</div>
+            <div class="pe-val short-stop">+${p.stopPct}%</div>
+            <div class="pe-sub">R:R&nbsp;${p.rrRatio}:1</div>
+          </div>
+        </div>
+        <div style="margin-top:5px">
           <a href="${p.articleUrl||'#'}" target="_blank" rel="noopener" style="font-size:10px;color:var(--dim)" onclick="event.stopPropagation()">Read full story →</a>
         </div>
       </div>`).join('');
