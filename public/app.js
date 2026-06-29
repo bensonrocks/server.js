@@ -2076,7 +2076,29 @@
   document.getElementById('openCameraBtn').addEventListener('click', openCameraScanner);
   document.getElementById('closeCameraBtn').addEventListener('click', closeCameraScanner);
   document.getElementById('cmodeSingle').addEventListener('click', () => setCameraMode('single'));
-  document.getElementById('cmodeBatch').addEventListener('click',  () => setCameraMode('batch'));
+
+  // "Batch" mode button in the single-scan overlay delegates to the standalone
+  // BatchScan module (batch-scan.js) which provides a dedicated full-screen UI.
+  document.getElementById('cmodeBatch').addEventListener('click', () => {
+    closeCameraScanner();
+    if (window.BatchScan) {
+      window.BatchScan.open(vals => {
+        vals.forEach(val => handleItemScan(val));
+      });
+    }
+  });
+
+  // Direct "Batch" button in the scan dock — opens BatchScan without going
+  // through the single-scan camera overlay first.
+  document.getElementById('openBatchScanBtn').addEventListener('click', () => {
+    if (cameraStream) closeCameraScanner(); // close single-scan camera if open
+    if (window.BatchScan) {
+      window.BatchScan.open(vals => {
+        vals.forEach(val => handleItemScan(val));
+      });
+    }
+  });
+
   document.getElementById('cameraClearBtn').addEventListener('click', () => { batchMap.clear(); renderBatchChips(); });
   document.getElementById('cameraSelectAllBtn').addEventListener('click', () => {
     batchMap.forEach(v => { v.checked = true; }); renderBatchChips();

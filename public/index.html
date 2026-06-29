@@ -140,7 +140,8 @@
         <input type="text" id="itemScanInput" class="big-scan-input"
           placeholder="Scan item barcode / SKU&#8230;"
           autocomplete="off" autocorrect="off" spellcheck="false" />
-        <button class="btn-camera-open" id="openCameraBtn" title="Camera scan">&#128247;</button>
+        <button class="btn-camera-open" id="openCameraBtn" title="Camera scan — single">&#128247;</button>
+        <button class="btn-batch-scan"  id="openBatchScanBtn" title="Batch scan — collect multiple barcodes at once">&#9707; Batch</button>
       </div>
       <div id="itemScanFeedback" class="scan-feedback hidden"></div>
       <div class="dock-actions">
@@ -747,6 +748,7 @@
     </div>
   </div>
 
+  <script src="batch-scan.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
