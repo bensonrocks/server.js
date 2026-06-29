@@ -294,6 +294,9 @@ function findBatchForOrder(db, orderNumber) {
 }
 
 // ── PDF waybill splitting ───────────────────────────────────────────────────
+// Normalize a string for comparison: uppercase, strip spaces/hyphens/underscores
+function normStr(s) { return String(s || '').replace(/[\s\-_]/g, '').toUpperCase(); }
+
 async function splitWaybillPdf(pdfBuffer, batchId, orders) {
   const matched = {};
   try {
@@ -302,9 +305,13 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
     const dir      = path.join(WAYBILL_DIR, batchId);
     fs.mkdirSync(dir, { recursive: true });
 
-    const waybills = orders
-      .filter(o => o.waybill_number)
-      .map(o => ({ orderNumber: o.order_number, waybill: o.waybill_number.toUpperCase() }));
+    // Build two lookup maps: normalized waybill/order number → orderNumber
+    const byWaybill = new Map();
+    const byOrder   = new Map();
+    for (const o of orders) {
+      if (o.waybill_number) byWaybill.set(normStr(o.waybill_number), o.order_number);
+      if (o.order_number)   byOrder.set(normStr(o.order_number),   o.order_number);
+    }
 
     for (let i = 0; i < numPages; i++) {
       const single = await PDFDocument.create();
@@ -314,21 +321,29 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
 
       let assignedOrder = null;
 
-      if (pdfParse && waybills.length) {
+      if (pdfParse && (byWaybill.size || byOrder.size)) {
         try {
-          const parsed = await pdfParse(buf);
-          const text   = (parsed.text || '').replace(/\s+/g, ' ').toUpperCase();
-          for (const w of waybills) {
-            if (!matched[w.orderNumber] && text.includes(w.waybill)) {
-              assignedOrder = w.orderNumber;
-              matched[w.orderNumber] = true;
-              break;
+          const parsed   = await pdfParse(buf);
+          const rawText  = (parsed.text || '').toUpperCase();
+          const normText = rawText.replace(/[\s\-_]/g, '');
+
+          // Priority 1: match by waybill number (most specific)
+          for (const [key, orderNo] of byWaybill) {
+            if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
+              assignedOrder = orderNo; matched[orderNo] = true; break;
+            }
+          }
+          // Priority 2: match by order number as fallback
+          if (!assignedOrder) {
+            for (const [key, orderNo] of byOrder) {
+              if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
+                assignedOrder = orderNo; matched[orderNo] = true; break;
+              }
             }
           }
         } catch {}
       }
 
-      // Save as order file if matched, otherwise by page number
       const fname = assignedOrder ? `${assignedOrder}.pdf` : `_page_${i + 1}.pdf`;
       fs.writeFileSync(path.join(dir, fname), buf);
     }
@@ -337,6 +352,22 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
   }
   return matched;
 }
+
+// Upload waybill PDF for an existing batch (post-upload or re-match)
+const waybillPdfUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'), async (req, res) => {
+  const { batchId } = req.params;
+  const db    = readDb();
+  const batch = db.batches.find(b => b.id === batchId);
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+  if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
+  try {
+    const matchResult = await splitWaybillPdf(req.file.buffer, batchId, batch.orders || []);
+    res.json({ ok: true, matched: Object.keys(matchResult).length, total: (batch.orders || []).length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Keyfields XLSX generation → see lib/keyfields.js
 

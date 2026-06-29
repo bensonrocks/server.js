@@ -511,8 +511,26 @@ tr:hover td { background: var(--surface-2); }
 body.scan-open { overflow: hidden; }
 
 .scan-order-header { display: flex; align-items: center; gap: .85rem; padding: .65rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; box-shadow: var(--shadow-sm); }
+.scan-header-right { display: flex; align-items: center; gap: .6rem; margin-left: auto; flex-shrink: 0; }
+.btn-scan-waybill {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: var(--success-bg); border: 1px solid var(--success-border);
+  border-radius: var(--radius-sm); padding: .28rem .65rem;
+  font-size: .78rem; font-weight: 700; text-decoration: none;
+  color: #15803d; white-space: nowrap; transition: background .12s;
+}
+.btn-scan-waybill:hover { background: #dcfce7; }
 .back-btn { background: none; border: 1px solid var(--border); padding: .3rem .7rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .8rem; color: var(--text-light); white-space: nowrap; transition: background .12s; }
 .back-btn:hover { background: var(--bg); }
+
+/* ── Batch attach waybill button ── */
+.btn-attach-waybill {
+  background: none; border: 1px solid var(--primary-border);
+  color: var(--primary); border-radius: var(--radius-sm);
+  padding: .28rem .6rem; font-size: .73rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap; transition: background .12s;
+}
+.btn-attach-waybill:hover { background: var(--primary-light); }
 .scan-order-title { display: flex; align-items: center; gap: .7rem; min-width: 0; flex: 1; }
 .scan-order-no { font-weight: 700; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scan-progress { background: var(--bg); border: 1px solid var(--border); padding: .15em .6em; border-radius: 99px; font-size: .73rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; }

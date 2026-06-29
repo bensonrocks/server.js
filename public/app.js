@@ -1013,6 +1013,14 @@
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
     if (!ord) return;
     activeOrder = ord;
+    // Show/hide the waybill PDF button in the scan header
+    const waybillBtn = document.getElementById('scanWaybillPdfBtn');
+    if (ord.has_waybill_pdf && ord.batchId) {
+      waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}`;
+      waybillBtn.classList.remove('hidden');
+    } else {
+      waybillBtn.classList.add('hidden');
+    }
     enterItemsPhase(ord);
     document.getElementById('scanOverlay').classList.remove('hidden');
     document.body.classList.add('scan-open');
@@ -1982,10 +1990,43 @@
             </div>
             <div class="log-card-actions">
               <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>&#8681; WMS</a>
+              <button class="btn-attach-waybill" data-id="${esc(b.id)}" data-count="${b.order_count}" title="Upload waybill PDF for this batch">&#128196; Waybill PDF</button>
               <button class="btn-del-batch" data-id="${esc(b.id)}" data-name="${esc(b.filename)}" title="Delete entire batch">&#128465; Delete Batch</button>
             </div>
           </div>`;
       }).join('');
+
+      listEl.querySelectorAll('.btn-attach-waybill').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const batchId    = btn.dataset.id;
+          const totalOrders = parseInt(btn.dataset.count) || 0;
+          const inp = document.createElement('input');
+          inp.type = 'file'; inp.accept = '.pdf';
+          inp.onchange = async () => {
+            if (!inp.files[0]) return;
+            const form = new FormData();
+            form.append('waybillPdf', inp.files[0]);
+            btn.textContent = '⏳ Matching…';
+            btn.disabled    = true;
+            try {
+              const r = await fetch(`/api/batch/${encodeURIComponent(batchId)}/waybill-pdf`, {
+                method: 'POST', body: form,
+              });
+              const d = await r.json();
+              if (!r.ok) throw new Error(d.error || 'Upload failed');
+              btn.textContent = `✓ ${d.matched}/${d.total} matched`;
+              btn.style.color = d.matched > 0 ? 'var(--success)' : 'var(--danger)';
+              await refreshOrders();
+              renderOrdersDash();
+            } catch (err) {
+              btn.textContent = '✗ Error';
+              btn.title = err.message;
+              btn.disabled = false;
+            }
+          };
+          inp.click();
+        });
+      });
 
       listEl.querySelectorAll('.btn-del-batch').forEach(btn => {
         btn.addEventListener('click', async e => {
