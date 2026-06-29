@@ -449,13 +449,21 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
 
     let allRows = [], skipped = 0;
     if (ext === '.csv') {
-      allRows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true }).map(mapRow);
+      const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
+      const detected = detectColumnMap(records);
+      allRows = records.map(r => mapRow(r, detected));
     } else {
-      const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const all = XLSX.utils.sheet_to_json(ws, { defval: null }).map(mapRow);
-      allRows = all.filter(r => r.sku && r.order_number !== 'UNKNOWN');
-      skipped = all.length - allRows.length;
+      const wb       = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const ws       = wb.Sheets[wb.SheetNames[0]];
+      const records  = XLSX.utils.sheet_to_json(ws, { defval: null });
+      const detected = detectColumnMap(records);
+      const all      = records.map(r => mapRow(r, detected));
+      allRows = all.filter(r =>
+        (detected.order_key || detected.sku_key)
+          ? r.order_number !== 'UNKNOWN'
+          : r.sku && r.order_number !== 'UNKNOWN'
+      );
+      skipped = records.length - allRows.length;
     }
 
     if (allRows.length > UPLOAD_MAX_ROWS) {
