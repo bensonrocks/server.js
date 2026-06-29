@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IDEALPICK · PPP Station</title>
+<title>PPP — Pick Plus Pack · IdealOMS</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -14,6 +14,7 @@
   --amber: #d97706; --amber-l: #fffbeb;
   --gray: #64748b; --gray-l: #f1f5f9;
   --text: #0f172a; --text2: #475569;
+  --purple: #7c3aed; --purple-l: #f5f3ff;
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
@@ -23,11 +24,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .topbar a:hover { color: #fff; }
 .topbar .title { font-weight: 800; font-size: 16px; color: #fff; letter-spacing: -0.3px; }
 .topbar .badge { background: #1d4ed8; color: #fff; font-size: 10px; padding: 2px 7px; border-radius: 99px; font-weight: 700; }
+.queue-badge { background: var(--amber); color: #fff; font-size: 11px; padding: 3px 10px; border-radius: 99px; font-weight: 800; cursor: pointer; display: none; }
+.queue-badge:hover { opacity: .88; }
 
 /* ── Layout ── */
 .layout { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 52px); }
-.sidebar { background: var(--card); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-.main { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.sidebar { background: var(--card); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; max-height: calc(100vh - 52px); }
+.main { padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; max-height: calc(100vh - 52px); }
 
 /* ── Cards ── */
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
@@ -37,21 +40,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 /* ── Scan input ── */
 .scan-zone { border: 2px dashed var(--border); border-radius: 10px; padding: 16px; transition: border-color .2s, background .2s; }
-.scan-zone.active { border-color: var(--blue); background: var(--blue-l); }
+.scan-zone.active  { border-color: var(--blue);  background: var(--blue-l);  }
 .scan-zone.success { border-color: var(--green); background: var(--green-l); }
-.scan-zone.error { border-color: var(--red); background: var(--red-l); }
+.scan-zone.error   { border-color: var(--red);   background: var(--red-l);   }
 .scan-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--gray); margin-bottom: 8px; }
 .scan-input { width: 100%; font-size: 18px; font-weight: 700; font-family: monospace; border: none; outline: none; background: transparent; color: var(--text); letter-spacing: 1px; }
 .scan-input::placeholder { color: #94a3b8; font-weight: 400; font-size: 14px; font-family: inherit; }
 .scan-feedback { font-size: 12px; margin-top: 8px; min-height: 18px; font-weight: 600; }
-.scan-feedback.ok { color: var(--green); }
-.scan-feedback.err { color: var(--red); }
+.scan-feedback.ok  { color: var(--green); }
+.scan-feedback.err { color: var(--red);   }
 
 /* ── Status badges ── */
 .status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
 .status-open   { background: #dbeafe; color: #1e40af; }
 .status-closed { background: #dcfce7; color: #166534; }
-.status-warn   { background: #fef9c3; color: #854d0e; }
 .status-none   { background: var(--gray-l); color: var(--gray); }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
@@ -59,9 +61,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .ctn-header { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); color: #fff; border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; }
 .ctn-header.empty { background: var(--gray-l); color: var(--gray); }
 .ctn-num { font-size: 28px; font-weight: 900; }
-.ctn-hu { font-family: monospace; font-size: 14px; letter-spacing: 1px; opacity: .85; margin-top: 2px; }
-.ctn-count { text-align: right; }
-.ctn-count .n { font-size: 28px; font-weight: 900; }
+.ctn-hu  { font-family: monospace; font-size: 14px; letter-spacing: 1px; opacity: .85; margin-top: 2px; }
+.ctn-count .n   { font-size: 28px; font-weight: 900; text-align: right; }
 .ctn-count .lbl { font-size: 11px; opacity: .8; }
 
 /* ── Item list ── */
@@ -76,28 +77,36 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 /* ── Carton list (sidebar) ── */
 .ctn-list { display: flex; flex-direction: column; gap: 8px; }
-.ctn-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: border-color .15s; }
+.ctn-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; transition: border-color .15s; }
 .ctn-item:hover { border-color: var(--blue); }
 .ctn-item.active { border-color: var(--blue); background: var(--blue-l); }
-.ctn-item-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
-.ctn-item-num { font-weight: 800; font-size: 13px; }
-.ctn-item-hu { font-family: monospace; font-size: 11px; color: var(--gray); }
-.ctn-item-meta { font-size: 11px; color: var(--gray); display: flex; gap: 8px; }
+.ctn-item-top  { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+.ctn-item-num  { font-weight: 800; font-size: 13px; }
+.ctn-item-hu   { font-family: monospace; font-size: 11px; color: var(--gray); }
+.ctn-item-meta { font-size: 11px; color: var(--gray); display: flex; gap: 8px; align-items: center; }
+
+/* ── Print queue (sidebar) ── */
+.queue-list { display: flex; flex-direction: column; gap: 6px; }
+.queue-item { display: flex; align-items: center; gap: 8px; background: var(--amber-l); border: 1px solid #fde68a; border-radius: 7px; padding: 8px 10px; }
+.queue-item-title { flex: 1; font-size: 12px; font-weight: 600; }
+.queue-item-type  { font-size: 10px; color: var(--amber); font-weight: 700; text-transform: uppercase; }
 
 /* ── Buttons ── */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 700; cursor: pointer; border: none; transition: opacity .15s; }
 .btn:hover { opacity: .88; }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn-blue  { background: var(--blue); color: #fff; }
-.btn-green { background: var(--green); color: #fff; }
-.btn-red   { background: var(--red); color: #fff; }
-.btn-gray  { background: var(--gray-l); color: var(--text); border: 1px solid var(--border); }
-.btn-sm    { padding: 5px 11px; font-size: 12px; }
+.btn-blue   { background: var(--blue);   color: #fff; }
+.btn-green  { background: var(--green);  color: #fff; }
+.btn-red    { background: var(--red);    color: #fff; }
+.btn-amber  { background: var(--amber);  color: #fff; }
+.btn-purple { background: var(--purple); color: #fff; }
+.btn-gray   { background: var(--gray-l); color: var(--text); border: 1px solid var(--border); }
+.btn-sm     { padding: 5px 11px; font-size: 12px; }
 
 /* ── Order selector ── */
 .order-pick { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
 .order-pick h2 { font-size: 16px; font-weight: 800; }
-.order-pick p { color: var(--gray); font-size: 13px; }
+.order-pick p  { color: var(--gray); font-size: 13px; }
 select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 14px; background: var(--card); }
 
 /* ── Session info ── */
@@ -113,22 +122,42 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
 .empty-state .ico { font-size: 32px; margin-bottom: 8px; }
 .empty-state p { font-size: 13px; }
 
-/* ── Print actions ── */
-.print-bar { display: flex; gap: 8px; flex-wrap: wrap; }
-
-/* ── Dim overlay (dimensions modal) ── */
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200; display: flex; align-items: center; justify-content: center; }
+/* ── Overlay / modals ── */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.48); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .overlay.hidden { display: none; }
-.modal { background: #fff; border-radius: 12px; padding: 24px; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
-.modal h2 { font-size: 15px; font-weight: 800; margin-bottom: 16px; }
+.modal { background: #fff; border-radius: 14px; padding: 24px; box-shadow: 0 24px 64px rgba(0,0,0,.22); }
+.modal h2 { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
+.modal-sub { font-size: 12px; color: var(--gray); margin-bottom: 18px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .form-group label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray); margin-bottom: 4px; }
 .form-group input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
 .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
+/* ── Print options modal ── */
+.print-modal { width: 440px; }
+.print-doc-info { background: var(--gray-l); border-radius: 8px; padding: 10px 14px; font-size: 12px; margin-bottom: 16px; }
+.print-doc-info strong { font-size: 13px; }
+.print-options { display: flex; flex-direction: column; gap: 10px; }
+.print-opt { display: flex; align-items: center; gap: 14px; border: 1.5px solid var(--border); border-radius: 10px; padding: 14px 16px; cursor: pointer; transition: all .15s; }
+.print-opt:hover { border-color: var(--blue); background: var(--blue-l); }
+.print-opt-icon { font-size: 26px; flex-shrink: 0; }
+.print-opt-title { font-size: 14px; font-weight: 700; }
+.print-opt-sub   { font-size: 12px; color: var(--gray); margin-top: 2px; }
+.print-opt-badge { margin-left: auto; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--gray-l); color: var(--gray); flex-shrink: 0; }
+.bt-status { font-size: 11px; margin-top: 6px; min-height: 16px; font-weight: 600; }
+.bt-status.ok  { color: var(--green); }
+.bt-status.err { color: var(--red);   }
+.bt-status.working { color: var(--blue); }
+
+/* ── BT device selector ── */
+.bt-device-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.bt-device { display: flex; align-items: center; justify-content: space-between; background: var(--gray-l); border-radius: 7px; padding: 8px 12px; font-size: 13px; }
+
 @media (max-width: 700px) {
   .layout { grid-template-columns: 1fr; }
-  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: none; }
+  .main { max-height: none; }
+  .print-modal { width: 100%; }
 }
 </style>
 </head>
@@ -137,35 +166,37 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
 <div class="topbar">
   <a href="/">&#8592; IdealOMS</a>
   <a href="/pick.html">IDEALPICK</a>
-  <span class="title">PPP Station</span>
+  <span class="title">PPP — Pick Plus Pack</span>
   <span class="badge">SCAN</span>
   <div style="flex:1"></div>
+  <span id="queueBadge" class="queue-badge" onclick="toggleQueuePanel()" title="Print queue">&#128196; <span id="queueCount">0</span> pending</span>
   <span id="sessionStatus" class="status status-none"><span class="dot"></span>No Session</span>
 </div>
 
-<!-- Order selection / session start screen -->
+<!-- ── Order selection screen ── -->
 <div id="startScreen" style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 52px)">
   <div class="order-pick">
     <div style="font-size:40px">&#128230;</div>
     <h2>Start a PPP Session</h2>
-    <p>Select an order to begin packing. Scan HU labels to open/close cartons,<br>then scan products to add them.</p>
+    <p>Select an order to begin packing. Scan HU labels to open/close cartons,<br>then scan products to add them. Print packing lists at any time.</p>
     <select class="order-sel" id="orderSel">
       <option value="">Loading orders…</option>
     </select>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
       <button class="btn btn-blue" onclick="startSession()">&#9654; Start Session</button>
       <button class="btn btn-gray" onclick="showSessions()">&#9776; Past Sessions</button>
     </div>
   </div>
 </div>
 
-<!-- Main scan station -->
+<!-- ── Main scan station ── -->
 <div id="stationScreen" class="layout" style="display:none">
 
-  <!-- LEFT: sidebar with carton list -->
+  <!-- LEFT: sidebar -->
   <div class="sidebar">
     <div class="session-info" id="sessionInfo">No session</div>
 
+    <!-- Carton list -->
     <div class="card">
       <div class="card-hd">
         <h2>Cartons</h2>
@@ -173,15 +204,27 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
       </div>
       <div class="card-body">
         <div class="ctn-list" id="cartonList">
-          <div class="empty-state"><div class="ico">&#128230;</div><p>No cartons yet.<br>Scan a HU label to open the first carton.</p></div>
+          <div class="empty-state"><div class="ico">&#128230;</div><p>No cartons yet.<br>Scan a HU label to open the first one.</p></div>
         </div>
       </div>
     </div>
 
+    <!-- Print queue panel -->
+    <div class="card" id="queuePanel" style="display:none">
+      <div class="card-hd">
+        <h2>&#128196; Print Queue</h2>
+        <button class="btn btn-gray btn-sm" onclick="printAllQueued()">Print All</button>
+      </div>
+      <div class="card-body">
+        <div id="queueList" class="queue-list"></div>
+      </div>
+    </div>
+
+    <!-- Session actions -->
     <div style="display:flex;flex-direction:column;gap:8px">
-      <button class="btn btn-green" onclick="openMasterPrint()" id="btnMasterPrint" disabled>&#128196; Master Packing List</button>
-      <button class="btn btn-red" onclick="closeSession()" id="btnCloseSession" disabled>&#9632; Close Session</button>
-      <button class="btn btn-gray" onclick="location.reload()">&#8592; New Session</button>
+      <button class="btn btn-green"  onclick="triggerPrint('master')" id="btnMasterPrint" disabled>&#128196; Master Packing List</button>
+      <button class="btn btn-red"    onclick="closeSession()"         id="btnCloseSession" disabled>&#9632; Close Session</button>
+      <button class="btn btn-gray"   onclick="location.reload()">&#8592; New Session</button>
     </div>
   </div>
 
@@ -192,7 +235,7 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
     <div class="ctn-header empty" id="cartonHeader">
       <div>
         <div class="ctn-num" id="cartonNum">No Open Carton</div>
-        <div class="ctn-hu" id="cartonHU">Scan a HU label to open one</div>
+        <div class="ctn-hu"  id="cartonHU">Scan a HU label to open one</div>
       </div>
       <div class="ctn-count">
         <div class="n" id="cartonItemCount">—</div>
@@ -218,7 +261,7 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
         <h2>Product Scan</h2>
         <div style="display:flex;gap:8px">
           <button class="btn btn-gray btn-sm" onclick="openDimsModal()" id="btnDims" disabled>&#9633; Dimensions</button>
-          <button class="btn btn-gray btn-sm" onclick="printCarton()" id="btnCartonPrint" disabled>&#128196; Packing List</button>
+          <button class="btn btn-gray btn-sm" onclick="triggerPrint('carton')" id="btnCartonPrint" disabled>&#128196; Packing List</button>
         </div>
       </div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
@@ -229,12 +272,11 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
             <input id="qtyInput" type="number" min="1" value="1" style="width:60px;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-weight:700" title="Qty per scan">
           </div>
           <div style="display:flex;gap:8px;margin-top:8px">
-            <input id="lotInput" class="scan-input" placeholder="Lot # (optional)" style="font-size:13px;font-weight:400" disabled>
+            <input id="lotInput"    class="scan-input" placeholder="Lot # (optional)" style="font-size:13px;font-weight:400" disabled>
             <input id="expiryInput" class="scan-input" placeholder="Expiry (optional)" style="font-size:13px;font-weight:400;width:140px" disabled>
           </div>
           <div class="scan-feedback" id="itemFeedback"></div>
         </div>
-
         <div id="itemListWrap">
           <div class="empty-state" style="padding:20px"><div class="ico">&#128269;</div><p>Open a carton, then scan products.</p></div>
         </div>
@@ -244,7 +286,7 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
   </div>
 </div>
 
-<!-- Sessions list screen -->
+<!-- ── Past sessions screen ── -->
 <div id="sessionsScreen" style="display:none;padding:20px;max-width:900px;margin:0 auto">
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
     <button class="btn btn-gray" onclick="showStart()">&#8592; Back</button>
@@ -253,17 +295,18 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
   <div id="sessionsList"></div>
 </div>
 
-<!-- Dimensions modal -->
+<!-- ── Dimensions modal ── -->
 <div class="overlay hidden" id="dimsOverlay">
-  <div class="modal">
+  <div class="modal" style="width:380px">
     <h2>Carton Dimensions</h2>
+    <div class="modal-sub" id="dimsCartonLabel"></div>
     <div class="form-row">
       <div class="form-group"><label>Weight (kg)</label><input id="dWeight" type="number" step="0.01" placeholder="0.00"></div>
-      <div class="form-group"><label>Length (cm)</label><input id="dLength" type="number" step="0.1" placeholder="0.0"></div>
+      <div class="form-group"><label>Length (cm)</label><input id="dLength" type="number" step="0.1"  placeholder="0.0"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Width (cm)</label><input id="dWidth" type="number" step="0.1" placeholder="0.0"></div>
-      <div class="form-group"><label>Height (cm)</label><input id="dHeight" type="number" step="0.1" placeholder="0.0"></div>
+      <div class="form-group"><label>Width (cm)</label> <input id="dWidth"  type="number" step="0.1"  placeholder="0.0"></div>
+      <div class="form-group"><label>Height (cm)</label><input id="dHeight" type="number" step="0.1"  placeholder="0.0"></div>
     </div>
     <div class="form-group"><label>Notes</label><input id="dNotes" type="text" placeholder="Optional notes"></div>
     <div class="modal-footer">
@@ -273,11 +316,73 @@ select.order-sel { width: 100%; padding: 10px 12px; border: 1px solid var(--bord
   </div>
 </div>
 
-<script>
-let session = null;
-let openCarton = null;
+<!-- ── Print options modal ── -->
+<div class="overlay hidden" id="printOverlay">
+  <div class="modal print-modal">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px">
+      <h2>&#128196; Print Document</h2>
+      <button class="btn btn-gray btn-sm" onclick="closePrintModal()" style="margin-left:12px">&#10005;</button>
+    </div>
+    <div class="print-doc-info" id="printDocInfo"><strong>—</strong></div>
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+    <div class="print-options">
+
+      <!-- Option 1: Office printer -->
+      <div class="print-opt" onclick="doPrintOffice()">
+        <div class="print-opt-icon">&#128424;</div>
+        <div>
+          <div class="print-opt-title">Office Printer</div>
+          <div class="print-opt-sub">Opens system print dialog — A4, letter, PDF export</div>
+        </div>
+        <div class="print-opt-badge">PDF / A4</div>
+      </div>
+
+      <!-- Option 2: Bluetooth thermal -->
+      <div class="print-opt" id="btPrintOpt" onclick="doPrintBluetooth()">
+        <div class="print-opt-icon">&#128246;</div>
+        <div style="flex:1">
+          <div class="print-opt-title">Bluetooth Thermal Printer</div>
+          <div class="print-opt-sub">ESC/POS via Web Bluetooth — 58mm / 80mm roll</div>
+          <div class="bt-status" id="btStatus"></div>
+        </div>
+        <div class="print-opt-badge" id="btBadge">Ready</div>
+      </div>
+
+      <!-- Option 3: Save for later -->
+      <div class="print-opt" onclick="doPrintQueue()">
+        <div class="print-opt-icon">&#128203;</div>
+        <div>
+          <div class="print-opt-title">Save for Later</div>
+          <div class="print-opt-sub">Add to print queue — print when convenient</div>
+        </div>
+        <div class="print-opt-badge">Queue</div>
+      </div>
+
+    </div>
+
+    <!-- BT status line below options -->
+    <div id="btConnectInfo" style="display:none;margin-top:12px;padding:10px 12px;background:var(--blue-l);border-radius:8px;font-size:12px">
+      <strong id="btDeviceName"></strong>
+      <div class="bt-status" id="btConnectStatus"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════════════════════
+let session    = null;
+let openCarton = null;
+let btDevice   = null;   // cached Bluetooth device
+let btChar     = null;   // cached writable characteristic
+
+// pending print context set when print modal opens
+let _printCtx  = null;   // { type: 'carton'|'master', refId, title, url }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════════════════════════
 async function init() {
   const orders = await api('GET', '/api/orders');
   const sel = document.getElementById('orderSel');
@@ -286,9 +391,18 @@ async function init() {
       .filter(o => o.status !== 'cancelled')
       .map(o => `<option value="${o.id}">#${o.order_number || o.id.slice(0,8)} – ${o.client_name || 'Unknown'} (${o.status})</option>`)
       .join('');
+  refreshQueueBadge();
+  if (!navigator.bluetooth) {
+    document.getElementById('btPrintOpt').style.opacity = '.45';
+    document.getElementById('btPrintOpt').style.cursor = 'not-allowed';
+    document.getElementById('btPrintOpt').onclick = () => setBtStatus('Web Bluetooth not supported in this browser. Use Chrome/Edge.', 'err');
+    document.getElementById('btBadge').textContent = 'N/A';
+  }
 }
 
-// ── Session management ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Session management
+// ═══════════════════════════════════════════════════════════════════════════════
 async function startSession() {
   const orderId = document.getElementById('orderSel').value;
   if (!orderId) return alert('Select an order first');
@@ -299,9 +413,9 @@ async function startSession() {
 }
 
 function enterStation() {
-  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('startScreen').style.display    = 'none';
   document.getElementById('sessionsScreen').style.display = 'none';
-  document.getElementById('stationScreen').style.display = 'grid';
+  document.getElementById('stationScreen').style.display  = 'grid';
   refreshSession();
 }
 
@@ -309,14 +423,14 @@ async function refreshSession() {
   if (!session) return;
   const data = await api('GET', `/api/ppp/sessions/${session.id}`);
   if (data.error) return;
-  session = data;
-  renderSidebar();
-  // find currently open carton
+  session    = data;
   openCarton = (session.cartons || []).find(c => c.status === 'open') || null;
+  renderSidebar();
   renderCartonHeader();
   renderItemList();
   updateUIState();
   updateSessionStatus();
+  refreshQueueBadge();
 }
 
 async function closeSession() {
@@ -329,10 +443,12 @@ async function closeSession() {
   renderSidebar();
   updateUIState();
   updateSessionStatus();
-  alert('Session closed. You can now print the master packing list.');
+  alert('Session closed. Print the master packing list to complete.');
 }
 
-// ── HU scanning ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// HU scanning
+// ═══════════════════════════════════════════════════════════════════════════════
 document.getElementById('huInput').addEventListener('keydown', async (e) => {
   if (e.key !== 'Enter') return;
   const huCode = e.target.value.trim();
@@ -352,16 +468,25 @@ document.getElementById('huInput').addEventListener('keydown', async (e) => {
     setZone('hu', 'success');
     setFeedback('hu', `Opened CTN – HU: ${huCode}`, 'ok');
   } else {
+    // carton just closed — auto-trigger print prompt
+    const closedCarton = data.carton;
     openCarton = null;
     setZone('hu', 'success');
-    setFeedback('hu', `Closed CTN ${data.carton.carton_seq} – ${data.carton.item_count} items packed`, 'ok');
+    setFeedback('hu', `Closed CTN ${closedCarton.carton_seq} – ${closedCarton.item_count} items packed`, 'ok');
+    await refreshSession();
+    // Show print modal for the just-closed carton
+    setTimeout(() => triggerPrintById('carton', closedCarton.id, closedCarton), 400);
+    setTimeout(() => setZone('hu', ''), 1800);
+    return;
   }
 
   await refreshSession();
   setTimeout(() => setZone('hu', ''), 1800);
 });
 
-// ── Product scanning ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Product scanning
+// ═══════════════════════════════════════════════════════════════════════════════
 document.getElementById('itemInput').addEventListener('keydown', async (e) => {
   if (e.key !== 'Enter') return;
   const sku = e.target.value.trim();
@@ -373,9 +498,9 @@ document.getElementById('itemInput').addEventListener('keydown', async (e) => {
     return;
   }
 
-  const qty = parseFloat(document.getElementById('qtyInput').value) || 1;
-  const lot_number  = document.getElementById('lotInput').value.trim();
-  const expiry_date = document.getElementById('expiryInput').value.trim();
+  const qty          = parseFloat(document.getElementById('qtyInput').value) || 1;
+  const lot_number   = document.getElementById('lotInput').value.trim();
+  const expiry_date  = document.getElementById('expiryInput').value.trim();
 
   setZone('item', 'active');
   const data = await api('POST', `/api/ppp/sessions/${session.id}/scan-item`, { sku, qty, lot_number, expiry_date });
@@ -393,32 +518,34 @@ document.getElementById('itemInput').addEventListener('keydown', async (e) => {
   setTimeout(() => { setZone('item', ''); setFeedback('item', '', ''); }, 1400);
 });
 
-// ── Remove item ───────────────────────────────────────────────────────────────
 async function removeItem(itemId) {
   const data = await api('DELETE', `/api/ppp/items/${itemId}`);
   if (data.error) return alert(data.error);
   await refreshSession();
 }
 
-// ── Dimensions modal ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Dimensions modal
+// ═══════════════════════════════════════════════════════════════════════════════
 function openDimsModal() {
   if (!openCarton) return;
+  document.getElementById('dimsCartonLabel').textContent = `CTN ${openCarton.carton_seq} · HU: ${openCarton.hu_code}`;
   document.getElementById('dWeight').value = openCarton.weight_kg || '';
   document.getElementById('dLength').value = openCarton.length_cm || '';
-  document.getElementById('dWidth').value  = openCarton.width_cm || '';
+  document.getElementById('dWidth').value  = openCarton.width_cm  || '';
   document.getElementById('dHeight').value = openCarton.height_cm || '';
-  document.getElementById('dNotes').value  = openCarton.notes || '';
+  document.getElementById('dNotes').value  = openCarton.notes     || '';
   document.getElementById('dimsOverlay').classList.remove('hidden');
 }
 function closeDimsModal() { document.getElementById('dimsOverlay').classList.add('hidden'); }
 async function saveDims() {
   if (!openCarton) return;
   const data = await api('PATCH', `/api/ppp/cartons/${openCarton.id}`, {
-    weight_kg:  parseFloat(document.getElementById('dWeight').value) || 0,
-    length_cm:  parseFloat(document.getElementById('dLength').value) || 0,
-    width_cm:   parseFloat(document.getElementById('dWidth').value)  || 0,
-    height_cm:  parseFloat(document.getElementById('dHeight').value) || 0,
-    notes:      document.getElementById('dNotes').value,
+    weight_kg: parseFloat(document.getElementById('dWeight').value) || 0,
+    length_cm: parseFloat(document.getElementById('dLength').value) || 0,
+    width_cm:  parseFloat(document.getElementById('dWidth').value)  || 0,
+    height_cm: parseFloat(document.getElementById('dHeight').value) || 0,
+    notes:     document.getElementById('dNotes').value,
   });
   if (data.error) { alert(data.error); return; }
   openCarton = { ...openCarton, ...data };
@@ -426,24 +553,309 @@ async function saveDims() {
   await refreshSession();
 }
 
-// ── Print ─────────────────────────────────────────────────────────────────────
-function printCarton() {
-  if (!openCarton) return;
-  window.open(`/print/carton/${openCarton.id}`, '_blank');
-}
-function openMasterPrint() {
-  if (!session) return;
-  window.open(`/print/master-packing-list/${session.id}`, '_blank');
+// ═══════════════════════════════════════════════════════════════════════════════
+// Print dispatcher — opens the print options modal
+// ═══════════════════════════════════════════════════════════════════════════════
+function triggerPrint(type) {
+  if (type === 'carton') {
+    if (!openCarton) return;
+    triggerPrintById('carton', openCarton.id, openCarton);
+  } else {
+    if (!session) return;
+    const total = (session.cartons || []).length;
+    const title = `Master Packing List · ${session.order?.order_number || session.order_id.slice(0,8)} · ${total} ctns`;
+    openPrintModal({ type: 'master', refId: session.id, title, url: `/print/master-packing-list/${session.id}` });
+  }
 }
 
-// Print a specific closed carton from sidebar
-function printCartonById(cartonId) {
-  window.open(`/print/carton/${cartonId}`, '_blank');
+function triggerPrintById(type, refId, carton) {
+  const total = (session?.cartons || []).length;
+  const title = type === 'carton'
+    ? `CTN ${carton.carton_seq} of ${total} · HU: ${carton.hu_code}`
+    : `Master Packing List · ${total} ctns`;
+  const url   = type === 'carton'
+    ? `/print/carton/${refId}`
+    : `/print/master-packing-list/${refId}`;
+  openPrintModal({ type, refId, title, url });
 }
 
-// ── Sessions list ─────────────────────────────────────────────────────────────
+function openPrintModal(ctx) {
+  _printCtx = ctx;
+  const info = document.getElementById('printDocInfo');
+  info.innerHTML = `<strong>${ctx.title}</strong><br><span style="color:var(--gray);font-size:11px">${ctx.url}</span>`;
+  document.getElementById('btStatus').textContent = '';
+  document.getElementById('btConnectInfo').style.display = 'none';
+  document.getElementById('printOverlay').classList.remove('hidden');
+  // pause HU auto-focus while modal is open
+  _printModalOpen = true;
+}
+let _printModalOpen = false;
+
+function closePrintModal() {
+  document.getElementById('printOverlay').classList.add('hidden');
+  _printModalOpen = false;
+  setTimeout(() => document.getElementById('huInput').focus(), 120);
+}
+
+// ── Option 1: Office printer (browser print dialog) ──────────────────────────
+function doPrintOffice() {
+  if (!_printCtx) return;
+  window.open(_printCtx.url + '?auto=1', '_blank');
+  closePrintModal();
+}
+
+// ── Option 2: Bluetooth thermal (ESC/POS via Web Bluetooth) ──────────────────
+async function doPrintBluetooth() {
+  if (!navigator.bluetooth) return;
+  if (!_printCtx) return;
+
+  setBtStatus('Searching for Bluetooth printers…', 'working');
+  document.getElementById('btConnectInfo').style.display = 'block';
+
+  try {
+    // Try to reuse existing connected device
+    if (!btDevice || !btDevice.gatt.connected) {
+      btDevice = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [
+          '000018f0-0000-1000-8000-00805f9b34fb',  // common BT thermal
+          '6e400001-b5ba-f393-e0a9-e50e24dcca9e',  // Nordic UART
+          '00001101-0000-1000-8000-00805f9b34fb',  // SPP
+          'e7810a71-73ae-499d-8c15-faa9aef0c3f2',  // another common
+        ],
+      });
+      btChar = null;
+    }
+
+    document.getElementById('btDeviceName').textContent = btDevice.name || 'Bluetooth Printer';
+    setBtStatus('Connecting…', 'working');
+
+    const server  = await btDevice.gatt.connect();
+    const services = await server.getPrimaryServices();
+    const WRITE_PROPS = ['write', 'writeWithoutResponse'];
+
+    for (const svc of services) {
+      try {
+        const chars = await svc.getCharacteristics();
+        for (const c of chars) {
+          if (WRITE_PROPS.some(p => c.properties[p])) {
+            btChar = c; break;
+          }
+        }
+      } catch {}
+      if (btChar) break;
+    }
+
+    if (!btChar) throw new Error('No writable characteristic found. Printer may not be ESC/POS compatible.');
+
+    setBtStatus('Connected — generating print data…', 'working');
+    const bytes = await buildEscPosBytes(_printCtx);
+    await writeChunked(btChar, bytes);
+
+    setBtStatus(`Sent ${bytes.length} bytes to ${btDevice.name || 'printer'}`, 'ok');
+    document.getElementById('btBadge').textContent = 'Sent';
+    closePrintModal();
+  } catch (err) {
+    setBtStatus(err.message, 'err');
+    document.getElementById('btBadge').textContent = 'Error';
+  }
+}
+
+function setBtStatus(msg, type) {
+  const el = document.getElementById('btStatus');
+  const cl = document.getElementById('btConnectStatus');
+  el.textContent = msg; el.className = 'bt-status' + (type ? ' ' + type : '');
+  cl.textContent = msg; cl.className = 'bt-status' + (type ? ' ' + type : '');
+}
+
+async function writeChunked(char, data) {
+  const MTU = 512;
+  for (let i = 0; i < data.length; i += MTU) {
+    const chunk = data.slice(i, i + MTU);
+    if (char.properties.writeWithoutResponse) {
+      await char.writeValueWithoutResponse(chunk);
+    } else {
+      await char.writeValue(chunk);
+    }
+  }
+}
+
+// Build ESC/POS bytes from print context (fetches data from server)
+async function buildEscPosBytes(ctx) {
+  const enc = new TextEncoder();
+  const buf = [];
+  const b   = (...bytes) => buf.push(...bytes);
+  const t   = (str)      => buf.push(...enc.encode(str));
+
+  const ESC = 0x1B, GS = 0x1D;
+  const INIT       = [ESC, 0x40];
+  const CENTER     = [ESC, 0x61, 0x01];
+  const LEFT       = [ESC, 0x61, 0x00];
+  const BOLD_ON    = [ESC, 0x45, 0x01];
+  const BOLD_OFF   = [ESC, 0x45, 0x00];
+  const DBL_H      = [ESC, 0x21, 0x10]; // double height
+  const NORMAL     = [ESC, 0x21, 0x00];
+  const FEED_CUT   = [ESC, 0x64, 0x04, GS, 0x56, 0x42, 0x00]; // feed 4 + partial cut
+  const NL         = 0x0A;
+  const LW         = 32; // line width (58mm = 32 chars, 80mm = 48 chars — use 32 as safe default)
+
+  function line(str = '') { t(str.slice(0, LW).padEnd(LW)); b(NL); }
+  function divider()      { t('-'.repeat(LW)); b(NL); }
+  function pair(left, right) {
+    const l = String(left || ''), r = String(right || '');
+    const pad = Math.max(0, LW - l.length - r.length);
+    t(l + ' '.repeat(pad) + r); b(NL);
+  }
+
+  b(...INIT);
+
+  if (ctx.type === 'carton') {
+    const data = await api('GET', `/api/ppp/sessions/${session.id}`);
+    const carton = (data.cartons || []).find(c => c.id === ctx.refId);
+    if (!carton) throw new Error('Carton not found');
+    const total = data.cartons.length;
+
+    b(...CENTER, ...DBL_H, ...BOLD_ON);
+    t('PACKING LIST'); b(NL);
+    b(...NORMAL);
+    t(`CTN ${carton.carton_seq} of ${total}`); b(NL);
+    b(...LEFT);
+    t(`HU: ${carton.hu_code}`); b(NL);
+    b(...BOLD_OFF);
+    divider();
+    pair('Order:', data.order?.order_number || data.order_id || '');
+    pair('Customer:', (data.order?.client_name || '').slice(0, 20));
+    if (carton.weight_kg) pair('Weight:', carton.weight_kg + ' kg');
+    divider();
+    b(...BOLD_ON); pair('SKU', 'QTY'); b(...BOLD_OFF);
+    divider();
+    for (const item of (carton.items || [])) {
+      pair(item.sku.slice(0, 22), String(item.qty));
+      if (item.item_name && item.item_name !== item.sku) {
+        b(...LEFT); t('  ' + item.item_name.slice(0, LW - 2)); b(NL);
+      }
+    }
+    divider();
+    const total_qty = (carton.items || []).reduce((s, i) => s + i.qty, 0);
+    b(...BOLD_ON); pair('TOTAL UNITS:', String(total_qty)); b(...BOLD_OFF);
+    divider();
+    line(); pair('Packed by:', '___________'); line();
+    t(new Date().toLocaleString()); b(NL);
+    line('IdealOMS PPP');
+
+  } else {
+    // Master packing list
+    const data = await api('GET', `/api/ppp/sessions/${session.id}`);
+    const cartons = data.cartons || [];
+    const grand   = cartons.reduce((s, c) => s + c.item_count, 0);
+
+    b(...CENTER, ...DBL_H, ...BOLD_ON);
+    t('MASTER PACKING'); b(NL); t('LIST'); b(NL);
+    b(...NORMAL, ...LEFT);
+    pair('Order:', data.order?.order_number || '');
+    pair('Customer:', (data.order?.client_name || '').slice(0, 20));
+    b(...BOLD_ON); pair('Total Cartons:', String(cartons.length)); b(...BOLD_OFF);
+    pair('Total Units:', String(grand));
+    divider();
+    for (const c of cartons) {
+      b(...BOLD_ON); t(`CTN ${c.carton_seq} of ${cartons.length}`); b(NL, ...BOLD_OFF);
+      t(`HU: ${c.hu_code}`); b(NL);
+      pair('Units:', String(c.item_count));
+      if (c.weight_kg) pair('Weight:', c.weight_kg + ' kg');
+      for (const item of (c.items || [])) pair('  ' + item.sku.slice(0, 18), String(item.qty));
+      divider();
+    }
+    line(); pair('Authorized by:', '__________'); line();
+    t(new Date().toLocaleString()); b(NL);
+    line('IdealOMS PPP');
+  }
+
+  b(...FEED_CUT);
+  return new Uint8Array(buf);
+}
+
+// ── Option 3: Save for later (print queue) ────────────────────────────────────
+async function doPrintQueue() {
+  if (!_printCtx) return;
+  const data = await api('POST', '/api/print-queue', {
+    doc_type: _printCtx.type,
+    ref_id:   _printCtx.refId,
+    title:    _printCtx.title,
+    url:      _printCtx.url,
+  });
+  if (data.error) { alert(data.error); return; }
+  closePrintModal();
+  await refreshQueueBadge();
+  if (document.getElementById('queuePanel').style.display !== 'none') renderQueuePanel();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Print queue panel
+// ═══════════════════════════════════════════════════════════════════════════════
+async function refreshQueueBadge() {
+  const data = await api('GET', '/api/print-queue/count');
+  const n = data.pending || 0;
+  const badge = document.getElementById('queueBadge');
+  document.getElementById('queueCount').textContent = n;
+  badge.style.display = n > 0 ? 'inline-flex' : 'none';
+}
+
+async function toggleQueuePanel() {
+  const panel = document.getElementById('queuePanel');
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+  if (!visible) renderQueuePanel();
+}
+
+async function renderQueuePanel() {
+  const items = await api('GET', '/api/print-queue?status=pending');
+  const el = document.getElementById('queueList');
+  if (!items || !items.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--gray);text-align:center;padding:8px">Queue is empty</div>';
+    return;
+  }
+  el.innerHTML = items.map(q => `
+    <div class="queue-item">
+      <div style="flex:1">
+        <div class="queue-item-type">${q.doc_type === 'master' ? 'Master' : 'Carton'}</div>
+        <div class="queue-item-title">${q.title}</div>
+      </div>
+      <button class="btn btn-amber btn-sm" onclick="printQueueItem('${q.id}','${q.url}')">Print</button>
+      <button class="btn btn-gray btn-sm" onclick="dismissQueueItem('${q.id}')" title="Remove">&#10005;</button>
+    </div>
+  `).join('');
+}
+
+async function printQueueItem(queueId, url) {
+  window.open(url + '?auto=1', '_blank');
+  await api('PATCH', `/api/print-queue/${queueId}/printed`);
+  await refreshQueueBadge();
+  renderQueuePanel();
+}
+
+async function dismissQueueItem(queueId) {
+  await api('DELETE', `/api/print-queue/${queueId}`);
+  await refreshQueueBadge();
+  renderQueuePanel();
+}
+
+async function printAllQueued() {
+  const items = await api('GET', '/api/print-queue?status=pending');
+  if (!items || !items.length) return;
+  for (const q of items) {
+    window.open(q.url + '?auto=1', '_blank');
+    await api('PATCH', `/api/print-queue/${q.id}/printed`);
+    await new Promise(r => setTimeout(r, 600));
+  }
+  await refreshQueueBadge();
+  renderQueuePanel();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sessions list
+// ═══════════════════════════════════════════════════════════════════════════════
 async function showSessions() {
-  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('startScreen').style.display    = 'none';
   document.getElementById('sessionsScreen').style.display = 'block';
   const sessions = await api('GET', '/api/ppp/sessions');
   const el = document.getElementById('sessionsList');
@@ -461,11 +873,22 @@ async function showSessions() {
         <span class="status ${s.status === 'open' ? 'status-open' : 'status-closed'}"><span class="dot"></span>${s.status}</span>
         <div style="display:flex;gap:6px">
           ${s.status === 'open' ? `<button class="btn btn-blue btn-sm" onclick="resumeSession('${s.id}')">&#9654; Resume</button>` : ''}
-          <button class="btn btn-gray btn-sm" onclick="window.open('/print/master-packing-list/${s.id}','_blank')">&#128196; MPL</button>
+          <button class="btn btn-gray btn-sm" onclick="openMPLFromSession('${s.id}', ${s.carton_count})">&#128196; MPL</button>
         </div>
       </div>
     </div>
   `).join('');
+}
+
+function openMPLFromSession(sessionId, cartonCount) {
+  const ctx = {
+    type:  'master',
+    refId: sessionId,
+    title: `Master Packing List · ${cartonCount} ctns`,
+    url:   `/print/master-packing-list/${sessionId}`,
+  };
+  // need session set for BT print to work, so just open directly for past sessions
+  window.open(ctx.url, '_blank');
 }
 
 async function resumeSession(sessionId) {
@@ -477,15 +900,16 @@ async function resumeSession(sessionId) {
 
 function showStart() {
   document.getElementById('sessionsScreen').style.display = 'none';
-  document.getElementById('startScreen').style.display = 'flex';
+  document.getElementById('startScreen').style.display    = 'flex';
 }
 
-// ── Render helpers ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Render helpers
+// ═══════════════════════════════════════════════════════════════════════════════
 function renderSidebar() {
   const cartons = session.cartons || [];
-  const el = document.getElementById('cartonList');
   document.getElementById('cartonCount').textContent = cartons.length;
-
+  const el = document.getElementById('cartonList');
   if (!cartons.length) {
     el.innerHTML = '<div class="empty-state"><div class="ico">&#128230;</div><p>No cartons yet.</p></div>';
     return;
@@ -501,30 +925,32 @@ function renderSidebar() {
       <div class="ctn-item-meta">
         <span>${c.item_count} items</span>
         ${c.weight_kg ? `<span>${c.weight_kg} kg</span>` : ''}
-        ${c.status === 'closed' ? `<a href="#" onclick="printCartonById('${c.id}');return false" style="color:var(--blue)">&#128196;</a>` : ''}
+        ${c.status === 'closed'
+          ? `<a href="#" onclick="triggerPrintById('carton','${c.id}',${JSON.stringify(c).replace(/"/g,'&quot;')});return false" style="color:var(--blue);font-size:12px">&#128196; Print</a>`
+          : ''}
       </div>
     </div>
   `).join('');
 }
 
 function renderCartonHeader() {
-  const hdr = document.getElementById('cartonHeader');
+  const hdr   = document.getElementById('cartonHeader');
   const total = (session.cartons || []).length;
   if (!openCarton) {
     hdr.className = 'ctn-header empty';
-    document.getElementById('cartonNum').textContent = 'No Open Carton';
-    document.getElementById('cartonHU').textContent = 'Scan a HU label to open one';
+    document.getElementById('cartonNum').textContent       = 'No Open Carton';
+    document.getElementById('cartonHU').textContent        = 'Scan a HU label to open one';
     document.getElementById('cartonItemCount').textContent = '—';
   } else {
     hdr.className = 'ctn-header';
-    document.getElementById('cartonNum').textContent = `CTN ${openCarton.carton_seq} of ${total}`;
-    document.getElementById('cartonHU').textContent = openCarton.hu_code;
+    document.getElementById('cartonNum').textContent       = `CTN ${openCarton.carton_seq} of ${total}`;
+    document.getElementById('cartonHU').textContent        = openCarton.hu_code;
     document.getElementById('cartonItemCount').textContent = openCarton.item_count || 0;
   }
 }
 
 function renderItemList() {
-  const wrap = document.getElementById('itemListWrap');
+  const wrap  = document.getElementById('itemListWrap');
   const items = openCarton ? (openCarton.items || []) : [];
   if (!items.length) {
     wrap.innerHTML = '<div class="empty-state" style="padding:20px"><div class="ico">&#128269;</div><p>' +
@@ -546,30 +972,24 @@ function renderItemList() {
 }
 
 function updateUIState() {
-  const hasSession = !!session;
-  const sessionOpen = hasSession && session.status === 'open';
-  const hasCartons = hasSession && (session.cartons || []).length > 0;
+  const sessionOpen   = !!session && session.status === 'open';
+  const hasCartons    = !!session && (session.cartons || []).length > 0;
   const hasOpenCarton = !!openCarton;
 
-  document.getElementById('btnCloseSession').disabled = !sessionOpen || hasOpenCarton;
-  document.getElementById('btnMasterPrint').disabled = !hasCartons;
-  document.getElementById('btnDims').disabled = !hasOpenCarton;
-  document.getElementById('btnCartonPrint').disabled = !hasOpenCarton;
-  document.getElementById('itemInput').disabled = !hasOpenCarton;
-  document.getElementById('lotInput').disabled = !hasOpenCarton;
-  document.getElementById('expiryInput').disabled = !hasOpenCarton;
+  document.getElementById('btnCloseSession').disabled  = !sessionOpen || hasOpenCarton;
+  document.getElementById('btnMasterPrint').disabled   = !hasCartons;
+  document.getElementById('btnDims').disabled          = !hasOpenCarton;
+  document.getElementById('btnCartonPrint').disabled   = !hasOpenCarton;
+  document.getElementById('itemInput').disabled        = !hasOpenCarton;
+  document.getElementById('lotInput').disabled         = !hasOpenCarton;
+  document.getElementById('expiryInput').disabled      = !hasOpenCarton;
 }
 
 function updateSessionStatus() {
   const el = document.getElementById('sessionStatus');
   if (!session) { el.className = 'status status-none'; el.innerHTML = '<span class="dot"></span>No Session'; return; }
-  if (session.status === 'open') {
-    el.className = 'status status-open';
-    el.innerHTML = `<span class="dot"></span>${session.order?.order_number || session.order_id.slice(0,8)} · Open`;
-  } else {
-    el.className = 'status status-closed';
-    el.innerHTML = `<span class="dot"></span>${session.order?.order_number || session.order_id.slice(0,8)} · Closed`;
-  }
+  el.className = session.status === 'open' ? 'status status-open' : 'status status-closed';
+  el.innerHTML = `<span class="dot"></span>${session.order?.order_number || session.order_id.slice(0,8)} · ${session.status}`;
   document.getElementById('sessionInfo').innerHTML =
     `<strong>Session</strong>: ${session.id.slice(0,8)}<br>` +
     `<strong>Order</strong>: ${session.order?.order_number || session.order_id.slice(0,8)} · ${session.order?.client_name || ''}<br>` +
@@ -577,24 +997,23 @@ function updateSessionStatus() {
     `<strong>Started</strong>: ${fmtDt(session.created_at)}`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════════════════════════
 function setZone(zone, state) {
-  const el = document.getElementById(zone === 'hu' ? 'huZone' : 'itemZone');
-  el.className = 'scan-zone' + (state ? ' ' + state : '');
+  document.getElementById(zone === 'hu' ? 'huZone' : 'itemZone').className = 'scan-zone' + (state ? ' ' + state : '');
 }
 function setFeedback(zone, msg, type) {
   const el = document.getElementById(zone === 'hu' ? 'huFeedback' : 'itemFeedback');
   el.textContent = msg;
-  el.className = 'scan-feedback' + (type ? ' ' + type : '');
+  el.className   = 'scan-feedback' + (type ? ' ' + type : '');
 }
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
-  try {
-    const r = await fetch(path, opts);
-    return r.json();
-  } catch (e) { return { error: e.message }; }
+  try { return (await fetch(path, opts)).json(); }
+  catch (e) { return { error: e.message }; }
 }
 
 function fmtDt(s) {
@@ -602,9 +1021,9 @@ function fmtDt(s) {
   return new Date(s).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-// Auto-focus HU input when station is active
+// Auto-focus HU input — but not when a modal is open
 document.getElementById('huInput').addEventListener('blur', () => {
-  if (document.getElementById('stationScreen').style.display !== 'none') {
+  if (!_printModalOpen && document.getElementById('stationScreen').style.display !== 'none') {
     setTimeout(() => document.getElementById('huInput').focus(), 100);
   }
 });

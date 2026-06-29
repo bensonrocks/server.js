@@ -35,6 +35,7 @@ const ldb      = require('./lib/leads-db');
 const pick     = require('./lib/pick');
 const pack     = require('./lib/pack');
 const ppp      = require('./lib/ppp');
+const printQ   = require('./lib/print-queue');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -790,7 +791,7 @@ app.get('/print/carton/:cartonId', (req, res) => {
   try {
     const data = ppp.getCartonPackingListData(req.params.cartonId);
     res.setHeader('Content-Type', 'text/html');
-    res.send(renderCartonPackingList(data));
+    res.send(renderCartonPackingList(data, req.query.auto === '1'));
   } catch (e) { res.status(404).send(e.message); }
 });
 
@@ -798,8 +799,33 @@ app.get('/print/master-packing-list/:sessionId', (req, res) => {
   try {
     const data = ppp.getMasterPackingListData(req.params.sessionId);
     res.setHeader('Content-Type', 'text/html');
-    res.send(renderMasterPackingList(data));
+    res.send(renderMasterPackingList(data, req.query.auto === '1'));
   } catch (e) { res.status(404).send(e.message); }
+});
+
+// ── Print Queue ───────────────────────────────────────────────────────────────
+
+app.get('/api/print-queue', (req, res) => {
+  res.json(printQ.list({ status: req.query.status }));
+});
+
+app.get('/api/print-queue/count', (req, res) => {
+  res.json({ pending: printQ.pendingCount() });
+});
+
+app.post('/api/print-queue', (req, res) => {
+  try { res.json(printQ.enqueue(req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.patch('/api/print-queue/:id/printed', (req, res) => {
+  try { res.json(printQ.markPrinted(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/print-queue/:id', (req, res) => {
+  try { res.json(printQ.remove(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ── IDEALPICK — Print templates (server-rendered HTML) ───────────────────────
@@ -1110,7 +1136,7 @@ ${s.notes ? `<div class="section" style="margin-top:14px"><h2>Notes</h2><div sty
 
 // ── Scan-Pack print renderers ─────────────────────────────────────────────────
 
-function renderCartonPackingList({ carton, session, order, totalCartons }) {
+function renderCartonPackingList({ carton, session, order, totalCartons }, autoPrint = false) {
   const ship = order.shipping || {};
   const addr = [ship.addressLine1, ship.addressLine2, ship.city, ship.state, ship.zip, ship.country].filter(Boolean).join(', ');
   const ctnLabel = `CTN ${carton.carton_seq} of ${totalCartons}`;
@@ -1180,10 +1206,11 @@ td{padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:10pt}
   <div class="info-box"><h3>Checked By</h3><div style="height:36px"></div></div>
 </div>
 <div class="footer"><span>${ctnLabel} · Order ${order.order_number || order.id} · HU: ${carton.hu_code}</span><span>IdealOMS · IDEALPICK</span></div>
+${autoPrint ? '<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),350))</script>' : ''}
 </body></html>`;
 }
 
-function renderMasterPackingList({ session, cartons, totalCartons, order }) {
+function renderMasterPackingList({ session, cartons, totalCartons, order }, autoPrint = false) {
   const ship = order.shipping || {};
   const addr = [ship.addressLine1, ship.addressLine2, ship.city, ship.state, ship.zip, ship.country].filter(Boolean).join(', ');
   const grandTotal = cartons.reduce((s, c) => s + c.item_count, 0);
@@ -1282,6 +1309,7 @@ ${detailSections}
   <div class="info-box"><h3>Authorized By</h3><div style="height:36px"></div></div>
 </div>
 <div class="footer"><span>Master Packing List · Order ${order.order_number || order.id} · ${totalCartons} ctns · ${grandTotal} units</span><span>IdealOMS · IDEALPICK · ${fmtDt(new Date().toISOString())}</span></div>
+${autoPrint ? '<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),350))</script>' : ''}
 </body></html>`;
 }
 
