@@ -99,7 +99,7 @@
         <span class="scan-progress" id="scanProgress"></span>
       </div>
       <div class="scan-header-right">
-        <a id="scanWaybillPdfBtn" class="btn-scan-waybill hidden" target="_blank" title="Open waybill PDF">&#128196; Waybill</a>
+        <a id="scanWaybillPdfBtn" class="btn-scan-waybill hidden" title="Download waybill PDF">&#8681; Waybill</a>
         <span id="scanTimer" class="scan-timer"></span>
       </div>
     </div>
@@ -730,19 +730,19 @@
     </div>
   </div>
 
-  <!-- Print Waybill Modal -->
+  <!-- Download Waybill Modal (shown after completing an order that has a matched waybill PDF) -->
   <div id="printWaybillOverlay" class="modal-overlay hidden">
     <div class="modal">
-      <div class="modal-icon">&#128438;</div>
-      <div class="modal-title">Print Waybill?</div>
-      <p class="modal-desc">Order <strong id="printOrderNo"></strong> completed.</p>
+      <div class="modal-icon">&#8681;</div>
+      <div class="modal-title">Download Waybill?</div>
+      <p class="modal-desc">Order <strong id="printOrderNo"></strong> completed — waybill ready.</p>
       <div class="print-countdown-wrap">
         <div class="print-countdown-bar" id="printCountdownBar"></div>
       </div>
       <p class="hint" style="text-align:center;margin-top:.5rem">Auto-skipping in <span id="printCountdownNum">3</span>s&hellip;</p>
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="printSkipBtn">Skip</button>
-        <button class="btn-primary"   id="printNowBtn">&#128438; Print Waybill</button>
+        <a class="btn-primary" id="printNowBtn" download>&#8681; Download Waybill</a>
       </div>
     </div>
   </div>

@@ -932,9 +932,9 @@
             <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
             <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
-            ${isDone ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint waybill label">&#128438; Label</button>` : ''}
+            ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
             ${isDone && slipUrl ? `<a class="btn-slip" href="${esc(slipUrl)}" download title="Download completion slip">&#128196; Slip</a>` : ''}
-            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}" target="_blank" title="Print waybill PDF">&#128438; Print</a>` : ''}
+            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" download="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
             ${kfBtn}
             ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
@@ -1016,7 +1016,8 @@
     // Show/hide the waybill PDF button in the scan header
     const waybillBtn = document.getElementById('scanWaybillPdfBtn');
     if (ord.has_waybill_pdf && ord.batchId) {
-      waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}`;
+      waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}?dl=1`;
+      waybillBtn.setAttribute('download', `${ord.order_number}_waybill.pdf`);
       waybillBtn.classList.remove('hidden');
     } else {
       waybillBtn.classList.add('hidden');
@@ -1555,11 +1556,10 @@
     }, 1000);
     printWaybillTimer = tick;
 
-    document.getElementById('printNowBtn').onclick = () => {
-      clearInterval(tick);
-      window.open(`/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}`, '_blank');
-      closePrintWaybillModal();
-    };
+    const dlBtn = document.getElementById('printNowBtn');
+    dlBtn.href = `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`;
+    dlBtn.setAttribute('download', `${order.order_number}_waybill.pdf`);
+    dlBtn.onclick = () => { clearInterval(tick); closePrintWaybillModal(); };
     document.getElementById('printSkipBtn').onclick = () => {
       clearInterval(tick);
       closePrintWaybillModal();

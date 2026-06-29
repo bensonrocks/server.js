@@ -539,8 +539,9 @@ app.get('/api/waybill-pdf/:batchId/:orderNumber', (req, res) => {
   const { batchId, orderNumber } = req.params;
   const filePath = path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Waybill PDF not found' });
+  const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${orderNumber}_waybill.pdf"`);
+  res.setHeader('Content-Disposition', `${disposition}; filename="${orderNumber}_waybill.pdf"`);
   fs.createReadStream(filePath).pipe(res);
 });
 
