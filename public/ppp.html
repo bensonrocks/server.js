@@ -264,11 +264,14 @@ a{color:#2563eb;text-decoration:none}
     <div class="ctn-banner empty" id="cartonHeader">
       <div>
         <div class="ctn-num" id="cartonNum">No Open Carton</div>
-        <div class="ctn-hu"  id="cartonHU">Scan a HU label to open one</div>
+        <div class="ctn-hu"  id="cartonHU">Scan a HU or click + New Carton</div>
       </div>
-      <div class="ctn-units">
-        <div class="n" id="cartonItemCount">—</div>
-        <div class="lbl">items</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="btnHULabel" style="display:none" class="btn btn-ghost btn-sm" onclick="printHULabel()">&#127991; Label</button>
+        <div class="ctn-units">
+          <div class="n" id="cartonItemCount">—</div>
+          <div class="lbl">items</div>
+        </div>
       </div>
     </div>
 
@@ -280,8 +283,11 @@ a{color:#2563eb;text-decoration:none}
       </div>
       <div class="card-body">
         <div class="scan-zone" id="huZone">
-          <div class="scan-label">Scan Handling Unit / Waybill Barcode — opens or closes current carton</div>
-          <input id="huInput" class="scan-input" placeholder="Scan or type HU code…" autocomplete="off" spellcheck="false">
+          <div class="scan-label">Scan HU / Waybill Barcode — opens or closes current carton</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="huInput" class="scan-input" placeholder="Scan or type HU code…" autocomplete="off" spellcheck="false" style="flex:1">
+            <button class="btn btn-primary btn-sm" onclick="autoOpenCarton()" id="btnNewCarton">+ New Carton</button>
+          </div>
           <div class="scan-feedback" id="huFeedback"></div>
         </div>
       </div>
@@ -476,6 +482,19 @@ async function closeSession() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // HU scanning
 // ═══════════════════════════════════════════════════════════════════════════════
+async function autoOpenCarton() {
+  if (!session) return;
+  if (openCarton) { setFeedback('hu', 'Close the current carton first', 'err'); return; }
+  setZone('hu', 'active');
+  const data = await api('POST', `/api/ppp/sessions/${session.id}/open-carton`);
+  if (data.error) { setZone('hu', 'error'); setFeedback('hu', data.error, 'err'); return; }
+  openCarton = data.carton;
+  setZone('hu', 'success');
+  setFeedback('hu', `Opened CTN ${data.carton.carton_seq} · HU: ${data.carton.hu_code} (system generated)`, 'ok');
+  await refreshSession();
+  setTimeout(() => { setZone('hu', ''); setFeedback('hu', '', ''); }, 2500);
+}
+
 document.getElementById('huInput').addEventListener('keydown', async e => {
   if (e.key !== 'Enter') return;
   const hu = e.target.value.trim();
@@ -820,6 +839,7 @@ function renderSidebar() {
       <div class="ctn-item-meta">
         <span>${c.item_count} items</span>
         ${c.weight_kg?`<span>${c.weight_kg} kg</span>`:''}
+        <a href="#" onclick="window.open('/print/hu-label/${c.id}','_blank');return false" style="color:#64748b;font-size:12px" title="Print HU label">&#127991;</a>
         ${c.status==='closed'?`<a href="#" onclick="triggerPrintById('carton','${c.id}',${JSON.stringify(c).replace(/"/g,'&quot;')});return false" style="color:#2563eb;font-size:12px">&#128196; Print</a>`:''}
       </div>
     </div>`).join('');
@@ -828,17 +848,25 @@ function renderSidebar() {
 function renderCartonHeader() {
   const hdr = document.getElementById('cartonHeader');
   const n   = (session.cartons||[]).length;
+  const labelBtn = document.getElementById('btnHULabel');
   if (!openCarton) {
     hdr.className = 'ctn-banner empty';
     document.getElementById('cartonNum').textContent       = 'No Open Carton';
-    document.getElementById('cartonHU').textContent        = 'Scan a HU label to open one';
+    document.getElementById('cartonHU').textContent        = 'Scan a HU or click + New Carton';
     document.getElementById('cartonItemCount').textContent = '—';
+    labelBtn.style.display = 'none';
   } else {
     hdr.className = 'ctn-banner';
     document.getElementById('cartonNum').textContent       = `CTN ${openCarton.carton_seq} of ${n}`;
     document.getElementById('cartonHU').textContent        = openCarton.hu_code;
     document.getElementById('cartonItemCount').textContent = openCarton.item_count||0;
+    labelBtn.style.display = 'inline-flex';
   }
+}
+
+function printHULabel() {
+  if (!openCarton) return;
+  window.open(`/print/hu-label/${openCarton.id}`, '_blank');
 }
 
 function renderItemList() {
@@ -869,6 +897,7 @@ function updateUIState() {
   document.getElementById('btnMasterPrint').disabled   = !hasCtns;
   document.getElementById('btnDims').disabled          = !hasOpen;
   document.getElementById('btnCartonPrint').disabled   = !hasOpen;
+  document.getElementById('btnNewCarton').disabled     = !open||hasOpen;
   document.getElementById('itemInput').disabled        = !hasOpen;
   document.getElementById('lotInput').disabled         = !hasOpen;
   document.getElementById('expiryInput').disabled      = !hasOpen;

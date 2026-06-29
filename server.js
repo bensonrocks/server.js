@@ -767,6 +767,11 @@ app.post('/api/ppp/sessions/:id/close', (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+app.post('/api/ppp/sessions/:id/open-carton', (req, res) => {
+  try { res.json(ppp.openCarton(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 app.post('/api/ppp/sessions/:id/scan-hu', (req, res) => {
   try { res.json(ppp.scanHU(req.params.id, req.body.huCode)); }
   catch (e) { res.status(400).json({ error: e.message }); }
@@ -785,6 +790,14 @@ app.delete('/api/ppp/items/:itemId', (req, res) => {
 app.patch('/api/ppp/cartons/:cartonId', (req, res) => {
   try { res.json(ppp.updateCartonDimensions(req.params.cartonId, req.body)); }
   catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/print/hu-label/:cartonId', (req, res) => {
+  try {
+    const data = ppp.getCartonPackingListData(req.params.cartonId);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(renderHULabel(data));
+  } catch (e) { res.status(404).send(e.message); }
 });
 
 app.get('/print/carton/:cartonId', (req, res) => {
@@ -1135,6 +1148,40 @@ ${s.notes ? `<div class="section" style="margin-top:14px"><h2>Notes</h2><div sty
 }
 
 // ── Scan-Pack print renderers ─────────────────────────────────────────────────
+
+function renderHULabel({ carton, order, totalCartons }) {
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>HU Label ${esc(carton.hu_code)}</title>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+<style>
+  @page{size:100mm 70mm;margin:3mm}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:6mm;gap:3mm}
+  .ref{font-size:10px;color:#555;text-align:center}
+  .bc-wrap{display:flex;justify-content:center;width:100%}
+  .bc-wrap svg{max-width:90mm}
+  .hu{font-family:monospace;font-size:18px;font-weight:900;letter-spacing:3px;text-align:center;color:#000}
+  .ctn{font-size:13px;font-weight:800;color:#333;text-align:center;margin-top:2mm}
+  @media screen{.print-btn{margin-top:10px;padding:8px 22px;background:#1d4ed8;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700}}
+  @media print{.print-btn{display:none}}
+</style>
+</head>
+<body>
+<div class="ref">${esc(order.order_number || order.id || '')}${order.client_name ? ' · ' + esc(order.client_name) : ''}</div>
+<div class="bc-wrap"><svg id="bc"></svg></div>
+<div class="hu">${esc(carton.hu_code)}</div>
+<div class="ctn">CTN ${carton.carton_seq} of ${totalCartons}</div>
+<button class="print-btn" onclick="window.print()">Print Label</button>
+<script>
+  try{JsBarcode('#bc','${esc(carton.hu_code)}',{format:'CODE128',width:2.5,height:60,displayValue:false,margin:6})}catch(e){document.getElementById('bc').remove()}
+<\/script>
+</body>
+</html>`;
+}
 
 function renderCartonPackingList({ carton, session, order, totalCartons }, autoPrint = false) {
   const ship = order.shipping || {};
