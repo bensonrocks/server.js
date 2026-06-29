@@ -14,6 +14,7 @@ try { pdfParse = require('pdf-parse'); } catch {}
 // Keyfields WMS format — edit lib/keyfields.js to change column mappings or output
 const {
   mapRow, normalizeKey, dateVal,
+  detectColumnMap,
   buildRow,
   generateKeyfieldsXLSX, generateTemplateSampleXLSX,
   KEYFIELDS_HEADERS,
@@ -398,14 +399,23 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
 function parseUploadedFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.csv') {
-    const records = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
-    return records.map(mapRow);
+    const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
+    const detected = detectColumnMap(records);
+    return records.map(r => mapRow(r, detected));
   }
   if (ext === '.xlsx' || ext === '.xls') {
-    const wb      = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-    const ws      = wb.Sheets[wb.SheetNames[0]];
-    const records = XLSX.utils.sheet_to_json(ws, { defval: null });
-    return records.map(mapRow).filter(r => r.sku && r.order_number !== 'UNKNOWN');
+    const wb       = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const ws       = wb.Sheets[wb.SheetNames[0]];
+    const records  = XLSX.utils.sheet_to_json(ws, { defval: null });
+    const detected = detectColumnMap(records);
+    const mapped   = records.map(r => mapRow(r, detected));
+    // When AI detected the order or SKU column, relax filtering to rows that
+    // at least have a non-UNKNOWN order number.  Otherwise keep the strict filter.
+    return mapped.filter(r =>
+      (detected.order_key || detected.sku_key)
+        ? r.order_number !== 'UNKNOWN'
+        : r.sku && r.order_number !== 'UNKNOWN'
+    );
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
