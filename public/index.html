@@ -140,9 +140,7 @@
         <input type="text" id="itemScanInput" class="big-scan-input"
           placeholder="Scan item barcode / SKU&#8230;"
           autocomplete="off" autocorrect="off" spellcheck="false" />
-        <button class="btn-camera-open" id="openCameraBtn" title="Camera scan — single">&#128247;</button>
-        <button class="btn-batch-scan"  id="openBatchScanBtn" title="Batch scan — collect multiple barcodes at once">&#9707; Batch</button>
-        <button class="btn-label-scan"  id="openLabelScanBtn" title="Scan white product label (OCR)">&#127991; Label</button>
+        <button class="btn-camera-open" id="openCameraBtn" title="Camera scan">&#128247; Scan</button>
       </div>
       <div id="itemScanFeedback" class="scan-feedback hidden"></div>
       <div class="dock-actions">
@@ -198,6 +196,7 @@
         <div class="camera-mode-toggle">
           <button class="cmode-btn active" id="cmodeSingle">Single</button>
           <button class="cmode-btn"        id="cmodeBatch">Batch</button>
+          <button class="cmode-btn"        id="cmodeLabel">&#127991; Label</button>
         </div>
       </div>
       <button class="back-btn camera-close-btn" id="closeCameraBtn">&#10005; Close</button>
@@ -216,6 +215,18 @@
       <div id="cameraSingleResult" class="camera-single-result hidden"></div>
       <!-- Single mode hint -->
       <div id="cameraSingleHint" class="camera-hint-pill">Point at a barcode — it scans instantly</div>
+      <!-- Label mode: wide aim frame -->
+      <div id="cameraLabelAim" class="camera-label-aim hidden">
+        <div class="cla-corner cla-tl"></div>
+        <div class="cla-corner cla-tr"></div>
+        <div class="cla-corner cla-bl"></div>
+        <div class="cla-corner cla-br"></div>
+        <div class="cla-hint">Centre label &mdash; tap Capture</div>
+      </div>
+      <!-- Label mode: processing spinner -->
+      <div id="cameraLabelSpinner" class="camera-label-spinner hidden">
+        <div class="cls-spin"></div><span>Reading label&hellip;</span>
+      </div>
     </div>
 
     <!-- Batch panel (shown in batch mode) -->
@@ -230,6 +241,25 @@
       <div class="camera-batch-actions">
         <button class="btn-secondary btn-sm" id="cameraSelectAllBtn">&#9745; All</button>
         <button class="btn-primary"          id="cameraScanSelectedBtn">&#10003; Scan Selected (<span id="cameraBatchCount">0</span>)</button>
+      </div>
+    </div>
+
+    <!-- Label panel (shown in label mode) -->
+    <div id="cameraLabelPanel" class="camera-label-panel hidden">
+      <div class="clf-capture-row">
+        <button class="clf-capture-btn" id="clfCaptureBtn">&#128247; Capture</button>
+        <span class="clf-status" id="clfStatus"></span>
+      </div>
+      <div id="clfResult" class="clf-result hidden">
+        <div class="clf-fields">
+          <div class="clf-field"><span class="clf-lbl">SKU</span><span class="clf-val" id="clfSku">—</span></div>
+          <div class="clf-field"><span class="clf-lbl">Batch</span><span class="clf-val" id="clfBatch">—</span></div>
+          <div class="clf-field"><span class="clf-lbl">Expiry</span><span class="clf-val" id="clfExpiry">—</span></div>
+        </div>
+        <div class="clf-result-actions">
+          <button class="clf-retry-btn" id="clfRetryBtn">&#8635; Retry</button>
+          <button class="clf-use-btn"   id="clfUseBtn">&#10003; Use SKU</button>
+        </div>
       </div>
     </div>
 

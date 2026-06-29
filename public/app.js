@@ -2160,7 +2160,7 @@
   let cameraStream    = null;
   let cameraAnimFrame = null;
   let barcodeDetector = null;
-  let cameraScanMode  = 'single'; // 'single' | 'batch'
+  let cameraScanMode  = 'single'; // 'single' | 'batch' | 'label'
   const batchMap      = new Map(); // rawValue → { checked: bool }
   const lastSingleHit = {};        // rawValue → timestamp (cooldown)
   const SINGLE_COOLDOWN_MS = 1800;
@@ -2168,36 +2168,17 @@
   document.getElementById('openCameraBtn').addEventListener('click', openCameraScanner);
   document.getElementById('closeCameraBtn').addEventListener('click', closeCameraScanner);
   document.getElementById('cmodeSingle').addEventListener('click', () => setCameraMode('single'));
+  document.getElementById('cmodeBatch').addEventListener('click',  () => setCameraMode('batch'));
+  document.getElementById('cmodeLabel').addEventListener('click',  () => setCameraMode('label'));
 
-  // "Batch" mode button in the single-scan overlay delegates to the standalone
-  // BatchScan module (batch-scan.js) which provides a dedicated full-screen UI.
-  document.getElementById('cmodeBatch').addEventListener('click', () => {
-    closeCameraScanner();
-    if (window.BatchScan) {
-      window.BatchScan.open(vals => {
-        vals.forEach(val => handleItemScan(val));
-      });
-    }
+  document.getElementById('clfCaptureBtn').addEventListener('click', captureLabel);
+  document.getElementById('clfRetryBtn').addEventListener('click', () => {
+    document.getElementById('clfResult').classList.add('hidden');
+    document.getElementById('clfStatus').textContent = '';
   });
-
-  // Direct "Batch" button in the scan dock — opens BatchScan without going
-  // through the single-scan camera overlay first.
-  document.getElementById('openBatchScanBtn').addEventListener('click', () => {
-    if (cameraStream) closeCameraScanner(); // close single-scan camera if open
-    if (window.BatchScan) {
-      window.BatchScan.open(vals => {
-        vals.forEach(val => handleItemScan(val));
-      });
-    }
-  });
-
-  document.getElementById('openLabelScanBtn').addEventListener('click', () => {
-    if (cameraStream) closeCameraScanner();
-    if (window.LabelScan) {
-      window.LabelScan.open(result => {
-        if (result && result.sku) handleItemScan(result.sku);
-      });
-    }
+  document.getElementById('clfUseBtn').addEventListener('click', () => {
+    const sku = document.getElementById('clfSku').textContent.trim();
+    if (sku && sku !== '—') { handleItemScan(sku); closeCameraScanner(); }
   });
 
   document.getElementById('cameraClearBtn').addEventListener('click', () => { batchMap.clear(); renderBatchChips(); });
@@ -2215,20 +2196,103 @@
     cameraScanMode = mode;
     document.getElementById('cmodeSingle').classList.toggle('active', mode === 'single');
     document.getElementById('cmodeBatch').classList.toggle('active',  mode === 'batch');
-    document.getElementById('cameraBatchPanel').classList.toggle('hidden', mode === 'single');
-    document.getElementById('cameraSingleHint').classList.toggle('hidden', mode === 'batch');
+    document.getElementById('cmodeLabel').classList.toggle('active',  mode === 'label');
+    document.getElementById('cameraBatchPanel').classList.toggle('hidden',   mode !== 'batch');
+    document.getElementById('cameraLabelPanel').classList.toggle('hidden',   mode !== 'label');
+    document.getElementById('cameraLabelAim').classList.toggle('hidden',     mode !== 'label');
+    document.getElementById('cameraSingleHint').classList.toggle('hidden',   mode !== 'single');
     document.getElementById('cameraSingleResult').classList.add('hidden');
     if (mode === 'batch') { batchMap.clear(); renderBatchChips(); }
+    if (mode === 'label') { resetLabelPanel(); }
+  }
+
+  function resetLabelPanel() {
+    document.getElementById('clfResult').classList.add('hidden');
+    document.getElementById('clfStatus').textContent = '';
+    document.getElementById('clfSku').textContent    = '—';
+    document.getElementById('clfBatch').textContent  = '—';
+    document.getElementById('clfExpiry').textContent = '—';
+    document.getElementById('cameraLabelSpinner').classList.add('hidden');
+    document.getElementById('clfCaptureBtn').disabled = false;
+  }
+
+  function binariseCanvas(canvas) {
+    const ctx = canvas.getContext('2d');
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += (d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114);
+    const thresh = (sum / (d.length / 4)) * 0.65;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
+      const v = lum > thresh ? 255 : 0;
+      d[i] = d[i+1] = d[i+2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  async function captureLabel() {
+    const video    = document.getElementById('cameraVideo');
+    const spinner  = document.getElementById('cameraLabelSpinner');
+    const statusEl = document.getElementById('clfStatus');
+    const resultEl = document.getElementById('clfResult');
+    const captBtn  = document.getElementById('clfCaptureBtn');
+
+    captBtn.disabled = true;
+    statusEl.textContent = '';
+    resultEl.classList.add('hidden');
+    spinner.classList.remove('hidden');
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = video.videoWidth  || 640;
+    canvas.height = video.videoHeight || 480;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    binariseCanvas(canvas);
+
+    canvas.toBlob(async blob => {
+      const fd = new FormData();
+      fd.append('image', blob, 'label.jpg');
+      try {
+        const resp = await fetch('/api/ocr/label', {
+          method: 'POST',
+          headers: { 'x-session-id': SESSION_ID },
+          body: fd,
+        });
+        const data = await resp.json();
+        spinner.classList.add('hidden');
+        document.getElementById('clfSku').textContent    = data.sku    || '—';
+        document.getElementById('clfBatch').textContent  = data.batch  || '—';
+        document.getElementById('clfExpiry').textContent = data.expiry || '—';
+        resultEl.classList.remove('hidden');
+        if (!data.sku) {
+          statusEl.textContent = 'No SKU found — try again';
+          statusEl.style.color = 'var(--danger)';
+        } else {
+          statusEl.textContent = '';
+        }
+        document.getElementById('clfUseBtn').disabled = !data.sku;
+      } catch (e) {
+        spinner.classList.add('hidden');
+        statusEl.textContent = 'Error — ' + e.message;
+        statusEl.style.color = 'var(--danger)';
+      }
+      captBtn.disabled = false;
+    }, 'image/jpeg', 0.92);
   }
 
   async function openCameraScanner() {
     document.getElementById('cameraScanOverlay').classList.remove('hidden');
     document.getElementById('cameraNoSupport').classList.add('hidden');
     document.getElementById('cameraViewfinderWrap').classList.remove('hidden');
+    // ensure panels start hidden — setCameraMode will show the right one
+    document.getElementById('cameraBatchPanel').classList.add('hidden');
+    document.getElementById('cameraLabelPanel').classList.add('hidden');
+    document.getElementById('cameraLabelAim').classList.add('hidden');
 
     if (!('BarcodeDetector' in window)) {
       document.getElementById('cameraViewfinderWrap').classList.add('hidden');
       document.getElementById('cameraBatchPanel').classList.add('hidden');
+      document.getElementById('cameraLabelPanel').classList.add('hidden');
       document.getElementById('cameraNoSupport').classList.remove('hidden');
       return;
     }
@@ -2283,6 +2347,7 @@
   }
 
   function processDetected(barcodes) {
+    if (cameraScanMode === 'label') return; // label mode uses manual capture
     const now = Date.now();
     for (const bc of barcodes) {
       const val = (bc.rawValue || '').trim();

@@ -565,7 +565,7 @@ body.scan-open { overflow: hidden; }
 .scan-items-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .scan-items-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 .scan-items-table th { position: sticky; top: 0; background: var(--surface-2); padding: .5rem .85rem; text-align: left; font-size: .7rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; border-bottom: 2px solid var(--border); }
-.scan-items-table td { padding: .55rem .85rem; border-bottom: 1px solid var(--border-light); }
+.scan-items-table td { padding: .72rem .85rem; border-bottom: 1px solid var(--border-light); font-size: .9rem; }
 .qty-col { text-align: center; width: 78px; }
 .status-col { width: 42px; text-align: center; }
 .row-ok      { background: var(--success-bg); }
@@ -581,21 +581,21 @@ body.scan-open { overflow: hidden; }
 .qty-input { width: 62px; padding: .28rem .38rem; text-align: center; border: 1px solid var(--border); border-radius: 4px; font-size: .85rem; background: var(--surface); }
 .qty-input:focus { outline: 2px solid var(--primary); }
 
-.item-scan-dock { flex-shrink: 0; background: var(--surface); border-top: 2px solid var(--border); padding: .85rem 1rem; }
-.item-scan-wrap { display: flex; align-items: center; gap: .4rem; margin-bottom: .5rem; }
-.scan-icon-prefix { padding: 0 .7rem; font-size: 1.2rem; color: var(--primary); user-select: none; }
-.big-scan-input { flex: 1; border: none; outline: none; padding: .85rem .4rem; font-size: 1rem; color: var(--text); background: transparent; }
+.item-scan-dock { flex-shrink: 0; background: var(--surface); border-top: 2px solid var(--border); padding: .75rem 1rem .85rem; }
+.item-scan-wrap { display: flex; align-items: stretch; gap: .5rem; margin-bottom: .6rem; background: var(--bg); border: 2px solid var(--primary); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 3px rgba(37,99,235,.07); }
+.scan-icon-prefix { padding: 0 .7rem; font-size: 1.3rem; color: var(--primary); user-select: none; display: flex; align-items: center; }
+.big-scan-input { flex: 1; border: none; outline: none; padding: .9rem .4rem; font-size: 1.05rem; color: var(--text); background: transparent; }
 .big-scan-input::placeholder { color: var(--text-muted); }
 .big-scan-wrap { display: flex; align-items: center; max-width: 520px; margin: .85rem auto; background: var(--surface); border: 2px solid var(--primary); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 4px rgba(37,99,235,.08); }
-.btn-camera-open { flex-shrink: 0; width: 42px; height: 42px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius-sm); font-size: 1.2rem; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; transition: background .15s; }
+.btn-camera-open { flex-shrink: 0; height: auto; background: var(--primary); color: #fff; border: none; border-radius: 0; font-size: .9rem; font-weight: 700; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; gap: .35rem; padding: 0 1.1rem; min-width: 80px; transition: background .15s; letter-spacing: .02em; }
 .btn-camera-open:hover { background: var(--primary-hover); }
-.scan-feedback { padding: .4rem .7rem; border-radius: var(--radius-sm); font-size: .8rem; font-weight: 500; margin-bottom: .5rem; }
+.scan-feedback { padding: .4rem .7rem; border-radius: var(--radius-sm); font-size: .82rem; font-weight: 500; margin-bottom: .5rem; }
 .scan-feedback.success { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .scan-feedback.error   { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
 .dock-actions { display: flex; gap: .5rem; }
-.dock-actions .btn-danger  { flex: 1; }
-.dock-actions .btn-pause   { flex: 1; }
-.dock-actions .btn-success { flex: 2; }
+.dock-actions .btn-danger  { flex: 1; padding: .72rem .5rem; font-size: .9rem; }
+.dock-actions .btn-pause   { flex: 1; padding: .72rem .5rem; font-size: .9rem; }
+.dock-actions .btn-success { flex: 2; padding: .72rem .5rem; font-size: .95rem; font-weight: 700; }
 
 .btn-pause { background: #f0f9ff; color: #0369a1; border: 1px solid #bae6fd; padding: .6rem .9rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .875rem; font-weight: 600; transition: background .15s; flex: 1; }
 .btn-pause:hover { background: #e0f2fe; }
@@ -835,8 +835,8 @@ body.log-open { overflow: hidden; }
 .camera-title { color: #fff; font-weight: 700; font-size: .9rem; }
 .camera-close-btn { color: rgba(255,255,255,.85); border-color: rgba(255,255,255,.3); }
 .camera-close-btn:hover { background: rgba(255,255,255,.1); }
-.camera-mode-toggle { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,.25); }
-.cmode-btn { padding: .28rem .7rem; font-size: .76rem; font-weight: 600; background: transparent; color: rgba(255,255,255,.55); border: none; cursor: pointer; transition: background .12s, color .12s; }
+.camera-mode-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.25); }
+.cmode-btn { padding: .5rem .95rem; font-size: .85rem; font-weight: 600; background: transparent; color: rgba(255,255,255,.6); border: none; cursor: pointer; transition: background .12s, color .12s; white-space: nowrap; }
 .cmode-btn.active { background: var(--primary); color: #fff; }
 .camera-viewfinder-wrap { flex: 1; position: relative; overflow: hidden; background: #111; min-height: 0; }
 .camera-video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -1511,3 +1511,110 @@ body.ls-open { overflow: hidden; }
 }
 .ls-use-btn:hover:not(:disabled) { background: #15803d; }
 .ls-use-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ================================================================
+   CAMERA — LABEL MODE
+   ================================================================ */
+
+/* Wide aim frame inside viewfinder */
+.camera-label-aim {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 86%; max-width: 420px;
+  height: 42%; max-height: 180px;
+  pointer-events: none;
+}
+.camera-label-aim.hidden { display: none; }
+.cla-corner {
+  position: absolute; width: 24px; height: 24px;
+  border-color: #a3e635; border-style: solid;
+}
+.cla-tl { top: 0; left: 0;  border-width: 3px 0 0 3px; border-radius: 3px 0 0 0; }
+.cla-tr { top: 0; right: 0; border-width: 3px 3px 0 0; border-radius: 0 3px 0 0; }
+.cla-bl { bottom: 0; left: 0;  border-width: 0 0 3px 3px; border-radius: 0 0 0 3px; }
+.cla-br { bottom: 0; right: 0; border-width: 0 3px 3px 0; border-radius: 0 0 3px 0; }
+.cla-hint {
+  position: absolute; bottom: -1.6rem; left: 50%; transform: translateX(-50%);
+  color: #a3e635; font-size: .74rem; font-weight: 600; white-space: nowrap;
+  text-shadow: 0 1px 4px #000;
+}
+
+/* Spinner overlay inside viewfinder while OCR runs */
+.camera-label-spinner {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .65rem; color: #e2e8f0; font-size: .9rem; font-weight: 600;
+}
+.camera-label-spinner.hidden { display: none; }
+.cls-spin {
+  width: 38px; height: 38px;
+  border: 3px solid rgba(255,255,255,.2); border-top-color: #a3e635;
+  border-radius: 50%; animation: cls-spin .75s linear infinite;
+}
+@keyframes cls-spin { to { transform: rotate(360deg); } }
+
+/* Label result panel below viewfinder */
+.camera-label-panel {
+  background: var(--surface); border-top: 2px solid var(--border);
+  flex-shrink: 0; padding: .75rem 1rem;
+}
+.camera-label-panel.hidden { display: none; }
+
+.clf-capture-row {
+  display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem;
+}
+.clf-capture-btn {
+  flex-shrink: 0; background: var(--primary); color: #fff; border: none;
+  border-radius: var(--radius-sm); padding: .7rem 1.6rem;
+  font-size: .95rem; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; gap: .4rem; transition: background .15s;
+}
+.clf-capture-btn:hover { background: var(--primary-hover); }
+.clf-capture-btn:disabled { opacity: .45; cursor: not-allowed; }
+.clf-status { font-size: .82rem; color: var(--text-muted); }
+
+.clf-result { margin-top: .3rem; }
+.clf-result.hidden { display: none; }
+.clf-fields {
+  display: flex; gap: .6rem; margin-bottom: .6rem; flex-wrap: wrap;
+}
+.clf-field {
+  display: flex; flex-direction: column; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: .45rem .7rem; min-width: 4.5rem; flex: 1;
+}
+.clf-lbl { font-size: .65rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: .15rem; }
+.clf-val { font-size: .92rem; font-weight: 700; color: var(--text); word-break: break-all; }
+.clf-result-actions { display: flex; gap: .55rem; }
+.clf-retry-btn {
+  padding: .6rem 1.2rem; background: var(--surface-2); color: var(--text-light);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: .88rem; font-weight: 600; cursor: pointer; transition: background .12s;
+}
+.clf-retry-btn:hover { background: var(--bg); }
+.clf-use-btn {
+  flex: 1; padding: .6rem 1rem; background: var(--success); color: #fff;
+  border: none; border-radius: var(--radius-sm);
+  font-size: .92rem; font-weight: 700; cursor: pointer; transition: background .12s;
+}
+.clf-use-btn:hover { background: #15803d; }
+.clf-use-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── Warehouse phone/tablet: larger camera header ──────────────────────────── */
+@media (max-width: 600px) {
+  .camera-header { padding: .85rem 1rem; }
+  .camera-title  { font-size: 1rem; }
+  .cmode-btn     { padding: .6rem 1rem; font-size: .88rem; }
+  .camera-close-btn { padding: .5rem .9rem; font-size: .88rem; }
+  .scan-items-table th { font-size: .75rem; padding: .6rem .85rem; }
+  .scan-items-table td { padding: .85rem .85rem; font-size: .95rem; }
+  .item-scan-dock { padding: .9rem 1rem 1rem; }
+  .big-scan-input { padding: 1rem .5rem; font-size: 1.1rem; }
+  .btn-camera-open { padding: 0 1.3rem; font-size: .95rem; min-width: 90px; }
+  .dock-actions .btn-danger,
+  .dock-actions .btn-pause  { padding: .9rem .5rem; font-size: .95rem; }
+  .dock-actions .btn-success { padding: .9rem .5rem; font-size: 1rem; }
+  .clf-capture-btn { padding: .85rem 2rem; font-size: 1rem; }
+}
