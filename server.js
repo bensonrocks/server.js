@@ -503,7 +503,10 @@ function _tryMeltWide(records, headers) {
   // A column is SKU-like if it has digits OR hyphens (e.g. AC-007-003-B, 100ML)
   // and is not a known metadata field name.
   const META_PAT = /^(s[._\/]?n|no\.?|seq|status|account|ref|address|remarks?|date|name|consign|line|uom|unit|total|grand|deliver|print|day|rite|amount|price|weight)$/i;
-  const skuCols  = headers.filter(h => (/\d/.test(h) || /[-_]/.test(h)) && /^[A-Z0-9][A-Z0-9_\-]{1,}$/i.test(h) && !META_PAT.test(h));
+  // Keyfields/Betime reserved schema columns (d-exline, d-exref2, d-shaddr1, d-lot1...) are
+  // metadata field names, never wide-pivot SKU columns — exclude the whole "d-"/"d_" namespace.
+  const D_PREFIX_PAT = /^d[-_]/i;
+  const skuCols  = headers.filter(h => (/\d/.test(h) || /[-_]/.test(h)) && /^[A-Z0-9][A-Z0-9_\-]{1,}$/i.test(h) && !META_PAT.test(h) && !D_PREFIX_PAT.test(h));
   if (skuCols.length < 2) return null;
   if (skuCols.length / headers.length < 0.25) return null;
 
