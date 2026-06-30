@@ -1281,6 +1281,59 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
   }
 });
 
+// ── Master: find/remove batches corrupted by the wide-pivot-melt bug ────────
+// A fixed bug (_tryMeltWide misreading Keyfields/Betime "d-" metadata columns
+// as SKU columns) saved some uploaded batches with fake item rows (sku values
+// like "d-exline", "d-exref2", "d-exdate2") instead of real product SKUs. The
+// real SKU values were never stored, so these batches can't be repaired in
+// place — they must be re-uploaded from the original source file. These
+// routes locate and remove the affected batches so they can be re-uploaded.
+// Exact match only (no "d-" prefix heuristic) — a real product SKU could
+// legitimately start with "D-"; the reserved Keyfields names below are an
+// exact, fixed list so matching them precisely carries no false-positive risk.
+const _RESERVED_KEYFIELDS = new Set(KEYFIELDS_HEADERS.map(h => h.toLowerCase()));
+function _isMeltBugSku(sku) {
+  return _RESERVED_KEYFIELDS.has(String(sku || '').trim().toLowerCase());
+}
+function _findMeltBugBatches(db) {
+  return db.batches.filter(b =>
+    (b.orders || []).some(o => (o.lines || []).some(l => _isMeltBugSku(l.sku)))
+  );
+}
+
+app.get('/api/master/melt-bug-scan', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db       = readDb();
+  const affected = _findMeltBugBatches(db).map(b => ({
+    batchId:      b.id,
+    filename:     b.filename,
+    uploaded_at:  b.uploaded_at,
+    client_name:  b.client_name || '',
+    order_count:  b.order_count,
+    row_count:    b.row_count,
+  }));
+  res.json({ affectedCount: affected.length, batches: affected });
+});
+
+app.delete('/api/master/melt-bug-batches', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  try {
+    const db       = readDb();
+    const affected = _findMeltBugBatches(db);
+    const removed  = affected.map(b => ({ batchId: b.id, filename: b.filename, client_name: b.client_name || '' }));
+    const ids      = new Set(affected.map(b => b.id));
+    db.batches = db.batches.filter(b => !ids.has(b.id));
+    writeDb(db);
+    for (const b of affected) {
+      try { fs.unlinkSync(path.join(WMS_DIR, `${b.id}.xlsx`)); } catch {}
+      try { fs.rmSync(path.join(WAYBILL_DIR, b.id), { recursive: true, force: true }); } catch {}
+    }
+    res.json({ ok: true, removedCount: removed.length, removed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Master: Keyfields template download / upload / reset ────────────────────
 
 app.get('/api/master/keyfields-template', (req, res) => {
