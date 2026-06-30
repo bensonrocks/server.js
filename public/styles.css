@@ -93,6 +93,7 @@ nav { display: flex; gap: 2px; }
   font-size: .82rem; color: var(--text-light); font-weight: 500;
   transition: all .15s; white-space: nowrap;
 }
+.tab-icon { display: none; line-height: 1; font-size: 1.35rem; }
 .tab-btn:hover  { background: var(--bg); color: var(--text); }
 .tab-btn.active { background: var(--primary-light); color: var(--primary); font-weight: 700; }
 .tab-btn:disabled,
@@ -764,7 +765,7 @@ body.log-open { overflow: hidden; }
 .master-actions { margin: 0; padding: 0; background: none; border: none; }
 
 /* Nav tabs */
-.admin-nav { display: flex; gap: 0; overflow-x: auto; border-bottom: 2px solid var(--border); background: var(--surface); position: sticky; top: 60px; z-index: 2; }
+.admin-nav { display: flex; gap: 0; overflow-x: auto; border-bottom: 2px solid var(--border); background: var(--surface); position: sticky; top: var(--header-h); z-index: 2; }
 .admin-nav-btn { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: .75rem 1.1rem; font-size: .82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s; }
 .admin-nav-btn:hover { color: var(--primary); }
 .admin-nav-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
@@ -1010,25 +1011,44 @@ body.log-open { overflow: hidden; }
    RESPONSIVE — MOBILE  (≤ 640px)
    ================================================================ */
 @media (max-width: 640px) {
-  :root { --bottom-nav-h: 60px; --pad: 1rem; }
+  :root { --header-h: 68px; --bottom-nav-h: 68px; --pad: 1rem; }
 
-  /* Header compact */
-  .header-inner { gap: .5rem; justify-content: space-between; }
+  /* ── Header: warehouse-optimized, large and readable ── */
+  .is-icon-hdr { width: 40px; height: 40px; flex-shrink: 0; }
+  .header-inner { gap: .55rem; padding: 0 .85rem; }
+  .header-logo { flex-shrink: 1; min-width: 0; overflow: hidden; }
+  .header-brand-text { min-width: 0; }
+  .header-brand-name { font-size: 1rem; }
   .header-brand-sub { display: none; }
-  .header-brand-name { font-size: .78rem; }
-  .header-user { gap: .3rem; }
-  .user-chip { max-width: 80px; font-size: .65rem; }
+  .header-user { gap: .4rem; flex-shrink: 0; }
+  .user-chip {
+    max-width: 110px; font-size: .85rem; font-weight: 700;
+    padding: .3em .85em; letter-spacing: .01em;
+  }
+  .lock-btn,
+  .printer-settings-btn {
+    min-width: 40px; min-height: 40px;
+    font-size: 1.1rem; padding: .3rem .45rem;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+  }
 
-  /* Bottom nav */
+  /* ── Bottom nav: tabs move to fixed bottom bar ── */
   header nav {
     position: fixed; bottom: 0; left: 0; right: 0;
     height: var(--bottom-nav-h); background: var(--surface);
-    border-top: 1px solid var(--border); display: flex; z-index: 150;
-    padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); gap: 2px;
-    box-shadow: 0 -2px 12px rgba(0,0,0,.08);
+    border-top: 2px solid var(--border); display: flex; z-index: 150;
+    padding: 4px 8px calc(4px + env(safe-area-inset-bottom)); gap: 4px;
+    box-shadow: 0 -2px 16px rgba(0,0,0,.1);
   }
-  .tab-btn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: .25rem .2rem; font-size: .62rem; border-radius: 10px; height: 100%; gap: 2px; }
-  .tab-btn.active { background: var(--primary-light); }
+  .tab-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: .2rem .3rem;
+    font-size: .74rem; font-weight: 600; border-radius: 10px;
+    height: 100%; gap: 3px;
+  }
+  .tab-btn.active { background: var(--primary-light); color: var(--primary); }
+  .tab-icon { display: block; }
 
   body { padding-bottom: var(--bottom-nav-h); }
   main { padding: 0; }
@@ -1053,29 +1073,39 @@ body.log-open { overflow: hidden; }
   .dcs-table { font-size: .7rem; }
   .dcs-table thead th { font-size: .6rem; }
 
+  /* ── Login + PIN: slightly bigger for mobile ── */
   .login-box { padding: 1.5rem 1.25rem 1.75rem; }
-  .pin-keypad { gap: .4rem; }
-  .pk { padding: .78rem; font-size: 1.05rem; }
+  .pin-keypad { gap: .45rem; }
+  .pk { padding: .9rem; font-size: 1.2rem; }
 
+  /* ── Scan overlay dock ── */
   .dock-actions .btn-danger,
   .dock-actions .btn-pause,
-  .dock-actions .btn-success { font-size: .78rem; padding: .52rem .35rem; }
+  .dock-actions .btn-success { font-size: .92rem; padding: .7rem .35rem; }
 
   .filter-row  { gap: .3rem; padding: .35rem 0; }
   .filter-chip { font-size: .7rem; padding: .18em .55em; }
 
+  /* ── Scan overlay body ── */
   .scan-overlay { top: var(--header-h); }
   .phase-items  { height: calc(100dvh - var(--header-h) - var(--bottom-nav-h)); }
-  .scan-order-header { padding: .5rem .75rem; gap: .5rem; }
-  .scan-order-no { font-size: .85rem; }
-  .scan-order-meta { padding: .4rem .75rem; font-size: .76rem; gap: .3rem .8rem; }
+
+  .scan-order-header { padding: .6rem .9rem; gap: .6rem; }
+  .back-btn { padding: .42rem .85rem; font-size: .88rem; }
+  .scan-order-no { font-size: 1rem; }
+  .scan-progress { font-size: .8rem; padding: .22em .75em; }
+  .scan-timer { font-size: .88rem; min-width: 48px; }
+
+  .scan-order-meta { padding: .45rem .9rem; font-size: .8rem; gap: .35rem .9rem; }
+
   .scan-items-table th:nth-child(2),
   .scan-items-table td:nth-child(2) { display: none; }
-  .scan-items-table th { padding: .4rem .55rem; }
-  .scan-items-table td { padding: .4rem .55rem; font-size: .8rem; }
-  .qty-col  { width: 56px; }
-  .qty-input { width: 48px; font-size: .8rem; }
-  .item-scan-dock { padding: .6rem .75rem; }
+  .scan-items-table th { padding: .5rem .75rem; font-size: .78rem; }
+  .scan-items-table td { padding: .7rem .75rem; font-size: .9rem; }
+  .qty-col  { width: 60px; }
+  .qty-input { width: 50px; font-size: .85rem; }
+
+  .item-scan-dock { padding: .65rem .85rem calc(.65rem + env(safe-area-inset-bottom)); }
 
   .modal-overlay { align-items: flex-end; padding: 0; }
   .modal { border-radius: 16px 16px 0 0; padding: 1.25rem 1rem calc(1.25rem + env(safe-area-inset-bottom)); max-height: 85vh; }
