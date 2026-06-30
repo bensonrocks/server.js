@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "analyze:metals": "node scripts/analyze-gold-silver.js"
   },
   "dependencies": {
     "csv-parse": "^5.5.3",
