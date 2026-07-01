@@ -359,38 +359,48 @@ function getSessionContext(now) {
 
 // entryOffset: % from open to enter (LONG: negative = wait for pullback; SHORT: positive = wait for dead-cat bounce)
 // stopPct: stop-loss distance from entry in %
+// Ranges are realistic 2-hour intraday moves, not the full catalyst magnitude.
 const SIGNAL_PLAYS = {
-  'earnings':           { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'EARNINGS BEAT',   note: 'Buy gap-open pullback. Set 2hr exit alert.',          entryOffset:-0.5, stopPct:2.0 },
-  'eps beat':           { dir: 'LONG',  upMin: 4,  upMax: 10, stars: 5, tag: 'EPS BEAT',         note: 'Buy VWAP dip at open. 2hr target, then exit.',        entryOffset:-0.3, stopPct:1.8 },
-  'beats estimates':    { dir: 'LONG',  upMin: 4,  upMax: 9,  stars: 5, tag: 'BEAT ESTIMATE',    note: 'Momentum entry at open. Exit within 2hrs.',            entryOffset:-0.3, stopPct:1.8 },
-  'guidance raised':    { dir: 'LONG',  upMin: 5,  upMax: 12, stars: 5, tag: 'GUIDANCE ▲',       note: 'Strongest signal. Buy premarket, exit 2hrs after open.',entryOffset: 0.0, stopPct:2.5 },
-  'upgrade':            { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'ANALYST UPGRADE',  note: 'Buy at open. 2hr window captures initial surge.',      entryOffset: 0.0, stopPct:1.5 },
-  'price target':       { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 4, tag: 'PT RAISED',        note: 'Enter on volume spike. 2hr momentum play.',            entryOffset: 0.2, stopPct:1.5 },
-  'all-time high':      { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'ATH BREAKOUT',     note: 'No overhead resistance. Ride 2hr momentum.',           entryOffset: 0.1, stopPct:2.0 },
-  'breakout':           { dir: 'LONG',  upMin: 3,  upMax: 7,  stars: 4, tag: 'BREAKOUT',         note: 'Enter on volume confirmation. 2hr hold max.',           entryOffset: 0.1, stopPct:2.0 },
-  'short squeeze':      { dir: 'LONG',  upMin: 10, upMax: 30, stars: 5, tag: '⚡ SHORT SQUEEZE',  note: 'Fast 2hr move. Size small — extreme volatility.',      entryOffset: 0.0, stopPct:3.0 },
-  'insider buying':     { dir: 'LONG',  upMin: 3,  upMax: 8,  stars: 5, tag: '🔍 INSIDER BUY',   note: 'CEO/Director buy = highest conviction. Enter early.',  entryOffset:-0.3, stopPct:1.5 },
-  'merger':             { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'M&A',              note: 'Buy target at open, 2hr spike to deal price.',         entryOffset: 0.0, stopPct:2.0 },
-  'acquisition':        { dir: 'LONG',  upMin: 15, upMax: 40, stars: 5, tag: 'ACQUISITION',      note: 'Gap to bid price within 2hrs. Buy at discount.',       entryOffset: 0.0, stopPct:2.0 },
-  'deal':               { dir: 'LONG',  upMin: 4,  upMax: 12, stars: 4, tag: 'MAJOR DEAL',       note: 'Revenue catalyst. 2hr entry on the news pop.',         entryOffset: 0.0, stopPct:2.0 },
-  'buyback':            { dir: 'LONG',  upMin: 2,  upMax: 6,  stars: 3, tag: 'BUYBACK',          note: '2hr momentum pop on buyback announcement.',            entryOffset: 0.0, stopPct:1.5 },
-  'dividend':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'DIVIDEND',         note: 'Modest 2hr lift. Defensive intraday play.',            entryOffset: 0.0, stopPct:1.0 },
-  'misses estimates':   { dir: 'SHORT', upMin: 4,  upMax: 10, stars: 4, tag: '🔴 MISS',           note: 'Short any gap-up open. 2hr downside target.',          entryOffset: 0.5, stopPct:2.0 },
-  'guidance lowered':   { dir: 'SHORT', upMin: 6,  upMax: 15, stars: 5, tag: '🔴 GUIDE DOWN',     note: 'Strongest short. Sell at open, cover 2hrs later.',     entryOffset: 0.0, stopPct:2.5 },
-  'downgrade':          { dir: 'SHORT', upMin: 3,  upMax: 7,  stars: 4, tag: '🔴 DOWNGRADE',      note: 'Sell rallies in 2hr window.',                          entryOffset: 0.5, stopPct:1.5 },
-  'insider selling':    { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 3, tag: '🔴 INSIDER SELL',   note: 'Check Form 4 size. Short on volume confirmation.',     entryOffset: 0.0, stopPct:1.5 },
-  'secondary offering': { dir: 'SHORT', upMin: 5,  upMax: 10, stars: 4, tag: '🔴 DILUTION',       note: 'Discount to market = 2hr selling pressure.',           entryOffset: 0.0, stopPct:2.0 },
-  'short interest':     { dir: 'SHORT', upMin: 3,  upMax: 8,  stars: 3, tag: '🔴 HIGH SHORT',     note: 'High short = squeeze or cascade. Read the macro.',     entryOffset: 0.3, stopPct:2.0 },
-  'opec':               { dir: 'SHORT', upMin: 2,  upMax: 5,  stars: 4, tag: 'OPEC SUPPLY',      note: 'Output hike = 2hr crude sell. Short OIL/XOM/CVX.',    entryOffset: 0.0, stopPct:1.5 },
-  'rate cut':           { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE CUT',         note: '2hr risk-on. Growth stocks, gold, crypto lift.',       entryOffset: 0.0, stopPct:1.0 },
-  'rate hike':          { dir: 'SHORT', upMin: 1,  upMax: 3,  stars: 3, tag: 'RATE HIKE',        note: '2hr pressure on growth/tech.',                         entryOffset: 0.0, stopPct:1.0 },
-  'cpi':                { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'CPI COOL',         note: 'Dovish pivot. 2hr risk-on trade.',                     entryOffset: 0.0, stopPct:1.0 },
-  'jobs report':        { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'JOBS DATA',        note: 'Strong jobs = soft landing. 2hr equity/crypto bid.',  entryOffset: 0.0, stopPct:1.0 },
-  'nonfarm payroll':    { dir: 'LONG',  upMin: 1,  upMax: 3,  stars: 3, tag: 'NFP',              note: 'Cool wage growth = bullish. 2hr momentum.',            entryOffset: 0.0, stopPct:1.0 },
-  'gdp':                { dir: 'LONG',  upMin: 1,  upMax: 2,  stars: 2, tag: 'GDP',              note: 'Upward revision = 2hr confidence bounce.',             entryOffset: 0.0, stopPct:0.8 },
-  'resistance':         { dir: 'LONG',  upMin: 2,  upMax: 5,  stars: 4, tag: 'RESISTANCE BREAK', note: 'Level cleared. 2hr ride to next resistance.',          entryOffset: 0.1, stopPct:1.5 },
-  'support':            { dir: 'LONG',  upMin: 1,  upMax: 4,  stars: 3, tag: 'SUPPORT HOLD',     note: 'Risk-defined 2hr bounce from key level.',              entryOffset: 0.0, stopPct:1.0 },
-  'ipo':                { dir: 'LONG',  upMin: 5,  upMax: 20, stars: 3, tag: 'IPO',              note: 'First 2hr pop possible. Size small, wide spreads.',    entryOffset: 0.0, stopPct:3.0 },
+  // ── LONG ──────────────────────────────────────────────────────────────────────
+  // Earnings gap is priced in overnight; you trade the 2hr momentum continuation, not the full gap.
+  'earnings':           { dir: 'LONG',  upMin: 2.5, upMax: 6.0,  stars: 5, tag: 'EARNINGS BEAT',   note: 'Gap already in at open. Trade 2hr continuation: historically 3–6% from VWAP entry.',           entryOffset:-0.5, stopPct:2.0 },
+  'eps beat':           { dir: 'LONG',  upMin: 2.0, upMax: 5.0,  stars: 5, tag: 'EPS BEAT',         note: 'EPS beat without guidance: 2–5% intraday range. Fade by midday — exit before 2hr mark.',      entryOffset:-0.3, stopPct:1.8 },
+  'beats estimates':    { dir: 'LONG',  upMin: 2.0, upMax: 5.0,  stars: 5, tag: 'BEAT ESTIMATE',    note: 'Revenue + EPS beat: 2–5% realistic 2hr run. Enter VWAP dip, not the initial spike.',           entryOffset:-0.3, stopPct:1.8 },
+  'guidance raised':    { dir: 'LONG',  upMin: 3.0, upMax: 7.0,  stars: 5, tag: 'GUIDANCE ▲',       note: 'Raised guidance is stronger than a beat alone — 4–7% open range typical. Best catalyst.',      entryOffset: 0.0, stopPct:2.5 },
+  'upgrade':            { dir: 'LONG',  upMin: 1.0, upMax: 3.5,  stars: 4, tag: 'ANALYST UPGRADE',  note: 'Upgrades drive 1–3.5% in 2hrs then fade. Do not hold past the morning session.',              entryOffset: 0.0, stopPct:1.5 },
+  'price target':       { dir: 'LONG',  upMin: 0.5, upMax: 2.5,  stars: 3, tag: 'PT RAISED',        note: 'PT raise alone = 0.5–2.5% nudge. Only enter if volume confirms — many do nothing.',           entryOffset: 0.2, stopPct:1.2 },
+  'all-time high':      { dir: 'LONG',  upMin: 1.0, upMax: 3.0,  stars: 4, tag: 'ATH BREAKOUT',     note: 'No overhead supply = clean momentum. 1–3% extension in 2hrs before profit-taking kicks in.',  entryOffset: 0.1, stopPct:1.5 },
+  'breakout':           { dir: 'LONG',  upMin: 1.5, upMax: 4.0,  stars: 4, tag: 'BREAKOUT',         note: 'Volume-confirmed break: 1.5–4% in 2hrs. False breakouts common — wait for retest.',           entryOffset: 0.1, stopPct:1.8 },
+  // Short squeeze CAN move 10–15% in 2hrs if short interest is extreme (>20% float).
+  'short squeeze':      { dir: 'LONG',  upMin: 5.0, upMax: 15.0, stars: 5, tag: '⚡ SHORT SQUEEZE',  note: 'Only extreme SI (>20% float) moves 5–15% in 2hrs. Size very small — can reverse instantly.', entryOffset: 0.0, stopPct:3.0 },
+  'insider buying':     { dir: 'LONG',  upMin: 1.0, upMax: 3.0,  stars: 5, tag: '🔍 INSIDER BUY',   note: 'Insider buys 1–3% same-day. Better multi-day hold — but 2hr trade captures news spike.',       entryOffset:-0.3, stopPct:1.5 },
+  // M&A: stock gaps to near the BID PRICE before open. 2hr trade = closing the remaining SPREAD (2–5% to deal price), not the full acquisition premium.
+  'merger':             { dir: 'LONG',  upMin: 2.0, upMax: 8.0,  stars: 5, tag: 'M&A ARBIT.',       note: 'Stock already gapped to ~90% of bid pre-open. 2hr trade = close remaining spread to deal price (2–8%).',  entryOffset: 0.0, stopPct:2.0 },
+  'acquisition':        { dir: 'LONG',  upMin: 2.0, upMax: 8.0,  stars: 5, tag: 'DEAL ARBIT.',      note: 'Remaining spread to announced bid: 2–8% typical. Gap widens only if deal falls through (risk).', entryOffset: 0.0, stopPct:2.0 },
+  'deal':               { dir: 'LONG',  upMin: 2.0, upMax: 6.0,  stars: 4, tag: 'MAJOR DEAL',       note: 'Partnership/contract win: 2–6% 2hr pop. Larger deals move more; partnership deals less.',     entryOffset: 0.0, stopPct:2.0 },
+  'buyback':            { dir: 'LONG',  upMin: 0.5, upMax: 2.0,  stars: 3, tag: 'BUYBACK',          note: 'Buyback is a mild catalyst: 0.5–2% same-day. Better long-term than 2hr trade.',               entryOffset: 0.0, stopPct:1.0 },
+  'dividend':           { dir: 'LONG',  upMin: 0.3, upMax: 1.5,  stars: 2, tag: 'DIVIDEND',         note: 'Dividend raise = <1.5% intraday. Very weak 2hr catalyst — trade only with volume spike.',      entryOffset: 0.0, stopPct:0.8 },
+  // ── SHORT ─────────────────────────────────────────────────────────────────────
+  'misses estimates':   { dir: 'SHORT', upMin: 2.0, upMax: 6.0,  stars: 4, tag: '🔴 MISS',           note: 'Miss gap-down is in at open. Short the dead-cat bounce: 2–6% continuation lower in 2hrs.',    entryOffset: 0.5, stopPct:2.0 },
+  'guidance lowered':   { dir: 'SHORT', upMin: 3.0, upMax: 8.0,  stars: 5, tag: '🔴 GUIDE DOWN',     note: 'Guide-down hits harder than a miss: 4–8% drop typical in 2hrs. Strongest short catalyst.',    entryOffset: 0.0, stopPct:2.5 },
+  'downgrade':          { dir: 'SHORT', upMin: 1.0, upMax: 3.5,  stars: 4, tag: '🔴 DOWNGRADE',      note: 'Downgrade moves 1–3.5% in 2hrs. Short the early bounce — fades during morning session.',      entryOffset: 0.5, stopPct:1.5 },
+  'insider selling':    { dir: 'SHORT', upMin: 0.5, upMax: 2.0,  stars: 3, tag: '🔴 INSIDER SELL',   note: 'Insider sales are weak 2hr catalysts (0.5–2%). Only trade alongside other bearish signals.',   entryOffset: 0.0, stopPct:1.2 },
+  // Secondary offering is priced at 5–8% below market. Stock converges to offer price within 2hrs.
+  'secondary offering': { dir: 'SHORT', upMin: 2.5, upMax: 6.0,  stars: 4, tag: '🔴 DILUTION',       note: 'Offering priced 5–8% below market. Stock drops to offer price in 2hrs — 2.5–6% down move.',  entryOffset: 0.0, stopPct:2.0 },
+  'short interest':     { dir: 'SHORT', upMin: 1.5, upMax: 4.0,  stars: 3, tag: '🔴 HIGH SHORT',     note: 'High SI is a setup, not a catalyst. Short only if price is clearly breaking down.',            entryOffset: 0.3, stopPct:2.0 },
+  'opec':               { dir: 'SHORT', upMin: 1.0, upMax: 3.0,  stars: 4, tag: 'OPEC SUPPLY',      note: 'OPEC hike drops crude 2–4%; oil stocks lag at 1–3%. Short XOM/CVX/BHP in 2hr window.',       entryOffset: 0.0, stopPct:1.5 },
+  // ── MACRO (index-level moves; individual stocks may differ) ──────────────────
+  'rate cut':           { dir: 'LONG',  upMin: 0.5, upMax: 1.5,  stars: 3, tag: 'RATE CUT',         note: 'Index moves 0.5–1.5% on rate cut. Best expressed via growth stocks or crypto, not indices.',  entryOffset: 0.0, stopPct:0.8 },
+  'rate hike':          { dir: 'SHORT', upMin: 0.5, upMax: 1.5,  stars: 3, tag: 'RATE HIKE',        note: 'Surprise hike: index −0.5 to −1.5% in 2hrs. Short tech/growth; cover before close.',         entryOffset: 0.0, stopPct:0.8 },
+  'cpi':                { dir: 'LONG',  upMin: 0.5, upMax: 1.5,  stars: 3, tag: 'CPI COOL',         note: 'Cool CPI = dovish pivot expectation: 0.5–1.5% index pop in 2hrs. Gold also benefits.',       entryOffset: 0.0, stopPct:0.8 },
+  'jobs report':        { dir: 'LONG',  upMin: 0.5, upMax: 1.5,  stars: 3, tag: 'JOBS DATA',        note: 'Strong jobs with cooling wages = soft landing: 0.5–1.5% equity bid for 2hrs.',              entryOffset: 0.0, stopPct:0.8 },
+  'nonfarm payroll':    { dir: 'LONG',  upMin: 0.5, upMax: 1.5,  stars: 3, tag: 'NFP',              note: 'NFP beat: 0.5–1.5% risk-on in 2hrs. Do not trade against the initial direction.',            entryOffset: 0.0, stopPct:0.8 },
+  'gdp':                { dir: 'LONG',  upMin: 0.3, upMax: 1.0,  stars: 2, tag: 'GDP',              note: 'GDP revision: <1% intraday nudge. Use as backdrop confirmation, not a standalone 2hr trade.',entryOffset: 0.0, stopPct:0.6 },
+  // ── TECHNICAL ────────────────────────────────────────────────────────────────
+  'resistance':         { dir: 'LONG',  upMin: 1.0, upMax: 3.0,  stars: 4, tag: 'RESISTANCE BREAK', note: 'Confirmed resistance break: 1–3% to next level in 2hrs. Requires volume >1.5× average.',    entryOffset: 0.1, stopPct:1.5 },
+  'support':            { dir: 'LONG',  upMin: 0.5, upMax: 2.0,  stars: 3, tag: 'SUPPORT HOLD',     note: 'Support bounce: 0.5–2% in 2hrs. Stop is below the support level — keep it tight.',          entryOffset: 0.0, stopPct:1.0 },
+  // IPO first 2hrs: pop is real but spreads are wide and liquidity thin.
+  'ipo':                { dir: 'LONG',  upMin: 3.0, upMax: 10.0, stars: 3, tag: 'IPO',              note: 'IPO first 2hrs historically pops 3–10%, but wide spreads eat into profit. Size very small.', entryOffset: 0.0, stopPct:3.0 },
 };
 
 const PRIORITY_SIGNALS = ['guidance raised','earnings','eps beat','beats estimates','short squeeze','merger','acquisition','insider buying','guidance lowered','all-time high','breakout','upgrade'];
@@ -494,9 +504,10 @@ function generatePlay(article) {
   if (sentiment === 'bear' && dir === 'LONG') dir = 'SHORT';
   if (sentiment === 'bull' && dir === 'SHORT') dir = 'LONG';
 
-  const sigBoost = Math.min(signals.length - 1, 3) * 1.5;
-  const upMin = (bestPlay.upMin + sigBoost).toFixed(1);
-  const upMax = (bestPlay.upMax + sigBoost * 1.5).toFixed(1);
+  // Each extra corroborating signal adds a small realistic boost (max +1% to upMax)
+  const sigBoost = Math.min(signals.length - 1, 2) * 0.5;
+  const upMin = (bestPlay.upMin + sigBoost * 0.5).toFixed(1);
+  const upMax = (bestPlay.upMax + sigBoost).toFixed(1);
   const stars = Math.min(5, bestPlay.stars + (signals.length > 2 ? 1 : 0));
 
   // ── Calculated entry / exit / risk levels ────────────────────────────────
