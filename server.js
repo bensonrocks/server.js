@@ -1474,15 +1474,10 @@ app.post('/api/master/label-templates/upload', upload.single('templateFile'), (r
     }
     if (imported.length === 0) return res.status(400).json({ error: 'No valid carrier rows found' });
 
-    // Merge: uploaded rows replace existing entries for same carrier, others kept
-    const existing = readLabelTemplates();
-    const merged   = [...existing];
-    for (const t of imported) {
-      const idx = merged.findIndex(x => x.carrier.toLowerCase() === t.carrier.toLowerCase());
-      if (idx >= 0) merged[idx] = t; else merged.push(t);
-    }
-    writeLabelTemplates(merged);
-    res.json({ ok: true, imported: imported.length, total: merged.length });
+    const previousCount = readLabelTemplates().length;
+    // Full replace — new file becomes the complete list
+    writeLabelTemplates(imported);
+    res.json({ ok: true, imported: imported.length, replaced: previousCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

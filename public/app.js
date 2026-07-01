@@ -2051,6 +2051,14 @@
 
   async function uploadLabelTplFile(file) {
     const statusEl = document.getElementById('ltpUploadStatus');
+    const current  = (_labelTemplates || []).length;
+    const msg      = current > 0
+      ? `This will REPLACE all ${current} existing carrier template${current !== 1 ? 's' : ''} with the contents of "${file.name}".\n\nContinue?`
+      : `Import "${file.name}" as the carrier template list?\n\nThis will take effect immediately.`;
+    if (!confirm(msg)) {
+      ltpFileInput.value = '';
+      return;
+    }
     statusEl.textContent = `Uploading ${file.name}…`;
     statusEl.className   = 'status-bar';
     statusEl.classList.remove('hidden');
@@ -2065,7 +2073,7 @@
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
       statusEl.className = 'status-bar success';
-      statusEl.textContent = `Imported ${data.imported} template${data.imported !== 1 ? 's' : ''} (${data.total} total).`;
+      statusEl.textContent = `Replaced ${data.replaced} template${data.replaced !== 1 ? 's' : ''} with ${data.imported} from file. Changes are live.`;
       ltpFileInput.value = '';
       await loadLabelTemplates();
     } catch (err) {
