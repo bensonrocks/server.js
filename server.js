@@ -494,57 +494,66 @@ app.post('/api/sync/:platform', withTenant, async (req, res) => {
 const DEMO_ORDERS = [
   {
     id: () => `SHP-DEMO-${Date.now()}`,
-    clientId: 'fashion-house', clientName: 'Fashion House', channel: 'shopify',
-    status: 'confirmed', currency: 'USD',
-    items: [{ sku: 'DRESS-SUM', name: 'Summer Dress', qty: 2, unitPrice: 79.99 }],
-    shipping: { recipient: 'Sophie Turner', addressLine1: '200 Hollywood Blvd', city: 'Los Angeles', state: 'CA', zip: '90028', country: 'US' },
-    subtotal: 159.98, shippingCost: 0, tax: 14.40, total: 174.38,
+    clientId: 'betime-marketing', clientName: 'Betime Marketing', channel: 'shopify',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'PILLOW-PRO', name: 'Memory Foam Pillow Pro', qty: 2, unitPrice: 45 }, { sku: 'LAMP-LED', name: 'LED Desk Lamp', qty: 1, unitPrice: 49 }],
+    shipping: { recipient: 'Hui Ling Lim', addressLine1: 'Blk 456 Jurong West St 61', addressLine2: '', city: 'Singapore', state: '', zip: '640456', country: 'SG' },
+    subtotal: 139, shippingCost: 0, tax: 12.51, total: 151.51,
     notes: '', source: { type: 'shopify', ingestedAt: '' },
   },
   {
     id: () => `SHOP-DEMO-${Date.now() + 1}`,
-    clientId: 'beauty-bliss', clientName: 'Beauty Bliss', channel: 'shopee',
-    status: 'confirmed', currency: 'MYR',
-    items: [{ sku: 'SERUM-VC', name: 'Vitamin C Serum', qty: 3, unitPrice: 45.00 }, { sku: 'MASK-HYD', name: 'Hydrating Mask', qty: 2, unitPrice: 22.00 }],
-    shipping: { recipient: 'Nurul Ain', addressLine1: 'Jalan Ampang 88', city: 'Kuala Lumpur', state: 'WP', zip: '50450', country: 'MY' },
-    subtotal: 179.00, shippingCost: 5.90, tax: 0, total: 184.90,
-    notes: 'Bubble wrap please', source: { type: 'shopee', ingestedAt: '' },
+    clientId: 'smilefam', clientName: 'SmileFam', channel: 'shopee',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'ELEC-BRUSH', name: 'Electric Toothbrush Pro', qty: 2, unitPrice: 59.90 }, { sku: 'WHTNG-KIT', name: 'Whitening Kit', qty: 1, unitPrice: 49 }],
+    shipping: { recipient: 'Ahmad Fadzillah', addressLine1: 'Blk 123 Tampines Ave 4', addressLine2: '', city: 'Singapore', state: '', zip: '520123', country: 'SG' },
+    subtotal: 168.80, shippingCost: 0, tax: 15.19, total: 183.99,
+    notes: '', source: { type: 'shopee', ingestedAt: '' },
   },
   {
     id: () => `LAZ-DEMO-${Date.now() + 2}`,
-    clientId: 'sports-zone', clientName: 'Sports Zone', channel: 'lazada',
-    status: 'confirmed', currency: 'MYR',
-    items: [{ sku: 'SHOE-RUN-BLK', name: 'Running Shoes Black', qty: 1, unitPrice: 189.00 }],
-    shipping: { recipient: 'Ahmad Fauzi', addressLine1: 'No 15 Jalan PJS 5/28', city: 'Petaling Jaya', state: 'Selangor', zip: '46150', country: 'MY' },
-    subtotal: 189.00, shippingCost: 0, tax: 0, total: 189.00,
+    clientId: 'athena-scents', clientName: 'Athena Scents', channel: 'lazada',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'OUD-50', name: 'Oud Perfume 50ml', qty: 1, unitPrice: 88 }, { sku: 'ROSE-EDP', name: 'Rose Garden EDP', qty: 1, unitPrice: 65 }],
+    shipping: { recipient: 'Siti Nurhaliza', addressLine1: 'Blk 678 Yishun Ring Rd', addressLine2: '', city: 'Singapore', state: '', zip: '760678', country: 'SG' },
+    subtotal: 153, shippingCost: 0, tax: 13.77, total: 166.77,
     notes: '', source: { type: 'lazada', ingestedAt: '' },
   },
   {
     id: () => `TTK-DEMO-${Date.now() + 3}`,
-    clientId: 'fashion-house', clientName: 'Fashion House', channel: 'tiktok',
-    status: 'confirmed', currency: 'USD',
-    items: [{ sku: 'SCARF-SLK', name: 'Silk Scarf', qty: 1, unitPrice: 44.99 }, { sku: 'SHIRT-CAS', name: 'Casual Shirt', qty: 2, unitPrice: 34.99 }],
-    shipping: { recipient: 'Megan Fox', addressLine1: '9200 Sunset Blvd', city: 'Los Angeles', state: 'CA', zip: '90069', country: 'US' },
-    subtotal: 114.97, shippingCost: 0, tax: 10.35, total: 125.32,
-    notes: 'TikTok live order', source: { type: 'tiktok', ingestedAt: '' },
+    clientId: 'chalgo', clientName: 'Chalgo', channel: 'tiktok',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'BOMBER-JKT', name: 'Bomber Jacket', qty: 1, unitPrice: 89 }, { sku: 'POLO-PRM', name: 'Premium Polo Tee', qty: 2, unitPrice: 49 }],
+    shipping: { recipient: 'Kavitha Pillai', addressLine1: '10 Orchard Rd', addressLine2: '', city: 'Singapore', state: '', zip: '238801', country: 'SG' },
+    subtotal: 187, shippingCost: 0, tax: 16.83, total: 203.83,
+    notes: 'TikTok Live sale', source: { type: 'tiktok', ingestedAt: '' },
   },
   {
     id: () => `SHOP-DEMO-${Date.now() + 4}`,
-    clientId: 'sports-zone', clientName: 'Sports Zone', channel: 'shopee',
-    status: 'confirmed', currency: 'MYR',
-    items: [{ sku: 'YOGA-MAT-PRP', name: 'Yoga Mat Purple', qty: 2, unitPrice: 79.00 }],
-    shipping: { recipient: 'Lim Mei Ling', addressLine1: '22 Jalan Tun Hussein Onn', city: 'Johor Bahru', state: 'Johor', zip: '80000', country: 'MY' },
-    subtotal: 158.00, shippingCost: 8.00, tax: 0, total: 166.00,
+    clientId: 'almighty', clientName: 'Almighty', channel: 'shopee',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'WHEY-1KG', name: 'Whey Protein 1kg', qty: 2, unitPrice: 79 }, { sku: 'BCAA-300', name: 'BCAA 300g', qty: 1, unitPrice: 49 }],
+    shipping: { recipient: 'Rajesh Kumar', addressLine1: 'Blk 445 Bishan St 12', addressLine2: '', city: 'Singapore', state: '', zip: '570445', country: 'SG' },
+    subtotal: 207, shippingCost: 0, tax: 18.63, total: 225.63,
     notes: '', source: { type: 'shopee', ingestedAt: '' },
   },
   {
     id: () => `LAZ-DEMO-${Date.now() + 5}`,
-    clientId: 'beauty-bliss', clientName: 'Beauty Bliss', channel: 'lazada',
-    status: 'confirmed', currency: 'MYR',
-    items: [{ sku: 'TONER-ROS', name: 'Rose Toner', qty: 2, unitPrice: 38.00 }, { sku: 'SPF-50', name: 'SPF 50 Sunscreen', qty: 1, unitPrice: 52.00 }],
-    shipping: { recipient: 'Priya Nair', addressLine1: 'Jalan Imbi 45', city: 'Kuala Lumpur', state: 'WP', zip: '55100', country: 'MY' },
-    subtotal: 128.00, shippingCost: 0, tax: 0, total: 128.00,
+    clientId: 'lz8', clientName: 'LZ8', channel: 'lazada',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'WATCH-CAS', name: 'Casual Watch', qty: 1, unitPrice: 89 }, { sku: 'WALLET-LTH', name: 'Leather Wallet', qty: 2, unitPrice: 45 }],
+    shipping: { recipient: 'Nurul Ain', addressLine1: 'Blk 99 Punggol Field', addressLine2: '', city: 'Singapore', state: '', zip: '828099', country: 'SG' },
+    subtotal: 179, shippingCost: 0, tax: 16.11, total: 195.11,
     notes: '', source: { type: 'lazada', ingestedAt: '' },
+  },
+  {
+    id: () => `TTK-DEMO-${Date.now() + 6}`,
+    clientId: 'simplytoy', clientName: 'SimplyToy', channel: 'tiktok',
+    status: 'confirmed', currency: 'SGD',
+    items: [{ sku: 'RC-TRUCK', name: 'RC Monster Truck', qty: 1, unitPrice: 69 }, { sku: 'PLUSH-BEAR', name: 'Plush Bear 40cm', qty: 2, unitPrice: 55 }],
+    shipping: { recipient: 'Deepak Sharma', addressLine1: 'Blk 201 Boon Lay Way', addressLine2: '', city: 'Singapore', state: '', zip: '640201', country: 'SG' },
+    subtotal: 179, shippingCost: 0, tax: 16.11, total: 195.11,
+    notes: '', source: { type: 'tiktok', ingestedAt: '' },
   },
 ];
 
@@ -588,6 +597,16 @@ app.post('/api/demo/reset', withTenant, (req, res) => {
     }
   }
   res.json({ ok: true, removed });
+});
+
+// Wipe all demo/seed orders and lock out auto-reseed permanently.
+// After this, connect real platform credentials and let auto-sync populate live orders.
+app.post('/api/demo/go-live', withTenant, (req, res) => {
+  const { store, db } = req;
+  const removed = store.deleteAllOrders();
+  // Set seed_version to a very high number so createStore never re-seeds this DB
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('seed_version', '9999')").run();
+  res.json({ ok: true, removed, message: 'Demo data cleared. Connect your marketplace credentials and sync to pull live orders.' });
 });
 
 // ── Sales Lead Digger ─────────────────────────────────────────────────────────
