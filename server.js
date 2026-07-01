@@ -253,6 +253,13 @@ const SEED = [
   { title: "NVDA Options Activity Explodes: $2B in Calls Bought Ahead of Earnings — Largest Ever", summary: "Nvidia options activity reached a historic level with $2B in call options purchased in the three sessions prior to earnings, the largest pre-earnings options buy in market history. The most popular strike is the $1,200 call expiring next Friday. IV crush risk is extreme post-earnings.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/nvda-options-record", publishedAt: ago(232) },
   { title: "BTC Technical: Golden Cross Forms on Weekly Chart — Historically Signals 40%+ Rally", summary: "Bitcoin's 50-week moving average crossed above the 200-week moving average for the first time since November 2023, forming a 'Golden Cross' on the weekly chart. This pattern preceded 40%+ rallies in all previous occurrences (2019, 2020, 2023). Current price: $103,800.", source: "CoinDesk", sourceMkt: "crypto", url: "https://coindesk.com/btc-golden-cross", publishedAt: ago(248) },
   { title: "Secondary Offering: Rivian Prices $1.2B Stock Sale at $12.40, Shares Fall 8%", summary: "Rivian priced a $1.2B secondary share offering at $12.40 per share, a 7% discount to the prior day's close. The company said proceeds will fund Volkswagen joint venture ramp-up costs. Shares fell 8% on the dilution announcement, bringing RIVN's YTD decline to -32%.", source: "Reuters Business", sourceMkt: "stocks", url: "https://reuters.com/rivn-secondary", publishedAt: ago(263) },
+
+  // ── SGX STOCKS (OCBC, UOB, Genting, Keppel, Wilmar) ──────────────────────
+  { title: "OCBC Bank Q1 Earnings Beat: Net Profit Up 12% to S$1.91B, Dividend Raised", summary: "OCBC (O39.SGX) posted Q1 2026 net profit of S$1.91B, up 12% year-on-year, ahead of consensus of S$1.74B. Net interest margin held at 2.19%. CEO Helen Wong guided for full-year double-digit ROE. Interim dividend raised to S$0.42, a 10.5% increase.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/ocbc-q1-2026-earnings-beat", publishedAt: ago(88) },
+  { title: "UOB Raises Full-Year Guidance After Strong Q1: NIM Expansion Beats Street Estimates", summary: "United Overseas Bank raised its full-year net interest income guidance to S$7.8-8.1B after Q1 NIM expanded to 2.11%, above the 2.04% consensus. CEO Wee Ee Cheong said ASEAN loan growth remains robust. UOB shares rose 3.2%.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/uob-guidance-raised-q1", publishedAt: ago(130) },
+  { title: "Genting Singapore Insider Buying: CEO Purchases S$8.5M of Shares Before Phase 2 Opens", summary: "Genting Singapore CEO purchased 12.5 million shares at S$0.68, totalling S$8.5M in open-market transactions via SGX filings. The insider buy at Resorts World Sentosa operator comes ahead of the Phase 2 expansion opening. Shares rose 4.1%.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/genting-sg-insider-buy", publishedAt: ago(172) },
+  { title: "Keppel Corp Wins S$3.8B Data Centre Deal in Indonesia; Stock Hits 52-Week High", summary: "Keppel Corporation announced a S$3.8B contract to build and operate three hyperscale data centres in Batam, Indonesia, for a consortium of US hyperscalers. This is Keppel's largest single infrastructure contract. Shares surged 6.8% to S$7.42, a new 52-week high.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/keppel-data-centre-deal", publishedAt: ago(210) },
+  { title: "Wilmar International Upgraded to Buy: Palm Oil Margin Recovery and China Rebound Drive Target Raise", summary: "Wilmar International received multiple analyst upgrades to Buy after Q1 gross margins recovered to 8.2%, up from 5.1% a year ago. CLSA raised its price target to S$4.20, citing the Yihai Kerry China consumer business rebounding strongly.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/wilmar-upgrade-2026", publishedAt: ago(245) },
 ];
 
 const DRIP_QUEUE = [
@@ -278,6 +285,11 @@ const DRIP_QUEUE = [
   { title: "Hang Seng Breaks 25,000 for First Time in 3 Years on Policy Pivot Optimism", summary: "Hong Kong's Hang Seng Index crossed 25,000 for the first time since 2021, driven by a series of PBOC policy easing measures and optimism over US-China trade talks. Daily turnover hit HK$280B, the highest since March 2021. Southbound flow from mainland investors reached HK$18.4B.", source: "RTHK News HK", sourceMkt: "stocks", url: "https://rthk.hk/hsi-25000-milestone", publishedAt: null },
   { title: "ICBC (1398.HK) Guidance Raised: NIM Stabilises, Dividend Yield Hits 7.1%", summary: "Industrial and Commercial Bank of China (ICBC) raised its full-year earnings guidance after net interest margin stabilised at 1.48% — better than the feared 1.40%. At current prices the stock yields 7.1%, attracting dividend-focused institutional investors. ICBC shares hit a 52-week high.", source: "Reuters Asia", sourceMkt: "stocks", url: "https://reuters.com/icbc-1398-guidance-raised", publishedAt: null },
   { title: "AIA Group (1299.HK) Reports 14% VONB Growth; New Business Value Beats Forecast", summary: "AIA Group reported 14% growth in Value of New Business (VONB) for Q1, ahead of the 9% consensus estimate, driven by strong sales of unit-linked and protection products in China and Thailand. CEO Lee Yuan Siong said mainland China VONB doubled year-on-year. Shares rose 6.3%.", source: "SCMP HK", sourceMkt: "stocks", url: "https://scmp.com/aia-1299-vonb-beat", publishedAt: null },
+
+  // ── SGX DRIP ───────────────────────────────────────────────────────────────
+  { title: "OCBC Bank All-Time High: Brokers Raise Target to S$18 After Record Quarter", summary: "OCBC shares hit a new all-time high of S$16.40 as UBS, Citi, and Goldman all moved to Buy with targets of S$17.20-18.00. The stock trades at 1.4x book, justified by ROE of 14.8%. Analysts cite strong NIM resilience and robust wealth management inflows.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/ocbc-all-time-high-target", publishedAt: null },
+  { title: "UOB and Genting Singapore Lead STI Gains; Straits Times Index Hits 14-Month High", summary: "Singapore's Straits Times Index advanced 1.4% to 3,880, a 14-month high, led by UOB (+3.4%) after its guidance upgrade and Genting Singapore (+4.1%) on strong Resorts World Sentosa visitor numbers. SGX analysts cite a rotation into ASEAN financials and gaming names.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/uob-genting-sti-high", publishedAt: null },
+  { title: "Keppel Corp Breakout: Shares Clear S$7.50 Resistance on Data Centre Deal Pipeline", summary: "Keppel Corporation shares broke out above the key S$7.50 resistance level on above-average volume, confirming a multi-month base pattern. The breakout follows a series of data centre deal announcements worth over S$5B in committed capex. Technical targets point to S$8.20-8.50.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/keppel-breakout-resistance", publishedAt: null },
 ];
 
 let dripIndex = 0;
@@ -338,6 +350,15 @@ function getMarketStatus(ex, now) {
   const preMarket = !open && mins >= openMins - 90 && mins < openMins;
   const label = preMarket ? 'Pre-Market' : open ? 'Open' : (mins < openMins ? 'Pre-Market' : 'Closed');
   return { open, preMarket, label };
+}
+
+function isExchangeOpen(exchangeId, now) {
+  if (!exchangeId) return true; // crypto, forex, commodities, indices = always show
+  const lookupId = exchangeId === 'NASDAQ' ? 'NYSE' : exchangeId;
+  const ex = EXCHANGES.find(e => e.id === lookupId);
+  if (!ex || ex.always) return true;
+  const s = getMarketStatus(ex, now);
+  return s.open || s.preMarket;
 }
 
 function getSessionContext(now) {
@@ -441,6 +462,14 @@ const TITLE_TICKER_MAP = {
   'jd.com': '9618', 'richard liu': '9618',
   'ping an': '2318', 'ping an insurance': '2318',
   'icbc': '1398', 'hang seng': 'HSI',
+  // SGX
+  'ocbc': 'O39', 'ocbc bank': 'O39', 'helen wong': 'O39', 'great eastern': 'O39',
+  'uob': 'U11', 'united overseas bank': 'U11', 'wee ee cheong': 'U11',
+  'capitaland': 'C31', 'capitaland investment': 'C31',
+  'genting singapore': 'G13', 'resorts world sentosa': 'G13',
+  'keppel': 'BN4', 'keppel corporation': 'BN4', 'keppel corp': 'BN4',
+  'wilmar': 'F34', 'wilmar international': 'F34', 'kuok': 'F34',
+  'sti': 'STI', 'straits times index': 'STI',
 };
 
 function extractTickerFromArticle(article) {
@@ -625,8 +654,11 @@ function generateBrief(articles, tz) {
     return b.stars - a.stars || parseFloat(b.upMax) - parseFloat(a.upMax);
   });
 
-  const longs  = allPlays.filter(p => p.direction === 'LONG').slice(0, 10);
-  const shorts = allPlays.filter(p => p.direction === 'SHORT').slice(0, 6);
+  // Only surface plays where the exchange is currently open (crypto/forex/indices always shown)
+  const openPlays = allPlays.filter(p => isExchangeOpen(p.exchange, now));
+  const longs  = openPlays.filter(p => p.direction === 'LONG').slice(0, 10);
+  const shorts = openPlays.filter(p => p.direction === 'SHORT').slice(0, 6);
+  const marketsClosed = longs.length === 0 && shorts.length === 0 && allPlays.length > 0;
 
   const macroKeyPoints = macroArticles.map(a => ({
     title:   a.title,
@@ -645,6 +677,7 @@ function generateBrief(articles, tz) {
     macroBackdrop: macroKeyPoints,
     longs,
     shorts,
+    marketsClosed,
     articleCount:  recent.length,
     totalArticles: articles.length,
     nextRefresh:   new Date(now.getTime() + 15 * 60 * 1000).toISOString(),

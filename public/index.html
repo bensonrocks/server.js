@@ -121,6 +121,14 @@ button,a{touch-action:manipulation}
 .starget{font-size:12px;font-weight:700;color:var(--red);margin-left:auto}
 .stitle{font-size:11px;color:var(--dim);line-height:1.4}
 
+/* ── MARKETS CLOSED CARD ── */
+.market-closed-card{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 20px;background:var(--card);border:1px solid var(--border);border-radius:var(--brad);text-align:center;gap:8px;grid-column:1/-1}
+.mc-icon{font-size:36px;line-height:1}
+.mc-title{font-size:16px;font-weight:800;color:var(--text);letter-spacing:.5px}
+.mc-desc{font-size:12px;color:var(--dim);line-height:1.6;max-width:280px}
+.mc-active{font-size:11px;color:var(--cyan);margin-top:4px;font-weight:600}
+.mc-session{font-size:10px;color:var(--muted);margin-top:6px;padding:5px 10px;background:var(--surface);border-radius:5px}
+
 /* ── ENTRY / EXIT BAR ── */
 .pentry{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);border-radius:7px;overflow:hidden;margin-top:9px}
 .pe-col{background:var(--card2);padding:7px 8px;text-align:center}
@@ -583,11 +591,30 @@ function renderBrief(b) {
   const longs  = sortBySession(rawLongs);
   const shorts = sortBySession(rawShorts);
 
-  document.getElementById('playCount').textContent =
-    `${longs.length} long · ${shorts.length} short`;
+  // Markets closed state
+  const lg = document.getElementById('longsGrid');
+  const sl = document.getElementById('shortList');
+  if (b.marketsClosed) {
+    const alwaysOn = (b.marketStatus || [])
+      .filter(ex => ex.status && (ex.status.open || ex.always))
+      .map(ex => ex.icon + ' ' + ex.name).join('  ');
+    document.getElementById('playCount').textContent = 'Markets closed';
+    lg.innerHTML = `<div class="market-closed-card">
+      <div class="mc-icon">🌙</div>
+      <div class="mc-title">Markets Closed</div>
+      <div class="mc-desc">All major exchanges are closed right now.<br>Recommendations will reappear at next market open.</div>
+      ${alwaysOn ? `<div class="mc-active">24/7 Active: ${esc(alwaysOn)}</div>` : ''}
+      <div class="mc-session">${esc(b.session.emoji)} ${esc(b.session.name)} &mdash; ${esc(b.session.desc)}</div>
+    </div>`;
+    sl.innerHTML = '<div style="color:var(--dim);padding:10px;font-size:11px">Short setups will appear when markets open</div>';
+    const lu = new Intl.DateTimeFormat('en-GB',{timeZone:userTz,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(b.generatedAt));
+    document.getElementById('lastUp').textContent = `Updated ${lu} local`;
+    return;
+  }
+
+  document.getElementById('playCount').textContent = `${longs.length} long · ${shorts.length} short`;
 
   // Longs
-  const lg = document.getElementById('longsGrid');
   if(longs.length) {
     lg.innerHTML = longs.map((p,i)=>{
       const isPrimary = primaryEx.includes(p.exchange);
@@ -636,7 +663,6 @@ function renderBrief(b) {
   }
 
   // Shorts
-  const sl = document.getElementById('shortList');
   if(shorts.length) {
     sl.innerHTML = shorts.map(p=>`
       <div class="scard">
