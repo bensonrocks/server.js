@@ -27,6 +27,14 @@ Only triggered when extracted code is **7+ all-digit characters**.
 
 **Do NOT merge these into one map or apply both at once.** Leading takes priority; trailing only fires if leading did not match.
 
+### Scope — apply to ALL extracted document codes
+`fixOcrConfusions` must be called on **every** extracted alphanumeric code field:
+- order number (both inline and two-line extraction paths)
+- reference, issue no, pick ticket
+- batch/lot number
+
+The 7+ all-digit guard means short numeric codes (SKUs like `5603`, batches like `533601`) are never touched. **Do not apply to SKU tokens** — SKUs must match WMS records exactly.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
