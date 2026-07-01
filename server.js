@@ -1394,6 +1394,11 @@ app.delete('/api/master/keyfields-template', (req, res) => {
 });
 
 // ── Master: Label templates ──────────────────────────────────────────────────
+const LABEL_TPL_COLUMNS = [
+  'carrier','header_text','header_bg','header_color',
+  'show_barcode','show_items','show_address','show_tel','show_platform','show_order_no',
+];
+
 function readLabelTemplates() {
   try { return JSON.parse(fs.readFileSync(LABEL_TEMPLATES_FILE, 'utf8')); }
   catch { return []; }
@@ -1401,10 +1406,86 @@ function readLabelTemplates() {
 function writeLabelTemplates(templates) {
   fs.writeFileSync(LABEL_TEMPLATES_FILE, JSON.stringify(templates, null, 2));
 }
+function parseBool(v, def = true) {
+  if (v === undefined || v === null || v === '') return def;
+  if (typeof v === 'boolean') return v;
+  const s = String(v).toLowerCase().trim();
+  if (s === 'false' || s === '0' || s === 'no') return false;
+  if (s === 'true'  || s === '1' || s === 'yes') return true;
+  return def;
+}
 
 app.get('/api/master/label-templates', (req, res) => {
   if (!checkMaster(req, res)) return;
   res.json(readLabelTemplates());
+});
+
+app.get('/api/master/label-templates/export', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const rows = readLabelTemplates();
+  const aoa  = [
+    LABEL_TPL_COLUMNS,
+    ...rows.map(t => LABEL_TPL_COLUMNS.map(k => {
+      const v = t[k];
+      if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+      return v ?? '';
+    })),
+    // blank sample row
+    ['NewCarrier','Header Text','#000000','#ffffff','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE'],
+  ];
+  const wb  = XLSX.utils.book_new();
+  const ws  = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = LABEL_TPL_COLUMNS.map((c, i) => ({ wch: i < 2 ? 18 : 14 }));
+  XLSX.utils.book_append_sheet(wb, ws, 'LabelTemplates');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="LabelTemplates_${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.end(buf);
+});
+
+app.post('/api/master/label-templates/upload', upload.single('templateFile'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb  = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws  = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return res.status(400).json({ error: 'Empty workbook' });
+    const [headerRow, ...dataRows] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const cols = (headerRow || []).map(h => String(h).trim().toLowerCase());
+    const ci   = k => cols.indexOf(k);
+    if (ci('carrier') < 0) return res.status(400).json({ error: 'Missing "carrier" column in row 1' });
+
+    const imported = [];
+    for (const row of dataRows) {
+      const carrier = String(row[ci('carrier')] || '').trim();
+      if (!carrier || carrier.toLowerCase() === 'newcarrier') continue;
+      imported.push({
+        carrier,
+        header_text  : String(row[ci('header_text')]  || carrier).trim(),
+        header_bg    : String(row[ci('header_bg')]     || '#000000').trim(),
+        header_color : String(row[ci('header_color')]  || '#ffffff').trim(),
+        show_barcode : parseBool(row[ci('show_barcode')]),
+        show_items   : parseBool(row[ci('show_items')]),
+        show_address : parseBool(row[ci('show_address')]),
+        show_tel     : parseBool(row[ci('show_tel')]),
+        show_platform: parseBool(row[ci('show_platform')]),
+        show_order_no: parseBool(row[ci('show_order_no')]),
+      });
+    }
+    if (imported.length === 0) return res.status(400).json({ error: 'No valid carrier rows found' });
+
+    // Merge: uploaded rows replace existing entries for same carrier, others kept
+    const existing = readLabelTemplates();
+    const merged   = [...existing];
+    for (const t of imported) {
+      const idx = merged.findIndex(x => x.carrier.toLowerCase() === t.carrier.toLowerCase());
+      if (idx >= 0) merged[idx] = t; else merged.push(t);
+    }
+    writeLabelTemplates(merged);
+    res.json({ ok: true, imported: imported.length, total: merged.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/master/label-templates', express.json(), (req, res) => {

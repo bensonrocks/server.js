@@ -372,7 +372,17 @@
             <div class="admin-section-sub">Customize the printed label for each delivery carrier. Matched by carrier name on each order.</div>
           </div>
         </div>
-        <div id="labelTemplateList" class="label-tpl-list"></div>
+        <div class="admin-action-row">
+          <a class="admin-action-link" id="ltpExportBtn">&#8681; Download template spreadsheet</a>
+        </div>
+        <div class="master-upload-label" style="margin-top:.75rem">Bulk Import (XLSX / CSV)</div>
+        <div class="upload-area upload-area-sm" id="ltpDropZone">
+          <input type="file" id="ltpFileInput" accept=".xlsx,.xls,.csv" hidden />
+          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
+          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="ltpBrowseBtn">browse</button></p>
+        </div>
+        <div id="ltpUploadStatus" class="status-bar hidden"></div>
+        <div id="labelTemplateList" class="label-tpl-list" style="margin-top:1rem"></div>
         <div class="admin-add-card">
           <div class="admin-add-title">Add / Edit Carrier Template</div>
           <div class="label-tpl-form">

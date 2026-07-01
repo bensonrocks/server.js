@@ -2021,6 +2021,59 @@
     setTimeout(() => el.classList.add('hidden'), 3500);
   }
 
+  // Export (master-key auth, not user token)
+  document.getElementById('ltpExportBtn').addEventListener('click', async e => {
+    e.preventDefault();
+    try {
+      const resp = await fetch('/api/master/label-templates/export', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!resp.ok) { showLabelTplStatus('Export failed', 'error'); return; }
+      const blob = await resp.blob();
+      const a    = document.createElement('a');
+      a.href     = URL.createObjectURL(blob);
+      a.download = `LabelTemplates_${new Date().toISOString().slice(0,10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) { showLabelTplStatus(err.message, 'error'); }
+  });
+
+  // Upload drop zone
+  const ltpDropZone   = document.getElementById('ltpDropZone');
+  const ltpFileInput  = document.getElementById('ltpFileInput');
+  document.getElementById('ltpBrowseBtn').addEventListener('click', () => ltpFileInput.click());
+  ltpFileInput.addEventListener('change', () => { if (ltpFileInput.files[0]) uploadLabelTplFile(ltpFileInput.files[0]); });
+  ltpDropZone.addEventListener('dragover', e => { e.preventDefault(); ltpDropZone.classList.add('dragover'); });
+  ltpDropZone.addEventListener('dragleave', ()  => ltpDropZone.classList.remove('dragover'));
+  ltpDropZone.addEventListener('drop', e => {
+    e.preventDefault(); ltpDropZone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) uploadLabelTplFile(f);
+  });
+
+  async function uploadLabelTplFile(file) {
+    const statusEl = document.getElementById('ltpUploadStatus');
+    statusEl.textContent = `Uploading ${file.name}…`;
+    statusEl.className   = 'status-bar';
+    statusEl.classList.remove('hidden');
+    const form = new FormData();
+    form.append('templateFile', file);
+    try {
+      const resp = await fetch('/api/master/label-templates/upload', {
+        method: 'POST',
+        headers: { 'x-master-key': LOG_PASSWORD },
+        body: form,
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      statusEl.className = 'status-bar success';
+      statusEl.textContent = `Imported ${data.imported} template${data.imported !== 1 ? 's' : ''} (${data.total} total).`;
+      ltpFileInput.value = '';
+      await loadLabelTemplates();
+    } catch (err) {
+      statusEl.className = 'status-bar error';
+      statusEl.textContent = err.message;
+    }
+  }
+
   document.getElementById('saveLabelTplBtn').addEventListener('click', async () => {
     const carrier = document.getElementById('ltpCarrier').value.trim();
     if (!carrier) { showLabelTplStatus('Carrier name is required.', 'error'); return; }
