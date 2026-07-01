@@ -106,6 +106,15 @@ a{color:#2563eb;text-decoration:none}
 select.form-input{cursor:pointer}
 .form-help{font-size:11px;color:#94a3b8}
 
+/* ── THU / batch suggestion ── */
+.suggestion-box{border-radius:9px;padding:12px 14px;margin-bottom:2px;display:flex;align-items:flex-start;gap:12px;font-size:12px}
+.suggestion-batch{background:#fffbeb;border:1.5px solid #fcd34d}
+.suggestion-single{background:#f0fdf4;border:1.5px solid #86efac}
+.suggestion-icon{font-size:22px;flex-shrink:0;margin-top:1px}
+.suggestion-reason{font-weight:600;color:#0f172a;margin-bottom:2px}
+.suggestion-sub{color:#64748b}
+.thu-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;background:#fef9c3;border:1px solid #fcd34d;color:#92400e;font-size:11px;font-weight:700;font-family:monospace}
+
 /* ── Strategy Picker ── */
 .strategy-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .strategy-card{border:2px solid #e2e8f0;border-radius:10px;padding:12px;cursor:pointer;transition:all .12s;text-align:center}
@@ -331,6 +340,7 @@ select.form-input{cursor:pointer}
           </div>
           <div class="order-list" id="orderList"></div>
         </div>
+        <div id="waveSuggestion" style="display:none;margin-bottom:4px"></div>
         <div class="form-grid" style="margin-bottom:14px">
           <div class="form-group">
             <label class="form-label">Notes</label>
@@ -649,13 +659,53 @@ function renderOrderList() {
 function toggleOrder(el) {
   el.classList.toggle('selected');
   el.querySelector('input[type=checkbox]').checked = el.classList.contains('selected');
+  debounceSuggest();
 }
-function selectAllOrders() { document.querySelectorAll('#orderList .order-check').forEach(el => { el.classList.add('selected'); el.querySelector('input').checked = true; }); }
+function selectAllOrders() {
+  document.querySelectorAll('#orderList .order-check').forEach(el => { el.classList.add('selected'); el.querySelector('input').checked = true; });
+  debounceSuggest();
+}
 function clearOrderSelection() {
   document.querySelectorAll('#orderList .order-check').forEach(el => { el.classList.remove('selected'); el.querySelector('input').checked = false; });
   document.getElementById('inlineAvailResult').style.display = 'none';
+  document.getElementById('waveSuggestion').style.display = 'none';
 }
 function getSelectedOrderIds() { return [...document.querySelectorAll('#orderList .order-check.selected')].map(el => el.dataset.id); }
+
+// ── Wave mode suggestion ──────────────────────────────────────────────────────
+let _suggestTimer = null;
+function debounceSuggest() {
+  clearTimeout(_suggestTimer);
+  _suggestTimer = setTimeout(fetchSuggestion, 350);
+}
+async function fetchSuggestion() {
+  const ids = getSelectedOrderIds();
+  const box = document.getElementById('waveSuggestion');
+  if (!ids.length) { box.style.display = 'none'; return; }
+  try {
+    const s = await api('POST', '/api/pick/suggest', { orderIds: ids });
+    if (s.suggestion === 'batch') {
+      box.style.display = 'block';
+      box.innerHTML = `<div class="suggestion-box suggestion-batch">
+        <div class="suggestion-icon">🧺</div>
+        <div>
+          <div class="suggestion-reason">Batch picking suggested — THU will be assigned</div>
+          <div class="suggestion-sub">${s.reason}</div>
+          <div style="margin-top:6px;font-size:11px;color:#92400e">A <strong>Temporary Handling Unit (THU)</strong> tote will be generated. Picker places all items into the THU; packing station sorts by order using the THU Manifest.</div>
+        </div>
+      </div>`;
+    } else {
+      box.style.display = 'block';
+      box.innerHTML = `<div class="suggestion-box suggestion-single">
+        <div class="suggestion-icon">📦</div>
+        <div>
+          <div class="suggestion-reason">Single-order pick — direct to packing station</div>
+          <div class="suggestion-sub">${s.reason}</div>
+        </div>
+      </div>`;
+    }
+  } catch (_) { box.style.display = 'none'; }
+}
 
 function selectStrategy(el) {
   document.querySelectorAll('.strategy-card').forEach(c => c.classList.remove('on'));
@@ -706,6 +756,7 @@ async function loadWaves() {
     const pct    = total ? Math.round((picked / total) * 100) : 0;
     const sl     = { fifo:'FIFO', lifo:'LIFO', batch:'Batch', wave:'Wave' }[w.strategy] || w.strategy;
     const isPrint = w.status === 'open' || w.status === 'in_progress' || w.status === 'completed';
+    const hasThu  = !!w.thu_code;
     return `<div class="wave-row">
       <div class="wave-head">
         <div class="wave-info">
@@ -713,13 +764,15 @@ async function loadWaves() {
             <span class="wave-number">${w.wave_number}</span>
             <span class="badge badge-${w.status}">${w.status.replace('_',' ')}</span>
             <span class="chip chip-strategy">${sl}</span>
+            ${hasThu ? `<span class="thu-badge">🧺 ${w.thu_code}</span>` : ''}
           </div>
-          <div class="wave-meta">${total} tasks · ${picked} picked (${pct}%) · ${fmtDate(w.created_at)}${w.notes ? ' · ' + w.notes : ''}</div>
+          <div class="wave-meta">${total} tasks · ${picked} picked (${pct}%) · ${fmtDate(w.created_at)}${w.notes ? ' · ' + w.notes : ''}${hasThu ? ' · Batch pick with THU' : ' · Single-order pick'}</div>
           <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
         </div>
         <div class="wave-actions">
           <button class="btn btn-ghost btn-sm" onclick="openWaveDetail('${w.id}')">Tasks</button>
-          ${isPrint ? `<a class="btn btn-ghost btn-sm" href="/print/pick/${w.id}" target="_blank">Print</a>` : ''}
+          ${isPrint ? `<a class="btn btn-ghost btn-sm" href="/print/pick/${w.id}" target="_blank">Pick List</a>` : ''}
+          ${hasThu && isPrint ? `<a class="btn btn-ghost btn-sm" href="/print/thu-manifest/${w.id}" target="_blank" style="color:#92400e;border-color:#fcd34d">🧺 THU</a>` : ''}
           ${w.status === 'open' || w.status === 'in_progress' ? `
             <button class="btn btn-success btn-sm" onclick="completeWave('${w.id}')">Complete</button>
             <button class="btn btn-danger btn-sm" onclick="cancelWave('${w.id}')">Cancel</button>
@@ -775,7 +828,8 @@ async function openWaveDetail(id) {
     </tr>`).join('') || '<tr><td colspan="8" class="tbl-empty">No tasks</td></tr>';
 
   document.getElementById('waveDetailFooter').innerHTML = `
-    <a class="btn btn-ghost" href="/print/pick/${id}" target="_blank">Print Pick List</a>
+    <a class="btn btn-ghost" href="/print/pick/${id}" target="_blank">Pick List</a>
+    ${wave.thu_code ? `<a class="btn btn-ghost" href="/print/thu-manifest/${id}" target="_blank" style="color:#92400e;border-color:#fcd34d">🧺 THU Manifest</a>` : ''}
     <button class="btn btn-ghost" onclick="closeModal('waveDetailModal')">Close</button>
     ${wave.status==='open'||wave.status==='in_progress'?`<button class="btn btn-success" onclick="completeWave('${id}');closeModal('waveDetailModal')">Complete Wave</button>`:''}
     ${wave.status==='completed'?`<button class="btn btn-warning" onclick="createPackOrders('${id}');closeModal('waveDetailModal')">→ Create Pack Orders</button>`:''}

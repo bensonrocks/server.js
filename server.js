@@ -648,6 +648,18 @@ app.post('/api/pick/availability', (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+app.post('/api/pick/suggest', (req, res) => {
+  const { orderIds } = req.body || {};
+  if (!Array.isArray(orderIds) || !orderIds.length) return res.status(400).json({ error: 'orderIds array required' });
+  try { res.json(pick.suggestWaveMode(orderIds)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/pick/waves/:id/thu', (req, res) => {
+  try { res.json(pick.getThuManifest(req.params.id)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // Waves
 app.get('/api/pick/waves', (req, res) => {
   const { status } = req.query;
@@ -851,6 +863,14 @@ app.get('/print/pick/:waveId', (req, res) => {
   } catch (e) { res.status(404).send(e.message); }
 });
 
+app.get('/print/thu-manifest/:waveId', (req, res) => {
+  try {
+    const data = pick.getThuManifest(req.params.waveId);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(renderThuManifest(data));
+  } catch (e) { res.status(404).send(e.message); }
+});
+
 app.get('/print/packing-slip/:packOrderId', (req, res) => {
   try {
     const po = pack.getPackingSlipData(req.params.packOrderId);
@@ -914,6 +934,8 @@ function fmtD(iso) {
 function renderPickList(wave, tasks) {
   const stratLabel = { fifo:'FIFO — First In, First Out', lifo:'LIFO — Last In, First Out', batch:'Batch Pick', wave:'Wave Pick' }[wave.strategy] || wave.strategy;
   const orderIds   = [...new Set(tasks.map(t => t.order_id))];
+  const isBatch    = !!wave.thu_code;
+
   const rows = tasks.map((t, i) => `
     <tr>
       <td style="text-align:center;font-weight:700">${i + 1}</td>
@@ -923,19 +945,37 @@ function renderPickList(wave, tasks) {
       <td style="text-align:center;font-weight:800">${t.qty_required}</td>
       <td style="text-align:center;font-weight:800">${t.qty_picked || ''}</td>
       <td><span class="badge badge-${t.status === 'picked' ? 'ok' : t.status === 'short' ? 'short' : ''}">${t.status}</span></td>
-      <td class="sku" style="font-size:10px">${t.order_id.slice(0, 16)}</td>
+      ${isBatch ? '' : `<td class="sku" style="font-size:10px">${t.order_id.slice(0, 16)}</td>`}
       <td class="check-col">☐</td>
     </tr>`).join('');
+
+  const thuBanner = isBatch ? `
+    <div style="border:3px solid #000;border-radius:6px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:18px;background:#fffbeb">
+      <div style="font-size:32px">🧺</div>
+      <div style="flex:1">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#92400e;margin-bottom:3px">Batch Pick — Temporary Handling Unit</div>
+        <div style="font-size:20px;font-weight:900;letter-spacing:1px">${wave.thu_code}</div>
+        <div style="font-size:11px;color:#6b7280;margin-top:2px">Place ALL picked items into this THU tote. Drop tote at packing station when done.</div>
+      </div>
+      <div style="text-align:center">
+        <div class="barcode" style="font-size:13px;letter-spacing:3px">${wave.thu_code}</div>
+        <div style="font-size:10px;color:#6b7280;margin-top:4px">${orderIds.length} orders · ${tasks.length} lines</div>
+      </div>
+    </div>` : `
+    <div style="border:2px solid #d1d5db;border-radius:6px;padding:10px 14px;margin-bottom:16px;background:#f0fdf4;font-size:12px;color:#166534;font-weight:600">
+      ✓ Single Order Pick — Deliver items directly to packing station for <strong>${orderIds[0] || ''}</strong>
+    </div>`;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Pick List ${wave.wave_number}</title>
 <style>${PRINT_CSS}</style></head><body>
 <div class="no-print" style="padding:0 0 14px;display:flex;gap:8px">
   <button onclick="window.print()" style="padding:8px 20px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">Print</button>
+  ${isBatch ? `<a href="/print/thu-manifest/${wave.id}" target="_blank" style="padding:8px 20px;background:#d97706;color:#fff;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;text-decoration:none">Print THU Manifest</a>` : ''}
   <button onclick="window.close()" style="padding:8px 16px;border:1px solid #d1d5db;background:#fff;border-radius:6px;font-size:13px;cursor:pointer">Close</button>
 </div>
 <div class="header">
   <div>
-    <h1>PICK LIST</h1>
+    <h1>PICK LIST${isBatch ? ' — BATCH' : ''}</h1>
     <div style="font-size:11px;color:#6b7280;margin-top:3px">IDEALPICK · IdealOMS</div>
   </div>
   <div style="text-align:right">
@@ -944,10 +984,11 @@ function renderPickList(wave, tasks) {
     <div style="font-size:10px;color:#6b7280;margin-top:4px">${fmtDt(wave.created_at)}</div>
   </div>
 </div>
+${thuBanner}
 <div class="meta-grid">
   <div class="meta-box"><div class="meta-lbl">Strategy</div><div class="meta-val">${stratLabel}</div></div>
   <div class="meta-box"><div class="meta-lbl">Wave Status</div><div class="meta-val">${wave.status.toUpperCase()}</div></div>
-  <div class="meta-box"><div class="meta-lbl">Total Lines</div><div class="meta-val">${tasks.length} tasks · ${orderIds.length} orders</div></div>
+  <div class="meta-box"><div class="meta-lbl">Total Lines</div><div class="meta-val">${tasks.length} tasks · ${orderIds.length} order${orderIds.length===1?'':'s'}</div></div>
 </div>
 <div class="meta-grid">
   <div class="meta-box"><div class="meta-lbl">Picker Name</div><div class="sign-box"></div></div>
@@ -961,7 +1002,8 @@ function renderPickList(wave, tasks) {
       <th>Location</th><th>SKU</th><th>Description</th>
       <th style="text-align:center">Required</th>
       <th style="text-align:center">Picked</th>
-      <th>Status</th><th>Order</th>
+      <th>Status</th>
+      ${isBatch ? '' : '<th>Order</th>'}
       <th style="text-align:center">✓</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -972,7 +1014,84 @@ function renderPickList(wave, tasks) {
   <div class="meta-box"><div class="meta-lbl">Supervisor Check</div><div class="sign-box"></div></div>
   <div class="meta-box"><div class="meta-lbl">Completed Time</div><div class="sign-box"></div></div>
 </div>
-<div class="footer"><span>Wave: ${wave.wave_number} · Strategy: ${wave.strategy.toUpperCase()} · Generated: ${fmtDt(new Date().toISOString())}</span><span>IdealOMS · IDEALPICK</span></div>
+${isBatch ? `<div style="border:2px solid #000;border-radius:4px;padding:10px 14px;margin-bottom:12px;font-size:12px;text-align:center;font-weight:700">
+  Drop THU <span style="font-family:monospace;font-size:14px;letter-spacing:1px">${wave.thu_code}</span> at packing station · Print THU Manifest for sorting guide
+</div>` : ''}
+<div class="footer"><span>Wave: ${wave.wave_number} · Strategy: ${wave.strategy.toUpperCase()}${isBatch?' · THU: '+wave.thu_code:''} · Generated: ${fmtDt(new Date().toISOString())}</span><span>IdealOMS · IDEALPICK</span></div>
+</body></html>`;
+}
+
+function renderThuManifest({ wave, thuCode, orders, totalItems }) {
+  const orderBlocks = orders.map((o, idx) => {
+    const rows = o.items.map(t => `
+      <tr>
+        <td class="sku">${t.sku}</td>
+        <td>${t.item_name}</td>
+        <td class="loc">${t.location || '—'}</td>
+        <td style="text-align:center;font-weight:800">${t.qty_required}</td>
+        <td style="text-align:center;font-weight:800">${t.qty_picked || ''}</td>
+        <td><span class="badge badge-${t.status === 'picked' ? 'ok' : t.status === 'short' ? 'short' : ''}">${t.status}</span></td>
+        <td class="check-col">☐</td>
+      </tr>`).join('');
+    const ship = o.shipping || {};
+    const addr = [ship.recipient, ship.addressLine1, ship.city, ship.state].filter(Boolean).join(', ');
+    return `
+      <div style="margin-bottom:20px;border:2px solid #000;border-radius:6px;overflow:hidden">
+        <div style="background:#111;color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.7">Order ${idx + 1} of ${orders.length}</div>
+            <div style="font-size:16px;font-weight:900;letter-spacing:-.3px">${o.orderId}</div>
+            <div style="font-size:11px;margin-top:1px;opacity:.85">${o.clientName}${addr ? ' · ' + addr : ''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:11px;opacity:.7">${o.items.length} line${o.items.length===1?'':'s'} · ${o.items.reduce((s,t)=>s+t.qty_required,0)} units</div>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>SKU</th><th>Description</th><th>Location</th><th style="text-align:center">Qty</th><th style="text-align:center">Picked</th><th>Status</th><th style="text-align:center">✓</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>THU Manifest ${thuCode}</title>
+<style>${PRINT_CSS}
+  .thu-hero{border:4px solid #000;border-radius:8px;padding:18px 22px;margin-bottom:18px;display:flex;align-items:center;gap:20px;background:#fffbeb}
+  .thu-code{font-size:28px;font-weight:900;letter-spacing:2px;font-family:monospace}
+</style></head><body>
+<div class="no-print" style="padding:0 0 14px;display:flex;gap:8px">
+  <button onclick="window.print()" style="padding:8px 20px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">Print</button>
+  <button onclick="window.close()" style="padding:8px 16px;border:1px solid #d1d5db;background:#fff;border-radius:6px;font-size:13px;cursor:pointer">Close</button>
+</div>
+<div class="header">
+  <div>
+    <h1>THU MANIFEST</h1>
+    <div style="font-size:11px;color:#6b7280;margin-top:3px">Packing Station Sort Guide · IDEALPICK</div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:20px;font-weight:900">${wave.wave_number}</div>
+    <div style="font-size:10px;color:#6b7280;margin-top:2px">${fmtDt(wave.created_at)}</div>
+  </div>
+</div>
+<div class="thu-hero">
+  <div style="font-size:36px">🧺</div>
+  <div style="flex:1">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#92400e">Temporary Handling Unit</div>
+    <div class="thu-code">${thuCode}</div>
+    <div style="font-size:11px;color:#6b7280;margin-top:3px">${orders.length} orders · ${totalItems} total units · Sort below by order before packing</div>
+  </div>
+  <div style="text-align:center">
+    <div class="barcode" style="font-size:14px;letter-spacing:4px">${thuCode}</div>
+  </div>
+</div>
+<div style="margin-bottom:14px;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:12px;color:#166534;font-weight:600">
+  Instructions: Take items from THU <strong>${thuCode}</strong> and sort into separate cartons for each order below. Tick each line as you pack it.
+</div>
+${orderBlocks}
+<div class="footer">
+  <span>THU: ${thuCode} · Wave: ${wave.wave_number} · Generated: ${fmtDt(new Date().toISOString())}</span>
+  <span>IdealOMS · IDEALPICK</span>
+</div>
 </body></html>`;
 }
 
