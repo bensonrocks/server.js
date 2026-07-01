@@ -263,8 +263,10 @@ function summarizeOrders(lines) {
       description:    line.sku,
       qty:            line.qty,
       uom:            'EACH',
-      expiry_date:    line.expiry_date,
-      remarks_betime: line.remarks_betime,
+      batch_number:   line.batch_number   || '',
+      serial_number:  line.serial_number  || '',
+      expiry_date:    line.expiry_date    || '',
+      remarks_betime: line.remarks_betime || '',
     });
     map[key].total_qty += line.qty;
   }

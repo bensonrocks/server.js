@@ -1454,6 +1454,15 @@
       const s        = scanned[item.sku] || 0;
       const rowClass = s === 0 ? '' : s === item.qty ? 'row-ok' : s > item.qty ? 'row-over' : 'row-partial';
       const icon     = s === item.qty && s > 0 ? '&#10003;' : s > item.qty ? '&#10007;' : s > 0 ? '&#8230;' : '';
+
+      const lotParts = [];
+      if (item.batch_number)  lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(item.batch_number)}</span>`);
+      if (item.serial_number) lotParts.push(`<span class="lot-badge lot-serial">S/N&nbsp;${esc(item.serial_number)}</span>`);
+      if (item.expiry_date)   lotParts.push(`<span class="lot-badge lot-expiry">Exp&nbsp;${esc(item.expiry_date)}</span>`);
+      const lotRow = lotParts.length
+        ? `<tr class="lot-info-row"><td colspan="5" class="lot-info-cell">${lotParts.join('')}</td></tr>`
+        : '';
+
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
           <td><code>${esc(item.sku)}</code></td>
@@ -1464,7 +1473,7 @@
               data-sku="${esc(item.sku)}" data-ordered="${item.qty}" />
           </td>
           <td class="status-icon">${icon}</td>
-        </tr>`;
+        </tr>${lotRow}`;
     }).join('');
 
     document.querySelectorAll('.qty-input').forEach(inp => {
@@ -1635,8 +1644,7 @@
   }
 
   // ── Complete order ─────────────────────────────────────────────────────────
-  document.getElementById('completeOrderBtn').addEventListener('click', async () => {
-    if (!activeOrder) return;
+  async function doCompleteOrder() {
     try {
       const resp = await fetch('/api/scan/complete', {
         method: 'POST', headers: hdrs(),
@@ -1669,6 +1677,34 @@
         showMismatchModal(data.mismatches);
       }
     } catch (err) { alert(err.message); }
+  }
+
+  function showLotCheckModal(lotLines, onConfirm) {
+    document.getElementById('lotCheckTbody').innerHTML = lotLines.map(l => `
+      <tr>
+        <td><code>${esc(l.sku)}</code></td>
+        <td>${l.batch_number  ? `<span class="lot-badge lot-batch">${esc(l.batch_number)}</span>`  : '—'}</td>
+        <td>${l.serial_number ? `<span class="lot-badge lot-serial">${esc(l.serial_number)}</span>` : '—'}</td>
+        <td>${l.expiry_date   ? `<span class="lot-badge lot-expiry">${esc(l.expiry_date)}</span>`   : '—'}</td>
+      </tr>`).join('');
+    document.getElementById('lotCheckOverlay').classList.remove('hidden');
+    document.getElementById('lotCheckConfirmBtn').onclick = () => {
+      document.getElementById('lotCheckOverlay').classList.add('hidden');
+      onConfirm();
+    };
+    document.getElementById('lotCheckCancelBtn').onclick = () => {
+      document.getElementById('lotCheckOverlay').classList.add('hidden');
+    };
+  }
+
+  document.getElementById('completeOrderBtn').addEventListener('click', async () => {
+    if (!activeOrder) return;
+    const lotLines = (activeOrder.lines || []).filter(l => l.batch_number || l.serial_number || l.expiry_date);
+    if (lotLines.length > 0) {
+      showLotCheckModal(lotLines, doCompleteOrder);
+      return;
+    }
+    await doCompleteOrder();
   });
 
   // ── Cancel order ───────────────────────────────────────────────────────────

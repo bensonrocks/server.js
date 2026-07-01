@@ -577,6 +577,22 @@ body.scan-open { overflow: hidden; }
 .row-ok .status-icon     { color: var(--success); font-size: 1rem; font-weight: 700; }
 .row-over .status-icon   { color: var(--danger);  font-size: 1rem; font-weight: 700; }
 .row-partial .status-icon{ color: var(--warning); font-size: 1rem; font-weight: 700; }
+
+/* Lot / serial / expiry info row below each SKU */
+.lot-info-row td { padding: .18rem .85rem .55rem; border-bottom: 1px solid var(--border-light); background: inherit; }
+.lot-info-cell  { display: flex; flex-wrap: wrap; gap: .35rem; }
+.lot-badge      { display: inline-flex; align-items: center; gap: .2rem; font-size: .72rem; font-weight: 600; padding: .18rem .55rem; border-radius: 20px; white-space: nowrap; }
+.lot-batch      { background: #dbeafe; color: #1d4ed8; }
+.lot-serial     { background: #f3e8ff; color: #6d28d9; }
+.lot-expiry     { background: #fef9c3; color: #92400e; }
+
+/* Lot check modal */
+.lot-check-modal  { max-width: 600px; }
+.lot-check-icon   { font-size: 2rem; margin-bottom: .5rem; }
+.lot-check-table  { width: 100%; border-collapse: collapse; margin-top: .75rem; font-size: .85rem; }
+.lot-check-table th { background: var(--surface-2); padding: .45rem .7rem; text-align: left; font-size: .72rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; border-bottom: 2px solid var(--border); }
+.lot-check-table td { padding: .55rem .7rem; border-bottom: 1px solid var(--border-light); }
+
 @keyframes rowFlash { 0% { background: #bfdbfe; } 100% { background: inherit; } }
 .row-flash { animation: rowFlash .4s ease-out; }
 .qty-input { width: 62px; padding: .28rem .38rem; text-align: center; border: 1px solid var(--border); border-radius: 4px; font-size: .85rem; background: var(--surface); }

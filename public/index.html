@@ -888,6 +888,25 @@
     </div>
   </div>
 
+  <!-- Lot / Serial number check before order completion -->
+  <div id="lotCheckOverlay" class="modal-overlay hidden">
+    <div class="modal lot-check-modal">
+      <div class="modal-icon lot-check-icon">&#9888;&#65039;</div>
+      <div class="modal-title">Verify Lot / Serial Numbers</div>
+      <p class="modal-desc">Please confirm you have physically checked the following before completing this order:</p>
+      <table class="lot-check-table">
+        <thead>
+          <tr><th>SKU</th><th>Lot / Batch</th><th>Serial No.</th><th>Expiry</th></tr>
+        </thead>
+        <tbody id="lotCheckTbody"></tbody>
+      </table>
+      <div class="modal-actions" style="margin-top:1.2rem">
+        <button class="btn-secondary" id="lotCheckCancelBtn">&#8592; Go Back</button>
+        <button class="btn-primary"   id="lotCheckConfirmBtn">&#10003; Confirmed &mdash; Complete Order</button>
+      </div>
+    </div>
+  </div>
+
   <script src="batch-scan.js"></script>
   <script src="label-scan.js"></script>
   <script src="app.js"></script>
