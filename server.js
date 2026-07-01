@@ -168,6 +168,36 @@ const TICKER_DB = {
   '9618':    { name: 'JD.com (HK)',         market: 'stocks', exchange: 'HKEX', terms: ['jd.com', 'jingdong', 'richard liu jd', 'jd logistics'] },
   '2318':    { name: 'Ping An Insurance',   market: 'stocks', exchange: 'HKEX', terms: ['ping an', 'ping an insurance', 'peter ma ping an', 'ping an bank'] },
   '1398':    { name: 'ICBC',                market: 'stocks', exchange: 'HKEX', terms: ['icbc', 'industrial commercial bank china', 'icbc hong kong'] },
+
+  // ── US ETFs ────────────────────────────────────────────────────────────────
+  'SPY':  { name: 'SPDR S&P 500 ETF',             market: 'etf', exchange: 'NYSE',   terms: ['spy etf', 'spdr s&p 500', 's&p 500 etf', 'spy fund'] },
+  'QQQ':  { name: 'Invesco Nasdaq 100 ETF',        market: 'etf', exchange: 'NASDAQ', terms: ['qqq etf', 'invesco nasdaq 100', 'qqq fund', 'nasdaq 100 etf'] },
+  'IWM':  { name: 'iShares Russell 2000 ETF',      market: 'etf', exchange: 'NYSE',   terms: ['iwm etf', 'russell 2000 etf', 'small cap etf iwm'] },
+  'GLD':  { name: 'SPDR Gold Shares ETF',          market: 'etf', exchange: 'NYSE',   terms: ['gld etf', 'gold etf', 'spdr gold', 'gold shares etf'] },
+  'SLV':  { name: 'iShares Silver Trust ETF',      market: 'etf', exchange: 'NYSE',   terms: ['slv etf', 'silver etf', 'ishares silver trust'] },
+  'USO':  { name: 'US Oil Fund ETF',               market: 'etf', exchange: 'NYSE',   terms: ['uso etf', 'us oil fund', 'oil fund etf', 'crude oil etf'] },
+  'TLT':  { name: 'iShares 20+ Yr Treasury ETF',   market: 'etf', exchange: 'NASDAQ', terms: ['tlt etf', 'treasury bond etf', '20 year treasury etf', 'long bond etf', 'tlt fund'] },
+  'XLF':  { name: 'Financial Sector SPDR ETF',     market: 'etf', exchange: 'NYSE',   terms: ['xlf etf', 'financial sector etf', 'financial spdr', 'bank sector etf'] },
+  'XLK':  { name: 'Technology Sector SPDR ETF',    market: 'etf', exchange: 'NYSE',   terms: ['xlk etf', 'tech sector etf', 'technology spdr etf', 'xlk fund'] },
+  'XLE':  { name: 'Energy Sector SPDR ETF',        market: 'etf', exchange: 'NYSE',   terms: ['xle etf', 'energy sector etf', 'energy spdr', 'oil sector etf'] },
+  'XLV':  { name: 'Health Care Sector SPDR ETF',   market: 'etf', exchange: 'NYSE',   terms: ['xlv etf', 'health care etf', 'healthcare spdr', 'health sector etf'] },
+  'ARKK': { name: 'ARK Innovation ETF',             market: 'etf', exchange: 'NYSE',   terms: ['arkk etf', 'ark innovation etf', 'cathie wood etf', 'ark invest', 'ark disruptive'] },
+  'GDX':  { name: 'VanEck Gold Miners ETF',         market: 'etf', exchange: 'NYSE',   terms: ['gdx etf', 'gold miners etf', 'vaneck gold miners', 'mining etf gdx'] },
+  'SOXL': { name: 'Direxion Semi Bull 3x ETF',      market: 'etf', exchange: 'NYSE',   terms: ['soxl etf', 'semiconductor bull etf', 'soxl 3x', 'leveraged semiconductor etf'] },
+  'TQQQ': { name: 'ProShares UltraPro QQQ (3x)',    market: 'etf', exchange: 'NASDAQ', terms: ['tqqq etf', 'ultrapro qqq', '3x nasdaq etf', 'tqqq fund', 'leveraged nasdaq etf'] },
+
+  // ── ASX ETFs ──────────────────────────────────────────────────────────────
+  'VAS':  { name: 'Vanguard Australian Shares ETF', market: 'etf', exchange: 'ASX', terms: ['vas etf', 'vanguard australian shares', 'vanguard asx etf'] },
+  'NDQ':  { name: 'BetaShares Nasdaq 100 ETF (ASX)',market: 'etf', exchange: 'ASX', terms: ['ndq etf', 'betashares nasdaq 100', 'ndq asx etf', 'nasdaq asx etf'] },
+  'A200': { name: 'BetaShares Australia 200 ETF',   market: 'etf', exchange: 'ASX', terms: ['a200 etf', 'betashares australia 200', 'a200 asx'] },
+  'IOZ':  { name: 'iShares Core ASX 200 ETF',       market: 'etf', exchange: 'ASX', terms: ['ioz etf', 'ishares asx 200', 'ishares core asx'] },
+
+  // ── SGX ETFs ──────────────────────────────────────────────────────────────
+  'ES3':  { name: 'SPDR STI ETF (SGX)',             market: 'etf', exchange: 'SGX', terms: ['es3 etf', 'sti etf', 'spdr sti', 'singapore etf sti', 'spdr straits times'] },
+
+  // ── HKEX ETFs ─────────────────────────────────────────────────────────────
+  '2800': { name: 'Tracker Fund HK (HSI ETF)',       market: 'etf', exchange: 'HKEX', terms: ['tracker fund', '2800.hk', 'hsi etf', 'hang seng etf tracker', 'trf hk'] },
+  '3188': { name: 'ChinaAMC CSI 300 ETF',           market: 'etf', exchange: 'HKEX', terms: ['3188.hk', 'csi 300 etf', 'chinamanc csi 300', 'a-shares etf hk', 'csi300 etf hk'] },
 };
 
 // ─── Seed Articles ────────────────────────────────────────────────────────────
@@ -260,6 +290,16 @@ const SEED = [
   { title: "Genting Singapore Insider Buying: CEO Purchases S$8.5M of Shares Before Phase 2 Opens", summary: "Genting Singapore CEO purchased 12.5 million shares at S$0.68, totalling S$8.5M in open-market transactions via SGX filings. The insider buy at Resorts World Sentosa operator comes ahead of the Phase 2 expansion opening. Shares rose 4.1%.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/genting-sg-insider-buy", publishedAt: ago(172) },
   { title: "Keppel Corp Wins S$3.8B Data Centre Deal in Indonesia; Stock Hits 52-Week High", summary: "Keppel Corporation announced a S$3.8B contract to build and operate three hyperscale data centres in Batam, Indonesia, for a consortium of US hyperscalers. This is Keppel's largest single infrastructure contract. Shares surged 6.8% to S$7.42, a new 52-week high.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/keppel-data-centre-deal", publishedAt: ago(210) },
   { title: "Wilmar International Upgraded to Buy: Palm Oil Margin Recovery and China Rebound Drive Target Raise", summary: "Wilmar International received multiple analyst upgrades to Buy after Q1 gross margins recovered to 8.2%, up from 5.1% a year ago. CLSA raised its price target to S$4.20, citing the Yihai Kerry China consumer business rebounding strongly.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/wilmar-upgrade-2026", publishedAt: ago(245) },
+
+  // ── US ETFs ────────────────────────────────────────────────────────────────
+  { title: "SPY ETF Hits New All-Time High $595 as Earnings Season Beats Estimates Broadly", summary: "The SPDR S&P 500 ETF (SPY) closed at a new all-time high of $595.40, up 1.6%, as 81% of S&P 500 companies reporting have beaten Q1 EPS estimates. Volume was 112M shares, 2.4× the 30-day average. SPY options showed heavy call buying with the $600 strike most active.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/spy-all-time-high-595", publishedAt: ago(19) },
+  { title: "QQQ ETF Breaks $490 Resistance on Record Nasdaq Volume; AI Earnings Fuel Breakout", summary: "Invesco's Nasdaq 100 ETF (QQQ) broke above the key $490 resistance level on volume of 68M shares, more than double the daily average, as Nvidia and Microsoft earnings blew past estimates. Technical analysts target $510–520 as the next range. TQQQ 3x ETF surged 8.2%.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/qqq-breakout-490", publishedAt: ago(42) },
+  { title: "GLD Gold ETF Hits Record $312 as Central Bank Buying Accelerates, Dollar Weakens", summary: "The SPDR Gold Shares ETF (GLD) hit a new all-time high of $312.40 per share on heavy volume as soft US CPI accelerated dollar weakness. GDX Gold Miners ETF gained 4.8%, leveraging the gold price move. World Gold Council data shows central bank gold purchases running 40% above 2024 pace.", source: "Investing.com", sourceMkt: "stocks", url: "https://investing.com/gld-all-time-high-312", publishedAt: ago(65) },
+  { title: "TLT Treasury ETF Jumps 3.2% as Fed Rate Cut Probability Hits 80% on Cool CPI Print", summary: "The iShares 20+ Year Treasury Bond ETF (TLT) surged 3.2% to $98.40, its best single-day gain in 8 months, as cool April CPI data pushed market-implied probability of a September Fed rate cut to 80%. XLF Financial Sector ETF gained 2.1% on the same catalyst.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/tlt-rate-cut-jump", publishedAt: ago(96) },
+  { title: "ARKK Innovation ETF Breaks 14-Month Resistance on AI Biotech Short Squeeze", summary: "ARK Innovation ETF (ARKK) surged 11.4% to $58.80, breaking above $55 resistance that had held for 14 months, driven by a short squeeze in its top AI and biotech holdings. Short interest in ARKK was 22% of float. Cathie Wood's ARK Invest added $120M in positions this week.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/arkk-breakout-squeeze", publishedAt: ago(145) },
+  { title: "BetaShares Nasdaq 100 ETF (NDQ) Gaps Up 2.8% on Wall Street Overnight Tech Surge", summary: "The BetaShares Nasdaq 100 ETF (NDQ.ASX) opened 2.8% higher on the ASX, tracking the overnight 3.1% surge in US tech stocks driven by Nvidia's blowout earnings. NDQ hit a record A$46.80. Trading volume was 5.8× the 30-day average. VAS Australian Shares ETF rose 1.1%.", source: "SMH Markets AU", sourceMkt: "stocks", url: "https://smh.com.au/ndq-gap-up-nvidia-surge", publishedAt: ago(28) },
+  { title: "SPDR STI ETF (ES3) Rises 1.8% as Singapore Banks DBS and OCBC Lead Straits Times Gains", summary: "The SPDR Straits Times Index ETF (ES3.SGX) advanced 1.8% on strong volume as DBS and OCBC earnings beats drove Singapore financials higher. The STI ETF is up 12.4% year-to-date, outperforming the MSCI Asia ex-Japan index. Analysts at DBS Vickers upgraded ES3 to Overweight.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/es3-sti-etf-upgrade-earnings", publishedAt: ago(75) },
+  { title: "Hang Seng Tracker Fund (2800.HK) Surges 4.4% as China Stimulus Ignites HSI Rally", summary: "The Tracker Fund of Hong Kong (2800.HK) — the flagship Hang Seng ETF — surged 4.4% to HK$22.80 on record daily turnover of HK$3.2B after Beijing announced a 6-trillion yuan stimulus package. The ChinaAMC CSI 300 ETF (3188.HK) gained 5.1%. Southbound inflows hit HK$22B.", source: "SCMP Business", sourceMkt: "stocks", url: "https://scmp.com/2800-tracker-fund-surge-stimulus", publishedAt: ago(110) },
 ];
 
 const DRIP_QUEUE = [
@@ -290,6 +330,13 @@ const DRIP_QUEUE = [
   { title: "OCBC Bank All-Time High: Brokers Raise Target to S$18 After Record Quarter", summary: "OCBC shares hit a new all-time high of S$16.40 as UBS, Citi, and Goldman all moved to Buy with targets of S$17.20-18.00. The stock trades at 1.4x book, justified by ROE of 14.8%. Analysts cite strong NIM resilience and robust wealth management inflows.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/ocbc-all-time-high-target", publishedAt: null },
   { title: "UOB and Genting Singapore Lead STI Gains; Straits Times Index Hits 14-Month High", summary: "Singapore's Straits Times Index advanced 1.4% to 3,880, a 14-month high, led by UOB (+3.4%) after its guidance upgrade and Genting Singapore (+4.1%) on strong Resorts World Sentosa visitor numbers. SGX analysts cite a rotation into ASEAN financials and gaming names.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/uob-genting-sti-high", publishedAt: null },
   { title: "Keppel Corp Breakout: Shares Clear S$7.50 Resistance on Data Centre Deal Pipeline", summary: "Keppel Corporation shares broke out above the key S$7.50 resistance level on above-average volume, confirming a multi-month base pattern. The breakout follows a series of data centre deal announcements worth over S$5B in committed capex. Technical targets point to S$8.20-8.50.", source: "Business Times", sourceMkt: "stocks", url: "https://bt.sg/keppel-breakout-resistance", publishedAt: null },
+
+  // ── US ETF DRIP ─────────────────────────────────────────────────────────────
+  { title: "TQQQ 3x Nasdaq ETF Gains 9% in Session as QQQ Breaks to All-Time High on AI Rally", summary: "ProShares UltraPro QQQ (TQQQ) surged 9.2% — triple the 3.1% Nasdaq 100 gain — as the QQQ ETF broke to a new all-time high. TQQQ volume hit 148M shares, the third-highest on record. Analysts caution that the leveraged product amplifies both gains and losses — only for experienced traders.", source: "MarketWatch", sourceMkt: "stocks", url: "https://marketwatch.com/tqqq-gains-qqq-ath", publishedAt: null },
+  { title: "SOXL Semiconductor Bull ETF Spikes 14% on AMD Azure Deal; Short Squeeze Accelerates", summary: "The Direxion Semiconductor Bull 3x ETF (SOXL) surged 14% on the AMD-Microsoft Azure deal announcement, amplifying the 4.8% gain in the underlying SOX semiconductor index. Short interest in SOXL stood at 19% of float ahead of the news, contributing to a sharp short squeeze.", source: "CNBC Markets", sourceMkt: "stocks", url: "https://cnbc.com/soxl-short-squeeze-amd", publishedAt: null },
+  { title: "GDX Gold Miners ETF Breakout Above $42: Analysts See 15% Upside to $48 Target", summary: "The VanEck Gold Miners ETF (GDX) broke out of an 8-month consolidation range above $42 resistance on triple the average volume. With spot gold hitting $3,400/oz, gold miner margins are the widest since 2020. Morgan Stanley initiated GDX at Overweight with a $48 price target.", source: "Investing.com", sourceMkt: "stocks", url: "https://investing.com/gdx-breakout-48-target", publishedAt: null },
+  { title: "XLE Energy ETF Drops 3.1% as OPEC+ Surprise Hike Floods Market; USO Oil Fund Falls 2.8%", summary: "The Energy Sector SPDR ETF (XLE) fell 3.1% and the US Oil Fund (USO) dropped 2.8% after OPEC+ announced a surprise 600,000 bpd production increase. WTI crude slid to $74.20/bbl. Short sellers in XLE covered during early trading, but renewed selling pushed the ETF to session lows.", source: "Reuters Business", sourceMkt: "stocks", url: "https://reuters.com/xle-uso-opec-drop", publishedAt: null },
+  { title: "IOZ ASX 200 ETF Hits 52-Week High as Wall Street Gains and Iron Ore Lift Australia Market", summary: "The iShares Core S&P/ASX 200 ETF (IOZ.ASX) reached a new 52-week high of A$31.20 as the ASX 200 cleared 8,400 for the first time. BHP, Rio Tinto, and CBA drove the gains. NDQ Nasdaq ETF on ASX also hit a 52-week high, with both ETFs seeing record daily inflows from retail investors.", source: "AFR Latest", sourceMkt: "stocks", url: "https://afr.com/ioz-ndq-52-week-high", publishedAt: null },
 ];
 
 let dripIndex = 0;
@@ -470,6 +517,32 @@ const TITLE_TICKER_MAP = {
   'keppel': 'BN4', 'keppel corporation': 'BN4', 'keppel corp': 'BN4',
   'wilmar': 'F34', 'wilmar international': 'F34', 'kuok': 'F34',
   'sti': 'STI', 'straits times index': 'STI',
+  // US ETFs
+  'spy etf': 'SPY', 'spdr s&p 500': 'SPY', 's&p 500 etf': 'SPY',
+  'qqq etf': 'QQQ', 'invesco nasdaq': 'QQQ', 'nasdaq 100 etf': 'QQQ',
+  'iwm etf': 'IWM', 'russell 2000 etf': 'IWM',
+  'gld etf': 'GLD', 'gold etf': 'GLD', 'spdr gold': 'GLD',
+  'slv etf': 'SLV', 'silver etf': 'SLV', 'ishares silver': 'SLV',
+  'uso etf': 'USO', 'oil fund etf': 'USO', 'crude oil etf': 'USO',
+  'tlt etf': 'TLT', 'treasury bond etf': 'TLT', 'long bond etf': 'TLT',
+  'xlf etf': 'XLF', 'financial sector etf': 'XLF',
+  'xlk etf': 'XLK', 'tech sector etf': 'XLK', 'technology spdr': 'XLK',
+  'xle etf': 'XLE', 'energy sector etf': 'XLE', 'energy spdr': 'XLE',
+  'xlv etf': 'XLV', 'healthcare etf': 'XLV',
+  'arkk': 'ARKK', 'ark innovation': 'ARKK', 'cathie wood': 'ARKK',
+  'gdx etf': 'GDX', 'gold miners etf': 'GDX', 'vaneck gold': 'GDX',
+  'soxl': 'SOXL', 'semiconductor bull etf': 'SOXL', 'semiconductor 3x': 'SOXL',
+  'tqqq': 'TQQQ', 'ultrapro qqq': 'TQQQ', '3x nasdaq': 'TQQQ',
+  // ASX ETFs
+  'vas etf': 'VAS', 'vanguard australian shares': 'VAS',
+  'ndq etf': 'NDQ', 'betashares nasdaq': 'NDQ',
+  'a200 etf': 'A200', 'betashares australia 200': 'A200',
+  'ioz etf': 'IOZ', 'ishares asx 200': 'IOZ',
+  // SGX ETFs
+  'sti etf': 'ES3', 'spdr sti': 'ES3',
+  // HKEX ETFs
+  'tracker fund': '2800', 'hsi etf': '2800', 'hang seng etf': '2800',
+  'csi 300 etf': '3188', 'a-shares etf': '3188',
 };
 
 function extractTickerFromArticle(article) {
