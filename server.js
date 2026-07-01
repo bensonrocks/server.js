@@ -487,6 +487,109 @@ app.post('/api/sync/:platform', withTenant, async (req, res) => {
   }
 });
 
+// ── Demo sync ─────────────────────────────────────────────────────────────────
+// Injects realistic fresh orders without needing real platform credentials.
+// Designed for client demos — call POST /api/demo/sync, reset with POST /api/demo/reset.
+
+const DEMO_ORDERS = [
+  {
+    id: () => `SHP-DEMO-${Date.now()}`,
+    clientId: 'fashion-house', clientName: 'Fashion House', channel: 'shopify',
+    status: 'confirmed', currency: 'USD',
+    items: [{ sku: 'DRESS-SUM', name: 'Summer Dress', qty: 2, unitPrice: 79.99 }],
+    shipping: { recipient: 'Sophie Turner', addressLine1: '200 Hollywood Blvd', city: 'Los Angeles', state: 'CA', zip: '90028', country: 'US' },
+    subtotal: 159.98, shippingCost: 0, tax: 14.40, total: 174.38,
+    notes: '', source: { type: 'shopify', ingestedAt: '' },
+  },
+  {
+    id: () => `SHOP-DEMO-${Date.now() + 1}`,
+    clientId: 'beauty-bliss', clientName: 'Beauty Bliss', channel: 'shopee',
+    status: 'confirmed', currency: 'MYR',
+    items: [{ sku: 'SERUM-VC', name: 'Vitamin C Serum', qty: 3, unitPrice: 45.00 }, { sku: 'MASK-HYD', name: 'Hydrating Mask', qty: 2, unitPrice: 22.00 }],
+    shipping: { recipient: 'Nurul Ain', addressLine1: 'Jalan Ampang 88', city: 'Kuala Lumpur', state: 'WP', zip: '50450', country: 'MY' },
+    subtotal: 179.00, shippingCost: 5.90, tax: 0, total: 184.90,
+    notes: 'Bubble wrap please', source: { type: 'shopee', ingestedAt: '' },
+  },
+  {
+    id: () => `LAZ-DEMO-${Date.now() + 2}`,
+    clientId: 'sports-zone', clientName: 'Sports Zone', channel: 'lazada',
+    status: 'confirmed', currency: 'MYR',
+    items: [{ sku: 'SHOE-RUN-BLK', name: 'Running Shoes Black', qty: 1, unitPrice: 189.00 }],
+    shipping: { recipient: 'Ahmad Fauzi', addressLine1: 'No 15 Jalan PJS 5/28', city: 'Petaling Jaya', state: 'Selangor', zip: '46150', country: 'MY' },
+    subtotal: 189.00, shippingCost: 0, tax: 0, total: 189.00,
+    notes: '', source: { type: 'lazada', ingestedAt: '' },
+  },
+  {
+    id: () => `TTK-DEMO-${Date.now() + 3}`,
+    clientId: 'fashion-house', clientName: 'Fashion House', channel: 'tiktok',
+    status: 'confirmed', currency: 'USD',
+    items: [{ sku: 'SCARF-SLK', name: 'Silk Scarf', qty: 1, unitPrice: 44.99 }, { sku: 'SHIRT-CAS', name: 'Casual Shirt', qty: 2, unitPrice: 34.99 }],
+    shipping: { recipient: 'Megan Fox', addressLine1: '9200 Sunset Blvd', city: 'Los Angeles', state: 'CA', zip: '90069', country: 'US' },
+    subtotal: 114.97, shippingCost: 0, tax: 10.35, total: 125.32,
+    notes: 'TikTok live order', source: { type: 'tiktok', ingestedAt: '' },
+  },
+  {
+    id: () => `SHOP-DEMO-${Date.now() + 4}`,
+    clientId: 'sports-zone', clientName: 'Sports Zone', channel: 'shopee',
+    status: 'confirmed', currency: 'MYR',
+    items: [{ sku: 'YOGA-MAT-PRP', name: 'Yoga Mat Purple', qty: 2, unitPrice: 79.00 }],
+    shipping: { recipient: 'Lim Mei Ling', addressLine1: '22 Jalan Tun Hussein Onn', city: 'Johor Bahru', state: 'Johor', zip: '80000', country: 'MY' },
+    subtotal: 158.00, shippingCost: 8.00, tax: 0, total: 166.00,
+    notes: '', source: { type: 'shopee', ingestedAt: '' },
+  },
+  {
+    id: () => `LAZ-DEMO-${Date.now() + 5}`,
+    clientId: 'beauty-bliss', clientName: 'Beauty Bliss', channel: 'lazada',
+    status: 'confirmed', currency: 'MYR',
+    items: [{ sku: 'TONER-ROS', name: 'Rose Toner', qty: 2, unitPrice: 38.00 }, { sku: 'SPF-50', name: 'SPF 50 Sunscreen', qty: 1, unitPrice: 52.00 }],
+    shipping: { recipient: 'Priya Nair', addressLine1: 'Jalan Imbi 45', city: 'Kuala Lumpur', state: 'WP', zip: '55100', country: 'MY' },
+    subtotal: 128.00, shippingCost: 0, tax: 0, total: 128.00,
+    notes: '', source: { type: 'lazada', ingestedAt: '' },
+  },
+];
+
+app.post('/api/demo/sync', withTenant, (req, res) => {
+  const { store, syncLog } = req;
+  const now = new Date().toISOString();
+  const results = {};
+  let totalAdded = 0;
+
+  for (const tpl of DEMO_ORDERS) {
+    const order = {
+      ...tpl,
+      id: tpl.id(),
+      orderDate: now,
+      source: { ...tpl.source, ingestedAt: now },
+    };
+    const platform = order.source.type;
+    try {
+      store.addOrder(order);
+      results[platform] = (results[platform] || 0) + 1;
+      totalAdded++;
+    } catch { /* duplicate — skip */ }
+  }
+
+  const at = now;
+  for (const [platform, added] of Object.entries(results)) {
+    syncLog.push({ platform, at, fetched: added, added });
+  }
+
+  res.json({ ok: true, added: totalAdded, breakdown: results, at });
+});
+
+app.post('/api/demo/reset', withTenant, (req, res) => {
+  const { store } = req;
+  // Remove only demo-injected orders (ids start with SHP-DEMO, SHOP-DEMO, LAZ-DEMO, TTK-DEMO)
+  const all = store.getOrders();
+  let removed = 0;
+  for (const o of all) {
+    if (/^(SHP|SHOP|LAZ|TTK)-DEMO-/.test(o.id)) {
+      try { store.deleteOrder(o.id); removed++; } catch {}
+    }
+  }
+  res.json({ ok: true, removed });
+});
+
 // ── Sales Lead Digger ─────────────────────────────────────────────────────────
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1';

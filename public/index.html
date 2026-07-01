@@ -592,6 +592,20 @@ a:hover{text-decoration:underline}
           <span id="server-banner-text"></span>
         </div>
 
+        <!-- Demo banner -->
+        <div id="demo-banner" style="display:none;background:#fefce8;border:1.5px solid #fde047;border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="font-size:22px">&#127916;</span>
+          <div style="flex:1;min-width:180px">
+            <div style="font-weight:700;color:#78350f;font-size:14px">Demo Mode</div>
+            <div style="font-size:12px;color:#92400e">Simulate a live sync from Shopify, Shopee, Lazada &amp; TikTok Shop — no API keys needed.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button id="demo-sync-btn" onclick="runDemoSync()" style="background:#d97706;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer">&#9654; Simulate Sync</button>
+            <button onclick="runDemoReset()" style="background:#fff;color:#92400e;border:1.5px solid #fde047;border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer">&#8635; Reset Demo</button>
+          </div>
+          <div id="demo-result" style="width:100%;font-size:12px;color:#78350f;display:none"></div>
+        </div>
+
         <div class="plat-grid">
           <!-- Lazada -->
           <div class="plat-tile" data-platform="lazada" onclick="openConnModal('lazada')">
@@ -1475,12 +1489,51 @@ async function refreshConnectionStatus(){
         for(const[p,info]of Object.entries(status))updateTileStatus(p,info.connected,info.lastSync,info.lastSyncCount);
       }
     }catch{}
+    showDemoBanner();
   }else{
     banner.className='server-banner warn';
     banner.innerHTML='<span>&#9888;</span><span><strong>Server offline &mdash; database unavailable.</strong> Start the server (double-click START.bat / START.command) to save credentials and orders permanently. Browser mode is read-only.</span>';
     banner.classList.remove('hidden');
     for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!c.accessToken,c.lastSync,c.lastSyncCount);}
   }
+}
+
+// ── DEMO SYNC ─────────────────────────────────────────────────────────────────
+function showDemoBanner(){
+  const b=$('demo-banner');
+  if(b)b.style.display=serverAvailable?'flex':'none';
+}
+
+async function runDemoSync(){
+  if(!serverAvailable){alert('Start the server first to use demo sync.');return;}
+  const btn=$('demo-sync-btn');
+  const res=$('demo-result');
+  btn.disabled=true;btn.textContent='Syncing…';
+  res.style.display='none';
+  try{
+    const r=await fetch(`${SERVER}/api/demo/sync`,{method:'POST',headers:{'Authorization':'Bearer '+authToken,'Content-Type':'application/json'}});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||'Demo sync failed');
+    const breakdown=Object.entries(j.breakdown||{}).map(([p,n])=>`${p}(+${n})`).join(' · ');
+    res.textContent=`&#10003; ${j.added} new orders injected — ${breakdown}`;
+    res.style.display='block';
+    // Refresh orders view
+    await fetchOrders();
+  }catch(e){
+    res.textContent='Error: '+e.message;res.style.display='block';
+  }finally{
+    btn.disabled=false;btn.textContent='&#9654; Simulate Sync';
+  }
+}
+
+async function runDemoReset(){
+  if(!serverAvailable){alert('Start the server first.');return;}
+  const r=await fetch(`${SERVER}/api/demo/reset`,{method:'POST',headers:{'Authorization':'Bearer '+authToken,'Content-Type':'application/json'}});
+  const j=await r.json();
+  const res=$('demo-result');
+  res.textContent=`Demo orders cleared (${j.removed} removed). Seed data restored.`;
+  res.style.display='block';
+  await fetchOrders();
 }
 
 // ── CONNECTION MODAL ──────────────────────────────────────────────────────────
