@@ -84,6 +84,51 @@ a:hover{text-decoration:underline}
 .amt{font-weight:700}
 .empty td{text-align:center;padding:48px;color:#94a3b8;font-size:15px}
 
+/* ── SCAN OVERLAY ── */
+.scan-ov{position:fixed;inset:0;background:#0f172a;z-index:9000;display:flex;flex-direction:column;color:#fff;overflow:hidden}
+.scan-ov.hidden{display:none}
+.scan-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#1e293b;flex-shrink:0}
+.scan-exit{width:36px;height:36px;background:#334155;border:none;color:#fff;border-radius:8px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.scan-progress-top{font-size:13px;font-weight:700;color:#94a3b8;text-align:center}
+.scan-camera-wrap{position:relative;background:#000;flex-shrink:0;max-height:220px;overflow:hidden}
+.scan-camera-wrap video{width:100%;display:block;max-height:220px;object-fit:cover}
+.scan-reticle{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.scan-reticle::after{content:'';width:200px;height:80px;border:3px solid #22c55e;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.4)}
+.scan-item-card{padding:20px 16px 12px;text-align:center;flex-shrink:0}
+.scan-item-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:#64748b;margin-bottom:8px}
+.scan-item-sku{font-family:monospace;font-size:22px;font-weight:900;color:#38bdf8;letter-spacing:1px;margin-bottom:4px}
+.scan-item-name{font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:6px}
+.scan-item-qty{font-size:42px;font-weight:900;color:#fbbf24;line-height:1;margin-bottom:6px}
+.scan-item-order{font-size:12px;color:#94a3b8}
+.scan-feedback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:64px;pointer-events:none;transition:opacity .3s}
+.scan-feedback.sf-ok{background:rgba(34,197,94,.25)}
+.scan-feedback.sf-err{background:rgba(239,68,68,.25)}
+.scan-items-prog{flex:1;overflow-y:auto;padding:0 16px 8px}
+.scan-order-hdr{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#64748b;padding:10px 0 6px;border-bottom:1px solid #1e293b}
+.scan-item-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1e293b;font-size:14px}
+.scan-item-row.done{opacity:.4;text-decoration:line-through}
+.scan-item-row.active{background:#1e3a5f;margin:0 -16px;padding:8px 16px;border-radius:0}
+.sip-sku{font-family:monospace;font-size:12px;color:#38bdf8;flex-shrink:0;width:110px;overflow:hidden;text-overflow:ellipsis}
+.sip-name{flex:1;color:#e2e8f0}
+.sip-qty{font-weight:700;color:#fbbf24;flex-shrink:0}
+.sip-check{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px}
+.sip-check.done{background:#22c55e;color:#fff}
+.sip-check.todo{border:2px solid #475569}
+.scan-bottom{padding:12px 16px;background:#1e293b;flex-shrink:0;display:flex;flex-direction:column;gap:8px}
+.scan-input{background:#0f172a;border:2px solid #334155;border-radius:10px;color:#fff;font-size:16px;padding:12px 14px;width:100%;outline:none;caret-color:#38bdf8}
+.scan-input:focus{border-color:#38bdf8}
+.scan-input::placeholder{color:#475569}
+.scan-btn-row{display:flex;gap:8px}
+.scan-confirm-btn{flex:1;background:#22c55e;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:800;cursor:pointer}
+.scan-confirm-btn:active{background:#16a34a}
+.scan-cam-btn{background:#334155;color:#94a3b8;border:none;border-radius:10px;padding:13px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
+.scan-cam-btn.active{background:#0284c7;color:#fff}
+.scan-done-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:32px}
+.scan-done-ico{font-size:72px}
+.scan-done-ttl{font-size:24px;font-weight:900;color:#22c55e}
+.scan-done-sub{font-size:14px;color:#94a3b8;text-align:center}
+.scan-done-btn{background:#22c55e;color:#fff;border:none;border-radius:12px;padding:14px 32px;font-size:16px;font-weight:800;cursor:pointer;margin-top:8px}
+
 /* ── FULFILLMENT ── */
 .ff-toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 18px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:16px}
 .ff-toolbar-l,.ff-toolbar-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -686,6 +731,7 @@ a:hover{text-decoration:underline}
           </div>
           <div class="ff-toolbar-r">
             <span id="ff-summary" class="ff-sel-bar"></span>
+            <button id="ff-btn-scan" class="btn btn-sm" disabled onclick="startScanning()" style="background:#0f172a;color:#fff;font-weight:800">&#128247; Start Scanning</button>
             <button id="ff-btn-pick" class="btn btn-s btn-sm" disabled onclick="printPicklist()">&#128203; Picklist</button>
             <button id="ff-btn-pack" class="btn btn-s btn-sm" disabled onclick="printPackSlips()">&#128196; Pack Slips</button>
             <button id="ff-btn-mani" class="btn btn-p btn-sm" disabled onclick="printManifest()">&#128203; Manifest</button>
@@ -2149,7 +2195,7 @@ function ffUpdateSummary(){
   const selOrders=orders.filter(o=>ffSelected.has(o.id));
   const totalItems=selOrders.reduce((s,o)=>s+o.items.reduce((ss,i)=>ss+i.qty,0),0);
   $('ff-summary').textContent=sel.length?`${sel.length} order${sel.length>1?'s':''} · ${totalItems} items`:'';
-  ['ff-btn-pick','ff-btn-pack','ff-btn-mani'].forEach(id=>{const b=$(id);if(b)b.disabled=!sel.length;});
+  ['ff-btn-scan','ff-btn-pick','ff-btn-pack','ff-btn-mani'].forEach(id=>{const b=$(id);if(b)b.disabled=!sel.length;});
 }
 
 // ── PICKLIST ──────────────────────────────────────────────────────────────────
@@ -2460,6 +2506,270 @@ $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();})
   if(serverAvailable)await loadOrdersFromServer();
   render();
 })();
+
+// ── SCAN PICKING ──────────────────────────────────────────────────────────────
+
+const ps={orders:[],oIdx:0,iIdx:0,confirmed:[],camActive:false,camStream:null,camTimer:null,detector:null};
+
+function startScanning(){
+  const sel=orders.filter(o=>ffSelected.has(o.id));
+  if(!sel.length){alert('Select at least one order first.');return;}
+  ps.orders=[...sel];
+  ps.oIdx=0;ps.iIdx=0;
+  ps.confirmed=ps.orders.map(o=>o.items.map(()=>false));
+  ps.camActive=false;
+  renderScanOverlay();
+  $('scan-ov').classList.remove('hidden');
+  document.body.style.overflow='hidden';
+  setTimeout(()=>focusScanInput(),100);
+}
+
+function exitScan(){
+  stopCamera();
+  $('scan-ov').classList.add('hidden');
+  document.body.style.overflow='';
+}
+
+function renderScanOverlay(){
+  const total=ps.orders.length;
+  const done=ps.confirmed.filter((c,i)=>c.every(Boolean)).length;
+  $('scan-progress-top').textContent=`Order ${ps.oIdx+1} of ${total} · ${done} packed`;
+  renderScanItemCard();
+  renderScanItemsList();
+}
+
+function renderScanItemCard(){
+  const o=ps.orders[ps.oIdx];
+  if(!o){showBatchDone();return;}
+  const item=o.items[ps.iIdx];
+  if(!item){advanceOrder();return;}
+  $('scan-item-sku').textContent=item.sku||'—';
+  $('scan-item-name').textContent=item.name;
+  $('scan-item-qty').textContent='× '+item.qty;
+  $('scan-item-order').textContent=o.id+' · '+o.clientName;
+}
+
+function renderScanItemsList(){
+  const wrap=$('scan-items-prog');
+  if(!wrap)return;
+  let html='';
+  for(let oi=ps.oIdx;oi<Math.min(ps.oIdx+3,ps.orders.length);oi++){
+    const o=ps.orders[oi];
+    const allDone=ps.confirmed[oi].every(Boolean);
+    html+=`<div class="scan-order-hdr">${o.id} &mdash; ${o.clientName}${allDone?' ✓':''}</div>`;
+    o.items.forEach((item,ii)=>{
+      const done=ps.confirmed[oi][ii];
+      const active=oi===ps.oIdx&&ii===ps.iIdx;
+      html+=`<div class="scan-item-row${done?' done':''}${active?' active':''}">
+        <span class="sip-check ${done?'done':'todo'}">${done?'✓':''}</span>
+        <span class="sip-sku">${item.sku||'—'}</span>
+        <span class="sip-name">${item.name}</span>
+        <span class="sip-qty">×${item.qty}</span>
+      </div>`;
+    });
+  }
+  wrap.innerHTML=html;
+}
+
+function normSku(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+
+function onScanKey(e){
+  if(e.key==='Enter'){
+    const val=$('scan-input').value.trim();
+    $('scan-input').value='';
+    if(val)processScan(val);
+    e.preventDefault();
+  }
+}
+
+function processScan(raw){
+  const code=normSku(raw);
+  const o=ps.orders[ps.oIdx];
+  if(!o)return;
+  const item=o.items[ps.iIdx];
+  if(!item)return;
+
+  if(normSku(item.sku)===code||normSku(item.name)===code){
+    scanOk();
+  }else{
+    // Check if this matches something else in the batch — tell the picker
+    let hint='';
+    for(const bo of ps.orders){
+      for(const bi of bo.items){
+        if(normSku(bi.sku)===code||normSku(bi.name)===code){
+          hint=bi.name+' → '+bo.id;break;
+        }
+      }
+      if(hint)break;
+    }
+    scanErr(hint?`Wrong item — that's ${hint}`:'Item not in this batch');
+  }
+}
+
+function confirmCurrentItem(){
+  const o=ps.orders[ps.oIdx];
+  if(!o)return;
+  scanOk();
+}
+
+function scanOk(){
+  ps.confirmed[ps.oIdx][ps.iIdx]=true;
+  flashFeedback(true);
+  vibrate([80]);
+  advanceItem();
+}
+
+function scanErr(msg){
+  flashFeedback(false,msg);
+  vibrate([80,40,80]);
+}
+
+function flashFeedback(ok,msg=''){
+  const el=$('scan-feedback');
+  el.className='scan-feedback '+(ok?'sf-ok':'sf-err');
+  el.textContent=ok?'✓':msg||'✗';
+  el.classList.remove('hidden');
+  el.style.opacity='1';
+  setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.classList.add('hidden'),300);},700);
+}
+
+function vibrate(pattern){try{navigator.vibrate&&navigator.vibrate(pattern);}catch{}}
+
+function advanceItem(){
+  const o=ps.orders[ps.oIdx];
+  // Find next unconfirmed item
+  for(let i=ps.iIdx+1;i<o.items.length;i++){
+    if(!ps.confirmed[ps.oIdx][i]){ps.iIdx=i;renderScanOverlay();focusScanInput();return;}
+  }
+  // All items in this order done
+  orderPicked();
+}
+
+async function orderPicked(){
+  const o=ps.orders[ps.oIdx];
+  // Mark order as processing
+  o.status='processing';
+  if(serverAvailable){
+    try{await fetch(`${SERVER}/api/orders/${o.id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},body:JSON.stringify({status:'processing'})});}catch{}
+  }
+  save();
+  flashFeedback(true,'Order packed!');
+  vibrate([100,50,100,50,200]);
+  setTimeout(()=>advanceOrder(),900);
+}
+
+function advanceOrder(){
+  ps.oIdx++;
+  if(ps.oIdx>=ps.orders.length){showBatchDone();return;}
+  ps.iIdx=0;
+  // Skip already-confirmed orders
+  while(ps.oIdx<ps.orders.length&&ps.confirmed[ps.oIdx].every(Boolean)){ps.oIdx++;}
+  if(ps.oIdx>=ps.orders.length){showBatchDone();return;}
+  renderScanOverlay();
+  focusScanInput();
+}
+
+function showBatchDone(){
+  const packed=ps.confirmed.filter(c=>c.every(Boolean)).length;
+  const scanMain=$('scan-main');
+  if(scanMain)scanMain.style.display='none';
+  $('scan-done-view').classList.remove('hidden');
+  $('scan-done-count').textContent=`${packed} order${packed!==1?'s':''} packed`;
+  stopCamera();
+}
+
+function focusScanInput(){
+  const inp=$('scan-input');
+  if(inp){inp.focus();inp.select();}
+}
+
+// ── CAMERA ────────────────────────────────────────────────────────────────────
+
+async function toggleCamera(){
+  if(ps.camActive){stopCamera();return;}
+  const wrap=$('scan-camera-wrap');
+  const btn=$('scan-cam-btn');
+  if(!('BarcodeDetector' in window)){
+    alert('Camera scanning requires Chrome on Android or a modern desktop browser. Use a hardware scanner or tap Confirm Pick instead.');
+    return;
+  }
+  try{
+    ps.camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const vid=$('scan-video');
+    vid.srcObject=ps.camStream;
+    await vid.play();
+    ps.detector=new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','upc_a']});
+    wrap.classList.remove('hidden');
+    btn.classList.add('active');
+    btn.textContent='Stop Camera';
+    ps.camActive=true;
+    cameraTick();
+  }catch(e){
+    alert('Camera access denied: '+e.message);
+  }
+}
+
+async function cameraTick(){
+  if(!ps.camActive)return;
+  const vid=$('scan-video');
+  try{
+    const codes=await ps.detector.detect(vid);
+    if(codes.length){
+      const val=codes[0].rawValue;
+      if(val){processScan(val);ps.camTimer=setTimeout(cameraTick,1200);return;}
+    }
+  }catch{}
+  ps.camTimer=setTimeout(cameraTick,200);
+}
+
+function stopCamera(){
+  ps.camActive=false;
+  clearTimeout(ps.camTimer);
+  if(ps.camStream){ps.camStream.getTracks().forEach(t=>t.stop());ps.camStream=null;}
+  const wrap=$('scan-camera-wrap');
+  if(wrap)wrap.classList.add('hidden');
+  const btn=$('scan-cam-btn');
+  if(btn){btn.classList.remove('active');btn.textContent='📷 Camera';}
+}
 </script>
+
+<!-- ── SCAN OVERLAY ─────────────────────────────────────────────────────── -->
+<div id="scan-ov" class="scan-ov hidden">
+  <div class="scan-hdr">
+    <button class="scan-exit" onclick="exitScan()">✕</button>
+    <div id="scan-progress-top" class="scan-progress-top"></div>
+    <div style="width:36px"></div>
+  </div>
+  <div id="scan-camera-wrap" class="scan-camera-wrap hidden">
+    <video id="scan-video" autoplay playsinline muted></video>
+    <div class="scan-reticle"></div>
+  </div>
+  <div id="scan-main" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative">
+    <div class="scan-item-card">
+      <div class="scan-item-label">Scan to confirm pick</div>
+      <div id="scan-item-sku" class="scan-item-sku"></div>
+      <div id="scan-item-name" class="scan-item-name"></div>
+      <div id="scan-item-qty" class="scan-item-qty"></div>
+      <div id="scan-item-order" class="scan-item-order"></div>
+    </div>
+    <div id="scan-feedback" class="scan-feedback hidden" style="opacity:0"></div>
+    <div id="scan-items-prog" class="scan-items-prog"></div>
+    <div class="scan-bottom">
+      <input id="scan-input" type="text" class="scan-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Scan barcode or type SKU + Enter…" onkeydown="onScanKey(event)">
+      <div class="scan-btn-row">
+        <button class="scan-confirm-btn" onclick="confirmCurrentItem()">✓ Confirm Pick</button>
+        <button id="scan-cam-btn" class="scan-cam-btn" onclick="toggleCamera()">📷 Camera</button>
+      </div>
+    </div>
+  </div>
+  <div id="scan-done-view" class="scan-done-card hidden">
+    <div class="scan-done-ico">🎉</div>
+    <div class="scan-done-ttl">Batch Complete!</div>
+    <div id="scan-done-count" class="scan-done-sub"></div>
+    <div class="scan-done-sub">All orders marked as Processing.</div>
+    <button class="scan-done-btn" onclick="exitScan();render()">Done</button>
+  </div>
+</div>
+
 </body>
 </html>
