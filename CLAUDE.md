@@ -46,10 +46,12 @@ Only triggered when extracted code is **7+ all-digit characters**.
 - `0` and `1` are NOT in the leading map — leading zeros are genuine in many codes.
 - Example: `500037495` → `S00037495`
 
-**Trailing fix** (`OCR_TRAIL_MAP`): `2→Z` only
-- Z is routinely misread as 2 by OCR engines.
+**Trailing fix** (`OCR_TRAIL_MAP`): `2→Z` and `7→Z`
+- Z is routinely misread as 2 or 7 by OCR engines.
 - Applied only when leading fix does not fire (they never both apply).
-- Example: `010720262` → `01072026Z`
+- Example: `010720262` → `01072026Z`, `010720267` → `01072026Z`
+
+**Duplicate-Z fix**: When OCR reads a terminal Z as *both* a digit and Z (producing e.g. `010720267Z`), the pattern `^\d{6,}[27]Z$` strips the artifact digit → `01072026Z`. This fires on codes that are not all-digit.
 
 **Do NOT merge these into one map or apply both at once.** Leading takes priority; trailing only fires if leading did not match.
 
@@ -59,7 +61,18 @@ Only triggered when extracted code is **7+ all-digit characters**.
 - reference, issue no, pick ticket
 - batch/lot number
 
-The 7+ all-digit guard means short numeric codes (SKUs like `5603`, batches like `533601`) are never touched. **Do not apply to SKU tokens** — SKUs must match WMS records exactly.
+The 7+ all-digit guard means short numeric codes (SKUs like `5603`, batches like `533601`) are never touched. The duplicate-Z rule handles mixed digit+Z codes. **Do not apply to SKU tokens** — SKUs must match WMS records exactly.
+
+### SKU token rejection rules
+Before accepting a token as SKU, these checks run in order:
+1. Length outside `[skuMinLen, 40]` → skip
+2. In `SKIP_SKU` set → skip
+3. **All-zero string** (`/^0+$/`) → skip (OCR noise, never a real product code)
+4. **Matches `EXPIRY_DATE_PAT`** → skip (date tokens like `30/Jun/2028` are not SKUs)
+5. Looks like a unit suffix (`100ml`, `250g`) → skip
+6. Matches `LOCATION_CODE_PAT` → skip
+7. Contains no digit → skip
+8. Does not match `/^[A-Z0-9][A-Z0-9_\-]{2,}$/i` → skip (`/` is excluded to prevent date-like strings)
 
 ## OCR Qty Parsing (lib/ocr-parse.js)
 
