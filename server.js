@@ -1843,6 +1843,44 @@ app.delete('/api/master/email-config', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Betime CODE 2 map management ─────────────────────────────────────────────
+
+// GET — return current map stats + all entries so admin can review mismatches
+app.get('/api/master/betime-code2', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json({ entries: Object.keys(_beTimeCode2Map).length, map: _beTimeCode2Map });
+});
+
+// POST — upload a new Betime SKU Excel; regenerates and hot-reloads the map
+app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const hdr  = data[0] || [];
+    const code1Idx = hdr.indexOf('Product Code');
+    const code2Idx = hdr.indexOf('CODE 2');
+    if (code1Idx === -1 || code2Idx === -1) {
+      return res.status(400).json({ error: 'Excel must have "Product Code" and "CODE 2" columns' });
+    }
+    const map = {};
+    let skipped = 0;
+    data.slice(1).forEach(row => {
+      const pc = String(row[code1Idx] || '').trim();
+      const c2 = String(row[code2Idx] || '').trim();
+      if (!pc || !c2) { skipped++; return; }
+      c2.split(',').forEach(b => { const bc = b.trim(); if (bc) map[bc] = pc; });
+    });
+    fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
+    _beTimeCode2Map = map;  // hot-reload in memory
+    res.json({ ok: true, entries: Object.keys(map).length, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Completion slip ──────────────────────────────────────────────────────────
 app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   const { batchId, orderNumber } = req.params;
