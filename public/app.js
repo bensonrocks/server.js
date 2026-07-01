@@ -1352,14 +1352,16 @@
       <span><strong>Customer:</strong> ${esc(order.customer_name || '—')}</span>
       ${order.client_name ? `<span><strong>Client:</strong> ${esc(order.client_name)}</span>` : ''}
       <span><strong>Carrier:</strong> ${esc(order.carrier || '—')}</span>
-      <span class="${order.waybill_number ? 'waybill-ok' : ''}">
+      <span class="${order.has_waybill_pdf ? 'waybill-ok' : ''}">
         <strong>Waybill:</strong>
-        ${order.waybill_number ? `${esc(order.waybill_number)} &#10003;` : 'Not provided'}
+        ${order.waybill_number
+          ? `${esc(order.waybill_number)}${order.has_waybill_pdf ? ' &#10003;' : ''}`
+          : 'Not provided'}
       </span>
       ${order.tel ? `<span><strong>Tel:</strong> ${esc(order.tel)}</span>` : ''}
       ${order.delivery_address ? `<span class="scan-meta-address"><strong>Address:</strong> ${esc(order.delivery_address)}</span>` : ''}
       ${order.platform ? `<span><strong>Platform:</strong> ${esc(order.platform)}${order.shop_name ? ' / ' + esc(order.shop_name) : ''}</span>` : ''}
-      ${order.has_waybill_pdf ? `<span class="meta-waybill-note">&#128196; Waybill PDF ready</span>` : ''}`;
+      ${order.has_waybill_pdf ? `<span class="meta-waybill-note">&#128196; Waybill PDF ready to print</span>` : ''}`;
 
     renderItemsTable(order);
     updateProgress(order);
