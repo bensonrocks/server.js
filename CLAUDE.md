@@ -74,6 +74,11 @@ Before accepting a token as SKU, these checks run in order:
 7. Contains no digit → skip
 8. Does not match `/^[A-Z0-9][A-Z0-9_\-]{2,}$/i` → skip (`/` is excluded to prevent date-like strings)
 
+After a token passes all checks, a phantom-B correction is applied:
+`/^([A-Z]{1,4})B(\d{3,}[A-Z]{0,2})$/` → `$1$2`
+Tesseract sometimes inserts a spurious `B` between an alphabetic prefix and a digit body
+(e.g. `PH6930` on the printed page → OCR outputs `PHB6930`). This strips it back.
+
 ## OCR Qty Parsing (lib/ocr-parse.js)
 
 ### Qty must be found BEFORE a UOM keyword, not as rightmost integer
