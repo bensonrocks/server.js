@@ -99,6 +99,7 @@ const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
 const DOC_TEMPLATE_DIR        = path.join(DATA_DIR, 'label_doc_templates');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
+const BETIME_CODE2_FILE       = path.join(DATA_DIR, 'betime-code2.json');
 
 fs.mkdirSync(WMS_DIR,          { recursive: true });
 fs.mkdirSync(WAYBILL_DIR,      { recursive: true });
@@ -185,6 +186,27 @@ function readDb() {
 }
 function writeDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
+
+// ── Betime CODE 2 → Product Code map ─────────────────────────────────────────
+// Loaded at startup. Translates customer barcodes (EAN-13 / CODE 2 field) to
+// WMS product codes so scanning a barcode finds the correct order line.
+// Entries with comma-separated barcodes in the source Excel are split so each
+// barcode is its own key. Empty CODE 2 rows are omitted entirely.
+let _beTimeCode2Map = {};
+try {
+  _beTimeCode2Map = JSON.parse(fs.readFileSync(BETIME_CODE2_FILE, 'utf8'));
+  console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries`);
+} catch (e) {
+  console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
+}
+
+// Resolve a scanned barcode to a WMS product code. Returns the original value
+// unchanged when the barcode is not in the Betime CODE 2 map.
+function resolveBeTimeCode2(scanned) {
+  if (!scanned) return scanned;
+  const k = scanned.trim();
+  return _beTimeCode2Map[k] || k;
 }
 
 // ── Email config ─────────────────────────────────────────────────────────────
@@ -1013,7 +1035,8 @@ app.post('/api/waybill-lookup', (req, res) => {
 });
 
 app.post('/api/scan/increment', (req, res) => {
-  const { orderNumber, sku } = req.body;
+  const { orderNumber } = req.body;
+  const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
   if (!orderNumber || !sku) return res.status(400).json({ error: 'orderNumber and sku required' });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
