@@ -376,6 +376,27 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
       const fname = assignedOrder ? `${assignedOrder}.pdf` : `_page_${i + 1}.pdf`;
       fs.writeFileSync(path.join(dir, fname), buf);
     }
+
+    // Sequential fallback — if text extraction matched fewer pages than orders
+    // (e.g. image-based label PDFs where no text can be extracted), match
+    // remaining unmatched pages to remaining unmatched orders in sequence.
+    // This works because carrier bulk label PDFs are printed in picklist order.
+    const unmatchedOrders = orders.map(o => o.order_number).filter(n => !matched[n]);
+    if (unmatchedOrders.length > 0 && numPages > 0) {
+      // Collect unmatched page files in page order
+      const unmatchedPages = [];
+      for (let i = 0; i < numPages; i++) {
+        const tmpPath = path.join(path.join(WAYBILL_DIR, batchId), `_page_${i + 1}.pdf`);
+        if (fs.existsSync(tmpPath)) unmatchedPages.push({ i, tmpPath });
+      }
+      const pairs = Math.min(unmatchedPages.length, unmatchedOrders.length);
+      for (let j = 0; j < pairs; j++) {
+        const orderNo  = unmatchedOrders[j];
+        const destPath = path.join(WAYBILL_DIR, batchId, `${orderNo}.pdf`);
+        fs.renameSync(unmatchedPages[j].tmpPath, destPath);
+        matched[orderNo] = true;
+      }
+    }
   } catch (err) {
     console.error('[pdf-split]', err.message);
   }
