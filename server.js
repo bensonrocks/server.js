@@ -19,14 +19,32 @@ const fs         = require('fs');
 const { exec }   = require('child_process');
 const multer     = require('multer');
 
-const store    = require('./lib/store');
-const emailP   = require('./lib/email-parser');
-const creds    = require('./lib/credentials');
-const syncLog  = require('./lib/sync-log');
-const registry = require('./lib/connector-registry');
-const auth     = require('./lib/auth');
-const importer = require('./lib/file-importer');
-const db       = require('./lib/db');
+const mainDb          = require('./lib/db/main');
+const { getTenantDb } = require('./lib/db/tenant');
+const createStore     = require('./lib/store');
+const createCreds     = require('./lib/credentials');
+const createSyncLog   = require('./lib/sync-log');
+const emailP          = require('./lib/email-parser');
+const registry        = require('./lib/connector-registry');
+const auth            = require('./lib/auth');
+const importer        = require('./lib/file-importer');
+
+// ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
+
+(function migrateLegacy() {
+  const legacyPath = path.join(__dirname, 'data', 'idealoms.db');
+  const tenantPath = path.join(__dirname, 'data', 'tenants', 'default.db');
+  if (fs.existsSync(legacyPath) && !fs.existsSync(tenantPath)) {
+    try {
+      const dir = path.dirname(tenantPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(legacyPath, tenantPath);
+      console.log('  Migrated legacy idealoms.db → data/tenants/default.db');
+    } catch (e) {
+      console.warn('  Legacy migration skipped:', e.message);
+    }
+  }
+})();
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -37,13 +55,66 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Auth — public routes (before middleware) ──────────────────────────────────
+// ── Tenant context cache ──────────────────────────────────────────────────────
+
+const tenantCtx = new Map();
+
+function getCtx(tenantId) {
+  if (!tenantCtx.has(tenantId)) {
+    const db = getTenantDb(tenantId);
+    tenantCtx.set(tenantId, {
+      db,
+      store:   createStore(db),
+      creds:   createCreds(db),
+      syncLog: createSyncLog(db),
+    });
+  }
+  return tenantCtx.get(tenantId);
+}
+
+// ── Auth middleware ───────────────────────────────────────────────────────────
+
+function withTenant(req, res, next) {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+
+  const tenant = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(session.tenantId);
+  if (!tenant || !tenant.active) return res.status(403).json({ error: 'Tenant not found or suspended' });
+
+  const ctx      = getCtx(session.tenantId);
+  req.tenantId   = session.tenantId;
+  req.db         = ctx.db;
+  req.store      = ctx.store;
+  req.creds      = ctx.creds;
+  req.syncLog    = ctx.syncLog;
+  next();
+}
+
+// ── Super-admin middleware ────────────────────────────────────────────────────
+
+const SUPER_PW = process.env.IDEAL_SUPER_PASSWORD || 'SuperAdmin@2024';
+
+function withSuperAdmin(req, res, next) {
+  const pw = (req.headers['x-super-password'] || '').trim();
+  if (!pw || pw !== SUPER_PW) return res.status(401).json({ error: 'Super-admin password required' });
+  next();
+}
+
+// ── Auth — public routes ──────────────────────────────────────────────────────
 
 app.post('/api/auth/login', (req, res) => {
-  const { password } = req.body || {};
+  const { tenantId = 'default', password } = req.body || {};
   if (!password) return res.status(400).json({ error: 'Password required' });
-  if (!auth.checkPassword(password)) return res.status(401).json({ error: 'Incorrect password' });
-  res.json({ token: auth.generateToken() });
+
+  const tenant = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(tenantId);
+  if (!tenant)        return res.status(404).json({ error: 'Tenant not found' });
+  if (!tenant.active) return res.status(403).json({ error: 'Tenant suspended' });
+
+  const { db } = getCtx(tenantId);
+  if (!auth.checkPassword(db, password)) return res.status(401).json({ error: 'Incorrect password' });
+
+  res.json({ token: auth.generateToken(tenantId), tenantId });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -53,45 +124,55 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/status', (req, res) => {
-  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  res.json({ authenticated: auth.validateToken(token) });
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  res.json({ authenticated: !!session, tenantId: session?.tenantId || null });
 });
 
-function requireAuth(req, res, next) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  if (!auth.validateToken(token)) return res.status(401).json({ error: 'Authentication required' });
-  next();
-}
-
-app.post('/api/auth/change-password', requireAuth, (req, res) => {
+app.post('/api/auth/change-password', withTenant, (req, res) => {
   const { newPassword } = req.body || {};
   if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-  auth.changePassword(newPassword);
+  auth.changePassword(req.db, newPassword);
+  auth.revokeAllTenantSessions(req.tenantId);
   res.json({ ok: true });
 });
 
-app.get('/api/admin/stats', requireAuth, (req, res) => {
-  const orders   = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
-  const leads    = db.prepare('SELECT COUNT(*) AS n FROM leads').get().n;
-  const sessions = db.prepare('SELECT COUNT(*) AS n FROM lead_sessions').get().n;
-  const syncs    = db.prepare('SELECT COUNT(*) AS n FROM sync_log').get().n;
+// ── Admin stats ───────────────────────────────────────────────────────────────
+
+app.get('/api/admin/stats', withTenant, (req, res) => {
+  const orders   = req.db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
+  const leads    = req.db.prepare('SELECT COUNT(*) AS n FROM leads').get().n;
+  const sessions = req.db.prepare('SELECT COUNT(*) AS n FROM lead_sessions').get().n;
+  const syncs    = req.db.prepare('SELECT COUNT(*) AS n FROM sync_log').get().n;
   res.json({ orders, leads, leadSessions: sessions, syncEntries: syncs });
 });
 
 // ── Orders ────────────────────────────────────────────────────────────────────
 
 app.get('/api/orders', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const { store } = getCtx(tenantId);
   const { clientId, channel, status, search } = req.query;
   res.json(store.getOrders({ clientId, channel, status, search }));
 });
 
 app.get('/api/orders/:id', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const { store } = getCtx(tenantId);
   const order = store.getOrder(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
 });
 
 app.patch('/api/orders/:id', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const { store } = getCtx(tenantId);
   const { status, notes, source, shipping } = req.body || {};
   try {
     const updated = store.updateOrder(req.params.id, { status, notes, source, shipping });
@@ -101,28 +182,33 @@ app.patch('/api/orders/:id', (req, res) => {
   }
 });
 
-app.delete('/api/orders/:id', requireAuth, (req, res) => {
+app.delete('/api/orders/:id', withTenant, (req, res) => {
   try {
-    store.deleteOrder(req.params.id);
+    req.store.deleteOrder(req.params.id);
     res.json({ ok: true });
   } catch (e) {
     res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
   }
 });
 
-app.delete('/api/orders', requireAuth, (req, res) => {
+app.delete('/api/orders', withTenant, (req, res) => {
   const { confirm } = req.body || {};
   if (confirm !== 'DELETE ALL') return res.status(400).json({ error: 'Send confirm: "DELETE ALL"' });
-  const deleted = store.deleteAllOrders();
+  const deleted = req.store.deleteAllOrders();
   res.json({ ok: true, deleted });
 });
 
-app.delete('/api/sync-log', requireAuth, (req, res) => {
-  syncLog.clear();
+app.delete('/api/sync-log', withTenant, (req, res) => {
+  req.syncLog.clear();
   res.json({ ok: true });
 });
 
 app.get('/api/orders/:id/waybill', async (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const { store, creds } = getCtx(tenantId);
+
   const order = store.getOrder(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
@@ -143,6 +229,11 @@ app.get('/api/orders/:id/waybill', async (req, res) => {
 });
 
 app.post('/api/orders/ingest-email', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const { store } = getCtx(tenantId);
+
   const { body, subject, from } = req.body || {};
   if (!body) return res.status(400).json({ error: 'Email body is required' });
   try {
@@ -156,7 +247,7 @@ app.post('/api/orders/ingest-email', (req, res) => {
   }
 });
 
-// ── File import — extract orders from an uploaded file ────────────────────────
+// ── File import ───────────────────────────────────────────────────────────────
 
 function extractedToOrder(data, index) {
   const now   = new Date().toISOString();
@@ -228,6 +319,11 @@ app.post('/api/orders/extract', upload.single('file'), async (req, res) => {
 });
 
 app.post('/api/orders/bulk-import', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const { store } = getCtx(tenantId);
+
   const { orders: raw } = req.body || {};
   if (!Array.isArray(raw) || !raw.length) return res.status(400).json({ error: 'No orders provided' });
 
@@ -249,16 +345,36 @@ app.post('/api/orders/bulk-import', (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.get('/api/stats',    (req, res) => res.json(store.getStats()));
-app.get('/api/clients',  (req, res) => res.json(store.getClients()));
-app.get('/api/channels', (req, res) => res.json(store.getChannels()));
+app.get('/api/stats', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const { store } = getCtx(session?.tenantId || 'default');
+  res.json(store.getStats());
+});
 
-// ── Connector registry — all platforms discovered from lib/connectors/ ─────────
+app.get('/api/clients', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const { store } = getCtx(session?.tenantId || 'default');
+  res.json(store.getClients());
+});
+
+app.get('/api/channels', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const { store } = getCtx(session?.tenantId || 'default');
+  res.json(store.getChannels());
+});
+
+// ── Connector registry ────────────────────────────────────────────────────────
 
 const PLATFORMS = Object.keys(registry);
 
-// Connection status for all registered platforms
 app.get('/api/connect/status', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const { creds } = getCtx(session?.tenantId || 'default');
+
   const all    = creds.getAll();
   const result = {};
   for (const id of PLATFORMS) {
@@ -277,31 +393,27 @@ app.get('/api/connect/status', (req, res) => {
   res.json(result);
 });
 
-// Save credentials for a platform
-app.post('/api/connect/:platform', (req, res) => {
+app.post('/api/connect/:platform', withTenant, (req, res) => {
   const { platform } = req.params;
   if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
-  const saved = creds.set(platform, req.body);
+  const saved = req.creds.set(platform, req.body);
   const { appSecret, partnerKey, apiSecret, ...safe } = saved;
   res.json({ ok: true, ...safe });
 });
 
-// Disconnect a platform
-app.delete('/api/connect/:platform', (req, res) => {
+app.delete('/api/connect/:platform', withTenant, (req, res) => {
   const { platform } = req.params;
   if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
-  creds.remove(platform);
+  req.creds.remove(platform);
   res.json({ ok: true });
 });
 
-// ── Generic OAuth — works for any connector that exports buildAuthUrl / exchangeCode
-
-app.get('/api/connect/:platform/oauth-url', (req, res) => {
+app.get('/api/connect/:platform/oauth-url', withTenant, (req, res) => {
   const { platform } = req.params;
   const conn = registry[platform];
   if (!conn)              return res.status(400).json({ error: 'Unknown platform' });
   if (!conn.buildAuthUrl) return res.status(400).json({ error: `${conn.meta.name} does not use OAuth` });
-  const c = creds.get(platform) || {};
+  const c = req.creds.get(platform) || {};
   for (const field of conn.meta.requiredForOAuth || []) {
     if (!c[field]) return res.status(400).json({ error: `Save your ${conn.meta.name} ${field} first` });
   }
@@ -312,6 +424,11 @@ app.get('/api/connect/:platform/callback', async (req, res) => {
   const { platform } = req.params;
   const conn = registry[platform];
   if (!conn) return res.status(400).send(errPage('Unknown', 'Unknown platform'));
+
+  // Resolve tenant from state param or token header (OAuth state carries tenantId)
+  const tenantId = req.query.tenantId || 'default';
+  const { creds } = getCtx(tenantId);
+
   try {
     const tokens = await conn.exchangeCode(creds.get(platform) || {}, req.query);
     creds.set(platform, { ...tokens, connectedAt: new Date().toISOString() });
@@ -323,9 +440,9 @@ app.get('/api/connect/:platform/callback', async (req, res) => {
 
 // ── Generic Order Sync ────────────────────────────────────────────────────────
 
-app.get('/api/sync/log', (req, res) => res.json(syncLog.recent(100)));
+app.get('/api/sync/log', withTenant, (req, res) => res.json(req.syncLog.recent(100)));
 
-async function syncPlatform(platform, opts = {}) {
+async function syncPlatform(platform, opts, store, creds, syncLog) {
   const conn = registry[platform];
   if (!conn)             throw new Error(`Unknown platform: ${platform}`);
   if (!conn.fetchOrders) throw new Error(`${conn.meta.name} does not support order sync`);
@@ -341,9 +458,9 @@ async function syncPlatform(platform, opts = {}) {
   return { platform, at: new Date().toISOString(), fetched: raw.length, added };
 }
 
-// Sync all connected platforms — must be registered before /:platform route
-app.post('/api/sync/all', async (req, res) => {
-  const results = await Promise.allSettled(PLATFORMS.map(p => syncPlatform(p)));
+app.post('/api/sync/all', withTenant, async (req, res) => {
+  const { store, creds, syncLog } = req;
+  const results = await Promise.allSettled(PLATFORMS.map(p => syncPlatform(p, {}, store, creds, syncLog)));
   const out = {};
   for (const [i, r] of results.entries()) {
     const p     = PLATFORMS[i];
@@ -356,7 +473,21 @@ app.post('/api/sync/all', async (req, res) => {
   res.json(out);
 });
 
-// ── Sales Lead Digger — Apollo proxy + persistence ────────────────────────────
+app.post('/api/sync/:platform', withTenant, async (req, res) => {
+  const { platform } = req.params;
+  if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
+  try {
+    const entry = await syncPlatform(platform, req.body, req.store, req.creds, req.syncLog);
+    req.syncLog.push(entry);
+    res.json(entry);
+  } catch (e) {
+    const entry = { platform, at: new Date().toISOString(), error: e.message };
+    req.syncLog.push(entry);
+    res.status(500).json(entry);
+  }
+});
+
+// ── Sales Lead Digger ─────────────────────────────────────────────────────────
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1';
 const { randomUUID } = require('crypto');
@@ -399,15 +530,18 @@ async function apolloRequest(path, body) {
   return res.json();
 }
 
-// Search + auto-save session and all leads to DB
 app.post('/api/leads/search', async (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const tenantId = session?.tenantId || 'default';
+  const db = getCtx(tenantId).db;
+
   const { vertical = 'logistics', location = '', seniority = '', size = '', page = 1 } = req.body || {};
   const vp = VERTICAL_PARAMS[vertical];
   if (!vp) return res.status(400).json({ error: 'Unknown vertical. Use "logistics" or "interior".' });
 
   const payload = {
-    per_page: 10,
-    page,
+    per_page: 10, page,
     person_titles: vp.person_titles,
     q_organization_keyword_tags: vp.q_organization_keyword_tags,
   };
@@ -419,14 +553,12 @@ app.post('/api/leads/search', async (req, res) => {
     const data    = await apolloRequest('/mixed_people/api_search', payload);
     const rawList = data.people || [];
 
-    // Create session record
     const sessionId = randomUUID();
     db.prepare(`INSERT INTO lead_sessions (id, vertical, location, seniority, company_size, total_found, lead_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(sessionId, vertical, location, seniority, size,
            data.pagination?.total_entries || rawList.length, rawList.length);
 
-    // Upsert each lead (skip if already saved from a previous search)
     const insertLead = db.prepare(`
       INSERT INTO leads (apollo_id, session_id, vertical, first_name, last_name_masked,
         title, company, location, linkedin_url, photo_url, has_email, has_phone)
@@ -439,74 +571,54 @@ app.post('/api/leads/search', async (req, res) => {
       const company  = p.organization?.name || '';
       const location = [p.city, p.state, p.country].filter(Boolean).join(', ');
       const lead = {
-        apollo_id:       p.id,
-        session_id:      sessionId,
-        vertical,
-        first_name:      p.first_name || '',
-        last_name_masked: p.last_name_obfuscated || p.last_name || '',
-        title:           p.title || '',
-        company,
-        location,
-        linkedin_url:    p.linkedin_url || '',
-        photo_url:       p.photo_url || '',
-        has_email:       p.has_email ? 1 : 0,
-        has_phone:       p.has_direct_phone === 'Yes' ? 1 : 0,
+        apollo_id: p.id, session_id: sessionId, vertical,
+        first_name: p.first_name || '', last_name_masked: p.last_name_obfuscated || p.last_name || '',
+        title: p.title || '', company, location,
+        linkedin_url: p.linkedin_url || '', photo_url: p.photo_url || '',
+        has_email: p.has_email ? 1 : 0, has_phone: p.has_direct_phone === 'Yes' ? 1 : 0,
       };
       insertLead.run(lead);
       return {
-        id:           p.id,
-        session_id:   sessionId,
-        first_name:   p.first_name || '',
-        last_name:    p.last_name_obfuscated || '',
-        name:         `${p.first_name || ''} ${p.last_name_obfuscated || ''}`.trim(),
-        title:        p.title || '',
-        company,
-        location,
-        linkedin_url: p.linkedin_url || '',
-        photo_url:    p.photo_url || '',
-        has_email:    !!p.has_email,
-        has_phone:    p.has_direct_phone === 'Yes',
-        enriched:     false,
-        contacted:    false,
+        id: p.id, session_id: sessionId,
+        first_name: p.first_name || '', last_name: p.last_name_obfuscated || '',
+        name: `${p.first_name || ''} ${p.last_name_obfuscated || ''}`.trim(),
+        title: p.title || '', company, location,
+        linkedin_url: p.linkedin_url || '', photo_url: p.photo_url || '',
+        has_email: !!p.has_email, has_phone: p.has_direct_phone === 'Yes',
+        enriched: false, contacted: false,
       };
     });
 
-    res.json({
-      session_id: sessionId,
-      people,
-      total:       data.pagination?.total_entries || rawList.length,
-      vertical,
-      description: vp.description,
-    });
+    res.json({ session_id: sessionId, people, total: data.pagination?.total_entries || rawList.length, vertical, description: vp.description });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Enrich a lead — saves email/phone to DB
 app.post('/api/leads/enrich', async (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const db = getCtx(session?.tenantId || 'default').db;
+
   const { id, first_name, last_name, organization_name } = req.body || {};
   if (!id && !first_name) return res.status(400).json({ error: 'Provide Apollo id or first_name' });
   try {
-    const data = await apolloRequest('/people/match', {
-      id, first_name, last_name, organization_name,
-      reveal_personal_emails: false,
-    });
+    const data = await apolloRequest('/people/match', { id, first_name, last_name, organization_name, reveal_personal_emails: false });
     const p     = data.person || {};
     const email = p.email || '';
     const phone = p.sanitized_phone || p.phone_numbers?.[0]?.sanitized_number || '';
-
-    db.prepare(`UPDATE leads SET email=?, phone=?, enriched=1, enriched_at=datetime('now')
-                WHERE apollo_id=?`).run(email, phone, id);
-
+    db.prepare(`UPDATE leads SET email=?, phone=?, enriched=1, enriched_at=datetime('now') WHERE apollo_id=?`).run(email, phone, id);
     res.json({ email, phone, email_status: p.email_status || '' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Mark a lead as contacted (toggle + timestamp + optional note)
 app.patch('/api/leads/:id/contact', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const db = getCtx(session?.tenantId || 'default').db;
+
   const { contacted, contact_note = '', note = '' } = req.body || {};
   const resolvedNote = contact_note || note;
   const now = contacted ? new Date().toISOString() : '';
@@ -517,15 +629,21 @@ app.patch('/api/leads/:id/contact', (req, res) => {
   res.json({ ok: true, contacted: !!lead.contacted, contacted_at: lead.contacted_at });
 });
 
-// Update contact note on a lead
 app.patch('/api/leads/:id/note', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const db = getCtx(session?.tenantId || 'default').db;
+
   const { note = '' } = req.body || {};
   db.prepare('UPDATE leads SET contact_note=? WHERE apollo_id=?').run(note, req.params.id);
   res.json({ ok: true });
 });
 
-// Get all saved leads (optionally filter by vertical / contacted)
 app.get('/api/leads', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const db = getCtx(session?.tenantId || 'default').db;
+
   const { vertical, contacted, session_id } = req.query;
   let sql    = 'SELECT l.*, s.dug_at as session_dug_at FROM leads l JOIN lead_sessions s ON l.session_id=s.id WHERE 1=1';
   const args = [];
@@ -536,45 +654,66 @@ app.get('/api/leads', (req, res) => {
   res.json(db.prepare(sql).all(...args));
 });
 
-// Get all past search sessions
 app.get('/api/leads/sessions', (req, res) => {
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  const db = getCtx(session?.tenantId || 'default').db;
   res.json(db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
 });
 
-// Admin — delete all leads + sessions
-app.delete('/api/leads', requireAuth, (req, res) => {
+app.delete('/api/leads', withTenant, (req, res) => {
   const { confirm } = req.body || {};
   if (confirm !== 'DELETE ALL') return res.status(400).json({ error: 'Send confirm: "DELETE ALL"' });
-  db.prepare('DELETE FROM leads').run();
-  db.prepare('DELETE FROM lead_sessions').run();
+  req.db.prepare('DELETE FROM leads').run();
+  req.db.prepare('DELETE FROM lead_sessions').run();
   res.json({ ok: true });
 });
 
-// Sync a single platform
-app.post('/api/sync/:platform', async (req, res) => {
-  const { platform } = req.params;
-  if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
-  try {
-    const entry = await syncPlatform(platform, req.body);
-    syncLog.push(entry);
-    res.json(entry);
-  } catch (e) {
-    const entry = { platform, at: new Date().toISOString(), error: e.message };
-    syncLog.push(entry);
-    res.status(500).json(entry);
-  }
-});
-
-// ── Generic Webhooks — route to connector's handleWebhook if it has one ───────
+// ── Generic Webhooks ──────────────────────────────────────────────────────────
 
 app.post('/webhook/:platform', (req, res) => {
   const { platform } = req.params;
   const conn = registry[platform];
   if (!conn) return res.status(400).json({ error: 'Unknown platform' });
+  // Determine tenant from a header or default
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const { creds } = getCtx(tenantId);
   if (conn.handleWebhook) {
     try { conn.handleWebhook(req.body, req.headers, creds.get(platform) || {}); } catch {}
   }
   res.json({ ok: true });
+});
+
+// ── Super-admin tenant management ─────────────────────────────────────────────
+
+app.get('/api/superadmin/tenants', withSuperAdmin, (req, res) => {
+  res.json(mainDb.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all());
+});
+
+app.post('/api/superadmin/tenants', withSuperAdmin, (req, res) => {
+  const { id, name, plan = 'basic' } = req.body || {};
+  if (!id || !name) return res.status(400).json({ error: 'id and name are required' });
+  if (!/^[a-z0-9-]+$/.test(id)) return res.status(400).json({ error: 'Tenant id must be lowercase alphanumeric with hyphens' });
+  try {
+    mainDb.prepare('INSERT INTO tenants (id, name, plan) VALUES (?, ?, ?)').run(id, name, plan);
+    // Touch the tenant DB to initialise it
+    getTenantDb(id);
+    res.status(201).json({ ok: true, id, name, plan });
+  } catch (e) {
+    res.status(409).json({ error: `Tenant '${id}' already exists` });
+  }
+});
+
+app.patch('/api/superadmin/tenants/:id', withSuperAdmin, (req, res) => {
+  const { id } = req.params;
+  const { name, plan, active } = req.body || {};
+  const tenant = mainDb.prepare('SELECT id FROM tenants WHERE id = ?').get(id);
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+  if (name   !== undefined) mainDb.prepare('UPDATE tenants SET name=?   WHERE id=?').run(name, id);
+  if (plan   !== undefined) mainDb.prepare('UPDATE tenants SET plan=?   WHERE id=?').run(plan, id);
+  if (active !== undefined) mainDb.prepare('UPDATE tenants SET active=? WHERE id=?').run(active ? 1 : 0, id);
+  if (active === false || active === 0) auth.revokeAllTenantSessions(id);
+  res.json(mainDb.prepare('SELECT * FROM tenants WHERE id=?').get(id));
 });
 
 // ── OAuth result pages ────────────────────────────────────────────────────────

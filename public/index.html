@@ -569,6 +569,7 @@ a:hover{text-decoration:underline}
           <div class="slk-title">Restricted Access</div>
           <p class="slk-sub">Enter the admin password to view the sync audit log.</p>
           <div id="synclog-err" class="slk-err" style="display:none"></div>
+          <input id="synclog-tenant" class="slk-input" type="text" placeholder="Tenant ID (default if blank)" autocomplete="off" style="margin-bottom:6px">
           <input id="synclog-pw" class="slk-input" type="password" placeholder="Password" autocomplete="current-password">
           <button id="synclog-unlock-btn" class="slk-btn">Unlock</button>
         </div>
@@ -599,6 +600,7 @@ a:hover{text-decoration:underline}
           <div class="slk-title">Administrator Access</div>
           <p class="slk-sub">Enter the admin password to manage data and settings.</p>
           <div id="admin-err" class="slk-err" style="display:none"></div>
+          <input id="admin-tenant" class="slk-input" type="text" placeholder="Tenant ID (default if blank)" autocomplete="off" style="margin-bottom:6px">
           <input id="admin-pw" class="slk-input" type="password" placeholder="Password" autocomplete="current-password">
           <button id="admin-unlock-btn" class="slk-btn" onclick="unlockAdmin()">Unlock</button>
         </div>
@@ -883,6 +885,7 @@ const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
 
 // ── STORAGE ───────────────────────────────────────────────────────────────────
 let authToken=localStorage.getItem('idealoms_token')||null;
+let currentTenantId=localStorage.getItem('idealoms_tenant')||'default';
 let orders=(()=>{try{const s=localStorage.getItem('od');return s?JSON.parse(s):SEED.map(o=>({...o}));}catch{return SEED.map(o=>({...o}));}})();
 const save=()=>{try{localStorage.setItem('od',JSON.stringify(orders));}catch{}};
 let connCreds=(()=>{try{return JSON.parse(localStorage.getItem('idealoms_creds')||'{}');}catch{return {};}})();
@@ -900,13 +903,16 @@ const $=id=>document.getElementById(id);
 // ── SYNC LOG AUTH ─────────────────────────────────────────────────────────────
 async function unlockSyncLog(){
   const pw=$('synclog-pw').value.trim();
+  const tid=($('synclog-tenant').value.trim()||'default');
   if(!pw){setSyncLogErr('Enter your password.');return;}
   const btn=$('synclog-unlock-btn');btn.disabled=true;btn.textContent='Checking…';
   try{
-    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenantId:tid,password:pw})});
     const j=await r.json();
     if(!r.ok){setSyncLogErr(j.error||'Incorrect password.');return;}
-    authToken=j.token;localStorage.setItem('idealoms_token',authToken);
+    authToken=j.token;currentTenantId=tid;
+    localStorage.setItem('idealoms_token',authToken);
+    localStorage.setItem('idealoms_tenant',currentTenantId);
     serverAvailable=true;adminUnlocked=true;
     showSyncLogContent();await renderSyncLog();
   }catch(e){
@@ -929,6 +935,7 @@ function showSyncLogLock(){
   $('synclog-content').style.display='none';
   $('synclog-err').style.display='none';
   $('synclog-pw').value='';
+  $('synclog-tenant').value=currentTenantId!=='default'?currentTenantId:'';
 }
 
 async function initSyncLogPage(){
@@ -950,13 +957,16 @@ async function initSyncLogPage(){
 // ── ADMINISTRATOR ─────────────────────────────────────────────────────────────
 async function unlockAdmin(){
   const pw=$('admin-pw').value.trim();
+  const tid=($('admin-tenant').value.trim()||'default');
   if(!pw){setAdminErr('Enter your password.');return;}
   const btn=$('admin-unlock-btn');btn.disabled=true;btn.textContent='Checking…';
   try{
-    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenantId:tid,password:pw})});
     const j=await r.json();
     if(!r.ok){setAdminErr(j.error||'Incorrect password.');return;}
-    authToken=j.token;localStorage.setItem('idealoms_token',authToken);
+    authToken=j.token;currentTenantId=tid;
+    localStorage.setItem('idealoms_token',authToken);
+    localStorage.setItem('idealoms_tenant',currentTenantId);
     serverAvailable=true;adminUnlocked=true;
     showAdminContent();await loadAdminStats();
   }catch(e){
@@ -979,6 +989,7 @@ function showAdminLock(){
   const c=$('admin-content');c.style.display='none';
   $('admin-err').style.display='none';
   $('admin-pw').value='';
+  $('admin-tenant').value=currentTenantId!=='default'?currentTenantId:'';
 }
 
 async function initAdminPage(){
