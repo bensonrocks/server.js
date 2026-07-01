@@ -44,6 +44,26 @@
   function hdrs() {
     return { 'x-session-id': SESSION_ID, 'Content-Type': 'application/json' };
   }
+  async function authDownload(url, filename) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) { alert('Download failed: ' + (await resp.text())); return; }
+      const blob = await resp.blob();
+      const a    = document.createElement('a');
+      a.href     = URL.createObjectURL(blob);
+      a.download = filename || 'download';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    } catch (e) { alert('Download error: ' + e.message); }
+  }
+  // Delegate clicks on auth-gated download links so fetch (not browser nav) is used
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-auth-dl]');
+    if (!el) return;
+    e.preventDefault();
+    authDownload(el.dataset.authDl, el.dataset.authDlName || '');
+  });
   function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
@@ -624,11 +644,11 @@
         setUploadStatus('success', `Scanned ${data.rowCount} line(s) across ${data.orders.length} order(s) from photo.`);
         const dlBtn  = document.getElementById('uploadDownloadBtn');
         const dlWrap = document.getElementById('uploadDownloadWrap');
-        dlBtn.href = `/api/download-wms/${data.batchId}`;
-        dlBtn.setAttribute('download', `WMS_PhotoScan_${new Date().toISOString().slice(0,10)}.xlsx`);
+        const _ocrDlUrl  = `/api/download-wms/${data.batchId}`;
+        const _ocrDlName = `WMS_PhotoScan_${new Date().toISOString().slice(0,10)}.xlsx`;
+        dlBtn.onclick = () => { authDownload(_ocrDlUrl, _ocrDlName); unlockTabsAfterDownload(); };
         dlWrap.classList.remove('hidden');
         lockTabsForDownload();
-        dlBtn.addEventListener('click', unlockTabsAfterDownload, { once: true });
         renderUploadList(data.orders);
         renderBreakdowns(data.orders);
         fetchAndRenderStats();
@@ -683,8 +703,9 @@
       // Show download button immediately and lock tabs until downloaded
       const dlBtn  = document.getElementById('uploadDownloadBtn');
       const dlWrap = document.getElementById('uploadDownloadWrap');
-      dlBtn.href   = `/api/download-wms/${data.batchId}`;
-      dlBtn.setAttribute('download', `WMS_${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+      const _dlUrl  = `/api/download-wms/${data.batchId}`;
+      const _dlName = `WMS_${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+      dlBtn.onclick = () => { authDownload(_dlUrl, _dlName); unlockTabsAfterDownload(); };
       // Add lock note if not already present
       let noteEl = document.getElementById('downloadLockNote');
       if (!noteEl) {
@@ -696,7 +717,6 @@
       }
       dlWrap.classList.remove('hidden');
       lockTabsForDownload();
-      dlBtn.addEventListener('click', unlockTabsAfterDownload, { once: true });
 
       renderUploadList(data.orders);
       renderBreakdowns(data.orders);
@@ -1025,8 +1045,8 @@
             <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
             ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
-            ${isDone && slipUrl ? `<a class="btn-slip" href="${esc(slipUrl)}" download title="Download completion slip">&#128196; Slip</a>` : ''}
-            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" href="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" download="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
+            ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
+            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" data-auth-dl="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" data-auth-dl-name="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
             ${kfBtn}
             ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
@@ -1649,9 +1669,14 @@
     printWaybillTimer = tick;
 
     const dlBtn = document.getElementById('printNowBtn');
-    dlBtn.href = `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`;
-    dlBtn.setAttribute('download', `${order.order_number}_waybill.pdf`);
-    dlBtn.onclick = () => { clearInterval(tick); closePrintWaybillModal(); };
+    dlBtn.onclick = () => {
+      clearInterval(tick);
+      closePrintWaybillModal();
+      authDownload(
+        `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`,
+        `${order.order_number}_waybill.pdf`
+      );
+    };
     document.getElementById('printSkipBtn').onclick = () => {
       clearInterval(tick);
       closePrintWaybillModal();
@@ -2081,7 +2106,7 @@
               </div>
             </div>
             <div class="log-card-actions">
-              <a class="btn-download" href="/api/download-wms/${esc(b.id)}" download>&#8681; WMS</a>
+              <a class="btn-download" data-auth-dl="/api/download-wms/${esc(b.id)}" data-auth-dl-name="WMS_${esc(b.filename || b.id)}.xlsx">&#8681; WMS</a>
               <button class="btn-attach-waybill" data-id="${esc(b.id)}" data-count="${b.order_count}" title="Upload waybill PDF for this batch">&#128196; Waybill PDF</button>
               <button class="btn-del-batch" data-id="${esc(b.id)}" data-name="${esc(b.filename)}" title="Delete entire batch">&#128465; Delete Batch</button>
             </div>
