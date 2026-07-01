@@ -409,6 +409,76 @@ a:hover{text-decoration:underline}
 .am-person-detail{font-size:12px;color:#64748b}
 .am-credit{background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:9px 12px;font-size:12px;color:#854d0e;font-weight:600;text-align:center}
 .am-actions{display:flex;gap:8px;justify-content:flex-end}
+/* ── CLIENT DASHBOARD ──────────────────────────────────────────────── */
+.cd-header{display:flex;align-items:center;gap:12px;background:#fff;border-radius:12px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:16px;flex-wrap:wrap}
+.cd-header h2{font-size:17px;font-weight:800;margin:0;flex:1;min-width:120px}
+.cd-client-sel{padding:8px 12px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;font-weight:600;color:#1d4ed8;background:#eff6ff;cursor:pointer;min-width:160px}
+.cd-client-sel:focus{outline:2px solid #1d4ed8}
+.cd-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+@media(max-width:700px){.cd-kpis{grid-template-columns:repeat(2,1fr)}}
+.cd-kpi{background:#fff;border-radius:12px;padding:16px 18px;box-shadow:0 1px 4px rgba(0,0,0,.07);display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden}
+.cd-kpi-accent{position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:4px 0 0 4px}
+.cd-kpi-lbl{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.cd-kpi-val{font-size:24px;font-weight:800;color:#0f172a;line-height:1.1}
+.cd-kpi-sub{font-size:11px;color:#94a3b8}
+.cd-kpi-icon{position:absolute;right:14px;top:14px;font-size:22px;opacity:.18}
+.cd-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+@media(max-width:750px){.cd-row2{grid-template-columns:1fr}}
+.cd-card{background:#fff;border-radius:12px;padding:16px 18px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.cd-card-title{font-size:13px;font-weight:800;color:#0f172a;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+/* Status funnel */
+.cd-funnel{display:flex;flex-direction:column;gap:7px}
+.cd-funnel-row{display:flex;align-items:center;gap:10px}
+.cd-funnel-lbl{font-size:12px;font-weight:600;width:80px;color:#334155;flex-shrink:0}
+.cd-funnel-bar-wrap{flex:1;background:#f1f5f9;border-radius:99px;height:14px;overflow:hidden}
+.cd-funnel-bar{height:100%;border-radius:99px;transition:width .5s ease}
+.cd-funnel-n{font-size:12px;font-weight:700;color:#64748b;width:28px;text-align:right;flex-shrink:0}
+/* Channel chart */
+.cd-ch-list{display:flex;flex-direction:column;gap:8px}
+.cd-ch-row{display:flex;align-items:center;gap:10px}
+.cd-ch-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.cd-ch-name{font-size:12px;font-weight:600;color:#334155;width:76px;flex-shrink:0}
+.cd-ch-bar-wrap{flex:1;background:#f1f5f9;border-radius:99px;height:10px;overflow:hidden}
+.cd-ch-bar{height:100%;border-radius:99px}
+.cd-ch-val{font-size:11px;font-weight:700;color:#64748b;min-width:52px;text-align:right;flex-shrink:0}
+/* Top products */
+.cd-prod-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.cd-prod-tbl th{text-align:left;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;padding:0 6px 8px}
+.cd-prod-tbl td{padding:6px 6px;border-top:1px solid #f1f5f9;color:#334155;vertical-align:middle}
+.cd-prod-rank{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#f1f5f9;font-size:10px;font-weight:800;color:#64748b}
+.cd-prod-rank.top{background:#fef3c7;color:#92400e}
+/* Recent orders mini */
+.cd-recent-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9}
+.cd-recent-row:last-child{border-bottom:none}
+.cd-recent-id{font-size:11px;font-weight:700;color:#1d4ed8;width:88px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cd-recent-name{flex:1;font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cd-recent-date{font-size:11px;color:#94a3b8;flex-shrink:0;width:68px;text-align:right}
+/* Attention items */
+.cd-alert-row{display:flex;align-items:flex-start;gap:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.cd-alert-row:last-child{margin-bottom:0}
+.cd-alert-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.cd-alert-body{flex:1;font-size:12px;color:#7c2d12}
+.cd-alert-id{font-weight:700;color:#c2410c}
+/* Order trend bars */
+.cd-trend{display:flex;align-items:flex-end;gap:4px;height:60px;margin-top:8px}
+.cd-trend-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+.cd-trend-bar{width:100%;background:#bfdbfe;border-radius:3px 3px 0 0;min-height:2px;transition:height .4s ease}
+.cd-trend-lbl{font-size:9px;color:#94a3b8;white-space:nowrap}
+.cd-trend-n{font-size:9px;color:#64748b;font-weight:700}
+/* Fulfillment pill */
+.cd-fulfill-ring{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px}
+.cd-fulfill-pct{font-size:28px;font-weight:800;color:#16a34a}
+.cd-fulfill-lbl{font-size:11px;color:#64748b}
+.cd-two-mini{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+@media(max-width:600px){.cd-two-mini{grid-template-columns:1fr}}
+.cd-empty{text-align:center;padding:32px;color:#94a3b8;font-size:13px}
+.cd-badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.badge-delivered{background:#dcfce7;color:#166534}
+.badge-shipped{background:#dbeafe;color:#1e40af}
+.badge-processing{background:#fef3c7;color:#92400e}
+.badge-confirmed{background:#ede9fe;color:#5b21b6}
+.badge-pending{background:#f1f5f9;color:#475569}
+.badge-cancelled{background:#fee2e2;color:#991b1b}
 </style>
 </head>
 <body>
@@ -456,6 +526,9 @@ a:hover{text-decoration:underline}
         </li>
         <li class="nav-li" id="nav-admin" onclick="switchPage('admin')">
           <span>&#9881;&#65039;</span><span class="nav-name">Administrator</span>
+        </li>
+        <li class="nav-li" id="nav-client-dash" onclick="switchPage('client-dash')">
+          <span>&#128196;</span><span class="nav-name">Client Report</span>
         </li>
 
       </ul>
@@ -656,6 +729,97 @@ a:hover{text-decoration:underline}
           </div>
 
         </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════
+           CLIENT DASHBOARD PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-client-dash" class="page">
+
+        <!-- Header + client selector -->
+        <div class="cd-header">
+          <h2>&#128196; Client Report</h2>
+          <select id="cd-client-sel" class="cd-client-sel" onchange="renderClientDash()">
+            <option value="">All Clients</option>
+          </select>
+          <select id="cd-period-sel" class="cd-client-sel" onchange="renderClientDash()">
+            <option value="all">All Time</option>
+            <option value="30">Last 30 days</option>
+            <option value="7">Last 7 days</option>
+          </select>
+        </div>
+
+        <!-- KPI row -->
+        <div class="cd-kpis">
+          <div class="cd-kpi">
+            <div class="cd-kpi-accent" style="background:#1d4ed8"></div>
+            <div class="cd-kpi-icon">&#128230;</div>
+            <div class="cd-kpi-lbl">Total Orders</div>
+            <div class="cd-kpi-val" id="cd-n-orders">—</div>
+            <div class="cd-kpi-sub" id="cd-n-orders-sub">&nbsp;</div>
+          </div>
+          <div class="cd-kpi">
+            <div class="cd-kpi-accent" style="background:#16a34a"></div>
+            <div class="cd-kpi-icon">&#128176;</div>
+            <div class="cd-kpi-lbl">Gross Revenue</div>
+            <div class="cd-kpi-val" id="cd-gmv">—</div>
+            <div class="cd-kpi-sub" id="cd-gmv-sub">&nbsp;</div>
+          </div>
+          <div class="cd-kpi">
+            <div class="cd-kpi-accent" style="background:#7c3aed"></div>
+            <div class="cd-kpi-icon">&#128179;</div>
+            <div class="cd-kpi-lbl">Avg Order Value</div>
+            <div class="cd-kpi-val" id="cd-aov">—</div>
+            <div class="cd-kpi-sub" id="cd-aov-sub">&nbsp;</div>
+          </div>
+          <div class="cd-kpi">
+            <div class="cd-kpi-accent" style="background:#ea580c"></div>
+            <div class="cd-kpi-icon">&#128666;</div>
+            <div class="cd-kpi-lbl">Fulfillment Rate</div>
+            <div class="cd-kpi-val" id="cd-fulfill">—</div>
+            <div class="cd-kpi-sub" id="cd-fulfill-sub">&nbsp;</div>
+          </div>
+        </div>
+
+        <!-- Status breakdown + Channel revenue -->
+        <div class="cd-row2">
+          <div class="cd-card">
+            <div class="cd-card-title">&#128200; Order Status Breakdown</div>
+            <div id="cd-status-bars" class="cd-funnel"></div>
+          </div>
+          <div class="cd-card">
+            <div class="cd-card-title">&#127760; Revenue by Channel</div>
+            <div id="cd-channel-bars" class="cd-ch-list"></div>
+          </div>
+        </div>
+
+        <!-- Order trend + Top products -->
+        <div class="cd-row2">
+          <div class="cd-card">
+            <div class="cd-card-title">&#128201; Order Volume (Last 14 Days)</div>
+            <div id="cd-trend" class="cd-trend"></div>
+          </div>
+          <div class="cd-card">
+            <div class="cd-card-title">&#127942; Top SKUs</div>
+            <table class="cd-prod-tbl">
+              <thead><tr><th>#</th><th>SKU / Product</th><th style="text-align:right">Units</th><th style="text-align:right">Revenue</th></tr></thead>
+              <tbody id="cd-top-skus"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Recent orders + Needs attention -->
+        <div class="cd-row2">
+          <div class="cd-card">
+            <div class="cd-card-title">&#128336; Recent Orders</div>
+            <div id="cd-recent"></div>
+          </div>
+          <div class="cd-card">
+            <div class="cd-card-title">&#9888;&#65039; Needs Attention</div>
+            <div id="cd-attention"></div>
+          </div>
+        </div>
+
       </div>
 
     </main>
@@ -1270,10 +1434,11 @@ function buildWaybillHTML(o){
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog','admin'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','admin','client-dash'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')initSyncLogPage();
   if(page==='admin')initAdminPage();
+  if(page==='client-dash')initClientDash();
   closeSidebar();
 }
 
@@ -1750,6 +1915,167 @@ $('btn-sample').onclick=()=>{$('em-body').value=SAMPLE;$('em-from').value='order
 $('status-sel').onchange=e=>{F.status=e.target.value;render();};
 let st;const onSearch=e=>{clearTimeout(st);st=setTimeout(()=>{F.search=e.target.value.trim().toLowerCase();render();},220);};
 $('search').oninput=onSearch;$('search-mob').oninput=onSearch;
+
+// ── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
+
+const STATUS_COLORS={pending:'#94a3b8',confirmed:'#7c3aed',processing:'#f59e0b',shipped:'#2563eb',delivered:'#16a34a',cancelled:'#ef4444'};
+const CH_COLORS=['#1d4ed8','#7c3aed','#ea580c','#16a34a','#0891b2','#db2777','#ca8a04','#64748b'];
+
+let cdAllOrders=[];
+
+async function initClientDash(){
+  // Populate client selector
+  let src=orders;
+  if(serverAvailable){
+    try{const r=await fetch(`${SERVER}/api/orders`,{headers:{'Authorization':`Bearer ${authToken}`}});if(r.ok)src=await r.json();}catch{}
+  }
+  cdAllOrders=src;
+  const sel=$('cd-client-sel');
+  const existing=new Set(Array.from(sel.options).map(o=>o.value).filter(v=>v));
+  const clients=[...new Set(src.map(o=>o.clientId))].sort();
+  clients.forEach(cid=>{
+    if(!existing.has(cid)){
+      const o=document.createElement('option');
+      o.value=cid;
+      const name=src.find(x=>x.clientId===cid)?.clientName||cid;
+      o.textContent=name;
+      sel.appendChild(o);
+    }
+  });
+  renderClientDash();
+}
+
+function cdFilterOrders(){
+  const cid=$('cd-client-sel').value;
+  const days=parseInt($('cd-period-sel').value)||0;
+  let os=cdAllOrders;
+  if(cid)os=os.filter(o=>o.clientId===cid);
+  if(days){
+    const cutoff=new Date(Date.now()-days*86400000).toISOString();
+    os=os.filter(o=>o.orderDate>=cutoff);
+  }
+  return os;
+}
+
+function fmtMoney(n,cur='USD'){
+  if(n>=1000000)return (cur==='USD'?'$':'')+(n/1000000).toFixed(1)+'M';
+  if(n>=1000)return (cur==='USD'?'$':'')+(n/1000).toFixed(1)+'K';
+  return (cur==='USD'?'$':'')+n.toFixed(2);
+}
+function fmtDate(iso){
+  const d=new Date(iso);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+}
+
+function renderClientDash(){
+  const os=cdFilterOrders();
+  if(!os.length){
+    ['cd-n-orders','cd-gmv','cd-aov','cd-fulfill'].forEach(id=>{$(id).textContent='0';});
+    $('cd-status-bars').innerHTML='<div class="cd-empty">No orders found</div>';
+    $('cd-channel-bars').innerHTML='<div class="cd-empty">No data</div>';
+    $('cd-trend').innerHTML='';
+    $('cd-top-skus').innerHTML='<tr><td colspan="4" class="cd-empty">No data</td></tr>';
+    $('cd-recent').innerHTML='<div class="cd-empty">No orders</div>';
+    $('cd-attention').innerHTML='<div class="cd-empty">All clear!</div>';
+    return;
+  }
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  const gmv=os.reduce((s,o)=>s+o.total,0);
+  const aov=gmv/os.length;
+  const fulfilled=os.filter(o=>o.status==='delivered'||o.status==='shipped').length;
+  const fulfillPct=Math.round(fulfilled/os.length*100);
+  const pending=os.filter(o=>o.status==='pending').length;
+  const cur=os[0]?.currency||'USD';
+
+  $('cd-n-orders').textContent=os.length;
+  $('cd-n-orders-sub').textContent=`${pending} pending`;
+  $('cd-gmv').textContent=fmtMoney(gmv,cur);
+  $('cd-gmv-sub').textContent=`Incl. shipping & tax`;
+  $('cd-aov').textContent=fmtMoney(aov,cur);
+  $('cd-aov-sub').textContent=`Median: ${fmtMoney(os.map(o=>o.total).sort((a,b)=>a-b)[Math.floor(os.length/2)]||0,cur)}`;
+  $('cd-fulfill').textContent=fulfillPct+'%';
+  $('cd-fulfill-sub').style.color=fulfillPct>=80?'#16a34a':fulfillPct>=50?'#d97706':'#dc2626';
+  $('cd-fulfill-sub').textContent=`${fulfilled} of ${os.length} shipped/delivered`;
+
+  // ── Status bars ────────────────────────────────────────────────────────────
+  const bySt={};
+  ['pending','confirmed','processing','shipped','delivered','cancelled'].forEach(s=>{bySt[s]=0;});
+  os.forEach(o=>{bySt[o.status]=(bySt[o.status]||0)+1;});
+  const maxSt=Math.max(...Object.values(bySt),1);
+  const stLabels={pending:'Pending',confirmed:'Confirmed',processing:'Processing',shipped:'Shipped',delivered:'Delivered',cancelled:'Cancelled'};
+  $('cd-status-bars').innerHTML=Object.entries(bySt).map(([st,n])=>`
+    <div class="cd-funnel-row">
+      <span class="cd-funnel-lbl">${stLabels[st]}</span>
+      <div class="cd-funnel-bar-wrap"><div class="cd-funnel-bar" style="width:${n?Math.max(Math.round(n/maxSt*100),4):0}%;background:${STATUS_COLORS[st]||'#94a3b8'}"></div></div>
+      <span class="cd-funnel-n">${n}</span>
+    </div>`).join('');
+
+  // ── Channel revenue ────────────────────────────────────────────────────────
+  const byCh={};
+  os.forEach(o=>{if(!byCh[o.channel])byCh[o.channel]={n:0,rev:0};byCh[o.channel].n++;byCh[o.channel].rev+=o.total;});
+  const chList=Object.entries(byCh).sort((a,b)=>b[1].rev-a[1].rev);
+  const maxChRev=Math.max(...chList.map(c=>c[1].rev),1);
+  $('cd-channel-bars').innerHTML=chList.map(([ch,d],i)=>`
+    <div class="cd-ch-row">
+      <span class="cd-ch-dot" style="background:${CH_COLORS[i%CH_COLORS.length]}"></span>
+      <span class="cd-ch-name">${ch}</span>
+      <div class="cd-ch-bar-wrap"><div class="cd-ch-bar" style="width:${Math.max(Math.round(d.rev/maxChRev*100),4)}%;background:${CH_COLORS[i%CH_COLORS.length]}"></div></div>
+      <span class="cd-ch-val">${fmtMoney(d.rev,cur)} <span style="color:#cbd5e1;font-weight:400">(${d.n})</span></span>
+    </div>`).join('');
+
+  // ── 14-day order trend ──────────────────────────────────────────────────────
+  const days14=[];
+  for(let i=13;i>=0;i--){const d=new Date(Date.now()-i*86400000);days14.push({date:d.toISOString().slice(0,10),n:0});}
+  os.forEach(o=>{const d=o.orderDate?.slice(0,10);const slot=days14.find(x=>x.date===d);if(slot)slot.n++;});
+  const maxN=Math.max(...days14.map(d=>d.n),1);
+  $('cd-trend').innerHTML=days14.map(d=>`
+    <div class="cd-trend-col">
+      <div class="cd-trend-n">${d.n||''}</div>
+      <div class="cd-trend-bar" style="height:${d.n?Math.max(Math.round(d.n/maxN*50),4):2}px;background:${d.n?'#1d4ed8':'#e2e8f0'}"></div>
+      <div class="cd-trend-lbl">${d.date.slice(5)}</div>
+    </div>`).join('');
+
+  // ── Top SKUs ───────────────────────────────────────────────────────────────
+  const skuMap={};
+  os.forEach(o=>(o.items||[]).forEach(it=>{const k=it.sku||it.name;if(!skuMap[k])skuMap[k]={name:it.name||k,units:0,rev:0};skuMap[k].units+=it.qty||1;skuMap[k].rev+=it.qty*(it.unitPrice||0);}));
+  const topSkus=Object.values(skuMap).sort((a,b)=>b.units-a.units).slice(0,6);
+  $('cd-top-skus').innerHTML=topSkus.length?topSkus.map((s,i)=>`
+    <tr>
+      <td><span class="cd-prod-rank ${i<3?'top':''}">${i+1}</span></td>
+      <td style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${s.name}">${s.name}</td>
+      <td style="text-align:right;font-weight:700">${s.units}</td>
+      <td style="text-align:right;color:#16a34a;font-weight:700">${fmtMoney(s.rev,cur)}</td>
+    </tr>`).join('')
+    :'<tr><td colspan="4" class="cd-empty">No items</td></tr>';
+
+  // ── Recent orders ──────────────────────────────────────────────────────────
+  const recent=[...os].sort((a,b)=>b.orderDate.localeCompare(a.orderDate)).slice(0,6);
+  $('cd-recent').innerHTML=recent.map(o=>`
+    <div class="cd-recent-row">
+      <span class="cd-recent-id">${o.id}</span>
+      <span class="cd-recent-name">${o.shipping?.recipient||o.clientName}</span>
+      <span class="cd-badge badge-${o.status}">${o.status}</span>
+      <span class="cd-recent-date">${fmtDate(o.orderDate)}</span>
+    </div>`).join('');
+
+  // ── Needs attention ────────────────────────────────────────────────────────
+  const now=new Date();
+  const attention=[];
+  os.forEach(o=>{
+    const age=Math.floor((now-new Date(o.orderDate))/86400000);
+    if(o.status==='pending'&&age>=2) attention.push({o,msg:`Pending for ${age} days — needs confirmation`});
+    else if(o.status==='confirmed'&&age>=3) attention.push({o,msg:`Confirmed ${age} days ago — not yet processing`});
+    else if(o.status==='processing'&&age>=5) attention.push({o,msg:`Processing for ${age} days — check fulfillment`});
+  });
+  $('cd-attention').innerHTML=attention.length
+    ?attention.slice(0,5).map(({o,msg})=>`
+      <div class="cd-alert-row">
+        <span class="cd-alert-icon">&#9888;&#65039;</span>
+        <div class="cd-alert-body"><span class="cd-alert-id">${o.id}</span>&nbsp;${msg}<br><span style="color:#9a3412">${o.shipping?.recipient||''} &bull; ${fmtMoney(o.total,cur)}</span></div>
+      </div>`).join('')
+    :'<div class="cd-empty" style="color:#16a34a">&#10003; All orders on track</div>';
+}
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 $('synclog-unlock-btn').onclick=unlockSyncLog;
