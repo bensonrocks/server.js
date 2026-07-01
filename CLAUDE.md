@@ -40,6 +40,21 @@ Only triggered when extracted code is **7+ all-digit characters**.
 
 The 7+ all-digit guard means short numeric codes (SKUs like `5603`, batches like `533601`) are never touched. **Do not apply to SKU tokens** — SKUs must match WMS records exactly.
 
+## OCR Qty Parsing (lib/ocr-parse.js)
+
+### Qty must be found BEFORE a UOM keyword, not as rightmost integer
+`UOM_RE = /^(?:EACH|EA|PCS|PIECES|BOX|CTN|CARTON|CARTO|CARTOS|UOM)$/i`
+
+Numeric batch numbers like `533601` and `517008` are all-digits and would be mistaken for qty
+if we used rightmost-integer logic. Always prefer the integer before a UOM keyword; fall back to
+rightmost integer only when no UOM is present.
+
+### Batch/expiry extraction
+After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `BatchNo`, `ExpiryDate`.
+- Skip: `/`, UOM-like tokens, the repeated qty value
+- Take: next alphanumeric token (2+ chars) → batch number (can be pure-digit like `533601` or letters like `RT`)
+- Take: date-like token matching `\d{1,2}[/-]\w+[/-]\d{2,4}` → expiry date
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
