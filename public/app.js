@@ -78,6 +78,7 @@
     } catch (e) { alert('Error: ' + e.message); }
   }
 
+
   // Delegate clicks on auth-gated download links so fetch (not browser nav) is used
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-auth-dl]');
