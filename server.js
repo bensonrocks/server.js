@@ -47,6 +47,8 @@ async function preprocessForOcr(buffer) {
       .greyscale()
       .normalize()
       .sharpen({ sigma: 1.5, m1: 2.0, m2: 0.5 })
+      .threshold(140)   // binarize to pure black/white — eliminates grey-pixel blur
+                        // between characters that causes LSTM to hallucinate extra chars
       .png({ compressionLevel: 1 })
       .toBuffer();
   } catch {

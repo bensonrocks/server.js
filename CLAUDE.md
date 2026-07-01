@@ -8,7 +8,8 @@ All photo-based OCR (picking list and product label) goes through two stages:
 1. **Greyscale** — removes colour noise that confuses the LSTM model
 2. **Normalize** — auto-stretches histogram for better contrast on faded/dim prints
 3. **Sharpen** (`sigma 1.5, m1 2.0, m2 0.5`) — crisp text edges reduce letter-doubling artefacts (e.g. DMG→DMMG)
-4. Output as **lossless PNG** — avoids JPEG compression artefacts around text
+4. **Threshold (140)** — binarizes to pure black/white; eliminates grey pixels between characters that cause LSTM hallucinations (e.g. `H6` pixel blur → model reads `HB6`)
+5. Output as **lossless PNG** — avoids JPEG compression artefacts around text
 
 If `sharp` is unavailable the original buffer is passed through unchanged (graceful degradation).
 
