@@ -13,19 +13,19 @@ look like product codes but are shelf positions. The pattern is:
 
 This is checked and skipped **before** any token is accepted as a SKU. Do not narrow this pattern.
 
-### S/5 OCR confusion in order numbers
-OCR frequently misreads the letter `S` as the digit `5` (and similarly O→0, B→8, G→6, I→1).
-When an extracted order number is **7 or more all-digit characters**, apply `fixOcrLeadingChar()`
-which substitutes the leading digit for its letter equivalent:
-- `5` → `S`
-- `0` → `O`
-- `8` → `B`
-- `6` → `G`
-- `1` → `I`
+### OCR digit/letter confusion in order numbers (`fixOcrConfusions`)
+Only triggered when extracted code is **7+ all-digit characters**.
 
-Example: `500037495` (9 all-digit chars) → `S00037495`
+**Leading fix** (`OCR_LEAD_MAP`): `5→S`, `8→B`, `6→G`
+- `0` and `1` are NOT in the leading map — leading zeros are genuine in many codes.
+- Example: `500037495` → `S00037495`
 
-This is applied after both the inline and two-line order number extraction paths.
+**Trailing fix** (`OCR_TRAIL_MAP`): `2→Z` only
+- Z is routinely misread as 2 by OCR engines.
+- Applied only when leading fix does not fire (they never both apply).
+- Example: `010720262` → `01072026Z`
+
+**Do NOT merge these into one map or apply both at once.** Leading takes priority; trailing only fires if leading did not match.
 
 ## Git
 
