@@ -288,6 +288,7 @@
         <button class="admin-nav-btn active" data-admin-tab="batches">&#128196; Upload History</button>
         <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
         <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
+        <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
         <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
         <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
@@ -361,6 +362,50 @@
           <p style="font-size:.82rem">Drag &amp; drop XLSX / CSV or <button class="link-btn" id="masterBrowseBtn">browse</button></p>
         </div>
         <div id="masterUploadStatus" class="status-bar hidden"></div>
+      </div>
+
+      <!-- Tab: Labels -->
+      <div class="admin-tab hidden" id="adminTab-labels">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Carrier Label Templates</div>
+            <div class="admin-section-sub">Customize the printed label for each delivery carrier. Matched by carrier name on each order.</div>
+          </div>
+        </div>
+        <div id="labelTemplateList" class="label-tpl-list"></div>
+        <div class="admin-add-card">
+          <div class="admin-add-title">Add / Edit Carrier Template</div>
+          <div class="label-tpl-form">
+            <div class="label-tpl-form-row">
+              <div class="form-group">
+                <label>Carrier Name <span class="cfg-req">*</span></label>
+                <input type="text" id="ltpCarrier" placeholder="e.g. SingPost" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label>Header Text</label>
+                <input type="text" id="ltpHeaderText" placeholder="Default: carrier name" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label>Header Background</label>
+                <input type="color" id="ltpHeaderBg" value="#000000" />
+              </div>
+              <div class="form-group">
+                <label>Header Text Colour</label>
+                <input type="color" id="ltpHeaderColor" value="#ffffff" />
+              </div>
+            </div>
+            <div class="label-tpl-checks">
+              <label><input type="checkbox" id="ltpShowBarcode"  checked /> Show barcode</label>
+              <label><input type="checkbox" id="ltpShowAddress"  checked /> Show address</label>
+              <label><input type="checkbox" id="ltpShowTel"      checked /> Show telephone</label>
+              <label><input type="checkbox" id="ltpShowItems"    checked /> Show items</label>
+              <label><input type="checkbox" id="ltpShowPlatform" checked /> Show platform</label>
+              <label><input type="checkbox" id="ltpShowOrderNo"  checked /> Show order no.</label>
+            </div>
+            <button class="btn-primary" id="saveLabelTplBtn">&#10003; Save Template</button>
+          </div>
+        </div>
+        <div id="labelTplStatus" class="status-bar hidden"></div>
       </div>
 
       <!-- Tab: Email -->

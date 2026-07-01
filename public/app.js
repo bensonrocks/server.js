@@ -1187,7 +1187,18 @@
 
   function printWaybillLabel(order) {
     const carrier     = (order.carrier || '').trim();
-    const header      = carrier || 'IDEALOMS';
+    // Match a saved carrier template (case-insensitive)
+    const tpl = (_labelTemplates || []).find(t => t.carrier.toLowerCase() === carrier.toLowerCase()) || null;
+    const headerText  = tpl ? (tpl.header_text || tpl.carrier) : (carrier || 'IDEALOMS');
+    const headerBg    = tpl ? (tpl.header_bg    || '#000000')  : '#000000';
+    const headerColor = tpl ? (tpl.header_color || '#ffffff')  : '#ffffff';
+    const showBarcode  = tpl ? tpl.show_barcode  !== false : true;
+    const showAddress  = tpl ? tpl.show_address  !== false : true;
+    const showTel      = tpl ? tpl.show_tel      !== false : true;
+    const showItems    = tpl ? tpl.show_items    !== false : true;
+    const showPlatform = tpl ? tpl.show_platform !== false : true;
+    const showOrderNo  = tpl ? tpl.show_order_no !== false : true;
+
     const customer    = order.customer_name    || '—';
     const address     = order.delivery_address || '—';
     const platform    = order.platform
@@ -1205,8 +1216,7 @@
       `<tr><td>${esc(String(l.sku))}</td><td class="qty">${l.qty}</td></tr>`
     ).join('');
 
-    // Barcode section — only if there's a waybill number
-    const barcodeSection = waybill ? `
+    const barcodeSection = (showBarcode && waybill) ? `
   <div class="barcode-section">
     <svg id="barcode"></svg>
     <div class="barcode-text">${esc(waybill)}</div>
@@ -1215,6 +1225,29 @@
     const printerHint = printerName
       ? `<div class="printer-hint">&#128438; Print to: <strong>${esc(printerName)}</strong></div>`
       : '';
+
+    const addressSection = showAddress ? `
+  <div class="section">
+    <div class="section-title">Deliver To</div>
+    <div class="customer-name">${esc(customer)}</div>
+    <div class="address">${esc(address)}</div>
+    ${showTel && tel ? `<div class="tel">Tel: ${esc(tel)}</div>` : ''}
+  </div>` : '';
+
+    const itemsSection = showItems ? `
+  <div class="section">
+    <div class="section-title">Items</div>
+    <table class="items">
+      <thead><tr><th>SKU / Item</th><th class="qty">Qty</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+  </div>` : '';
+
+    const footerRow = (showPlatform || showOrderNo) ? `
+  <div class="footer-row">
+    ${showOrderNo  ? `<div class="order-no">Order: ${esc(order.order_number)}</div>` : '<div></div>'}
+    ${showPlatform && platform ? `<div class="platform-badge">${esc(platform)}</div>` : ''}
+  </div>` : '';
 
     const html = `<!DOCTYPE html>
 <html>
@@ -1229,7 +1262,7 @@
   .printer-hint { text-align:center; padding: 3px 0 5px; font-size: 8pt; color: #555; }
   @media print { .printer-hint { display: none !important; } }
   .label-header {
-    background: #000; color: #fff;
+    background: ${headerBg}; color: ${headerColor};
     text-align: center; font-size: 17pt; font-weight: 900;
     letter-spacing: 2px; padding: 3mm 2mm; margin-bottom: 2.5mm;
     text-transform: uppercase;
@@ -1253,32 +1286,18 @@
 </head>
 <body>
   ${printerHint}
-  <div class="label-header">${esc(header)}</div>
+  <div class="label-header">${esc(headerText)}</div>
 
   ${barcodeSection}
 
-  <div class="section">
-    <div class="section-title">Deliver To</div>
-    <div class="customer-name">${esc(customer)}</div>
-    <div class="address">${esc(address)}</div>
-    ${tel ? `<div class="tel">Tel: ${esc(tel)}</div>` : ''}
-  </div>
+  ${addressSection}
 
-  <div class="section">
-    <div class="section-title">Items</div>
-    <table class="items">
-      <thead><tr><th>SKU / Item</th><th class="qty">Qty</th></tr></thead>
-      <tbody>${itemRows}</tbody>
-    </table>
-  </div>
+  ${itemsSection}
 
-  <div class="footer-row">
-    <div class="order-no">Order: ${esc(order.order_number)}</div>
-    ${platform ? `<div class="platform-badge">${esc(platform)}</div>` : ''}
-  </div>
+  ${footerRow}
 
   <script>
-    ${waybill ? `JsBarcode("#barcode","${waybill.replace(/"/g,'\\"')}",{format:"CODE128",width:2.8,height:60,displayValue:false,margin:4});` : ''}
+    ${(showBarcode && waybill) ? `JsBarcode("#barcode","${waybill.replace(/"/g,'\\"')}",{format:"CODE128",width:2.8,height:60,displayValue:false,margin:4});` : ''}
     window.onload = function(){ setTimeout(function(){ window.print(); }, 300); };
   <\/script>
 </body>
@@ -1764,11 +1783,14 @@
     }
   }
 
+  let _labelTemplates = null;
+
   function renderMasterActions() {
     document.getElementById('masterActionsSection').classList.remove('hidden');
     document.getElementById('adminLockedState').classList.add('hidden');
     loadUserList();
     loadEmailConfig();
+    loadLabelTemplates();
   }
 
   // Admin tab switching
@@ -1952,6 +1974,115 @@
       document.getElementById('cfgToEmail').value   = '';
       showEmailStatus('Email settings cleared.', 'success');
     } catch (err) { showEmailStatus(err.message, 'error'); }
+  });
+
+  // ── Label Templates ──────────────────────────────────────────────────────────
+  async function loadLabelTemplates() {
+    try {
+      const resp = await fetch('/api/master/label-templates', { headers: { 'x-master-key': LOG_PASSWORD } });
+      _labelTemplates = await resp.json();
+      renderLabelTemplateList();
+    } catch (e) {
+      _labelTemplates = [];
+    }
+  }
+
+  function renderLabelTemplateList() {
+    const el = document.getElementById('labelTemplateList');
+    if (!el) return;
+    if (!_labelTemplates || _labelTemplates.length === 0) {
+      el.innerHTML = '<p class="hint" style="padding:.5rem 0 1rem">No templates saved yet. Add one below.</p>';
+      return;
+    }
+    el.innerHTML = _labelTemplates.map(t => `
+      <div class="label-tpl-row">
+        <span class="label-tpl-swatch" style="background:${esc(t.header_bg)};color:${esc(t.header_color)}">${esc(t.header_text || t.carrier)}</span>
+        <span class="label-tpl-name">${esc(t.carrier)}</span>
+        <span class="label-tpl-flags">
+          ${t.show_barcode   ? '&#128211; barcode' : ''}
+          ${t.show_address   ? '&#127968; addr'    : ''}
+          ${t.show_tel       ? '&#128222; tel'      : ''}
+          ${t.show_items     ? '&#128230; items'   : ''}
+          ${t.show_platform  ? '&#127760; platform' : ''}
+          ${t.show_order_no  ? '&#35; order'        : ''}
+        </span>
+        <div class="label-tpl-actions">
+          <button class="btn-sm btn-secondary ltp-edit-btn" data-carrier="${esc(t.carrier)}">Edit</button>
+          <button class="btn-sm btn-danger-sm ltp-del-btn"  data-carrier="${esc(t.carrier)}">&#215;</button>
+        </div>
+      </div>`).join('');
+  }
+
+  function showLabelTplStatus(msg, type) {
+    const el = document.getElementById('labelTplStatus');
+    el.textContent = msg;
+    el.className   = `status-bar ${type}`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 3500);
+  }
+
+  document.getElementById('saveLabelTplBtn').addEventListener('click', async () => {
+    const carrier = document.getElementById('ltpCarrier').value.trim();
+    if (!carrier) { showLabelTplStatus('Carrier name is required.', 'error'); return; }
+    const body = {
+      carrier,
+      header_text  : document.getElementById('ltpHeaderText').value.trim(),
+      header_bg    : document.getElementById('ltpHeaderBg').value,
+      header_color : document.getElementById('ltpHeaderColor').value,
+      show_barcode : document.getElementById('ltpShowBarcode').checked,
+      show_address : document.getElementById('ltpShowAddress').checked,
+      show_tel     : document.getElementById('ltpShowTel').checked,
+      show_items   : document.getElementById('ltpShowItems').checked,
+      show_platform: document.getElementById('ltpShowPlatform').checked,
+      show_order_no: document.getElementById('ltpShowOrderNo').checked,
+    };
+    try {
+      const resp = await fetch('/api/master/label-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error);
+      showLabelTplStatus(`Template for "${carrier}" saved.`, 'success');
+      document.getElementById('ltpCarrier').value     = '';
+      document.getElementById('ltpHeaderText').value  = '';
+      document.getElementById('ltpHeaderBg').value    = '#000000';
+      document.getElementById('ltpHeaderColor').value = '#ffffff';
+      ['ltpShowBarcode','ltpShowAddress','ltpShowTel','ltpShowItems','ltpShowPlatform','ltpShowOrderNo']
+        .forEach(id => { document.getElementById(id).checked = true; });
+      await loadLabelTemplates();
+    } catch (err) { showLabelTplStatus(err.message, 'error'); }
+  });
+
+  document.getElementById('labelTemplateList').addEventListener('click', async e => {
+    const editBtn = e.target.closest('.ltp-edit-btn');
+    const delBtn  = e.target.closest('.ltp-del-btn');
+    if (editBtn) {
+      const t = (_labelTemplates || []).find(x => x.carrier === editBtn.dataset.carrier);
+      if (!t) return;
+      document.getElementById('ltpCarrier').value     = t.carrier;
+      document.getElementById('ltpHeaderText').value  = t.header_text || '';
+      document.getElementById('ltpHeaderBg').value    = t.header_bg    || '#000000';
+      document.getElementById('ltpHeaderColor').value = t.header_color || '#ffffff';
+      document.getElementById('ltpShowBarcode').checked  = t.show_barcode  !== false;
+      document.getElementById('ltpShowAddress').checked  = t.show_address  !== false;
+      document.getElementById('ltpShowTel').checked      = t.show_tel      !== false;
+      document.getElementById('ltpShowItems').checked    = t.show_items    !== false;
+      document.getElementById('ltpShowPlatform').checked = t.show_platform !== false;
+      document.getElementById('ltpShowOrderNo').checked  = t.show_order_no !== false;
+      document.getElementById('ltpCarrier').focus();
+    }
+    if (delBtn) {
+      const carrier = delBtn.dataset.carrier;
+      if (!confirm(`Delete template for "${carrier}"?`)) return;
+      try {
+        await fetch(`/api/master/label-templates/${encodeURIComponent(carrier)}`, {
+          method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
+        });
+        await loadLabelTemplates();
+        showLabelTplStatus(`Template for "${carrier}" deleted.`, 'success');
+      } catch (err) { showLabelTplStatus(err.message, 'error'); }
+    }
   });
 
   // Master: export status report

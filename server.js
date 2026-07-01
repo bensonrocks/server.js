@@ -50,6 +50,7 @@ const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 const DB_FILE     = path.join(DATA_DIR, 'db.json');
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
+const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
 
@@ -1390,6 +1391,53 @@ app.delete('/api/master/keyfields-template', (req, res) => {
     fs.unlinkSync(KEYFIELDS_TEMPLATE_FILE);
   } catch {}
   res.json({ ok: true, headers: KEYFIELDS_HEADERS });
+});
+
+// ── Master: Label templates ──────────────────────────────────────────────────
+function readLabelTemplates() {
+  try { return JSON.parse(fs.readFileSync(LABEL_TEMPLATES_FILE, 'utf8')); }
+  catch { return []; }
+}
+function writeLabelTemplates(templates) {
+  fs.writeFileSync(LABEL_TEMPLATES_FILE, JSON.stringify(templates, null, 2));
+}
+
+app.get('/api/master/label-templates', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(readLabelTemplates());
+});
+
+app.post('/api/master/label-templates', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { carrier, header_text, header_bg, header_color,
+          show_barcode, show_items, show_address, show_tel,
+          show_platform, show_order_no } = req.body;
+  if (!carrier) return res.status(400).json({ error: 'carrier is required' });
+  const templates = readLabelTemplates();
+  const idx = templates.findIndex(t => t.carrier.toLowerCase() === carrier.toLowerCase());
+  const entry = {
+    carrier      : String(carrier).trim(),
+    header_text  : String(header_text || carrier).trim(),
+    header_bg    : header_bg    || '#000000',
+    header_color : header_color || '#ffffff',
+    show_barcode : show_barcode  !== false,
+    show_items   : show_items    !== false,
+    show_address : show_address  !== false,
+    show_tel     : show_tel      !== false,
+    show_platform: show_platform !== false,
+    show_order_no: show_order_no !== false,
+  };
+  if (idx >= 0) templates[idx] = entry; else templates.push(entry);
+  writeLabelTemplates(templates);
+  res.json({ ok: true });
+});
+
+app.delete('/api/master/label-templates/:carrier', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const remaining = readLabelTemplates()
+    .filter(t => t.carrier.toLowerCase() !== req.params.carrier.toLowerCase());
+  writeLabelTemplates(remaining);
+  res.json({ ok: true });
 });
 
 // ── Master: User management ──────────────────────────────────────────────────
