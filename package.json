@@ -8,11 +8,11 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "bwip-js": "^3.5.0",
+    "bwip-js": "^4.11.1",
     "csv-parse": "^5.5.3",
     "csv-stringify": "^6.4.4",
-    "docxtemplater": "^3.49.0",
-    "docxtemplater-image-module-free": "^3.16.0",
+    "docxtemplater": "^3.69.0",
+    "docxtemplater-image-module-free": "^1.1.1",
     "express": "^4.18.2",
     "jsbarcode": "^3.12.3",
     "multer": "^2.2.0",
