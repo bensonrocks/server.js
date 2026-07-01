@@ -730,6 +730,28 @@ function errPage(platform, msg) {
 </head><body><div class="box"><div class="ico">&#10007;</div><div class="ttl">Connection Failed</div><p class="sub">${platform}</p><div class="err">${msg}</div><a href="/" class="btn">Back to IdealOMS</a></div></body></html>`;
 }
 
+// ── Auto-sync ─────────────────────────────────────────────────────────────────
+
+const SYNC_INTERVAL_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES) || 15) * 60 * 1000;
+
+async function autoSyncAll() {
+  const tenants = mainDb.prepare('SELECT id FROM tenants WHERE active=1').all();
+  for (const { id: tenantId } of tenants) {
+    const { store, creds, syncLog } = getCtx(tenantId);
+    for (const platform of PLATFORMS) {
+      const c = creds.get(platform);
+      if (!c?.accessToken) continue;
+      try {
+        const entry = await syncPlatform(platform, {}, store, creds, syncLog);
+        syncLog.push(entry);
+        if (entry.added > 0) console.log(`  [auto-sync] ${tenantId}/${platform}: +${entry.added} orders`);
+      } catch (e) {
+        syncLog.push({ platform, at: new Date().toISOString(), error: e.message });
+      }
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
@@ -739,4 +761,9 @@ app.listen(PORT, () => {
             : process.platform === 'darwin' ? `open "${url}"`
             : `xdg-open "${url}"`;
   exec(cmd);
+
+  // Kick off auto-sync: run immediately, then on interval
+  autoSyncAll().catch(() => {});
+  setInterval(autoSyncAll, SYNC_INTERVAL_MS);
+  console.log(`  Auto-sync every ${SYNC_INTERVAL_MS / 60000} min (set SYNC_INTERVAL_MINUTES to change)\n`);
 });
