@@ -70,6 +70,36 @@ app.get('/api/orders/:id', (req, res) => {
   res.json(order);
 });
 
+app.patch('/api/orders/:id', (req, res) => {
+  const { status, notes, source, shipping } = req.body || {};
+  try {
+    const updated = store.updateOrder(req.params.id, { status, notes, source, shipping });
+    res.json(updated);
+  } catch (e) {
+    res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.get('/api/orders/:id/waybill', async (req, res) => {
+  const order = store.getOrder(req.params.id);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  const { type, externalId } = order.source || {};
+  const conn = registry[type];
+  if (!conn?.fetchWaybill) return res.status(404).json({ error: 'Waybill not available for this order type' });
+
+  const c = creds.get(type);
+  if (!c?.accessToken) return res.status(400).json({ error: `${conn.meta.name} not connected — check Connections page` });
+
+  try {
+    const result = await conn.fetchWaybill(c, externalId, order);
+    if (result.url) store.updateOrder(order.id, { source: { waybillUrl: result.url } });
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.post('/api/orders/ingest-email', (req, res) => {
   const { body, subject, from } = req.body || {};
   if (!body) return res.status(400).json({ error: 'Email body is required' });
