@@ -5,11 +5,11 @@
 ### Location codes must NEVER become SKUs
 Warehouse bin/location codes like `AB-005001-A`, `AB-006-001-B`, `BC-003-035`, `AC-007-003-B`, `DMG-2`, `BIN-1`
 look like product codes but are shelf positions. The pattern is:
-- 1–3 letter prefix
+- **1–4 letter prefix** (up to 4 because OCR can double a letter: `DMG` → `DMMG`)
 - 1–3 hyphen-separated digit groups (**1–6 digits each** — note: 1 digit minimum, e.g. `DMG-2`)
 - optional hyphen + 1–2 letter suffix
 
-`LOCATION_CODE_PAT = /^[A-Z]{1,3}(-\d{1,6}){1,3}(-[A-Z]{1,2})?$/i`
+`LOCATION_CODE_PAT = /^[A-Z]{1,4}(-\d{1,6}){1,3}(-[A-Z]{1,2})?$/i`
 
 This is checked and skipped **before** any token is accepted as a SKU. Do not narrow this pattern.
 
