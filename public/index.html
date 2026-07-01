@@ -84,6 +84,21 @@ a:hover{text-decoration:underline}
 .amt{font-weight:700}
 .empty td{text-align:center;padding:48px;color:#94a3b8;font-size:15px}
 
+/* ── FULFILLMENT ── */
+.ff-toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 18px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:16px}
+.ff-toolbar-l,.ff-toolbar-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ff-sel-bar{font-size:13px;color:#64748b;padding:4px 0}
+.ff-tbl-wrap{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.ff-tbl{width:100%;border-collapse:collapse}
+.ff-tbl th{background:#f8fafc;padding:9px 12px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#64748b;border-bottom:2px solid #e2e8f0}
+.ff-tbl td{padding:9px 12px;font-size:13px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.ff-tbl tbody tr:hover{background:#f8fafc;cursor:pointer}
+.ff-tbl tbody tr.ff-sel td{background:#eff6ff}
+.ff-oid{font-family:monospace;font-size:11px;font-weight:700;color:#2563eb}
+.ff-items-cell{max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#64748b;font-size:12px}
+.ff-date-cell{color:#94a3b8;font-size:12px;white-space:nowrap}
+.ff-empty{text-align:center;padding:48px;color:#94a3b8;font-size:14px}
+
 /* ── BADGES ── */
 .bdg{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap}
 .b-email{background:#eef2ff;color:#4f46e5}.b-shopify{background:#dcfce7;color:#16a34a}
@@ -530,6 +545,9 @@ a:hover{text-decoration:underline}
         <li class="nav-li" id="nav-client-dash" onclick="switchPage('client-dash')">
           <span>&#128196;</span><span class="nav-name">Client Report</span>
         </li>
+        <li class="nav-li" id="nav-fulfillment" onclick="switchPage('fulfillment')">
+          <span>&#128230;</span><span class="nav-name">Fulfillment</span>
+        </li>
 
       </ul>
       <div class="sb-label" style="margin-top:8px">Clients</div>
@@ -639,6 +657,42 @@ a:hover{text-decoration:underline}
             <div class="pt-sync" id="tile-shopify-sync"></div>
             <div class="pt-cta">Configure &rsaquo;</div>
           </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════
+           FULFILLMENT PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-fulfillment" class="page">
+        <div class="page-hdr">
+          <h2>&#128230; Fulfillment</h2>
+          <p>Select orders to print a picklist, pack slips, or shipping manifest.</p>
+        </div>
+        <div class="ff-toolbar">
+          <div class="ff-toolbar-l">
+            <select id="ff-status-filter" class="filter-sel" onchange="renderFulfillment()">
+              <option value="confirmed,processing,pending">Ready to pick (confirmed / processing / pending)</option>
+              <option value="confirmed">Confirmed only</option>
+              <option value="processing">Processing only</option>
+              <option value="shipped">Shipped</option>
+              <option value="all">All statuses</option>
+            </select>
+            <select id="ff-client-filter" class="filter-sel" onchange="renderFulfillment()">
+              <option value="">All Clients</option>
+            </select>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">
+              <input type="checkbox" id="ff-select-all" onchange="toggleAllFulfill(this.checked)"> Select all
+            </label>
+          </div>
+          <div class="ff-toolbar-r">
+            <span id="ff-summary" class="ff-sel-bar"></span>
+            <button id="ff-btn-pick" class="btn btn-s btn-sm" disabled onclick="printPicklist()">&#128203; Picklist</button>
+            <button id="ff-btn-pack" class="btn btn-s btn-sm" disabled onclick="printPackSlips()">&#128196; Pack Slips</button>
+            <button id="ff-btn-mani" class="btn btn-p btn-sm" disabled onclick="printManifest()">&#128203; Manifest</button>
+          </div>
+        </div>
+        <div class="ff-tbl-wrap">
+          <div id="ff-table-body"></div>
         </div>
       </div>
 
@@ -1448,11 +1502,12 @@ function buildWaybillHTML(o){
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog','admin','client-dash'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','admin','client-dash','fulfillment'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')initSyncLogPage();
   if(page==='admin')initAdminPage();
   if(page==='client-dash')initClientDash();
+  if(page==='fulfillment')initFulfillment();
   closeSidebar();
 }
 
@@ -2018,6 +2073,271 @@ function fmtMoney(n,cur='USD'){
 function fmtDate(iso){
   const d=new Date(iso);
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+}
+
+// ── FULFILLMENT ───────────────────────────────────────────────────────────────
+
+let ffSelected=new Set();
+
+function initFulfillment(){
+  const clients=[...new Set(orders.map(o=>o.clientName))].sort();
+  const sel=$('ff-client-filter');
+  sel.innerHTML='<option value="">All Clients</option>'+clients.map(c=>`<option value="${c}">${c}</option>`).join('');
+  ffSelected.clear();
+  renderFulfillment();
+}
+
+function ffGetFiltered(){
+  const sv=$('ff-status-filter').value;
+  const statuses=sv==='all'?null:new Set(sv.split(','));
+  const client=$('ff-client-filter').value;
+  return orders.filter(o=>{
+    if(statuses&&!statuses.has(o.status))return false;
+    if(client&&o.clientName!==client)return false;
+    return true;
+  });
+}
+
+function renderFulfillment(){
+  const filtered=ffGetFiltered();
+  const filteredIds=new Set(filtered.map(o=>o.id));
+  for(const id of ffSelected)if(!filteredIds.has(id))ffSelected.delete(id);
+  const wrap=$('ff-table-body');
+  if(!filtered.length){
+    wrap.innerHTML='<div class="ff-empty">No orders match the selected filters.</div>';
+    ffUpdateSummary();return;
+  }
+  wrap.innerHTML=`<table class="ff-tbl"><thead><tr>
+    <th style="width:36px"><input type="checkbox" id="ff-cb-hdr" onchange="toggleAllFulfill(this.checked)"></th>
+    <th>Order ID</th><th>Client</th><th>Channel</th><th>Items</th><th>Status</th><th>Date</th>
+  </tr></thead><tbody>${filtered.map(o=>{
+    const sel=ffSelected.has(o.id);
+    const itemStr=o.items.map(i=>`${i.qty}× ${i.name}`).join(', ');
+    return `<tr class="ff-row${sel?' ff-sel':''}" data-id="${o.id}" onclick="ffToggleRow('${o.id}',this)">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="ff-cb" ${sel?'checked':''} onchange="ffToggleRow('${o.id}',this.closest('tr'),this.checked)"></td>
+      <td><span class="ff-oid">${o.id}</span></td>
+      <td style="font-weight:600">${o.clientName}</td>
+      <td><span class="bdg b-${o.channel}">${CHANNEL_LABELS[o.channel]||o.channel}</span></td>
+      <td class="ff-items-cell" title="${itemStr}">${itemStr}</td>
+      <td><span class="sts s-${o.status}">${cap(o.status)}</span></td>
+      <td class="ff-date-cell">${fmtDate(o.orderDate)}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
+  ffUpdateSummary();
+}
+
+function ffToggleRow(id,row,force){
+  const cb=row.querySelector('.ff-cb');
+  const on=force!==undefined?force:!ffSelected.has(id);
+  on?ffSelected.add(id):ffSelected.delete(id);
+  row.classList.toggle('ff-sel',on);
+  if(cb)cb.checked=on;
+  ffUpdateSummary();
+}
+
+function toggleAllFulfill(on){
+  const filtered=ffGetFiltered();
+  filtered.forEach(o=>on?ffSelected.add(o.id):ffSelected.delete(o.id));
+  document.querySelectorAll('.ff-cb').forEach(cb=>cb.checked=on);
+  document.querySelectorAll('.ff-row').forEach(r=>r.classList.toggle('ff-sel',on));
+  const hdr=$('ff-cb-hdr');if(hdr)hdr.checked=on;
+  ffUpdateSummary();
+}
+
+function ffUpdateSummary(){
+  const sel=[...ffSelected];
+  const selOrders=orders.filter(o=>ffSelected.has(o.id));
+  const totalItems=selOrders.reduce((s,o)=>s+o.items.reduce((ss,i)=>ss+i.qty,0),0);
+  $('ff-summary').textContent=sel.length?`${sel.length} order${sel.length>1?'s':''} · ${totalItems} items`:'';
+  ['ff-btn-pick','ff-btn-pack','ff-btn-mani'].forEach(id=>{const b=$(id);if(b)b.disabled=!sel.length;});
+}
+
+// ── PICKLIST ──────────────────────────────────────────────────────────────────
+
+function printPicklist(){
+  const selOrders=orders.filter(o=>ffSelected.has(o.id));
+  if(!selOrders.length)return;
+
+  // Group by SKU
+  const bySkuMap=new Map();
+  for(const o of selOrders){
+    for(const item of o.items){
+      const key=item.sku||item.name;
+      if(!bySkuMap.has(key))bySkuMap.set(key,{sku:item.sku||'—',name:item.name,totalQty:0,orders:[]});
+      const r=bySkuMap.get(key);
+      r.totalQty+=item.qty;
+      r.orders.push({orderId:o.id,qty:item.qty,client:o.clientName});
+    }
+  }
+  const rows=[...bySkuMap.values()].sort((a,b)=>b.totalQty-a.totalQty);
+  const now=new Date().toLocaleString('en-GB');
+  const totalItems=rows.reduce((s,r)=>s+r.totalQty,0);
+
+  const html=`<!DOCTYPE html><html><head><title>Picklist</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:20px}
+h1{font-size:18px;font-weight:800;margin-bottom:2px}
+.meta{font-size:11px;color:#555;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;margin-bottom:20px}
+th{background:#1e293b;color:#fff;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+td{padding:7px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top}
+tr:nth-child(even) td{background:#f8fafc}
+.sku{font-family:monospace;font-weight:700;color:#1e293b}
+.qty{font-size:18px;font-weight:800;text-align:center;width:60px}
+.chk{width:36px;text-align:center}
+.chk-box{display:inline-block;width:20px;height:20px;border:2px solid #94a3b8;border-radius:4px}
+.orders-list{font-size:11px;color:#555;margin-top:3px}
+.footer{font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;margin-top:8px}
+@media print{body{padding:10px}.no-print{display:none}}
+</style></head><body>
+<h1>&#128203; PICK LIST</h1>
+<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; Total items to pick: ${totalItems}</div>
+<table><thead><tr>
+  <th class="chk">&#10003;</th>
+  <th>SKU</th>
+  <th>Item Name</th>
+  <th style="text-align:center">Qty to Pick</th>
+  <th>Order(s)</th>
+</tr></thead><tbody>
+${rows.map((r,i)=>`<tr>
+  <td class="chk"><span class="chk-box"></span></td>
+  <td><span class="sku">${r.sku}</span></td>
+  <td>${r.name}</td>
+  <td class="qty">${r.totalQty}</td>
+  <td><div>${r.orders.map(o=>`<strong>${o.orderId}</strong> &times;${o.qty} (${o.client})`).join('<br>')}</div></td>
+</tr>`).join('')}
+</tbody></table>
+<div class="footer">IdealOMS &mdash; Picklist &mdash; ${now}</div>
+<div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print Picklist</button></div>
+</body></html>`;
+
+  const w=window.open('','_blank','width=900,height=700');
+  w.document.write(html);w.document.close();
+  setTimeout(()=>w.print(),500);
+}
+
+// ── PACK SLIPS ────────────────────────────────────────────────────────────────
+
+function printPackSlips(){
+  const selOrders=orders.filter(o=>ffSelected.has(o.id));
+  if(!selOrders.length)return;
+  const now=new Date().toLocaleString('en-GB');
+
+  const slips=selOrders.map(o=>{
+    const addr=[o.shipping.addressLine1,o.shipping.addressLine2,o.shipping.city,o.shipping.state,o.shipping.zip,o.shipping.country].filter(Boolean).join(', ');
+    const itemRows=o.items.map(i=>`<tr><td style="font-family:monospace;font-size:11px">${i.sku||'—'}</td><td>${i.name}</td><td style="text-align:center;font-weight:700">${i.qty}</td><td style="text-align:right">$${(i.unitPrice*i.qty).toFixed(2)}</td></tr>`).join('');
+    const totalQty=o.items.reduce((s,i)=>s+i.qty,0);
+    return `<div class="slip">
+      <div class="slip-hdr">
+        <div><div class="slip-co">IdealOMS</div><div class="slip-sub">Pack Slip</div></div>
+        <div style="text-align:right"><div class="slip-oid">${o.id}</div><div class="slip-date">${new Date(o.orderDate).toLocaleDateString('en-GB')}</div></div>
+      </div>
+      <div class="two-col">
+        <div class="box"><div class="box-lbl">Ship To</div>
+          <div style="font-weight:700">${o.shipping.recipient||'—'}</div>
+          <div>${addr||'—'}</div>
+        </div>
+        <div class="box"><div class="box-lbl">Order Info</div>
+          <div><strong>Client:</strong> ${o.clientName}</div>
+          <div><strong>Channel:</strong> ${CHANNEL_LABELS[o.channel]||o.channel}</div>
+          <div><strong>Status:</strong> ${cap(o.status)}</div>
+          ${o.notes?`<div style="margin-top:6px;color:#555;font-style:italic">${o.notes}</div>`:''}
+        </div>
+      </div>
+      <table><thead><tr><th>SKU</th><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Line Total</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+      <tfoot><tr><td colspan="2" style="text-align:right;font-weight:600;padding-top:6px">Total: ${totalQty} item${totalQty>1?'s':''}</td><td></td><td style="text-align:right;font-weight:800;font-size:14px">$${o.total.toFixed(2)}</td></tr></tfoot>
+      </table>
+    </div>`;
+  }).join('<div class="page-break"></div>');
+
+  const html=`<!DOCTYPE html><html><head><title>Pack Slips</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:12px;color:#111}
+.slip{padding:20px;max-width:680px;margin:0 auto}
+.slip-hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e293b;padding-bottom:12px;margin-bottom:14px}
+.slip-co{font-size:20px;font-weight:800;color:#1e293b}
+.slip-sub{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.6px}
+.slip-oid{font-family:monospace;font-size:16px;font-weight:800;color:#2563eb}
+.slip-date{font-size:12px;color:#64748b}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.box{background:#f8fafc;border-radius:6px;padding:10px}
+.box-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#64748b;margin-bottom:5px}
+table{width:100%;border-collapse:collapse}
+th{background:#1e293b;color:#fff;padding:6px 8px;text-align:left;font-size:11px}
+td{padding:6px 8px;border-bottom:1px solid #e2e8f0}
+tfoot td{border-top:2px solid #1e293b;border-bottom:none}
+.page-break{page-break-after:always;height:0;overflow:hidden}
+@media print{body{font-size:11px}.no-print{display:none}}
+</style></head><body>
+${slips}
+<div class="no-print" style="padding:20px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print ${selOrders.length} Pack Slip${selOrders.length>1?'s':''}</button></div>
+</body></html>`;
+
+  const w=window.open('','_blank','width=900,height=700');
+  w.document.write(html);w.document.close();
+  setTimeout(()=>w.print(),500);
+}
+
+// ── MANIFEST ─────────────────────────────────────────────────────────────────
+
+function printManifest(){
+  const selOrders=orders.filter(o=>ffSelected.has(o.id));
+  if(!selOrders.length)return;
+  const now=new Date().toLocaleString('en-GB');
+  const totalValue=selOrders.reduce((s,o)=>s+o.total,0);
+  const totalItems=selOrders.reduce((s,o)=>s+o.items.reduce((ss,i)=>ss+i.qty,0),0);
+
+  const rows=selOrders.map((o,i)=>{
+    const totalQty=o.items.reduce((s,i)=>s+i.qty,0);
+    return `<tr>
+      <td>${i+1}</td>
+      <td><span style="font-family:monospace;font-weight:700;color:#2563eb">${o.id}</span></td>
+      <td style="font-weight:600">${o.clientName}</td>
+      <td>${CHANNEL_LABELS[o.channel]||o.channel}</td>
+      <td>${o.shipping.recipient||'—'}</td>
+      <td style="text-align:center">${totalQty}</td>
+      <td style="text-align:right;font-weight:700">$${o.total.toFixed(2)}</td>
+      <td style="text-align:center"><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${o.status==='delivered'?'#dcfce7':o.status==='shipped'?'#cffafe':o.status==='processing'?'#ede9fe':'#dbeafe'};color:${o.status==='delivered'?'#166534':o.status==='shipped'?'#155e75':o.status==='processing'?'#5b21b6':'#1e40af'}">${cap(o.status)}</span></td>
+    </tr>`;
+  }).join('');
+
+  const html=`<!DOCTYPE html><html><head><title>Manifest</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:20px}
+h1{font-size:18px;font-weight:800;margin-bottom:2px}
+.meta{font-size:11px;color:#555;margin-bottom:16px}
+table{width:100%;border-collapse:collapse}
+th{background:#1e293b;color:#fff;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+td{padding:7px 10px;border-bottom:1px solid #e2e8f0;font-size:12px}
+tr:nth-child(even) td{background:#f8fafc}
+tfoot td{background:#f1f5f9;font-weight:800;border-top:2px solid #1e293b;border-bottom:none}
+.footer{font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;margin-top:16px}
+@media print{body{padding:10px}.no-print{display:none}}
+</style></head><body>
+<h1>&#128203; SHIPPING MANIFEST</h1>
+<div class="meta">Generated: ${now} &nbsp;|&nbsp; ${selOrders.length} orders &nbsp;|&nbsp; ${totalItems} total items &nbsp;|&nbsp; Total value: $${totalValue.toFixed(2)}</div>
+<table><thead><tr>
+  <th>#</th><th>Order ID</th><th>Client</th><th>Channel</th><th>Recipient</th><th style="text-align:center">Items</th><th style="text-align:right">Value</th><th style="text-align:center">Status</th>
+</tr></thead>
+<tbody>${rows}</tbody>
+<tfoot><tr>
+  <td colspan="5" style="text-align:right">TOTALS</td>
+  <td style="text-align:center">${totalItems}</td>
+  <td style="text-align:right">$${totalValue.toFixed(2)}</td>
+  <td></td>
+</tr></tfoot>
+</table>
+<div class="footer">IdealOMS &mdash; Manifest &mdash; ${now}</div>
+<div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print Manifest</button></div>
+</body></html>`;
+
+  const w=window.open('','_blank','width=1100,height=700');
+  w.document.write(html);w.document.close();
+  setTimeout(()=>w.print(),500);
 }
 
 function renderClientDash(){
