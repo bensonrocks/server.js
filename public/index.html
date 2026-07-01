@@ -255,6 +255,15 @@ a:hover{text-decoration:underline}
 .pt-sync{font-size:10px;color:#94a3b8;min-height:14px;line-height:1.4}
 .pt-cta{font-size:11px;color:#2563eb;font-weight:600;opacity:0;transition:opacity .15s}
 .plat-tile:hover .pt-cta{opacity:1}
+.api-bar{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;margin-bottom:14px;flex-wrap:wrap}
+.api-bar-lbl{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.api-chips{display:flex;gap:7px;flex:1;flex-wrap:wrap}
+.api-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;border:1.5px solid #e2e8f0;font-size:12px;font-weight:500;cursor:pointer;color:#475569;transition:all .15s;user-select:none}
+.api-chip:hover{border-color:#bfdbfe}
+.api-chip.live{border-color:#86efac;background:#f0fdf4;color:#166534}
+.api-chip.live .chip-dot{background:#22c55e;box-shadow:0 0 0 2px #bbf7d0}
+.chip-dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1;flex-shrink:0;transition:background .2s}
+.api-bar-link{font-size:11px;color:#2563eb;text-decoration:none;white-space:nowrap;margin-left:auto;font-weight:500}
 
 /* Platform logo colours */
 .logo-lazada{background:#FF6000}.logo-shopee{background:#EE4D2D}
@@ -615,6 +624,16 @@ a:hover{text-decoration:underline}
           <div class="stat"><div class="stat-lbl">Revenue</div><div class="stat-val" id="s-rev">—</div></div>
           <div class="stat"><div class="stat-lbl">Clients</div><div class="stat-val" id="s-cli">—</div></div>
           <div class="stat"><div class="stat-lbl">Channels</div><div class="stat-val" id="s-ch">—</div></div>
+        </div>
+        <div class="api-bar">
+          <span class="api-bar-lbl">Live API</span>
+          <div class="api-chips">
+            <span class="api-chip" id="chip-shopee" onclick="switchPage('connections')" title="Shopee"><span class="chip-dot" id="chip-dot-shopee"></span>Shopee</span>
+            <span class="api-chip" id="chip-lazada" onclick="switchPage('connections')" title="Lazada"><span class="chip-dot" id="chip-dot-lazada"></span>Lazada</span>
+            <span class="api-chip" id="chip-tiktok" onclick="switchPage('connections')" title="TikTok Shop"><span class="chip-dot" id="chip-dot-tiktok"></span>TikTok Shop</span>
+            <span class="api-chip" id="chip-shopify" onclick="switchPage('connections')" title="Shopify"><span class="chip-dot" id="chip-dot-shopify"></span>Shopify</span>
+          </div>
+          <a class="api-bar-link" onclick="switchPage('connections');return false" href="#">Manage &rsaquo;</a>
         </div>
         <div class="filters">
           <span class="flbl">Channel:</span>
@@ -1559,6 +1578,11 @@ function switchPage(page){
 
 // ── CONNECTION TILES ──────────────────────────────────────────────────────────
 function updateTileStatus(platform,connected,lastSync,lastSyncCount){
+  // Dashboard API bar chip
+  const chip=$(`chip-${platform}`), dot=$(`chip-dot-${platform}`);
+  if(chip){chip.classList.toggle('live',connected);chip.title=connected?`${platform} — Connected`:`${platform} — Not connected`;}
+  if(dot)dot.style.background=connected?'#22c55e':'#cbd5e1';
+  // Connections page tile
   const tile=document.querySelector(`.plat-tile[data-platform="${platform}"]`);
   if(!tile)return;
   tile.classList.toggle('connected',connected);
