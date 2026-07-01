@@ -235,6 +235,35 @@ a:hover{text-decoration:underline}
 .pc-tiktok{background:#f0f0f0;color:#111}.pc-shopify{background:#f0fdf4;color:#16a34a}
 .log-ok{color:#16a34a;font-weight:700}.log-err{color:#991b1b}
 
+/* ── ADMIN PAGE ── */
+.adm-card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.adm-card-title{font-size:13px;font-weight:800;color:#0f172a;margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px}
+.adm-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.adm-stat{background:#f8fafc;border-radius:10px;padding:14px 16px;text-align:center;border:1px solid #e2e8f0}
+.adm-stat-n{font-size:26px;font-weight:800;color:#0f172a;line-height:1}
+.adm-stat-l{font-size:11px;color:#64748b;margin-top:4px;font-weight:600}
+.adm-danger-card{border:1.5px solid #fecaca}
+.adm-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #fee2e2}
+.adm-row:last-child{border-bottom:none;padding-bottom:0}
+.adm-row:first-child{padding-top:0}
+.adm-row-info{flex:1;min-width:0}
+.adm-row-label{font-size:13px;font-weight:700;color:#0f172a;margin-bottom:2px}
+.adm-row-hint{font-size:12px;color:#64748b;line-height:1.4}
+.adm-btn-danger{padding:7px 16px;border-radius:8px;background:#fee2e2;color:#991b1b;font-size:12px;font-weight:700;border:1.5px solid #fca5a5;white-space:nowrap;transition:all .12s;flex-shrink:0}
+.adm-btn-danger:hover{background:#fecaca;border-color:#f87171}
+.adm-pw-form{display:flex;flex-direction:column;gap:9px;max-width:400px}
+.adm-confirm-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;display:flex;align-items:center;justify-content:center}
+.adm-confirm-box{background:#fff;border-radius:14px;padding:28px;width:380px;max-width:92vw;box-shadow:0 24px 64px rgba(0,0,0,.24);display:flex;flex-direction:column;gap:14px}
+.adm-confirm-title{font-size:16px;font-weight:800;color:#0f172a}
+.adm-confirm-body{font-size:13px;color:#475569;line-height:1.5}
+.adm-confirm-actions{display:flex;gap:8px;justify-content:flex-end}
+.adm-btn-cancel{padding:8px 18px;border-radius:8px;background:#e2e8f0;color:#0f172a;font-size:13px;font-weight:600}
+.adm-btn-confirm-danger{padding:8px 18px;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:700}
+.adm-btn-confirm-danger:hover{background:#b91c1c}
+.dp-btn-delete{background:#fee2e2;color:#991b1b;width:100%;justify-content:center;font-size:12px;padding:7px 14px;border-radius:8px;font-weight:700;display:flex;align-items:center;gap:6px;transition:background .12s;border:1.5px solid #fca5a5}
+.dp-btn-delete:hover{background:#fecaca}
+@media(max-width:640px){.adm-stats-grid{grid-template-columns:repeat(2,1fr)}}
+
 /* ── OVERLAY ── */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:190;backdrop-filter:blur(2px)}
 .overlay.hidden{display:none}
@@ -425,6 +454,9 @@ a:hover{text-decoration:underline}
         <li class="nav-li" id="nav-synclog" onclick="switchPage('synclog')">
           <span>&#128260;</span><span class="nav-name">Sync Log</span>
         </li>
+        <li class="nav-li" id="nav-admin" onclick="switchPage('admin')">
+          <span>&#9881;&#65039;</span><span class="nav-name">Administrator</span>
+        </li>
 
       </ul>
       <div class="sb-label" style="margin-top:8px">Clients</div>
@@ -550,6 +582,77 @@ a:hover{text-decoration:underline}
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════
+           ADMINISTRATOR PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-admin" class="page">
+        <div class="page-hdr">
+          <h2>&#9881;&#65039; Administrator</h2>
+          <p>Restricted — data management and system settings.</p>
+        </div>
+        <!-- Lock -->
+        <div id="admin-lock" class="synclog-lock">
+          <div class="slk-icon">&#128272;</div>
+          <div class="slk-title">Administrator Access</div>
+          <p class="slk-sub">Enter the admin password to manage data and settings.</p>
+          <div id="admin-err" class="slk-err" style="display:none"></div>
+          <input id="admin-pw" class="slk-input" type="password" placeholder="Password" autocomplete="current-password">
+          <button id="admin-unlock-btn" class="slk-btn" onclick="unlockAdmin()">Unlock</button>
+        </div>
+        <!-- Content -->
+        <div id="admin-content" style="display:none;display:none;flex-direction:column;gap:16px">
+
+          <!-- DB Stats -->
+          <div class="adm-card">
+            <div class="adm-card-title">&#128202; Database Overview</div>
+            <div id="adm-stats-grid" class="adm-stats-grid">
+              <div class="adm-stat"><div class="adm-stat-n" id="adm-n-orders">—</div><div class="adm-stat-l">Orders</div></div>
+              <div class="adm-stat"><div class="adm-stat-n" id="adm-n-leads">—</div><div class="adm-stat-l">Leads</div></div>
+              <div class="adm-stat"><div class="adm-stat-n" id="adm-n-syncs">—</div><div class="adm-stat-l">Sync Entries</div></div>
+              <div class="adm-stat"><div class="adm-stat-n" id="adm-n-sessions">—</div><div class="adm-stat-l">Lead Sessions</div></div>
+            </div>
+          </div>
+
+          <!-- Danger Zone -->
+          <div class="adm-card adm-danger-card">
+            <div class="adm-card-title" style="color:#991b1b">&#9888;&#65039; Danger Zone</div>
+            <div class="adm-row">
+              <div class="adm-row-info">
+                <div class="adm-row-label">Delete All Orders</div>
+                <div class="adm-row-hint">Permanently removes every order from the database. This cannot be undone.</div>
+              </div>
+              <button class="adm-btn-danger" onclick="adminDeleteAllOrders()">Delete All Orders</button>
+            </div>
+            <div class="adm-row">
+              <div class="adm-row-info">
+                <div class="adm-row-label">Clear Sync Log</div>
+                <div class="adm-row-hint">Wipes all platform sync history records.</div>
+              </div>
+              <button class="adm-btn-danger" onclick="adminClearSyncLog()">Clear Sync Log</button>
+            </div>
+            <div class="adm-row">
+              <div class="adm-row-info">
+                <div class="adm-row-label">Delete All Leads</div>
+                <div class="adm-row-hint">Removes all saved leads and search sessions.</div>
+              </div>
+              <button class="adm-btn-danger" onclick="adminDeleteAllLeads()">Delete All Leads</button>
+            </div>
+          </div>
+
+          <!-- Change Password -->
+          <div class="adm-card">
+            <div class="adm-card-title">&#128273; Change Password</div>
+            <div class="adm-pw-form">
+              <input id="adm-new-pw" class="slk-input" type="password" placeholder="New password (min. 6 characters)" autocomplete="new-password">
+              <input id="adm-confirm-pw" class="slk-input" type="password" placeholder="Confirm new password" autocomplete="new-password">
+              <div id="adm-pw-msg" style="display:none;font-size:13px;padding:8px 12px;border-radius:8px"></div>
+              <button class="slk-btn" onclick="adminChangePassword()">Update Password</button>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -788,7 +891,7 @@ let localSyncLog=[];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 const F={client:null,channel:null,status:'',search:''};
-let activeTab='email',currentPage='dashboard',serverAvailable=false,currentConnPlatform=null;
+let activeTab='email',currentPage='dashboard',serverAvailable=false,currentConnPlatform=null,adminUnlocked=false;
 const SERVER='';
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -804,7 +907,7 @@ async function unlockSyncLog(){
     const j=await r.json();
     if(!r.ok){setSyncLogErr(j.error||'Incorrect password.');return;}
     authToken=j.token;localStorage.setItem('idealoms_token',authToken);
-    serverAvailable=true;
+    serverAvailable=true;adminUnlocked=true;
     showSyncLogContent();await renderSyncLog();
   }catch(e){
     setSyncLogErr('Cannot reach server — make sure it is running.');
@@ -835,13 +938,150 @@ async function initSyncLogPage(){
       const r=await fetch(`${SERVER}/api/auth/status`,{headers:{'Authorization':`Bearer ${authToken}`}});
       if(r.ok){
         const j=await r.json();
-        if(j.authenticated){serverAvailable=true;showSyncLogContent();await renderSyncLog();return;}
+        if(j.authenticated){serverAvailable=true;adminUnlocked=true;showSyncLogContent();await renderSyncLog();return;}
       }
     }catch{}
     // Token invalid or server unreachable — clear it and show lock
     authToken=null;localStorage.removeItem('idealoms_token');
   }
   showSyncLogLock();
+}
+
+// ── ADMINISTRATOR ─────────────────────────────────────────────────────────────
+async function unlockAdmin(){
+  const pw=$('admin-pw').value.trim();
+  if(!pw){setAdminErr('Enter your password.');return;}
+  const btn=$('admin-unlock-btn');btn.disabled=true;btn.textContent='Checking…';
+  try{
+    const r=await fetch(`${SERVER}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+    const j=await r.json();
+    if(!r.ok){setAdminErr(j.error||'Incorrect password.');return;}
+    authToken=j.token;localStorage.setItem('idealoms_token',authToken);
+    serverAvailable=true;adminUnlocked=true;
+    showAdminContent();await loadAdminStats();
+  }catch(e){
+    setAdminErr('Cannot reach server — make sure it is running.');
+  }finally{btn.disabled=false;btn.textContent='Unlock';}
+}
+
+function setAdminErr(msg){
+  const e=$('admin-err');e.textContent=msg;e.style.display='block';
+  $('admin-pw').value='';$('admin-pw').focus();
+}
+
+function showAdminContent(){
+  $('admin-lock').style.display='none';
+  const c=$('admin-content');c.style.display='flex';c.style.flexDirection='column';c.style.gap='16px';
+}
+
+function showAdminLock(){
+  $('admin-lock').style.display='';
+  const c=$('admin-content');c.style.display='none';
+  $('admin-err').style.display='none';
+  $('admin-pw').value='';
+}
+
+async function initAdminPage(){
+  if(authToken){
+    try{
+      const r=await fetch(`${SERVER}/api/auth/status`,{headers:{'Authorization':`Bearer ${authToken}`}});
+      if(r.ok){
+        const j=await r.json();
+        if(j.authenticated){serverAvailable=true;adminUnlocked=true;showAdminContent();await loadAdminStats();return;}
+      }
+    }catch{}
+    authToken=null;adminUnlocked=false;localStorage.removeItem('idealoms_token');
+  }
+  showAdminLock();
+}
+
+async function loadAdminStats(){
+  try{
+    const r=await fetch(`${SERVER}/api/admin/stats`,{headers:{'Authorization':`Bearer ${authToken}`}});
+    if(!r.ok)return;
+    const j=await r.json();
+    $('adm-n-orders').textContent=j.orders??'—';
+    $('adm-n-leads').textContent=j.leads??'—';
+    $('adm-n-syncs').textContent=j.syncEntries??'—';
+    $('adm-n-sessions').textContent=j.leadSessions??'—';
+  }catch{}
+}
+
+function admConfirm(title,body,onConfirm){
+  const overlay=document.createElement('div');overlay.className='adm-confirm-modal';
+  overlay.innerHTML=`<div class="adm-confirm-box">
+    <div class="adm-confirm-title">${title}</div>
+    <div class="adm-confirm-body">${body}</div>
+    <div class="adm-confirm-actions">
+      <button class="adm-btn-cancel" id="adm-cancel">Cancel</button>
+      <button class="adm-btn-confirm-danger" id="adm-confirm">Confirm</button>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#adm-cancel').onclick=()=>overlay.remove();
+  overlay.querySelector('#adm-confirm').onclick=()=>{overlay.remove();onConfirm();};
+}
+
+async function adminDeleteAllOrders(){
+  admConfirm('Delete All Orders','This will permanently delete <strong>all orders</strong> from the database. This action cannot be undone.',async()=>{
+    try{
+      const r=await fetch(`${SERVER}/api/orders`,{method:'DELETE',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify({confirm:'DELETE ALL'})});
+      const j=await r.json();
+      if(!r.ok)throw new Error(j.error||'Failed');
+      orders=[];save();render();
+      await loadAdminStats();
+      alert(`Deleted ${j.deleted} orders.`);
+    }catch(e){alert('Error: '+e.message);}
+  });
+}
+
+async function adminDeleteAllLeads(){
+  admConfirm('Delete All Leads','This will permanently delete <strong>all saved leads and search sessions</strong>. This action cannot be undone.',async()=>{
+    try{
+      const r=await fetch(`${SERVER}/api/leads`,{method:'DELETE',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify({confirm:'DELETE ALL'})});
+      const j=await r.json();
+      if(!r.ok)throw new Error(j.error||'Failed');
+      await loadAdminStats();
+      alert('All leads deleted.');
+    }catch(e){alert('Error: '+e.message);}
+  });
+}
+
+async function adminClearSyncLog(){
+  admConfirm('Clear Sync Log','This will delete <strong>all sync history records</strong>. This action cannot be undone.',async()=>{
+    try{
+      const r=await fetch(`${SERVER}/api/sync-log`,{method:'DELETE',headers:{'Authorization':`Bearer ${authToken}`}});
+      if(!r.ok)throw new Error((await r.json()).error||'Failed');
+      localSyncLog=[];await loadAdminStats();
+      alert('Sync log cleared.');
+    }catch(e){alert('Error: '+e.message);}
+  });
+}
+
+async function adminDeleteOrder(id){
+  admConfirm('Delete Order',`Permanently delete order <strong>${id}</strong>? This cannot be undone.`,async()=>{
+    try{
+      const r=await fetch(`${SERVER}/api/orders/${encodeURIComponent(id)}`,{method:'DELETE',headers:{'Authorization':`Bearer ${authToken}`}});
+      if(!r.ok)throw new Error((await r.json()).error||'Failed');
+      orders=orders.filter(o=>o.id!==id);save();render();
+      closeDetail();
+    }catch(e){alert('Error: '+e.message);}
+  });
+}
+
+async function adminChangePassword(){
+  const np=$('adm-new-pw').value;
+  const cp=$('adm-confirm-pw').value;
+  const msg=$('adm-pw-msg');
+  const show=(text,ok)=>{msg.textContent=text;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
+  if(!np||np.length<6){show('Password must be at least 6 characters.',false);return;}
+  if(np!==cp){show('Passwords do not match.',false);return;}
+  try{
+    const r=await fetch(`${SERVER}/api/auth/change-password`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify({newPassword:np})});
+    if(!r.ok)throw new Error((await r.json()).error||'Failed');
+    show('Password updated. You will need to log in again.',true);
+    authToken=null;adminUnlocked=false;localStorage.removeItem('idealoms_token');
+    $('adm-new-pw').value='';$('adm-confirm-pw').value='';
+  }catch(e){show('Error: '+e.message,false);}
 }
 
 // ── COMPUTE ───────────────────────────────────────────────────────────────────
@@ -908,15 +1148,17 @@ function openDetail(id){
     </div>
     ${o.notes?`<div class="dp-sec"><div class="dp-sec-t">Notes</div><div class="notes-b">${o.notes}</div></div>`:''}`;
 
-  // Footer: status switcher + print waybill
+  // Footer: status switcher + print waybill + admin delete
   const STATUSES = ['pending','confirmed','processing','shipped','delivered','cancelled'];
   const statusBtns = STATUSES.map(s=>`<button class="sst-btn${s===o.status?' cur':''}" onclick="updateOrderStatus('${o.id}','${s}')">${cap(s)}</button>`).join('');
   const waybillId = 'wb-btn-'+o.id;
   const footer = $('dp-footer');
   footer.style.display = '';
+  const deleteBtn = adminUnlocked ? `<button class="dp-btn-delete" onclick="adminDeleteOrder('${o.id}')">&#128465;&#65039; Delete Order</button>` : '';
   footer.innerHTML = `
     <div><div class="sst-label">Status</div><div class="sst-row">${statusBtns}</div></div>
-    <button id="${waybillId}" class="btn-waybill" onclick="printWaybill('${o.id}')">&#128230; Print Waybill</button>`;
+    <button id="${waybillId}" class="btn-waybill" onclick="printWaybill('${o.id}')">&#128230; Print Waybill</button>
+    ${deleteBtn}`;
 
   $('dp').classList.add('open');$('dp-ov').classList.remove('hidden');
 }
@@ -1017,9 +1259,10 @@ function buildWaybillHTML(o){
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','admin'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')initSyncLogPage();
+  if(page==='admin')initAdminPage();
   closeSidebar();
 }
 
@@ -1500,6 +1743,7 @@ $('search').oninput=onSearch;$('search-mob').oninput=onSearch;
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 $('synclog-unlock-btn').onclick=unlockSyncLog;
 $('synclog-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockSyncLog();});
+$('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();});
 
 (async()=>{
   try{const r=await fetch(`${SERVER}/api/auth/status`);if(r.ok)serverAvailable=true;}catch{}

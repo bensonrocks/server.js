@@ -57,6 +57,27 @@ app.get('/api/auth/status', (req, res) => {
   res.json({ authenticated: auth.validateToken(token) });
 });
 
+function requireAuth(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  if (!auth.validateToken(token)) return res.status(401).json({ error: 'Authentication required' });
+  next();
+}
+
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  const { newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  auth.changePassword(newPassword);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/stats', requireAuth, (req, res) => {
+  const orders   = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
+  const leads    = db.prepare('SELECT COUNT(*) AS n FROM leads').get().n;
+  const sessions = db.prepare('SELECT COUNT(*) AS n FROM lead_sessions').get().n;
+  const syncs    = db.prepare('SELECT COUNT(*) AS n FROM sync_log').get().n;
+  res.json({ orders, leads, leadSessions: sessions, syncEntries: syncs });
+});
+
 // ── Orders ────────────────────────────────────────────────────────────────────
 
 app.get('/api/orders', (req, res) => {
@@ -78,6 +99,27 @@ app.patch('/api/orders/:id', (req, res) => {
   } catch (e) {
     res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
   }
+});
+
+app.delete('/api/orders/:id', requireAuth, (req, res) => {
+  try {
+    store.deleteOrder(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/orders', requireAuth, (req, res) => {
+  const { confirm } = req.body || {};
+  if (confirm !== 'DELETE ALL') return res.status(400).json({ error: 'Send confirm: "DELETE ALL"' });
+  const deleted = store.deleteAllOrders();
+  res.json({ ok: true, deleted });
+});
+
+app.delete('/api/sync-log', requireAuth, (req, res) => {
+  syncLog.clear();
+  res.json({ ok: true });
 });
 
 app.get('/api/orders/:id/waybill', async (req, res) => {
@@ -497,6 +539,15 @@ app.get('/api/leads', (req, res) => {
 // Get all past search sessions
 app.get('/api/leads/sessions', (req, res) => {
   res.json(db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
+});
+
+// Admin — delete all leads + sessions
+app.delete('/api/leads', requireAuth, (req, res) => {
+  const { confirm } = req.body || {};
+  if (confirm !== 'DELETE ALL') return res.status(400).json({ error: 'Send confirm: "DELETE ALL"' });
+  db.prepare('DELETE FROM leads').run();
+  db.prepare('DELETE FROM lead_sessions').run();
+  res.json({ ok: true });
 });
 
 // Sync a single platform
