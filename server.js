@@ -11,6 +11,14 @@ const { PDFDocument } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
 
+let Docxtemplater, PizZip, DocxImageModule, bwipjs;
+try {
+  Docxtemplater   = require('docxtemplater');
+  PizZip          = require('pizzip');
+  DocxImageModule = require('docxtemplater-image-module-free');
+} catch (e) { console.warn('[IdealScan] docxtemplater not available:', e.message); }
+try { bwipjs = require('bwip-js'); } catch (e) { console.warn('[IdealScan] bwip-js not available:', e.message); }
+
 // Keyfields WMS format — edit lib/keyfields.js to change column mappings or output
 const {
   mapRow, normalizeKey, dateVal,
@@ -51,11 +59,13 @@ const DB_FILE     = path.join(DATA_DIR, 'db.json');
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
 const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
+const DOC_TEMPLATE_DIR        = path.join(DATA_DIR, 'label_doc_templates');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
 
-fs.mkdirSync(WMS_DIR,     { recursive: true });
-fs.mkdirSync(WAYBILL_DIR, { recursive: true });
+fs.mkdirSync(WMS_DIR,          { recursive: true });
+fs.mkdirSync(WAYBILL_DIR,      { recursive: true });
+fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
 
 // ── User credentials ─────────────────────────────────────────────────────────
 // Users are stored inside db.json under the "users" key so all app data lives
@@ -1514,6 +1524,147 @@ app.delete('/api/master/label-templates/:carrier', (req, res) => {
     .filter(t => t.carrier.toLowerCase() !== req.params.carrier.toLowerCase());
   writeLabelTemplates(remaining);
   res.json({ ok: true });
+});
+
+// ── Word doc label templates ─────────────────────────────────────────────────
+function carrierSlug(name) {
+  return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+const DOC_TPL_INDEX = path.join(DOC_TEMPLATE_DIR, '_index.json');
+function readDocTplIndex() {
+  try { return JSON.parse(fs.readFileSync(DOC_TPL_INDEX, 'utf8')); }
+  catch { return {}; }
+}
+function writeDocTplIndex(idx) {
+  fs.writeFileSync(DOC_TPL_INDEX, JSON.stringify(idx, null, 2));
+}
+
+const _EMPTY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+async function generateLabelDoc(templateBuf, order) {
+  if (!Docxtemplater || !PizZip) throw new Error('DOCX support not installed on the server.');
+
+  let barcodePng = null;
+  if (bwipjs && order.waybill_number) {
+    try {
+      barcodePng = await bwipjs.toBuffer({
+        bcid: 'code128', text: String(order.waybill_number),
+        scale: 2, height: 12, includetext: true, textxalign: 'center',
+      });
+    } catch (e) { console.warn('[IdealScan] barcode gen failed:', e.message); }
+  }
+
+  const modules = [];
+  if (DocxImageModule) {
+    modules.push(new DocxImageModule({
+      centered : false,
+      getImage : (tagValue) => (Buffer.isBuffer(tagValue) && tagValue.length > 4 ? tagValue : _EMPTY_PNG),
+      getSize  : (img)      => img === _EMPTY_PNG ? [1, 1] : [280, 70],
+    }));
+  }
+
+  const zip = new PizZip(templateBuf);
+  const doc = new Docxtemplater(zip, { modules, paragraphLoop: true, linebreaks: true });
+
+  const platform = order.platform
+    ? (order.shop_name ? `${order.platform} / ${order.shop_name}` : order.platform)
+    : (order.shop_name || '');
+  const items = (order.lines || []).map(l => `${l.sku} x${l.qty}`).join(', ');
+
+  try {
+    doc.render({
+      customer_name   : order.customer_name    || '',
+      delivery_address: order.delivery_address || '',
+      waybill_number  : order.waybill_number   || '',
+      order_number    : order.order_number     || '',
+      platform,
+      tel             : order.tel              || '',
+      carrier         : order.carrier          || '',
+      items,
+      date            : new Date().toLocaleDateString('en-SG', { year: 'numeric', month: 'short', day: '2-digit' }),
+      waybill_barcode : barcodePng || _EMPTY_PNG,
+    });
+  } catch (err) {
+    const msgs = (err.properties && err.properties.errors || []).map(e => e.message).join('; ');
+    throw new Error(msgs || err.message);
+  }
+
+  return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+// Admin routes — manage stored doc templates
+app.get('/api/master/label-doc-templates', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const idx = readDocTplIndex();
+  res.json(Object.entries(idx).map(([slug, carrier]) => ({ slug, carrier })));
+});
+
+app.post('/api/master/label-doc-templates', upload.single('docxFile'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const carrier = String(req.body && req.body.carrier || '').trim();
+  if (!carrier) return res.status(400).json({ error: 'carrier name is required' });
+  if (!req.file)  return res.status(400).json({ error: 'No file uploaded' });
+  const ext = path.extname(req.file.originalname || '').toLowerCase();
+  if (ext !== '.docx') return res.status(400).json({ error: 'Only .docx files are accepted' });
+  const slug    = carrierSlug(carrier);
+  const outPath = path.join(DOC_TEMPLATE_DIR, `${slug}.docx`);
+  fs.writeFileSync(outPath, req.file.buffer);
+  const idx = readDocTplIndex();
+  idx[slug] = carrier;
+  writeDocTplIndex(idx);
+  res.json({ ok: true, slug, carrier });
+});
+
+app.delete('/api/master/label-doc-templates/:slug', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { slug } = req.params;
+  try { fs.unlinkSync(path.join(DOC_TEMPLATE_DIR, `${slug}.docx`)); } catch {}
+  const idx = readDocTplIndex();
+  delete idx[slug];
+  writeDocTplIndex(idx);
+  res.json({ ok: true });
+});
+
+app.get('/api/master/label-doc-templates/:slug/download', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const idx  = readDocTplIndex();
+  const name = idx[req.params.slug] || req.params.slug;
+  const tplPath = path.join(DOC_TEMPLATE_DIR, `${req.params.slug}.docx`);
+  if (!fs.existsSync(tplPath)) return res.status(404).json({ error: 'Template not found' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/[^a-z0-9_-]/gi,'_')}_template.docx"`);
+  res.end(fs.readFileSync(tplPath));
+});
+
+// User route — list carriers that have doc templates (for print-label decision)
+app.get('/api/label/doc-templates', requireAuth, (req, res) => {
+  const idx = readDocTplIndex();
+  res.json(Object.values(idx));
+});
+
+// User route — generate and download a populated label docx
+app.post('/api/label/doc', requireAuth, express.json(), async (req, res) => {
+  const { carrier, order } = req.body || {};
+  if (!carrier || !order) return res.status(400).json({ error: 'carrier and order required' });
+  if (!Docxtemplater || !PizZip)
+    return res.status(503).json({ error: 'DOCX support not installed. Contact administrator.' });
+  const idx  = readDocTplIndex();
+  const slug = Object.keys(idx).find(s => idx[s].toLowerCase() === carrier.toLowerCase());
+  if (!slug) return res.status(404).json({ error: `No Word template for carrier "${carrier}"` });
+  const tplPath = path.join(DOC_TEMPLATE_DIR, `${slug}.docx`);
+  if (!fs.existsSync(tplPath)) return res.status(404).json({ error: 'Template file missing' });
+  try {
+    const docBuf  = await generateLabelDoc(fs.readFileSync(tplPath), order);
+    const safeName = String(order.order_number || 'label').replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="Label_${safeName}.docx"`);
+    res.end(docBuf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Master: User management ──────────────────────────────────────────────────

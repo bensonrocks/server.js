@@ -57,6 +57,27 @@
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     } catch (e) { alert('Download error: ' + e.message); }
   }
+  async function postDownload(url, body, filename) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        alert('Failed: ' + (d.error || resp.statusText)); return;
+      }
+      const blob = await resp.blob();
+      const a    = document.createElement('a');
+      a.href     = URL.createObjectURL(blob);
+      a.download = filename || 'download';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    } catch (e) { alert('Error: ' + e.message); }
+  }
+
   // Delegate clicks on auth-gated download links so fetch (not browser nav) is used
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-auth-dl]');
@@ -1185,9 +1206,21 @@
   });
   document.getElementById('pltSkipBtn').addEventListener('click', dismissPrintLabelPrompt);
 
-  function printWaybillLabel(order) {
-    const carrier     = (order.carrier || '').trim();
-    // Match a saved carrier template (case-insensitive)
+  async function printWaybillLabel(order) {
+    const carrier = (order.carrier || '').trim();
+
+    // If a Word doc template is registered for this carrier, download the populated docx
+    if (_docTemplates === null) {
+      try { _docTemplates = await fetch('/api/label/doc-templates').then(r => r.json()); }
+      catch { _docTemplates = []; }
+    }
+    if (carrier && (_docTemplates || []).some(c => c.toLowerCase() === carrier.toLowerCase())) {
+      const filename = `Label_${(order.order_number || 'label').replace(/[^a-zA-Z0-9_-]/g, '_')}.docx`;
+      await postDownload('/api/label/doc', { carrier, order }, filename);
+      return;
+    }
+
+    // Match a saved HTML carrier template (case-insensitive)
     const tpl = (_labelTemplates || []).find(t => t.carrier.toLowerCase() === carrier.toLowerCase()) || null;
     const headerText  = tpl ? (tpl.header_text || tpl.carrier) : (carrier || 'IDEALOMS');
     const headerBg    = tpl ? (tpl.header_bg    || '#000000')  : '#000000';
@@ -1784,6 +1817,33 @@
   }
 
   let _labelTemplates = null;
+  let _docTemplates   = null; // array of carrier names that have .docx templates
+
+  async function loadDocTemplates() {
+    try { _docTemplates = await fetch('/api/label/doc-templates').then(r => r.json()); }
+    catch { _docTemplates = []; }
+    renderDocTemplateList();
+  }
+
+  function renderDocTemplateList() {
+    const el = document.getElementById('docTemplateList');
+    if (!el) return;
+    if (!_docTemplates || _docTemplates.length === 0) {
+      el.innerHTML = '<p class="hint" style="padding:.4rem 0 .8rem">No Word templates uploaded yet.</p>';
+      return;
+    }
+    el.innerHTML = _docTemplates.map(carrier => {
+      const slug = carrier.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      return `
+      <div class="doc-tpl-row">
+        <span class="doc-tpl-carrier-name">&#128196; ${esc(carrier)}</span>
+        <div class="doc-tpl-row-actions">
+          <button class="btn-sm btn-secondary doc-tpl-dl-btn" data-slug="${esc(slug)}" data-carrier="${esc(carrier)}">&#8681; Download</button>
+          <button class="btn-sm btn-danger-sm doc-tpl-del-btn" data-slug="${esc(slug)}" data-carrier="${esc(carrier)}">&#215; Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
 
   function renderMasterActions() {
     document.getElementById('masterActionsSection').classList.remove('hidden');
@@ -1791,6 +1851,7 @@
     loadUserList();
     loadEmailConfig();
     loadLabelTemplates();
+    loadDocTemplates();
   }
 
   // Admin tab switching
@@ -2143,6 +2204,78 @@
         await loadLabelTemplates();
         showLabelTplStatus(`Template for "${carrier}" deleted.`, 'success');
       } catch (err) { showLabelTplStatus(err.message, 'error'); }
+    }
+  });
+
+  // ── Word Doc Template admin handlers ─────────────────────────────────────────
+  function showDocTplStatus(msg, type) {
+    const el = document.getElementById('docTplUploadStatus');
+    el.textContent = msg;
+    el.className   = `status-bar ${type}`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 4000);
+  }
+
+  const docTplDropZone  = document.getElementById('docTplDropZone');
+  const docTplFileInput = document.getElementById('docTplFileInput');
+  document.getElementById('docTplBrowseBtn').addEventListener('click', () => docTplFileInput.click());
+  docTplFileInput.addEventListener('change', () => { if (docTplFileInput.files[0]) uploadDocTpl(docTplFileInput.files[0]); });
+  docTplDropZone.addEventListener('dragover', e => { e.preventDefault(); docTplDropZone.classList.add('dragover'); });
+  docTplDropZone.addEventListener('dragleave', () => docTplDropZone.classList.remove('dragover'));
+  docTplDropZone.addEventListener('drop', e => {
+    e.preventDefault(); docTplDropZone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0]; if (f) uploadDocTpl(f);
+  });
+
+  async function uploadDocTpl(file) {
+    const carrier = document.getElementById('docTplCarrier').value.trim();
+    if (!carrier) { showDocTplStatus('Enter the carrier name first.', 'error'); return; }
+    if (!file.name.toLowerCase().endsWith('.docx')) { showDocTplStatus('Only .docx files are accepted.', 'error'); return; }
+    showDocTplStatus(`Uploading "${file.name}" for ${carrier}…`, '');
+    const form = new FormData();
+    form.append('carrier', carrier);
+    form.append('docxFile', file);
+    try {
+      const resp = await fetch('/api/master/label-doc-templates', {
+        method: 'POST', headers: { 'x-master-key': LOG_PASSWORD }, body: form,
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      showDocTplStatus(`Word template for "${carrier}" saved. Printing labels for this carrier will now download a populated .docx.`, 'success');
+      document.getElementById('docTplCarrier').value = '';
+      docTplFileInput.value = '';
+      await loadDocTemplates();
+    } catch (err) { showDocTplStatus(err.message, 'error'); }
+  }
+
+  document.getElementById('docTemplateList').addEventListener('click', async e => {
+    const dlBtn  = e.target.closest('.doc-tpl-dl-btn');
+    const delBtn = e.target.closest('.doc-tpl-del-btn');
+    if (dlBtn) {
+      const { slug, carrier } = dlBtn.dataset;
+      try {
+        const resp = await fetch(`/api/master/label-doc-templates/${encodeURIComponent(slug)}/download`, {
+          headers: { 'x-master-key': LOG_PASSWORD },
+        });
+        if (!resp.ok) { showDocTplStatus('Download failed', 'error'); return; }
+        const blob = await resp.blob();
+        const a    = document.createElement('a');
+        a.href     = URL.createObjectURL(blob);
+        a.download = `${slug}_template.docx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (err) { showDocTplStatus(err.message, 'error'); }
+    }
+    if (delBtn) {
+      const { slug, carrier } = delBtn.dataset;
+      if (!confirm(`Delete the Word template for "${carrier}"? This cannot be undone.`)) return;
+      try {
+        await fetch(`/api/master/label-doc-templates/${encodeURIComponent(slug)}`, {
+          method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
+        });
+        await loadDocTemplates();
+        showDocTplStatus(`Template for "${carrier}" deleted.`, 'success');
+      } catch (err) { showDocTplStatus(err.message, 'error'); }
     }
   });
 

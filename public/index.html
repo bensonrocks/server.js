@@ -366,10 +366,59 @@
 
       <!-- Tab: Labels -->
       <div class="admin-tab hidden" id="adminTab-labels">
+
+        <!-- ── Word Doc Templates ── -->
         <div class="admin-section-header">
           <div>
-            <div class="admin-section-title">Carrier Label Templates</div>
-            <div class="admin-section-sub">Customize the printed label for each delivery carrier. Matched by carrier name on each order.</div>
+            <div class="admin-section-title">&#128196; Word Document Templates</div>
+            <div class="admin-section-sub">Upload a <strong>.docx</strong> file per carrier. Use <code>{field}</code> placeholders for order data and <code>{%waybill_barcode}</code> for a scannable barcode image.</div>
+          </div>
+        </div>
+
+        <!-- Field reference -->
+        <div class="doc-tpl-field-ref">
+          <div class="doc-tpl-field-ref-title">Available placeholders</div>
+          <div class="doc-tpl-fields">
+            <span class="doc-tpl-field">{customer_name}</span>
+            <span class="doc-tpl-field">{delivery_address}</span>
+            <span class="doc-tpl-field">{waybill_number}</span>
+            <span class="doc-tpl-field">{order_number}</span>
+            <span class="doc-tpl-field">{carrier}</span>
+            <span class="doc-tpl-field">{platform}</span>
+            <span class="doc-tpl-field">{tel}</span>
+            <span class="doc-tpl-field">{items}</span>
+            <span class="doc-tpl-field">{date}</span>
+            <span class="doc-tpl-field doc-tpl-field-img">{%waybill_barcode} &#128247;</span>
+          </div>
+          <p class="doc-tpl-hint">Tip: in Word, type placeholders exactly as shown. Disable autocorrect for curly braces if Word replaces <code>{</code> with a fancy quote.</p>
+        </div>
+
+        <div id="docTemplateList" class="doc-tpl-list"></div>
+
+        <div class="admin-add-card">
+          <div class="admin-add-title">Upload Carrier Template (.docx)</div>
+          <div class="doc-tpl-upload-row">
+            <div class="form-group" style="flex:1;min-width:160px">
+              <label>Carrier Name <span class="cfg-req">*</span></label>
+              <input type="text" id="docTplCarrier" placeholder="e.g. SingPost" autocomplete="off" />
+            </div>
+            <div class="doc-tpl-drop-wrap">
+              <div class="upload-area upload-area-sm" id="docTplDropZone">
+                <input type="file" id="docTplFileInput" accept=".docx" hidden />
+                <div class="upload-icon" style="font-size:1.2rem">&#8679;</div>
+                <p style="font-size:.82rem">Drag .docx or <button class="link-btn" id="docTplBrowseBtn">browse</button></p>
+              </div>
+            </div>
+          </div>
+          <div id="docTplUploadStatus" class="status-bar hidden"></div>
+        </div>
+
+        <div class="admin-section-divider"></div>
+        <!-- ── HTML colour/section templates (fallback) ── -->
+        <div class="admin-section-header" style="margin-top:.5rem">
+          <div>
+            <div class="admin-section-title">&#127921; HTML Label Templates <span class="doc-tpl-fallback-badge">fallback</span></div>
+            <div class="admin-section-sub">Used when no Word template is configured for a carrier. Bulk-import from XLSX or add individually below.</div>
           </div>
         </div>
         <div class="admin-action-row">

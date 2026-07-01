@@ -815,6 +815,23 @@ body.log-open { overflow: hidden; }
 .user-add-row input:focus { outline: none; border-color: var(--primary); }
 .user-role-select { border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: .38rem .5rem; font-size: .82rem; background: #fff; color: var(--text); cursor: pointer; }
 
+/* Word Doc Templates */
+.doc-tpl-field-ref { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: .6rem .9rem; margin-bottom: .75rem; font-size: .8rem; }
+.doc-tpl-field-ref-title { font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: .4rem; }
+.doc-tpl-fields { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .4rem; }
+.doc-tpl-field { background: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: .78rem; border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
+.doc-tpl-field-img { background: #1a3a1a; color: #a6e3a1; }
+.doc-tpl-hint { font-size: .73rem; color: var(--text-muted); margin-top: .2rem; }
+.doc-tpl-hint code { background: var(--surface); padding: 0 4px; border-radius: 3px; font-size: .72rem; }
+.doc-tpl-list { margin: .25rem 0 .5rem; }
+.doc-tpl-row { display: flex; align-items: center; gap: .6rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .45rem .85rem; margin-bottom: .3rem; }
+.doc-tpl-carrier-name { flex: 1; font-weight: 600; font-size: .83rem; }
+.doc-tpl-row-actions { display: flex; gap: .3rem; }
+.doc-tpl-upload-row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: flex-end; }
+.doc-tpl-drop-wrap { flex: 1; min-width: 180px; }
+.admin-section-divider { border: none; border-top: 1px dashed var(--border); margin: 1.25rem 0 .5rem; }
+.doc-tpl-fallback-badge { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; font-size: .65rem; font-weight: 500; padding: 1px 7px; vertical-align: middle; color: var(--text-muted); text-transform: none; letter-spacing: 0; }
+
 /* Label Templates */
 .label-tpl-list { margin-bottom: .5rem; }
 .label-tpl-row  { display: flex; align-items: center; gap: .6rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .45rem .85rem; margin-bottom: .35rem; font-size: .82rem; flex-wrap: wrap; }
