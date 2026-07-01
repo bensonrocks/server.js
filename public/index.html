@@ -255,13 +255,19 @@ a:hover{text-decoration:underline}
 .pt-sync{font-size:10px;color:#94a3b8;min-height:14px;line-height:1.4}
 .pt-cta{font-size:11px;color:#2563eb;font-weight:600;opacity:0;transition:opacity .15s}
 .plat-tile:hover .pt-cta{opacity:1}
-.api-bar{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;margin-bottom:14px;flex-wrap:wrap}
-.api-bar-lbl{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.api-bar{display:flex;flex-direction:column;gap:0;padding:0;background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.api-bar-row{display:flex;align-items:center;gap:10px;padding:9px 14px;flex-wrap:wrap}
+.api-bar-divider{height:1px;background:var(--border,#e2e8f0);margin:0}
+.api-bar-lbl{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:52px}
 .api-chips{display:flex;gap:7px;flex:1;flex-wrap:wrap}
 .api-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;border:1.5px solid #e2e8f0;font-size:12px;font-weight:500;cursor:pointer;color:#475569;transition:all .15s;user-select:none}
-.api-chip:hover{border-color:#bfdbfe}
+.api-chip:hover{border-color:#bfdbfe;background:#f8fafc}
 .api-chip.live{border-color:#86efac;background:#f0fdf4;color:#166534}
 .api-chip.live .chip-dot{background:#22c55e;box-shadow:0 0 0 2px #bbf7d0}
+.api-chip.cli-live{border-color:#86efac;background:#f0fdf4;color:#166534}
+.api-chip.cli-live .chip-dot{background:#22c55e;box-shadow:0 0 0 2px #bbf7d0}
+.api-chip.cli-sel{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8}
+.api-chip.cli-sel .chip-dot{background:#3b82f6}
 .chip-dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1;flex-shrink:0;transition:background .2s}
 .api-bar-link{font-size:11px;color:#2563eb;text-decoration:none;white-space:nowrap;margin-left:auto;font-weight:500}
 
@@ -625,15 +631,22 @@ a:hover{text-decoration:underline}
           <div class="stat"><div class="stat-lbl">Clients</div><div class="stat-val" id="s-cli">—</div></div>
           <div class="stat"><div class="stat-lbl">Channels</div><div class="stat-val" id="s-ch">—</div></div>
         </div>
-        <div class="api-bar">
-          <span class="api-bar-lbl">Live API</span>
-          <div class="api-chips">
-            <span class="api-chip" id="chip-shopee" onclick="switchPage('connections')" title="Shopee"><span class="chip-dot" id="chip-dot-shopee"></span>Shopee</span>
-            <span class="api-chip" id="chip-lazada" onclick="switchPage('connections')" title="Lazada"><span class="chip-dot" id="chip-dot-lazada"></span>Lazada</span>
-            <span class="api-chip" id="chip-tiktok" onclick="switchPage('connections')" title="TikTok Shop"><span class="chip-dot" id="chip-dot-tiktok"></span>TikTok Shop</span>
-            <span class="api-chip" id="chip-shopify" onclick="switchPage('connections')" title="Shopify"><span class="chip-dot" id="chip-dot-shopify"></span>Shopify</span>
+        <div class="api-bar" id="api-bar-panel">
+          <div class="api-bar-row">
+            <span class="api-bar-lbl">Channels</span>
+            <div class="api-chips" id="api-plat-chips">
+              <span class="api-chip" id="chip-shopee" onclick="switchPage('connections')" title="Shopee"><span class="chip-dot" id="chip-dot-shopee"></span>Shopee</span>
+              <span class="api-chip" id="chip-lazada" onclick="switchPage('connections')" title="Lazada"><span class="chip-dot" id="chip-dot-lazada"></span>Lazada</span>
+              <span class="api-chip" id="chip-tiktok" onclick="switchPage('connections')" title="TikTok Shop"><span class="chip-dot" id="chip-dot-tiktok"></span>TikTok Shop</span>
+              <span class="api-chip" id="chip-shopify" onclick="switchPage('connections')" title="Shopify"><span class="chip-dot" id="chip-dot-shopify"></span>Shopify</span>
+            </div>
+            <a class="api-bar-link" onclick="switchPage('connections');return false" href="#">Manage &rsaquo;</a>
           </div>
-          <a class="api-bar-link" onclick="switchPage('connections');return false" href="#">Manage &rsaquo;</a>
+          <div class="api-bar-divider"></div>
+          <div class="api-bar-row">
+            <span class="api-bar-lbl">Clients</span>
+            <div class="api-chips" id="api-client-chips"></div>
+          </div>
         </div>
         <div class="filters">
           <span class="flbl">Channel:</span>
@@ -1410,6 +1423,16 @@ const stBdg=s=>`<span class="sts s-${s}">${cap(s)}</span>`;
 function render(){
   const st=stats(),cl=clients(),ch=channels(),rows=filtered();
   $('s-orders').textContent=st.total;$('s-rev').textContent=fmt(st.rev);$('s-cli').textContent=st.clients;$('s-ch').textContent=st.channels;
+  // ── API bar: platform chips → green when orders exist for that channel ────
+  ['shopee','lazada','tiktok','shopify'].forEach(p=>{
+    const on=!!st.byChannel[p];
+    const chip=$(`chip-${p}`),dot=$(`chip-dot-${p}`);
+    if(chip)chip.classList.toggle('live',on);
+    if(dot)dot.style.background=on?'#22c55e':'#cbd5e1';
+  });
+  // ── API bar: client chips → one per client, green = has orders, click to filter ─
+  const ccEl=$('api-client-chips');
+  if(ccEl){ccEl.innerHTML=cl.map(c=>{const sel=F.client===c.id;const hasOrds=c.count>0;return`<span class="api-chip${hasOrds?' cli-live':''}${sel?' cli-sel':''}" onclick="F.client=F.client==='${c.id}'?null:'${c.id}';render()" title="${c.name} — ${c.count} order${c.count!==1?'s':''}"><span class="chip-dot"></span>${c.name}<span style="font-size:10px;opacity:.6;margin-left:2px">${c.count}</span></span>`;}).join('');}
   const cul=$('client-list');cul.innerHTML='';
   [{id:null,name:'All Clients',count:st.total},...cl].forEach(c=>{const li=document.createElement('li');li.className='nav-li'+(F.client===c.id?' on':'');li.innerHTML=`<span class="nav-name">${c.name}</span><span class="nbadge">${c.count}</span>`;li.onclick=()=>{F.client=F.client===c.id&&c.id!==null?null:c.id;render();closeSidebar();};cul.appendChild(li);});
   const chul=$('channel-list');chul.innerHTML='';
