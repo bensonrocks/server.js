@@ -1,5 +1,26 @@
 # IDEALSCAN — Project Notes for Claude
 
+## OCR Pipeline (server.js — `preprocessForOcr` / `runOcr`)
+
+All photo-based OCR (picking list and product label) goes through two stages:
+
+### Stage 1 — Image preprocessing (`preprocessForOcr`, requires `sharp`)
+1. **Greyscale** — removes colour noise that confuses the LSTM model
+2. **Normalize** — auto-stretches histogram for better contrast on faded/dim prints
+3. **Sharpen** (`sigma 1.5, m1 2.0, m2 0.5`) — crisp text edges reduce letter-doubling artefacts (e.g. DMG→DMMG)
+4. Output as **lossless PNG** — avoids JPEG compression artefacts around text
+
+If `sharp` is unavailable the original buffer is passed through unchanged (graceful degradation).
+
+### Stage 2 — Tesseract with LSTM engine (`runOcr`)
+- **OEM 1** (LSTM neural-net only) — more accurate than legacy engine
+- **PSM 3** (auto page segmentation) for picking lists — lets Tesseract detect the mixed header+table layout
+- **PSM 6** (single uniform block) for product labels — compact, few-line documents
+- **`preserve_interword_spaces: 1`** — keeps column spacing so the parser can split tokens correctly
+- Product label scan also sets a **character whitelist** to block OCR from inventing symbols
+
+Do NOT revert to bare `Tesseract.recognize()` — always call `runOcr()`.
+
 ## OCR Parsing Rules (lib/ocr-parse.js)
 
 ### Location codes must NEVER become SKUs

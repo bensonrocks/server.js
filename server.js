@@ -35,6 +35,43 @@ const { validateRows } = require('./lib/validation');
 const { parseOcrPicklist } = require('./lib/ocr-parse');
 let Tesseract;
 try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
+let sharp;
+try { sharp = require('sharp'); } catch { sharp = null; }
+
+// Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
+// Returns the processed PNG buffer, or the original buffer if sharp is unavailable.
+async function preprocessForOcr(buffer) {
+  if (!sharp) return buffer;
+  try {
+    return await sharp(buffer)
+      .greyscale()
+      .normalize()
+      .sharpen({ sigma: 1.5, m1: 2.0, m2: 0.5 })
+      .png({ compressionLevel: 1 })
+      .toBuffer();
+  } catch {
+    return buffer;
+  }
+}
+
+// Run Tesseract with LSTM engine (OEM 1) + auto page segmentation (PSM 3).
+// Extra Tesseract params can be passed as extraParams (e.g. char whitelist, PSM override).
+async function runOcr(buffer, extraParams = {}) {
+  const img = await preprocessForOcr(buffer);
+  // OEM 1 = LSTM neural-net engine only (more accurate than legacy)
+  const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+  try {
+    await worker.setParameters({
+      tessedit_pageseg_mode: '3',      // PSM_AUTO — let Tesseract detect layout
+      preserve_interword_spaces: '1',  // keeps column spacing intact
+      ...extraParams,
+    });
+    const { data: { text } } = await worker.recognize(img);
+    return text;
+  } finally {
+    await worker.terminate();
+  }
+}
 
 const app    = express();
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
@@ -687,7 +724,7 @@ app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
     return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
   }
   try {
-    const { data: { text } } = await Tesseract.recognize(req.file.buffer, 'eng', { logger: () => {} });
+    const text   = await runOcr(req.file.buffer);
     const rows   = parseOcrPicklist(text);
     const orders = summarizeOrders(rows);
     if (!rows.length) {
@@ -779,9 +816,9 @@ app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
     return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
   }
   try {
-    const { data: { text } } = await Tesseract.recognize(req.file.buffer, 'eng', {
-      logger: () => {},
-      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_/',
+    const text   = await runOcr(req.file.buffer, {
+      tessedit_pageseg_mode: '6',  // PSM_SINGLE_BLOCK — compact product labels
+      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -_./:()&',
     });
     const result = parseLabelLines(text);
     res.json(result);
