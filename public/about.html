@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>About IdealOMS &ndash; E-Commerce Order Management</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;background:#fff;line-height:1.6}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+
+/* ── NAV ── */
+.nav{position:sticky;top:0;z-index:50;background:rgba(15,23,42,.97);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.07)}
+.nav-inner{max-width:1100px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:16px}
+.brand{font-size:18px;font-weight:900;color:#fff;letter-spacing:-.3px;flex:1}
+.brand span{color:#fb923c}
+.brand-sub{font-size:9px;font-weight:700;color:#fb923c;letter-spacing:.5px;text-transform:uppercase;display:block;margin-top:-2px}
+.nav-links{display:flex;align-items:center;gap:6px}
+.nav-link{padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;color:#94a3b8;transition:all .15s;cursor:pointer}
+.nav-link:hover{color:#fff;background:rgba(255,255,255,.08)}
+.nav-cta{padding:7px 16px;border-radius:8px;font-size:13px;font-weight:700;background:#2563eb;color:#fff;transition:background .15s}
+.nav-cta:hover{background:#1d4ed8}
+@media(max-width:500px){.nav-link{display:none}}
+
+/* ── HERO ── */
+.hero{background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 50%,#0f172a 100%);padding:80px 24px 88px;text-align:center;overflow:hidden;position:relative}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 100%,rgba(37,99,235,.25),transparent)}
+.hero-inner{max-width:760px;margin:0 auto;position:relative}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;border:1px solid rgba(251,146,60,.3);background:rgba(251,146,60,.08);color:#fb923c;font-size:12px;font-weight:700;letter-spacing:.3px;margin-bottom:22px}
+.hero-title{font-size:clamp(32px,5vw,54px);font-weight:900;color:#fff;line-height:1.1;letter-spacing:-.5px;margin-bottom:18px}
+.hero-title span{background:linear-gradient(90deg,#fb923c,#fbbf24);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-sub{font-size:clamp(15px,2.5vw,18px);color:#94a3b8;max-width:560px;margin:0 auto 32px;line-height:1.7}
+.hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-hero-p{padding:13px 28px;border-radius:10px;background:#2563eb;color:#fff;font-size:15px;font-weight:700;transition:background .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-hero-p:hover{background:#1d4ed8}
+.btn-hero-s{padding:13px 28px;border-radius:10px;border:1.5px solid rgba(255,255,255,.15);color:#e2e8f0;font-size:15px;font-weight:600;transition:all .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-hero-s:hover{border-color:rgba(255,255,255,.35);color:#fff;background:rgba(255,255,255,.06)}
+
+/* ── STATS BAR ── */
+.stats-bar{background:#1e293b;border-bottom:1px solid rgba(255,255,255,.06)}
+.stats-inner{max-width:1100px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:repeat(4,1fr)}
+.stat-item{padding:22px 16px;text-align:center;border-right:1px solid rgba(255,255,255,.06)}
+.stat-item:last-child{border-right:none}
+.stat-val{font-size:28px;font-weight:900;color:#fff;letter-spacing:-.5px;line-height:1}
+.stat-lbl{font-size:11px;font-weight:600;color:#64748b;margin-top:4px;letter-spacing:.3px;text-transform:uppercase}
+@media(max-width:600px){.stats-inner{grid-template-columns:repeat(2,1fr)}.stat-item:nth-child(2){border-right:none}.stat-item:nth-child(3){border-right:1px solid rgba(255,255,255,.06)}}
+
+/* ── SECTIONS ── */
+.section{padding:72px 24px}
+.section-inner{max-width:1100px;margin:0 auto}
+.section-label{font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#2563eb;margin-bottom:10px}
+.section-title{font-size:clamp(24px,4vw,36px);font-weight:900;color:#0f172a;letter-spacing:-.3px;line-height:1.2;margin-bottom:14px}
+.section-sub{font-size:16px;color:#64748b;max-width:540px;line-height:1.7}
+
+/* ── FEATURES ── */
+.section-bg{background:#f8fafc}
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:44px}
+.feat-card{background:#fff;border-radius:14px;padding:24px;border:1px solid #e2e8f0;transition:box-shadow .2s,transform .2s}
+.feat-card:hover{box-shadow:0 8px 28px rgba(0,0,0,.08);transform:translateY(-2px)}
+.feat-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:14px}
+.feat-title{font-size:15px;font-weight:800;color:#0f172a;margin-bottom:7px}
+.feat-text{font-size:13px;color:#64748b;line-height:1.65}
+@media(max-width:768px){.feat-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.feat-grid{grid-template-columns:1fr}}
+
+/* ── HOW IT WORKS ── */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:44px;position:relative}
+.steps::before{content:'';position:absolute;top:28px;left:calc(16.67% + 14px);right:calc(16.67% + 14px);height:2px;background:linear-gradient(90deg,#2563eb,#fb923c);opacity:.3}
+.step{text-align:center;position:relative}
+.step-num{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:20px;font-weight:900;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;box-shadow:0 4px 16px rgba(37,99,235,.35)}
+.step-title{font-size:15px;font-weight:800;color:#0f172a;margin-bottom:7px}
+.step-text{font-size:13px;color:#64748b;line-height:1.65}
+@media(max-width:600px){.steps{grid-template-columns:1fr}.steps::before{display:none}}
+
+/* ── CHANNELS ── */
+.channels-row{display:flex;gap:16px;flex-wrap:wrap;margin-top:36px}
+.ch-chip{display:flex;align-items:center;gap:10px;padding:12px 20px;border-radius:12px;background:#fff;border:1.5px solid #e2e8f0;font-weight:700;font-size:14px;color:#0f172a;transition:all .15s}
+.ch-chip:hover{border-color:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,.12);transform:translateY(-1px)}
+.ch-dot{width:10px;height:10px;border-radius:50%}
+
+/* ── CLIENT PORTAL CTA ── */
+.portal-section{background:linear-gradient(135deg,#1e3a5f 0%,#0f172a 100%);padding:72px 24px;text-align:center;position:relative;overflow:hidden}
+.portal-section::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 80% at 50% 50%,rgba(37,99,235,.2),transparent)}
+.portal-inner{max-width:680px;margin:0 auto;position:relative}
+.portal-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;border:1px solid rgba(134,239,172,.3);background:rgba(134,239,172,.08);color:#86efac;font-size:12px;font-weight:700;letter-spacing:.3px;margin-bottom:20px}
+.portal-title{font-size:clamp(26px,4vw,38px);font-weight:900;color:#fff;letter-spacing:-.3px;line-height:1.2;margin-bottom:14px}
+.portal-sub{font-size:16px;color:#94a3b8;margin-bottom:32px;line-height:1.7}
+.portal-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:28px 32px;margin-bottom:28px;text-align:left;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.portal-feat{display:flex;align-items:flex-start;gap:10px}
+.portal-feat-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.portal-feat-text{font-size:13px;color:#cbd5e1;line-height:1.5}
+.portal-feat-text strong{color:#fff;display:block;font-size:13px;font-weight:700;margin-bottom:2px}
+@media(max-width:560px){.portal-card{grid-template-columns:1fr}}
+.btn-portal{display:inline-flex;align-items:center;gap:8px;padding:14px 32px;border-radius:10px;background:#16a34a;color:#fff;font-size:16px;font-weight:800;transition:background .15s;border:none;cursor:pointer}
+.btn-portal:hover{background:#15803d}
+.portal-url{font-size:13px;color:#64748b;margin-top:12px}
+.portal-url code{color:#94a3b8;background:rgba(255,255,255,.06);padding:2px 8px;border-radius:5px;font-family:monospace;font-size:12px}
+
+/* ── CLIENTS ── */
+.clients-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:36px}
+.client-card{background:#fff;border-radius:12px;padding:18px 16px;border:1px solid #e2e8f0;text-align:center;transition:all .2s}
+.client-card:hover{box-shadow:0 6px 20px rgba(0,0,0,.07);transform:translateY(-2px);border-color:#bfdbfe}
+.client-icon{width:42px;height:42px;border-radius:10px;font-size:18px;display:flex;align-items:center;justify-content:center;margin:0 auto 10px}
+.client-name{font-size:13px;font-weight:700;color:#0f172a}
+.client-tag{font-size:11px;color:#64748b;margin-top:3px}
+@media(max-width:700px){.clients-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:400px){.clients-grid{grid-template-columns:repeat(2,1fr)}}
+
+/* ── FOOTER ── */
+.footer{background:#0f172a;padding:44px 24px 32px;border-top:1px solid rgba(255,255,255,.06)}
+.footer-inner{max-width:1100px;margin:0 auto}
+.footer-top{display:flex;align-items:flex-start;gap:40px;margin-bottom:32px;flex-wrap:wrap}
+.footer-brand{flex:1;min-width:200px}
+.footer-brand-name{font-size:20px;font-weight:900;color:#fff;letter-spacing:-.3px}
+.footer-brand-name span{color:#fb923c}
+.footer-brand-sub{font-size:11px;font-weight:700;color:#fb923c;letter-spacing:.5px;text-transform:uppercase;display:block;margin-top:1px}
+.footer-brand-desc{font-size:13px;color:#475569;margin-top:12px;max-width:280px;line-height:1.7}
+.footer-col{min-width:150px}
+.footer-col-title{font-size:11px;font-weight:700;color:#64748b;letter-spacing:.8px;text-transform:uppercase;margin-bottom:12px}
+.footer-link{display:block;font-size:13px;color:#475569;margin-bottom:8px;transition:color .15s;cursor:pointer}
+.footer-link:hover{color:#e2e8f0}
+.footer-bottom{border-top:1px solid rgba(255,255,255,.06);padding-top:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.footer-copy{font-size:12px;color:#334155}
+.footer-tag{font-size:12px;color:#334155;background:rgba(255,255,255,.04);padding:4px 12px;border-radius:20px;border:1px solid rgba(255,255,255,.06)}
+</style>
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/about.html" class="brand">
+      Ideal<span>OMS</span>
+      <span class="brand-sub">Order Management System</span>
+    </a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Admin Dashboard</a>
+      <a href="/portal.html" class="nav-cta">&#128101; Client Portal &rarr;</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-badge">&#127480;&#127468; &nbsp;Singapore E-Commerce OMS</div>
+    <h1 class="hero-title">Your E-Commerce Operations,<br><span>Unified</span></h1>
+    <p class="hero-sub">IdealOMS connects your marketplaces, tracks every order in real time, and gives each client their own secure portal &mdash; all in one place.</p>
+    <div class="hero-btns">
+      <a href="/portal.html" class="btn-hero-p">&#128101; Client Portal &rarr;</a>
+      <a href="/" class="btn-hero-s">&#128202; Admin Dashboard</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── STATS ── -->
+<div class="stats-bar">
+  <div class="stats-inner">
+    <div class="stat-item"><div class="stat-val">100+</div><div class="stat-lbl">Orders Managed</div></div>
+    <div class="stat-item"><div class="stat-val">7</div><div class="stat-lbl">Active Clients</div></div>
+    <div class="stat-item"><div class="stat-val">4</div><div class="stat-lbl">Channels Connected</div></div>
+    <div class="stat-item"><div class="stat-val">99%</div><div class="stat-lbl">Fulfillment Rate</div></div>
+  </div>
+</div>
+
+<!-- ── FEATURES ── -->
+<section class="section section-bg">
+  <div class="section-inner">
+    <div class="section-label">Platform Features</div>
+    <h2 class="section-title">Everything your fulfilment team needs</h2>
+    <p class="section-sub">Built for Singapore e-commerce businesses — from solo sellers to multi-client fulfilment hubs.</p>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <div class="feat-icon" style="background:#eff6ff">&#128279;</div>
+        <div class="feat-title">Multi-Channel Sync</div>
+        <div class="feat-text">Pull orders automatically from Shopee, Lazada, TikTok Shop, and Shopify. One dashboard, all your channels.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:#f0fdf4">&#128202;</div>
+        <div class="feat-title">Real-Time Dashboard</div>
+        <div class="feat-text">See order status at a glance — confirmed, processing, shipped, delivered. Filter by client, channel, or date.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:#f0fdf4">&#128101;</div>
+        <div class="feat-title">Client Portal</div>
+        <div class="feat-text">Each client gets their own private login. They see only their own orders — full visibility, zero confusion.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:#fff7ed">&#128196;</div>
+        <div class="feat-title">Order Upload</div>
+        <div class="feat-text">Clients can submit orders directly via CSV or Excel from their portal. No emails, no manual entry.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:#faf5ff">&#128230;</div>
+        <div class="feat-title">Fulfilment Tools</div>
+        <div class="feat-text">Generate pick lists, pack slips, and shipping manifests in one click. Streamline your warehouse operations.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:#fffbeb">&#127480;&#127468;</div>
+        <div class="feat-title">Singapore-Ready</div>
+        <div class="feat-text">SGD currency, 9% GST auto-calculation, and local address formats built in from day one.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ── -->
+<section class="section">
+  <div class="section-inner">
+    <div class="section-label">How It Works</div>
+    <h2 class="section-title">Up and running in minutes</h2>
+    <p class="section-sub">No complex setup. Connect your channels, and IdealOMS handles the rest.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-title">Connect Your Channels</div>
+        <div class="step-text">Link your Shopee, Lazada, TikTok Shop, or Shopify store with your credentials. OAuth-secured, no passwords stored.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-title">Orders Sync Automatically</div>
+        <div class="step-text">IdealOMS fetches new orders every 15 minutes. Your fulfilment team always sees an up-to-date view.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-title">Clients Track Their Orders</div>
+        <div class="step-text">Each client logs into their own secure portal window and views real-time status — no chasing, no calls.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CHANNELS ── -->
+<section class="section section-bg">
+  <div class="section-inner">
+    <div class="section-label">Supported Channels</div>
+    <h2 class="section-title">All major Singapore marketplaces</h2>
+    <p class="section-sub">Connect the channels your clients sell on — more being added regularly.</p>
+    <div class="channels-row">
+      <div class="ch-chip"><div class="ch-dot" style="background:#EE4D2D"></div>Shopee</div>
+      <div class="ch-chip"><div class="ch-dot" style="background:#FF6000"></div>Lazada</div>
+      <div class="ch-chip"><div class="ch-dot" style="background:#010101"></div>TikTok Shop</div>
+      <div class="ch-chip"><div class="ch-dot" style="background:#96bf48"></div>Shopify</div>
+      <div class="ch-chip" style="border-style:dashed;color:#94a3b8"><div class="ch-dot" style="background:#e2e8f0"></div>More coming soon</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CLIENTS ── -->
+<section class="section">
+  <div class="section-inner">
+    <div class="section-label">Our Clients</div>
+    <h2 class="section-title">Trusted by Singapore brands</h2>
+    <p class="section-sub">Seven growing businesses rely on IdealOMS to manage their fulfilment operations.</p>
+    <div class="clients-grid">
+      <div class="client-card">
+        <div class="client-icon" style="background:#eff6ff">&#127768;</div>
+        <div class="client-name">Betime Marketing</div>
+        <div class="client-tag">Home &amp; Lifestyle</div>
+      </div>
+      <div class="client-card">
+        <div class="client-icon" style="background:#f0fdf4">&#128133;</div>
+        <div class="client-name">SmileFam</div>
+        <div class="client-tag">Dental Care</div>
+      </div>
+      <div class="client-card">
+        <div class="client-icon" style="background:#fdf4ff">&#127799;</div>
+        <div class="client-name">Athena Scents</div>
+        <div class="client-tag">Fragrances</div>
+      </div>
+      <div class="client-card">
+        <div class="client-icon" style="background:#fff7ed">&#127921;</div>
+        <div class="client-name">SimplyToy</div>
+        <div class="client-tag">Toys &amp; Games</div>
+      </div>
+      <div class="client-card">
+        <div class="client-icon" style="background:#fefce8">&#128081;</div>
+        <div class="client-name">LZ8</div>
+        <div class="client-tag">Fashion Accessories</div>
+      </div>
+      <div class="client-card">
+        <div class="client-icon" style="background:#fdf2f8">&#128170;</div>
+        <div class="client-name">Almighty</div>
+        <div class="client-tag">Supplements</div>
+      </div>
+      <div class="client-card">
+        <div class="client-icon" style="background:#f0fdf4">&#128084;</div>
+        <div class="client-name">Chalgo</div>
+        <div class="client-tag">Apparel</div>
+      </div>
+      <div class="client-card" style="border-style:dashed;background:#fafafa;cursor:default">
+        <div class="client-icon" style="background:#f1f5f9">&#43;</div>
+        <div class="client-name" style="color:#94a3b8">Your Brand Here</div>
+        <div class="client-tag">Get onboarded today</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CLIENT PORTAL CTA ── -->
+<section class="portal-section">
+  <div class="portal-inner">
+    <div class="portal-badge">&#128101; Client Portal</div>
+    <h2 class="portal-title">Give your clients full visibility into their orders</h2>
+    <p class="portal-sub">No more status-update emails. Each client gets a private, secure login that shows only their orders — in real time.</p>
+    <div class="portal-card">
+      <div class="portal-feat">
+        <div class="portal-feat-icon">&#128274;</div>
+        <div class="portal-feat-text"><strong>Private &amp; Secure</strong>Clients see only their own orders. Fully isolated — no cross-client data exposure.</div>
+      </div>
+      <div class="portal-feat">
+        <div class="portal-feat-icon">&#128202;</div>
+        <div class="portal-feat-text"><strong>Live Stats Dashboard</strong>Total orders, delivered count, in-progress, and revenue — always up to date.</div>
+      </div>
+      <div class="portal-feat">
+        <div class="portal-feat-icon">&#128196;</div>
+        <div class="portal-feat-text"><strong>Upload Orders Directly</strong>Clients submit new orders via CSV or Excel — imported instantly into the system.</div>
+      </div>
+      <div class="portal-feat">
+        <div class="portal-feat-icon">&#128241;</div>
+        <div class="portal-feat-text"><strong>Works on Any Device</strong>Fully mobile-responsive portal — accessible from phone, tablet, or desktop.</div>
+      </div>
+    </div>
+    <a href="/portal.html" class="btn-portal">&#128101; Access Client Portal &rarr;</a>
+    <div class="portal-url">Direct link: <code>/portal.html</code></div>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">Ideal<span>OMS</span><span class="footer-brand-sub">Order Management System</span></div>
+        <p class="footer-brand-desc">Unified order management for Singapore e-commerce businesses. Multi-channel sync, client portal, and fulfilment tools in one platform.</p>
+      </div>
+      <div class="footer-col">
+        <div class="footer-col-title">Platform</div>
+        <a href="/" class="footer-link">Admin Dashboard</a>
+        <a href="/portal.html" class="footer-link">Client Portal</a>
+        <a href="/about.html" class="footer-link">About</a>
+      </div>
+      <div class="footer-col">
+        <div class="footer-col-title">Channels</div>
+        <span class="footer-link" style="cursor:default">Shopee</span>
+        <span class="footer-link" style="cursor:default">Lazada</span>
+        <span class="footer-link" style="cursor:default">TikTok Shop</span>
+        <span class="footer-link" style="cursor:default">Shopify</span>
+      </div>
+      <div class="footer-col">
+        <div class="footer-col-title">Contact</div>
+        <span class="footer-link" style="cursor:default">ops@idealoms.com</span>
+        <span class="footer-link" style="cursor:default">Singapore</span>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="footer-copy">&copy; 2026 IdealOMS. All rights reserved.</div>
+      <div class="footer-tag">&#127480;&#127468; Made for Singapore E-Commerce</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
