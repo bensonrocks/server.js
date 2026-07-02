@@ -21,7 +21,7 @@ const multer     = require('multer');
 
 const mainDb          = require('./lib/db/main');
 const { getTenantDb } = require('./lib/db/tenant');
-const { getWarehouseDb } = require('./lib/db/warehouse-db');
+const { getWarehouseDb, warehouseDbExists } = require('./lib/db/warehouse-db');
 const createStore     = require('./lib/store');
 const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
@@ -30,6 +30,7 @@ const createPicking   = require('./lib/warehouse-pick');
 const createPacking   = require('./lib/warehouse-pack');
 const createPPP       = require('./lib/warehouse-ppp');
 const createPrintQueue = require('./lib/warehouse-print-queue');
+const createFulfillmentStatus = require('./lib/warehouse-status');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -166,6 +167,24 @@ app.get('/api/staff/client-users', withStaff, (req, res) => {
   const { db } = getCtx(tenantId);
   const ca = createClientAuth(db);
   res.json(ca.listUsers());
+});
+
+// Read-only, cross-client warehouse health for support — no order/stock detail,
+// just enough to tell whether a client uses the warehouse module and whether
+// anything looks stuck (open waves, backed-up print queue).
+app.get('/api/staff/warehouse-overview', withStaff, (req, res) => {
+  const tenantId = req.query.tenantId || 'default';
+  const { db } = getCtx(tenantId);
+  const ca = createClientAuth(db);
+  const overview = ca.listUsers().map(c => {
+    if (!warehouseDbExists(tenantId, c.id)) {
+      return { clientId: c.id, clientName: c.name, hasWarehouse: false, openWaves: 0, pendingPrint: 0, totalItems: 0, lastActivityAt: null };
+    }
+    const whDb = getWarehouseDb(tenantId, c.id);
+    const stats = createFulfillmentStatus(whDb).getOverview();
+    return { clientId: c.id, clientName: c.name, hasWarehouse: true, ...stats };
+  });
+  res.json(overview);
 });
 
 // Reset a client portal user's password
@@ -964,6 +983,18 @@ app.get('/api/client/me', withClientAuth, (req, res) => {
 app.get('/api/client/orders', withClientAuth, (req, res) => {
   const { channel, status, search } = req.query;
   res.json(req.store.getOrders({ clientId: req.clientId, channel, status, search }));
+});
+
+// Read-only fulfillment status (pick/pack/ship) for the logged-in client's own
+// orders — never exposes operational controls or other clients' data.
+app.get('/api/client/fulfillment', withClientAuth, (req, res) => {
+  const orders = req.store.getOrders({ clientId: req.clientId });
+  if (!warehouseDbExists(req.tenantId, req.clientId)) {
+    return res.json(orders.map(o => ({ orderId: o.id, pick: { stage: 'not_started' }, pack: { stage: 'not_started' }, shipment: null })));
+  }
+  const whDb = getWarehouseDb(req.tenantId, req.clientId);
+  const status = createFulfillmentStatus(whDb);
+  res.json(status.getForOrders(orders.map(o => o.id)));
 });
 
 app.post('/api/client/orders/upload', withClientAuth, upload.single('file'), (req, res) => {

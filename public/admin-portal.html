@@ -68,6 +68,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .btn-enable:hover{background:#dcfce7}
 @media(max-width:600px){.user-row{grid-template-columns:1fr 80px}.user-row .user-toggle,.user-row-hdr .th-toggle{display:none}}
 
+/* ── WAREHOUSE OVERVIEW TABLE ── */
+.wh-row{display:grid;grid-template-columns:1fr 90px 100px 110px 140px;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f8fafc;font-size:12px}
+.wh-row:last-child{border-bottom:none}
+.wh-row-hdr{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;padding-bottom:8px;border-bottom:1.5px solid #e2e8f0;margin-bottom:4px}
+.wh-num{font-weight:700;color:#0f172a}
+.wh-num.warn{color:#d97706}
+.wh-muted{color:#94a3b8}
+@media(max-width:640px){.wh-row{grid-template-columns:1fr 70px}.wh-row>div:nth-child(3),.wh-row>div:nth-child(4),.wh-row>div:nth-child(5){display:none}.wh-row-hdr>div:nth-child(3),.wh-row-hdr>div:nth-child(4),.wh-row-hdr>div:nth-child(5){display:none}}
+
 /* ── PASSWORD FORM ── */
 .pw-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
 .pw-form .fg{flex:1;min-width:180px;margin-bottom:0}
@@ -135,6 +144,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           <div class="th-toggle">Action</div>
         </div>
         <div id="client-users-body"><div style="color:#94a3b8;font-size:12px;padding:12px 0">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Warehouse Overview (support/health — read-only, cross-client) -->
+    <div class="card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">&#128230; Warehouse Overview</div>
+          <div class="card-sub">Support view — which clients use the warehouse module, and whether anything looks stuck</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="wh-row wh-row-hdr">
+          <div>Client</div>
+          <div>Warehouse</div>
+          <div>Open Waves</div>
+          <div>Print Queue</div>
+          <div>Last Activity</div>
+        </div>
+        <div id="warehouse-overview-body"><div style="color:#94a3b8;font-size:12px;padding:12px 0">Loading…</div></div>
       </div>
     </div>
 
@@ -223,6 +252,7 @@ function showDash() {
   document.getElementById('page-dash').style.flexDirection = 'column';
   document.getElementById('dash-user').textContent = staffUser;
   loadClientUsers();
+  loadWarehouseOverview();
 }
 
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
@@ -287,6 +317,29 @@ async function loadClientUsers() {
         </div>
       </div>`).join('');
   } catch { el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Error loading users.</div>'; }
+}
+
+// ── WAREHOUSE OVERVIEW (read-only support view) ───────────────────────────────
+function fmtWhDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso.replace(' ', 'T') + 'Z').toLocaleString('en-SG', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+async function loadWarehouseOverview() {
+  const el = document.getElementById('warehouse-overview-body');
+  try {
+    const r = await fetch(`${SERVER}/api/staff/warehouse-overview`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { if (r.status === 401) { doLogout(); return; } el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Failed to load.</div>'; return; }
+    const rows = await r.json();
+    if (!rows.length) { el.innerHTML = '<div style="color:#94a3b8;font-size:12px;padding:10px 0">No clients found.</div>'; return; }
+    el.innerHTML = rows.map(c => `
+      <div class="wh-row">
+        <div class="user-name">${esc(c.clientName)}</div>
+        <div>${c.hasWarehouse ? '<span class="status-pill status-on"><span class="status-dot"></span>Active</span>' : '<span class="status-pill status-off"><span class="status-dot"></span>Unused</span>'}</div>
+        <div class="${c.openWaves > 0 ? 'wh-num warn' : 'wh-muted'}">${c.openWaves}</div>
+        <div class="${c.pendingPrint > 0 ? 'wh-num warn' : 'wh-muted'}">${c.pendingPrint} pending</div>
+        <div class="wh-muted">${fmtWhDate(c.lastActivityAt)}</div>
+      </div>`).join('');
+  } catch { el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Error loading warehouse overview.</div>'; }
 }
 
 async function toggleClient(clientId, currentActive) {

@@ -57,12 +57,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .search-inp{padding:6px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:12px;color:#0f172a;outline:none;width:180px}
 .search-inp:focus{border-color:#2563eb}
 .orders-list{overflow-y:auto;max-height:calc(100vh - 300px)}
-.order-row{display:grid;grid-template-columns:140px 90px 1fr 100px 90px;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #f8fafc;transition:background .1s;cursor:default}
+.order-row{display:grid;grid-template-columns:140px 90px 1fr 100px 130px 90px;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #f8fafc;transition:background .1s;cursor:default}
 .order-row:hover{background:#f8fafc}
 .order-row-hdr{background:#f8fafc;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;border-bottom:1.5px solid #e2e8f0;cursor:default}
 .order-id{font-size:12px;font-weight:700;color:#2563eb;font-family:monospace}
 .order-date{font-size:12px;color:#64748b}
 .order-items{font-size:12px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.order-fulfill{font-size:11px;font-weight:600;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.order-fulfill.of-shipped,.order-fulfill.of-delivered{color:#16a34a}
+.order-fulfill.of-picking,.order-fulfill.of-packing{color:#d97706}
+.order-fulfill.of-none{color:#94a3b8}
 .order-total{font-size:13px;font-weight:700;color:#0f172a;text-align:right}
 .order-status{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
 .st-delivered{background:#f0fdf4;color:#16a34a}
@@ -75,9 +79,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .empty-state p{font-size:13px}
 @media(max-width:640px){
   .order-row{grid-template-columns:1fr 80px}
-  .order-date,.order-items,.order-total{display:none}
+  .order-date,.order-items,.order-fulfill,.order-total{display:none}
   .order-row-hdr .o-status-hdr,.order-row-hdr .o-id-hdr{display:flex}
-  .order-row-hdr .o-date-hdr,.order-row-hdr .o-items-hdr,.order-row-hdr .o-total-hdr{display:none}
+  .order-row-hdr .o-date-hdr,.order-row-hdr .o-items-hdr,.order-row-hdr .o-fulfill-hdr,.order-row-hdr .o-total-hdr{display:none}
 }
 
 /* ── UPLOAD MODAL ── */
@@ -162,6 +166,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         <div class="o-date-hdr">Date</div>
         <div class="o-items-hdr">Items</div>
         <div class="o-status-hdr">Status</div>
+        <div class="o-fulfill-hdr">Fulfillment</div>
         <div class="o-total-hdr" style="text-align:right">Total</div>
       </div>
       <div class="orders-list" id="orders-list"></div>
@@ -299,7 +304,36 @@ async function loadOrders() {
     allOrders = await r.json();
     renderStats();
     renderOrders();
+    loadFulfillment();
   } catch {}
+}
+
+// ── FULFILLMENT (read-only — pick/pack/ship status, no operational controls) ──
+let fulfillmentByOrder = {};
+async function loadFulfillment() {
+  try {
+    const r = await fetch(`${SERVER}/api/client/fulfillment`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) return;
+    const list = await r.json();
+    fulfillmentByOrder = {};
+    list.forEach(f => { fulfillmentByOrder[f.orderId] = f; });
+    renderOrders();
+  } catch {}
+}
+
+function fulfillmentInfo(orderId) {
+  const f = fulfillmentByOrder[orderId];
+  if (!f) return { label: '—', cls: 'of-none' };
+  if (f.shipment) {
+    const map = { pending: 'Shipped', in_transit: 'In Transit', delivered: 'Delivered' };
+    const label = (map[f.shipment.status] || 'Shipped') + (f.shipment.trackingNo ? ' · #' + f.shipment.trackingNo : '');
+    return { label, cls: f.shipment.status === 'delivered' ? 'of-delivered' : 'of-shipped' };
+  }
+  if (f.pack && f.pack.stage === 'packed')  return { label: 'Packed — ready to ship', cls: 'of-shipped' };
+  if (f.pack && f.pack.stage === 'packing') return { label: 'Packing', cls: 'of-packing' };
+  if (f.pick && f.pick.stage === 'picked')  return { label: 'Picked', cls: 'of-shipped' };
+  if (f.pick && f.pick.stage === 'in_progress') return { label: 'Picking', cls: 'of-picking' };
+  return { label: '—', cls: 'of-none' };
 }
 
 function renderStats() {
@@ -331,11 +365,13 @@ function renderOrders() {
     const items   = (o.items || []);
     const itemStr = items.length ? items[0].name + (items.length > 1 ? ` +${items.length - 1} more` : '') : '—';
     const sc      = statusClass(o.status);
+    const ff      = fulfillmentInfo(o.id);
     return `<div class="order-row">
       <div class="order-id">${esc(o.id)}</div>
       <div class="order-date">${date}</div>
       <div class="order-items" title="${esc(items.map(i=>i.name).join(', '))}">${esc(itemStr)}</div>
       <div><span class="order-status ${sc}">${esc(o.status)}</span></div>
+      <div class="order-fulfill ${ff.cls}" title="${esc(ff.label)}">${esc(ff.label)}</div>
       <div class="order-total">S$${(o.total || 0).toFixed(2)}</div>
     </div>`;
   }).join('');
