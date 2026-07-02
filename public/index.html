@@ -555,8 +555,28 @@ a:hover{text-decoration:underline}
 .badge-pending{background:#f1f5f9;color:#475569}
 .badge-cancelled{background:#fee2e2;color:#991b1b}
 </style>
+<!-- Auth gate: runs before first paint to avoid flash -->
+<script>
+(function(){var t=localStorage.getItem('idealoms_token'),q=location.search;if(!t&&q.indexOf('login')===-1){location.replace('/about.html');}})();
+</script>
 </head>
 <body>
+<!-- Login overlay: shown when visiting /?login without a session token -->
+<div id="login-ov" style="display:none;position:fixed;inset:0;background:#0f172a;z-index:9999;align-items:center;justify-content:center;padding:24px;flex-direction:column">
+  <div style="background:#1e293b;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.5);padding:36px 32px;width:100%;max-width:370px">
+    <div style="text-align:center;margin-bottom:26px">
+      <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:-.3px">Ideal<span style="color:#fb923c">OMS</span></div>
+      <div style="font-size:11px;font-weight:700;color:#fb923c;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">Order Management System</div>
+      <div style="font-size:12px;color:#64748b;margin-top:10px">Administrator Login</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input id="ov-pw" type="password" placeholder="Password" autocomplete="current-password" style="padding:11px 14px;border-radius:9px;border:1.5px solid #334155;background:#0f172a;color:#fff;font-size:14px;outline:none;font-family:inherit" onkeydown="if(event.key==='Enter')doOverlayLogin()">
+      <button id="ov-btn" onclick="doOverlayLogin()" style="padding:12px;border-radius:9px;background:#2563eb;color:#fff;border:none;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Sign In &rarr;</button>
+      <div id="ov-err" style="display:none;font-size:12px;color:#f87171;background:rgba(248,113,113,.08);border-radius:7px;padding:9px 12px;text-align:center;border:1px solid rgba(248,113,113,.2)"></div>
+    </div>
+    <a href="/about.html" style="display:block;text-align:center;margin-top:18px;font-size:12px;color:#475569;text-decoration:none">&larr; Back to About IdealOMS</a>
+  </div>
+</div>
 <div class="app">
 
   <header class="header">
@@ -1236,6 +1256,38 @@ const PLAT_CONFIG={
 };
 const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
 
+// ── ADMIN LOGIN OVERLAY ───────────────────────────────────────────────────────
+function showLoginOverlay(){
+  const ov=document.getElementById('login-ov');
+  ov.style.display='flex';
+  setTimeout(()=>document.getElementById('ov-pw').focus(),50);
+}
+
+async function doOverlayLogin(){
+  const pw=document.getElementById('ov-pw').value;
+  const errEl=document.getElementById('ov-err');
+  const btn=document.getElementById('ov-btn');
+  if(!pw)return;
+  btn.disabled=true;btn.textContent='Signing in…';errEl.style.display='none';
+  try{
+    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenantId:'default',password:pw})});
+    const j=await r.json();
+    if(!r.ok){errEl.textContent=j.error||'Incorrect password';errEl.style.display='block';document.getElementById('ov-pw').value='';document.getElementById('ov-pw').focus();return;}
+    authToken=j.token;currentTenantId=j.tenantId||'default';
+    localStorage.setItem('idealoms_token',authToken);localStorage.setItem('idealoms_tenant',currentTenantId);
+    serverAvailable=true;adminUnlocked=true;
+    history.replaceState({},'','/');
+    document.getElementById('login-ov').style.display='none';
+    await fetchOrders();render();
+  }catch(e){errEl.textContent='Cannot reach server — make sure it is running.';errEl.style.display='block';}
+  finally{btn.disabled=false;btn.textContent='Sign In →';}
+}
+
+// Show overlay if visiting /?login without a token
+if(new URLSearchParams(location.search).has('login')&&!localStorage.getItem('idealoms_token')){
+  document.addEventListener('DOMContentLoaded',showLoginOverlay);
+}
+
 // ── STORAGE ───────────────────────────────────────────────────────────────────
 let authToken=localStorage.getItem('idealoms_token')||null;
 let currentTenantId=localStorage.getItem('idealoms_tenant')||'default';
@@ -1301,8 +1353,9 @@ async function initSyncLogPage(){
         if(j.authenticated){serverAvailable=true;adminUnlocked=true;showSyncLogContent();await renderSyncLog();return;}
       }
     }catch{}
-    // Token invalid or server unreachable — clear it and show lock
+    // Token invalid or server unreachable — clear it and redirect
     authToken=null;localStorage.removeItem('idealoms_token');
+    window.location.replace('/about.html');return;
   }
   showSyncLogLock();
 }
@@ -1355,6 +1408,7 @@ async function initAdminPage(){
       }
     }catch{}
     authToken=null;adminUnlocked=false;localStorage.removeItem('idealoms_token');
+    window.location.replace('/about.html');return;
   }
   showAdminLock();
 }
@@ -1442,9 +1496,10 @@ async function adminChangePassword(){
   try{
     const r=await fetch(`${SERVER}/api/auth/change-password`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify({newPassword:np})});
     if(!r.ok)throw new Error((await r.json()).error||'Failed');
-    show('Password updated. You will need to log in again.',true);
+    show('Password updated. You will be redirected to sign in again.',true);
     authToken=null;adminUnlocked=false;localStorage.removeItem('idealoms_token');
     $('adm-new-pw').value='';$('adm-confirm-pw').value='';
+    setTimeout(()=>window.location.replace('/about.html'),1800);
   }catch(e){show('Error: '+e.message,false);}
 }
 
