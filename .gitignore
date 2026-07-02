@@ -2,4 +2,3 @@ node_modules/
 .env
 *.log
 data/
-!data/betime-code2.json

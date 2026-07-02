@@ -101,7 +101,8 @@ const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
 const DOC_TEMPLATE_DIR        = path.join(DATA_DIR, 'label_doc_templates');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
-const BETIME_CODE2_FILE       = path.join(DATA_DIR, 'betime-code2.json');
+// Not DATA_DIR — static reference data, always lives with the app code
+const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json');
 
 fs.mkdirSync(WMS_DIR,          { recursive: true });
 fs.mkdirSync(WAYBILL_DIR,      { recursive: true });
