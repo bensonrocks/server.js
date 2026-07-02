@@ -8,9 +8,9 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;min-height:100vh}
 
-/* ── LOGIN PAGE ── */
+/* ── LOGIN ── */
 #page-login{display:flex;flex-direction:column;min-height:100vh}
-.login-header{background:#0f172a;padding:16px 24px;display:flex;align-items:center;gap:10px}
+.login-header{background:#0f172a;padding:16px 24px;display:flex;align-items:center}
 .login-header .brand{font-size:20px;font-weight:900;color:#fff;letter-spacing:-.3px}
 .login-header .brand span{color:#fb923c}
 .login-body{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -31,15 +31,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 /* ── DASHBOARD ── */
 #page-dash{display:none;flex-direction:column;min-height:100vh}
-.dash-header{background:#0f172a;padding:0 20px;height:56px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.dash-header{background:#0f172a;padding:0 20px;height:56px;display:flex;align-items:center;gap:10px;flex-shrink:0}
 .dash-logo{font-size:16px;font-weight:900;color:#fff;letter-spacing:-.3px;white-space:nowrap}
 .dash-logo span{color:#fb923c}
 .dash-client{font-size:12px;font-weight:600;color:#94a3b8;background:#1e293b;padding:4px 10px;border-radius:20px;white-space:nowrap}
 .dash-spacer{flex:1}
-.dash-upload-btn{padding:7px 14px;border-radius:8px;background:#2563eb;color:#fff;border:none;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .15s}
-.dash-upload-btn:hover{background:#1d4ed8}
-.dash-logout{padding:7px 14px;border-radius:8px;border:1.5px solid rgba(255,255,255,.15);background:transparent;color:#94a3b8;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
-.dash-logout:hover{border-color:rgba(255,255,255,.3);color:#fff}
+.hdr-btn{padding:7px 13px;border-radius:8px;border:none;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap}
+.hdr-btn-primary{background:#2563eb;color:#fff}
+.hdr-btn-primary:hover{background:#1d4ed8}
+.hdr-btn-ghost{background:rgba(255,255,255,.08);color:#cbd5e1;border:1.5px solid rgba(255,255,255,.12)}
+.hdr-btn-ghost:hover{background:rgba(255,255,255,.15);color:#fff}
 .dash-body{flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
 
 /* ── STATS ── */
@@ -47,38 +48,138 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .stat{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
 .stat-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
 .stat-val{font-size:22px;font-weight:800;color:#0f172a;line-height:1.2}
-.stat-sub{font-size:11px;color:#94a3b8;margin-top:1px}
+.stat-sub{font-size:11px;color:#94a3b8;margin-top:2px}
 @media(max-width:600px){.stats-row{grid-template-columns:repeat(2,1fr)}}
 
-/* ── ORDERS PANEL ── */
-.orders-panel{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;flex:1;min-height:0}
-.panel-hdr{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid #f1f5f9}
-.panel-title{font-size:14px;font-weight:700;color:#0f172a;flex:1}
-.search-inp{padding:6px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:12px;color:#0f172a;outline:none;width:180px}
+/* ── TOOLBAR ── */
+.toolbar{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);padding:10px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toolbar-sep{width:1px;height:22px;background:#e2e8f0;flex-shrink:0}
+.search-inp{padding:7px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:12px;color:#0f172a;outline:none;width:190px;transition:border-color .15s}
 .search-inp:focus{border-color:#2563eb}
-.orders-list{overflow-y:auto;max-height:calc(100vh - 300px)}
-.order-row{display:grid;grid-template-columns:140px 90px 1fr 100px 90px;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #f8fafc;transition:background .1s;cursor:default}
+
+/* status filter pills */
+.filter-pills{display:flex;gap:5px;flex-wrap:wrap}
+.pill{padding:5px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;transition:all .15s;white-space:nowrap}
+.pill:hover{border-color:#93c5fd;color:#2563eb}
+.pill.active{background:#2563eb;border-color:#2563eb;color:#fff}
+.pill.p-delivered.active{background:#16a34a;border-color:#16a34a}
+.pill.p-shipped.active{background:#2563eb;border-color:#2563eb}
+.pill.p-processing.active{background:#d97706;border-color:#d97706}
+.pill.p-pending.active{background:#64748b;border-color:#64748b}
+
+/* channel + sort selects */
+.ctrl-select{padding:6px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:12px;color:#374151;background:#fff;outline:none;cursor:pointer;transition:border-color .15s}
+.ctrl-select:focus{border-color:#2563eb}
+
+/* view toggle */
+.view-toggle{display:flex;gap:3px;background:#f1f5f9;border-radius:8px;padding:3px}
+.vt-btn{padding:5px 11px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;color:#64748b;background:transparent;display:flex;align-items:center;gap:4px;transition:all .15s;white-space:nowrap}
+.vt-btn.active{background:#fff;color:#2563eb;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+.toolbar-right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.dl-btn{padding:6px 12px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#374151;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s}
+.dl-btn:hover{border-color:#2563eb;color:#2563eb}
+
+/* ── TABLE VIEW ── */
+.orders-panel{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;flex:1}
+.order-row{display:grid;grid-template-columns:150px 95px 1fr 110px 95px;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #f8fafc;cursor:default;transition:background .1s}
 .order-row:hover{background:#f8fafc}
-.order-row-hdr{background:#f8fafc;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;border-bottom:1.5px solid #e2e8f0;cursor:default}
+.order-row-hdr{background:#f8fafc;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;border-bottom:1.5px solid #e2e8f0}
 .order-id{font-size:12px;font-weight:700;color:#2563eb;font-family:monospace}
 .order-date{font-size:12px;color:#64748b}
 .order-items{font-size:12px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .order-total{font-size:13px;font-weight:700;color:#0f172a;text-align:right}
+.ch-tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.ch-shopee{background:#fff1e6;color:#ea580c}
+.ch-lazada{background:#fdf4ff;color:#9333ea}
+.ch-tiktok{background:#f0fdf4;color:#15803d}
+.ch-shopify{background:#eff6ff;color:#2563eb}
+.ch-manual{background:#f8fafc;color:#475569}
 .order-status{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
 .st-delivered{background:#f0fdf4;color:#16a34a}
 .st-shipped{background:#eff6ff;color:#2563eb}
 .st-processing{background:#fff7ed;color:#d97706}
 .st-pending{background:#f8fafc;color:#64748b}
 .st-confirmed{background:#f0fdf4;color:#16a34a}
+.orders-scroll{overflow-y:auto;max-height:calc(100vh - 340px)}
 .empty-state{text-align:center;padding:48px 24px;color:#94a3b8}
 .empty-state .empty-icon{font-size:36px;margin-bottom:12px}
 .empty-state p{font-size:13px}
 @media(max-width:640px){
-  .order-row{grid-template-columns:1fr 80px}
+  .order-row{grid-template-columns:1fr 90px}
   .order-date,.order-items,.order-total{display:none}
-  .order-row-hdr .o-status-hdr,.order-row-hdr .o-id-hdr{display:flex}
   .order-row-hdr .o-date-hdr,.order-row-hdr .o-items-hdr,.order-row-hdr .o-total-hdr{display:none}
 }
+
+/* ── CARD VIEW ── */
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px;padding:14px}
+.order-card{border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;padding:16px;display:flex;flex-direction:column;gap:10px;transition:box-shadow .15s,border-color .15s}
+.order-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.09);border-color:#bfdbfe}
+.card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.card-id{font-size:13px;font-weight:800;color:#1e40af;font-family:monospace}
+.card-date{font-size:11px;color:#94a3b8;margin-top:2px}
+.card-badges{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.card-items{display:flex;flex-direction:column;gap:4px}
+.card-item-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px}
+.card-item-name{color:#374151;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-item-qty{color:#64748b;white-space:nowrap;font-size:11px}
+.card-item-price{color:#0f172a;font-weight:600;white-space:nowrap;font-size:12px}
+.card-divider{border:none;border-top:1px solid #f1f5f9}
+.card-footer{display:flex;align-items:center;justify-content:space-between}
+.card-recipient{font-size:11px;color:#64748b;display:flex;align-items:center;gap:4px}
+.card-total{font-size:15px;font-weight:800;color:#0f172a}
+.card-total-lbl{font-size:10px;color:#94a3b8;font-weight:600;text-align:right}
+
+/* ── ANALYTICS VIEW ── */
+.analytics-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px}
+@media(max-width:700px){.analytics-grid{grid-template-columns:1fr}}
+.an-card{background:#fff;border-radius:10px;border:1.5px solid #e2e8f0;padding:16px}
+.an-card.full{grid-column:1/-1}
+.an-title{font-size:13px;font-weight:700;color:#0f172a;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+.an-title span{font-size:11px;color:#94a3b8;font-weight:500}
+
+/* status breakdown */
+.status-bars{display:flex;flex-direction:column;gap:10px}
+.sbar-row{display:flex;align-items:center;gap:10px}
+.sbar-lbl{font-size:12px;color:#374151;width:85px;flex-shrink:0;font-weight:600}
+.sbar-track{flex:1;height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden}
+.sbar-fill{height:100%;border-radius:5px;transition:width .6s}
+.sbar-count{font-size:12px;font-weight:700;color:#0f172a;width:35px;text-align:right;flex-shrink:0}
+.sbar-pct{font-size:11px;color:#94a3b8;width:35px;flex-shrink:0}
+.fill-delivered{background:#22c55e}
+.fill-shipped{background:#3b82f6}
+.fill-processing{background:#f59e0b}
+.fill-pending{background:#94a3b8}
+.fill-confirmed{background:#10b981}
+
+/* channel breakdown */
+.ch-bars{display:flex;flex-direction:column;gap:10px}
+.chbar-row{display:flex;align-items:center;gap:10px}
+.chbar-lbl{font-size:12px;font-weight:700;width:70px;flex-shrink:0}
+.chbar-track{flex:1;height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden}
+.chbar-fill{height:100%;border-radius:5px}
+.fill-shopee{background:#f97316}
+.fill-lazada{background:#a855f7}
+.fill-tiktok{background:#22c55e}
+.fill-shopify{background:#3b82f6}
+.fill-other{background:#94a3b8}
+.chbar-val{font-size:11px;color:#64748b;width:80px;text-align:right;flex-shrink:0}
+
+/* top SKUs table */
+.sku-table{width:100%;border-collapse:collapse}
+.sku-table th{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;padding:6px 8px;text-align:left;border-bottom:1.5px solid #f1f5f9}
+.sku-table td{font-size:12px;padding:8px;border-bottom:1px solid #f8fafc;color:#374151}
+.sku-table td:last-child{text-align:right;font-weight:700;color:#0f172a}
+.sku-table tr:last-child td{border-bottom:none}
+.sku-rank{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#f1f5f9;font-size:10px;font-weight:800;color:#64748b}
+.sku-rank.top{background:#fef9c3;color:#854d0e}
+
+/* monthly bar chart */
+.monthly-chart{display:flex;align-items:flex-end;gap:6px;height:100px;padding-top:4px}
+.month-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.month-bar{width:100%;border-radius:4px 4px 0 0;background:#bfdbfe;transition:height .5s;min-height:2px}
+.month-bar.highlight{background:#2563eb}
+.month-lbl{font-size:9px;color:#94a3b8;font-weight:600;text-align:center}
+.month-val{font-size:9px;color:#64748b;font-weight:700}
 
 /* ── UPLOAD MODAL ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
@@ -106,15 +207,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .upload-result.ok{background:#f0fdf4;color:#15803d}
 .upload-result.err{background:#fef2f2;color:#dc2626}
 .selected-file{font-size:12px;color:#2563eb;font-weight:600;margin:8px 0;display:none}
+
+/* order count badge */
+.result-count{font-size:11px;color:#94a3b8;padding:0 4px;white-space:nowrap}
 </style>
 </head>
 <body>
 
 <!-- ── LOGIN PAGE ── -->
 <div id="page-login">
-  <div class="login-header">
-    <div class="brand">Ideal<span>OMS</span></div>
-  </div>
+  <div class="login-header"><div class="brand">Ideal<span>OMS</span></div></div>
   <div class="login-body">
     <div class="login-card">
       <div class="login-icon">&#128101;</div>
@@ -142,29 +244,95 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <div class="dash-logo">Ideal<span>OMS</span></div>
     <div class="dash-client" id="dash-client-name"></div>
     <div class="dash-spacer"></div>
-    <button class="dash-upload-btn" onclick="openUpload()">&#8679; Upload Orders</button>
-    <button class="dash-logout" onclick="doLogout()">Log Out</button>
+    <button class="hdr-btn hdr-btn-primary" onclick="openUpload()">&#8679; Upload Orders</button>
+    <button class="hdr-btn hdr-btn-ghost" onclick="doLogout()">Log Out</button>
   </div>
   <div class="dash-body">
-    <div class="stats-row" id="stats-row">
-      <div class="stat"><div class="stat-lbl">Total Orders</div><div class="stat-val" id="st-total">—</div></div>
-      <div class="stat"><div class="stat-lbl">Delivered</div><div class="stat-val" id="st-delivered" style="color:#16a34a">—</div></div>
-      <div class="stat"><div class="stat-lbl">In Progress</div><div class="stat-val" id="st-inprog" style="color:#2563eb">—</div></div>
-      <div class="stat"><div class="stat-lbl">Revenue (SGD)</div><div class="stat-val" id="st-revenue">—</div></div>
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat">
+        <div class="stat-lbl">Total Orders</div>
+        <div class="stat-val" id="st-total">—</div>
+        <div class="stat-sub" id="st-total-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">Delivered</div>
+        <div class="stat-val" id="st-delivered" style="color:#16a34a">—</div>
+        <div class="stat-sub" id="st-delivered-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">In Progress</div>
+        <div class="stat-val" id="st-inprog" style="color:#2563eb">—</div>
+        <div class="stat-sub" id="st-inprog-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">Revenue (SGD)</div>
+        <div class="stat-val" id="st-revenue">—</div>
+        <div class="stat-sub" id="st-revenue-sub"></div>
+      </div>
     </div>
-    <div class="orders-panel">
-      <div class="panel-hdr">
-        <div class="panel-title">My Orders</div>
-        <input class="search-inp" id="order-search" placeholder="&#128269; Search orders&hellip;" oninput="renderOrders()">
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <input class="search-inp" id="order-search" placeholder="&#128269; Search orders&hellip;" oninput="applyFilters()">
+      <div class="toolbar-sep"></div>
+      <div class="filter-pills">
+        <button class="pill active" data-status="" onclick="setPill(this)">All</button>
+        <button class="pill p-delivered" data-status="delivered" onclick="setPill(this)">Delivered</button>
+        <button class="pill p-shipped" data-status="shipped" onclick="setPill(this)">Shipped</button>
+        <button class="pill p-processing" data-status="processing" onclick="setPill(this)">Processing</button>
+        <button class="pill p-pending" data-status="pending" onclick="setPill(this)">Pending</button>
       </div>
-      <div class="order-row order-row-hdr">
-        <div class="o-id-hdr">Order ID</div>
-        <div class="o-date-hdr">Date</div>
-        <div class="o-items-hdr">Items</div>
-        <div class="o-status-hdr">Status</div>
-        <div class="o-total-hdr" style="text-align:right">Total</div>
+      <div class="toolbar-sep"></div>
+      <select class="ctrl-select" id="ch-filter" onchange="applyFilters()">
+        <option value="">All Channels</option>
+        <option value="shopee">Shopee</option>
+        <option value="lazada">Lazada</option>
+        <option value="tiktok">TikTok</option>
+        <option value="shopify">Shopify</option>
+        <option value="manual">Manual</option>
+      </select>
+      <select class="ctrl-select" id="sort-by" onchange="applyFilters()">
+        <option value="date-desc">Newest First</option>
+        <option value="date-asc">Oldest First</option>
+        <option value="total-desc">Highest Value</option>
+        <option value="total-asc">Lowest Value</option>
+      </select>
+      <span class="result-count" id="result-count"></span>
+      <div class="toolbar-right">
+        <button class="dl-btn" onclick="downloadCSV()">&#8681; CSV</button>
+        <button class="dl-btn" onclick="downloadJSON()">&#8681; JSON</button>
+        <div class="view-toggle">
+          <button class="vt-btn active" id="vt-table" onclick="setView('table')">&#9776; Table</button>
+          <button class="vt-btn" id="vt-cards" onclick="setView('cards')">&#9638; Cards</button>
+          <button class="vt-btn" id="vt-analytics" onclick="setView('analytics')">&#9656; Analytics</button>
+        </div>
       </div>
-      <div class="orders-list" id="orders-list"></div>
+    </div>
+
+    <!-- Content area -->
+    <div id="content-area">
+      <!-- TABLE VIEW -->
+      <div id="view-table" class="orders-panel">
+        <div class="order-row order-row-hdr">
+          <div>Order ID</div>
+          <div>Date</div>
+          <div>Items</div>
+          <div>Status</div>
+          <div style="text-align:right">Total</div>
+        </div>
+        <div class="orders-scroll" id="orders-list"></div>
+      </div>
+
+      <!-- CARD VIEW -->
+      <div id="view-cards" style="display:none">
+        <div class="cards-grid" id="cards-grid"></div>
+      </div>
+
+      <!-- ANALYTICS VIEW -->
+      <div id="view-analytics" style="display:none">
+        <div class="analytics-grid" id="analytics-grid"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -201,24 +369,23 @@ Recipient Name, Address, City, Postal Code, Notes</code>
 
 <script>
 const SERVER = '';
-const K_TOKEN = 'cportal_token';
+const K_TOKEN  = 'cportal_token';
 const K_CLIENT = 'cportal_client';
 
-let token = sessionStorage.getItem(K_TOKEN);
+let token      = sessionStorage.getItem(K_TOKEN);
 let clientInfo = JSON.parse(sessionStorage.getItem(K_CLIENT) || 'null');
-let allOrders = [];
+let allOrders  = [];
+let filtered   = [];
 let uploadFile = null;
+let currentView   = 'table';
+let activeStatus  = '';
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 (async () => {
   if (token && clientInfo) {
     try {
       const r = await fetch(`${SERVER}/api/client/me`, { headers: { Authorization: 'Bearer ' + token } });
-      if (r.ok) {
-        clientInfo = await r.json();
-        showDash();
-        return;
-      }
+      if (r.ok) { clientInfo = await r.json(); showDash(); return; }
     } catch {}
   }
   token = null;
@@ -230,7 +397,6 @@ let uploadFile = null;
 function showLogin() {
   document.getElementById('page-login').style.display = 'flex';
   document.getElementById('page-dash').style.display  = 'none';
-  document.getElementById('page-dash').style.flexDirection = '';
   setTimeout(() => document.getElementById('inp-user').focus(), 50);
 }
 
@@ -249,13 +415,10 @@ async function doLogin() {
   const errEl = document.getElementById('login-err');
   const btn   = document.getElementById('login-btn');
   if (!username || !password) { showErr('Please enter your username and password.'); return; }
-  btn.disabled = true;
-  btn.textContent = 'Logging in…';
-  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Logging in…'; errEl.style.display = 'none';
   try {
     const r = await fetch(`${SERVER}/api/client/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
     const j = await r.json();
@@ -265,28 +428,20 @@ async function doLogin() {
     sessionStorage.setItem(K_TOKEN, token);
     sessionStorage.setItem(K_CLIENT, JSON.stringify(clientInfo));
     showDash();
-  } catch (e) {
-    showErr('Could not connect to server. Please try again.');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Log In →';
-  }
+  } catch { showErr('Could not connect to server. Please try again.'); }
+  finally { btn.disabled = false; btn.textContent = 'Log In →'; }
 }
 
 function showErr(msg) {
   const el = document.getElementById('login-err');
-  el.textContent = msg;
-  el.style.display = 'block';
+  el.textContent = msg; el.style.display = 'block';
 }
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 async function doLogout() {
   try { await fetch(`${SERVER}/api/client/logout`, { method: 'POST', headers: { Authorization: 'Bearer ' + token } }); } catch {}
-  token = null;
-  clientInfo = null;
-  allOrders = [];
-  sessionStorage.removeItem(K_TOKEN);
-  sessionStorage.removeItem(K_CLIENT);
+  token = null; clientInfo = null; allOrders = []; filtered = [];
+  sessionStorage.removeItem(K_TOKEN); sessionStorage.removeItem(K_CLIENT);
   document.getElementById('inp-pass').value = '';
   showLogin();
 }
@@ -298,7 +453,7 @@ async function loadOrders() {
     if (!r.ok) { if (r.status === 401) { doLogout(); return; } }
     allOrders = await r.json();
     renderStats();
-    renderOrders();
+    applyFilters();
   } catch {}
 }
 
@@ -307,46 +462,358 @@ function renderStats() {
   const delivered = allOrders.filter(o => o.status === 'delivered').length;
   const inprog    = allOrders.filter(o => ['shipped','processing','confirmed'].includes(o.status)).length;
   const revenue   = allOrders.reduce((s, o) => s + (o.total || 0), 0);
-  document.getElementById('st-total').textContent     = total;
-  document.getElementById('st-delivered').textContent  = delivered;
-  document.getElementById('st-inprog').textContent     = inprog;
-  document.getElementById('st-revenue').textContent    = 'S$' + revenue.toFixed(2);
+  const pending   = allOrders.filter(o => o.status === 'pending').length;
+
+  document.getElementById('st-total').textContent        = total;
+  document.getElementById('st-total-sub').textContent    = total > 0 ? `${Math.round(((total - pending) / total) * 100)}% fulfilment rate` : '';
+  document.getElementById('st-delivered').textContent    = delivered;
+  document.getElementById('st-delivered-sub').textContent= total > 0 ? `${Math.round((delivered / total) * 100)}% of orders` : '';
+  document.getElementById('st-inprog').textContent       = inprog;
+  document.getElementById('st-inprog-sub').textContent   = inprog > 0 ? `${inprog} order${inprog>1?'s':''} en route` : 'All caught up';
+  document.getElementById('st-revenue').textContent      = 'S$' + revenue.toFixed(2);
+  document.getElementById('st-revenue-sub').textContent  = total > 0 ? 'Avg S$' + (revenue / total).toFixed(2) + ' / order' : '';
 }
 
-function renderOrders() {
-  const q   = (document.getElementById('order-search').value || '').toLowerCase();
-  let list  = allOrders;
+// ── FILTERS + SORT ────────────────────────────────────────────────────────────
+function setPill(el) {
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  activeStatus = el.dataset.status;
+  applyFilters();
+}
+
+function applyFilters() {
+  const q  = (document.getElementById('order-search').value || '').toLowerCase();
+  const ch = document.getElementById('ch-filter').value;
+  const sort = document.getElementById('sort-by').value;
+
+  let list = allOrders.slice();
+
+  if (activeStatus) list = list.filter(o => o.status === activeStatus);
+  if (ch) list = list.filter(o => o.channel === ch);
   if (q) list = list.filter(o =>
     (o.id || '').toLowerCase().includes(q) ||
+    ((o.shipping || {}).recipient || '').toLowerCase().includes(q) ||
     (o.notes || '').toLowerCase().includes(q) ||
-    (o.items || []).some(i => (i.name || '').toLowerCase().includes(q))
+    (o.items || []).some(i => (i.name || '').toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q))
   );
+
+  if (sort === 'date-desc')  list.sort((a,b) => new Date(b.orderDate) - new Date(a.orderDate));
+  if (sort === 'date-asc')   list.sort((a,b) => new Date(a.orderDate) - new Date(b.orderDate));
+  if (sort === 'total-desc') list.sort((a,b) => (b.total||0) - (a.total||0));
+  if (sort === 'total-asc')  list.sort((a,b) => (a.total||0) - (b.total||0));
+
+  filtered = list;
+  document.getElementById('result-count').textContent = `${list.length} order${list.length !== 1 ? 's' : ''}`;
+  renderView();
+}
+
+// ── VIEW SWITCHING ────────────────────────────────────────────────────────────
+function setView(v) {
+  currentView = v;
+  ['table','cards','analytics'].forEach(x => {
+    document.getElementById('view-' + x).style.display = x === v ? '' : 'none';
+    document.getElementById('vt-' + x).classList.toggle('active', x === v);
+  });
+  renderView();
+}
+
+function renderView() {
+  if (currentView === 'table')     renderTable();
+  else if (currentView === 'cards') renderCards();
+  else renderAnalytics();
+}
+
+// ── TABLE VIEW ────────────────────────────────────────────────────────────────
+function renderTable() {
   const el = document.getElementById('orders-list');
-  if (!list.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128230;</div><p>' + (q ? 'No orders match your search.' : 'No orders yet. Upload your first order above.') + '</p></div>';
-    return;
+  if (!filtered.length) {
+    el.innerHTML = emptyState(); return;
   }
-  el.innerHTML = list.map(o => {
-    const date    = o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-SG', { day:'2-digit', month:'short', year:'numeric' }) : '—';
-    const items   = (o.items || []);
-    const itemStr = items.length ? items[0].name + (items.length > 1 ? ` +${items.length - 1} more` : '') : '—';
-    const sc      = statusClass(o.status);
+  el.innerHTML = filtered.map(o => {
+    const date  = fmtDate(o.orderDate);
+    const items = o.items || [];
+    const itemStr = items.length ? items[0].name + (items.length > 1 ? ` +${items.length-1} more` : '') : '—';
+    const title   = items.map(i => `${i.name} ×${i.qty}`).join(', ');
     return `<div class="order-row">
-      <div class="order-id">${esc(o.id)}</div>
+      <div>
+        <div class="order-id">${esc(o.id)}</div>
+        <div style="margin-top:2px">${chTag(o.channel)}</div>
+      </div>
       <div class="order-date">${date}</div>
-      <div class="order-items" title="${esc(items.map(i=>i.name).join(', '))}">${esc(itemStr)}</div>
-      <div><span class="order-status ${sc}">${esc(o.status)}</span></div>
-      <div class="order-total">S$${(o.total || 0).toFixed(2)}</div>
+      <div class="order-items" title="${esc(title)}">${esc(itemStr)}</div>
+      <div><span class="order-status ${stClass(o.status)}">${esc(o.status)}</span></div>
+      <div class="order-total">S$${(o.total||0).toFixed(2)}</div>
     </div>`;
   }).join('');
 }
 
-function statusClass(s) {
-  const map = { delivered:'st-delivered', shipped:'st-shipped', processing:'st-processing', confirmed:'st-confirmed', pending:'st-pending' };
-  return map[s] || 'st-pending';
+// ── CARD VIEW ─────────────────────────────────────────────────────────────────
+function renderCards() {
+  const el = document.getElementById('cards-grid');
+  if (!filtered.length) { el.innerHTML = `<div style="grid-column:1/-1">${emptyState()}</div>`; return; }
+  el.innerHTML = filtered.map(o => {
+    const items = (o.items || []).slice(0, 4);
+    const more  = (o.items || []).length - items.length;
+    const ship  = o.shipping || {};
+    return `<div class="order-card">
+      <div class="card-top">
+        <div>
+          <div class="card-id">${esc(o.id)}</div>
+          <div class="card-date">${fmtDate(o.orderDate)}</div>
+        </div>
+        <div class="card-badges">
+          ${chTag(o.channel)}
+          <span class="order-status ${stClass(o.status)}">${esc(o.status)}</span>
+        </div>
+      </div>
+      <div class="card-items">
+        ${items.map(i => `<div class="card-item-row">
+          <span class="card-item-name" title="${esc(i.name)}">${esc(i.name)}</span>
+          <span class="card-item-qty">×${i.qty}</span>
+          <span class="card-item-price">S$${((i.qty||1)*(i.unitPrice||0)).toFixed(2)}</span>
+        </div>`).join('')}
+        ${more > 0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">+${more} more item${more>1?'s':''}</div>` : ''}
+      </div>
+      <hr class="card-divider">
+      <div class="card-footer">
+        <div class="card-recipient">&#128100; ${esc(ship.recipient || '—')}</div>
+        <div>
+          <div class="card-total-lbl">Total</div>
+          <div class="card-total">S$${(o.total||0).toFixed(2)}</div>
+        </div>
+      </div>
+      ${o.notes ? `<div style="font-size:11px;color:#64748b;background:#f8fafc;border-radius:6px;padding:6px 8px">&#128203; ${esc(o.notes)}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
-function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// ── ANALYTICS VIEW ────────────────────────────────────────────────────────────
+function renderAnalytics() {
+  const el = document.getElementById('analytics-grid');
+  if (!filtered.length) { el.innerHTML = `<div style="grid-column:1/-1">${emptyState()}</div>`; return; }
+
+  // Status breakdown
+  const statusMap = {};
+  filtered.forEach(o => { statusMap[o.status] = (statusMap[o.status]||0) + 1; });
+  const statusOrder = ['delivered','shipped','processing','confirmed','pending'];
+  const maxStatus = Math.max(...Object.values(statusMap), 1);
+
+  const statusBars = statusOrder.filter(s => statusMap[s]).map(s => {
+    const count = statusMap[s] || 0;
+    const pct   = Math.round((count / filtered.length) * 100);
+    const w     = Math.round((count / maxStatus) * 100);
+    return `<div class="sbar-row">
+      <div class="sbar-lbl">${s.charAt(0).toUpperCase()+s.slice(1)}</div>
+      <div class="sbar-track"><div class="sbar-fill fill-${s}" style="width:${w}%"></div></div>
+      <div class="sbar-count">${count}</div>
+      <div class="sbar-pct">${pct}%</div>
+    </div>`;
+  }).join('');
+
+  // Channel breakdown
+  const chMap = {};
+  filtered.forEach(o => {
+    if (!chMap[o.channel]) chMap[o.channel] = { count:0, revenue:0 };
+    chMap[o.channel].count++;
+    chMap[o.channel].revenue += o.total || 0;
+  });
+  const chOrder = ['shopee','lazada','tiktok','shopify'];
+  const allCh = [...chOrder.filter(c => chMap[c]), ...Object.keys(chMap).filter(c => !chOrder.includes(c))];
+  const maxCh = Math.max(...allCh.map(c => chMap[c].count), 1);
+
+  const chBars = allCh.map(c => {
+    const d   = chMap[c];
+    const w   = Math.round((d.count / maxCh) * 100);
+    const lbl = c.charAt(0).toUpperCase() + c.slice(1);
+    return `<div class="chbar-row">
+      <div class="chbar-lbl" style="color:${chColor(c)}">${lbl}</div>
+      <div class="chbar-track"><div class="chbar-fill fill-${chOrder.includes(c)?c:'other'}" style="width:${w}%"></div></div>
+      <div class="chbar-val">${d.count} orders &bull; S$${d.revenue.toFixed(0)}</div>
+    </div>`;
+  }).join('');
+
+  // Top SKUs
+  const skuMap = {};
+  filtered.forEach(o => {
+    (o.items||[]).forEach(i => {
+      if (!skuMap[i.sku]) skuMap[i.sku] = { name: i.name, qty:0, revenue:0 };
+      skuMap[i.sku].qty     += i.qty || 0;
+      skuMap[i.sku].revenue += (i.qty||0) * (i.unitPrice||0);
+    });
+  });
+  const topSkus = Object.entries(skuMap)
+    .sort((a,b) => b[1].qty - a[1].qty)
+    .slice(0, 8);
+
+  const skuRows = topSkus.map(([sku, d], idx) => `
+    <tr>
+      <td><span class="sku-rank ${idx<3?'top':''}">${idx+1}</span></td>
+      <td><strong>${esc(sku)}</strong><br><span style="color:#94a3b8;font-size:11px">${esc(d.name)}</span></td>
+      <td>${d.qty} units</td>
+      <td>S$${d.revenue.toFixed(2)}</td>
+    </tr>`).join('');
+
+  // Monthly trend (last 6 months of filtered orders)
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, lbl: d.toLocaleString('en',{month:'short'}) });
+  }
+  const mMap = {};
+  months.forEach(m => mMap[m.key] = 0);
+  filtered.forEach(o => {
+    if (!o.orderDate) return;
+    const k = o.orderDate.slice(0,7);
+    if (mMap[k] !== undefined) mMap[k]++;
+  });
+  const mVals = months.map(m => mMap[m.key]);
+  const mMax  = Math.max(...mVals, 1);
+  const curMoKey = months[months.length-1].key;
+
+  const monthBars = months.map((m, i) => {
+    const v = mVals[i];
+    const h = Math.max(Math.round((v / mMax) * 80), v > 0 ? 4 : 2);
+    const isCur = m.key === curMoKey;
+    return `<div class="month-bar-wrap">
+      <div class="month-val">${v||''}</div>
+      <div class="month-bar ${isCur?'highlight':''}" style="height:${h}px"></div>
+      <div class="month-lbl">${m.lbl}</div>
+    </div>`;
+  }).join('');
+
+  // Revenue summary
+  const totalRev  = filtered.reduce((s,o) => s+(o.total||0), 0);
+  const totalItems= filtered.reduce((s,o) => s+(o.items||[]).reduce((ss,i)=>ss+(i.qty||0),0), 0);
+  const avgOrder  = filtered.length ? totalRev / filtered.length : 0;
+
+  el.innerHTML = `
+    <div class="an-card">
+      <div class="an-title">Order Status <span>${filtered.length} orders</span></div>
+      <div class="status-bars">${statusBars}</div>
+    </div>
+    <div class="an-card">
+      <div class="an-title">By Channel</div>
+      <div class="ch-bars">${chBars}</div>
+    </div>
+    <div class="an-card">
+      <div class="an-title">Orders (Last 6 Months)</div>
+      <div class="monthly-chart">${monthBars}</div>
+    </div>
+    <div class="an-card">
+      <div class="an-title">Revenue Summary</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #f1f5f9;padding-bottom:8px">
+          <span style="font-size:12px;color:#64748b">Total Revenue</span>
+          <span style="font-size:20px;font-weight:800;color:#0f172a">S$${totalRev.toFixed(2)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between"><span style="font-size:12px;color:#64748b">Average Order Value</span><span style="font-size:13px;font-weight:700">S$${avgOrder.toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="font-size:12px;color:#64748b">Total Units Sold</span><span style="font-size:13px;font-weight:700">${totalItems}</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="font-size:12px;color:#64748b">Orders in View</span><span style="font-size:13px;font-weight:700">${filtered.length}</span></div>
+      </div>
+    </div>
+    <div class="an-card full">
+      <div class="an-title">Top Products by Units Sold <span>${topSkus.length} SKUs</span></div>
+      <table class="sku-table">
+        <thead><tr><th>#</th><th>SKU / Product</th><th>Units Sold</th><th>Revenue</th></tr></thead>
+        <tbody>${skuRows}</tbody>
+      </table>
+    </div>`;
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-SG', { day:'2-digit', month:'short', year:'numeric' });
+}
+
+function stClass(s) {
+  return { delivered:'st-delivered', shipped:'st-shipped', processing:'st-processing', confirmed:'st-confirmed', pending:'st-pending' }[s] || 'st-pending';
+}
+
+function chTag(ch) {
+  const cls = { shopee:'ch-shopee', lazada:'ch-lazada', tiktok:'ch-tiktok', shopify:'ch-shopify' }[ch] || 'ch-manual';
+  const lbl = ch ? ch.charAt(0).toUpperCase() + ch.slice(1) : 'Manual';
+  return `<span class="ch-tag ${cls}">${esc(lbl)}</span>`;
+}
+
+function chColor(ch) {
+  return { shopee:'#ea580c', lazada:'#9333ea', tiktok:'#16a34a', shopify:'#2563eb' }[ch] || '#64748b';
+}
+
+function emptyState() {
+  const q = document.getElementById('order-search').value;
+  return `<div class="empty-state"><div class="empty-icon">&#128230;</div><p>${q ? 'No orders match your search.' : 'No orders yet.'}</p></div>`;
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── DOWNLOAD ──────────────────────────────────────────────────────────────────
+function downloadCSV() {
+  if (!filtered.length) return;
+  const rows = [
+    ['Order ID','Date','Channel','Status','Items','Total (SGD)','Subtotal','Tax','Shipping Cost','Currency','Recipient','Address','City','Postal Code','Country','Notes'].join(',')
+  ];
+  filtered.forEach(o => {
+    const ship = o.shipping || {};
+    const itemsSummary = (o.items||[]).map(i => `${i.name} x${i.qty} @${i.unitPrice}`).join(' | ');
+    rows.push([
+      csv(o.id),
+      csv(o.orderDate ? o.orderDate.slice(0,10) : ''),
+      csv(o.channel),
+      csv(o.status),
+      csv(itemsSummary),
+      csv((o.total||0).toFixed(2)),
+      csv((o.subtotal||0).toFixed(2)),
+      csv((o.tax||0).toFixed(2)),
+      csv((o.shippingCost||0).toFixed(2)),
+      csv(o.currency||'SGD'),
+      csv(ship.recipient||''),
+      csv([ship.addressLine1,ship.addressLine2].filter(Boolean).join(' ')),
+      csv(ship.city||''),
+      csv(ship.zip||''),
+      csv(ship.country||''),
+      csv(o.notes||''),
+    ].join(','));
+  });
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  triggerDownload(URL.createObjectURL(blob), `orders_${(clientInfo.clientName||'export').replace(/\s+/g,'-')}_${today()}.csv`);
+}
+
+function downloadJSON() {
+  if (!filtered.length) return;
+  const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
+  triggerDownload(URL.createObjectURL(blob), `orders_${(clientInfo.clientName||'export').replace(/\s+/g,'-')}_${today()}.json`);
+}
+
+function csv(v) {
+  const s = String(v == null ? '' : v);
+  return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g,'""')}"` : s;
+}
+
+function today() {
+  return new Date().toISOString().slice(0,10);
+}
+
+function triggerDownload(url, filename) {
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function downloadTemplate() {
+  const csv = [
+    'Order ID,Product SKU,Product Name,Qty,Unit Price,Recipient Name,Address,City,Postal Code,Notes',
+    'MY-ORD-001,PROD-001,Example Product,2,25.00,John Doe,123 Main Street,Singapore,640001,',
+    'MY-ORD-001,PROD-002,Another Item,1,15.00,John Doe,123 Main Street,Singapore,640001,Gift wrap please',
+    'MY-ORD-002,PROD-003,Third Product,3,10.00,Jane Smith,456 Side Lane,Singapore,520456,',
+  ].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'idealoms_order_template.csv';
+  a.click();
+}
 
 // ── UPLOAD ────────────────────────────────────────────────────────────────────
 function openUpload() {
@@ -392,15 +859,12 @@ function handleDrop(e) {
 async function doUpload() {
   if (!uploadFile) return;
   const btn = document.getElementById('upload-btn');
-  btn.disabled = true;
-  btn.textContent = 'Uploading…';
+  btn.disabled = true; btn.textContent = 'Uploading…';
   const form = new FormData();
   form.append('file', uploadFile);
   try {
     const r = await fetch(`${SERVER}/api/client/orders/upload`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token },
-      body: form,
+      method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form,
     });
     const j = await r.json();
     if (!r.ok) { showUploadResult(j.error || 'Upload failed', false); return; }
@@ -410,12 +874,8 @@ async function doUpload() {
     document.getElementById('file-input').value = '';
     document.getElementById('selected-file-name').style.display = 'none';
     document.getElementById('upload-btn').disabled = true;
-  } catch (e) {
-    showUploadResult('Upload failed: ' + e.message, false);
-  } finally {
-    btn.textContent = 'Upload';
-    btn.disabled = !uploadFile;
-  }
+  } catch(e) { showUploadResult('Upload failed: ' + e.message, false); }
+  finally { btn.textContent = 'Upload'; btn.disabled = !uploadFile; }
 }
 
 function showUploadResult(msg, ok) {
@@ -423,19 +883,6 @@ function showUploadResult(msg, ok) {
   el.textContent = msg;
   el.className = 'upload-result ' + (ok ? 'ok' : 'err');
   el.style.display = 'block';
-}
-
-function downloadTemplate() {
-  const csv = [
-    'Order ID,Product SKU,Product Name,Qty,Unit Price,Recipient Name,Address,City,Postal Code,Notes',
-    'MY-ORD-001,PROD-001,Example Product,2,25.00,John Doe,123 Main Street,Singapore,640001,',
-    'MY-ORD-001,PROD-002,Another Item,1,15.00,John Doe,123 Main Street,Singapore,640001,Gift wrap please',
-    'MY-ORD-002,PROD-003,Third Product,3,10.00,Jane Smith,456 Side Lane,Singapore,520456,',
-  ].join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-  a.download = 'idealoms_order_template.csv';
-  a.click();
 }
 </script>
 </body>
