@@ -35,6 +35,45 @@ const { validateRows } = require('./lib/validation');
 const { parseOcrPicklist } = require('./lib/ocr-parse');
 let Tesseract;
 try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
+let sharp;
+try { sharp = require('sharp'); } catch { sharp = null; }
+
+// Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
+// Returns the processed PNG buffer, or the original buffer if sharp is unavailable.
+async function preprocessForOcr(buffer) {
+  if (!sharp) return buffer;
+  try {
+    return await sharp(buffer)
+      .greyscale()
+      .normalize()
+      .sharpen({ sigma: 1.5, m1: 2.0, m2: 0.5 })
+      .threshold(140)   // binarize to pure black/white — eliminates grey-pixel blur
+                        // between characters that causes LSTM to hallucinate extra chars
+      .png({ compressionLevel: 1 })
+      .toBuffer();
+  } catch {
+    return buffer;
+  }
+}
+
+// Run Tesseract with LSTM engine (OEM 1) + auto page segmentation (PSM 3).
+// Extra Tesseract params can be passed as extraParams (e.g. char whitelist, PSM override).
+async function runOcr(buffer, extraParams = {}) {
+  const img = await preprocessForOcr(buffer);
+  // OEM 1 = LSTM neural-net engine only (more accurate than legacy)
+  const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+  try {
+    await worker.setParameters({
+      tessedit_pageseg_mode: '3',      // PSM_AUTO — let Tesseract detect layout
+      preserve_interword_spaces: '1',  // keeps column spacing intact
+      ...extraParams,
+    });
+    const { data: { text } } = await worker.recognize(img);
+    return text;
+  } finally {
+    await worker.terminate();
+  }
+}
 
 const app    = express();
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
@@ -62,6 +101,8 @@ const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
 const DOC_TEMPLATE_DIR        = path.join(DATA_DIR, 'label_doc_templates');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
+// Not DATA_DIR — static reference data, always lives with the app code
+const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json');
 
 fs.mkdirSync(WMS_DIR,          { recursive: true });
 fs.mkdirSync(WAYBILL_DIR,      { recursive: true });
@@ -148,6 +189,27 @@ function readDb() {
 }
 function writeDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
+
+// ── Betime CODE 2 → Product Code map ─────────────────────────────────────────
+// Loaded at startup. Translates customer barcodes (EAN-13 / CODE 2 field) to
+// WMS product codes so scanning a barcode finds the correct order line.
+// Entries with comma-separated barcodes in the source Excel are split so each
+// barcode is its own key. Empty CODE 2 rows are omitted entirely.
+let _beTimeCode2Map = {};
+try {
+  _beTimeCode2Map = JSON.parse(fs.readFileSync(BETIME_CODE2_FILE, 'utf8'));
+  console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries`);
+} catch (e) {
+  console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
+}
+
+// Resolve a scanned barcode to a WMS product code. Returns the original value
+// unchanged when the barcode is not in the Betime CODE 2 map.
+function resolveBeTimeCode2(scanned) {
+  if (!scanned) return scanned;
+  const k = scanned.trim();
+  return _beTimeCode2Map[k] || k;
 }
 
 // ── Email config ─────────────────────────────────────────────────────────────
@@ -687,7 +749,7 @@ app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
     return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
   }
   try {
-    const { data: { text } } = await Tesseract.recognize(req.file.buffer, 'eng', { logger: () => {} });
+    const text   = await runOcr(req.file.buffer);
     const rows   = parseOcrPicklist(text);
     const orders = summarizeOrders(rows);
     if (!rows.length) {
@@ -779,9 +841,9 @@ app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
     return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
   }
   try {
-    const { data: { text } } = await Tesseract.recognize(req.file.buffer, 'eng', {
-      logger: () => {},
-      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_/',
+    const text   = await runOcr(req.file.buffer, {
+      tessedit_pageseg_mode: '6',  // PSM_SINGLE_BLOCK — compact product labels
+      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -_./:()&',
     });
     const result = parseLabelLines(text);
     res.json(result);
@@ -976,7 +1038,8 @@ app.post('/api/waybill-lookup', (req, res) => {
 });
 
 app.post('/api/scan/increment', (req, res) => {
-  const { orderNumber, sku } = req.body;
+  const { orderNumber } = req.body;
+  const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
   if (!orderNumber || !sku) return res.status(400).json({ error: 'orderNumber and sku required' });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
@@ -1781,6 +1844,44 @@ app.delete('/api/master/email-config', (req, res) => {
   if (!checkMaster(req, res)) return;
   try { fs.unlinkSync(EMAIL_CONFIG_FILE); } catch {}
   res.json({ ok: true });
+});
+
+// ── Betime CODE 2 map management ─────────────────────────────────────────────
+
+// GET — return current map stats + all entries so admin can review mismatches
+app.get('/api/master/betime-code2', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json({ entries: Object.keys(_beTimeCode2Map).length, map: _beTimeCode2Map });
+});
+
+// POST — upload a new Betime SKU Excel; regenerates and hot-reloads the map
+app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const hdr  = data[0] || [];
+    const code1Idx = hdr.indexOf('Product Code');
+    const code2Idx = hdr.indexOf('CODE 2');
+    if (code1Idx === -1 || code2Idx === -1) {
+      return res.status(400).json({ error: 'Excel must have "Product Code" and "CODE 2" columns' });
+    }
+    const map = {};
+    let skipped = 0;
+    data.slice(1).forEach(row => {
+      const pc = String(row[code1Idx] || '').trim();
+      const c2 = String(row[code2Idx] || '').trim();
+      if (!pc || !c2) { skipped++; return; }
+      c2.split(',').forEach(b => { const bc = b.trim(); if (bc) map[bc] = pc; });
+    });
+    fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
+    _beTimeCode2Map = map;  // hot-reload in memory
+    res.json({ ok: true, entries: Object.keys(map).length, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Completion slip ──────────────────────────────────────────────────────────

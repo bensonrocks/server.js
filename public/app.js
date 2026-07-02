@@ -1513,6 +1513,9 @@
   }
 
   function _globalScanKeydown(e) {
+    // Never intercept while any modal dialog is visible
+    if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+
     // Let normal input inside qty fields or modal inputs work uninterrupted
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') {

@@ -45,6 +45,31 @@
   --bottom-nav-h:  0px;
   --content-max:   1100px;
   --pad:           1.5rem;
+
+  /* ── Z-index scale (edit here — nowhere else) ─────────────────
+     100  sticky header
+     150  sticky bottom-nav
+     400  log overlay
+     500  scan overlay
+     600  modals  ← must always be above every workflow overlay
+     700  camera-scan overlay
+     800  batch-scan overlay
+     850  print-label toast
+     900  pin lock
+    1000  login screen
+    9900  label-scan overlay
+  ──────────────────────────────────────────────────────────────── */
+  --z-header:          100;
+  --z-bottom-nav:      150;
+  --z-log-overlay:     400;
+  --z-scan-overlay:    500;
+  --z-modal:           600;
+  --z-camera-overlay:  700;
+  --z-bs-overlay:      800;
+  --z-print-toast:     850;
+  --z-pin-overlay:     900;
+  --z-login:          1000;
+  --z-ls-overlay:     9900;
 }
 
 body {
@@ -72,7 +97,7 @@ header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 8px rgba(0,0,0,.05);
-  position: sticky; top: 0; z-index: 100;
+  position: sticky; top: 0; z-index: var(--z-header);
   height: var(--header-h);
 }
 .header-inner {
@@ -529,7 +554,7 @@ tr:hover td { background: var(--surface-2); }
    SCAN OVERLAY
    ================================================================ */
 .scanner-tab { padding: 0; display: flex; flex-direction: column; min-height: calc(100vh - var(--header-h) - 2.5rem); }
-.scan-overlay { position: fixed; inset: 0; top: var(--header-h); z-index: 500; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+.scan-overlay { position: fixed; inset: 0; top: var(--header-h); z-index: var(--z-scan-overlay); background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
 .scan-overlay.hidden { display: none !important; }
 body.scan-open { overflow: hidden; }
 
@@ -621,7 +646,7 @@ body.scan-open { overflow: hidden; }
 
 /* Print label toast — fixed bottom banner after successful scan completion */
 .print-label-toast {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 900;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: var(--z-print-toast);
   display: flex; align-items: center; gap: .75rem;
   padding: .85rem 1.25rem;
   background: #1e3a5f; color: #fff;
@@ -671,7 +696,7 @@ body.scan-open { overflow: hidden; }
 /* ================================================================
    MODALS
    ================================================================ */
-.modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.55); backdrop-filter: blur(4px); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.55); backdrop-filter: blur(4px); z-index: var(--z-modal); display: flex; align-items: center; justify-content: center; padding: 1rem; }
 .modal { background: var(--surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 540px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto; }
 .modal-icon  { font-size: 2rem; text-align: center; color: var(--warning); }
 .modal-title { font-size: 1.05rem; font-weight: 800; text-align: center; margin: .4rem 0 .3rem; color: var(--warning); }
@@ -711,7 +736,7 @@ body.scan-open { overflow: hidden; }
 .login-overlay {
   position: fixed; inset: 0;
   background: linear-gradient(145deg, #1e3a8a 0%, #1d4ed8 55%, #2563eb 100%);
-  z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 1.5rem;
+  z-index: var(--z-login); display: flex; align-items: center; justify-content: center; padding: 1.5rem;
 }
 .login-box {
   background: var(--surface); border-radius: 20px;
@@ -735,7 +760,7 @@ body.scan-open { overflow: hidden; }
 /* ================================================================
    PIN LOCK OVERLAY
    ================================================================ */
-.pin-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.92); backdrop-filter: blur(10px); z-index: 900; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.pin-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.92); backdrop-filter: blur(10px); z-index: var(--z-pin-overlay); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
 .pin-box { background: var(--surface); border-radius: 20px; padding: 2rem 1.75rem; width: 100%; max-width: 300px; text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,.4); }
 .pin-logo-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .85rem; }
 .pin-brand-name { font-size: .88rem; font-weight: 900; letter-spacing: .06em; color: #1e3a8a; }
@@ -756,7 +781,7 @@ body.scan-open { overflow: hidden; }
 /* ================================================================
    LOG OVERLAY
    ================================================================ */
-.log-overlay { position: fixed; inset: 0; top: var(--header-h); z-index: 400; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.log-overlay { position: fixed; inset: 0; top: var(--header-h); z-index: var(--z-log-overlay); background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .log-overlay.hidden { display: none !important; }
 body.log-open { overflow: hidden; }
 .log-overlay-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem .6rem; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 1; box-shadow: var(--shadow-sm); }
@@ -876,7 +901,7 @@ body.log-open { overflow: hidden; }
 /* ================================================================
    CAMERA SCAN OVERLAY
    ================================================================ */
-.camera-scan-overlay { position: fixed; inset: 0; z-index: 700; background: #000; display: flex; flex-direction: column; }
+.camera-scan-overlay { position: fixed; inset: 0; z-index: var(--z-camera-overlay); background: #000; display: flex; flex-direction: column; }
 .camera-scan-overlay.hidden { display: none !important; }
 .camera-header { display: flex; align-items: center; justify-content: space-between; padding: .65rem 1rem; background: rgba(0,0,0,.75); flex-shrink: 0; gap: .75rem; }
 .camera-header-left { display: flex; align-items: center; gap: .75rem; }
@@ -1084,7 +1109,7 @@ body.log-open { overflow: hidden; }
   header nav {
     position: fixed; bottom: 0; left: 0; right: 0;
     height: var(--bottom-nav-h); background: var(--surface);
-    border-top: 2px solid var(--border); display: flex; z-index: 150;
+    border-top: 2px solid var(--border); display: flex; z-index: var(--z-bottom-nav);
     padding: 4px 8px calc(4px + env(safe-area-inset-bottom)); gap: 4px;
     box-shadow: 0 -2px 16px rgba(0,0,0,.1);
   }
@@ -1214,7 +1239,7 @@ body.log-open { overflow: hidden; }
 
 /* Overlay shell */
 .bs-overlay {
-  position: fixed; inset: 0; z-index: 800;
+  position: fixed; inset: 0; z-index: var(--z-bs-overlay);
   background: #0a0a0a;
   display: flex; flex-direction: column;
 }
@@ -1467,7 +1492,7 @@ body.bs-open { overflow: hidden; }
 
 /* ── Label Scan Overlay ───────────────────────────────────────────────────── */
 .ls-overlay {
-  position: fixed; inset: 0; z-index: 9900;
+  position: fixed; inset: 0; z-index: var(--z-ls-overlay);
   background: #000;
   display: flex; flex-direction: column;
   font-family: inherit;
