@@ -709,18 +709,15 @@ function generateBrief(articles, tz) {
   const swingArticles = recent.filter(a => a.isSwingRelevant);
   const rawPlays = swingArticles.map(a => generatePlay(a)).filter(Boolean);
 
-  // Allow up to 2 plays per ticker (top 2 by stars)
+  // 1 play per ticker — keep the highest-stars play, drop any duplicates
   const playMap = {};
   for (const p of rawPlays) {
     const key = p.ticker;
-    if (!playMap[key]) playMap[key] = [];
-    playMap[key].push(p);
-    playMap[key].sort((a, b) => b.stars - a.stars);
-    if (playMap[key].length > 2) playMap[key].pop();
+    if (!playMap[key] || p.stars > playMap[key].stars) playMap[key] = p;
   }
 
   // Sort: primary-market tickers first, then by stars
-  const allPlays = Object.values(playMap).flat().sort((a, b) => {
+  const allPlays = Object.values(playMap).sort((a, b) => {
     const ap = priorityExchanges.includes(a.exchange) ? 1 : 0;
     const bp = priorityExchanges.includes(b.exchange) ? 1 : 0;
     if (bp !== ap) return bp - ap;
