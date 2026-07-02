@@ -21,9 +21,11 @@ const multer     = require('multer');
 
 const mainDb          = require('./lib/db/main');
 const { getTenantDb } = require('./lib/db/tenant');
+const { getWarehouseDb } = require('./lib/db/warehouse-db');
 const createStore     = require('./lib/store');
 const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
+const createWarehouse = require('./lib/warehouse');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -90,6 +92,18 @@ function withTenant(req, res, next) {
   req.store      = ctx.store;
   req.creds      = ctx.creds;
   req.syncLog    = ctx.syncLog;
+  next();
+}
+
+// Resolves :clientId to that client's own, physically separate warehouse DB —
+// never shared with sibling clients under the same tenant. Must run after withTenant.
+function withClientWarehouse(req, res, next) {
+  const { clientId } = req.params;
+  const client = req.db.prepare('SELECT id FROM client_users WHERE id = ?').get(clientId);
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const whDb = getWarehouseDb(req.tenantId, clientId);
+  req.clientId  = clientId;
+  req.warehouse = createWarehouse(whDb);
   next();
 }
 
@@ -1012,11 +1026,12 @@ app.post('/api/admin/client-users', withTenant, (req, res) => {
 
 app.patch('/api/admin/client-users/:id', withTenant, (req, res) => {
   const { id } = req.params;
-  const { password, active } = req.body || {};
+  const { password, active, logoUrl, showLogo } = req.body || {};
   const ca = createClientAuth(req.db);
   try {
     if (password !== undefined) ca.setPassword(id, password);
     if (active  !== undefined) ca.setActive(id, !!active);
+    if (logoUrl !== undefined || showLogo !== undefined) ca.setBranding(id, { logoUrl, showLogo });
     res.json({ ok: true });
   } catch (e) {
     res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
@@ -1027,6 +1042,119 @@ app.delete('/api/admin/client-users/:id', withTenant, (req, res) => {
   const ca = createClientAuth(req.db);
   ca.deleteUser(req.params.id);
   res.json({ ok: true });
+});
+
+// ── Admin — per-client warehouse (each client gets its own isolated DB) ──────
+// Staff-only for now: mounted under withTenant, not exposed to withClientAuth.
+
+app.get('/api/admin/client-users/:clientId/warehouse/config', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.getConfig());
+});
+
+app.patch('/api/admin/client-users/:clientId/warehouse/config', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.updateConfig(req.body || {}));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/custom-fields', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.listCustomFields(req.query.entityType || 'item'));
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/custom-fields', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.warehouse.addCustomField(req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/client-users/:clientId/warehouse/custom-fields/:fieldId', withTenant, withClientWarehouse, (req, res) => {
+  req.warehouse.deleteCustomField(req.params.fieldId);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/facilities', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.listFacilities());
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/facilities', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.warehouse.addFacility(req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/client-users/:clientId/warehouse/facilities/:facilityId', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    req.warehouse.updateFacility(req.params.facilityId, req.body || {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/locations', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.listLocations({ facilityId: req.query.facilityId }));
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/locations', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.warehouse.addLocation(req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/items', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.listItems({ search: req.query.search }));
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/items', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.warehouse.addItem(req.body || {}));
+  } catch (e) {
+    res.status(409).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/stock', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.getStockLevels({ itemId: req.query.itemId, locationId: req.query.locationId }));
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/stock/receive', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json({ moveId: req.warehouse.receiveStock({ ...req.body, createdBy: req.tenantId }) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/stock/ship', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json({ moveId: req.warehouse.shipStock({ ...req.body, createdBy: req.tenantId }) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/stock/transfer', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json({ moveId: req.warehouse.transferStock({ ...req.body, createdBy: req.tenantId }) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/stock/adjust', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json({ moveId: req.warehouse.adjustStock({ ...req.body, createdBy: req.tenantId }) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/moves', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.listMoves({ itemId: req.query.itemId, limit: req.query.limit ? Number(req.query.limit) : undefined }));
 });
 
 // ── Super-admin tenant management ─────────────────────────────────────────────
