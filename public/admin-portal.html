@@ -231,7 +231,7 @@ async function doLogin() {
   const password = document.getElementById('inp-pass').value;
   const errEl = document.getElementById('login-err');
   const btn   = document.getElementById('login-btn');
-  if (!username || !password) { showErr('Enter your username and password.'); return; }
+  if (!username) { showErr('Enter your username.'); return; }
   btn.disabled = true; btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
