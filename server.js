@@ -29,6 +29,7 @@ const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
 const importer        = require('./lib/file-importer');
 const { createClientAuth } = require('./lib/client-auth');
+const staffAuth = require('./lib/staff-auth');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
@@ -101,6 +102,91 @@ function withSuperAdmin(req, res, next) {
   if (!pw || pw !== SUPER_PW) return res.status(401).json({ error: 'Super-admin password required' });
   next();
 }
+
+// ── Staff portal middleware ───────────────────────────────────────────────────
+
+function withStaff(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = staffAuth.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Staff authentication required' });
+  req.staffUsername = session.username;
+  next();
+}
+
+// ── Staff portal routes ───────────────────────────────────────────────────────
+
+app.post('/api/staff/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const user = staffAuth.checkPassword(username, password);
+  if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+  res.json({ token: staffAuth.generateToken(username), username });
+});
+
+app.post('/api/staff/logout', withStaff, (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  staffAuth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+app.get('/api/staff/me', withStaff, (req, res) => {
+  res.json({ username: req.staffUsername });
+});
+
+// List client portal users (all tenants — for now defaults to 'default')
+app.get('/api/staff/client-users', withStaff, (req, res) => {
+  const tenantId = req.query.tenantId || 'default';
+  const { db } = getCtx(tenantId);
+  const ca = createClientAuth(db);
+  res.json(ca.listUsers());
+});
+
+// Reset a client portal user's password
+app.patch('/api/staff/client-users/:clientId', withStaff, (req, res) => {
+  const { clientId } = req.params;
+  const { password } = req.body || {};
+  if (!password || password.length < 1) return res.status(400).json({ error: 'New password required' });
+  const tenantId = req.query.tenantId || 'default';
+  const { db } = getCtx(tenantId);
+  const ca = createClientAuth(db);
+  try {
+    ca.setPassword(clientId, password);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
+// Toggle client portal user active/inactive
+app.patch('/api/staff/client-users/:clientId/active', withStaff, (req, res) => {
+  const { clientId } = req.params;
+  const { active } = req.body || {};
+  const tenantId = req.query.tenantId || 'default';
+  const { db } = getCtx(tenantId);
+  const ca = createClientAuth(db);
+  ca.setActive(clientId, !!active);
+  res.json({ ok: true });
+});
+
+// Change OMS admin password (the main system login)
+app.patch('/api/staff/oms-password', withStaff, (req, res) => {
+  const { tenantId = 'default', newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 1) return res.status(400).json({ error: 'New password required' });
+  const { db } = getCtx(tenantId);
+  auth.changePassword(db, newPassword);
+  auth.revokeAllTenantSessions(tenantId);
+  res.json({ ok: true });
+});
+
+// Change staff user's own password
+app.patch('/api/staff/my-password', withStaff, (req, res) => {
+  const { newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 1) return res.status(400).json({ error: 'New password required' });
+  staffAuth.changePassword(req.staffUsername, newPassword);
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  staffAuth.revokeToken(token);
+  res.json({ ok: true });
+});
 
 // ── Client portal middleware ──────────────────────────────────────────────────
 

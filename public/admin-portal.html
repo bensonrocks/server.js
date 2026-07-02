@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>IdealOMS &ndash; Admin Portal</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;min-height:100vh}
+
+/* ── LOGIN ── */
+#page-login{display:flex;flex-direction:column;min-height:100vh}
+.login-hdr{background:#0f172a;padding:16px 24px;display:flex;align-items:center;gap:10px;border-bottom:2px solid #fb923c}
+.login-hdr .brand{font-size:18px;font-weight:900;color:#fff;letter-spacing:-.3px}
+.login-hdr .brand span{color:#fb923c}
+.login-hdr .brand-badge{font-size:10px;font-weight:700;background:#fb923c;color:#fff;padding:2px 8px;border-radius:10px;letter-spacing:.5px;margin-left:8px;text-transform:uppercase}
+.login-body{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
+.login-card{background:#fff;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.10);padding:36px 32px;width:100%;max-width:380px}
+.login-icon{width:52px;height:52px;border-radius:12px;background:#fff7ed;border:2px solid #fed7aa;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;font-size:24px}
+.login-title{font-size:20px;font-weight:800;text-align:center;margin-bottom:4px}
+.login-sub{font-size:12px;color:#64748b;text-align:center;margin-bottom:22px}
+.fg{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.fg label{font-size:12px;font-weight:600;color:#374151}
+.fg input{padding:10px 13px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:14px;color:#0f172a;outline:none;font-family:inherit;transition:border-color .15s}
+.fg input:focus{border-color:#f59e0b}
+.login-btn{width:100%;padding:11px;border:none;border-radius:10px;background:#f59e0b;color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-top:6px;font-family:inherit;transition:background .15s}
+.login-btn:hover{background:#d97706}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.login-err{font-size:12px;color:#dc2626;background:#fef2f2;border-radius:8px;padding:9px 12px;margin-top:10px;display:none}
+.login-note{font-size:11px;color:#94a3b8;text-align:center;margin-top:18px}
+.login-footer{background:#f8fafc;border-top:1px solid #e2e8f0;padding:12px 24px;text-align:center;font-size:11px;color:#94a3b8}
+
+/* ── DASHBOARD ── */
+#page-dash{display:none;flex-direction:column;min-height:100vh}
+.dash-hdr{background:#0f172a;height:56px;padding:0 20px;display:flex;align-items:center;gap:12px;border-bottom:2px solid #f59e0b}
+.dash-logo{font-size:16px;font-weight:900;color:#fff;letter-spacing:-.3px;white-space:nowrap}
+.dash-logo span{color:#fb923c}
+.dash-badge{font-size:10px;font-weight:700;background:#f59e0b;color:#0f172a;padding:3px 9px;border-radius:10px;letter-spacing:.4px;text-transform:uppercase}
+.dash-user{font-size:12px;color:#94a3b8;background:#1e293b;padding:4px 10px;border-radius:20px}
+.dash-spacer{flex:1}
+.dash-logout{padding:6px 14px;border-radius:8px;border:1.5px solid rgba(255,255,255,.15);background:transparent;color:#94a3b8;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.dash-logout:hover{border-color:rgba(255,255,255,.3);color:#fff}
+.dash-body{padding:20px;display:flex;flex-direction:column;gap:16px;max-width:860px;margin:0 auto;width:100%}
+
+/* ── CARDS ── */
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}
+.card-hdr{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #f1f5f9;gap:10px;flex-wrap:wrap}
+.card-title{font-size:15px;font-weight:800;color:#0f172a}
+.card-sub{font-size:11px;color:#64748b;margin-top:2px}
+.card-body{padding:16px 20px}
+
+/* ── USERS TABLE ── */
+.user-row{display:grid;grid-template-columns:1fr 110px 80px 140px;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f8fafc}
+.user-row:last-child{border-bottom:none}
+.user-row-hdr{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;padding-bottom:8px;border-bottom:1.5px solid #e2e8f0;margin-bottom:4px}
+.user-name{font-weight:700;color:#0f172a;font-size:13px}
+.user-uname{font-size:11px;color:#64748b;margin-top:1px}
+.status-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px}
+.status-on{background:#f0fdf4;color:#16a34a}
+.status-off{background:#f8fafc;color:#94a3b8}
+.status-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.btn-sm{padding:5px 12px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid;font-family:inherit;transition:all .15s;white-space:nowrap}
+.btn-reset{border-color:#e2e8f0;background:#fff;color:#374151}
+.btn-reset:hover{border-color:#f59e0b;color:#d97706}
+.btn-disable{border-color:#fee2e2;background:#fff;color:#dc2626}
+.btn-disable:hover{background:#fee2e2}
+.btn-enable{border-color:#dcfce7;background:#fff;color:#16a34a}
+.btn-enable:hover{background:#dcfce7}
+@media(max-width:600px){.user-row{grid-template-columns:1fr 80px}.user-row .user-toggle,.user-row-hdr .th-toggle{display:none}}
+
+/* ── PASSWORD FORM ── */
+.pw-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.pw-form .fg{flex:1;min-width:180px;margin-bottom:0}
+.pw-form .fg input{width:100%}
+.btn-primary{padding:9px 18px;border-radius:8px;border:none;background:#f59e0b;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn-primary:hover{background:#d97706}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.msg{font-size:12px;border-radius:7px;padding:8px 12px;margin-top:10px;display:none}
+.msg.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+.msg.err{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+
+/* ── INLINE PASSWORD MODAL ── */
+.pw-popup{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;align-items:center;justify-content:center;padding:16px}
+.pw-popup-card{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.pw-popup-title{font-size:15px;font-weight:800;margin-bottom:4px}
+.pw-popup-sub{font-size:12px;color:#64748b;margin-bottom:16px}
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN ── -->
+<div id="page-login">
+  <div class="login-hdr">
+    <div class="brand">Ideal<span>OMS</span><span class="brand-badge">Staff</span></div>
+  </div>
+  <div class="login-body">
+    <div class="login-card">
+      <div class="login-icon">&#128737;</div>
+      <div class="login-title">Admin Portal</div>
+      <div class="login-sub">IdealOMS staff access only</div>
+      <div class="fg"><label>Username</label><input id="inp-user" type="text" placeholder="Username" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div class="fg"><label>Password</label><input id="inp-pass" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In &rarr;</button>
+      <div id="login-err" class="login-err"></div>
+      <div class="login-note">This portal is for IdealOMS staff only.<br>Clients: use <a href="/portal.html" style="color:#2563eb">Client Portal</a> instead.</div>
+    </div>
+  </div>
+  <div class="login-footer">IdealOMS Admin Portal &bull; Internal Use Only</div>
+</div>
+
+<!-- ── DASHBOARD ── -->
+<div id="page-dash">
+  <div class="dash-hdr">
+    <div class="dash-logo">Ideal<span>OMS</span></div>
+    <div class="dash-badge">Staff</div>
+    <div class="dash-user" id="dash-user"></div>
+    <div class="dash-spacer"></div>
+    <button class="dash-logout" onclick="doLogout()">Log Out</button>
+  </div>
+  <div class="dash-body">
+
+    <!-- Client Portal Users -->
+    <div class="card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">&#128101; Client Portal Users</div>
+          <div class="card-sub">Reset passwords or disable access for any client portal login</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="user-row user-row-hdr">
+          <div>Client</div>
+          <div>Username</div>
+          <div>Status</div>
+          <div class="th-toggle">Action</div>
+        </div>
+        <div id="client-users-body"><div style="color:#94a3b8;font-size:12px;padding:12px 0">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- OMS Admin Password -->
+    <div class="card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">&#128202; OMS Admin Password</div>
+          <div class="card-sub">Change the password for the main admin dashboard login (/<wbr>index.html)</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="pw-form">
+          <div class="fg"><label>New Password</label><input id="oms-pw" type="password" placeholder="Enter new password"></div>
+          <div class="fg"><label>Confirm Password</label><input id="oms-pw2" type="password" placeholder="Repeat password" onkeydown="if(event.key==='Enter')changeOmsPw()"></div>
+          <button class="btn-primary" onclick="changeOmsPw()">Update OMS Password</button>
+        </div>
+        <div id="oms-msg" class="msg"></div>
+      </div>
+    </div>
+
+    <!-- My Password -->
+    <div class="card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">&#128274; My Staff Password</div>
+          <div class="card-sub">Change your own admin portal login password</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="pw-form">
+          <div class="fg"><label>New Password</label><input id="my-pw" type="password" placeholder="Enter new password"></div>
+          <div class="fg"><label>Confirm Password</label><input id="my-pw2" type="password" placeholder="Repeat password" onkeydown="if(event.key==='Enter')changeMyPw()"></div>
+          <button class="btn-primary" onclick="changeMyPw()">Update My Password</button>
+        </div>
+        <div id="my-msg" class="msg"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Reset Password Popup -->
+<div class="pw-popup" id="reset-popup" onclick="if(event.target===this)closeResetPopup()">
+  <div class="pw-popup-card">
+    <div class="pw-popup-title" id="popup-title">Reset Password</div>
+    <div class="pw-popup-sub" id="popup-sub"></div>
+    <div class="fg"><label>New Password</label><input id="popup-pw" type="password" placeholder="Enter new password" onkeydown="if(event.key==='Enter')confirmReset()"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+      <button onclick="closeResetPopup()" style="padding:8px 16px;border-radius:7px;border:1.5px solid #e2e8f0;background:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Cancel</button>
+      <button onclick="confirmReset()" id="popup-btn" class="btn-primary" style="padding:8px 18px">Set Password</button>
+    </div>
+    <div id="popup-msg" class="msg" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script>
+const SERVER = '';
+const K_TOKEN = 'staff_token';
+const K_USER  = 'staff_user';
+
+let token = sessionStorage.getItem(K_TOKEN);
+let staffUser = sessionStorage.getItem(K_USER);
+let resetTarget = null; // { type: 'client', clientId, name }
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+(async () => {
+  if (token && staffUser) {
+    const r = await fetch(`${SERVER}/api/staff/me`, { headers: { Authorization: 'Bearer ' + token } }).catch(() => null);
+    if (r && r.ok) { showDash(); return; }
+  }
+  clearSession();
+  showLogin();
+})();
+
+function showLogin() {
+  document.getElementById('page-login').style.display = 'flex';
+  document.getElementById('page-dash').style.display = 'none';
+  document.getElementById('page-dash').style.flexDirection = '';
+  setTimeout(() => document.getElementById('inp-user').focus(), 50);
+}
+
+function showDash() {
+  document.getElementById('page-login').style.display = 'none';
+  document.getElementById('page-dash').style.display = 'flex';
+  document.getElementById('page-dash').style.flexDirection = 'column';
+  document.getElementById('dash-user').textContent = staffUser;
+  loadClientUsers();
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const username = document.getElementById('inp-user').value.trim();
+  const password = document.getElementById('inp-pass').value;
+  const errEl = document.getElementById('login-err');
+  const btn   = document.getElementById('login-btn');
+  if (!username || !password) { showErr('Enter your username and password.'); return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  errEl.style.display = 'none';
+  try {
+    const r = await fetch(`${SERVER}/api/staff/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showErr(j.error || 'Invalid credentials'); return; }
+    token = j.token; staffUser = j.username;
+    sessionStorage.setItem(K_TOKEN, token);
+    sessionStorage.setItem(K_USER, staffUser);
+    showDash();
+  } catch { showErr('Cannot reach server — make sure it is running.'); }
+  finally { btn.disabled = false; btn.textContent = 'Sign In →'; }
+}
+
+function showErr(msg) {
+  const el = document.getElementById('login-err');
+  el.textContent = msg; el.style.display = 'block';
+}
+
+// ── LOGOUT ────────────────────────────────────────────────────────────────────
+async function doLogout() {
+  await fetch(`${SERVER}/api/staff/logout`, { method: 'POST', headers: { Authorization: 'Bearer ' + token } }).catch(() => {});
+  clearSession(); showLogin();
+}
+
+function clearSession() {
+  token = null; staffUser = null;
+  sessionStorage.removeItem(K_TOKEN); sessionStorage.removeItem(K_USER);
+}
+
+// ── CLIENT USERS ──────────────────────────────────────────────────────────────
+async function loadClientUsers() {
+  const el = document.getElementById('client-users-body');
+  try {
+    const r = await fetch(`${SERVER}/api/staff/client-users`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { if (r.status === 401) { doLogout(); return; } el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Failed to load.</div>'; return; }
+    const users = await r.json();
+    if (!users.length) { el.innerHTML = '<div style="color:#94a3b8;font-size:12px;padding:10px 0">No client users found.</div>'; return; }
+    el.innerHTML = users.map(u => `
+      <div class="user-row">
+        <div>
+          <div class="user-name">${esc(u.name)}</div>
+          <div class="user-uname">@${esc(u.username)}</div>
+        </div>
+        <div style="font-size:12px;color:#64748b;font-family:monospace">${esc(u.username)}</div>
+        <div><span class="status-pill ${u.active ? 'status-on' : 'status-off'}"><span class="status-dot"></span>${u.active ? 'Active' : 'Disabled'}</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" class="user-toggle">
+          <button class="btn-sm btn-reset" onclick="openResetPopup('${esc(u.id)}','${esc(u.name)}')">&#128274; Reset PW</button>
+          <button class="btn-sm ${u.active ? 'btn-disable' : 'btn-enable'}" onclick="toggleClient('${esc(u.id)}',${u.active})">${u.active ? 'Disable' : 'Enable'}</button>
+        </div>
+      </div>`).join('');
+  } catch { el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Error loading users.</div>'; }
+}
+
+async function toggleClient(clientId, currentActive) {
+  await fetch(`${SERVER}/api/staff/client-users/${encodeURIComponent(clientId)}/active`, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active: !currentActive }),
+  });
+  loadClientUsers();
+}
+
+// ── RESET POPUP ───────────────────────────────────────────────────────────────
+function openResetPopup(clientId, clientName) {
+  resetTarget = { clientId, clientName };
+  document.getElementById('popup-title').textContent = 'Reset Password';
+  document.getElementById('popup-sub').textContent = 'Set a new portal password for ' + clientName;
+  document.getElementById('popup-pw').value = '';
+  document.getElementById('popup-msg').style.display = 'none';
+  document.getElementById('reset-popup').style.display = 'flex';
+  setTimeout(() => document.getElementById('popup-pw').focus(), 50);
+}
+
+function closeResetPopup() {
+  document.getElementById('reset-popup').style.display = 'none';
+  resetTarget = null;
+}
+
+async function confirmReset() {
+  if (!resetTarget) return;
+  const pw = document.getElementById('popup-pw').value;
+  const msgEl = document.getElementById('popup-msg');
+  const btn = document.getElementById('popup-btn');
+  if (!pw) { showPopupMsg('Enter a new password.', false); return; }
+  btn.disabled = true; btn.textContent = 'Saving…';
+  msgEl.style.display = 'none';
+  try {
+    const r = await fetch(`${SERVER}/api/staff/client-users/${encodeURIComponent(resetTarget.clientId)}`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showPopupMsg(j.error || 'Failed', false); return; }
+    showPopupMsg('Password updated for ' + resetTarget.clientName + '.', true);
+    document.getElementById('popup-pw').value = '';
+    setTimeout(closeResetPopup, 1400);
+  } catch { showPopupMsg('Server error.', false); }
+  finally { btn.disabled = false; btn.textContent = 'Set Password'; }
+}
+
+function showPopupMsg(msg, ok) {
+  const el = document.getElementById('popup-msg');
+  el.textContent = msg; el.className = 'msg ' + (ok ? 'ok' : 'err'); el.style.display = 'block';
+}
+
+// ── OMS PASSWORD ──────────────────────────────────────────────────────────────
+async function changeOmsPw() {
+  const pw  = document.getElementById('oms-pw').value;
+  const pw2 = document.getElementById('oms-pw2').value;
+  const msg = document.getElementById('oms-msg');
+  msg.style.display = 'none';
+  if (!pw) { showMsg('oms-msg', 'Enter a new password.', false); return; }
+  if (pw !== pw2) { showMsg('oms-msg', 'Passwords do not match.', false); return; }
+  try {
+    const r = await fetch(`${SERVER}/api/staff/oms-password`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'default', newPassword: pw }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showMsg('oms-msg', j.error || 'Failed', false); return; }
+    showMsg('oms-msg', 'OMS admin password updated. All existing OMS sessions have been revoked.', true);
+    document.getElementById('oms-pw').value = '';
+    document.getElementById('oms-pw2').value = '';
+  } catch { showMsg('oms-msg', 'Server error.', false); }
+}
+
+// ── MY PASSWORD ───────────────────────────────────────────────────────────────
+async function changeMyPw() {
+  const pw  = document.getElementById('my-pw').value;
+  const pw2 = document.getElementById('my-pw2').value;
+  if (!pw) { showMsg('my-msg', 'Enter a new password.', false); return; }
+  if (pw !== pw2) { showMsg('my-msg', 'Passwords do not match.', false); return; }
+  try {
+    const r = await fetch(`${SERVER}/api/staff/my-password`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword: pw }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showMsg('my-msg', j.error || 'Failed', false); return; }
+    showMsg('my-msg', 'Password updated. You will be signed out.', true);
+    document.getElementById('my-pw').value = '';
+    document.getElementById('my-pw2').value = '';
+    setTimeout(() => { clearSession(); showLogin(); }, 1800);
+  } catch { showMsg('my-msg', 'Server error.', false); }
+}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+function showMsg(id, msg, ok) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.className = 'msg ' + (ok ? 'ok' : 'err'); el.style.display = 'block';
+}
+
+function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>
