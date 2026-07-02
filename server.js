@@ -600,11 +600,10 @@ app.post('/api/demo/reset', withTenant, (req, res) => {
 });
 
 // Wipe all demo/seed orders and lock out auto-reseed permanently.
-// After this, connect real platform credentials and let auto-sync populate live orders.
-app.post('/api/demo/go-live', withTenant, (req, res) => {
+// Requires both a valid tenant session AND the super-admin password (x-super-password header).
+app.post('/api/demo/go-live', withTenant, withSuperAdmin, (req, res) => {
   const { store, db } = req;
   const removed = store.deleteAllOrders();
-  // Set seed_version to a very high number so createStore never re-seeds this DB
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('seed_version', '9999')").run();
   res.json({ ok: true, removed, message: 'Demo data cleared. Connect your marketplace credentials and sync to pull live orders.' });
 });

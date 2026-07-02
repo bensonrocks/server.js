@@ -701,14 +701,20 @@ a:hover{text-decoration:underline}
           <div id="demo-result" style="width:100%;font-size:12px;color:#78350f;display:none"></div>
         </div>
 
-        <!-- Go Live banner -->
-        <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <span style="font-size:22px">&#128640;</span>
-          <div style="flex:1;min-width:180px">
-            <div style="font-weight:700;color:#166534;font-size:14px">Ready to Go Live?</div>
-            <div style="font-size:12px;color:#15803d">Erase all demo data, then connect your real marketplace credentials below and let auto-sync pull live orders.</div>
+        <!-- Admin panel — hidden, password-protected -->
+        <div id="admin-panel" style="display:none;background:#fafafa;border:1.5px dashed #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:18px">&#128274;</span>
+            <div style="flex:1">
+              <div style="font-weight:700;color:#374151;font-size:13px">Administrator — Go Live</div>
+              <div style="font-size:11px;color:#6b7280">Permanently erases all demo/seed data. Real marketplace orders will populate on next sync.</div>
+            </div>
+            <button onclick="runGoLive()" style="background:#dc2626;color:#fff;border:none;border-radius:8px;padding:7px 16px;font-weight:700;font-size:12px;cursor:pointer">&#9889; Go Live</button>
           </div>
-          <button onclick="runGoLive()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:700;font-size:13px;cursor:pointer">&#9889; Go Live</button>
+        </div>
+        <!-- Tiny admin toggle — not labelled, sits at bottom of section -->
+        <div style="text-align:right;margin-bottom:6px">
+          <span id="admin-toggle" onclick="toggleAdminPanel()" style="font-size:10px;color:#e2e8f0;cursor:pointer;user-select:none">&#9679;&#9679;&#9679;</span>
         </div>
 
         <div class="plat-grid">
@@ -1694,17 +1700,29 @@ async function runDemoReset(){
   await fetchOrders();
 }
 
+let _adminPw='';
+function toggleAdminPanel(){
+  const panel=$('admin-panel');
+  if(panel.style.display!=='none'){panel.style.display='none';_adminPw='';return;}
+  const pw=prompt('Administrator password:');
+  if(!pw)return;
+  _adminPw=pw;
+  panel.style.display='block';
+}
+
 async function runGoLive(){
   if(!serverAvailable){alert('Start the server first.');return;}
-  const confirmed=confirm('This will permanently erase ALL demo/seed orders from the database.\n\nThe auto-reseed will be disabled — real marketplace orders will populate after you connect credentials.\n\nContinue?');
+  if(!_adminPw){alert('Unlock the admin panel first.');return;}
+  const confirmed=confirm('PERMANENT ACTION\n\nThis will erase ALL demo/seed orders and disable auto-reseed.\n\nReal orders will populate once marketplace credentials are connected.\n\nContinue?');
   if(!confirmed)return;
-  const r=await fetch(`${SERVER}/api/demo/go-live`,{method:'POST',headers:{'Authorization':'Bearer '+authToken,'Content-Type':'application/json'}});
+  const r=await fetch(`${SERVER}/api/demo/go-live`,{method:'POST',headers:{'Authorization':'Bearer '+authToken,'Content-Type':'application/json','x-super-password':_adminPw}});
   const j=await r.json();
   if(j.ok){
-    alert(`Done — ${j.removed} demo orders removed.\n\nYou are now in production mode. Enter your real API credentials below and click "Sync Now" on each platform.`);
+    $('admin-panel').style.display='none';_adminPw='';
+    alert(`Done — ${j.removed} demo orders removed.\n\nProduction mode active. Enter your real API credentials below and sync.`);
     await fetchOrders();
   }else{
-    alert('Error: '+(j.error||'Unknown error'));
+    alert('Error: '+(j.error||'Wrong password or server error'));
   }
 }
 
