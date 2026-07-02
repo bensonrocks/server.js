@@ -26,6 +26,8 @@ const createStore     = require('./lib/store');
 const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
 const createWarehouse = require('./lib/warehouse');
+const createPicking   = require('./lib/warehouse-pick');
+const createPacking   = require('./lib/warehouse-pack');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -104,6 +106,13 @@ function withClientWarehouse(req, res, next) {
   const whDb = getWarehouseDb(req.tenantId, clientId);
   req.clientId  = clientId;
   req.warehouse = createWarehouse(whDb);
+
+  // Orders live in the tenant's shared orders table, not this client's own
+  // warehouse DB — scope every lookup to this client so picking/packing can
+  // never touch a sibling client's order.
+  const ordersApi = { getOrder: id => { const o = req.store.getOrder(id); return (o && o.clientId === clientId) ? o : null; } };
+  req.picking = createPicking(whDb, ordersApi);
+  req.packing = createPacking(whDb, ordersApi);
   next();
 }
 
@@ -1155,6 +1164,157 @@ app.post('/api/admin/client-users/:clientId/warehouse/stock/adjust', withTenant,
 
 app.get('/api/admin/client-users/:clientId/warehouse/moves', withTenant, withClientWarehouse, (req, res) => {
   res.json(req.warehouse.listMoves({ itemId: req.query.itemId, limit: req.query.limit ? Number(req.query.limit) : undefined }));
+});
+
+// ── Admin — per-client wave picking (ported from IDEALPICK) ──────────────────
+
+app.post('/api/admin/client-users/:clientId/warehouse/pick/availability', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.picking.checkAvailability(req.body.orderIds || []));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pick/suggest', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.picking.suggestWaveMode(req.body.orderIds || []));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pick/waves', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.picking.listWaves({ status: req.query.status }));
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pick/waves', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.picking.createWave(req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pick/waves/:waveId', withTenant, withClientWarehouse, (req, res) => {
+  const wave = req.picking.getWave(req.params.waveId);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  res.json(wave);
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pick/waves/:waveId/thu-manifest', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.picking.getThuManifest(req.params.waveId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pick/waves/:waveId/complete', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.picking.completeWave(req.params.waveId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pick/waves/:waveId/cancel', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    req.picking.cancelWave(req.params.waveId);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/client-users/:clientId/warehouse/pick/tasks/:taskId', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.picking.updateTask(req.params.taskId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pick/stats', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.picking.getPickStats());
+});
+
+// ── Admin — per-client pack & ship (ported from IDEALPICK) ────────────────────
+
+app.post('/api/admin/client-users/:clientId/warehouse/pack/from-wave/:waveId', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.packing.createPackOrdersFromWave(req.params.waveId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pack/orders', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.packing.listPackOrders({ status: req.query.status, waveId: req.query.waveId }));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pack/orders/:packOrderId', withTenant, withClientWarehouse, (req, res) => {
+  const po = req.packing.getPackOrder(req.params.packOrderId);
+  if (!po) return res.status(404).json({ error: 'Pack order not found' });
+  res.json(po);
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pack/orders/:packOrderId/boxes', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.packing.addBox(req.params.packOrderId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/client-users/:clientId/warehouse/pack/boxes/:boxId', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.packing.updateBox(req.params.boxId, req.body || {}));
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pack/boxes/:boxId/items', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.packing.addItemToBox(req.params.boxId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pack/orders/:packOrderId/complete', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.packing.completePackOrder(req.params.packOrderId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/pack/orders/:packOrderId/ship', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.packing.createShipment(req.params.packOrderId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pack/shipments', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.packing.listShipments({ status: req.query.status }));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pack/shipments/:shipmentId', withTenant, withClientWarehouse, (req, res) => {
+  const s = req.packing.getShipment(req.params.shipmentId);
+  if (!s) return res.status(404).json({ error: 'Shipment not found' });
+  res.json(s);
+});
+
+app.patch('/api/admin/client-users/:clientId/warehouse/pack/shipments/:shipmentId', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.packing.updateShipment(req.params.shipmentId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/pack/stats', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.packing.getPackStats());
 });
 
 // ── Super-admin tenant management ─────────────────────────────────────────────
