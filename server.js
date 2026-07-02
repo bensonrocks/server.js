@@ -117,8 +117,8 @@ function withStaff(req, res, next) {
 
 app.post('/api/staff/login', (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  const user = staffAuth.checkPassword(username, password);
+  if (!username) return res.status(400).json({ error: 'Username required' });
+  const user = staffAuth.checkPassword(username, password || '');
   if (!user) return res.status(401).json({ error: 'Invalid username or password' });
   res.json({ token: staffAuth.generateToken(username), username });
 });
