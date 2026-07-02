@@ -28,6 +28,7 @@ const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
 const importer        = require('./lib/file-importer');
+const { createClientAuth } = require('./lib/client-auth');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
@@ -98,6 +99,24 @@ const SUPER_PW = process.env.IDEAL_SUPER_PASSWORD || 'SuperAdmin@2024';
 function withSuperAdmin(req, res, next) {
   const pw = (req.headers['x-super-password'] || '').trim();
   if (!pw || pw !== SUPER_PW) return res.status(401).json({ error: 'Super-admin password required' });
+  next();
+}
+
+// ── Client portal middleware ──────────────────────────────────────────────────
+
+function withClientAuth(req, res, next) {
+  const token    = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const ctx      = getCtx(tenantId);
+  const ca       = createClientAuth(ctx.db);
+  const session  = ca.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Client authentication required' });
+  req.tenantId     = tenantId;
+  req.clientId     = session.clientId;
+  req.clientName   = session.clientName;
+  req.clientAuth   = ca;
+  req.store        = ctx.store;
+  req.db           = ctx.db;
   next();
 }
 
@@ -802,6 +821,125 @@ app.post('/webhook/:platform', (req, res) => {
   if (conn.handleWebhook) {
     try { conn.handleWebhook(req.body, req.headers, creds.get(platform) || {}); } catch {}
   }
+  res.json({ ok: true });
+});
+
+// ── Client portal auth ────────────────────────────────────────────────────────
+
+app.post('/api/client/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const { db } = getCtx(tenantId);
+  const ca = createClientAuth(db);
+  const user = ca.checkPassword(username, password);
+  if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+  const token = ca.generateToken(user.id, user.name, user.username);
+  res.json({ token, clientId: user.id, clientName: user.name, username: user.username });
+});
+
+app.post('/api/client/logout', withClientAuth, (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  req.clientAuth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+app.get('/api/client/me', withClientAuth, (req, res) => {
+  res.json({ clientId: req.clientId, clientName: req.clientName });
+});
+
+app.get('/api/client/orders', withClientAuth, (req, res) => {
+  const { channel, status, search } = req.query;
+  res.json(req.store.getOrders({ clientId: req.clientId, channel, status, search }));
+});
+
+app.post('/api/client/orders/upload', withClientAuth, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { path: filePath, originalname } = req.file;
+  const ext = (originalname.split('.').pop() || '').toLowerCase();
+  if (!['csv', 'xlsx', 'xls'].includes(ext)) {
+    try { fs.unlinkSync(filePath); } catch {}
+    return res.status(400).json({ error: 'Only CSV, XLSX, or XLS files are supported' });
+  }
+  try {
+    const extracted = importer.extractFromSpreadsheet(filePath);
+    const now = new Date().toISOString();
+    let imported = 0, skipped = 0;
+    extracted.forEach((data, i) => {
+      const refNo = data.trackingNumber || data.orderNumber;
+      const orderId = refNo
+        ? 'CLI-' + refNo.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 18)
+        : 'CLI-' + Date.now().toString(36).toUpperCase() + '-' + String(i).padStart(3, '0');
+      const items = Array.isArray(data.items) && data.items.length
+        ? data.items.map(it => ({ sku: String(it.sku || 'ITEM'), name: String(it.name || 'Item'), qty: parseInt(it.qty) || 1, unitPrice: parseFloat(it.unitPrice) || 0 }))
+        : [{ sku: 'ITEM', name: 'Uploaded Item', qty: parseInt(data.qty) || 1, unitPrice: parseFloat(data.unitPrice) || 0 }];
+      const subtotal = items.reduce((s, it) => s + it.qty * it.unitPrice, 0);
+      const tax = Math.round(subtotal * 0.09 * 100) / 100;
+      const order = {
+        id: orderId,
+        clientId: req.clientId, clientName: req.clientName,
+        channel: 'portal', orderDate: now, status: 'pending', currency: 'SGD',
+        notes: data.notes || '',
+        items,
+        shipping: {
+          recipient:    data.recipientName || '',
+          addressLine1: data.addressLine1  || data.address || '',
+          addressLine2: data.addressLine2  || '',
+          city:         data.city          || 'Singapore',
+          state:        data.state         || '',
+          zip:          data.zip           || '',
+          country:      data.country       || 'SG',
+        },
+        subtotal, shippingCost: 0, tax, total: subtotal + tax,
+        source: { type: 'portal-upload', ingestedAt: now },
+      };
+      try { req.store.addOrder(order); imported++; }
+      catch { skipped++; }
+    });
+    res.json({ ok: true, imported, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    try { fs.unlinkSync(filePath); } catch {}
+  }
+});
+
+// ── Admin — client user management ───────────────────────────────────────────
+
+app.get('/api/admin/client-users', withTenant, (req, res) => {
+  const ca = createClientAuth(req.db);
+  res.json(ca.listUsers());
+});
+
+app.post('/api/admin/client-users', withTenant, (req, res) => {
+  const { id, name, username, password } = req.body || {};
+  if (!id || !name || !username || !password) return res.status(400).json({ error: 'id, name, username, and password are required' });
+  if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
+  const ca = createClientAuth(req.db);
+  try {
+    const user = ca.createUser(id, name, username, password);
+    res.status(201).json(user);
+  } catch (e) {
+    res.status(409).json({ error: e.message.includes('UNIQUE') ? 'Username already taken' : e.message });
+  }
+});
+
+app.patch('/api/admin/client-users/:id', withTenant, (req, res) => {
+  const { id } = req.params;
+  const { password, active } = req.body || {};
+  const ca = createClientAuth(req.db);
+  try {
+    if (password !== undefined) ca.setPassword(id, password);
+    if (active  !== undefined) ca.setActive(id, !!active);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/client-users/:id', withTenant, (req, res) => {
+  const ca = createClientAuth(req.db);
+  ca.deleteUser(req.params.id);
   res.json({ ok: true });
 });
 

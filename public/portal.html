@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>IdealOMS &ndash; Client Portal</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;min-height:100vh}
+
+/* ── LOGIN PAGE ── */
+#page-login{display:flex;flex-direction:column;min-height:100vh}
+.login-header{background:#0f172a;padding:16px 24px;display:flex;align-items:center;gap:10px}
+.login-header .brand{font-size:20px;font-weight:900;color:#fff;letter-spacing:-.3px}
+.login-header .brand span{color:#fb923c}
+.login-body{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
+.login-card{background:#fff;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.10);padding:36px 32px;width:100%;max-width:380px}
+.login-icon{width:48px;height:48px;border-radius:12px;background:#eff6ff;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;font-size:22px}
+.login-title{font-size:20px;font-weight:800;color:#0f172a;text-align:center;margin-bottom:4px}
+.login-sub{font-size:13px;color:#64748b;text-align:center;margin-bottom:24px}
+.fg{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.fg label{font-size:12px;font-weight:600;color:#374151}
+.fg input{padding:10px 13px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:14px;color:#0f172a;outline:none;transition:border-color .15s}
+.fg input:focus{border-color:#2563eb}
+.login-btn{width:100%;padding:11px;border:none;border-radius:10px;background:#2563eb;color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-top:6px;transition:background .15s}
+.login-btn:hover{background:#1d4ed8}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.login-err{font-size:12px;color:#dc2626;background:#fef2f2;border-radius:8px;padding:9px 12px;margin-top:12px;display:none}
+.login-help{font-size:12px;color:#94a3b8;text-align:center;margin-top:20px;line-height:1.6}
+.login-footer{background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 24px;text-align:center;font-size:11px;color:#94a3b8}
+
+/* ── DASHBOARD ── */
+#page-dash{display:none;flex-direction:column;min-height:100vh}
+.dash-header{background:#0f172a;padding:0 20px;height:56px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.dash-logo{font-size:16px;font-weight:900;color:#fff;letter-spacing:-.3px;white-space:nowrap}
+.dash-logo span{color:#fb923c}
+.dash-client{font-size:12px;font-weight:600;color:#94a3b8;background:#1e293b;padding:4px 10px;border-radius:20px;white-space:nowrap}
+.dash-spacer{flex:1}
+.dash-upload-btn{padding:7px 14px;border-radius:8px;background:#2563eb;color:#fff;border:none;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .15s}
+.dash-upload-btn:hover{background:#1d4ed8}
+.dash-logout{padding:7px 14px;border-radius:8px;border:1.5px solid rgba(255,255,255,.15);background:transparent;color:#94a3b8;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.dash-logout:hover{border-color:rgba(255,255,255,.3);color:#fff}
+.dash-body{flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+
+/* ── STATS ── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.stat-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.stat-val{font-size:22px;font-weight:800;color:#0f172a;line-height:1.2}
+.stat-sub{font-size:11px;color:#94a3b8;margin-top:1px}
+@media(max-width:600px){.stats-row{grid-template-columns:repeat(2,1fr)}}
+
+/* ── ORDERS PANEL ── */
+.orders-panel{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;flex:1;min-height:0}
+.panel-hdr{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid #f1f5f9}
+.panel-title{font-size:14px;font-weight:700;color:#0f172a;flex:1}
+.search-inp{padding:6px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:12px;color:#0f172a;outline:none;width:180px}
+.search-inp:focus{border-color:#2563eb}
+.orders-list{overflow-y:auto;max-height:calc(100vh - 300px)}
+.order-row{display:grid;grid-template-columns:140px 90px 1fr 100px 90px;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #f8fafc;transition:background .1s;cursor:default}
+.order-row:hover{background:#f8fafc}
+.order-row-hdr{background:#f8fafc;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;border-bottom:1.5px solid #e2e8f0;cursor:default}
+.order-id{font-size:12px;font-weight:700;color:#2563eb;font-family:monospace}
+.order-date{font-size:12px;color:#64748b}
+.order-items{font-size:12px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.order-total{font-size:13px;font-weight:700;color:#0f172a;text-align:right}
+.order-status{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+.st-delivered{background:#f0fdf4;color:#16a34a}
+.st-shipped{background:#eff6ff;color:#2563eb}
+.st-processing{background:#fff7ed;color:#d97706}
+.st-pending{background:#f8fafc;color:#64748b}
+.st-confirmed{background:#f0fdf4;color:#16a34a}
+.empty-state{text-align:center;padding:48px 24px;color:#94a3b8}
+.empty-state .empty-icon{font-size:36px;margin-bottom:12px}
+.empty-state p{font-size:13px}
+@media(max-width:640px){
+  .order-row{grid-template-columns:1fr 80px}
+  .order-date,.order-items,.order-total{display:none}
+  .order-row-hdr .o-status-hdr,.order-row-hdr .o-id-hdr{display:flex}
+  .order-row-hdr .o-date-hdr,.order-row-hdr .o-items-hdr,.order-row-hdr .o-total-hdr{display:none}
+}
+
+/* ── UPLOAD MODAL ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
+.modal{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:480px;overflow:hidden}
+.modal-hdr{background:#0f172a;padding:18px 20px;display:flex;align-items:center;gap:10px}
+.modal-hdr-title{font-size:15px;font-weight:700;color:#fff;flex:1}
+.modal-close{color:#94a3b8;background:none;border:none;font-size:20px;cursor:pointer;line-height:1}
+.modal-close:hover{color:#fff}
+.modal-body{padding:20px}
+.upload-zone{border:2px dashed #e2e8f0;border-radius:12px;padding:32px;text-align:center;margin-bottom:16px;cursor:pointer;transition:border-color .15s}
+.upload-zone:hover,.upload-zone.drag{border-color:#2563eb;background:#eff6ff}
+.upload-zone .uz-icon{font-size:32px;margin-bottom:10px}
+.upload-zone .uz-title{font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px}
+.upload-zone .uz-sub{font-size:12px;color:#64748b}
+.file-input{display:none}
+.upload-format{background:#f8fafc;border-radius:10px;padding:14px;margin-bottom:16px}
+.upload-format h4{font-size:12px;font-weight:700;color:#374151;margin-bottom:8px}
+.upload-format code{display:block;font-size:10px;background:#0f172a;color:#86efac;border-radius:8px;padding:10px 12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.tpl-link{font-size:12px;color:#2563eb;cursor:pointer;text-decoration:underline;display:inline-block;margin-top:6px}
+.upload-actions{display:flex;gap:8px;justify-content:flex-end}
+.btn-cancel{padding:9px 18px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;font-size:13px;font-weight:600;cursor:pointer}
+.btn-upload{padding:9px 18px;border-radius:8px;border:none;background:#2563eb;color:#fff;font-size:13px;font-weight:700;cursor:pointer}
+.btn-upload:disabled{opacity:.5;cursor:not-allowed}
+.upload-result{font-size:13px;border-radius:8px;padding:10px 14px;margin-bottom:12px;display:none}
+.upload-result.ok{background:#f0fdf4;color:#15803d}
+.upload-result.err{background:#fef2f2;color:#dc2626}
+.selected-file{font-size:12px;color:#2563eb;font-weight:600;margin:8px 0;display:none}
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN PAGE ── -->
+<div id="page-login">
+  <div class="login-header">
+    <div class="brand">Ideal<span>OMS</span></div>
+  </div>
+  <div class="login-body">
+    <div class="login-card">
+      <div class="login-icon">&#128101;</div>
+      <div class="login-title">Client Portal</div>
+      <div class="login-sub">Enter your credentials to view your orders</div>
+      <div class="fg">
+        <label>Username</label>
+        <input id="inp-user" type="text" placeholder="Your username" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div class="fg">
+        <label>Password</label>
+        <input id="inp-pass" type="password" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <button class="login-btn" id="login-btn" onclick="doLogin()">Log In &rarr;</button>
+      <div id="login-err" class="login-err"></div>
+      <div class="login-help">Credentials are issued by your IdealOMS account manager.<br>Contact us if you need assistance.</div>
+    </div>
+  </div>
+  <div class="login-footer">Powered by IdealOMS &bull; Confidential &bull; Authorised users only</div>
+</div>
+
+<!-- ── DASHBOARD PAGE ── -->
+<div id="page-dash">
+  <div class="dash-header">
+    <div class="dash-logo">Ideal<span>OMS</span></div>
+    <div class="dash-client" id="dash-client-name"></div>
+    <div class="dash-spacer"></div>
+    <button class="dash-upload-btn" onclick="openUpload()">&#8679; Upload Orders</button>
+    <button class="dash-logout" onclick="doLogout()">Log Out</button>
+  </div>
+  <div class="dash-body">
+    <div class="stats-row" id="stats-row">
+      <div class="stat"><div class="stat-lbl">Total Orders</div><div class="stat-val" id="st-total">—</div></div>
+      <div class="stat"><div class="stat-lbl">Delivered</div><div class="stat-val" id="st-delivered" style="color:#16a34a">—</div></div>
+      <div class="stat"><div class="stat-lbl">In Progress</div><div class="stat-val" id="st-inprog" style="color:#2563eb">—</div></div>
+      <div class="stat"><div class="stat-lbl">Revenue (SGD)</div><div class="stat-val" id="st-revenue">—</div></div>
+    </div>
+    <div class="orders-panel">
+      <div class="panel-hdr">
+        <div class="panel-title">My Orders</div>
+        <input class="search-inp" id="order-search" placeholder="&#128269; Search orders&hellip;" oninput="renderOrders()">
+      </div>
+      <div class="order-row order-row-hdr">
+        <div class="o-id-hdr">Order ID</div>
+        <div class="o-date-hdr">Date</div>
+        <div class="o-items-hdr">Items</div>
+        <div class="o-status-hdr">Status</div>
+        <div class="o-total-hdr" style="text-align:right">Total</div>
+      </div>
+      <div class="orders-list" id="orders-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── UPLOAD MODAL ── -->
+<div class="modal-overlay" id="upload-modal" style="display:none" onclick="if(event.target===this)closeUpload()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-hdr-title">&#8679; Upload Orders</div>
+      <button class="modal-close" onclick="closeUpload()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="upload-result" class="upload-result"></div>
+      <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleDrop(event)">
+        <div class="uz-icon">&#128196;</div>
+        <div class="uz-title">Click or drag &amp; drop your file here</div>
+        <div class="uz-sub">Supports CSV, Excel (.xlsx, .xls)</div>
+      </div>
+      <input type="file" id="file-input" class="file-input" accept=".csv,.xlsx,.xls" onchange="fileSelected(this)">
+      <div id="selected-file-name" class="selected-file"></div>
+      <div class="upload-format">
+        <h4>Required Column Headers</h4>
+        <code>Order ID, Product SKU, Product Name, Qty, Unit Price,
+Recipient Name, Address, City, Postal Code, Notes</code>
+        <a class="tpl-link" onclick="downloadTemplate()">&#8681; Download CSV Template</a>
+      </div>
+      <div class="upload-actions">
+        <button class="btn-cancel" onclick="closeUpload()">Cancel</button>
+        <button class="btn-upload" id="upload-btn" onclick="doUpload()" disabled>Upload</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SERVER = '';
+const K_TOKEN = 'cportal_token';
+const K_CLIENT = 'cportal_client';
+
+let token = sessionStorage.getItem(K_TOKEN);
+let clientInfo = JSON.parse(sessionStorage.getItem(K_CLIENT) || 'null');
+let allOrders = [];
+let uploadFile = null;
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+(async () => {
+  if (token && clientInfo) {
+    try {
+      const r = await fetch(`${SERVER}/api/client/me`, { headers: { Authorization: 'Bearer ' + token } });
+      if (r.ok) {
+        clientInfo = await r.json();
+        showDash();
+        return;
+      }
+    } catch {}
+  }
+  token = null;
+  sessionStorage.removeItem(K_TOKEN);
+  sessionStorage.removeItem(K_CLIENT);
+  showLogin();
+})();
+
+function showLogin() {
+  document.getElementById('page-login').style.display = 'flex';
+  document.getElementById('page-dash').style.display  = 'none';
+  document.getElementById('page-dash').style.flexDirection = '';
+  setTimeout(() => document.getElementById('inp-user').focus(), 50);
+}
+
+function showDash() {
+  document.getElementById('page-login').style.display = 'none';
+  document.getElementById('page-dash').style.display  = 'flex';
+  document.getElementById('page-dash').style.flexDirection = 'column';
+  document.getElementById('dash-client-name').textContent = clientInfo.clientName;
+  loadOrders();
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const username = document.getElementById('inp-user').value.trim();
+  const password = document.getElementById('inp-pass').value;
+  const errEl = document.getElementById('login-err');
+  const btn   = document.getElementById('login-btn');
+  if (!username || !password) { showErr('Please enter your username and password.'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Logging in…';
+  errEl.style.display = 'none';
+  try {
+    const r = await fetch(`${SERVER}/api/client/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showErr(j.error || 'Login failed'); return; }
+    token = j.token;
+    clientInfo = { clientId: j.clientId, clientName: j.clientName };
+    sessionStorage.setItem(K_TOKEN, token);
+    sessionStorage.setItem(K_CLIENT, JSON.stringify(clientInfo));
+    showDash();
+  } catch (e) {
+    showErr('Could not connect to server. Please try again.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Log In →';
+  }
+}
+
+function showErr(msg) {
+  const el = document.getElementById('login-err');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+// ── LOGOUT ────────────────────────────────────────────────────────────────────
+async function doLogout() {
+  try { await fetch(`${SERVER}/api/client/logout`, { method: 'POST', headers: { Authorization: 'Bearer ' + token } }); } catch {}
+  token = null;
+  clientInfo = null;
+  allOrders = [];
+  sessionStorage.removeItem(K_TOKEN);
+  sessionStorage.removeItem(K_CLIENT);
+  document.getElementById('inp-pass').value = '';
+  showLogin();
+}
+
+// ── ORDERS ────────────────────────────────────────────────────────────────────
+async function loadOrders() {
+  try {
+    const r = await fetch(`${SERVER}/api/client/orders`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { if (r.status === 401) { doLogout(); return; } }
+    allOrders = await r.json();
+    renderStats();
+    renderOrders();
+  } catch {}
+}
+
+function renderStats() {
+  const total     = allOrders.length;
+  const delivered = allOrders.filter(o => o.status === 'delivered').length;
+  const inprog    = allOrders.filter(o => ['shipped','processing','confirmed'].includes(o.status)).length;
+  const revenue   = allOrders.reduce((s, o) => s + (o.total || 0), 0);
+  document.getElementById('st-total').textContent     = total;
+  document.getElementById('st-delivered').textContent  = delivered;
+  document.getElementById('st-inprog').textContent     = inprog;
+  document.getElementById('st-revenue').textContent    = 'S$' + revenue.toFixed(2);
+}
+
+function renderOrders() {
+  const q   = (document.getElementById('order-search').value || '').toLowerCase();
+  let list  = allOrders;
+  if (q) list = list.filter(o =>
+    (o.id || '').toLowerCase().includes(q) ||
+    (o.notes || '').toLowerCase().includes(q) ||
+    (o.items || []).some(i => (i.name || '').toLowerCase().includes(q))
+  );
+  const el = document.getElementById('orders-list');
+  if (!list.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128230;</div><p>' + (q ? 'No orders match your search.' : 'No orders yet. Upload your first order above.') + '</p></div>';
+    return;
+  }
+  el.innerHTML = list.map(o => {
+    const date    = o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-SG', { day:'2-digit', month:'short', year:'numeric' }) : '—';
+    const items   = (o.items || []);
+    const itemStr = items.length ? items[0].name + (items.length > 1 ? ` +${items.length - 1} more` : '') : '—';
+    const sc      = statusClass(o.status);
+    return `<div class="order-row">
+      <div class="order-id">${esc(o.id)}</div>
+      <div class="order-date">${date}</div>
+      <div class="order-items" title="${esc(items.map(i=>i.name).join(', '))}">${esc(itemStr)}</div>
+      <div><span class="order-status ${sc}">${esc(o.status)}</span></div>
+      <div class="order-total">S$${(o.total || 0).toFixed(2)}</div>
+    </div>`;
+  }).join('');
+}
+
+function statusClass(s) {
+  const map = { delivered:'st-delivered', shipped:'st-shipped', processing:'st-processing', confirmed:'st-confirmed', pending:'st-pending' };
+  return map[s] || 'st-pending';
+}
+
+function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── UPLOAD ────────────────────────────────────────────────────────────────────
+function openUpload() {
+  uploadFile = null;
+  document.getElementById('upload-modal').style.display = 'flex';
+  document.getElementById('upload-btn').disabled = true;
+  document.getElementById('selected-file-name').style.display = 'none';
+  document.getElementById('upload-result').style.display = 'none';
+  document.getElementById('file-input').value = '';
+}
+
+function closeUpload() {
+  document.getElementById('upload-modal').style.display = 'none';
+}
+
+function fileSelected(input) {
+  uploadFile = input.files[0] || null;
+  const nameEl = document.getElementById('selected-file-name');
+  if (uploadFile) {
+    nameEl.textContent = '📎 ' + uploadFile.name;
+    nameEl.style.display = 'block';
+    document.getElementById('upload-btn').disabled = false;
+  } else {
+    nameEl.style.display = 'none';
+    document.getElementById('upload-btn').disabled = true;
+  }
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (!['csv','xlsx','xls'].includes(ext)) { showUploadResult('Only CSV, XLSX, or XLS files are accepted.', false); return; }
+  uploadFile = f;
+  const nameEl = document.getElementById('selected-file-name');
+  nameEl.textContent = '📎 ' + f.name;
+  nameEl.style.display = 'block';
+  document.getElementById('upload-btn').disabled = false;
+}
+
+async function doUpload() {
+  if (!uploadFile) return;
+  const btn = document.getElementById('upload-btn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+  const form = new FormData();
+  form.append('file', uploadFile);
+  try {
+    const r = await fetch(`${SERVER}/api/client/orders/upload`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body: form,
+    });
+    const j = await r.json();
+    if (!r.ok) { showUploadResult(j.error || 'Upload failed', false); return; }
+    showUploadResult(`✓ ${j.imported} order(s) imported successfully${j.skipped ? ` (${j.skipped} skipped — duplicates)` : ''}.`, true);
+    await loadOrders();
+    uploadFile = null;
+    document.getElementById('file-input').value = '';
+    document.getElementById('selected-file-name').style.display = 'none';
+    document.getElementById('upload-btn').disabled = true;
+  } catch (e) {
+    showUploadResult('Upload failed: ' + e.message, false);
+  } finally {
+    btn.textContent = 'Upload';
+    btn.disabled = !uploadFile;
+  }
+}
+
+function showUploadResult(msg, ok) {
+  const el = document.getElementById('upload-result');
+  el.textContent = msg;
+  el.className = 'upload-result ' + (ok ? 'ok' : 'err');
+  el.style.display = 'block';
+}
+
+function downloadTemplate() {
+  const csv = [
+    'Order ID,Product SKU,Product Name,Qty,Unit Price,Recipient Name,Address,City,Postal Code,Notes',
+    'MY-ORD-001,PROD-001,Example Product,2,25.00,John Doe,123 Main Street,Singapore,640001,',
+    'MY-ORD-001,PROD-002,Another Item,1,15.00,John Doe,123 Main Street,Singapore,640001,Gift wrap please',
+    'MY-ORD-002,PROD-003,Third Product,3,10.00,Jane Smith,456 Side Lane,Singapore,520456,',
+  ].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'idealoms_order_template.csv';
+  a.click();
+}
+</script>
+</body>
+</html>
