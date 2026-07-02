@@ -28,6 +28,8 @@ const createSyncLog   = require('./lib/sync-log');
 const createWarehouse = require('./lib/warehouse');
 const createPicking   = require('./lib/warehouse-pick');
 const createPacking   = require('./lib/warehouse-pack');
+const createPPP       = require('./lib/warehouse-ppp');
+const createPrintQueue = require('./lib/warehouse-print-queue');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -111,8 +113,10 @@ function withClientWarehouse(req, res, next) {
   // warehouse DB — scope every lookup to this client so picking/packing can
   // never touch a sibling client's order.
   const ordersApi = { getOrder: id => { const o = req.store.getOrder(id); return (o && o.clientId === clientId) ? o : null; } };
-  req.picking = createPicking(whDb, ordersApi);
-  req.packing = createPacking(whDb, ordersApi);
+  req.picking    = createPicking(whDb, ordersApi);
+  req.packing    = createPacking(whDb, ordersApi);
+  req.ppp        = createPPP(whDb, ordersApi);
+  req.printQueue = createPrintQueue(whDb);
   next();
 }
 
@@ -1315,6 +1319,108 @@ app.patch('/api/admin/client-users/:clientId/warehouse/pack/shipments/:shipmentI
 
 app.get('/api/admin/client-users/:clientId/warehouse/pack/stats', withTenant, withClientWarehouse, (req, res) => {
   res.json(req.packing.getPackStats());
+});
+
+// ── Admin — per-client scan-based Pick-and-Pack, PPP (ported from IDEALPICK) ──
+
+app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.ppp.openSession(req.body.orderId, req.body.operatorId || ''));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/ppp/sessions', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.ppp.listSessions({ status: req.query.status, orderId: req.query.orderId }));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/ppp/sessions/:sessionId', withTenant, withClientWarehouse, (req, res) => {
+  const s = req.ppp.getSession(req.params.sessionId);
+  if (!s) return res.status(404).json({ error: 'Session not found' });
+  res.json(s);
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions/:sessionId/close', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.ppp.closeSession(req.params.sessionId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions/:sessionId/cartons', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.ppp.openCarton(req.params.sessionId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions/:sessionId/scan-hu', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.ppp.scanHU(req.params.sessionId, req.body.huCode));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions/:sessionId/scan-item', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.status(201).json(req.ppp.scanItem(req.params.sessionId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/client-users/:clientId/warehouse/ppp/items/:itemId', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.ppp.removeItem(req.params.itemId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/client-users/:clientId/warehouse/ppp/cartons/:cartonId', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.ppp.updateCartonDimensions(req.params.cartonId, req.body || {}));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/ppp/cartons/:cartonId/packing-list', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.ppp.getCartonPackingListData(req.params.cartonId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/ppp/sessions/:sessionId/master-packing-list', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.ppp.getMasterPackingListData(req.params.sessionId));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Admin — per-client print queue (ported from IDEALPICK) ───────────────────
+
+app.post('/api/admin/client-users/:clientId/warehouse/print-queue', withTenant, withClientWarehouse, (req, res) => {
+  res.status(201).json(req.printQueue.enqueue(req.body || {}));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/print-queue', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.printQueue.list({ status: req.query.status }));
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/print-queue/pending-count', withTenant, withClientWarehouse, (req, res) => {
+  res.json({ count: req.printQueue.pendingCount() });
+});
+
+app.post('/api/admin/client-users/:clientId/warehouse/print-queue/:jobId/printed', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.printQueue.markPrinted(req.params.jobId));
+});
+
+app.delete('/api/admin/client-users/:clientId/warehouse/print-queue/:jobId', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.printQueue.remove(req.params.jobId));
 });
 
 // ── Super-admin tenant management ─────────────────────────────────────────────
