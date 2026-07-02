@@ -197,8 +197,17 @@ function writeDb(data) {
 // Entries with comma-separated barcodes in the source Excel are split so each
 // barcode is its own key. Empty CODE 2 rows are omitted entirely.
 let _beTimeCode2Map = {};
+let _beTimeCode2Lengths = []; // unique key lengths, descending — rebuilt whenever map changes
+
+function _rebuildCode2Lengths() {
+  const lens = [...new Set(Object.keys(_beTimeCode2Map).map(k => k.length))];
+  lens.sort((a, b) => b - a); // longest first so we match the most-specific prefix
+  _beTimeCode2Lengths = lens;
+}
+
 try {
   _beTimeCode2Map = JSON.parse(fs.readFileSync(BETIME_CODE2_FILE, 'utf8'));
+  _rebuildCode2Lengths();
   console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries`);
 } catch (e) {
   console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
@@ -206,17 +215,24 @@ try {
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
-// Handles scanners that concatenate multiple barcodes in one burst: if the
-// direct lookup misses and the input is all-digits longer than 13, try EAN-13
-// (13), EAN-12 (12) and EAN-8 (8) prefixes in that order.
+//
+// Handles scanners that sweep multiple barcodes in one burst and concatenate
+// them into a single string. When a direct lookup misses and the input is
+// all-digits longer than the shortest known barcode, we try every key-length
+// that exists in the map (derived at load time, updated on hot-reload) as a
+// prefix — longest first. This works for any barcode format in any future
+// upload without hardcoded lengths.
 function resolveBeTimeCode2(scanned) {
   if (!scanned) return scanned;
   const k = scanned.trim();
   if (_beTimeCode2Map[k]) return _beTimeCode2Map[k];
-  if (/^\d{14,}$/.test(k)) {
-    for (const len of [13, 14, 12, 8]) {
-      const sub = k.slice(0, len);
-      if (_beTimeCode2Map[sub]) return _beTimeCode2Map[sub];
+  const minLen = _beTimeCode2Lengths[_beTimeCode2Lengths.length - 1] || 8;
+  if (/^\d+$/.test(k) && k.length > minLen) {
+    for (const len of _beTimeCode2Lengths) {
+      if (k.length > len) {
+        const hit = _beTimeCode2Map[k.slice(0, len)];
+        if (hit) return hit;
+      }
     }
   }
   return k;
@@ -1888,6 +1904,7 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
     });
     fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
     _beTimeCode2Map = map;  // hot-reload in memory
+    _rebuildCode2Lengths();
     res.json({ ok: true, entries: Object.keys(map).length, skipped });
   } catch (err) {
     res.status(500).json({ error: err.message });
