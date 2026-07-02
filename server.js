@@ -1039,7 +1039,9 @@ app.post('/api/waybill-lookup', (req, res) => {
 
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
-  const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
+  const raw = req.body.sku;
+  const sku = resolveBeTimeCode2(raw);  // translate barcode → product code
+  console.log(`[scan] raw="${raw}" resolved="${sku}" mapSize=${Object.keys(_beTimeCode2Map).length}`);
   if (!orderNumber || !sku) return res.status(400).json({ error: 'orderNumber and sku required' });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
