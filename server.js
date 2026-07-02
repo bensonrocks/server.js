@@ -206,10 +206,20 @@ try {
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
+// Handles scanners that concatenate multiple barcodes in one burst: if the
+// direct lookup misses and the input is all-digits longer than 13, try EAN-13
+// (13), EAN-12 (12) and EAN-8 (8) prefixes in that order.
 function resolveBeTimeCode2(scanned) {
   if (!scanned) return scanned;
   const k = scanned.trim();
-  return _beTimeCode2Map[k] || k;
+  if (_beTimeCode2Map[k]) return _beTimeCode2Map[k];
+  if (/^\d{14,}$/.test(k)) {
+    for (const len of [13, 14, 12, 8]) {
+      const sub = k.slice(0, len);
+      if (_beTimeCode2Map[sub]) return _beTimeCode2Map[sub];
+    }
+  }
+  return k;
 }
 
 // ── Email config ─────────────────────────────────────────────────────────────
@@ -1039,9 +1049,7 @@ app.post('/api/waybill-lookup', (req, res) => {
 
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
-  const raw = req.body.sku;
-  const sku = resolveBeTimeCode2(raw);  // translate barcode → product code
-  console.log(`[scan] raw="${raw}" resolved="${sku}" mapSize=${Object.keys(_beTimeCode2Map).length}`);
+  const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
   if (!orderNumber || !sku) return res.status(400).json({ error: 'orderNumber and sku required' });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
