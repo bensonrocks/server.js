@@ -31,6 +31,10 @@ a:hover{text-decoration:underline}
 .search-box{padding:6px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.1);color:#fff;font-size:13px;width:190px}
 .search-box::placeholder{color:rgba(255,255,255,.4)}
 .search-box:focus{outline:none;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.15)}
+.session-timer{padding:4px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+.session-timer.warn{border-color:#f59e0b;background:rgba(245,158,11,.15);color:#fbbf24;animation:pulse-warn 1.5s ease-in-out infinite}
+.session-timer.expired{border-color:#ef4444;background:rgba(239,68,68,.15);color:#fca5a5}
+@keyframes pulse-warn{0%,100%{opacity:1}50%{opacity:.6}}
 .sync-all-btn{padding:5px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-size:12px;font-weight:600;transition:all .12s}
 .sync-all-btn:hover{background:rgba(255,255,255,.16)}
 .sync-all-btn:disabled{opacity:.4;cursor:not-allowed}
@@ -602,6 +606,7 @@ a:hover{text-decoration:underline}
     </div>
     <div class="hdr-r">
       <input id="search" class="search-box" placeholder="Search orders&#8230;" autocomplete="off">
+      <div id="session-timer" class="session-timer" title="Session time remaining" onclick="showLoginOverlay()" style="display:none">&#128274; <span id="session-timer-val"></span></div>
       <button id="sync-all-btn" class="sync-all-btn">&#8635; Sync All</button>
       <button id="btn-ingest" class="btn btn-p">+ Add Order</button>
     </div>
@@ -1258,6 +1263,53 @@ const PLAT_CONFIG={
 const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
 
 // ── ADMIN LOGIN OVERLAY ───────────────────────────────────────────────────────
+// ── SESSION TIMER ─────────────────────────────────────────────────────────────
+let _sessionTimerInterval = null;
+function startSessionTimer() {
+  const el  = document.getElementById('session-timer');
+  const val = document.getElementById('session-timer-val');
+  if (!el || !val) return;
+  if (_sessionTimerInterval) clearInterval(_sessionTimerInterval);
+  const tick = () => {
+    const expiry = parseInt(localStorage.getItem('idealoms_token_expiry') || '0', 10);
+    const ms = expiry - Date.now();
+    if (ms <= 0) {
+      el.style.display = 'none';
+      clearInterval(_sessionTimerInterval);
+      authToken = null; adminUnlocked = false;
+      localStorage.removeItem('idealoms_token');
+      localStorage.removeItem('idealoms_token_expiry');
+      showLoginOverlay();
+      return;
+    }
+    const totalMin = Math.floor(ms / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    val.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    el.style.display = '';
+    el.className = 'session-timer' + (ms < 5 * 60 * 1000 ? ' warn' : '');
+    if (ms < 5 * 60 * 1000 && ms > 4.9 * 60 * 1000) {
+      // exactly entered the 5-min window — show toast
+      showToast('⚠️ Session expires in 5 minutes — save your work and log in again.', 8000);
+    }
+  };
+  tick();
+  _sessionTimerInterval = setInterval(tick, 30000);
+}
+
+function showToast(msg, duration = 4000) {
+  let t = document.getElementById('session-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'session-toast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fbbf24;border:1.5px solid #f59e0b;border-radius:10px;padding:12px 20px;font-size:13px;font-weight:600;z-index:9998;box-shadow:0 8px 24px rgba(0,0,0,.3);transition:opacity .3s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg; t.style.opacity = '1'; t.style.display = 'block';
+  clearTimeout(t._hide);
+  t._hide = setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.style.display = 'none', 300); }, duration);
+}
+
 function showLoginOverlay(){
   const ov=document.getElementById('login-ov');
   ov.style.display='flex';
@@ -1277,7 +1329,9 @@ async function doOverlayLogin(){
     if(!r.ok){errEl.textContent=j.error||'Incorrect username or password';errEl.style.display='block';document.getElementById('ov-pw').value='';document.getElementById('ov-user').focus();return;}
     authToken=j.token;currentTenantId=j.tenantId||'default';
     localStorage.setItem('idealoms_token',authToken);localStorage.setItem('idealoms_tenant',currentTenantId);
+    localStorage.setItem('idealoms_token_expiry', Date.now() + 8*60*60*1000);
     serverAvailable=true;adminUnlocked=true;
+    startSessionTimer();
     history.replaceState({},'','/');
     document.getElementById('login-ov').style.display='none';
     await fetchOrders();render();
@@ -1320,7 +1374,9 @@ async function unlockSyncLog(){
     authToken=j.token;currentTenantId=tid;
     localStorage.setItem('idealoms_token',authToken);
     localStorage.setItem('idealoms_tenant',currentTenantId);
+    localStorage.setItem('idealoms_token_expiry', Date.now() + 8*60*60*1000);
     serverAvailable=true;adminUnlocked=true;
+    startSessionTimer();
     showSyncLogContent();await renderSyncLog();
   }catch(e){
     setSyncLogErr('Cannot reach server — make sure it is running.');
@@ -1375,7 +1431,9 @@ async function unlockAdmin(){
     authToken=j.token;currentTenantId=tid;
     localStorage.setItem('idealoms_token',authToken);
     localStorage.setItem('idealoms_tenant',currentTenantId);
+    localStorage.setItem('idealoms_token_expiry', Date.now() + 8*60*60*1000);
     serverAvailable=true;adminUnlocked=true;
+    startSessionTimer();
     showAdminContent();await loadAdminStats();
   }catch(e){
     setAdminErr('Cannot reach server — make sure it is running.');
@@ -1941,7 +1999,7 @@ async function saveConnCredentials(){
     try{
       const r=await fetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify(payload)});
       const j=await r.json();
-      if(r.status===401){showCMMsg('Session expired — click the lock icon to log in first, then save again.');return;}
+      if(r.status===401){showCMMsg('Session expired — logging you back in…');setTimeout(()=>{document.querySelector('#cm-close-btn')?.click();showLoginOverlay();},800);return;}
       if(!r.ok){showCMMsg(j.error||'Save failed');return;}
       connCreds[platform]={...connCreds[platform],...payload};saveCreds();
       showCMMsg('Credentials saved to server!',false);
@@ -2738,8 +2796,8 @@ $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();})
     if(r.ok){
       serverAvailable=true;
       const j=await r.json();
-      if(j.authenticated){adminUnlocked=true;}
-      else{authToken=null;localStorage.removeItem('idealoms_token');}
+      if(j.authenticated){adminUnlocked=true;startSessionTimer();}
+      else{authToken=null;localStorage.removeItem('idealoms_token');localStorage.removeItem('idealoms_token_expiry');}
     }
   }catch{}
   if(serverAvailable)await loadOrdersFromServer();
