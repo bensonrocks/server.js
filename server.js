@@ -714,6 +714,103 @@ app.post('/api/demo/go-live', withTenant, withSuperAdmin, (req, res) => {
   res.json({ ok: true, removed, message: 'Demo data cleared. Connect your marketplace credentials and sync to pull live orders.' });
 });
 
+// ── Test Order Injection ──────────────────────────────────────────────────────
+
+const TEST_PRODUCTS = [
+  { sku:'TEST-SKU-001', name:'Sample Product A',   unitPrice:29.90 },
+  { sku:'TEST-SKU-002', name:'Sample Product B',   unitPrice:49.00 },
+  { sku:'TEST-SKU-003', name:'Sample Product C',   unitPrice:15.50 },
+  { sku:'TEST-SKU-004', name:'Sample Bundle Pack', unitPrice:89.00 },
+  { sku:'TEST-SKU-005', name:'Test Item Deluxe',   unitPrice:120.00 },
+];
+const TEST_RECIPIENTS = [
+  { name:'Alex Tan',    addr:'Blk 123 Tampines Ave 4', city:'Singapore', zip:'520123' },
+  { name:'Wei Ling Lim',addr:'Blk 456 Jurong West St 61', city:'Singapore', zip:'640456' },
+  { name:'Raj Kumar',   addr:'10 Orchard Rd',         city:'Singapore', zip:'238801' },
+  { name:'Siti Binte',  addr:'Blk 789 Woodlands Dr 73',city:'Singapore', zip:'730789' },
+  { name:'James Ong',   addr:'Blk 321 Clementi Ave 4', city:'Singapore', zip:'120321' },
+];
+const TEST_CHANNELS  = ['shopee','lazada','tiktok','shopify'];
+const TEST_STATUSES  = ['pending','processing','shipped','delivered'];
+const TEST_CLIENTS   = [
+  { id:'betime-marketing', name:'Betime Marketing' },
+  { id:'smilefam',         name:'SmileFam' },
+  { id:'athena-scents',    name:'Athena Scents' },
+  { id:'simplytoy',        name:'SimplyToy' },
+  { id:'lz8',              name:'LZ8' },
+  { id:'almighty',         name:'Almighty' },
+  { id:'chalgo',           name:'Chalgo' },
+];
+
+function makeTestOrder({ clientId, clientName, channel, status, index } = {}) {
+  const ts      = Date.now();
+  const rand    = Math.floor(Math.random() * 9000) + 1000;
+  const id      = `TEST-${(channel||'manual').toUpperCase().slice(0,3)}-${ts}-${rand}`;
+  const client  = TEST_CLIENTS.find(c => c.id === clientId) || TEST_CLIENTS[Math.floor(Math.random()*TEST_CLIENTS.length)];
+  const ch      = TEST_CHANNELS.includes(channel) ? channel : TEST_CHANNELS[Math.floor(Math.random()*TEST_CHANNELS.length)];
+  const st      = TEST_STATUSES.includes(status)  ? status  : TEST_STATUSES[Math.floor(Math.random()*TEST_STATUSES.length)];
+  const recip   = TEST_RECIPIENTS[Math.floor(Math.random()*TEST_RECIPIENTS.length)];
+  const numItems= Math.floor(Math.random()*3)+1;
+  const items   = [];
+  for (let i = 0; i < numItems; i++) {
+    const p    = TEST_PRODUCTS[Math.floor(Math.random()*TEST_PRODUCTS.length)];
+    const qty  = Math.floor(Math.random()*3)+1;
+    items.push({ sku:p.sku, name:p.name, qty, unitPrice:p.unitPrice });
+  }
+  const subtotal    = Math.round(items.reduce((s,i)=>s+(i.qty*i.unitPrice),0)*100)/100;
+  const tax         = Math.round(subtotal*0.09*100)/100;
+  const total       = Math.round((subtotal+tax)*100)/100;
+  const orderDate   = new Date(ts - Math.floor(Math.random()*7*24*60*60*1000)).toISOString();
+  return {
+    id, clientId:client.id, clientName:client.name, channel:ch, orderDate,
+    status:st, currency:'SGD', notes:'[TEST ORDER]', items,
+    shipping:{ recipient:recip.name, addressLine1:recip.addr, addressLine2:'', city:recip.city, state:'', zip:recip.zip, country:'SG' },
+    subtotal, shippingCost:0, tax, total,
+    source:{ type:ch, ingestedAt:new Date().toISOString(), test:true },
+  };
+}
+
+// Inject arbitrary orders (pass full order objects)
+app.post('/api/test/inject', withTenant, (req, res) => {
+  const { orders } = req.body || {};
+  if (!Array.isArray(orders) || !orders.length) return res.status(400).json({ error: 'Provide orders: [...]' });
+  let imported = 0, skipped = 0;
+  const errors = [];
+  for (const o of orders) {
+    if (!o.id) { errors.push('Missing id on an order'); skipped++; continue; }
+    try { req.store.addOrder(o); imported++; }
+    catch(e) { skipped++; if (!e.message.includes('already exists')) errors.push(e.message); }
+  }
+  res.json({ ok:true, imported, skipped, errors });
+});
+
+// Generate random test orders and inject them
+app.post('/api/test/generate', withTenant, (req, res) => {
+  const { count=5, clientId, channel, status } = req.body || {};
+  const n = Math.min(Math.max(parseInt(count)||5, 1), 50);
+  let imported = 0, skipped = 0;
+  const orders = [];
+  for (let i = 0; i < n; i++) {
+    const o = makeTestOrder({ clientId, channel, status, index:i });
+    orders.push(o);
+    try { req.store.addOrder(o); imported++; }
+    catch { skipped++; }
+  }
+  res.json({ ok:true, imported, skipped, orders });
+});
+
+// Remove all TEST- prefixed orders
+app.delete('/api/test/orders', withTenant, (req, res) => {
+  const all = req.store.getOrders();
+  let removed = 0;
+  for (const o of all) {
+    if (o.id.startsWith('TEST-') || (o.notes||'').includes('[TEST ORDER]')) {
+      try { req.store.deleteOrder(o.id); removed++; } catch {}
+    }
+  }
+  res.json({ ok:true, removed });
+});
+
 // ── Sales Lead Digger ─────────────────────────────────────────────────────────
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1';

@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IdealOMS — Test Order Injector</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace;background:#0f172a;color:#e2e8f0;font-size:13px;min-height:100vh}
+a{color:#60a5fa;text-decoration:none}
+
+.topbar{background:#1e293b;border-bottom:1px solid #334155;padding:0 24px;height:52px;display:flex;align-items:center;gap:12px}
+.topbar-brand{font-size:15px;font-weight:900;color:#fff;letter-spacing:-.3px}
+.topbar-brand span{color:#fb923c}
+.topbar-badge{font-size:10px;font-weight:700;background:#dc2626;color:#fff;padding:2px 8px;border-radius:10px;letter-spacing:.4px;text-transform:uppercase}
+.topbar-spacer{flex:1}
+.topbar-link{font-size:12px;color:#64748b;padding:6px 12px;border-radius:7px;border:1px solid #334155;transition:all .15s}
+.topbar-link:hover{color:#e2e8f0;border-color:#475569}
+
+.layout{display:grid;grid-template-columns:320px 1fr;height:calc(100vh - 52px)}
+
+/* ── SIDEBAR ── */
+.sidebar{background:#1e293b;border-right:1px solid #334155;display:flex;flex-direction:column;overflow-y:auto}
+.sb-section{padding:16px;border-bottom:1px solid #334155}
+.sb-label{font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
+
+.fg{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.fg label{font-size:11px;font-weight:600;color:#94a3b8}
+.fg select,.fg input{padding:7px 10px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:12px;outline:none;width:100%;font-family:inherit;transition:border-color .15s}
+.fg select:focus,.fg input:focus{border-color:#3b82f6}
+
+.btn{width:100%;padding:9px;border-radius:8px;border:none;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.btn-blue{background:#2563eb;color:#fff}
+.btn-blue:hover{background:#1d4ed8}
+.btn-blue:disabled{opacity:.4;cursor:not-allowed}
+.btn-green{background:#16a34a;color:#fff}
+.btn-green:hover{background:#15803d}
+.btn-green:disabled{opacity:.4;cursor:not-allowed}
+.btn-red{background:rgba(220,38,38,.15);color:#f87171;border:1px solid rgba(220,38,38,.2)}
+.btn-red:hover{background:rgba(220,38,38,.25)}
+.btn-ghost{background:rgba(255,255,255,.05);color:#94a3b8;border:1px solid #334155}
+.btn-ghost:hover{background:rgba(255,255,255,.1);color:#e2e8f0}
+.btn-sm{padding:6px 12px;font-size:11px;width:auto}
+
+.result-box{margin-top:10px;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6;display:none;font-family:monospace}
+.result-box.ok{background:rgba(22,163,74,.1);border:1px solid rgba(22,163,74,.2);color:#86efac}
+.result-box.err{background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.2);color:#f87171}
+
+/* ── MAIN PANEL ── */
+.main{display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;background:#1e293b;border-bottom:1px solid #334155;padding:0 20px;gap:2px}
+.tab{padding:14px 18px;font-size:12px;font-weight:700;color:#64748b;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.tab:hover{color:#94a3b8}
+.tab.active{color:#60a5fa;border-bottom-color:#3b82f6}
+
+.tab-content{flex:1;overflow:hidden;display:none;flex-direction:column}
+.tab-content.active{display:flex}
+
+/* JSON EDITOR TAB */
+.editor-wrap{flex:1;display:flex;flex-direction:column;padding:16px;gap:10px;overflow:hidden}
+.editor-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.editor-toolbar span{font-size:11px;color:#475569}
+textarea.json-editor{flex:1;background:#0f172a;border:1px solid #334155;border-radius:10px;color:#86efac;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.7;padding:16px;resize:none;outline:none;transition:border-color .15s}
+textarea.json-editor:focus{border-color:#3b82f6}
+.inject-footer{display:flex;gap:8px;align-items:center}
+.inject-footer .inject-count{font-size:11px;color:#475569}
+
+/* RESULTS LOG TAB */
+.log-wrap{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.log-entry{background:#1e293b;border-radius:8px;border:1px solid #334155;padding:12px 14px}
+.log-entry.log-ok{border-color:rgba(22,163,74,.3)}
+.log-entry.log-err{border-color:rgba(220,38,38,.3)}
+.log-hdr{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.log-time{font-size:10px;color:#475569;font-family:monospace}
+.log-badge{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px}
+.log-badge.ok{background:rgba(22,163,74,.15);color:#86efac}
+.log-badge.err{background:rgba(220,38,38,.15);color:#f87171}
+.log-body{font-size:11px;color:#94a3b8;font-family:monospace;white-space:pre-wrap;word-break:break-all}
+.log-empty{text-align:center;padding:48px;color:#334155;font-size:13px}
+
+/* CURL TAB */
+.curl-wrap{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px}
+.curl-block{background:#1e293b;border-radius:10px;border:1px solid #334155;overflow:hidden}
+.curl-block-hdr{padding:12px 16px;border-bottom:1px solid #334155;display:flex;align-items:center;gap:10px}
+.curl-method{font-size:11px;font-weight:800;padding:2px 8px;border-radius:5px}
+.curl-method.post{background:rgba(37,99,235,.2);color:#93c5fd}
+.curl-method.delete{background:rgba(220,38,38,.15);color:#f87171}
+.curl-path{font-size:13px;font-weight:700;color:#e2e8f0;font-family:monospace}
+.curl-desc{font-size:11px;color:#64748b;margin-left:auto}
+.curl-code{background:#0f172a;padding:14px 16px;font-family:'SF Mono','Fira Code',monospace;font-size:11px;color:#86efac;line-height:1.7;white-space:pre;overflow-x:auto}
+.copy-btn{margin:10px 16px 14px;padding:6px 14px;border-radius:6px;border:1px solid #334155;background:transparent;color:#64748b;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit}
+.copy-btn:hover{color:#e2e8f0;border-color:#475569}
+.copy-btn.copied{color:#86efac;border-color:rgba(22,163,74,.4)}
+
+/* ORDERS LIST TAB */
+.orders-wrap{flex:1;overflow-y:auto;padding:0}
+.orders-toolbar{padding:12px 16px;border-bottom:1px solid #334155;display:flex;gap:8px;align-items:center}
+.orders-toolbar input{flex:1;padding:6px 10px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:12px;outline:none;font-family:inherit}
+.orders-toolbar input:focus{border-color:#3b82f6}
+.order-row{display:grid;grid-template-columns:160px 80px 100px 1fr 90px 80px;gap:8px;padding:10px 16px;border-bottom:1px solid #1e293b;align-items:center;font-size:11px;transition:background .1s}
+.order-row:hover{background:#1e293b}
+.order-row-hdr{background:#1e293b;font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #334155}
+.order-id{color:#60a5fa;font-family:monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-tag{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;display:inline-block}
+.ch-shopee{background:rgba(238,77,45,.15);color:#fb923c}
+.ch-lazada{background:rgba(168,85,247,.15);color:#c084fc}
+.ch-tiktok{background:rgba(34,197,94,.12);color:#86efac}
+.ch-shopify{background:rgba(37,99,235,.15);color:#93c5fd}
+.ch-other{background:rgba(255,255,255,.05);color:#64748b}
+.st-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;display:inline-block;white-space:nowrap}
+.st-delivered{background:rgba(22,163,74,.12);color:#86efac}
+.st-shipped{background:rgba(37,99,235,.12);color:#93c5fd}
+.st-processing{background:rgba(245,158,11,.12);color:#fcd34d}
+.st-pending{background:rgba(100,116,139,.12);color:#94a3b8}
+.is-test{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(220,38,38,.15);color:#f87171;margin-left:4px}
+.empty-msg{text-align:center;padding:48px;color:#334155;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-brand">Ideal<span>OMS</span></div>
+  <div class="topbar-badge">Dev Tool</div>
+  <div class="topbar-spacer"></div>
+  <a href="/?login" class="topbar-link">← Admin Dashboard</a>
+</div>
+
+<div class="layout">
+  <!-- ── SIDEBAR ── -->
+  <div class="sidebar">
+
+    <!-- Login -->
+    <div class="sb-section" id="login-section">
+      <div class="sb-label">Authentication</div>
+      <div class="fg"><label>Username</label><input id="auth-user" type="text" placeholder="admin" value="admin"></div>
+      <div class="fg"><label>Password</label><input id="auth-pass" type="password" placeholder="Password"></div>
+      <button class="btn btn-blue" onclick="doAuth()">🔐 Authenticate</button>
+      <div id="auth-result" class="result-box"></div>
+    </div>
+
+    <!-- Quick Generate -->
+    <div class="sb-section">
+      <div class="sb-label">Quick Generate</div>
+      <div class="fg">
+        <label>Client</label>
+        <select id="gen-client">
+          <option value="">Random</option>
+          <option value="betime-marketing">Betime Marketing</option>
+          <option value="smilefam">SmileFam</option>
+          <option value="athena-scents">Athena Scents</option>
+          <option value="simplytoy">SimplyToy</option>
+          <option value="lz8">LZ8</option>
+          <option value="almighty">Almighty</option>
+          <option value="chalgo">Chalgo</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Channel</label>
+        <select id="gen-channel">
+          <option value="">Random</option>
+          <option value="shopee">Shopee</option>
+          <option value="lazada">Lazada</option>
+          <option value="tiktok">TikTok Shop</option>
+          <option value="shopify">Shopify</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Status</label>
+        <select id="gen-status">
+          <option value="">Random</option>
+          <option value="pending">Pending</option>
+          <option value="processing">Processing</option>
+          <option value="shipped">Shipped</option>
+          <option value="delivered">Delivered</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Count (1–50)</label>
+        <input id="gen-count" type="number" value="5" min="1" max="50">
+      </div>
+      <button class="btn btn-green" id="gen-btn" onclick="doGenerate()">⚡ Generate &amp; Inject</button>
+      <div id="gen-result" class="result-box"></div>
+    </div>
+
+    <!-- Cleanup -->
+    <div class="sb-section">
+      <div class="sb-label">Cleanup</div>
+      <p style="font-size:11px;color:#475569;margin-bottom:10px;line-height:1.6">Remove all orders whose ID starts with <code style="color:#fcd34d">TEST-</code> or notes contain <code style="color:#fcd34d">[TEST ORDER]</code>.</p>
+      <button class="btn btn-red" onclick="doCleanup()">🗑 Remove All Test Orders</button>
+      <div id="cleanup-result" class="result-box"></div>
+    </div>
+
+    <!-- Status -->
+    <div class="sb-section" style="border-bottom:none">
+      <div class="sb-label">Token Status</div>
+      <div id="token-status" style="font-size:11px;color:#475569">Not authenticated</div>
+    </div>
+  </div>
+
+  <!-- ── MAIN PANEL ── -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" onclick="setTab('orders')">Orders in System</div>
+      <div class="tab" onclick="setTab('editor')">JSON Editor</div>
+      <div class="tab" onclick="setTab('curl')">cURL Reference</div>
+      <div class="tab" onclick="setTab('log')">Injection Log</div>
+    </div>
+
+    <!-- ORDERS TAB -->
+    <div class="tab-content active" id="tab-orders">
+      <div class="orders-toolbar">
+        <input id="orders-search" placeholder="🔍 Filter by ID, client, channel, status…" oninput="renderOrdersList()">
+        <button class="btn btn-ghost btn-sm" onclick="loadOrders()">↺ Refresh</button>
+      </div>
+      <div class="order-row order-row-hdr">
+        <div>Order ID</div><div>Channel</div><div>Status</div>
+        <div>Client</div><div>Total</div><div>Date</div>
+      </div>
+      <div id="orders-body"></div>
+    </div>
+
+    <!-- JSON EDITOR TAB -->
+    <div class="tab-content" id="tab-editor">
+      <div class="editor-wrap">
+        <div class="editor-toolbar">
+          <button class="btn btn-ghost btn-sm" onclick="loadTemplate()">Load Template</button>
+          <button class="btn btn-ghost btn-sm" onclick="formatJson()">Format JSON</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearEditor()">Clear</button>
+          <span id="editor-status"></span>
+        </div>
+        <textarea class="json-editor" id="json-editor" placeholder='Paste an array of order objects here, e.g.:
+[
+  {
+    "id": "MY-TEST-001",
+    "clientId": "betime-marketing",
+    "clientName": "Betime Marketing",
+    "channel": "shopee",
+    "orderDate": "2026-07-03T10:00:00Z",
+    "status": "pending",
+    "currency": "SGD",
+    "notes": "Test order",
+    "items": [
+      { "sku": "SKU-001", "name": "Test Product", "qty": 2, "unitPrice": 25.00 }
+    ],
+    "shipping": {
+      "recipient": "John Doe",
+      "addressLine1": "123 Test Street",
+      "city": "Singapore",
+      "zip": "520123",
+      "country": "SG"
+    },
+    "subtotal": 50.00,
+    "shippingCost": 0,
+    "tax": 4.50,
+    "total": 54.50
+  }
+]' oninput="updateEditorStatus()"></textarea>
+        <div class="inject-footer">
+          <span class="inject-count" id="inject-count"></span>
+          <div style="flex:1"></div>
+          <button class="btn btn-green btn-sm" id="inject-btn" onclick="doInject()">⬆ Inject Orders</button>
+        </div>
+        <div id="inject-result" class="result-box"></div>
+      </div>
+    </div>
+
+    <!-- CURL TAB -->
+    <div class="tab-content" id="tab-curl">
+      <div class="curl-wrap">
+
+        <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:12px 16px;font-size:12px;color:#fcd34d;line-height:1.7">
+          <strong>Note:</strong> All endpoints require a Bearer token. Authenticate first using <code>POST /api/auth/login</code>, then pass the token as <code>Authorization: Bearer &lt;token&gt;</code>.
+        </div>
+
+        <div class="curl-block">
+          <div class="curl-block-hdr">
+            <span class="curl-method post">POST</span>
+            <span class="curl-path">/api/auth/login</span>
+            <span class="curl-desc">Get auth token</span>
+          </div>
+          <pre class="curl-code" id="curl-auth">curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"Ideal@2024"}'</pre>
+          <button class="copy-btn" onclick="copyCode('curl-auth',this)">Copy</button>
+        </div>
+
+        <div class="curl-block">
+          <div class="curl-block-hdr">
+            <span class="curl-method post">POST</span>
+            <span class="curl-path">/api/test/generate</span>
+            <span class="curl-desc">Generate random test orders</span>
+          </div>
+          <pre class="curl-code" id="curl-gen">curl -s -X POST http://localhost:3000/api/test/generate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "count": 5,
+    "clientId": "betime-marketing",
+    "channel": "shopee",
+    "status": "pending"
+  }'</pre>
+          <button class="copy-btn" onclick="copyCode('curl-gen',this)">Copy</button>
+        </div>
+
+        <div class="curl-block">
+          <div class="curl-block-hdr">
+            <span class="curl-method post">POST</span>
+            <span class="curl-path">/api/test/inject</span>
+            <span class="curl-desc">Inject custom order objects</span>
+          </div>
+          <pre class="curl-code" id="curl-inject">curl -s -X POST http://localhost:3000/api/test/inject \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "orders": [
+      {
+        "id": "MY-TEST-001",
+        "clientId": "betime-marketing",
+        "clientName": "Betime Marketing",
+        "channel": "shopee",
+        "orderDate": "2026-07-03T10:00:00Z",
+        "status": "pending",
+        "currency": "SGD",
+        "notes": "Test order",
+        "items": [
+          { "sku": "SKU-001", "name": "Test Product", "qty": 2, "unitPrice": 25.00 }
+        ],
+        "shipping": {
+          "recipient": "John Doe",
+          "addressLine1": "123 Test Street",
+          "city": "Singapore",
+          "zip": "520123",
+          "country": "SG"
+        },
+        "subtotal": 50.00,
+        "shippingCost": 0,
+        "tax": 4.50,
+        "total": 54.50
+      }
+    ]
+  }'</pre>
+          <button class="copy-btn" onclick="copyCode('curl-inject',this)">Copy</button>
+        </div>
+
+        <div class="curl-block">
+          <div class="curl-block-hdr">
+            <span class="curl-method post">POST</span>
+            <span class="curl-path">/api/test/inject</span>
+            <span class="curl-desc">Inject from a JSON file</span>
+          </div>
+          <pre class="curl-code" id="curl-file">curl -s -X POST http://localhost:3000/api/test/inject \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d @my_orders.json</pre>
+          <button class="copy-btn" onclick="copyCode('curl-file',this)">Copy</button>
+        </div>
+
+        <div class="curl-block">
+          <div class="curl-block-hdr">
+            <span class="curl-method delete">DELETE</span>
+            <span class="curl-path">/api/test/orders</span>
+            <span class="curl-desc">Remove all test orders</span>
+          </div>
+          <pre class="curl-code" id="curl-del">curl -s -X DELETE http://localhost:3000/api/test/orders \
+  -H "Authorization: Bearer YOUR_TOKEN"</pre>
+          <button class="copy-btn" onclick="copyCode('curl-del',this)">Copy</button>
+        </div>
+
+        <div class="curl-block">
+          <div class="curl-block-hdr">
+            <span class="curl-method post">POST</span>
+            <span class="curl-path">/api/test/generate</span>
+            <span class="curl-desc">Generate for all clients, all channels</span>
+          </div>
+          <pre class="curl-code" id="curl-gen-all">curl -s -X POST http://localhost:3000/api/test/generate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"count": 20}'</pre>
+          <button class="copy-btn" onclick="copyCode('curl-gen-all',this)">Copy</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- LOG TAB -->
+    <div class="tab-content" id="tab-log">
+      <div class="log-wrap" id="log-wrap">
+        <div class="log-empty">No injections yet this session.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let authToken = null;
+let allOrders = [];
+const logEntries = [];
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+async function doAuth() {
+  const username = document.getElementById('auth-user').value.trim();
+  const password = document.getElementById('auth-pass').value;
+  const btn = document.querySelector('#login-section .btn-blue');
+  btn.disabled = true; btn.textContent = 'Authenticating…';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showResult('auth-result', false, j.error || 'Login failed'); return; }
+    authToken = j.token;
+    document.getElementById('token-status').innerHTML = `<span style="color:#86efac">✓ Authenticated</span><br><span style="font-family:monospace;word-break:break-all">${authToken.slice(0,16)}…</span>`;
+    showResult('auth-result', true, 'Authenticated successfully.');
+    loadOrders();
+  } catch(e) { showResult('auth-result', false, e.message); }
+  finally { btn.disabled = false; btn.textContent = '🔐 Authenticate'; }
+}
+
+// ── GENERATE ──────────────────────────────────────────────────────────────────
+async function doGenerate() {
+  if (!authToken) { alert('Authenticate first.'); return; }
+  const btn = document.getElementById('gen-btn');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  const body = {
+    count:    parseInt(document.getElementById('gen-count').value) || 5,
+    clientId: document.getElementById('gen-client').value || undefined,
+    channel:  document.getElementById('gen-channel').value || undefined,
+    status:   document.getElementById('gen-status').value || undefined,
+  };
+  try {
+    const r = await fetch('/api/test/generate', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok) { showResult('gen-result', false, j.error); return; }
+    const msg = `✓ Injected ${j.imported} order${j.imported!==1?'s':''}${j.skipped?` (${j.skipped} skipped)`:''}.`;
+    showResult('gen-result', true, msg);
+    addLog(true, `Generate: ${j.imported} injected`, JSON.stringify({ params: body, imported: j.imported, skipped: j.skipped }, null, 2));
+    loadOrders();
+    setTab('orders');
+  } catch(e) { showResult('gen-result', false, e.message); }
+  finally { btn.disabled = false; btn.textContent = '⚡ Generate & Inject'; }
+}
+
+// ── INJECT ────────────────────────────────────────────────────────────────────
+async function doInject() {
+  if (!authToken) { alert('Authenticate first.'); return; }
+  const raw = document.getElementById('json-editor').value.trim();
+  let orders;
+  try { orders = JSON.parse(raw); }
+  catch(e) { showResult('inject-result', false, 'Invalid JSON: ' + e.message); return; }
+  if (!Array.isArray(orders)) { showResult('inject-result', false, 'Must be a JSON array [ ... ]'); return; }
+  const btn = document.getElementById('inject-btn');
+  btn.disabled = true; btn.textContent = 'Injecting…';
+  try {
+    const r = await fetch('/api/test/inject', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},
+      body: JSON.stringify({ orders }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showResult('inject-result', false, j.error); return; }
+    const msg = `✓ Injected ${j.imported}, skipped ${j.skipped}${j.errors.length ? '\nErrors: '+j.errors.join(', ') : ''}`;
+    showResult('inject-result', true, msg);
+    addLog(true, `Inject: ${j.imported} in / ${j.skipped} skip`, JSON.stringify(j, null, 2));
+    loadOrders();
+  } catch(e) { showResult('inject-result', false, e.message); }
+  finally { btn.disabled = false; btn.textContent = '⬆ Inject Orders'; }
+}
+
+// ── CLEANUP ───────────────────────────────────────────────────────────────────
+async function doCleanup() {
+  if (!authToken) { alert('Authenticate first.'); return; }
+  if (!confirm('Remove all test orders from the system?')) return;
+  try {
+    const r = await fetch('/api/test/orders', { method:'DELETE', headers:{'Authorization':'Bearer '+authToken} });
+    const j = await r.json();
+    if (!r.ok) { showResult('cleanup-result', false, j.error); return; }
+    showResult('cleanup-result', true, `✓ Removed ${j.removed} test order${j.removed!==1?'s':''}.`);
+    addLog(true, `Cleanup: ${j.removed} removed`, '');
+    loadOrders();
+  } catch(e) { showResult('cleanup-result', false, e.message); }
+}
+
+// ── LOAD ORDERS ───────────────────────────────────────────────────────────────
+async function loadOrders() {
+  if (!authToken) return;
+  try {
+    const r = await fetch('/api/orders', { headers:{'Authorization':'Bearer '+authToken} });
+    if (r.ok) { allOrders = await r.json(); renderOrdersList(); }
+  } catch {}
+}
+
+function renderOrdersList() {
+  const q = (document.getElementById('orders-search').value || '').toLowerCase();
+  let list = allOrders;
+  if (q) list = list.filter(o =>
+    (o.id||'').toLowerCase().includes(q) ||
+    (o.clientName||'').toLowerCase().includes(q) ||
+    (o.channel||'').toLowerCase().includes(q) ||
+    (o.status||'').toLowerCase().includes(q)
+  );
+  const el = document.getElementById('orders-body');
+  if (!list.length) { el.innerHTML = '<div class="empty-msg">No orders found.</div>'; return; }
+  el.innerHTML = list.map(o => {
+    const isTest = o.id.startsWith('TEST-') || (o.notes||'').includes('[TEST ORDER]');
+    const d = o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-SG',{day:'2-digit',month:'short'}) : '—';
+    return `<div class="order-row">
+      <div class="order-id">${esc(o.id)}${isTest?'<span class="is-test">TEST</span>':''}</div>
+      <div><span class="ch-tag ch-${o.channel||'other'}">${esc(o.channel||'—')}</span></div>
+      <div><span class="st-badge st-${o.status||'pending'}">${esc(o.status||'—')}</span></div>
+      <div style="color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.clientName||'—')}</div>
+      <div style="font-weight:700;color:#e2e8f0">S$${(o.total||0).toFixed(2)}</div>
+      <div style="color:#475569">${d}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── TABS ──────────────────────────────────────────────────────────────────────
+function setTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const tabs = ['orders','editor','curl','log'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => {
+    c.classList.toggle('active', c.id === 'tab-' + name);
+  });
+  if (name === 'orders') loadOrders();
+}
+
+// ── JSON EDITOR HELPERS ───────────────────────────────────────────────────────
+function loadTemplate() {
+  const tpl = [{
+    id: 'MY-TEST-' + Date.now(),
+    clientId: 'betime-marketing', clientName: 'Betime Marketing',
+    channel: 'shopee', orderDate: new Date().toISOString(),
+    status: 'pending', currency: 'SGD', notes: '[TEST ORDER]',
+    items: [{ sku:'SKU-001', name:'Test Product A', qty:2, unitPrice:25.00 }],
+    shipping:{ recipient:'John Doe', addressLine1:'123 Test Street', addressLine2:'', city:'Singapore', state:'', zip:'520123', country:'SG' },
+    subtotal:50.00, shippingCost:0, tax:4.50, total:54.50,
+  }];
+  document.getElementById('json-editor').value = JSON.stringify(tpl, null, 2);
+  updateEditorStatus();
+}
+
+function formatJson() {
+  const el = document.getElementById('json-editor');
+  try { el.value = JSON.stringify(JSON.parse(el.value), null, 2); updateEditorStatus(); }
+  catch(e) { document.getElementById('editor-status').textContent = '⚠ ' + e.message; document.getElementById('editor-status').style.color='#f87171'; }
+}
+
+function clearEditor() { document.getElementById('json-editor').value=''; updateEditorStatus(); }
+
+function updateEditorStatus() {
+  const el = document.getElementById('editor-status');
+  const raw = document.getElementById('json-editor').value.trim();
+  if (!raw) { el.textContent=''; document.getElementById('inject-count').textContent=''; return; }
+  try {
+    const arr = JSON.parse(raw);
+    const n = Array.isArray(arr) ? arr.length : '?';
+    el.textContent = `✓ Valid JSON`; el.style.color='#86efac';
+    document.getElementById('inject-count').textContent = `${n} order${n!==1?'s':''} ready`;
+  } catch(e) { el.textContent='⚠ Invalid JSON'; el.style.color='#f87171'; document.getElementById('inject-count').textContent=''; }
+}
+
+// ── LOG ───────────────────────────────────────────────────────────────────────
+function addLog(ok, title, detail) {
+  logEntries.unshift({ ok, title, detail, time: new Date().toLocaleTimeString('en-SG') });
+  const el = document.getElementById('log-wrap');
+  el.innerHTML = logEntries.map(e => `
+    <div class="log-entry ${e.ok?'log-ok':'log-err'}">
+      <div class="log-hdr">
+        <span class="log-badge ${e.ok?'ok':'err'}">${e.ok?'OK':'ERR'}</span>
+        <span style="color:#e2e8f0;font-weight:700">${esc(e.title)}</span>
+        <span class="log-time">${e.time}</span>
+      </div>
+      ${e.detail ? `<div class="log-body">${esc(e.detail)}</div>` : ''}
+    </div>`).join('');
+}
+
+// ── COPY ──────────────────────────────────────────────────────────────────────
+function copyCode(id, btn) {
+  navigator.clipboard.writeText(document.getElementById(id).textContent);
+  btn.textContent='Copied!'; btn.classList.add('copied');
+  setTimeout(()=>{ btn.textContent='Copy'; btn.classList.remove('copied'); }, 1500);
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function showResult(id, ok, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.className = 'result-box ' + (ok?'ok':'err');
+  el.style.display = 'block';
+}
+
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
