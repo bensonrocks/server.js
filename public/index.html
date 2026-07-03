@@ -1939,7 +1939,7 @@ async function saveConnCredentials(){
   if(!Object.keys(payload).length){showCMMsg('Fill in at least the required fields.');return;}
   if(serverAvailable){
     try{
-      const r=await fetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const r=await fetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify(payload)});
       const j=await r.json();
       if(!r.ok){showCMMsg(j.error||'Save failed');return;}
       connCreds[platform]={...connCreds[platform],...payload};saveCreds();
@@ -1958,7 +1958,7 @@ async function generateConnOAuthUrl(){
   const urlInput=$('cm-oauth-url'),copyBtn=$('cm-copy-btn');
   if(!serverAvailable){showCMMsg('Start the server first, then click Generate.');return;}
   try{
-    const r=await fetch(`${SERVER}/api/connect/${platform}/oauth-url`);
+    const r=await fetch(`${SERVER}/api/connect/${platform}/oauth-url`,{headers:{'Authorization':`Bearer ${authToken}`}});
     const j=await r.json();
     if(!r.ok){showCMMsg(j.error||'Could not generate. Save credentials first.');return;}
     urlInput.value=j.url;if(copyBtn)copyBtn.style.display='';
@@ -1977,7 +1977,7 @@ async function syncConnNow(){
   if(!serverAvailable){showCMMsg('Start the server first, then sync.');return;}
   showCMMsg('Syncing…',false);
   try{
-    const r=await fetch(`${SERVER}/api/sync/${platform}`,{method:'POST'});
+    const r=await fetch(`${SERVER}/api/sync/${platform}`,{method:'POST',headers:{'Authorization':`Bearer ${authToken}`}});
     const j=await r.json();
     if(j.error){showCMMsg(j.error);return;}
     await loadOrdersFromServer();
@@ -1991,7 +1991,7 @@ async function syncConnNow(){
 async function disconnectConn(){
   const platform=currentConnPlatform;if(!platform)return;
   delete connCreds[platform];saveCreds();
-  if(serverAvailable)try{await fetch(`${SERVER}/api/connect/${platform}`,{method:'DELETE'});}catch{}
+  if(serverAvailable)try{await fetch(`${SERVER}/api/connect/${platform}`,{method:'DELETE',headers:{'Authorization':`Bearer ${authToken}`}});}catch{}
   updateTileStatus(platform,false,null,null);
   showCMMsg('Disconnected.',false);
 }
