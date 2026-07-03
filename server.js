@@ -67,7 +67,7 @@ function getCtx(tenantId) {
     tenantCtx.set(tenantId, {
       db,
       store:   createStore(db),
-      creds:   createCreds(db),
+      creds:   createCreds(tenantId),
       syncLog: createSyncLog(db),
     });
   }
