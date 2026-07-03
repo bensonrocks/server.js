@@ -1941,6 +1941,7 @@ async function saveConnCredentials(){
     try{
       const r=await fetch(`${SERVER}/api/connect/${platform}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify(payload)});
       const j=await r.json();
+      if(r.status===401){showCMMsg('Session expired — click the lock icon to log in first, then save again.');return;}
       if(!r.ok){showCMMsg(j.error||'Save failed');return;}
       connCreds[platform]={...connCreds[platform],...payload};saveCreds();
       showCMMsg('Credentials saved to server!',false);
@@ -2731,7 +2732,16 @@ $('synclog-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockSyncLog(
 $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();});
 
 (async()=>{
-  try{const r=await fetch(`${SERVER}/api/auth/status`);if(r.ok)serverAvailable=true;}catch{}
+  try{
+    const headers=authToken?{'Authorization':`Bearer ${authToken}`}:{};
+    const r=await fetch(`${SERVER}/api/auth/status`,{headers});
+    if(r.ok){
+      serverAvailable=true;
+      const j=await r.json();
+      if(j.authenticated){adminUnlocked=true;}
+      else{authToken=null;localStorage.removeItem('idealoms_token');}
+    }
+  }catch{}
   if(serverAvailable)await loadOrdersFromServer();
   render();
 })();
