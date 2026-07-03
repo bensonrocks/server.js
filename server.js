@@ -209,15 +209,16 @@ function withClientAuth(req, res, next) {
 // ── Auth — public routes ──────────────────────────────────────────────────────
 
 app.post('/api/auth/login', (req, res) => {
-  const { tenantId = 'default', password } = req.body || {};
-  if (!password) return res.status(400).json({ error: 'Password required' });
+  const { tenantId = 'default', username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
   const tenant = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(tenantId);
   if (!tenant)        return res.status(404).json({ error: 'Tenant not found' });
   if (!tenant.active) return res.status(403).json({ error: 'Tenant suspended' });
 
   const { db } = getCtx(tenantId);
-  if (!auth.checkPassword(db, password)) return res.status(401).json({ error: 'Incorrect password' });
+  if (!auth.checkUsername(db, username) || !auth.checkPassword(db, password))
+    return res.status(401).json({ error: 'Incorrect username or password' });
 
   res.json({ token: auth.generateToken(tenantId), tenantId });
 });
