@@ -188,6 +188,53 @@ app.patch('/api/staff/my-password', withStaff, (req, res) => {
   res.json({ ok: true });
 });
 
+// API key management (staff only)
+app.get('/api/staff/api-keys', withStaff, (req, res) => {
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const { db } = getCtx(tenantId);
+  res.json(createClientAuth(db).listApiKeys());
+});
+
+app.post('/api/staff/api-keys', withStaff, (req, res) => {
+  const { clientId, clientName, label } = req.body || {};
+  if (!clientId || !clientName) return res.status(400).json({ error: 'clientId and clientName required' });
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const { db } = getCtx(tenantId);
+  const key = createClientAuth(db).generateApiKey(clientId, clientName, label || '');
+  res.json({ key });
+});
+
+app.delete('/api/staff/api-keys/:key', withStaff, (req, res) => {
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const { db } = getCtx(tenantId);
+  createClientAuth(db).revokeApiKey(req.params.key);
+  res.json({ ok: true });
+});
+
+app.patch('/api/staff/api-keys/:key/active', withStaff, (req, res) => {
+  const { active } = req.body || {};
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const { db } = getCtx(tenantId);
+  createClientAuth(db).setApiKeyActive(req.params.key, !!active);
+  res.json({ ok: true });
+});
+
+// ── API key middleware (client ingest) ────────────────────────────────────────
+
+function withApiKey(req, res, next) {
+  const key      = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const tenantId = req.headers['x-tenant-id'] || 'default';
+  const ctx      = getCtx(tenantId);
+  const ca       = createClientAuth(ctx.db);
+  const session  = ca.validateApiKey(key);
+  if (!session) return res.status(401).json({ error: 'Invalid or revoked API key' });
+  req.tenantId   = tenantId;
+  req.clientId   = session.clientId;
+  req.clientName = session.clientName;
+  req.store      = ctx.store;
+  next();
+}
+
 // ── Client portal middleware ──────────────────────────────────────────────────
 
 function withClientAuth(req, res, next) {
@@ -1086,6 +1133,58 @@ app.post('/api/client/orders/upload', withClientAuth, upload.single('file'), (re
   } finally {
     try { fs.unlinkSync(filePath); } catch {}
   }
+});
+
+// ── API key ingest endpoint ───────────────────────────────────────────────────
+
+app.post('/api/ingest/orders', withApiKey, (req, res) => {
+  const raw = Array.isArray(req.body) ? req.body : [req.body];
+  const now = new Date().toISOString();
+  let accepted = 0;
+  const errors = [];
+  raw.forEach((data, i) => {
+    try {
+      const id = data.id
+        ? String(data.id).replace(/[^A-Z0-9\-_]/gi, '').slice(0, 40)
+        : 'API-' + Date.now().toString(36).toUpperCase() + '-' + String(i).padStart(3, '0');
+      const items = Array.isArray(data.items) && data.items.length
+        ? data.items.map(it => ({ sku: String(it.sku || 'ITEM'), name: String(it.name || 'Item'), qty: parseInt(it.qty) || 1, unitPrice: parseFloat(it.unitPrice || it.unit_price) || 0 }))
+        : [{ sku: 'ITEM', name: 'Order Item', qty: parseInt(data.qty) || 1, unitPrice: parseFloat(data.unitPrice || data.unit_price) || 0 }];
+      const subtotal = items.reduce((s, it) => s + it.qty * it.unitPrice, 0);
+      const tax = parseFloat(data.tax) || 0;
+      const shippingCost = parseFloat(data.shippingCost || data.shipping_cost) || 0;
+      const ship = data.shipping || {};
+      req.store.addOrder({
+        id,
+        clientId:     req.clientId,
+        clientName:   req.clientName,
+        channel:      data.channel || 'api',
+        orderDate:    data.orderDate || data.order_date || now,
+        status:       data.status || 'pending',
+        currency:     data.currency || 'SGD',
+        notes:        data.notes || '',
+        items,
+        shipping: {
+          recipient:    ship.recipient    || data.recipient    || '',
+          addressLine1: ship.addressLine1 || ship.address_line1 || data.address || '',
+          addressLine2: ship.addressLine2 || ship.address_line2 || '',
+          city:         ship.city         || 'Singapore',
+          state:        ship.state        || '',
+          zip:          ship.zip          || ship.postal_code  || '',
+          country:      ship.country      || 'SG',
+        },
+        subtotal,
+        shippingCost,
+        tax,
+        total: parseFloat(data.total) || subtotal + shippingCost + tax,
+        source: { type: 'api', channel: data.channel || 'api', ingestedAt: now },
+      });
+      accepted++;
+    } catch (e) {
+      errors.push({ index: i, id: data.id || null, error: e.message });
+    }
+  });
+  res.json({ ok: true, accepted, errors });
 });
 
 // ── Admin — client user management ───────────────────────────────────────────

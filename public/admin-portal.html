@@ -79,6 +79,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
 .msg.err{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
 
+/* ── API KEYS ── */
+.key-row{display:grid;grid-template-columns:1fr 110px 90px 80px 100px;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #f8fafc;font-size:12px}
+.key-row:last-child{border-bottom:none}
+.key-row-hdr{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;padding-bottom:8px;border-bottom:1.5px solid #e2e8f0;margin-bottom:4px}
+.key-val{font-family:monospace;font-size:11px;color:#1e40af;background:#eff6ff;padding:3px 7px;border-radius:6px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;user-select:all;title:'Click to copy'}
+.key-val:hover{background:#dbeafe}
+.key-gen-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+.key-gen-form select,.key-gen-form input{padding:8px 11px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;color:#0f172a;font-family:inherit;outline:none}
+.key-gen-form select:focus,.key-gen-form input:focus{border-color:#f59e0b}
+.new-key-banner{background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:12px 14px;margin-bottom:12px;display:none}
+.new-key-banner .nk-label{font-size:11px;font-weight:700;color:#15803d;margin-bottom:6px}
+.new-key-banner .nk-val{font-family:monospace;font-size:13px;color:#166534;word-break:break-all;background:#dcfce7;padding:8px 10px;border-radius:6px;cursor:pointer;user-select:all}
+.new-key-banner .nk-note{font-size:11px;color:#166534;margin-top:6px}
+@media(max-width:600px){.key-row{grid-template-columns:1fr 70px 70px}.key-row .key-ts,.key-row-hdr .th-ts{display:none}}
+
 /* ── INLINE PASSWORD MODAL ── */
 .pw-popup{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;align-items:center;justify-content:center;padding:16px}
 .pw-popup-card{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
@@ -135,6 +150,43 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           <div class="th-toggle">Action</div>
         </div>
         <div id="client-users-body"><div style="color:#94a3b8;font-size:12px;padding:12px 0">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- API Keys -->
+    <div class="card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">&#128273; Client API Keys</div>
+          <div class="card-sub">Generate API keys so clients can push orders directly into the OMS</div>
+        </div>
+        <button class="btn-primary" onclick="toggleNewKeyForm()" id="new-key-toggle-btn">+ New Key</button>
+      </div>
+      <div class="card-body">
+        <div id="new-key-banner" class="new-key-banner">
+          <div class="nk-label">&#9989; New API key generated — copy it now, it won't be shown again</div>
+          <div class="nk-val" id="new-key-val" onclick="copyKey(this.textContent)" title="Click to copy"></div>
+          <div class="nk-note">Use as: <code>Authorization: Bearer &lt;key&gt;</code> &mdash; endpoint: <code>POST /api/ingest/orders</code></div>
+        </div>
+        <div id="new-key-form" style="display:none">
+          <div class="key-gen-form">
+            <div class="fg" style="margin-bottom:0;min-width:160px"><label>Client</label>
+              <select id="key-client-select" style="width:100%"><option value="">— select client —</option></select>
+            </div>
+            <div class="fg" style="margin-bottom:0;flex:1;min-width:140px"><label>Label (optional)</label>
+              <input id="key-label" type="text" placeholder="e.g. TikTok Shop"></div>
+            <button class="btn-primary" onclick="generateKey()">Generate</button>
+          </div>
+          <div id="key-gen-msg" class="msg"></div>
+        </div>
+        <div class="key-row key-row-hdr">
+          <div>Client</div>
+          <div>Label</div>
+          <div class="th-ts">Created</div>
+          <div>Status</div>
+          <div>Action</div>
+        </div>
+        <div id="api-keys-body"><div style="color:#94a3b8;font-size:12px;padding:12px 0">Loading…</div></div>
       </div>
     </div>
 
@@ -223,6 +275,8 @@ function showDash() {
   document.getElementById('page-dash').style.flexDirection = 'column';
   document.getElementById('dash-user').textContent = staffUser;
   loadClientUsers();
+  loadApiKeys();
+  loadClientsForKeyForm();
 }
 
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
@@ -383,6 +437,104 @@ async function changeMyPw() {
     document.getElementById('my-pw2').value = '';
     setTimeout(() => { clearSession(); showLogin(); }, 1800);
   } catch { showMsg('my-msg', 'Server error.', false); }
+}
+
+// ── API KEYS ──────────────────────────────────────────────────────────────────
+async function loadApiKeys() {
+  const el = document.getElementById('api-keys-body');
+  try {
+    const r = await fetch(`${SERVER}/api/staff/api-keys`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Failed to load.</div>'; return; }
+    const keys = await r.json();
+    if (!keys.length) { el.innerHTML = '<div style="color:#94a3b8;font-size:12px;padding:10px 0">No API keys yet. Generate one above.</div>'; return; }
+    el.innerHTML = keys.map(k => `
+      <div class="key-row">
+        <div>
+          <div class="user-name">${esc(k.client_name)}</div>
+          <div class="user-uname">${esc(k.client_id)}</div>
+        </div>
+        <div style="color:#64748b">${esc(k.label || '—')}</div>
+        <div class="key-ts" style="color:#94a3b8;font-size:11px">${k.created_at ? k.created_at.slice(0,10) : '—'}</div>
+        <div><span class="status-pill ${k.active ? 'status-on' : 'status-off'}"><span class="status-dot"></span>${k.active ? 'Active' : 'Off'}</span></div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          <button class="btn-sm btn-reset" onclick="copyKey('${esc(k.key)}')" title="${esc(k.key)}">&#128203; Copy</button>
+          <button class="btn-sm ${k.active ? 'btn-disable' : 'btn-enable'}" onclick="toggleApiKey('${esc(k.key)}',${k.active})">${k.active ? 'Disable' : 'Enable'}</button>
+          <button class="btn-sm btn-disable" onclick="revokeApiKey('${esc(k.key)}','${esc(k.client_name)}')">&#128465;</button>
+        </div>
+      </div>`).join('');
+  } catch { el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Error loading keys.</div>'; }
+}
+
+async function loadClientsForKeyForm() {
+  const sel = document.getElementById('key-client-select');
+  try {
+    const r = await fetch(`${SERVER}/api/staff/client-users`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) return;
+    const users = await r.json();
+    users.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ id: u.id, name: u.name });
+      opt.textContent = u.name;
+      sel.appendChild(opt);
+    });
+  } catch {}
+}
+
+function toggleNewKeyForm() {
+  const form = document.getElementById('new-key-form');
+  const btn  = document.getElementById('new-key-toggle-btn');
+  const show = form.style.display === 'none';
+  form.style.display = show ? 'block' : 'none';
+  btn.textContent = show ? '✕ Cancel' : '+ New Key';
+  document.getElementById('new-key-banner').style.display = 'none';
+}
+
+async function generateKey() {
+  const sel = document.getElementById('key-client-select');
+  const label = document.getElementById('key-label').value.trim();
+  if (!sel.value) { showMsg('key-gen-msg', 'Select a client.', false); return; }
+  const { id: clientId, name: clientName } = JSON.parse(sel.value);
+  try {
+    const r = await fetch(`${SERVER}/api/staff/api-keys`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, clientName, label }),
+    });
+    const j = await r.json();
+    if (!r.ok) { showMsg('key-gen-msg', j.error || 'Failed', false); return; }
+    document.getElementById('new-key-form').style.display = 'none';
+    document.getElementById('new-key-toggle-btn').textContent = '+ New Key';
+    document.getElementById('key-gen-msg').style.display = 'none';
+    document.getElementById('new-key-val').textContent = j.key;
+    document.getElementById('new-key-banner').style.display = 'block';
+    sel.value = '';
+    document.getElementById('key-label').value = '';
+    loadApiKeys();
+  } catch { showMsg('key-gen-msg', 'Server error.', false); }
+}
+
+async function toggleApiKey(key, currentActive) {
+  await fetch(`${SERVER}/api/staff/api-keys/${encodeURIComponent(key)}/active`, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active: !currentActive }),
+  });
+  loadApiKeys();
+}
+
+async function revokeApiKey(key, clientName) {
+  if (!confirm(`Permanently revoke this key for ${clientName}? This cannot be undone.`)) return;
+  await fetch(`${SERVER}/api/staff/api-keys/${encodeURIComponent(key)}`, {
+    method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+  });
+  loadApiKeys();
+}
+
+function copyKey(key) {
+  navigator.clipboard.writeText(key).then(() => {
+    const banner = document.getElementById('new-key-banner');
+    if (banner.style.display !== 'none') { banner.querySelector('.nk-label').textContent = '✅ Copied to clipboard!'; }
+  }).catch(() => { prompt('Copy this key:', key); });
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
