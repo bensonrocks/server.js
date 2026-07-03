@@ -1294,6 +1294,11 @@ async function autoSyncAll() {
   }
 }
 
+// ── Legal pages ───────────────────────────────────────────────────────────────
+
+app.get('/tnc',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'tnc.html')));
+app.get('/privacypolicy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacypolicy.html')));
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
