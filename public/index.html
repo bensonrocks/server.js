@@ -1270,6 +1270,10 @@ function startSessionTimer() {
   const val = document.getElementById('session-timer-val');
   if (!el || !val) return;
   if (_sessionTimerInterval) clearInterval(_sessionTimerInterval);
+  // If expiry wasn't stored yet (first login after update), assume 8h from now
+  if (!localStorage.getItem('idealoms_token_expiry')) {
+    localStorage.setItem('idealoms_token_expiry', Date.now() + 8*60*60*1000);
+  }
   const tick = () => {
     const expiry = parseInt(localStorage.getItem('idealoms_token_expiry') || '0', 10);
     const ms = expiry - Date.now();
