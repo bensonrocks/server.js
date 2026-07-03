@@ -1,914 +1,381 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IDEALSCAN — United Logistics &amp; Distribution</title>
-  <link rel="stylesheet" href="styles.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AndrewTrade — XAU/XAG Analysis</title>
+<style>
+  :root {
+    --bg:#EEE9E0;--bg-2:#E4DFD5;--bg-3:#D8D2C8;--surface:#F7F4EF;
+    --border:#C2BCB0;--text:#1A1810;--text-2:#5A5448;--text-3:#8A8278;
+    --gold:#9A7418;--gold-dim:#C4A84C;--silver:#4A7080;--silver-dim:#7EA4B4;
+    --bull:#1E6644;--bull-bg:#D4EDE1;--bear:#7A2030;--bear-bg:#F0D4DA;
+    --entry:#2A4E7A;--entry-bg:#D0DEF0;
+    --mono:'Courier New',Courier,monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',sans-serif;
+    --serif:Georgia,'Times New Roman',serif;
+  }
+  @media(prefers-color-scheme:dark){:root{
+    --bg:#0B0C0F;--bg-2:#111318;--bg-3:#1A1D24;--surface:#141720;
+    --border:#2A2E3A;--text:#E8E2D6;--text-2:#9A9488;--text-3:#5A5650;
+    --gold:#C4A84C;--gold-dim:#8A6A20;--silver:#7EA4B4;--silver-dim:#3A5A6A;
+    --bull:#2EA86A;--bull-bg:#0A2A1A;--bear:#C04060;--bear-bg:#2A0A10;
+    --entry:#5A84B4;--entry-bg:#0A1828;
+  }}
+  :root[data-theme="light"]{--bg:#EEE9E0;--bg-2:#E4DFD5;--bg-3:#D8D2C8;--surface:#F7F4EF;--border:#C2BCB0;--text:#1A1810;--text-2:#5A5448;--text-3:#8A8278;--gold:#9A7418;--gold-dim:#C4A84C;--silver:#4A7080;--silver-dim:#7EA4B4;--bull:#1E6644;--bull-bg:#D4EDE1;--bear:#7A2030;--bear-bg:#F0D4DA;--entry:#2A4E7A;--entry-bg:#D0DEF0;}
+  :root[data-theme="dark"]{--bg:#0B0C0F;--bg-2:#111318;--bg-3:#1A1D24;--surface:#141720;--border:#2A2E3A;--text:#E8E2D6;--text-2:#9A9488;--text-3:#5A5650;--gold:#C4A84C;--gold-dim:#8A6A20;--silver:#7EA4B4;--silver-dim:#3A5A6A;--bull:#2EA86A;--bull-bg:#0A2A1A;--bear:#C04060;--bear-bg:#2A0A10;--entry:#5A84B4;--entry-bg:#0A1828;}
+
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:14px}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.5;min-height:100vh}
+
+  .topbar{background:var(--bg-2);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .brand{font-family:var(--serif);font-size:1.1rem;font-weight:normal;letter-spacing:.04em}
+  .brand span{color:var(--gold)}
+  .badge{font-size:.65rem;font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase;background:var(--bg-3);border:1px solid var(--border);color:var(--text-2);padding:2px 7px}
+  .badge.live{background:var(--bull-bg);color:var(--bull);border-color:var(--bull)}
+  .topbar-right{display:flex;align-items:center;gap:10px}
+  .btn{background:none;border:1px solid var(--border);color:var(--text-2);font-size:.75rem;font-family:var(--mono);padding:4px 10px;cursor:pointer;letter-spacing:.06em}
+  .btn:hover{background:var(--bg-3)}
+  .btn.primary{background:var(--entry-bg);color:var(--entry);border-color:var(--entry)}
+
+  .page{padding:24px 24px 48px}
+  .page-title{font-family:var(--serif);font-size:1.5rem;font-weight:normal;margin-bottom:4px}
+  .page-sub{font-size:.72rem;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:24px}
+
+  .status-bar{padding:8px 12px;margin-bottom:20px;font-family:var(--mono);font-size:.72rem;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:10px}
+  .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .dot.loading{background:var(--gold);animation:pulse 1s infinite}
+  .dot.ok{background:var(--bull)}
+  .dot.err{background:var(--bear)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)}
+  @media(max-width:800px){.grid{grid-template-columns:1fr}}
+
+  .card{background:var(--surface)}
+  .card-head{padding:18px 20px 14px;border-bottom:1px solid var(--border)}
+  .card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+  .inst-label{font-family:var(--mono);font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:2px}
+  .inst-name{font-family:var(--serif);font-size:1.25rem;font-weight:normal}
+  .inst-name.gold{color:var(--gold)}
+  .inst-name.silver{color:var(--silver)}
+  .price{font-family:var(--mono);font-size:2rem;font-variant-numeric:tabular-nums;line-height:1;margin-bottom:3px}
+  .price-sub{font-family:var(--mono);font-size:.65rem;color:var(--text-3);letter-spacing:.06em}
+  .bias{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;padding:3px 9px;font-weight:bold}
+  .bias.bull{background:var(--bull-bg);color:var(--bull)}
+  .bias.bear{background:var(--bear-bg);color:var(--bear)}
+  .conviction{font-family:var(--mono);font-size:.6rem;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
+
+  .ladder-wrap{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;gap:20px}
+  .ladder-axis{position:relative;width:20px;flex-shrink:0;height:300px}
+  .ladder-track{position:absolute;left:9px;top:0;bottom:0;width:2px;background:var(--border)}
+  .ladder-zone{position:absolute;left:3px;width:14px;background:color-mix(in srgb,var(--entry) 18%,transparent);border:1px solid color-mix(in srgb,var(--entry) 35%,transparent)}
+  .lm{position:absolute;left:3px;width:14px;height:2px;transform:translateY(-1px)}
+  .lm.sl{background:var(--bear)}
+  .lm.entry{background:var(--entry)}
+  .lm.tp{background:var(--bull)}
+  .ladder-labels{flex:1;position:relative;height:300px}
+  .lr{position:absolute;left:0;right:0;transform:translateY(-50%);display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .lr-lbl{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3)}
+  .lr-lbl.sl{color:var(--bear)}
+  .lr-lbl.entry{color:var(--entry)}
+  .lr-lbl.tp{color:var(--bull)}
+  .lr-price{font-family:var(--mono);font-size:.8rem;font-variant-numeric:tabular-nums;font-weight:bold}
+  .lr-rr{font-family:var(--mono);font-size:.62rem;color:var(--text-3)}
+  .zone-mid{position:absolute;left:0;right:0;text-align:center;font-family:var(--mono);font-size:.58rem;letter-spacing:.08em;text-transform:uppercase;color:var(--entry)}
+
+  .section{padding:14px 20px;border-bottom:1px solid var(--border)}
+  .section:last-child{border-bottom:none}
+  .sec-label{font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px;font-family:var(--mono)}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}
+  .chip{font-family:var(--mono);font-size:.7rem;letter-spacing:.05em;padding:2px 7px;border:1px solid}
+  .chip.hh{background:var(--bull-bg);color:var(--bull);border-color:var(--bull)}
+  .chip.hl{background:color-mix(in srgb,var(--bull-bg) 50%,transparent);color:var(--bull);border-color:color-mix(in srgb,var(--bull) 40%,transparent)}
+  .chip.lh{background:color-mix(in srgb,var(--bear-bg) 50%,transparent);color:var(--bear);border-color:color-mix(in srgb,var(--bear) 40%,transparent)}
+  .chip.ll{background:var(--bear-bg);color:var(--bear);border-color:var(--bear)}
+  .dr{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--bg-2);gap:8px}
+  .dr:last-child{border-bottom:none}
+  .dk{font-size:.7rem;color:var(--text-2)}
+  .dv{font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+  .dv.bull{color:var(--bull)}.dv.bear{color:var(--bear)}.dv.entry{color:var(--entry)}.dv.gold-c{color:var(--gold)}.dv.silver-c{color:var(--silver)}
+
+  .ob-list{display:flex;flex-direction:column;gap:3px}
+  .ob-row{display:flex;justify-content:space-between;align-items:center;padding:4px 6px;background:var(--bg-2);gap:8px}
+  .ob-badge{font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;padding:1px 5px}
+  .ob-badge.bull{background:var(--bull-bg);color:var(--bull)}
+  .ob-badge.bear{background:var(--bear-bg);color:var(--bear)}
+  .ob-badge.none{opacity:.4}
+  .ob-date{font-size:.68rem;color:var(--text-3);font-family:var(--mono)}
+  .ob-range{font-family:var(--mono);font-size:.74rem;font-variant-numeric:tabular-nums}
+
+  .fvg-row{display:flex;gap:16px}
+  .fvg-stat{display:flex;flex-direction:column}
+  .fvg-n{font-family:var(--mono);font-size:1.3rem;font-variant-numeric:tabular-nums;line-height:1}
+  .fvg-n.bull{color:var(--bull)}.fvg-n.warn{color:var(--gold)}.fvg-n.neutral{color:var(--text-3)}
+  .fvg-d{font-size:.62rem;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
+
+  .fib-row{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+  .fib-pct{font-family:var(--mono);font-size:.63rem;color:var(--text-3);width:38px;flex-shrink:0}
+  .fib-track{flex:1;height:3px;background:var(--bg-3);position:relative}
+  .fib-fill{position:absolute;left:0;top:0;height:100%;background:var(--gold-dim)}
+  .fib-price{font-family:var(--mono);font-size:.7rem;font-variant-numeric:tabular-nums;width:62px;text-align:right;flex-shrink:0}
+  .fib-row.gp .fib-pct{color:var(--gold)}.fib-row.gp .fib-fill{background:var(--gold)}.fib-row.gp .fib-price{color:var(--gold);font-weight:bold}
+
+  .footer{margin-top:24px;padding-top:14px;border-top:1px solid var(--border);font-size:.65rem;color:var(--text-3);line-height:1.7;font-family:var(--mono)}
+  .footer a{color:var(--text-3)}
+
+  /* Loading skeleton */
+  .skeleton{background:linear-gradient(90deg,var(--bg-2) 25%,var(--bg-3) 50%,var(--bg-2) 75%);background-size:200% 100%;animation:shimmer 1.2s infinite;height:1em;border-radius:2px}
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+</style>
 </head>
 <body>
 
-  <!-- ── SVG symbol library ── -->
-  <svg style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <!-- IDEALSCAN logo icon: barcode + scan beam in blue square -->
-      <symbol id="is-icon" viewBox="0 0 44 44">
-        <rect width="44" height="44" rx="9" fill="#1e40af"/>
-        <!-- Barcode bars -->
-        <rect x="6"  y="10" width="2.5" height="24" rx="1" fill="white"/>
-        <rect x="11" y="10" width="4"   height="24" rx="1" fill="white"/>
-        <rect x="17" y="10" width="2"   height="24" rx="1" fill="white"/>
-        <rect x="21" y="10" width="3"   height="24" rx="1" fill="white"/>
-        <rect x="26" y="10" width="1.5" height="24" rx="1" fill="white"/>
-        <rect x="30" y="10" width="4"   height="24" rx="1" fill="white"/>
-        <rect x="36" y="10" width="2"   height="24" rx="1" fill="white"/>
-        <!-- Scan beam -->
-        <rect x="4" y="20.5" width="36" height="3" rx="1.5" fill="#22c55e"/>
-      </symbol>
-    </defs>
-  </svg>
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="brand">Andrew<span>Trade</span></span>
+    <span class="badge" id="mode-badge">DEMO</span>
+  </div>
+  <div class="topbar-right">
+    <span style="font-family:var(--mono);font-size:.7rem;color:var(--text-3)">ICT · SMC · Daily TF</span>
+    <button class="btn primary" onclick="refresh()">↻ Refresh</button>
+    <button class="btn" onclick="toggleTheme()">◑ Theme</button>
+  </div>
+</div>
 
-  <!-- ── Login Overlay ── -->
-  <div id="loginOverlay" class="login-overlay">
-    <div class="login-box">
-      <div class="login-logo-wrap">
-        <svg class="is-icon-lg" aria-hidden="true"><use href="#is-icon"/></svg>
-        <div class="login-brand-text">
-          <div class="login-brand-name">IDEALSCAN</div>
-          <div class="login-brand-sub">United Logistics &amp; Distribution</div>
-        </div>
-      </div>
-      <div id="loginLiveStats" class="login-live-stats hidden"></div>
-      <h2>Sign In</h2>
-      <p class="hint">Enter your credentials to continue</p>
-      <div class="form-group">
-        <label>User ID</label>
-        <input type="text" id="loginName" placeholder="User ID" autocomplete="username" />
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="loginIC" placeholder="Password" autocomplete="current-password" />
-      </div>
-      <div id="loginError" class="login-error hidden"></div>
-      <button class="btn-primary login-submit" id="loginBtn">Sign In &#8594;</button>
-    </div>
+<div class="page">
+  <div class="page-title">Gold &amp; Silver — Technical Analysis</div>
+  <div class="page-sub" id="page-sub">Loading analysis…</div>
+
+  <div class="status-bar">
+    <div class="dot loading" id="status-dot"></div>
+    <span id="status-msg">Fetching analysis…</span>
   </div>
 
-  <!-- ── PIN Lock Overlay ── -->
-  <div id="pinOverlay" class="pin-overlay hidden">
-    <div class="pin-box">
-      <div class="pin-logo-row">
-        <svg class="is-icon-sm" aria-hidden="true"><use href="#is-icon"/></svg>
-        <span class="pin-brand-name">IDEALSCAN</span>
-      </div>
-      <div class="pin-icon">&#128274;</div>
-      <h2 id="pinTitle">App Locked</h2>
-      <p class="hint" id="pinSubtitle">Enter your PIN to continue</p>
-      <div class="pin-dots">
-        <div class="pin-dot" id="pd0"></div>
-        <div class="pin-dot" id="pd1"></div>
-        <div class="pin-dot" id="pd2"></div>
-        <div class="pin-dot" id="pd3"></div>
-      </div>
-      <div id="pinError" class="pin-error hidden">Incorrect PIN. Try again.</div>
-      <div class="pin-keypad">
-        <button class="pk" data-d="1">1</button>
-        <button class="pk" data-d="2">2</button>
-        <button class="pk" data-d="3">3</button>
-        <button class="pk" data-d="4">4</button>
-        <button class="pk" data-d="5">5</button>
-        <button class="pk" data-d="6">6</button>
-        <button class="pk" data-d="7">7</button>
-        <button class="pk" data-d="8">8</button>
-        <button class="pk" data-d="9">9</button>
-        <button class="pk pk-del" data-d="del">&#9003;</button>
-        <button class="pk" data-d="0">0</button>
-        <div class="pk-placeholder"></div>
-      </div>
-      <button class="link-btn pin-signout" id="pinLogoutBtn">Sign out</button>
-    </div>
+  <div class="grid" id="grid">
+    <!-- populated by JS -->
   </div>
 
-  <!-- ── Scan Overlay ── -->
-  <div id="scanOverlay" class="scan-overlay hidden">
-
-    <div class="scan-order-header">
-      <button class="back-btn" id="backToOrdersBtn">&#8592; Orders</button>
-      <div class="scan-order-title">
-        <span class="scan-order-no" id="scanOrderNo"></span>
-        <span class="scan-progress" id="scanProgress"></span>
-      </div>
-      <div class="scan-header-right">
-        <a id="scanWaybillPdfBtn" class="btn-scan-waybill hidden" title="Download waybill PDF">&#8681; Waybill</a>
-        <span id="scanTimer" class="scan-timer"></span>
-      </div>
-    </div>
-
-    <div class="scan-order-meta" id="scanOrderMeta"></div>
-
-    <!-- shown only when re-opening an unprocessed order -->
-    <div id="unprocessedBanner" class="unprocessed-banner hidden">
-      <div class="unproc-header">
-        <span class="unproc-icon">&#9888;</span>
-        <span class="unproc-title">Previously cancelled &mdash; mismatches recorded</span>
-        <button class="btn-clear-restart" id="clearAndRestartBtn">&#8635; Clear &amp; restart from zero</button>
-      </div>
-      <table class="unproc-mismatch-table">
-        <thead><tr><th>SKU</th><th>Description</th><th>Ordered</th><th>Scanned</th><th>Gap</th></tr></thead>
-        <tbody id="unprocessedMismatchTbody"></tbody>
-      </table>
-    </div>
-
-    <div class="scan-items-scroll">
-      <table class="scan-items-table">
-        <thead>
-          <tr>
-            <th>SKU</th>
-            <th>Description</th>
-            <th class="qty-col">Ordered</th>
-            <th class="qty-col">Scanned</th>
-            <th class="status-col"></th>
-          </tr>
-        </thead>
-        <tbody id="scanItemsTbody"></tbody>
-      </table>
-    </div>
-
-    <div class="item-scan-dock">
-      <div class="item-scan-wrap">
-        <span class="scan-icon-prefix">&#9524;</span>
-        <input type="text" id="itemScanInput" class="big-scan-input"
-          placeholder="Scan item barcode / SKU&#8230;"
-          autocomplete="off" autocorrect="off" spellcheck="false" />
-        <button class="btn-camera-open" id="openCameraBtn" title="Camera scan">&#128247; Scan</button>
-      </div>
-      <div id="itemScanFeedback" class="scan-feedback hidden"></div>
-      <div class="dock-actions">
-        <button class="btn-danger"  id="cancelOrderBtn">&#10005; Cancel</button>
-        <button class="btn-pause"   id="pauseOrderBtn">&#9646;&#9646; Pause</button>
-        <button class="btn-success" id="completeOrderBtn">&#10003; Complete</button>
-      </div>
-    </div>
-
-  </div><!-- /scanOverlay -->
-
-  <!-- Print label prompt — floats over the orders list for 3 s after completion -->
-  <div id="printLabelToast" class="print-label-toast hidden">
-    <span class="plt-text">Print waybill label?</span>
-    <button class="plt-btn-print" id="pltPrintBtn">&#128438; Print</button>
-    <button class="plt-btn-skip"  id="pltSkipBtn">Skip</button>
-    <span class="plt-countdown" id="pltCountdown">3</span>
+  <div class="footer">
+    <strong>Disclaimer:</strong> For educational and informational purposes only. Not financial advice.
+    Always verify levels on your own charting platform before executing any trade. ·
+    Set <code>ALPHA_VANTAGE_API_KEY</code> env var for live XAU/XAG data. ·
+    <a href="https://github.com/bensonrocks/server.js/tree/andrewtrade">AndrewTrade · bensonrocks/server.js</a>
   </div>
+</div>
 
-  <!-- ── Printer Settings Modal ── -->
-  <div id="printerSettingsOverlay" class="modal-overlay hidden">
-    <div class="modal ps-modal">
-      <div class="ps-modal-header">
-        <h3 class="ps-modal-title">&#128438; Printer Settings</h3>
-        <button id="printerSettingsClose" class="ps-close-btn">&times;</button>
-      </div>
-      <p class="printer-settings-hint">These settings apply to your account only. Each user can connect to a different printer.</p>
-      <label class="ps-label">Printer Name
-        <input id="psNameInput" type="text" class="ps-input" placeholder="e.g. ZEBRA ZD420, DYMO 4XL…" maxlength="120"/>
-        <span class="ps-hint">Shown as a reminder in the print window so you know which printer to select.</span>
-      </label>
-      <label class="ps-label">Label Size
-        <select id="psLabelSize" class="ps-input">
-          <option value="100x160">100 × 160 mm (default)</option>
-          <option value="100x150">100 × 150 mm</option>
-          <option value="4x6">4" × 6"  (101.6 × 152.4 mm)</option>
-        </select>
-      </label>
-      <div class="ps-footer">
-        <button id="psSaveBtn" class="btn-primary">Save</button>
-        <button id="psCancelBtn" class="btn-ghost">Cancel</button>
-        <span id="psSaveStatus" class="ps-save-status"></span>
-      </div>
+<script>
+function toggleTheme() {
+  const r = document.documentElement;
+  r.setAttribute('data-theme', r.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+}
+
+function fmt(n, d = 2) {
+  if (typeof n !== 'number') return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+function setStatus(state, msg) {
+  const dot = document.getElementById('status-dot');
+  dot.className = `dot ${state}`;
+  document.getElementById('status-msg').textContent = msg;
+}
+
+function buildLadder(tp, isSilver) {
+  if (!tp) return '<div style="padding:16px 20px;color:var(--text-3);font-family:var(--mono);font-size:.75rem">No trade setup — market ranging.</div>';
+  const slPrice  = tp.stopLoss;
+  const entry    = tp.entry;
+  const tp1      = tp.takeProfits[0].price;
+  const tp2      = tp.takeProfits[1].price;
+  const tp3      = tp.takeProfits[2].price;
+  const range    = tp3 - slPrice;
+  const pct = p => ((p - slPrice) / range * 100).toFixed(2) + '%';
+  const zLo = entry - tp.stopLossPips * (isSilver ? 0.01 : 0.1) * 0.75;
+  const zHi = entry + tp.stopLossPips * (isSilver ? 0.01 : 0.1) * 0.75;
+  const zBotPct = ((zLo - slPrice) / range * 100).toFixed(2) + '%';
+  const zHgtPct = ((zHi - zLo)    / range * 100).toFixed(2) + '%';
+  return `
+  <div class="ladder-wrap">
+    <div class="ladder-axis">
+      <div class="ladder-track"></div>
+      <div class="ladder-zone" style="bottom:${zBotPct};height:${zHgtPct}"></div>
+      <div class="lm sl"    style="bottom:0%"></div>
+      <div class="lm entry" style="bottom:${pct(entry)}"></div>
+      <div class="lm tp"    style="bottom:${pct(tp1)}"></div>
+      <div class="lm tp"    style="bottom:${pct(tp2)}"></div>
+      <div class="lm tp"    style="bottom:${pct(tp3)}"></div>
     </div>
-  </div>
+    <div class="ladder-labels">
+      <div class="lr" style="bottom:0%">
+        <span class="lr-lbl sl">SL</span>
+        <span class="lr-price">${fmt(slPrice)}</span>
+        <span class="lr-rr">${tp.stopLossPips} pip</span>
+      </div>
+      <div class="lr" style="bottom:${pct(entry)}">
+        <span class="lr-lbl entry">Entry</span>
+        <span class="lr-price">${fmt(entry)}</span>
+        <span class="lr-rr">limit</span>
+      </div>
+      <div class="lr" style="bottom:calc(${pct(tp1)} + 18px)">
+        <span class="lr-lbl tp">TP1</span>
+        <span class="lr-price">${fmt(tp1)}</span>
+        <span class="lr-rr">${fmt(tp.takeProfits[0].riskReward)}R</span>
+      </div>
+      <div class="lr" style="bottom:${pct(tp2)}">
+        <span class="lr-lbl tp">TP2</span>
+        <span class="lr-price">${fmt(tp2)}</span>
+        <span class="lr-rr">${fmt(tp.takeProfits[1].riskReward)}R</span>
+      </div>
+      <div class="lr" style="bottom:100%">
+        <span class="lr-lbl tp">TP3</span>
+        <span class="lr-price">${fmt(tp3)}</span>
+        <span class="lr-rr">${fmt(tp.takeProfits[2].riskReward)}R</span>
+      </div>
+      <div class="zone-mid" style="bottom:calc(${pct(entry)} - 10px)">— ${tp.direction} zone —</div>
+    </div>
+  </div>`;
+}
 
-  <!-- ── Camera Scan Overlay ── -->
-  <div id="cameraScanOverlay" class="camera-scan-overlay hidden">
+function buildStructureChips(structure) {
+  const recent = structure.slice(-8);
+  return recent.map(s => {
+    const cls = s.label === 'HH' ? 'hh' : s.label === 'HL' ? 'hl' : s.label === 'LH' ? 'lh' : s.label === 'LL' ? 'll' : 'hl';
+    return `<span class="chip ${cls}">${s.label}</span>`;
+  }).join('');
+}
 
-    <div class="camera-header">
-      <div class="camera-header-left">
-        <span class="camera-title">&#128247; Camera Scan</span>
-        <div class="camera-mode-toggle">
-          <button class="cmode-btn active" id="cmodeSingle">Single</button>
-          <button class="cmode-btn"        id="cmodeBatch">Batch</button>
-          <button class="cmode-btn"        id="cmodeLabel">&#127991; Label</button>
+function buildCard(key, d, isLive) {
+  const isGold   = key === 'GOLD';
+  const isSilver = key === 'SILVER';
+  const label    = isGold ? 'XAU / USD · Gold' : 'XAG / USD · Silver';
+  const cls      = isGold ? 'gold' : 'silver';
+  const biasCls  = d.trend === 'uptrend' ? 'bull' : d.trend === 'downtrend' ? 'bear' : '';
+  const biasIcon = d.trend === 'uptrend' ? '▲ Bullish' : d.trend === 'downtrend' ? '▼ Bearish' : '◆ Ranging';
+  const tp       = d.tradePlan;
+  const fib      = d.fibZone;
+  const obs      = d.orderBlocks;
+  const ufvgs    = d.unfilledFVGs || [];
+  const ifvgs    = d.ifvgs || [];
+  const bullFVG  = ufvgs.filter(g => g.type === 'bullish').length;
+  const bearFVG  = ufvgs.filter(g => g.type === 'bearish').length;
+
+  // Conviction heuristic
+  const recent = (d.structure || []).slice(-6);
+  const hhCount = recent.filter(s => s.label === 'HH').length;
+  const hlCount = recent.filter(s => s.label === 'HL').length;
+  const conviction = (hhCount >= 2 && hlCount >= 1) || recent.filter(s => ['LL','LH'].includes(s.label)).length >= 3 ? 'HIGH' : 'MODERATE';
+
+  const zone = d.zone;
+
+  return `
+  <div class="card">
+    <div class="card-head">
+      <div class="card-top">
+        <div>
+          <div class="inst-label">Spot Metal · Daily</div>
+          <div class="inst-name ${cls}">${label}</div>
+        </div>
+        <div style="text-align:right">
+          ${biasCls ? `<div class="bias ${biasCls}">${biasIcon}</div>` : `<div class="bias">${biasIcon}</div>`}
+          <div class="conviction">Conviction: ${conviction}</div>
         </div>
       </div>
-      <button class="back-btn camera-close-btn" id="closeCameraBtn">&#10005; Close</button>
+      <div class="price">${fmt(d.currentPrice, isGold ? 2 : 3)}</div>
+      <div class="price-sub">as of ${d.asOf} · pip = $${d.pipSize} · ${isLive ? 'live data' : 'synthetic demo'}</div>
     </div>
 
-    <!-- Video viewfinder -->
-    <div class="camera-viewfinder-wrap" id="cameraViewfinderWrap">
-      <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
-      <!-- Corner aim markers -->
-      <div class="camera-aim">
-        <div class="aim-corner tl"></div><div class="aim-corner tr"></div>
-        <div class="aim-corner bl"></div><div class="aim-corner br"></div>
-        <div class="aim-scan-line"></div>
-      </div>
-      <!-- Single mode: flash result -->
-      <div id="cameraSingleResult" class="camera-single-result hidden"></div>
-      <!-- Single mode hint -->
-      <div id="cameraSingleHint" class="camera-hint-pill">Point at a barcode — it scans instantly</div>
-      <!-- Label mode: wide aim frame -->
-      <div id="cameraLabelAim" class="camera-label-aim hidden">
-        <div class="cla-corner cla-tl"></div>
-        <div class="cla-corner cla-tr"></div>
-        <div class="cla-corner cla-bl"></div>
-        <div class="cla-corner cla-br"></div>
-        <div class="cla-hint">Centre label &mdash; tap Capture</div>
-      </div>
-      <!-- Label mode: processing spinner -->
-      <div id="cameraLabelSpinner" class="camera-label-spinner hidden">
-        <div class="cls-spin"></div><span>Reading label&hellip;</span>
-      </div>
+    ${buildLadder(tp, isSilver)}
+
+    <div class="section">
+      <div class="sec-label">Market Structure · recent swings</div>
+      <div class="chips">${buildStructureChips(d.structure || [])}</div>
+      ${d.trendline ? `
+      <div class="dr"><span class="dk">Trendline (${d.trendline.type})</span><span class="dv">${fmt(d.trendline.projectedPrice)} projected</span></div>` : ''}
+      ${zone ? `
+      <div class="dr"><span class="dk">${tp ? tp.direction.toUpperCase() : ''} zone</span><span class="dv ${tp?.direction === 'buy' ? 'bull' : 'bear'}">${fmt(zone.low)} – ${fmt(zone.high)}</span></div>
+      <div class="dr"><span class="dk">Zone width</span><span class="dv">${fmt(zone.widthPips, 1)} pips (min 50 enforced)</span></div>` : ''}
     </div>
 
-    <!-- Batch panel (shown in batch mode) -->
-    <div id="cameraBatchPanel" class="camera-batch-panel hidden">
-      <div class="camera-batch-header">
-        <span class="camera-batch-title">Detected Barcodes</span>
-        <button class="link-btn" id="cameraClearBtn">Clear all</button>
-      </div>
-      <div id="cameraBatchList" class="camera-batch-list">
-        <span class="hint camera-batch-empty">Point camera at barcodes to collect them&hellip;</span>
-      </div>
-      <div class="camera-batch-actions">
-        <button class="btn-secondary btn-sm" id="cameraSelectAllBtn">&#9745; All</button>
-        <button class="btn-primary"          id="cameraScanSelectedBtn">&#10003; Scan Selected (<span id="cameraBatchCount">0</span>)</button>
-      </div>
-    </div>
-
-    <!-- Label panel (shown in label mode) -->
-    <div id="cameraLabelPanel" class="camera-label-panel hidden">
-      <div class="clf-capture-row">
-        <button class="clf-capture-btn" id="clfCaptureBtn">&#128247; Capture</button>
-        <span class="clf-status" id="clfStatus"></span>
-      </div>
-      <div id="clfResult" class="clf-result hidden">
-        <div class="clf-fields">
-          <div class="clf-field"><span class="clf-lbl">SKU</span><span class="clf-val" id="clfSku">—</span></div>
-          <div class="clf-field"><span class="clf-lbl">Batch</span><span class="clf-val" id="clfBatch">—</span></div>
-          <div class="clf-field"><span class="clf-lbl">Expiry</span><span class="clf-val" id="clfExpiry">—</span></div>
-        </div>
-        <div class="clf-result-actions">
-          <button class="clf-retry-btn" id="clfRetryBtn">&#8635; Retry</button>
-          <button class="clf-use-btn"   id="clfUseBtn">&#10003; Use SKU</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Unsupported browser message -->
-    <div id="cameraNoSupport" class="camera-no-support hidden">
-      <div class="camera-no-support-icon">&#128483;</div>
-      <p><strong>Camera scanning not available</strong></p>
-      <p class="hint">Requires Chrome or Edge on Android.<br>Use a physical scanner or type SKU manually on other devices.</p>
-    </div>
-
-  </div><!-- /cameraScanOverlay -->
-
-  <!-- ── Administrator Overlay ── -->
-  <div id="logOverlay" class="log-overlay hidden">
-    <div class="log-overlay-header">
-      <div class="log-overlay-title">
-        <svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>
-        <h2>Administrator</h2>
-      </div>
-      <button class="back-btn" id="closeLogBtn">&#10005; Close</button>
-    </div>
-
-    <!-- Admin nav tabs (shown after unlock) -->
-    <div id="masterActionsSection" class="master-actions hidden">
-      <div class="admin-nav">
-        <button class="admin-nav-btn active" data-admin-tab="batches">&#128196; Upload History</button>
-        <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
-        <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
-        <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
-        <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
-        <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
-      </div>
-
-      <!-- Tab: Upload History -->
-      <div class="admin-tab active" id="adminTab-batches">
-        <div class="admin-section-header">
-          <div>
-            <div class="admin-section-title">Upload History</div>
-            <div class="admin-section-sub">All picklists uploaded. Click WMS to download the converted file.</div>
-          </div>
-          <button class="btn-primary btn-sm" id="masterExportBtn">&#8681; Export Audit Trail</button>
-        </div>
-        <div id="logOverlayEmpty" class="empty-state hidden">No uploads yet.</div>
-        <div id="logOverlayList"></div>
-      </div>
-
-      <!-- Tab: Users -->
-      <div class="admin-tab hidden" id="adminTab-users">
-        <div class="admin-section-header">
-          <div>
-            <div class="admin-section-title">System Users</div>
-            <div class="admin-section-sub">Manage who can access IdealScan and their role.</div>
-          </div>
-        </div>
-        <div id="userList" class="user-list-wrap"></div>
-        <div class="admin-add-card">
-          <div class="admin-add-title">Add New User</div>
-          <div class="user-add-row">
-            <input type="text"     id="newUserId"   placeholder="User ID"           autocomplete="off" />
-            <input type="text"     id="newUserName" placeholder="Display Name"       autocomplete="off" />
-            <input type="password" id="newUserPass" placeholder="Password"           autocomplete="new-password" />
-            <select id="newUserRole" class="user-role-select">
-              <option value="warehouse">Warehouse</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button class="btn-primary" id="addUserBtn">+ Add User</button>
-          </div>
-        </div>
-        <div id="userMgmtStatus" class="status-bar hidden"></div>
-      </div>
-
-      <!-- Tab: WMS Template -->
-      <div class="admin-tab hidden" id="adminTab-wms">
-        <div class="admin-section-header">
-          <div>
-            <div class="admin-section-title">Keyfields Output Template</div>
-            <div class="admin-section-sub">Download to verify the WMS column format. Upload a custom template (row 1 = headers) to change the output columns.</div>
-          </div>
-        </div>
-        <div class="admin-action-row">
-          <a class="admin-action-link" id="kfDownloadTplBtn">&#8681; Download current template</a>
-          <a class="admin-action-link" id="kfResetTplBtn">&#8635; Reset to default</a>
-        </div>
-        <div class="master-upload-label" style="margin-top:1rem">Upload New Template</div>
-        <div class="upload-area upload-area-sm" id="kfTplDropZone">
-          <input type="file" id="kfTplFileInput" accept=".xlsx,.xls" hidden />
-          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
-          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="kfTplBrowseBtn">browse</button></p>
-        </div>
-        <div id="kfTplStatus" class="status-bar hidden"></div>
-        <div class="admin-section-header" style="margin-top:1.5rem">
-          <div>
-            <div class="admin-section-title">Upload New Picklist</div>
-            <div class="admin-section-sub">Upload an additional picklist without leaving the admin panel.</div>
-          </div>
-        </div>
-        <div class="upload-area upload-area-sm" id="masterDropZone">
-          <input type="file" id="masterFileInput" accept=".xlsx,.xls,.csv" hidden />
-          <div class="upload-icon" style="font-size:1.4rem">&#8679;</div>
-          <p style="font-size:.82rem">Drag &amp; drop XLSX / CSV or <button class="link-btn" id="masterBrowseBtn">browse</button></p>
-        </div>
-        <div id="masterUploadStatus" class="status-bar hidden"></div>
-      </div>
-
-      <!-- Tab: Labels -->
-      <div class="admin-tab hidden" id="adminTab-labels">
-
-        <!-- ── Word Doc Templates ── -->
-        <div class="admin-section-header">
-          <div>
-            <div class="admin-section-title">&#128196; Word Document Templates</div>
-            <div class="admin-section-sub">Upload a <strong>.docx</strong> file per carrier. Use <code>{field}</code> placeholders for order data and <code>{%waybill_barcode}</code> for a scannable barcode image.</div>
-          </div>
-        </div>
-
-        <!-- Field reference -->
-        <div class="doc-tpl-field-ref">
-          <div class="doc-tpl-field-ref-title">Available placeholders</div>
-          <div class="doc-tpl-fields">
-            <span class="doc-tpl-field">{customer_name}</span>
-            <span class="doc-tpl-field">{delivery_address}</span>
-            <span class="doc-tpl-field">{waybill_number}</span>
-            <span class="doc-tpl-field">{order_number}</span>
-            <span class="doc-tpl-field">{carrier}</span>
-            <span class="doc-tpl-field">{platform}</span>
-            <span class="doc-tpl-field">{tel}</span>
-            <span class="doc-tpl-field">{items}</span>
-            <span class="doc-tpl-field">{date}</span>
-            <span class="doc-tpl-field doc-tpl-field-img">{%waybill_barcode} &#128247;</span>
-          </div>
-          <p class="doc-tpl-hint">Tip: in Word, type placeholders exactly as shown. Disable autocorrect for curly braces if Word replaces <code>{</code> with a fancy quote.</p>
-        </div>
-
-        <div id="docTemplateList" class="doc-tpl-list"></div>
-
-        <div class="admin-add-card">
-          <div class="admin-add-title">Upload Carrier Template (.docx)</div>
-          <div class="doc-tpl-upload-row">
-            <div class="form-group" style="flex:1;min-width:160px">
-              <label>Carrier Name <span class="cfg-req">*</span></label>
-              <input type="text" id="docTplCarrier" placeholder="e.g. SingPost" autocomplete="off" />
-            </div>
-            <div class="doc-tpl-drop-wrap">
-              <div class="upload-area upload-area-sm" id="docTplDropZone">
-                <input type="file" id="docTplFileInput" accept=".docx" hidden />
-                <div class="upload-icon" style="font-size:1.2rem">&#8679;</div>
-                <p style="font-size:.82rem">Drag .docx or <button class="link-btn" id="docTplBrowseBtn">browse</button></p>
-              </div>
-            </div>
-          </div>
-          <div id="docTplUploadStatus" class="status-bar hidden"></div>
-        </div>
-
-        <div class="admin-section-divider"></div>
-        <!-- ── HTML colour/section templates (fallback) ── -->
-        <div class="admin-section-header" style="margin-top:.5rem">
-          <div>
-            <div class="admin-section-title">&#127921; HTML Label Templates <span class="doc-tpl-fallback-badge">fallback</span></div>
-            <div class="admin-section-sub">Used when no Word template is configured for a carrier. Bulk-import from XLSX or add individually below.</div>
-          </div>
-        </div>
-        <div class="admin-action-row">
-          <a class="admin-action-link" id="ltpExportBtn">&#8681; Download template spreadsheet</a>
-        </div>
-        <div class="master-upload-label" style="margin-top:.75rem">Bulk Import (XLSX / CSV)</div>
-        <div class="upload-area upload-area-sm" id="ltpDropZone">
-          <input type="file" id="ltpFileInput" accept=".xlsx,.xls,.csv" hidden />
-          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
-          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="ltpBrowseBtn">browse</button></p>
-        </div>
-        <div id="ltpUploadStatus" class="status-bar hidden"></div>
-        <div id="labelTemplateList" class="label-tpl-list" style="margin-top:1rem"></div>
-        <div class="admin-add-card">
-          <div class="admin-add-title">Add / Edit Carrier Template</div>
-          <div class="label-tpl-form">
-            <div class="label-tpl-form-row">
-              <div class="form-group">
-                <label>Carrier Name <span class="cfg-req">*</span></label>
-                <input type="text" id="ltpCarrier" placeholder="e.g. SingPost" autocomplete="off" />
-              </div>
-              <div class="form-group">
-                <label>Header Text</label>
-                <input type="text" id="ltpHeaderText" placeholder="Default: carrier name" autocomplete="off" />
-              </div>
-              <div class="form-group">
-                <label>Header Background</label>
-                <input type="color" id="ltpHeaderBg" value="#000000" />
-              </div>
-              <div class="form-group">
-                <label>Header Text Colour</label>
-                <input type="color" id="ltpHeaderColor" value="#ffffff" />
-              </div>
-            </div>
-            <div class="label-tpl-checks">
-              <label><input type="checkbox" id="ltpShowBarcode"  checked /> Show barcode</label>
-              <label><input type="checkbox" id="ltpShowAddress"  checked /> Show address</label>
-              <label><input type="checkbox" id="ltpShowTel"      checked /> Show telephone</label>
-              <label><input type="checkbox" id="ltpShowItems"    checked /> Show items</label>
-              <label><input type="checkbox" id="ltpShowPlatform" checked /> Show platform</label>
-              <label><input type="checkbox" id="ltpShowOrderNo"  checked /> Show order no.</label>
-            </div>
-            <button class="btn-primary" id="saveLabelTplBtn">&#10003; Save Template</button>
-          </div>
-        </div>
-        <div id="labelTplStatus" class="status-bar hidden"></div>
-      </div>
-
-      <!-- Tab: Email -->
-      <div class="admin-tab hidden" id="adminTab-email">
-        <div class="admin-section-header">
-          <div>
-            <div class="admin-section-title">Email Settings</div>
-            <div class="admin-section-sub">Completion alerts are sent to the recipient below when warehouse marks an order done.</div>
-          </div>
-        </div>
-        <div class="email-cfg-grid">
-          <div class="form-group">
-            <label>From Email <span class="cfg-req">*</span></label>
-            <input type="email" id="cfgFromEmail" placeholder="your@gmail.com" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label>App Password <span class="cfg-note" id="cfgPassNote"></span></label>
-            <input type="password" id="cfgPassword" placeholder="Leave blank to keep existing" autocomplete="new-password" />
-          </div>
-          <div class="form-group">
-            <label>SMTP Host</label>
-            <input type="text" id="cfgSmtpHost" placeholder="smtp.gmail.com" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label>SMTP Port</label>
-            <input type="number" id="cfgSmtpPort" placeholder="587" autocomplete="off" />
-          </div>
-          <div class="form-group cfg-full">
-            <label>Default Alert Recipient</label>
-            <input type="email" id="cfgToEmail" placeholder="wms@warehouse.com" autocomplete="off" />
-          </div>
-        </div>
-        <div class="email-cfg-actions">
-          <button class="btn-primary"    id="saveEmailCfgBtn">&#10003; Save Settings</button>
-          <button class="btn-secondary"  id="testEmailCfgBtn">&#9993; Send Test Email</button>
-          <button class="btn-danger-sm"  id="clearEmailCfgBtn">&#215; Clear</button>
-        </div>
-        <div id="emailCfgStatus" class="status-bar hidden"></div>
-      </div>
-
-      <!-- Tab: System / Danger zone -->
-      <div class="admin-tab hidden" id="adminTab-danger">
-        <div class="admin-section-header">
-          <div>
-            <div class="admin-section-title">System</div>
-            <div class="admin-section-sub">Destructive actions. These cannot be undone.</div>
-          </div>
-        </div>
-        <div class="danger-zone-card">
-          <div class="danger-zone-label">Master Reset</div>
-          <p class="danger-zone-desc">Deletes all uploaded batches, order states, and WMS files. Users and email settings are preserved.</p>
-          <button class="btn-danger" id="masterResetBtn">&#128465; Reset All Data</button>
-        </div>
+    <div class="section">
+      <div class="sec-label">Order Blocks</div>
+      <div class="ob-list">
+        ${obs.bullish.slice(-2).map(o => `
+          <div class="ob-row">
+            <span class="ob-badge bull">Demand</span>
+            <span class="ob-date">${o.date}</span>
+            <span class="ob-range">${fmt(o.low)} – ${fmt(o.high)}</span>
+          </div>`).join('') || '<div class="ob-row"><span class="ob-badge none">Demand</span><span class="ob-date">—</span><span class="ob-range">none detected</span></div>'}
+        ${obs.bearish.slice(-2).map(o => `
+          <div class="ob-row">
+            <span class="ob-badge bear">Supply</span>
+            <span class="ob-date">${o.date}</span>
+            <span class="ob-range">${fmt(o.low)} – ${fmt(o.high)}</span>
+          </div>`).join('') || '<div class="ob-row"><span class="ob-badge none">Supply</span><span class="ob-date">—</span><span class="ob-range">none detected</span></div>'}
       </div>
     </div>
 
-    <!-- Locked state — shown before password unlock -->
-    <div id="adminLockedState" class="admin-locked-state">
-      <p class="hint" style="padding:.4rem 1.25rem .6rem">All uploaded batches. Click WMS to download.</p>
-      <div id="logOverlayEmptyLocked" class="empty-state hidden">No uploads yet.</div>
-      <div id="logOverlayListLocked" style="padding:0 1.25rem 3rem"></div>
+    <div class="section">
+      <div class="sec-label">Fair Value Gaps &amp; IFVG</div>
+      <div class="fvg-row">
+        <div class="fvg-stat"><span class="fvg-n bull">${bullFVG}</span><span class="fvg-d">Bullish FVG<br>unfilled</span></div>
+        <div class="fvg-stat"><span class="fvg-n ${bearFVG ? 'bear' : 'neutral'}">${bearFVG}</span><span class="fvg-d">Bearish FVG<br>unfilled</span></div>
+        <div class="fvg-stat"><span class="fvg-n warn">${ifvgs.length}</span><span class="fvg-d">IFVG<br>inversions</span></div>
+      </div>
+      ${ifvgs.length > 3 ? '<div style="margin-top:8px;font-size:.67rem;color:var(--text-3)">High IFVG count — repeated liquidity sweeps, active institutional re-pricing.</div>' : ''}
     </div>
-  </div>
 
-  <!-- ── Administrator Access Modal ── -->
-  <div id="logPasswordOverlay" class="modal-overlay hidden">
-    <div class="modal" style="max-width:340px">
-      <div class="pin-logo-row" style="justify-content:center;margin-bottom:.75rem">
-        <svg class="is-icon-sm" aria-hidden="true"><use href="#is-icon"/></svg>
-        <span class="pin-brand-name">IDEALSCAN</span>
-      </div>
-      <div class="modal-title">Administrator Access</div>
-      <p class="modal-desc">Enter the administrator password to unlock settings.</p>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="logPasswordInput" placeholder="Enter password" autocomplete="off" />
-      </div>
-      <div id="logPasswordError" class="login-error hidden">Incorrect password.</div>
-      <div class="modal-actions" style="margin-top:1rem">
-        <button class="btn-secondary" id="logPasswordCancelBtn">Cancel</button>
-        <button class="btn-primary"   id="logPasswordSubmitBtn">Unlock &#8594;</button>
-      </div>
-    </div>
-  </div>
-
-  <header>
-    <div class="header-inner">
-      <a class="header-logo" href="#" onclick="return false">
-        <svg class="is-icon-hdr" aria-hidden="true"><use href="#is-icon"/></svg>
-        <div class="header-brand-text">
-          <span class="header-brand-name">IDEALSCAN</span>
-          <span class="header-brand-sub">United Logistics &amp; Distribution</span>
-        </div>
-      </a>
-      <nav>
-        <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
-        <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
-        <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
-      </nav>
-      <div class="header-user">
-        <span id="userDisplay" class="user-chip hidden"></span>
-        <button id="printerSettingsBtn" class="printer-settings-btn hidden" title="Printer settings">&#128438;</button>
-        <button id="lockBtn" class="lock-btn hidden" title="Lock app">&#128274;</button>
-      </div>
-    </div>
-  </header>
-
-  <main>
-
-    <!-- ── TAB 1: Upload / Dashboard ── -->
-    <section id="tab-upload" class="tab active">
-
-      <div class="upload-two-col">
-        <div id="dashStatsSection" class="dash-stats-section hidden">
-          <div class="dash-stats-header">
-            <h3>Dashboard</h3>
-            <button class="link-btn" id="refreshStatsBtn">&#8635; Refresh</button>
-          </div>
-          <div id="dashStatsGrid" class="dash-stats-grid"></div>
-        </div>
-
-        <div class="card">
-          <h2>Upload Client Picklist</h2>
-          <p class="hint">Upload the client's XLSX or CSV picklist. Optionally attach the waybill PDF to split and match per order.</p>
-
-          <div class="form-group">
-            <label>Client Name</label>
-            <input type="text" id="clientNameInput" placeholder="e.g. Glowverse" autocomplete="off" />
-          </div>
-
-          <div class="upload-area" id="dropZone">
-            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
-            <input type="file" id="photoInput" accept="image/*" capture="environment" hidden />
-            <div class="upload-icon">&#8679;</div>
-            <p>Drag &amp; drop or <button class="link-btn" id="browseBtn">browse</button></p>
-          </div>
-          <div class="upload-or-photo-row">
-            <span class="upload-or-sep">or</span>
-            <button class="btn-photo-upload" id="photoUploadBtn" title="Take a photo of a printed picking list">&#128247; Take Photo of Picklist</button>
-          </div>
-          <p class="upload-cap-hint">
-            XLSX &nbsp;·&nbsp; XLS &nbsp;·&nbsp; CSV &nbsp;&nbsp;|&nbsp;&nbsp; up to <strong>10 MB</strong> &nbsp;·&nbsp; up to <strong>5,000 rows</strong> per file
-            &nbsp;&nbsp;|&nbsp;&nbsp; Column names are <strong>auto-detected</strong> — any layout converts to Keyfields
-          </p>
-
-          <div class="waybill-upload-row">
-            <label class="waybill-upload-label">
-              <span>&#128196; Waybill PDF <span class="hint-inline">(optional)</span></span>
-              <input type="file" id="waybillPdfInput" accept=".pdf" hidden />
-              <button class="btn-secondary btn-sm" id="browsePdfBtn">Attach PDF</button>
-            </label>
-            <span id="waybillPdfName" class="waybill-pdf-name"></span>
-          </div>
-
-          <div id="uploadStatus" class="status-bar hidden"></div>
-          <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
-            <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
-          </div>
+    ${fib ? `
+    <div class="section">
+      <div class="sec-label">Fibonacci Zone · ${fib.anchorFrom.date} → ${fib.anchorTo.date}</div>
+      <div>
+        ${Object.entries(fib.levels).map(([pct, price]) => {
+          const isGP = pct === '0.618' || pct === '0.786';
+          return `<div class="fib-row${isGP ? ' gp' : ''}">
+            <span class="fib-pct">${pct}${isGP ? ' ★' : ''}</span>
+            <div class="fib-track"><div class="fib-fill" style="width:${parseFloat(pct)*100}%"></div></div>
+            <span class="fib-price">${fmt(price)}</span>
+          </div>`;
+        }).join('')}
+        <div class="fib-row" style="margin-top:4px">
+          <span class="fib-pct" style="color:var(--bull)">1.618</span>
+          <div class="fib-track"><div class="fib-fill" style="width:100%;background:var(--bull)"></div></div>
+          <span class="fib-price">${fmt(fib.extensions['1.618'])}</span>
         </div>
       </div>
-
-      <!-- Breakdown: platforms + carriers -->
-      <div id="dashBreakdownSection" class="hidden"></div>
-
-      <div id="uploadOrdersSection" class="hidden">
-        <div class="section-header">
-          <h2>Loaded Orders <span id="orderCount" class="badge"></span></h2>
-          <button class="btn-primary" id="goOrdersBtn">View Orders &#8594;</button>
-        </div>
-        <div id="uploadOrdersList"></div>
+      <div style="margin-top:7px;font-family:var(--mono);font-size:.67rem;color:var(--${cls === 'gold' ? 'gold' : 'silver'})">
+        ★ Golden pocket: ${fmt(fib.goldenPocket[0])} – ${fmt(fib.goldenPocket[1])}
       </div>
-    </section>
+    </div>` : ''}
 
-    <!-- ── TAB 2: Orders ── -->
-    <section id="tab-orders" class="tab">
-      <div id="ordersEmpty" class="empty-state">
-        No orders loaded. <button class="link-btn" data-tab-link="upload">Upload first.</button>
-      </div>
-      <div id="ordersDashboard" class="hidden">
-        <div class="stats-bar" id="statsBar"></div>
-        <div id="kfClosureBanner" class="kf-closure-banner hidden"></div>
+  </div>`;
+}
 
-        <!-- Waybill scan bar -->
-        <div class="waybill-scan-bar">
-          <div class="waybill-scan-inner">
-            <span class="waybill-scan-icon">&#9641;</span>
-            <input id="waybillScanInput" type="text" class="waybill-scan-input"
-              placeholder="Scan or type waybill number to find order..." autocomplete="off" spellcheck="false" />
-            <span id="waybillScanMsg" class="waybill-scan-msg hidden"></span>
-          </div>
-        </div>
+async function refresh() {
+  setStatus('loading', 'Fetching analysis…');
+  document.getElementById('grid').innerHTML = '';
+  try {
+    // Try live endpoint first, fall back to demo
+    let res = await fetch('/api/analysis');
+    let json = await res.json();
+    if (!json.ok) {
+      res = await fetch('/api/demo');
+      json = await res.json();
+    }
+    const isLive = json.live;
+    document.getElementById('mode-badge').textContent = isLive ? 'LIVE' : 'DEMO';
+    document.getElementById('mode-badge').className = `badge${isLive ? ' live' : ''}`;
+    document.getElementById('page-sub').textContent =
+      (isLive ? 'Live Alpha Vantage data' : 'Synthetic demo data') + ' · ICT / Smart Money · Daily timeframe';
+    const grid = document.getElementById('grid');
+    grid.innerHTML = buildCard('GOLD', json.data.GOLD, isLive) + buildCard('SILVER', json.data.SILVER, isLive);
+    setStatus('ok', isLive ? 'Live data loaded successfully.' : 'Demo mode — set ALPHA_VANTAGE_API_KEY for live prices.');
+  } catch (err) {
+    setStatus('err', 'Error: ' + err.message);
+  }
+}
 
-        <div class="filter-row" id="clientFilterRow"></div>
-        <div class="filter-row" id="carrierFilterRow"></div>
-        <div id="ordersDashList"></div>
-      </div>
-    </section>
-
-    <!-- ── TAB 3: About ── -->
-    <section id="tab-about" class="tab about-tab">
-      <div class="about-hero">
-        <div class="about-hero-inner">
-          <div class="about-logo-mark">&#128269;</div>
-          <div>
-            <h1 class="about-title">IDEALSCAN</h1>
-            <p class="about-subtitle">Fulfillment Scanning System</p>
-          </div>
-        </div>
-        <p class="about-tagline">Replacing paper-based pick verification with a live, real-time scan workflow — from order upload to printed shipping label, all in one place.</p>
-        <a href="/idealscan-overview.html" target="_blank" class="about-download-btn">&#128196; Download Overview Document</a>
-      </div>
-
-      <div class="about-body">
-
-        <div class="about-section">
-          <h2 class="about-section-title">Why This Exists</h2>
-          <div class="about-why-grid">
-            <div class="about-why-card">
-              <div class="about-why-num">1</div>
-              <div>
-                <strong>No single source of truth</strong>
-                <p>Order data arrives by email, spreadsheet, and WhatsApp — not in one system staff can act on.</p>
-              </div>
-            </div>
-            <div class="about-why-card">
-              <div class="about-why-num">2</div>
-              <div>
-                <strong>Manual verification fails at scale</strong>
-                <p>Counting by hand and ticking paper tally sheets is slow, inconsistent, and doesn't scale.</p>
-              </div>
-            </div>
-            <div class="about-why-card">
-              <div class="about-why-num">3</div>
-              <div>
-                <strong>No audit trail</strong>
-                <p>When a wrong item ships or a quantity is disputed, there's no record of who verified what and when.</p>
-              </div>
-            </div>
-            <div class="about-why-card">
-              <div class="about-why-num">4</div>
-              <div>
-                <strong>Labels require a separate system</strong>
-                <p>Producing shipping labels means switching apps, copying order details manually, and risking errors.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="about-section">
-          <h2 class="about-section-title">What You Can Do</h2>
-          <div class="about-feature-grid">
-            <div class="about-feature">
-              <div class="about-feature-icon">📤</div>
-              <div class="about-feature-name">Upload order files</div>
-              <div class="about-feature-desc">CSV or XLSX from any client — auto-mapped to WMS format instantly.</div>
-            </div>
-            <div class="about-feature">
-              <div class="about-feature-icon">🔍</div>
-              <div class="about-feature-name">Scan &amp; verify orders</div>
-              <div class="about-feature-desc">Live barcode scan with instant pass/fail per item and per order.</div>
-            </div>
-            <div class="about-feature">
-              <div class="about-feature-icon">📦</div>
-              <div class="about-feature-name">Scan waybill to jump to order</div>
-              <div class="about-feature-desc">Point a barcode gun at any parcel — lands on that order's scan screen.</div>
-            </div>
-            <div class="about-feature">
-              <div class="about-feature-icon">📍</div>
-              <div class="about-feature-name">See full delivery details</div>
-              <div class="about-feature-desc">Address, phone, and platform shown during scanning for every order.</div>
-            </div>
-            <div class="about-feature">
-              <div class="about-feature-icon">🖨</div>
-              <div class="about-feature-name">Print waybill labels</div>
-              <div class="about-feature-desc">One click after verification — carrier, buyer, items, and barcode on one label.</div>
-            </div>
-            <div class="about-feature">
-              <div class="about-feature-icon">📊</div>
-              <div class="about-feature-name">Export audit reports</div>
-              <div class="about-feature-desc">Full XLSX export: who scanned what, when, how long, and whether it was correct.</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="about-section">
-          <h2 class="about-section-title">User Roles</h2>
-          <div class="about-roles">
-            <div class="about-role-card">
-              <span class="about-role-badge admin-badge">Admin</span>
-              <ul>
-                <li>Upload and manage order batches</li>
-                <li>Manage user accounts and roles</li>
-                <li>Configure WMS template and email</li>
-                <li>Export audit trail</li>
-              </ul>
-            </div>
-            <div class="about-role-card">
-              <span class="about-role-badge warehouse-badge">Warehouse</span>
-              <ul>
-                <li>Scan and verify orders</li>
-                <li>Scan waybill to find an order instantly</li>
-                <li>Print and reprint waybill labels</li>
-                <li>Configure personal printer settings</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-      </div><!-- /about-body -->
-
-      <div class="about-footer">
-        <span>IDEALSCAN &nbsp;·&nbsp; United Logistics &amp; Distribution &nbsp;·&nbsp; Built by Benson</span>
-        <a href="/idealscan-overview.html" target="_blank" class="about-dl-link">&#128196; Full overview document</a>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- ── Footer ── -->
-  <footer class="app-footer">
-    <div class="footer-brand">
-      <svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>
-      <div class="footer-brand-text">
-        <span class="footer-app-name">IDEALSCAN</span>
-        <span class="footer-divider">&#183;</span>
-        <span class="footer-company">United Logistics &amp; Distribution</span>
-        <span class="footer-divider">&#183;</span>
-        <span class="footer-by">By Benson</span>
-      </div>
-    </div>
-    <button class="log-access-link" id="logAccessBtn">&#9881; Administrator</button>
-  </footer>
-
-  <!-- Upload Confirm Modal -->
-  <div id="uploadConfirmOverlay" class="modal-overlay hidden">
-    <div class="modal">
-      <div class="modal-title">Confirm Upload</div>
-
-      <div class="confirm-summary">
-        <div class="confirm-row">
-          <span class="confirm-lbl">File</span>
-          <span class="confirm-val" id="confirmFileName">—</span>
-        </div>
-        <div class="confirm-row">
-          <span class="confirm-lbl">Client</span>
-          <span class="confirm-val" id="confirmClientName">—</span>
-        </div>
-        <div class="confirm-row">
-          <span class="confirm-lbl">Orders</span>
-          <span class="confirm-val confirm-big" id="confirmOrderCount">—</span>
-        </div>
-        <div class="confirm-row">
-          <span class="confirm-lbl">Lines</span>
-          <span class="confirm-val confirm-big" id="confirmLineCount">—</span>
-        </div>
-        <div class="confirm-row">
-          <span class="confirm-lbl">WMS Format</span>
-          <span class="confirm-val" id="confirmConverted">—</span>
-        </div>
-        <div class="confirm-row" id="confirmCustomersRow">
-          <span class="confirm-lbl">Customers</span>
-          <span class="confirm-val" id="confirmCustomers">—</span>
-        </div>
-      </div>
-
-      <div id="confirmErrors" class="confirm-errors hidden"></div>
-
-      <div class="form-group" style="margin-top:1.1rem">
-        <label>Upload Type</label>
-        <div class="direction-toggle">
-          <button class="dir-btn active" id="dirOutboundBtn" data-dir="Outbound">Outbound</button>
-          <button class="dir-btn"        id="dirInboundBtn"  data-dir="Inbound">Inbound</button>
-        </div>
-      </div>
-
-      <input type="hidden" id="confirmEmail" />
-      <div id="confirmEmailError" class="login-error hidden"></div>
-
-      <div class="modal-actions" style="margin-top:1rem">
-        <button class="btn-secondary" id="confirmCancelBtn">Cancel</button>
-        <button class="btn-primary"   id="confirmApproveBtn">Approve &amp; Upload &#8594;</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Mismatch Modal -->
-  <div id="mismatchOverlay" class="modal-overlay hidden">
-    <div class="modal">
-      <div class="modal-icon">&#9888;</div>
-      <div class="modal-title">Quantity Mismatch Detected</div>
-      <p class="modal-desc">The following items do not match the ordered quantities:</p>
-      <div class="mismatch-table-wrap">
-        <table class="mismatch-table">
-          <thead>
-            <tr><th>SKU</th><th>Description</th><th>Ordered</th><th>Scanned</th><th>Gap</th></tr>
-          </thead>
-          <tbody id="mismatchTbody"></tbody>
-        </table>
-      </div>
-      <div class="modal-actions">
-        <button class="btn-secondary" id="mismatchContinueBtn">Continue Scanning</button>
-        <button class="btn-danger"    id="mismatchCancelBtn">Cancel Order &#8212; Mark Unprocessed</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Download Waybill Modal (shown after completing an order that has a matched waybill PDF) -->
-  <div id="printWaybillOverlay" class="modal-overlay hidden">
-    <div class="modal">
-      <div class="modal-icon">&#8681;</div>
-      <div class="modal-title">Download Waybill?</div>
-      <p class="modal-desc">Order <strong id="printOrderNo"></strong> completed — waybill ready.</p>
-      <div class="print-countdown-wrap">
-        <div class="print-countdown-bar" id="printCountdownBar"></div>
-      </div>
-      <p class="hint" style="text-align:center;margin-top:.5rem">Auto-skipping in <span id="printCountdownNum">3</span>s&hellip;</p>
-      <div class="modal-actions" style="margin-top:1rem">
-        <button class="btn-secondary" id="printSkipBtn">Skip</button>
-        <button class="btn-primary" id="printNowBtn">&#8681; Download Waybill</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Lot / Serial number check before order completion -->
-  <div id="lotCheckOverlay" class="modal-overlay hidden">
-    <div class="modal lot-check-modal">
-      <div class="modal-icon lot-check-icon">&#9888;&#65039;</div>
-      <div class="modal-title">Verify Lot / Serial Numbers</div>
-      <p class="modal-desc">Please confirm you have physically checked the following before completing this order:</p>
-      <table class="lot-check-table">
-        <thead>
-          <tr><th>SKU</th><th>Lot / Batch</th><th>Serial No.</th><th>Expiry</th></tr>
-        </thead>
-        <tbody id="lotCheckTbody"></tbody>
-      </table>
-      <div class="modal-actions" style="margin-top:1.2rem">
-        <button class="btn-secondary" id="lotCheckCancelBtn">&#8592; Go Back</button>
-        <button class="btn-primary"   id="lotCheckConfirmBtn">&#10003; Confirmed &mdash; Complete Order</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="batch-scan.js"></script>
-  <script src="label-scan.js"></script>
-  <script src="app.js"></script>
+refresh();
+</script>
 </body>
 </html>
