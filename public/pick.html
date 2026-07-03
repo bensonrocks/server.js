@@ -108,6 +108,13 @@ a{color:#2563eb;text-decoration:none}
 select.form-input{cursor:pointer}
 .form-help{font-size:11px;color:#94a3b8}
 
+/* ── Module toggle rows (Client Settings modal) ── */
+.module-toggle{display:flex;align-items:flex-start;gap:12px;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:9px}
+.module-toggle input[type=checkbox]{width:18px;height:18px;accent-color:#1d4ed8;flex-shrink:0;margin-top:1px;cursor:pointer}
+.module-toggle-name{font-size:13px;font-weight:700;color:#0f172a}
+.module-toggle-desc{font-size:11px;color:#64748b;margin-top:1px}
+.module-disabled-note{padding:10px 14px;background:#f8fafc;border-radius:8px;color:#64748b;font-size:12px;margin:8px 0}
+
 /* ── THU / batch suggestion ── */
 .suggestion-box{border-radius:9px;padding:12px 14px;margin-bottom:2px;display:flex;align-items:flex-start;gap:12px;font-size:12px}
 .suggestion-batch{background:#fffbeb;border:1.5px solid #fcd34d}
@@ -237,6 +244,7 @@ select.form-input{cursor:pointer}
   </div>
   <div style="display:flex;gap:10px;align-items:center">
     <select id="clientPicker" onchange="onClientChange()"><option>Loading clients…</option></select>
+    <a href="#" onclick="openSettingsModal();return false">&#9881;&#65039; Settings</a>
     <a href="/ppp.html">&#128247; PPP</a>
     <a href="/index.html">&larr; OMS</a>
   </div>
@@ -591,6 +599,21 @@ select.form-input{cursor:pointer}
   </div>
 </div>
 
+<!-- Client Settings — module selections -->
+<div class="modal-bg" id="settingsModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Client Settings</span><button class="modal-close" onclick="closeModal('settingsModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <p class="form-help" style="margin-bottom:14px">Which warehouse capabilities are enabled for this client. Turning a module off hides it here and blocks the underlying action — it does not delete any existing data.</p>
+      <div style="display:flex;flex-direction:column;gap:12px" id="moduleToggleList"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('settingsModal')">Close</button>
+      <button class="btn btn-primary" onclick="saveModuleToggles()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
@@ -652,15 +675,68 @@ async function ensureDefaultLocation() {
 
 async function boot() {
   await ensureDefaultLocation();
+  await loadConfig();
   await Promise.all([loadStats(), loadOrders(), loadWaves(), loadInventory(), loadPackOrders(), loadShipments()]);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadClients();
 
+// ── Module selections (Client Settings) ───────────────────────────────────────
+const MODULE_DEFS = [
+  { key: 'inventory',     name: 'Inventory & Stock',  desc: 'Items, locations, receive/ship/transfer — the base layer everything else builds on.' },
+  { key: 'picking',       name: 'Wave Picking',       desc: 'Batch orders into pick waves (FIFO/LIFO/batch/wave), THU consolidation for multi-order runs.' },
+  { key: 'packShip',      name: 'Pack & Ship',        desc: 'Boxes with GS1 SSCC codes, carrier/tracking, shipment status.' },
+  { key: 'scanStation',   name: 'Scan Station (PPP)', desc: 'HU-scan carton workflow at /ppp.html — an alternative to wave picking for single-order packing.' },
+  { key: 'clientVisible', name: 'Client Visibility',  desc: "Shows a read-only Fulfillment status column in this client's own portal login." },
+];
+let currentConfig = null;
+
+async function loadConfig() {
+  currentConfig = await api('GET', wh('config'));
+  applyModuleGating();
+}
+
+function applyModuleGating() {
+  const m = currentConfig?.modules || {};
+  const gates = { create: m.picking, pack: m.packShip, ship: m.packShip };
+  document.querySelectorAll('.pipe-step').forEach((el, i) => {
+    const tab = TAB_NAMES[i];
+    const enabled = gates[tab] !== false; // tabs with no gate (waves/availability/inventory) stay on
+    el.style.opacity = enabled ? '' : '.45';
+    el.style.cursor  = enabled ? '' : 'not-allowed';
+  });
+}
+
+function openSettingsModal() {
+  const m = currentConfig?.modules || {};
+  document.getElementById('moduleToggleList').innerHTML = MODULE_DEFS.map(d => `
+    <label class="module-toggle">
+      <input type="checkbox" data-module="${d.key}" ${m[d.key] ? 'checked' : ''}>
+      <div><div class="module-toggle-name">${d.name}</div><div class="module-toggle-desc">${d.desc}</div></div>
+    </label>`).join('');
+  openModal('settingsModal');
+}
+
+async function saveModuleToggles() {
+  const modules = {};
+  document.querySelectorAll('#moduleToggleList input[type=checkbox]').forEach(cb => { modules[cb.dataset.module] = cb.checked; });
+  try {
+    currentConfig = await api('PATCH', wh('config'), { modules });
+    applyModuleGating();
+    closeModal('settingsModal');
+    toast('Client settings saved');
+  } catch (e) { toast(e.message, true); }
+}
+
 // ── Tab / pipeline switching ──────────────────────────────────────────────────
 const TAB_NAMES = ['waves','create','pack','ship','availability','inventory'];
 function switchTab(name) {
+  const gates = { create: 'picking', pack: 'packShip', ship: 'packShip' };
+  if (gates[name] && currentConfig && !currentConfig.modules[gates[name]]) {
+    toast(`${MODULE_DEFS.find(d => d.key === gates[name]).name} is disabled for this client — enable it in Settings`, true);
+    return;
+  }
   document.querySelectorAll('.pipe-step').forEach((el, i) => el.classList.toggle('on', TAB_NAMES[i] === name));
   document.querySelectorAll('.panel').forEach(el => el.classList.remove('on'));
   const panel = document.getElementById('panel' + name.charAt(0).toUpperCase() + name.slice(1));

@@ -69,13 +69,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 @media(max-width:600px){.user-row{grid-template-columns:1fr 80px}.user-row .user-toggle,.user-row-hdr .th-toggle{display:none}}
 
 /* ── WAREHOUSE OVERVIEW TABLE ── */
-.wh-row{display:grid;grid-template-columns:1fr 90px 100px 110px 140px;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f8fafc;font-size:12px}
+.wh-row{display:grid;grid-template-columns:1fr 90px 90px 100px 130px 80px;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f8fafc;font-size:12px}
 .wh-row:last-child{border-bottom:none}
 .wh-row-hdr{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;padding-bottom:8px;border-bottom:1.5px solid #e2e8f0;margin-bottom:4px}
 .wh-num{font-weight:700;color:#0f172a}
 .wh-num.warn{color:#d97706}
 .wh-muted{color:#94a3b8}
-@media(max-width:640px){.wh-row{grid-template-columns:1fr 70px}.wh-row>div:nth-child(3),.wh-row>div:nth-child(4),.wh-row>div:nth-child(5){display:none}.wh-row-hdr>div:nth-child(3),.wh-row-hdr>div:nth-child(4),.wh-row-hdr>div:nth-child(5){display:none}}
+@media(max-width:640px){.wh-row{grid-template-columns:1fr 70px 60px}.wh-row>div:nth-child(3),.wh-row>div:nth-child(4),.wh-row>div:nth-child(5){display:none}.wh-row-hdr>div:nth-child(3),.wh-row-hdr>div:nth-child(4),.wh-row-hdr>div:nth-child(5){display:none}}
+
+/* ── Module toggle rows (shared with pick.html's Client Settings) ── */
+.module-toggle{display:flex;align-items:flex-start;gap:12px;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:9px;margin-bottom:10px}
+.module-toggle input[type=checkbox]{width:18px;height:18px;accent-color:#1d4ed8;flex-shrink:0;margin-top:1px;cursor:pointer}
+.module-toggle-name{font-size:13px;font-weight:700;color:#0f172a}
+.module-toggle-desc{font-size:11px;color:#64748b;margin-top:1px}
 
 /* ── PASSWORD FORM ── */
 .pw-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
@@ -162,6 +168,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           <div>Open Waves</div>
           <div>Print Queue</div>
           <div>Last Activity</div>
+          <div></div>
         </div>
         <div id="warehouse-overview-body"><div style="color:#94a3b8;font-size:12px;padding:12px 0">Loading…</div></div>
       </div>
@@ -217,6 +224,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <button onclick="confirmReset()" id="popup-btn" class="btn-primary" style="padding:8px 18px">Set Password</button>
     </div>
     <div id="popup-msg" class="msg" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- Warehouse Module Settings Popup -->
+<div class="pw-popup" id="wh-settings-popup" onclick="if(event.target===this)closeWhSettingsPopup()">
+  <div class="pw-popup-card" style="max-width:420px">
+    <div class="pw-popup-title" id="wh-settings-title">Warehouse Settings</div>
+    <div class="pw-popup-sub">Which warehouse capabilities are enabled for this client.</div>
+    <div id="wh-settings-toggles"></div>
+    <div style="display:flex;gap:8px;margin-top:6px;justify-content:flex-end">
+      <button onclick="closeWhSettingsPopup()" style="padding:8px 16px;border-radius:7px;border:1.5px solid #e2e8f0;background:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Cancel</button>
+      <button onclick="saveWhSettings()" class="btn-primary" style="padding:8px 18px">Save</button>
+    </div>
+    <div id="wh-settings-msg" class="msg" style="margin-top:10px"></div>
   </div>
 </div>
 
@@ -338,8 +359,56 @@ async function loadWarehouseOverview() {
         <div class="${c.openWaves > 0 ? 'wh-num warn' : 'wh-muted'}">${c.openWaves}</div>
         <div class="${c.pendingPrint > 0 ? 'wh-num warn' : 'wh-muted'}">${c.pendingPrint} pending</div>
         <div class="wh-muted">${fmtWhDate(c.lastActivityAt)}</div>
+        <div><button class="btn-sm btn-reset" onclick="openWhSettingsPopup('${esc(c.clientId)}','${esc(c.clientName)}')">&#9881;&#65039;</button></div>
       </div>`).join('');
   } catch { el.innerHTML = '<div style="color:#dc2626;font-size:12px;padding:10px 0">Error loading warehouse overview.</div>'; }
+}
+
+// ── WAREHOUSE MODULE SETTINGS (staff can also flip these, same config the
+// tenant edits from pick.html) ────────────────────────────────────────────────
+const MODULE_DEFS = [
+  { key: 'inventory',     name: 'Inventory & Stock',  desc: 'Items, locations, receive/ship/transfer.' },
+  { key: 'picking',       name: 'Wave Picking',       desc: 'Batch orders into pick waves.' },
+  { key: 'packShip',      name: 'Pack & Ship',        desc: 'Boxes, SSCC codes, carrier tracking.' },
+  { key: 'scanStation',   name: 'Scan Station (PPP)', desc: 'HU-scan carton workflow at /ppp.html.' },
+  { key: 'clientVisible', name: 'Client Visibility',  desc: "Fulfillment status shown in the client's own portal." },
+];
+let whSettingsTarget = null; // { clientId, clientName }
+
+async function openWhSettingsPopup(clientId, clientName) {
+  whSettingsTarget = { clientId, clientName };
+  document.getElementById('wh-settings-title').textContent = `Warehouse Settings — ${clientName}`;
+  document.getElementById('wh-settings-toggles').innerHTML = '<div style="color:#94a3b8;font-size:12px;padding:8px 0">Loading…</div>';
+  document.getElementById('wh-settings-msg').textContent = '';
+  document.getElementById('wh-settings-popup').style.display = 'flex';
+  try {
+    const r = await fetch(`${SERVER}/api/staff/client-users/${encodeURIComponent(clientId)}/warehouse/config`, { headers: { Authorization: 'Bearer ' + token } });
+    const config = await r.json();
+    const m = config.modules || {};
+    document.getElementById('wh-settings-toggles').innerHTML = MODULE_DEFS.map(d => `
+      <label class="module-toggle">
+        <input type="checkbox" data-module="${d.key}" ${m[d.key] ? 'checked' : ''}>
+        <div><div class="module-toggle-name">${d.name}</div><div class="module-toggle-desc">${d.desc}</div></div>
+      </label>`).join('');
+  } catch { document.getElementById('wh-settings-toggles').innerHTML = '<div style="color:#dc2626;font-size:12px">Failed to load settings.</div>'; }
+}
+function closeWhSettingsPopup() {
+  document.getElementById('wh-settings-popup').style.display = 'none';
+  whSettingsTarget = null;
+}
+async function saveWhSettings() {
+  if (!whSettingsTarget) return;
+  const modules = {};
+  document.querySelectorAll('#wh-settings-toggles input[type=checkbox]').forEach(cb => { modules[cb.dataset.module] = cb.checked; });
+  try {
+    const r = await fetch(`${SERVER}/api/staff/client-users/${encodeURIComponent(whSettingsTarget.clientId)}/warehouse/config`, {
+      method: 'PATCH', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modules }),
+    });
+    if (!r.ok) { const j = await r.json(); showMsg('wh-settings-msg', j.error || 'Failed to save', false); return; }
+    closeWhSettingsPopup();
+    loadWarehouseOverview();
+  } catch { showMsg('wh-settings-msg', 'Could not reach server.', false); }
 }
 
 async function toggleClient(clientId, currentActive) {

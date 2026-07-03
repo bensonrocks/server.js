@@ -123,6 +123,7 @@ a{color:#2563eb;text-decoration:none}
 .empty{text-align:center;padding:28px 16px;color:#94a3b8}
 .empty .ico{font-size:28px;margin-bottom:7px}
 .empty p{font-size:12px;line-height:1.5}
+.module-disabled-note{padding:14px 16px;background:#f8fafc;border-radius:8px;color:#64748b;font-size:13px;line-height:1.5}
 
 /* ── Flash animation ── */
 @keyframes flashIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
@@ -215,10 +216,12 @@ a{color:#2563eb;text-decoration:none}
       <div class="ico">&#128230;</div>
       <h2>Pick Plus Pack — Scan Station</h2>
       <p>Select an order, then scan HU labels to open cartons, scan products to pack, and scan the same HU label again to close. Print packing lists per carton or as a master list.</p>
-      <select id="orderSel"><option value="">Loading orders…</option></select>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
-        <button class="btn btn-primary" onclick="startSession()">&#9654; Start Session</button>
-        <button class="btn btn-ghost"   onclick="showSessions()">&#9776; Past Sessions</button>
+      <div id="startCardBody">
+        <select id="orderSel"><option value="">Loading orders…</option></select>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">
+          <button class="btn btn-primary" onclick="startSession()">&#9654; Start Session</button>
+          <button class="btn btn-ghost"   onclick="showSessions()">&#9776; Past Sessions</button>
+        </div>
       </div>
     </div>
   </div>
@@ -461,6 +464,12 @@ let _modalOpen    = false;
 // Init
 // ═══════════════════════════════════════════════════════════════════════════════
 async function init() {
+  const config = await api('GET', wh('config'));
+  if (!config.modules || !config.modules.scanStation) {
+    document.getElementById('startCardBody').innerHTML =
+      `<div class="module-disabled-note">Scan Station is disabled for this client. Turn it on from IDEALPICK &rarr; Settings, or ask staff.</div>`;
+    return;
+  }
   const orders = await api('GET', `/api/orders?clientId=${encodeURIComponent(state.clientId)}`);
   const sel = document.getElementById('orderSel');
   sel.innerHTML = '<option value="">— Select an order —</option>' +

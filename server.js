@@ -121,6 +121,34 @@ function withClientWarehouse(req, res, next) {
   next();
 }
 
+const MODULE_LABELS = { picking: 'Wave picking', packShip: 'Pack & ship', scanStation: 'Scan station' };
+
+// Gates a whole workflow on the client's module selection (set by tenant or
+// staff — see /warehouse/config and /staff/.../warehouse/config). Must run
+// after withClientWarehouse.
+function requireModule(name) {
+  return (req, res, next) => {
+    if (req.warehouse.getConfig().modules[name]) return next();
+    res.status(403).json({ error: `${MODULE_LABELS[name] || name} is disabled for this client` });
+  };
+}
+
+// Staff equivalent of withClientWarehouse — resolves tenant from ?tenantId=
+// (same pattern as other staff routes) rather than a tenant login session.
+// Staff only gets read/write access to warehouse *config* (module toggles),
+// not operational picking/packing/scanning — that stays tenant-only.
+function withStaffClientWarehouse(req, res, next) {
+  const tenantId = req.query.tenantId || 'default';
+  const { clientId } = req.params;
+  const { db } = getCtx(tenantId);
+  const client = db.prepare('SELECT id FROM client_users WHERE id = ?').get(clientId);
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  req.tenantId  = tenantId;
+  req.clientId  = clientId;
+  req.warehouse = createWarehouse(getWarehouseDb(tenantId, clientId));
+  next();
+}
+
 // ── Super-admin middleware ────────────────────────────────────────────────────
 
 const SUPER_PW = process.env.IDEAL_SUPER_PASSWORD || 'SuperAdmin@2024';
@@ -185,6 +213,17 @@ app.get('/api/staff/warehouse-overview', withStaff, (req, res) => {
     return { clientId: c.id, clientName: c.name, hasWarehouse: true, ...stats };
   });
   res.json(overview);
+});
+
+// Module selections (Inventory / Wave Picking / Pack & Ship / Scan Station /
+// Client Visibility) — staff can view and adjust these for onboarding/support,
+// same config the tenant can also edit from pick.html.
+app.get('/api/staff/client-users/:clientId/warehouse/config', withStaff, withStaffClientWarehouse, (req, res) => {
+  res.json(req.warehouse.getConfig());
+});
+
+app.patch('/api/staff/client-users/:clientId/warehouse/config', withStaff, withStaffClientWarehouse, (req, res) => {
+  res.json(req.warehouse.updateConfig(req.body || {}));
 });
 
 // Reset a client portal user's password
@@ -987,14 +1026,20 @@ app.get('/api/client/orders', withClientAuth, (req, res) => {
 
 // Read-only fulfillment status (pick/pack/ship) for the logged-in client's own
 // orders — never exposes operational controls or other clients' data.
+// `visible: false` means the tenant/staff has turned this off for the client
+// (distinct from `visible: true` + empty orders, which just means no
+// warehouse activity has happened yet).
 app.get('/api/client/fulfillment', withClientAuth, (req, res) => {
-  const orders = req.store.getOrders({ clientId: req.clientId });
   if (!warehouseDbExists(req.tenantId, req.clientId)) {
-    return res.json(orders.map(o => ({ orderId: o.id, pick: { stage: 'not_started' }, pack: { stage: 'not_started' }, shipment: null })));
+    return res.json({ visible: true, orders: [] });
   }
   const whDb = getWarehouseDb(req.tenantId, req.clientId);
+  if (!createWarehouse(whDb).getConfig().modules.clientVisible) {
+    return res.json({ visible: false, orders: [] });
+  }
+  const orders = req.store.getOrders({ clientId: req.clientId });
   const status = createFulfillmentStatus(whDb);
-  res.json(status.getForOrders(orders.map(o => o.id)));
+  res.json({ visible: true, orders: status.getForOrders(orders.map(o => o.id)) });
 });
 
 app.post('/api/client/orders/upload', withClientAuth, upload.single('file'), (req, res) => {
@@ -1223,7 +1268,7 @@ app.get('/api/admin/client-users/:clientId/warehouse/pick/waves', withTenant, wi
   res.json(req.picking.listWaves({ status: req.query.status }));
 });
 
-app.post('/api/admin/client-users/:clientId/warehouse/pick/waves', withTenant, withClientWarehouse, (req, res) => {
+app.post('/api/admin/client-users/:clientId/warehouse/pick/waves', withTenant, withClientWarehouse, requireModule('picking'), (req, res) => {
   try {
     res.status(201).json(req.picking.createWave(req.body || {}));
   } catch (e) {
@@ -1276,7 +1321,7 @@ app.get('/api/admin/client-users/:clientId/warehouse/pick/stats', withTenant, wi
 
 // ── Admin — per-client pack & ship (ported from IDEALPICK) ────────────────────
 
-app.post('/api/admin/client-users/:clientId/warehouse/pack/from-wave/:waveId', withTenant, withClientWarehouse, (req, res) => {
+app.post('/api/admin/client-users/:clientId/warehouse/pack/from-wave/:waveId', withTenant, withClientWarehouse, requireModule('packShip'), (req, res) => {
   try {
     res.status(201).json(req.packing.createPackOrdersFromWave(req.params.waveId));
   } catch (e) {
@@ -1354,7 +1399,7 @@ app.get('/api/admin/client-users/:clientId/warehouse/pack/stats', withTenant, wi
 
 // ── Admin — per-client scan-based Pick-and-Pack, PPP (ported from IDEALPICK) ──
 
-app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions', withTenant, withClientWarehouse, (req, res) => {
+app.post('/api/admin/client-users/:clientId/warehouse/ppp/sessions', withTenant, withClientWarehouse, requireModule('scanStation'), (req, res) => {
   try {
     res.status(201).json(req.ppp.openSession(req.body.orderId, req.body.operatorId || ''));
   } catch (e) {

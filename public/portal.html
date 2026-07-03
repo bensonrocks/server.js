@@ -58,6 +58,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .search-inp:focus{border-color:#2563eb}
 .orders-list{overflow-y:auto;max-height:calc(100vh - 300px)}
 .order-row{display:grid;grid-template-columns:140px 90px 1fr 100px 130px 90px;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #f8fafc;transition:background .1s;cursor:default}
+.orders-panel.fulfillment-hidden .order-row{grid-template-columns:140px 90px 1fr 100px 90px}
+.orders-panel.fulfillment-hidden .order-fulfill,.orders-panel.fulfillment-hidden .o-fulfill-hdr{display:none}
 .order-row:hover{background:#f8fafc}
 .order-row-hdr{background:#f8fafc;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;border-bottom:1.5px solid #e2e8f0;cursor:default}
 .order-id{font-size:12px;font-weight:700;color:#2563eb;font-family:monospace}
@@ -309,14 +311,17 @@ async function loadOrders() {
 }
 
 // ── FULFILLMENT (read-only — pick/pack/ship status, no operational controls) ──
+// `visible: false` means the tenant/staff turned this off for us — hide the
+// column entirely rather than show a misleading column of all-dashes.
 let fulfillmentByOrder = {};
 async function loadFulfillment() {
   try {
     const r = await fetch(`${SERVER}/api/client/fulfillment`, { headers: { Authorization: 'Bearer ' + token } });
     if (!r.ok) return;
-    const list = await r.json();
+    const data = await r.json();
     fulfillmentByOrder = {};
-    list.forEach(f => { fulfillmentByOrder[f.orderId] = f; });
+    (data.orders || []).forEach(f => { fulfillmentByOrder[f.orderId] = f; });
+    document.querySelector('.orders-panel').classList.toggle('fulfillment-hidden', data.visible === false);
     renderOrders();
   } catch {}
 }
