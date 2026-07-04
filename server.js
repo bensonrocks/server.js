@@ -61,6 +61,10 @@ app.post('/api/payment/webhook',
 );
 
 // ── Middleware ─────────────────────────────────────────────────────────
+// Railway (and most PaaS) terminate TLS at their edge and proxy HTTP
+// internally. Trust the first hop so req.secure reflects the real
+// protocol — required for express-session to set Secure cookies.
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
