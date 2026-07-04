@@ -1,7 +1,7 @@
 {
-  "name": "andrewtrade",
+  "name": "vaultsignals",
   "version": "1.0.0",
-  "description": "Gold & Silver smart-money technical analysis tool — ICT/SMC methodology",
+  "description": "VaultSignals — Gold & Silver ICT/SMC smart money signals",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

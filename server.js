@@ -210,7 +210,7 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`AndrewTrade running on port ${PORT}`);
+  console.log(`VaultSignals running on port ${PORT}`);
   console.log(`Stripe: ${stripe ? 'configured' : 'NOT configured — dev mode (no payment required)'}`);
   console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
 });
