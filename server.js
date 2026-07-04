@@ -10,6 +10,7 @@ const Stripe  = require('stripe');
 const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
+const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 
@@ -358,12 +359,62 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 app.get('/api/analysis', requireSubscriptionAPI, async (req, res) => {
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
   const results = {};
+  const allCandles = {};
   try {
     for (const key of Object.keys(SYMBOLS)) {
       const candles = await fetchDailyCandles(key, { apiKey });
+      allCandles[key] = candles;
       results[key] = analyze(candles, key);
     }
+
+    // Track signal outcomes and record today's signal (live mode only)
+    if (apiKey) {
+      for (const key of Object.keys(SYMBOLS)) {
+        const candles = allCandles[key];
+
+        // Resolve any open signals against subsequent candles
+        const openSigs = await signals.getOpenSignals(key);
+        for (const sig of openSigs) {
+          const later = candles.filter(c => c.date > sig.signalDate);
+          for (const candle of later) {
+            const outcome = signals.resolveOutcome(sig, candle);
+            if (outcome) {
+              await signals.updateOutcome(sig.id, outcome, candle.date);
+              break;
+            }
+          }
+        }
+
+        // Save today's signal if a trade plan was generated
+        const tp = results[key].tradePlan;
+        if (tp) {
+          await signals.saveSignal({
+            instrument: key,
+            direction:  tp.direction,
+            entry:      tp.entry,
+            stopLoss:   tp.stopLoss,
+            tp1:        tp.takeProfits[0].price,
+            tp2:        tp.takeProfits[1].price,
+            tp3:        tp.takeProfits[2].price,
+            rr1:        tp.takeProfits[0].riskReward,
+            signalDate: results[key].asOf,
+          });
+        }
+      }
+    }
+
     res.json({ ok: true, data: results, live: !!apiKey });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/stats', requireSubscriptionAPI, async (req, res) => {
+  try {
+    const all    = await signals.getAll();
+    const stats  = signals.calculateStats(all);
+    const recent = await signals.getRecent(30);
+    res.json({ ok: true, stats, recent });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

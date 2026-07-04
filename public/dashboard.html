@@ -136,6 +136,34 @@
 
   .footer{margin-top:24px;padding-top:14px;border-top:1px solid var(--border);font-size:.65rem;color:var(--text-3);line-height:1.7;font-family:var(--mono)}
   .footer a{color:var(--text-3)}
+
+  /* ── PERFORMANCE STATS ── */
+  .perf-wrap{margin-bottom:20px}
+  .perf-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .perf-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.16em;text-transform:uppercase;color:var(--text-3)}
+  .perf-count{font-family:var(--mono);font-size:.6rem;color:var(--text-3)}
+  .perf-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)}
+  @media(max-width:600px){.perf-tiles{grid-template-columns:repeat(2,1fr)}}
+  .perf-tile{background:var(--surface);padding:16px 18px}
+  .ptv{font-family:var(--mono);font-size:1.55rem;font-variant-numeric:tabular-nums;font-weight:bold;line-height:1;margin-bottom:3px;letter-spacing:.02em}
+  .ptl{font-family:var(--mono);font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--text-3)}
+  .ptv.win{color:var(--bull)}.ptv.loss{color:var(--bear)}.ptv.neutral{color:var(--text-2)}.ptv.gold{color:var(--gold)}
+  .perf-empty{font-family:var(--mono);font-size:.72rem;color:var(--text-3);padding:18px;border:1px solid var(--border);background:var(--surface)}
+
+  /* ── SIGNAL HISTORY ── */
+  .hist-wrap{margin-top:20px}
+  .hist-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .hist-scroll{overflow-x:auto}
+  .hist-table{width:100%;border-collapse:collapse}
+  .hist-table th{font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  .hist-table td{padding:9px 10px;border-bottom:1px solid var(--bg-2);font-family:var(--mono);font-size:.76rem;font-variant-numeric:tabular-nums;white-space:nowrap;vertical-align:middle}
+  .hist-table tr:last-child td{border-bottom:none}
+  .hist-table tr:hover td{background:var(--bg-2)}
+  .oc{display:inline-block;font-size:.65rem;letter-spacing:.08em;padding:2px 7px;border:1px solid}
+  .oc.win {background:color-mix(in srgb,var(--bull-bg) 60%,transparent);color:var(--bull);border-color:color-mix(in srgb,var(--bull) 35%,transparent)}
+  .oc.loss{background:color-mix(in srgb,var(--bear-bg) 60%,transparent);color:var(--bear);border-color:color-mix(in srgb,var(--bear) 35%,transparent)}
+  .oc.open{background:var(--bg-3);color:var(--text-3);border-color:var(--border)}
+  .dir-buy{color:var(--bull);font-weight:bold}.dir-sell{color:var(--bear);font-weight:bold}
 </style>
 </head>
 <body>
@@ -171,7 +199,35 @@
     <div class="dot loading" id="status-dot"></div>
     <span id="status-msg">Fetching analysis…</span>
   </div>
+
+  <!-- Performance stats -->
+  <div class="perf-wrap">
+    <div class="perf-hdr">
+      <span class="perf-label">Trailing Performance</span>
+      <span class="perf-count" id="perf-count"></span>
+    </div>
+    <div id="perf-tiles"></div>
+  </div>
+
   <div class="grid" id="grid"></div>
+
+  <!-- Signal history -->
+  <div class="hist-wrap" id="hist-wrap" style="display:none">
+    <div class="hist-hdr">
+      <span class="perf-label">Signal History — Gold &amp; Silver</span>
+      <span class="perf-count" id="hist-count"></span>
+    </div>
+    <div class="hist-scroll">
+      <table class="hist-table">
+        <thead><tr>
+          <th>Date</th><th>Symbol</th><th>Dir</th>
+          <th>Entry</th><th>TP1</th><th>SL</th><th>R:R</th><th>Outcome</th>
+        </tr></thead>
+        <tbody id="hist-body"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="footer">
     <strong>Research platform — not financial advice.</strong> Signals are for informational &amp; research purposes only. No signal confirms a winning trade. All trading is at your own risk. ·
     Signals update daily. ·
@@ -337,6 +393,96 @@ function buildCard(key,d,isLive){
 
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
 
+// ── Performance stats ──────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const res  = await fetch('/api/stats');
+    const data = await res.json();
+    if (!data.ok) return;
+    renderStats(data.stats);
+    renderHistory(data.recent);
+  } catch {
+    document.getElementById('perf-tiles').innerHTML =
+      '<div class="perf-empty">Stats unavailable</div>';
+  }
+}
+
+function renderStats(s) {
+  const count = document.getElementById('perf-count');
+  const box   = document.getElementById('perf-tiles');
+
+  // Build count line
+  const parts = [];
+  if (s.total  > 0) parts.push(`${s.total} resolved`);
+  if (s.open   > 0) parts.push(`${s.open} open`);
+  count.textContent = parts.join(' · ');
+
+  if (s.total === 0 && s.open === 0) {
+    box.innerHTML = '<div class="perf-empty">Performance tracking starts as daily signals are issued. Check back tomorrow.</div>';
+    return;
+  }
+
+  const wr       = s.winRate !== null ? s.winRate + '%' : '—';
+  const wrCls    = s.winRate === null ? 'neutral' : s.winRate >= 60 ? 'win' : s.winRate >= 40 ? 'neutral' : 'loss';
+  const wl       = s.total > 0 ? `${s.wins} / ${s.losses}` : '—';
+  const wlCls    = s.wins > s.losses ? 'win' : s.wins < s.losses ? 'loss' : 'neutral';
+  const pf       = s.profitFactor == null ? '—'
+                 : s.profitFactor >= 99 ? '∞' : s.profitFactor + '×';
+  const pfCls    = s.profitFactor == null ? 'neutral'
+                 : s.profitFactor >= 2 ? 'win' : s.profitFactor >= 1 ? 'neutral' : 'loss';
+  const st       = s.streak ? `${s.streak}${s.streakType === 'win' ? 'W' : 'L'}` : '—';
+  const stCls    = s.streakType === 'win' ? 'win' : s.streakType === 'loss' ? 'loss' : 'neutral';
+  const stArrow  = s.streak > 1 ? (s.streakType === 'win' ? ' ↑' : ' ↓') : '';
+
+  box.className = 'perf-tiles';
+  box.innerHTML = `
+    <div class="perf-tile">
+      <div class="ptv ${wrCls}">${wr}</div>
+      <div class="ptl">Win Rate</div>
+    </div>
+    <div class="perf-tile">
+      <div class="ptv ${wlCls}">${wl}</div>
+      <div class="ptl">W / L</div>
+    </div>
+    <div class="perf-tile">
+      <div class="ptv ${pfCls}">${pf}</div>
+      <div class="ptl">Profit Factor</div>
+    </div>
+    <div class="perf-tile">
+      <div class="ptv ${stCls}">${st}${stArrow}</div>
+      <div class="ptl">Streak</div>
+    </div>`;
+}
+
+function renderHistory(sigs) {
+  const wrap  = document.getElementById('hist-wrap');
+  const body  = document.getElementById('hist-body');
+  const count = document.getElementById('hist-count');
+  if (!sigs || !sigs.length) { wrap.style.display = 'none'; return; }
+
+  count.textContent = `last ${sigs.length}`;
+  body.innerHTML = sigs.map(s => {
+    const dp   = s.instrument === 'GOLD' ? 2 : 3;
+    const icls = s.instrument === 'GOLD' ? 'gold' : 'silver';
+    const dcls = s.direction === 'buy'   ? 'dir-buy' : 'dir-sell';
+    const dtxt = s.direction === 'buy'   ? '▲ BUY' : '▼ SELL';
+    const ocls = s.outcome === 'win_tp1' ? 'win' : s.outcome === 'loss' ? 'loss' : 'open';
+    const otxt = s.outcome === 'win_tp1' ? '✓ WIN' : s.outcome === 'loss' ? '✕ LOSS' : '○ OPEN';
+    const rr   = s.rr1 ? fmt(s.rr1, 1) + 'R' : '—';
+    return `<tr>
+      <td>${s.signalDate}</td>
+      <td style="color:var(--${icls})">${s.instrument}</td>
+      <td class="${dcls}">${dtxt}</td>
+      <td>${fmt(s.entry, dp)}</td>
+      <td>${fmt(s.tp1, dp)}</td>
+      <td>${fmt(s.stopLoss, dp)}</td>
+      <td style="color:var(--text-3)">${rr}</td>
+      <td><span class="oc ${ocls}">${otxt}</span></td>
+    </tr>`;
+  }).join('');
+  wrap.style.display = 'block';
+}
+
 async function refresh(){
   setStatus('loading','Fetching analysis…');
   document.getElementById('grid').innerHTML='';
@@ -352,6 +498,7 @@ async function refresh(){
   }catch(err){setStatus('err','Error: '+err.message)}
 }
 refresh();
+loadStats();
 </script>
 </body>
 </html>
