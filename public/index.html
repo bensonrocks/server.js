@@ -332,6 +332,33 @@ a:hover{text-decoration:underline}
   .cm-full{grid-column:auto}
 }
 @media(min-width:769px){.mob-search{display:none}}
+
+/* ── IDEALINVENTORY ── */
+.inv-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.inv-stat{background:#fff;border-radius:10px;padding:13px 15px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.inv-stat-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.inv-stat-val{font-size:22px;font-weight:800;color:#0f172a}
+.inv-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fff;border-radius:10px;padding:10px 13px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.inv-search{flex:1;min-width:140px;padding:6px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px}
+.inv-search:focus{outline:none;border-color:#2563eb}
+.inv-cat-sel{padding:5px 8px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;background:#fff}
+.stock-bar{width:80px;height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden;display:inline-block;vertical-align:middle}
+.stock-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.inv-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.inv-modal-full{grid-column:1/-1}
+.inv-inp{width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px}
+.inv-inp:focus{outline:none;border-color:#2563eb}
+.inv-label{font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px;display:block}
+.inv-mv-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+.inv-mv-type{padding:2px 7px;border-radius:8px;font-weight:700;font-size:10px}
+.mv-inbound{background:#dcfce7;color:#166534}.mv-outbound{background:#fee2e2;color:#991b1b}
+.mv-adjustment{background:#dbeafe;color:#1e40af}.mv-reserved{background:#fef3c7;color:#92400e}
+.low-stock-row{background:#fffbeb!important}.out-stock-row{background:#fff5f5!important}
+.inv-panel{position:fixed;top:0;right:0;width:400px;height:100vh;background:#fff;box-shadow:-4px 0 32px rgba(0,0,0,.15);z-index:200;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
+.inv-panel.open{transform:translateX(0)}
+.inv-panel-hd{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc}
+.inv-panel-body{flex:1;overflow-y:auto;padding:16px 18px}
+@media(max-width:768px){.inv-stats{grid-template-columns:repeat(2,1fr)}.inv-panel{width:100%}}
 </style>
 </head>
 <body>
@@ -376,6 +403,10 @@ a:hover{text-decoration:underline}
         </li>
         <li class="nav-li" id="nav-synclog" onclick="switchPage('synclog')">
           <span>&#128260;</span><span class="nav-name">Sync Log</span>
+        </li>
+        <li class="nav-li" id="nav-inventory" onclick="switchPage('inventory')">
+          <span>&#128230;</span><span class="nav-name">Inventory</span>
+          <span class="nbadge" id="inv-low-badge" style="display:none;background:#fef3c7;color:#92400e"></span>
         </li>
         <li class="nav-li" id="nav-scan" onclick="switchPage('scan')">
           <span>&#128247;</span><span class="nav-name">Pick &amp; Scan</span>
@@ -611,7 +642,130 @@ a:hover{text-decoration:underline}
         </div>
       </div><!-- /scan -->
 
+      <!-- ══════════════════════════════════════════════════
+           IDEALINVENTORY PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-inventory" class="page">
+        <div class="main">
+
+          <!-- Stats bar -->
+          <div class="inv-stats">
+            <div class="inv-stat">
+              <div class="inv-stat-lbl">Total SKUs</div>
+              <div class="inv-stat-val" id="inv-s-total">—</div>
+            </div>
+            <div class="inv-stat">
+              <div class="inv-stat-lbl">Low Stock</div>
+              <div class="inv-stat-val" id="inv-s-low" style="color:#d97706">—</div>
+            </div>
+            <div class="inv-stat">
+              <div class="inv-stat-lbl">Out of Stock</div>
+              <div class="inv-stat-val" id="inv-s-out" style="color:#dc2626">—</div>
+            </div>
+            <div class="inv-stat">
+              <div class="inv-stat-lbl">Stock Value</div>
+              <div class="inv-stat-val" id="inv-s-val">—</div>
+            </div>
+          </div>
+
+          <!-- Toolbar -->
+          <div class="inv-toolbar">
+            <input id="inv-search" class="inv-search" placeholder="Search SKU or name…" oninput="invFilter()">
+            <select id="inv-cat" class="inv-cat-sel" onchange="invFilter()">
+              <option value="">All Categories</option>
+            </select>
+            <label style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:5px;cursor:pointer">
+              <input type="checkbox" id="inv-low-only" onchange="invFilter()" style="accent-color:#d97706"> Low stock only
+            </label>
+            <button class="btn btn-p btn-sm" onclick="invOpenAdd()">+ Add SKU</button>
+          </div>
+
+          <!-- SKU table -->
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>SKU</th><th>Name</th><th>Category</th>
+                  <th>In Stock</th><th>Reserved</th><th>Stock Level</th>
+                  <th>Sell Price</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="inv-tbody">
+                <tr class="empty"><td colspan="8">Loading inventory…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div><!-- /main -->
+      </div><!-- /inventory -->
+
     </main>
+  </div>
+
+  <!-- ── Inventory side panel (SKU detail + movements) ── -->
+  <div id="inv-panel" class="inv-panel">
+    <div class="inv-panel-hd">
+      <div style="flex:1">
+        <div id="inv-panel-sku" style="font-family:monospace;font-size:11px;color:#2563eb;font-weight:700"></div>
+        <div id="inv-panel-name" style="font-size:16px;font-weight:800;color:#0f172a"></div>
+      </div>
+      <button onclick="invClosePanel()" class="btn-x">&#10005;</button>
+    </div>
+    <div class="inv-panel-body">
+      <!-- Stock summary -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px">
+        <div class="inv-stat"><div class="inv-stat-lbl">In Stock</div><div class="inv-stat-val" id="inv-p-qty" style="font-size:28px">—</div></div>
+        <div class="inv-stat"><div class="inv-stat-lbl">Reserved</div><div class="inv-stat-val" id="inv-p-res" style="font-size:28px;color:#d97706">—</div></div>
+        <div class="inv-stat"><div class="inv-stat-lbl">Reorder At</div><div class="inv-stat-val" id="inv-p-reo" style="font-size:28px;color:#94a3b8">—</div></div>
+      </div>
+      <!-- Quick adjust -->
+      <div style="background:#f8fafc;border-radius:10px;padding:14px;margin-bottom:18px">
+        <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">Adjust Stock</div>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1">
+            <label class="inv-label">Qty (+ add / − remove)</label>
+            <input id="inv-adj-qty" type="number" class="inv-inp" placeholder="e.g. 50 or -5" style="width:100%">
+          </div>
+          <div style="flex:2">
+            <label class="inv-label">Reason</label>
+            <input id="inv-adj-reason" class="inv-inp" placeholder="Restock, Count, Damage…" style="width:100%">
+          </div>
+          <button class="btn btn-p btn-sm" onclick="invAdjust()">Apply</button>
+        </div>
+      </div>
+      <!-- Movement history -->
+      <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Movement History</div>
+      <div id="inv-movements"></div>
+    </div>
+  </div>
+  <div id="inv-panel-ov" class="overlay hidden" onclick="invClosePanel()"></div>
+
+  <!-- ── Inventory add/edit modal ── -->
+  <div id="inv-modal" class="modal hidden">
+    <div class="modal-box" style="max-width:520px">
+      <div class="modal-hd">
+        <h3 id="inv-modal-title">Add SKU</h3>
+        <button onclick="invCloseModal()" class="btn-x">&#10005;</button>
+      </div>
+      <div style="padding:18px;display:flex;flex-direction:column;gap:0">
+        <div class="inv-modal-grid">
+          <div><label class="inv-label">SKU *</label><input id="inv-f-sku" class="inv-inp" placeholder="WIDGET-BLU"></div>
+          <div><label class="inv-label">Name *</label><input id="inv-f-name" class="inv-inp" placeholder="Blue Widget"></div>
+          <div><label class="inv-label">Category</label><input id="inv-f-cat" class="inv-inp" placeholder="Electronics"></div>
+          <div><label class="inv-label">Unit</label><input id="inv-f-unit" class="inv-inp" placeholder="pcs" value="pcs"></div>
+          <div><label class="inv-label">Initial Stock</label><input id="inv-f-qty" type="number" class="inv-inp" value="0"></div>
+          <div><label class="inv-label">Reorder Point</label><input id="inv-f-reo" type="number" class="inv-inp" value="10"></div>
+          <div><label class="inv-label">Cost Price</label><input id="inv-f-cost" type="number" step="0.01" class="inv-inp" value="0"></div>
+          <div><label class="inv-label">Sell Price</label><input id="inv-f-sell" type="number" step="0.01" class="inv-inp" value="0"></div>
+          <div class="inv-modal-full"><label class="inv-label">Description</label><input id="inv-f-desc" class="inv-inp" placeholder="Optional description"></div>
+        </div>
+        <div id="inv-modal-err" style="color:#dc2626;font-size:12px;margin-top:10px;display:none"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+          <button class="btn btn-g" onclick="invCloseModal()">Cancel</button>
+          <button class="btn btn-p" onclick="invSave()">Save SKU</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── Detail panel ── -->
@@ -898,9 +1052,10 @@ function closeDetail(){$('dp').classList.remove('open');$('dp-ov').classList.add
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog','scan'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','scan','inventory'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')renderSyncLog();
+  if(page==='inventory')invLoad();
   if(page!=='scan')scanStop();
   closeSidebar();
 }
@@ -1267,9 +1422,212 @@ $('search').oninput=onSearch;$('search-mob').oninput=onSearch;
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 (async()=>{
   await checkServer();
-  if(serverAvailable)await loadOrdersFromServer();
+  if(serverAvailable){ await loadOrdersFromServer(); invLoadStats(); }
   render();
 })();
+</script>
+
+<!-- ── IDEALINVENTORY ── -->
+<script>
+'use strict';
+// ── IDEALINVENTORY — SKU catalogue, stock levels, movements ──────────────────
+
+let _invItems = [];
+let _invPanelSku = null;
+let _invEditSku = null;
+
+const fmtQty = n => Number(n).toLocaleString();
+const fmtMoney = n => '$' + Number(n).toFixed(2);
+
+// ── Load & render ─────────────────────────────────────────────────────────────
+async function invLoad() {
+  if (!serverAvailable) { document.getElementById('inv-tbody').innerHTML = '<tr class="empty"><td colspan="8">Server offline — connect to view inventory.</td></tr>'; return; }
+  try {
+    const res = await fetch(`${SERVER}/api/inventory`);
+    _invItems = await res.json();
+    invRender(_invItems);
+    invLoadStats();
+  } catch (e) {
+    document.getElementById('inv-tbody').innerHTML = `<tr class="empty"><td colspan="8">Failed to load inventory: ${e.message}</td></tr>`;
+  }
+}
+
+async function invLoadStats() {
+  if (!serverAvailable) return;
+  try {
+    const s = await fetch(`${SERVER}/api/inventory/stats`).then(r => r.json());
+    document.getElementById('inv-s-total').textContent = s.totalSKUs;
+    document.getElementById('inv-s-low').textContent   = s.lowStock;
+    document.getElementById('inv-s-out').textContent   = s.outOfStock;
+    document.getElementById('inv-s-val').textContent   = fmtMoney(s.totalValue);
+    // populate category dropdown
+    const sel = document.getElementById('inv-cat');
+    if (sel && s.categories?.length) {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All Categories</option>' + s.categories.map(c => `<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+    }
+    // nav badge for low stock
+    const badge = document.getElementById('inv-low-badge');
+    if (badge) { if (s.lowStock > 0) { badge.textContent = s.lowStock; badge.style.display = ''; } else badge.style.display = 'none'; }
+  } catch {}
+}
+
+function invRender(items) {
+  const tbody = document.getElementById('inv-tbody');
+  if (!items.length) { tbody.innerHTML = '<tr class="empty"><td colspan="8">No SKUs found.</td></tr>'; return; }
+  tbody.innerHTML = items.map(r => {
+    const pct   = r.reorder_point > 0 ? Math.min(100, Math.round(r.stock_qty / (r.reorder_point * 3) * 100)) : 100;
+    const color = r.stock_qty === 0 ? '#dc2626' : r.stock_qty <= r.reorder_point ? '#d97706' : '#16a34a';
+    const rowCls = r.stock_qty === 0 ? 'out-stock-row' : r.stock_qty <= r.reorder_point ? 'low-stock-row' : '';
+    return `<tr class="${rowCls}" onclick="invOpenPanel('${r.sku}')">
+      <td><span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563eb">${r.sku}</span></td>
+      <td style="font-weight:600">${r.name}</td>
+      <td><span style="font-size:11px;background:#f1f5f9;padding:2px 7px;border-radius:8px;color:#475569">${r.category||'—'}</span></td>
+      <td><strong style="color:${color}">${fmtQty(r.stock_qty)}</strong> <span style="font-size:11px;color:#94a3b8">${r.unit}</span></td>
+      <td style="color:#d97706">${r.reserved_qty > 0 ? fmtQty(r.reserved_qty) : '—'}</td>
+      <td><div class="stock-bar"><div class="stock-bar-fill" style="width:${pct}%;background:${color}"></div></div></td>
+      <td>${fmtMoney(r.sell_price)}</td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn btn-s btn-sm" style="font-size:11px" onclick="invOpenEdit('${r.sku}')">Edit</button>
+        <button class="btn btn-sm" style="font-size:11px;color:#dc2626" onclick="invDelete('${r.sku}')">Del</button>
+      </td></tr>`;
+  }).join('');
+}
+
+function invFilter() {
+  const q    = (document.getElementById('inv-search')?.value || '').toLowerCase();
+  const cat  = document.getElementById('inv-cat')?.value || '';
+  const low  = document.getElementById('inv-low-only')?.checked;
+  const list = _invItems.filter(r =>
+    (!q   || r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)) &&
+    (!cat || r.category === cat) &&
+    (!low || r.stock_qty <= r.reorder_point)
+  );
+  invRender(list);
+}
+
+// ── Side panel ────────────────────────────────────────────────────────────────
+async function invOpenPanel(sku) {
+  _invPanelSku = sku;
+  const item = _invItems.find(r => r.sku === sku);
+  if (!item) return;
+  document.getElementById('inv-panel-sku').textContent  = item.sku;
+  document.getElementById('inv-panel-name').textContent = item.name;
+  document.getElementById('inv-p-qty').textContent = fmtQty(item.stock_qty);
+  document.getElementById('inv-p-res').textContent = fmtQty(item.reserved_qty);
+  document.getElementById('inv-p-reo').textContent = fmtQty(item.reorder_point);
+  document.getElementById('inv-panel').classList.add('open');
+  document.getElementById('inv-panel-ov').classList.remove('hidden');
+  invLoadMovements(sku);
+}
+
+function invClosePanel() {
+  document.getElementById('inv-panel').classList.remove('open');
+  document.getElementById('inv-panel-ov').classList.add('hidden');
+  _invPanelSku = null;
+}
+
+async function invLoadMovements(sku) {
+  const el = document.getElementById('inv-movements');
+  el.innerHTML = '<div style="color:#94a3b8;font-size:12px">Loading…</div>';
+  try {
+    const mvs = await fetch(`${SERVER}/api/inventory/${encodeURIComponent(sku)}/movements`).then(r => r.json());
+    if (!mvs.length) { el.innerHTML = '<div style="color:#94a3b8;font-size:12px">No movements yet.</div>'; return; }
+    el.innerHTML = mvs.map(m => {
+      const sign = m.qty > 0 ? '+' : '';
+      const color = m.qty > 0 ? '#16a34a' : '#dc2626';
+      return `<div class="inv-mv-row">
+        <span class="inv-mv-type mv-${m.type}">${m.type}</span>
+        <span style="font-weight:700;color:${color}">${sign}${m.qty}</span>
+        <span style="flex:1;color:#475569">${m.reason||'—'}</span>
+        ${m.order_id ? `<span style="font-family:monospace;font-size:10px;color:#2563eb;cursor:pointer" onclick="openDetail('${m.order_id}')">${m.order_id}</span>` : ''}
+        <span style="color:#94a3b8;font-size:10px">${new Date(m.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+      </div>`;
+    }).join('');
+  } catch (e) { el.innerHTML = `<div style="color:#dc2626;font-size:12px">${e.message}</div>`; }
+}
+
+async function invAdjust() {
+  const qty    = parseFloat(document.getElementById('inv-adj-qty').value);
+  const reason = document.getElementById('inv-adj-reason').value.trim();
+  if (isNaN(qty) || qty === 0) { alert('Enter a non-zero quantity'); return; }
+  try {
+    const updated = await fetch(`${SERVER}/api/inventory/${encodeURIComponent(_invPanelSku)}/adjust`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qty, reason }),
+    }).then(r => r.json());
+    document.getElementById('inv-p-qty').textContent = fmtQty(updated.stock_qty);
+    document.getElementById('inv-adj-qty').value = '';
+    document.getElementById('inv-adj-reason').value = '';
+    // refresh items list and stats
+    const idx = _invItems.findIndex(r => r.sku === _invPanelSku);
+    if (idx >= 0) _invItems[idx] = updated;
+    invFilter(); invLoadStats(); invLoadMovements(_invPanelSku);
+  } catch (e) { alert('Adjust failed: ' + e.message); }
+}
+
+// ── Add / Edit modal ──────────────────────────────────────────────────────────
+function invOpenAdd() {
+  _invEditSku = null;
+  document.getElementById('inv-modal-title').textContent = 'Add SKU';
+  ['sku','name','cat','desc','unit','qty','reo','cost','sell'].forEach(f => {
+    const el = document.getElementById('inv-f-'+f);
+    if (el) el.value = f==='unit' ? 'pcs' : f==='qty'||f==='reo'||f==='cost'||f==='sell' ? '0' : '';
+  });
+  document.getElementById('inv-f-sku').disabled = false;
+  document.getElementById('inv-modal-err').style.display = 'none';
+  document.getElementById('inv-modal').classList.remove('hidden');
+}
+
+function invOpenEdit(sku) {
+  const item = _invItems.find(r => r.sku === sku);
+  if (!item) return;
+  _invEditSku = sku;
+  document.getElementById('inv-modal-title').textContent = 'Edit SKU';
+  document.getElementById('inv-f-sku').value  = item.sku;   document.getElementById('inv-f-sku').disabled = true;
+  document.getElementById('inv-f-name').value = item.name;
+  document.getElementById('inv-f-cat').value  = item.category || '';
+  document.getElementById('inv-f-desc').value = item.description || '';
+  document.getElementById('inv-f-unit').value = item.unit || 'pcs';
+  document.getElementById('inv-f-qty').value  = item.stock_qty;
+  document.getElementById('inv-f-reo').value  = item.reorder_point;
+  document.getElementById('inv-f-cost').value = item.cost_price;
+  document.getElementById('inv-f-sell').value = item.sell_price;
+  document.getElementById('inv-modal-err').style.display = 'none';
+  document.getElementById('inv-modal').classList.remove('hidden');
+}
+
+function invCloseModal() { document.getElementById('inv-modal').classList.add('hidden'); }
+
+async function invSave() {
+  const sku  = document.getElementById('inv-f-sku').value.trim().toUpperCase();
+  const name = document.getElementById('inv-f-name').value.trim();
+  const errEl = document.getElementById('inv-modal-err');
+  if (!sku || !name) { errEl.textContent = 'SKU and Name are required'; errEl.style.display = ''; return; }
+  const body = {
+    sku, name,
+    description: document.getElementById('inv-f-desc').value.trim(),
+    category:    document.getElementById('inv-f-cat').value.trim(),
+    unit:        document.getElementById('inv-f-unit').value.trim() || 'pcs',
+    stock_qty:   parseFloat(document.getElementById('inv-f-qty').value) || 0,
+    reorder_point: parseFloat(document.getElementById('inv-f-reo').value) || 10,
+    cost_price:  parseFloat(document.getElementById('inv-f-cost').value) || 0,
+    sell_price:  parseFloat(document.getElementById('inv-f-sell').value) || 0,
+  };
+  try {
+    const method = _invEditSku ? 'PUT' : 'POST';
+    const url    = _invEditSku ? `${SERVER}/api/inventory/${encodeURIComponent(_invEditSku)}` : `${SERVER}/api/inventory`;
+    const saved  = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json());
+    if (saved.error) { errEl.textContent = saved.error; errEl.style.display = ''; return; }
+    invCloseModal(); invLoad();
+  } catch (e) { errEl.textContent = e.message; errEl.style.display = ''; }
+}
+
+async function invDelete(sku) {
+  if (!confirm(`Delete SKU ${sku}? This cannot be undone.`)) return;
+  await fetch(`${SERVER}/api/inventory/${encodeURIComponent(sku)}`, { method: 'DELETE' });
+  invLoad();
+}
 </script>
 
 <!-- ZXing barcode library -->
@@ -1411,6 +1769,8 @@ async function _scanLookup(code, source) {
           previousStatus = result.previousStatus; newStatus = result.newStatus;
           platformPush = result.platformPush; trackingAttached = result.trackingAttached;
           await loadOrdersFromServer(); render();
+          // If just packed, inventory was deducted — refresh nav badge
+          if (result.waybillReady) invLoadStats();
         }
       } else {
         // read-only lookup
@@ -1470,13 +1830,23 @@ function _scanShowOrder(o, meta = {}) {
     ((o.shipping.state ? o.shipping.state + ' ' : '') + o.shipping.zip), o.shipping.country]
     .filter(Boolean).join(', ');
 
-  const itemsHTML = o.items.map(i => `
-    <tr>
-      <td><div style="font-weight:600">${_esc(i.name)}</div><div style="font-family:monospace;font-size:10px;color:#94a3b8">${_esc(i.sku)}</div></td>
+  const itemsHTML = o.items.map(i => {
+    // check local inventory cache for stock level
+    const inv = typeof _invItems !== 'undefined' ? _invItems.find(r => r.sku === i.sku) : null;
+    const stockHint = inv
+      ? (inv.stock_qty === 0
+          ? '<span style="color:#dc2626;font-size:10px;font-weight:700"> ⚠ OUT</span>'
+          : inv.stock_qty <= inv.reorder_point
+            ? `<span style="color:#d97706;font-size:10px"> ${inv.stock_qty} left</span>`
+            : `<span style="color:#16a34a;font-size:10px"> ${inv.stock_qty} in stock</span>`)
+      : '';
+    return `<tr>
+      <td><div style="font-weight:600">${_esc(i.name)}${stockHint}</div><div style="font-family:monospace;font-size:10px;color:#94a3b8">${_esc(i.sku)}</div></td>
       <td>${i.qty}</td>
       <td>${fmt(i.unitPrice)}</td>
       <td style="font-weight:700">${fmt(i.qty * i.unitPrice)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   const src = o.source || {};
   const scanned = _scanSession.find(s => s.orderId === o.id);

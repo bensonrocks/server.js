@@ -14,6 +14,7 @@ const tiktok  = require('./lib/marketplace/tiktok');
 const shopify = require('./lib/marketplace/shopify');
 const mapper      = require('./lib/marketplace/mapper');
 const fulfillment = require('./lib/fulfillment');
+const inventory   = require('./lib/inventory');
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -135,6 +136,47 @@ app.get('/api/orders/:id/waybill', async (req, res) => {
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
   }
+});
+
+// ── Inventory (IDEALINVENTORY) ────────────────────────────────────────────────
+
+app.get('/api/inventory', (req, res) => {
+  const { category, search, lowStock } = req.query;
+  res.json(inventory.getAll({ category, search, lowStock: lowStock === 'true' }));
+});
+
+app.get('/api/inventory/stats', (req, res) => res.json(inventory.getStats()));
+
+app.get('/api/inventory/:sku', (req, res) => {
+  const item = inventory.get(req.params.sku);
+  if (!item) return res.status(404).json({ error: 'SKU not found' });
+  res.json(item);
+});
+
+app.post('/api/inventory', (req, res) => {
+  try { res.status(201).json(inventory.upsert(req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/inventory/:sku', (req, res) => {
+  try { res.json(inventory.upsert({ ...req.body, sku: req.params.sku })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/inventory/:sku', (req, res) => {
+  inventory.remove(req.params.sku);
+  res.json({ ok: true });
+});
+
+app.post('/api/inventory/:sku/adjust', (req, res) => {
+  const { qty, type = 'adjustment', reason = '' } = req.body || {};
+  if (typeof qty !== 'number') return res.status(400).json({ error: 'qty (number) required' });
+  try { res.json(inventory.adjust(req.params.sku, qty, type, reason)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/inventory/:sku/movements', (req, res) => {
+  res.json(inventory.movements(req.params.sku, Number(req.query.limit) || 50));
 });
 
 // ── Marketplace Connections ───────────────────────────────────────────────────
