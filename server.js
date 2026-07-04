@@ -1345,6 +1345,26 @@ app.get('/api/inventory/:sku/movements', withTenant, (req, res) => {
   res.json(req.ctx.inventory.movements(req.params.sku, Number(req.query.limit) || 50));
 });
 
+app.post('/api/inventory/import', withTenant, (req, res) => {
+  const { items, mode = 'upsert' } = req.body || {};
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array required' });
+  const inv = req.ctx.inventory;
+  const results = { imported: 0, skipped: 0, errors: [] };
+  if (mode === 'replace') {
+    inv.getAll().forEach(r => inv.remove(r.sku));
+  }
+  for (const row of items) {
+    try {
+      if (!row.sku || !row.name) { results.skipped++; continue; }
+      inv.upsert(row);
+      results.imported++;
+    } catch (e) {
+      results.errors.push({ sku: row.sku || '?', error: e.message });
+    }
+  }
+  res.json(results);
+});
+
 // ── Webhooks ──────────────────────────────────────────────────────────────────
 
 app.post('/webhook/shopee', (req, res) => {
