@@ -119,20 +119,41 @@ function requireAdmin(req, res, next) {
 
 // ── SEO ────────────────────────────────────────────────────────────────
 app.get('/robots.txt', (req, res) => {
-  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const base = process.env.APP_URL || `https://${req.get('host')}`;
   res.type('text/plain').send(
-    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /vaultkeepers\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
+    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /vaultkeepers\nDisallow: /api/\n\nSitemap: ${base}/sitemap.xml`
   );
 });
 
 app.get('/sitemap.xml', (req, res) => {
-  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const base  = process.env.APP_URL || `https://${req.get('host')}`;
   const today = new Date().toISOString().split('T')[0];
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>${base}/</loc><lastmod>${today}</lastmod><priority>1.0</priority></url>
-  <url><loc>${base}/tutorial.html</loc><lastmod>${today}</lastmod><priority>0.8</priority></url>
-  <url><loc>${base}/signup</loc><lastmod>${today}</lastmod><priority>0.7</priority></url>
+  <url>
+    <loc>${base}/</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>${base}/tutorial.html</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>${base}/signup</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+  </url>
+  <url>
+    <loc>${base}/login</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
 </urlset>`);
 });
 
