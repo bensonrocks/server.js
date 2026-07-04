@@ -10,7 +10,7 @@ const Stripe  = require('stripe');
 const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
-const { init: initDb }               = require('./lib/db');
+const { init: initDb, hasDb }        = require('./lib/db');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -222,7 +222,7 @@ initDb()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`VaultSignals running on port ${PORT}`);
-      console.log(`DB: PostgreSQL`);
+      console.log(`DB: ${hasDb ? 'PostgreSQL' : 'JSON file (add DATABASE_URL to enable Postgres)'}`);
       console.log(`Stripe: ${stripe ? 'configured' : 'NOT configured — dev mode (no payment required)'}`);
       console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
     });
