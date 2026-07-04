@@ -171,7 +171,7 @@
   <div class="grid" id="grid"></div>
   <div class="footer">
     Not financial advice — educational signals only. Always verify on your own chart before trading. ·
-    Set <code>ALPHA_VANTAGE_API_KEY</code> in Railway env vars for live prices. ·
+    Signals update daily. ·
     <a href="/tutorial.html">How to read these signals →</a>
   </div>
 </div>
@@ -334,9 +334,9 @@ async function refresh(){
     const isLive=json.live;
     document.getElementById('mode-badge').textContent=isLive?'LIVE':'DEMO';
     document.getElementById('mode-badge').className=`badge${isLive?' live':''}`;
-    document.getElementById('page-sub').textContent=(isLive?'Live Alpha Vantage data':'Synthetic demo data')+' · Daily timeframe · Auto-refreshes on load';
+    document.getElementById('page-sub').textContent=(isLive?'Live market data':'Demo data')+' · Daily timeframe · Auto-refreshes on load';
     document.getElementById('grid').innerHTML=buildCard('GOLD',json.data.GOLD,isLive)+buildCard('SILVER',json.data.SILVER,isLive);
-    setStatus('ok',isLive?'Live data loaded.':'Demo mode — add ALPHA_VANTAGE_API_KEY in Railway for live prices.');
+    setStatus('ok',isLive?'Live data loaded.':'Demo mode — live signals activate when market data feed is connected.');
   }catch(err){setStatus('err','Error: '+err.message)}
 }
 refresh();
