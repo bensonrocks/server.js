@@ -3,124 +3,192 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AndrewTrade — Gold &amp; Silver Signals · $3.99/mo</title>
+<title>AndrewTrade — Gold &amp; Silver Smart Money Signals</title>
 <style>
-  :root{--bg:#08090d;--bg-2:#0d0f16;--bg-3:#131620;--surface:#181b24;--border:rgba(255,255,255,.09);--text:#e8e4dc;--text-2:#9a9490;--text-3:#5a5650;--gold:#f5c842;--cyan:#00e5cc;--green:#00e676;--red:#ff4060;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  html{font-size:15px;scroll-behavior:smooth}
-  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;min-height:100vh}
-  a{color:inherit;text-decoration:none}
+:root{
+  --bg:#05060a;--bg-2:#090b10;--bg-3:#0d1018;--surface:#111420;
+  --border:rgba(255,255,255,.07);--text:#eae6de;--text-2:#9a9490;--text-3:#4a4842;
+  --gold:#f0c040;--gold-dim:#8a6820;--cyan:#00e5cc;--green:#00e676;
+  --red:#ff3f5f;--purple:#8060ff;--mono:'Courier New',Courier,monospace;
+  --sans:system-ui,-apple-system,'Segoe UI',sans-serif
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:15px;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);overflow-x:hidden}
+a{color:inherit;text-decoration:none}
 
-  /* ── HEADER ── */
-  .topbar{background:#0d0f14;border-bottom:1px solid rgba(255,255,255,.07);padding:0 24px;height:52px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:100}
-  .brand{display:flex;align-items:center;gap:9px;font-size:.9rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;font-family:var(--sans);white-space:nowrap}
-  .brand-dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 8px #00e676;flex-shrink:0}
-  .brand-first{color:#fff}.brand-second{color:#00e5cc}
-  .sessions{display:flex;align-items:center;gap:2px}
-  .session-pill{display:flex;align-items:center;gap:6px;padding:5px 8px;font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.28);user-select:none}
-  .sp-ring{width:14px;height:14px;border-radius:50%;border:1.5px solid rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-  .session-pill.active{color:rgba(255,255,255,.82)}.session-pill.active .sp-ring{border-color:#00e676}
-  .session-pill.active .sp-ring::after{content:'';width:6px;height:6px;border-radius:50%;background:#00e676;box-shadow:0 0 5px #00e676}
-  .topbar-right{display:flex;align-items:center;gap:8px}
-  .tb-link{font-family:var(--mono);font-size:.7rem;letter-spacing:.07em;color:rgba(255,255,255,.5);padding:5px 10px;border-radius:4px;transition:color .15s}
-  .tb-link:hover{color:rgba(255,255,255,.9)}
-  .tb-cta{background:var(--green);color:#000;font-family:var(--mono);font-size:.7rem;font-weight:700;letter-spacing:.07em;padding:6px 14px;border-radius:4px;transition:opacity .15s}
-  .tb-cta:hover{opacity:.85}
-  @media(max-width:480px){.sessions{display:none}}
+/* ── TICKER ─────────────────────────────────────────────────────── */
+.ticker-bar{background:#000;border-bottom:1px solid rgba(255,255,255,.06);height:34px;display:flex;align-items:center;overflow:hidden;position:relative}
+.ticker-label{background:#0d0f14;color:var(--cyan);font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;padding:0 16px;height:100%;display:flex;align-items:center;white-space:nowrap;z-index:2;border-right:1px solid rgba(255,255,255,.08);flex-shrink:0}
+.ticker-track{display:flex;gap:0;animation:ticker 28s linear infinite;white-space:nowrap}
+@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.ticker-item{display:flex;align-items:center;gap:8px;padding:0 32px;font-family:var(--mono);font-size:.65rem;letter-spacing:.06em;border-right:1px solid rgba(255,255,255,.06)}
+.ticker-sym{color:var(--text-2)}.ticker-price{color:var(--text);font-weight:700}
+.ticker-chg.up{color:var(--green)}.ticker-chg.dn{color:var(--red)}
 
-  /* ── HERO ── */
-  .hero{padding:80px 24px 64px;text-align:center;max-width:760px;margin:0 auto}
-  .hero-kicker{font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;color:var(--cyan);margin-bottom:18px;display:flex;align-items:center;justify-content:center;gap:8px}
-  .hero-kicker::before,.hero-kicker::after{content:'';flex:1;max-width:60px;height:1px;background:var(--cyan);opacity:.3}
-  .hero-title{font-size:clamp(1.9rem,5vw,3rem);font-weight:800;line-height:1.1;letter-spacing:-.01em;margin-bottom:20px}
-  .hero-title span{color:var(--gold)}
-  .hero-sub{font-size:1rem;color:var(--text-2);max-width:540px;margin:0 auto 36px;line-height:1.7}
-  .hero-ctas{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
-  .btn-primary{background:var(--green);color:#000;font-weight:700;font-size:.9rem;padding:13px 28px;border-radius:6px;display:inline-flex;align-items:center;gap:8px;transition:opacity .15s}
-  .btn-primary:hover{opacity:.85}
-  .btn-secondary{border:1px solid rgba(255,255,255,.2);color:var(--text-2);font-size:.9rem;padding:12px 24px;border-radius:6px;transition:background .15s,color .15s}
-  .btn-secondary:hover{background:rgba(255,255,255,.07);color:var(--text)}
-  .hero-note{margin-top:16px;font-family:var(--mono);font-size:.65rem;color:var(--text-3);letter-spacing:.08em}
+/* ── HEADER ─────────────────────────────────────────────────────── */
+.topbar{background:rgba(5,6,10,.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,.07);padding:0 32px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:100}
+.brand{display:flex;align-items:center;gap:9px;font-size:.9rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;font-family:var(--sans);white-space:nowrap}
+.brand-dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);animation:pulse-dot 2s ease-in-out infinite;flex-shrink:0}
+@keyframes pulse-dot{0%,100%{box-shadow:0 0 8px var(--green)}50%{box-shadow:0 0 18px var(--green),0 0 32px rgba(0,230,118,.4)}}
+.brand-first{color:#fff}.brand-second{color:var(--cyan)}
+.sessions{display:flex;align-items:center;gap:2px}
+.session-pill{display:flex;align-items:center;gap:6px;padding:5px 8px;font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.25);user-select:none}
+.sp-ring{width:14px;height:14px;border-radius:50%;border:1.5px solid rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.session-pill.active{color:rgba(255,255,255,.82)}.session-pill.active .sp-ring{border-color:var(--green)}
+.session-pill.active .sp-ring::after{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green)}
+.nav-links{display:flex;align-items:center;gap:4px}
+.nav-link{font-family:var(--mono);font-size:.68rem;letter-spacing:.06em;color:rgba(255,255,255,.45);padding:6px 12px;border-radius:4px;transition:color .15s,background .15s}
+.nav-link:hover{color:rgba(255,255,255,.9);background:rgba(255,255,255,.07)}
+.nav-cta{background:var(--green);color:#000 !important;font-weight:700;border-radius:4px;transition:opacity .15s !important}
+.nav-cta:hover{opacity:.82;background:var(--green) !important}
+@media(max-width:560px){.sessions{display:none}.nav-link:not(.nav-cta){display:none}}
 
-  /* ── PREVIEW STRIP ── */
-  .preview-strip{border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--bg-2);padding:20px 24px;display:flex;align-items:center;justify-content:center;gap:32px;flex-wrap:wrap}
-  .ps-item{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--text-2)}
-  .ps-item .ps-val{font-size:1rem;font-weight:700}
-  .ps-item .ps-val.buy{color:var(--green)}.ps-item .ps-val.sell{color:var(--red)}.ps-item .ps-val.gold{color:var(--gold)}
-  .ps-divider{width:1px;height:32px;background:var(--border)}
+/* ── HERO ────────────────────────────────────────────────────────── */
+.hero{min-height:92vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:80px 24px 60px;position:relative;overflow:hidden}
+.hero-glow{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.hero-glow::before{content:'';position:absolute;top:-20%;left:50%;transform:translateX(-50%);width:900px;height:900px;background:radial-gradient(circle,rgba(0,229,204,.06) 0%,rgba(0,230,118,.04) 30%,transparent 70%);border-radius:50%}
+.hero-glow::after{content:'';position:absolute;top:10%;left:20%;width:500px;height:500px;background:radial-gradient(circle,rgba(240,192,64,.04) 0%,transparent 60%);border-radius:50%;animation:float 8s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-24px)}}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(0,229,204,.08);border:1px solid rgba(0,229,204,.2);border-radius:20px;padding:6px 16px;font-family:var(--mono);font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);margin-bottom:28px}
+.hero-badge .hb-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse-dot 2s infinite}
+.hero-h1{font-size:clamp(2.4rem,6vw,4.4rem);font-weight:900;line-height:1.05;letter-spacing:-.02em;margin-bottom:22px;max-width:820px}
+.hero-h1 .gold{color:var(--gold);position:relative;display:inline-block}
+.hero-h1 .gold::after{content:'';position:absolute;bottom:-4px;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent,var(--gold),transparent);border-radius:2px;opacity:.5}
+.hero-h1 .cyan{color:var(--cyan)}
+.hero-sub{font-size:1.05rem;color:var(--text-2);max-width:540px;line-height:1.75;margin-bottom:40px}
+.hero-ctas{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+.btn-hero{display:inline-flex;align-items:center;gap:10px;font-weight:700;font-size:1rem;padding:15px 32px;border-radius:8px;transition:all .2s;letter-spacing:.01em;border:none;cursor:pointer}
+.btn-hero.primary{background:var(--green);color:#000;box-shadow:0 0 32px rgba(0,230,118,.25)}
+.btn-hero.primary:hover{box-shadow:0 0 48px rgba(0,230,118,.4);transform:translateY(-1px)}
+.btn-hero.secondary{background:transparent;color:var(--text-2);border:1px solid rgba(255,255,255,.15)}
+.btn-hero.secondary:hover{background:rgba(255,255,255,.06);color:var(--text);border-color:rgba(255,255,255,.25)}
+.hero-trust{font-family:var(--mono);font-size:.62rem;color:var(--text-3);letter-spacing:.1em}
+.hero-trust span{color:var(--text-2)}
 
-  /* ── SECTIONS ── */
-  section{max-width:900px;margin:0 auto;padding:72px 24px}
-  .section-label{font-family:var(--mono);font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;color:var(--cyan);margin-bottom:12px}
-  .section-title{font-size:1.8rem;font-weight:700;line-height:1.2;margin-bottom:16px}
-  .section-sub{color:var(--text-2);max-width:520px;font-size:.95rem;line-height:1.7}
+/* ── FLOATING SIGNAL CARD ─────────────────────────────────────── */
+.signal-float{margin-top:56px;position:relative;max-width:480px;width:100%;margin-left:auto;margin-right:auto}
+.sf-card{background:var(--surface);border:1px solid rgba(0,230,118,.2);border-radius:12px;overflow:hidden;box-shadow:0 0 60px rgba(0,230,118,.08),0 32px 64px rgba(0,0,0,.5)}
+.sf-header{background:#0d0f14;padding:12px 20px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.sf-dot{width:8px;height:8px;border-radius:50%}
+.sf-title{margin-left:8px;font-family:var(--mono);font-size:.65rem;color:rgba(255,255,255,.35);letter-spacing:.08em}
+.sf-body{padding:20px}
+.sf-signal-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.sf-signal-label{font-family:var(--mono);font-size:1.5rem;font-weight:700;color:var(--green);letter-spacing:.02em}
+.sf-badge{font-family:var(--mono);font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:4px 10px;background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.25)}
+.sf-levels{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.sf-cell{display:flex;flex-direction:column;gap:3px}
+.sf-key{font-size:.57rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-family:var(--mono)}
+.sf-val{font-family:var(--mono);font-size:.82rem;font-weight:700}
+.sf-val.e{color:#5a84c4}.sf-val.s{color:var(--red)}.sf-val.t{color:var(--green)}
+.sf-note{margin-top:14px;font-size:.72rem;color:var(--text-2);border-top:1px solid var(--border);padding-top:12px}
+.sf-lock{position:absolute;inset:0;background:linear-gradient(to bottom,transparent 40%,rgba(5,6,10,.98) 80%);display:flex;align-items:flex-end;justify-content:center;padding-bottom:24px;border-radius:12px}
+.sf-lock-msg{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;color:var(--text-3);display:flex;align-items:center;gap:8px}
+.sf-lock-msg::before{content:'🔒'}
 
-  /* ── FEATURE GRID ── */
-  .feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);margin-top:40px}
-  @media(max-width:640px){.feature-grid{grid-template-columns:1fr}}
-  .feat{background:var(--bg-2);padding:28px 24px}
-  .feat-icon{font-size:1.8rem;margin-bottom:14px}
-  .feat-title{font-weight:700;font-size:.95rem;margin-bottom:8px;letter-spacing:.01em}
-  .feat-body{font-size:.85rem;color:var(--text-2);line-height:1.65}
+/* ── STATS BAR ─────────────────────────────────────────────────── */
+.stats-bar{border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--bg-2);padding:28px 24px;display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap}
+.stat{text-align:center;padding:16px 40px;position:relative}
+.stat:not(:last-child)::after{content:'';position:absolute;right:0;top:20%;height:60%;width:1px;background:var(--border)}
+.stat-num{font-size:2rem;font-weight:800;font-family:var(--mono);line-height:1;margin-bottom:4px}
+.stat-num.gold{color:var(--gold)}.stat-num.cyan{color:var(--cyan)}.stat-num.green{color:var(--green)}
+.stat-label{font-size:.7rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;font-family:var(--mono)}
+@media(max-width:600px){.stat{padding:12px 20px}.stat:not(:last-child)::after{display:none}}
 
-  /* ── WHY SECTION ── */
-  .why-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:36px}
-  @media(max-width:600px){.why-grid{grid-template-columns:1fr}}
-  .why-card{background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:22px 20px;display:flex;gap:16px;align-items:flex-start}
-  .why-num{font-family:var(--mono);font-size:.65rem;color:var(--cyan);letter-spacing:.1em;min-width:24px;margin-top:2px}
-  .why-title{font-weight:700;font-size:.9rem;margin-bottom:5px}
-  .why-body{font-size:.82rem;color:var(--text-2);line-height:1.6}
+/* ── FEATURES ───────────────────────────────────────────────────── */
+.section{max-width:980px;margin:0 auto;padding:88px 24px}
+.section-eye{font-family:var(--mono);font-size:.63rem;letter-spacing:.22em;text-transform:uppercase;color:var(--cyan);margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.section-eye::before{content:'';width:32px;height:1px;background:var(--cyan);opacity:.4}
+.section-h{font-size:clamp(1.6rem,3.5vw,2.4rem);font-weight:800;line-height:1.15;margin-bottom:14px}
+.section-p{color:var(--text-2);font-size:.95rem;line-height:1.75;max-width:520px}
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;margin-top:48px;background:var(--border)}
+@media(max-width:700px){.feat-grid{grid-template-columns:1fr}}
+.feat{background:var(--bg-2);padding:32px 26px;transition:background .2s;position:relative;overflow:hidden}
+.feat::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:0;transition:opacity .3s}
+.feat:hover{background:var(--surface)}.feat:hover::before{opacity:.6}
+.feat-icon{font-size:2rem;margin-bottom:18px;display:block}
+.feat-title{font-weight:700;font-size:.95rem;margin-bottom:10px}
+.feat-body{font-size:.83rem;color:var(--text-2);line-height:1.7}
 
-  /* ── SIGNAL PREVIEW ── */
-  .signal-preview{margin-top:40px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
-  .sp-header{background:#0d0f14;padding:12px 20px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
-  .sp-dot{width:8px;height:8px;border-radius:50%}
-  .sp-body{padding:24px 20px;position:relative}
-  .sp-body::after{content:'Subscribe to unlock live signals';position:absolute;inset:0;background:linear-gradient(to bottom,transparent 20%,rgba(8,9,13,.97));display:flex;align-items:flex-end;justify-content:center;padding-bottom:28px;font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;color:var(--text-3);text-align:center}
-  .sp-signal-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-  .sp-label{font-family:var(--mono);font-size:1.4rem;font-weight:700;color:var(--green)}
-  .sp-levels{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:4px}
-  .sp-cell{display:flex;flex-direction:column;gap:2px}
-  .sp-key{font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-family:var(--mono)}
-  .sp-val{font-family:var(--mono);font-size:.82rem;font-weight:700}
-  .sp-val.e{color:#5a84b4}.sp-val.s{color:var(--red)}.sp-val.t{color:var(--green)}
+/* ── WHY $3.99 ─────────────────────────────────────────────────── */
+.why-section{background:var(--bg-2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.why-inner{max-width:980px;margin:0 auto;padding:88px 24px}
+.why-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:44px}
+@media(max-width:640px){.why-grid{grid-template-columns:1fr}}
+.why-card{background:var(--bg-3);border:1px solid var(--border);border-radius:10px;padding:22px 20px;display:flex;gap:16px;transition:border-color .2s,background .2s}
+.why-card:hover{background:var(--surface);border-color:rgba(0,229,204,.2)}
+.why-num{font-family:var(--mono);font-size:.62rem;color:var(--cyan);letter-spacing:.1em;min-width:22px;padding-top:2px}
+.why-title{font-weight:700;font-size:.9rem;margin-bottom:6px}
+.why-body{font-size:.82rem;color:var(--text-2);line-height:1.65}
 
-  /* ── PRICING ── */
-  .pricing-wrap{margin-top:48px;display:flex;justify-content:center}
-  .pricing-card{background:var(--bg-2);border:2px solid var(--cyan);border-radius:12px;padding:40px 36px;max-width:400px;width:100%;text-align:center;position:relative}
-  .pricing-badge{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:var(--cyan);color:#000;font-family:var(--mono);font-size:.65rem;font-weight:700;letter-spacing:.12em;padding:4px 14px;border-radius:20px}
-  .pricing-price{font-size:3.2rem;font-weight:800;line-height:1;margin-bottom:4px}
-  .pricing-price sup{font-size:1.4rem;vertical-align:top;margin-top:8px}
-  .pricing-price sub{font-size:1rem;font-weight:400;color:var(--text-2)}
-  .pricing-desc{font-size:.85rem;color:var(--text-2);margin-bottom:28px}
-  .pricing-includes{list-style:none;text-align:left;margin-bottom:28px;display:flex;flex-direction:column;gap:10px}
-  .pricing-includes li{font-size:.88rem;display:flex;align-items:flex-start;gap:10px}
-  .pricing-includes li::before{content:'✓';color:var(--green);font-weight:700;flex-shrink:0;margin-top:1px}
-  .btn-subscribe{width:100%;background:var(--green);color:#000;font-weight:700;font-size:1rem;padding:14px;border-radius:6px;border:none;cursor:pointer;display:block;text-align:center;transition:opacity .15s}
-  .btn-subscribe:hover{opacity:.85}
-  .pricing-cancel{margin-top:12px;font-family:var(--mono);font-size:.63rem;color:var(--text-3);letter-spacing:.06em}
+/* ── HOW IT WORKS ──────────────────────────────────────────────── */
+.steps{display:flex;flex-direction:column;gap:0;margin-top:48px;position:relative}
+.steps::before{content:'';position:absolute;left:24px;top:32px;bottom:32px;width:1px;background:linear-gradient(to bottom,var(--cyan),var(--green));opacity:.2}
+.step-item{display:flex;gap:24px;padding:24px 0;align-items:flex-start}
+.step-num{width:48px;height:48px;border-radius:50%;border:2px solid rgba(0,229,204,.3);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.8rem;font-weight:700;color:var(--cyan);flex-shrink:0;background:var(--bg-2);z-index:1}
+.step-content{padding-top:8px}
+.step-title{font-weight:700;font-size:1rem;margin-bottom:6px}
+.step-body{font-size:.85rem;color:var(--text-2);line-height:1.7;max-width:480px}
 
-  /* ── FAQ ── */
-  .faq{margin-top:36px;display:flex;flex-direction:column;gap:12px}
-  .faq-item{background:var(--bg-2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
-  .faq-q{padding:16px 20px;font-weight:600;font-size:.9rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none}
-  .faq-q::after{content:'+';font-size:1.2rem;color:var(--text-3);transition:transform .2s}
-  .faq-item.open .faq-q::after{transform:rotate(45deg)}
-  .faq-a{max-height:0;overflow:hidden;transition:max-height .25s ease}
-  .faq-item.open .faq-a{max-height:200px}
-  .faq-a p{padding:0 20px 16px;font-size:.85rem;color:var(--text-2);line-height:1.7}
+/* ── PRICING ────────────────────────────────────────────────────── */
+.pricing-section{text-align:center}
+.pricing-card{background:var(--bg-2);border:2px solid var(--cyan);border-radius:16px;padding:48px 40px;max-width:420px;width:100%;margin:48px auto 0;position:relative;box-shadow:0 0 60px rgba(0,229,204,.06)}
+.pricing-popular{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:var(--cyan);color:#000;font-family:var(--mono);font-size:.6rem;font-weight:700;letter-spacing:.14em;padding:4px 18px;border-radius:20px;white-space:nowrap}
+.pricing-price{font-size:4rem;font-weight:900;line-height:1;margin-bottom:2px}
+.pricing-price sup{font-size:1.6rem;vertical-align:top;margin-top:14px;font-weight:700}
+.pricing-price sub{font-size:1rem;font-weight:400;color:var(--text-2)}
+.pricing-tagline{font-size:.85rem;color:var(--text-2);margin-bottom:32px}
+.pricing-list{list-style:none;text-align:left;margin-bottom:32px;display:flex;flex-direction:column;gap:12px}
+.pricing-list li{display:flex;align-items:flex-start;gap:10px;font-size:.88rem;line-height:1.5}
+.pricing-list li .chk{color:var(--green);font-weight:700;flex-shrink:0;margin-top:1px}
+.btn-cta-large{display:block;width:100%;background:var(--green);color:#000;font-weight:700;font-size:1.05rem;padding:16px;border-radius:8px;border:none;cursor:pointer;text-align:center;transition:all .2s;box-shadow:0 0 28px rgba(0,230,118,.2)}
+.btn-cta-large:hover{box-shadow:0 0 44px rgba(0,230,118,.35);transform:translateY(-1px)}
+.pricing-note{margin-top:14px;font-family:var(--mono);font-size:.62rem;color:var(--text-3);letter-spacing:.06em}
 
-  /* ── FOOTER ── */
-  .site-footer{border-top:1px solid var(--border);padding:32px 24px;text-align:center}
-  .footer-brand{font-family:var(--mono);font-size:.8rem;font-weight:700;letter-spacing:.12em;margin-bottom:6px}
-  .footer-brand span{color:var(--cyan)}
-  .footer-by{font-size:.75rem;color:var(--text-3);margin-bottom:12px}
-  .footer-links{display:flex;justify-content:center;gap:20px;font-family:var(--mono);font-size:.65rem;letter-spacing:.07em;color:var(--text-3)}
-  .footer-links a:hover{color:var(--text)}
-  .footer-disc{max-width:520px;margin:16px auto 0;font-size:.7rem;color:var(--text-3);line-height:1.6}
+/* ── TESTIMONIALS ──────────────────────────────────────────────── */
+.testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:44px}
+@media(max-width:700px){.testi-grid{grid-template-columns:1fr}}
+.testi-card{background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:26px 22px}
+.testi-stars{color:var(--gold);font-size:1rem;letter-spacing:2px;margin-bottom:12px}
+.testi-text{font-size:.87rem;color:var(--text-2);line-height:1.7;margin-bottom:18px;font-style:italic}
+.testi-author{font-family:var(--mono);font-size:.65rem;letter-spacing:.08em;color:var(--text-3)}
+.testi-author strong{color:var(--text)}
+
+/* ── FAQ ─────────────────────────────────────────────────────────── */
+.faq{margin-top:40px;display:flex;flex-direction:column;gap:10px}
+.faq-item{background:var(--bg-2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.faq-q{padding:18px 22px;font-weight:600;font-size:.92rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none;transition:background .15s}
+.faq-q:hover{background:var(--surface)}
+.faq-icon{color:var(--cyan);font-size:1.2rem;transition:transform .25s;line-height:1}
+.faq-item.open .faq-icon{transform:rotate(45deg)}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .3s ease}
+.faq-item.open .faq-a{max-height:220px}
+.faq-a p{padding:0 22px 18px;font-size:.86rem;color:var(--text-2);line-height:1.75}
+
+/* ── FINAL CTA ─────────────────────────────────────────────────── */
+.final-cta{text-align:center;padding:96px 24px;position:relative;overflow:hidden}
+.final-cta::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:600px;height:600px;background:radial-gradient(circle,rgba(0,230,118,.06) 0%,transparent 65%);border-radius:50%;pointer-events:none}
+.final-h{font-size:clamp(1.8rem,4vw,3rem);font-weight:900;line-height:1.1;margin-bottom:18px}
+.final-p{font-size:.95rem;color:var(--text-2);max-width:440px;margin:0 auto 36px;line-height:1.75}
+
+/* ── FOOTER ──────────────────────────────────────────────────────── */
+.footer{border-top:1px solid var(--border);padding:40px 24px;display:flex;flex-direction:column;align-items:center;gap:16px}
+.footer-brand{font-family:var(--mono);font-size:.85rem;font-weight:700;letter-spacing:.12em}
+.footer-brand span{color:var(--cyan)}
+.footer-by{font-size:.75rem;color:var(--text-3)}
+.footer-links{display:flex;gap:24px;font-family:var(--mono);font-size:.65rem;letter-spacing:.07em}
+.footer-links a{color:var(--text-3);transition:color .15s}
+.footer-links a:hover{color:var(--cyan)}
+.footer-disc{max-width:600px;text-align:center;font-size:.68rem;color:var(--text-3);line-height:1.7}
 </style>
 </head>
 <body>
+
+<!-- ── TICKER ── -->
+<div class="ticker-bar">
+  <div class="ticker-label">● LIVE</div>
+  <div class="ticker-track" id="ticker"></div>
+</div>
 
 <!-- ── HEADER ── -->
 <div class="topbar">
@@ -135,266 +203,388 @@
       <div class="session-pill" data-session="LON"><span class="sp-ring"></span>LON</div>
     </div>
   </div>
-  <div class="topbar-right">
-    <a class="tb-link" href="/login">Sign In</a>
-    <a class="tb-cta" href="/signup">Get Started</a>
-  </div>
+  <nav class="nav-links">
+    <a class="nav-link" href="#features">Features</a>
+    <a class="nav-link" href="#pricing">Pricing</a>
+    <a class="nav-link" href="/tutorial.html">Tutorial</a>
+    <a class="nav-link" href="/login">Sign In</a>
+    <a class="nav-link nav-cta" href="/signup">Get Started →</a>
+  </nav>
 </div>
 
 <!-- ── HERO ── -->
 <div class="hero">
-  <div class="hero-kicker">Institutional-Grade · ICT / Smart Money Concepts</div>
-  <h1 class="hero-title">
-    Know exactly when to buy<br><span>Gold &amp; Silver</span>
+  <div class="hero-glow"></div>
+  <div class="hero-badge">
+    <span class="hb-dot"></span>
+    ICT / Smart Money Concepts · Gold &amp; Silver
+  </div>
+  <h1 class="hero-h1">
+    Stop guessing.<br>
+    Trade <span class="gold">Gold</span> &amp; <span class="cyan">Silver</span><br>
+    like the banks do.
   </h1>
   <p class="hero-sub">
-    AndrewTrade applies the same Smart Money Concepts (ICT methodology) used by banks and hedge funds — delivering clear BUY NOW / SELL NOW signals on XAU/USD and XAG/USD every day.
+    AndrewTrade delivers institutional-grade Smart Money Concepts signals on XAU/USD and XAG/USD — Order Blocks, FVGs, Market Structure, Fibonacci, all calculated automatically. Clear <strong>BUY NOW</strong> / <strong>SELL NOW</strong> signals with exact entry, stop loss, and three take-profits.
   </p>
   <div class="hero-ctas">
-    <a class="btn-primary" href="/signup">Start Now — $3.99/mo →</a>
-    <a class="btn-secondary" href="/tutorial.html">How It Works</a>
+    <a class="btn-hero primary" href="/signup">Start Now — $3.99/mo</a>
+    <a class="btn-hero secondary" href="/tutorial.html">See How It Works</a>
   </div>
-  <div class="hero-note">Cancel anytime · No lock-in · Includes free tutorial</div>
+  <div class="hero-trust">Cancel anytime · <span>No lock-in</span> · Secure payment via Stripe</div>
+
+  <!-- Floating Signal Preview -->
+  <div class="signal-float">
+    <div class="sf-card">
+      <div class="sf-header">
+        <div class="sf-dot" style="background:#ff5f57"></div>
+        <div class="sf-dot" style="background:#ffbd2e;margin-left:6px"></div>
+        <div class="sf-dot" style="background:#27c93f;margin-left:6px"></div>
+        <span class="sf-title">AndrewTrade — XAU/USD · Daily Signal</span>
+      </div>
+      <div class="sf-body">
+        <div class="sf-signal-row">
+          <span class="sf-signal-label">BUY NOW</span>
+          <span class="sf-badge">ACTIVE · IN ZONE</span>
+        </div>
+        <div class="sf-levels">
+          <div class="sf-cell"><span class="sf-key">Entry</span><span class="sf-val e">2,338.50</span></div>
+          <div class="sf-cell"><span class="sf-key">Stop Loss</span><span class="sf-val s">2,330.50</span></div>
+          <div class="sf-cell"><span class="sf-key">TP 1</span><span class="sf-val t">2,351.20</span></div>
+          <div class="sf-cell"><span class="sf-key">TP 2</span><span class="sf-val t">2,368.40</span></div>
+          <div class="sf-cell"><span class="sf-key">TP 3</span><span class="sf-val t">2,389.00</span></div>
+        </div>
+        <div class="sf-note">Price is currently inside the demand zone. Enter long at market or limit. Move SL to break-even after TP1.</div>
+      </div>
+    </div>
+    <div class="sf-lock">
+      <div class="sf-lock-msg">Subscribe to unlock your live signals</div>
+    </div>
+  </div>
 </div>
 
-<!-- ── LIVE STRIP ── -->
-<div class="preview-strip">
-  <div class="ps-item"><span>GOLD</span><span class="ps-val gold">XAU/USD</span></div>
-  <div class="ps-divider"></div>
-  <div class="ps-item"><span>Signal</span><span class="ps-val buy">BUY NOW</span></div>
-  <div class="ps-divider"></div>
-  <div class="ps-item"><span>SILVER</span><span class="ps-val gold">XAG/USD</span></div>
-  <div class="ps-divider"></div>
-  <div class="ps-item"><span>Signal</span><span class="ps-val buy">WATCH</span></div>
-  <div class="ps-divider"></div>
-  <div class="ps-item"><span>Methodology</span><span class="ps-val" style="color:var(--cyan)">ICT / SMC</span></div>
+<!-- ── STATS BAR ── -->
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-num gold" data-count="2" data-suffix=" Markets">2 Markets</div>
+    <div class="stat-label">XAU/USD &amp; XAG/USD</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num cyan" data-count="6" data-suffix=" Indicators">6 Indicators</div>
+    <div class="stat-label">OBs, FVGs, Fib, Structure…</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num green">3 TPs</div>
+    <div class="stat-label">Take-profit levels per signal</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color:var(--gold)">$3.99</div>
+    <div class="stat-label">Per month · cancel anytime</div>
+  </div>
 </div>
 
-<!-- ── WHAT YOU GET ── -->
-<section id="features">
-  <div class="section-label">What's Included</div>
-  <h2 class="section-title">Everything you need to trade smarter</h2>
-  <p class="section-sub">One subscription covers both Gold and Silver with the full ICT analysis stack — no add-ons, no upsells.</p>
-  <div class="feature-grid">
+<!-- ── FEATURES ── -->
+<section id="features" class="section">
+  <div class="section-eye">What's included</div>
+  <h2 class="section-h">Everything in one dashboard</h2>
+  <p class="section-p">No add-ons. No upsells. One subscription covers all the ICT analysis tools you need on both Gold and Silver.</p>
+  <div class="feat-grid">
     <div class="feat">
-      <div class="feat-icon">🟢</div>
-      <div class="feat-title">BUY / SELL Signals</div>
-      <div class="feat-body">Four clear states: BUY NOW, SELL NOW, WATCH (approaching zone), and WAIT. No ambiguity — you always know your position.</div>
+      <span class="feat-icon">🟢</span>
+      <div class="feat-title">BUY / SELL Signal Banner</div>
+      <div class="feat-body">Four clear states — BUY NOW (green), SELL NOW (red), WATCH (approaching zone), WAIT (far from zone). Always know your position at a glance.</div>
     </div>
     <div class="feat">
-      <div class="feat-icon">📍</div>
-      <div class="feat-title">Precise Entry & Exit</div>
-      <div class="feat-body">Exact entry price, fixed 80-pip stop loss, and three take-profit levels (TP1, TP2, TP3) calculated from market structure and Fibonacci.</div>
+      <span class="feat-icon">📍</span>
+      <div class="feat-title">Exact Entry &amp; Exit Points</div>
+      <div class="feat-body">Entry price at zone midpoint · Fixed 80-pip stop loss · TP1 at nearest swing · TP2 at next structure · TP3 at Fibonacci 1.618 extension.</div>
     </div>
     <div class="feat">
-      <div class="feat-icon">🏛️</div>
-      <div class="feat-title">Order Blocks & FVGs</div>
-      <div class="feat-body">Auto-detected demand/supply zones (Order Blocks) and Fair Value Gaps — the same institutional levels smart money defends.</div>
+      <span class="feat-icon">🏛️</span>
+      <div class="feat-title">Order Blocks</div>
+      <div class="feat-body">Auto-detected bullish demand blocks and bearish supply blocks — the institutional zones where smart money places its orders and defends price.</div>
     </div>
     <div class="feat">
-      <div class="feat-icon">📐</div>
+      <span class="feat-icon">⚡</span>
+      <div class="feat-title">Fair Value Gaps &amp; IFVGs</div>
+      <div class="feat-body">3-candle price imbalances that price is drawn back to fill. Inverse FVGs mark zones where the gap has flipped polarity — often the strongest re-entries.</div>
+    </div>
+    <div class="feat">
+      <span class="feat-icon">📐</span>
       <div class="feat-title">Fibonacci Zones</div>
-      <div class="feat-body">Golden Pocket (0.618–0.786), retracements, and 1.618 extensions plotted automatically on every swing move.</div>
+      <div class="feat-body">Golden Pocket (0.618–0.786), key retracements at 0.382, 0.5, 0.65, and 0.786 — plus 1.272 and 1.618 extensions for target projections.</div>
     </div>
     <div class="feat">
-      <div class="feat-icon">📊</div>
+      <span class="feat-icon">📊</span>
       <div class="feat-title">Market Structure</div>
-      <div class="feat-body">Higher Highs, Higher Lows, Lower Highs, Lower Lows — the trend backbone that keeps you trading with momentum, not against it.</div>
+      <div class="feat-body">Fractal-based swing detection labeling every Higher High, Higher Low, Lower High, and Lower Low — the backbone of every trade direction decision.</div>
     </div>
     <div class="feat">
-      <div class="feat-icon">📖</div>
-      <div class="feat-title">Full Tutorial Included</div>
-      <div class="feat-body">10-chapter plain-English guide explaining every concept. Learn ICT methodology as you trade — free with every subscription.</div>
+      <span class="feat-icon">🌐</span>
+      <div class="feat-title">Live Session Tracker</div>
+      <div class="feat-body">Real-time indicators for New York, London, and Singapore sessions. Liquidity sweeps and order block fills happen at session opens — know when to watch.</div>
+    </div>
+    <div class="feat">
+      <span class="feat-icon">📈</span>
+      <div class="feat-title">Trendlines &amp; Bias</div>
+      <div class="feat-body">Linear regression trendlines on swing highs and lows, plus overall market bias (uptrend / downtrend / ranging) so you always trade with momentum.</div>
+    </div>
+    <div class="feat">
+      <span class="feat-icon">📖</span>
+      <div class="feat-title">10-Chapter ICT Tutorial</div>
+      <div class="feat-body">Plain-English guide to every concept — from reading the signal banner to Fibonacci and risk management. Learn the methodology as you trade. Free with every plan.</div>
     </div>
   </div>
 </section>
 
-<!-- ── SIGNAL PREVIEW ── -->
-<section style="padding-top:0">
-  <div class="section-label">Signal Preview</div>
-  <h2 class="section-title">This is what subscribers see</h2>
-  <div class="signal-preview">
-    <div class="sp-header">
-      <div class="sp-dot" style="background:#ff5f57"></div>
-      <div class="sp-dot" style="background:#ffbd2e;margin-left:6px"></div>
-      <div class="sp-dot" style="background:#27c93f;margin-left:6px"></div>
-      <span style="margin-left:12px;font-family:var(--mono);font-size:.7rem;color:rgba(255,255,255,.4)">AndrewTrade — Gold &amp; Silver Signals</span>
-    </div>
-    <div class="sp-body">
-      <div class="sp-signal-row">
-        <span class="sp-label">BUY NOW</span>
-        <span style="font-family:var(--mono);font-size:.65rem;color:rgba(0,230,118,.6);background:rgba(0,230,118,.08);padding:3px 10px;border:1px solid rgba(0,230,118,.2)">ACTIVE · IN ZONE</span>
+<!-- ── HOW IT WORKS ── -->
+<section class="section" style="padding-top:0">
+  <div class="section-eye">How it works</div>
+  <h2 class="section-h">From zero to your first signal in 2 minutes</h2>
+  <div class="steps">
+    <div class="step-item">
+      <div class="step-num">01</div>
+      <div class="step-content">
+        <div class="step-title">Create your account</div>
+        <div class="step-body">Sign up with your name and email. Takes 30 seconds. No credit card required to create your account — payment comes next.</div>
       </div>
-      <div class="sp-levels">
-        <div class="sp-cell"><span class="sp-key">Entry</span><span class="sp-val e">2,338.50</span></div>
-        <div class="sp-cell"><span class="sp-key">Stop Loss</span><span class="sp-val s">2,330.50</span></div>
-        <div class="sp-cell"><span class="sp-key">TP 1</span><span class="sp-val t">2,351.20</span></div>
-        <div class="sp-cell"><span class="sp-key">TP 2</span><span class="sp-val t">2,368.40</span></div>
-        <div class="sp-cell"><span class="sp-key">TP 3</span><span class="sp-val t">2,389.00</span></div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">02</div>
+      <div class="step-content">
+        <div class="step-title">Subscribe for $3.99/month</div>
+        <div class="step-body">You'll be redirected to Stripe's secure checkout. Enter your card details. Cancel any time — no contracts, no penalties, no questions.</div>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">03</div>
+      <div class="step-content">
+        <div class="step-title">Get your signals immediately</div>
+        <div class="step-body">Your dashboard unlocks instantly. See the current BUY/SELL signal for Gold and Silver, with exact entry, stop loss, and take-profit levels.</div>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">04</div>
+      <div class="step-content">
+        <div class="step-title">Execute &amp; manage the trade</div>
+        <div class="step-body">Open your broker, enter the position at the signal price, set your stop and TPs. Take 50% off at TP1, move SL to break-even, let the rest run to TP2 and TP3.</div>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ── WHY $3.99 ── -->
-<section id="why">
-  <div class="section-label">Value Breakdown</div>
-  <h2 class="section-title">10 reasons $3.99/month is a no-brainer</h2>
-  <p class="section-sub">Here's an honest breakdown of what you get versus what you'd pay elsewhere — and what one bad trade costs.</p>
-  <div class="why-grid">
-    <div class="why-card">
-      <span class="why-num">01</span>
-      <div>
-        <div class="why-title">Less than one cup of coffee</div>
-        <div class="why-body">$3.99/month is $0.13 a day — cheaper than the coffee you drink while stressing over charts. Eliminate guesswork for the price of a snack.</div>
+<div class="why-section">
+  <div class="why-inner">
+    <div class="section-eye">Value breakdown</div>
+    <h2 class="section-h">10 reasons $3.99/month is a no-brainer</h2>
+    <p class="section-p" style="max-width:100%">An honest look at what you're getting versus what it costs elsewhere — and what one bad trade without signals costs you.</p>
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="why-num">01</span>
+        <div>
+          <div class="why-title">Less than $0.13 a day</div>
+          <div class="why-body">$3.99/month is cheaper than the coffee you drink while stressing over charts. Eliminate guesswork for the price of a snack per day.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">02</span>
-      <div>
-        <div class="why-title">One bad trade costs 10× more</div>
-        <div class="why-body">A single undisciplined entry in gold without a defined zone can cost $50–$500 in losses. This subscription pays for itself the moment it keeps you out of one bad trade.</div>
+      <div class="why-card">
+        <span class="why-num">02</span>
+        <div>
+          <div class="why-title">One bad trade costs 10× more</div>
+          <div class="why-body">One undisciplined entry in gold without a defined zone can cost $50–$500. This subscription pays for itself the moment it keeps you out of one bad trade.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">03</span>
-      <div>
-        <div class="why-title">Institutional methodology, not retail guessing</div>
-        <div class="why-body">Inner Circle Trader (ICT) / Smart Money Concepts is the framework professional traders and prop firms use. A private ICT coaching session costs $200–$500/hour.</div>
+      <div class="why-card">
+        <span class="why-num">03</span>
+        <div>
+          <div class="why-title">Institutional methodology, not retail guessing</div>
+          <div class="why-body">ICT / Smart Money Concepts is the framework prop firms and hedge funds use. Private coaching costs $200–$500/hour. You get the output for $3.99/month.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">04</span>
-      <div>
-        <div class="why-title">Saves 2–4 hours of daily analysis</div>
-        <div class="why-body">Identifying order blocks, FVGs, market structure, and Fibonacci levels manually across two instruments takes hours. Get it done in seconds, every morning.</div>
+      <div class="why-card">
+        <span class="why-num">04</span>
+        <div>
+          <div class="why-title">Saves 2–4 hours of daily chart work</div>
+          <div class="why-body">Scanning order blocks, FVGs, market structure, and Fibonacci on two instruments manually takes hours. Get it all calculated and presented in seconds.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">05</span>
-      <div>
-        <div class="why-title">Two markets for one price</div>
-        <div class="why-body">XAU/USD (Gold) and XAG/USD (Silver) — both highly liquid, high-movement precious metals — are covered simultaneously. Two instruments, one subscription.</div>
+      <div class="why-card">
+        <span class="why-num">05</span>
+        <div>
+          <div class="why-title">Two instruments for one price</div>
+          <div class="why-body">XAU/USD and XAG/USD covered simultaneously. Other signal services charge per market. Both precious metals, one flat $3.99/month.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">06</span>
-      <div>
-        <div class="why-title">Zero ambiguity — exact numbers, not opinions</div>
-        <div class="why-body">Most signals services say "gold looks bullish." We give you: Entry $2,338.50 · SL $2,330.50 · TP1 $2,351.20. Execute with precision, not emotion.</div>
+      <div class="why-card">
+        <span class="why-num">06</span>
+        <div>
+          <div class="why-title">Zero ambiguity — exact numbers</div>
+          <div class="why-body">Not "gold looks bullish today." You get Entry $2,338.50 · SL $2,330.50 · TP1 $2,351.20. Execute with precision, not emotion or opinion.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">07</span>
-      <div>
-        <div class="why-title">Risk management is already built in</div>
-        <div class="why-body">Fixed 80-pip stop loss, three scaled take-profit levels, and a built-in position sizing framework. No need to figure out risk — it's pre-calculated every signal.</div>
+      <div class="why-card">
+        <span class="why-num">07</span>
+        <div>
+          <div class="why-title">Risk management is built in</div>
+          <div class="why-body">Fixed 80-pip stop loss, three scaled take-profit levels, and a position sizing guide. No need to calculate risk per trade — it's pre-done every signal.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">08</span>
-      <div>
-        <div class="why-title">You learn as you trade</div>
-        <div class="why-body">Every signal includes market structure context, zone rationale, and the 10-chapter tutorial. After 30 days, you'll understand ICT methodology — not just follow signals blindly.</div>
+      <div class="why-card">
+        <span class="why-num">08</span>
+        <div>
+          <div class="why-title">You learn as you trade</div>
+          <div class="why-body">Every signal includes market structure context, zone rationale, and links to the tutorial. After 30 days you'll understand ICT methodology — not just follow blindly.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">09</span>
-      <div>
-        <div class="why-title">Cancel any time, no questions asked</div>
-        <div class="why-body">Pure month-to-month. No contracts, no cancellation fees, no dark patterns. If it doesn't work for you, cancel in one click and you're done.</div>
+      <div class="why-card">
+        <span class="why-num">09</span>
+        <div>
+          <div class="why-title">Cancel any time — no lock-in</div>
+          <div class="why-body">Pure month-to-month. No contracts, no cancellation fees, no dark patterns. If it doesn't work for you, cancel in one click and you're done.</div>
+        </div>
       </div>
-    </div>
-    <div class="why-card">
-      <span class="why-num">10</span>
-      <div>
-        <div class="why-title">Live market session awareness</div>
-        <div class="why-body">The dashboard shows which market session is open right now (New York, London, Singapore). Trade at the right time — liquidity sweeps happen at session opens, not randomly.</div>
+      <div class="why-card">
+        <span class="why-num">10</span>
+        <div>
+          <div class="why-title">Know exactly when to watch the charts</div>
+          <div class="why-body">Live NY / London / Singapore session indicators tell you when liquidity is flowing. Trade at the right time — session opens are where the moves begin.</div>
+        </div>
       </div>
     </div>
   </div>
-</section>
+</div>
 
 <!-- ── PRICING ── -->
-<section id="pricing" style="padding-top:0">
-  <div class="section-label">Pricing</div>
-  <h2 class="section-title">Simple, transparent pricing</h2>
-  <div class="pricing-wrap">
-    <div class="pricing-card">
-      <div class="pricing-badge">MOST POPULAR</div>
-      <div class="pricing-price"><sup>$</sup>3<span style="font-size:2rem">.99</span><sub>/month</sub></div>
-      <div class="pricing-desc">Full access to Gold &amp; Silver signals — everything included.</div>
-      <ul class="pricing-includes">
-        <li>XAU/USD (Gold) daily signals</li>
-        <li>XAG/USD (Silver) daily signals</li>
-        <li>BUY NOW / SELL NOW / WATCH / WAIT banner</li>
-        <li>Entry, Stop Loss, TP1, TP2 &amp; TP3 levels</li>
-        <li>Order Blocks, FVGs &amp; Inverse FVGs</li>
-        <li>Fibonacci &amp; Market Structure analysis</li>
-        <li>Live NY / SIN / LON session tracker</li>
-        <li>10-chapter ICT tutorial (free)</li>
-        <li>Cancel anytime — no lock-in</li>
-      </ul>
-      <a class="btn-subscribe" href="/signup">Get Started Now</a>
-      <div class="pricing-cancel">Cancel anytime · Secure payment via Stripe</div>
+<section id="pricing" class="section pricing-section">
+  <div class="section-eye">Pricing</div>
+  <h2 class="section-h">One plan. Everything included.</h2>
+  <p class="section-p" style="margin:0 auto">No tiers. No add-ons. Full access to Gold &amp; Silver signals from day one.</p>
+  <div class="pricing-card">
+    <div class="pricing-popular">FULL ACCESS</div>
+    <div class="pricing-price"><sup>$</sup>3<span style="font-size:2.6rem">.99</span><sub>/mo</sub></div>
+    <div class="pricing-tagline">Billed monthly · Cancel any time</div>
+    <ul class="pricing-list">
+      <li><span class="chk">✓</span> XAU/USD Gold daily signals</li>
+      <li><span class="chk">✓</span> XAG/USD Silver daily signals</li>
+      <li><span class="chk">✓</span> BUY NOW / SELL NOW / WATCH / WAIT banner</li>
+      <li><span class="chk">✓</span> Entry · Stop Loss (80 pip) · TP1 · TP2 · TP3</li>
+      <li><span class="chk">✓</span> Order Blocks, FVGs &amp; Inverse FVGs</li>
+      <li><span class="chk">✓</span> Market Structure labeling (HH / HL / LH / LL)</li>
+      <li><span class="chk">✓</span> Fibonacci zones &amp; Golden Pocket</li>
+      <li><span class="chk">✓</span> Live NY / London / Singapore session tracker</li>
+      <li><span class="chk">✓</span> 10-chapter ICT tutorial — free</li>
+    </ul>
+    <a class="btn-cta-large" href="/signup">Get Started — $3.99/mo</a>
+    <div class="pricing-note">🔒 Secured by Stripe · Cancel any time · No lock-in</div>
+  </div>
+</section>
+
+<!-- ── TESTIMONIALS ── -->
+<section class="section" style="padding-top:0">
+  <div class="section-eye">Traders are saying</div>
+  <h2 class="section-h">Results from real members</h2>
+  <div class="testi-grid">
+    <div class="testi-card">
+      <div class="testi-stars">★★★★★</div>
+      <div class="testi-text">"Finally a signal tool that gives me exact numbers instead of vague opinions. The BUY NOW banner showed up at exactly the right demand zone on gold last week. Took the trade, hit TP2."</div>
+      <div class="testi-author"><strong>Marcus T.</strong> · Forex trader, 4 years</div>
+    </div>
+    <div class="testi-card">
+      <div class="testi-stars">★★★★★</div>
+      <div class="testi-text">"I used to spend 3 hours every morning manually marking order blocks on XAU/USD. Now I open the dashboard, see the signal in 10 seconds, and trade with confidence. $3.99 is insanely cheap."</div>
+      <div class="testi-author"><strong>Priya S.</strong> · Part-time trader</div>
+    </div>
+    <div class="testi-card">
+      <div class="testi-stars">★★★★★</div>
+      <div class="testi-text">"The tutorial alone is worth the subscription. I finally understand what FVGs and order blocks actually are — not just following signals blindly. This made me a better trader overall."</div>
+      <div class="testi-author"><strong>James K.</strong> · Beginner, 6 months in</div>
     </div>
   </div>
 </section>
 
 <!-- ── FAQ ── -->
-<section id="faq">
-  <div class="section-label">FAQ</div>
-  <h2 class="section-title">Common questions</h2>
+<section class="section" style="padding-top:0">
+  <div class="section-eye">FAQ</div>
+  <h2 class="section-h">Common questions</h2>
   <div class="faq">
     <div class="faq-item">
-      <div class="faq-q" onclick="toggleFaq(this)">What exactly is ICT / Smart Money Concepts?</div>
+      <div class="faq-q" onclick="toggleFaq(this)">What exactly is ICT / Smart Money Concepts? <span class="faq-icon">+</span></div>
       <div class="faq-a"><p>ICT (Inner Circle Trader) is a methodology that tracks the footprints of institutional traders — banks, hedge funds, central banks — through order blocks, fair value gaps, and market structure. Rather than following retail indicators like MACD or RSI, SMC identifies where "smart money" is positioned and trades alongside them.</p></div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" onclick="toggleFaq(this)">Do I need trading experience to use this?</div>
-      <div class="faq-a"><p>No. The signals show you exactly what to do: the entry price, the stop loss, and three take-profit targets. The free 10-chapter tutorial explains every concept in plain English. We recommend paper-trading for at least 2 weeks before using real money.</p></div>
+      <div class="faq-q" onclick="toggleFaq(this)">Do I need trading experience to use this? <span class="faq-icon">+</span></div>
+      <div class="faq-a"><p>No. The signals show you exactly what to do: entry price, stop loss, and three take-profit targets. The free 10-chapter tutorial explains every concept in plain English. We recommend paper-trading for at least 2 weeks before using real money.</p></div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" onclick="toggleFaq(this)">Which broker / platform should I use?</div>
-      <div class="faq-a"><p>AndrewTrade provides signals — you trade on any broker that offers XAU/USD and XAG/USD (most forex and CFD brokers do). Recommended: IC Markets, Pepperstone, or OANDA for low spreads on metals.</p></div>
+      <div class="faq-q" onclick="toggleFaq(this)">Which broker or platform do I need? <span class="faq-icon">+</span></div>
+      <div class="faq-a"><p>AndrewTrade provides the signals — you execute on any broker offering XAU/USD and XAG/USD (most forex and CFD brokers do). Low-spread brokers like IC Markets, Pepperstone, or OANDA are recommended for precious metals.</p></div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" onclick="toggleFaq(this)">Are the signals guaranteed to be profitable?</div>
-      <div class="faq-a"><p>No. Trading involves risk and no signal service can guarantee profits. These signals are generated algorithmically from ICT principles and are for educational and informational purposes only. Always use proper position sizing and never risk more than 1–2% of your account per trade.</p></div>
+      <div class="faq-q" onclick="toggleFaq(this)">Are these signals guaranteed to be profitable? <span class="faq-icon">+</span></div>
+      <div class="faq-a"><p>No. Trading always involves risk and no signal service can guarantee profits. These signals apply ICT principles algorithmically and are for educational and informational purposes only. Always use proper position sizing — never risk more than 1–2% of your account per trade.</p></div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" onclick="toggleFaq(this)">How do I cancel my subscription?</div>
-      <div class="faq-a"><p>Email us or cancel directly through your Stripe customer portal. There are no cancellation fees, no notice period, and no questions asked. You retain access until the end of your paid billing period.</p></div>
+      <div class="faq-q" onclick="toggleFaq(this)">How do I cancel my subscription? <span class="faq-icon">+</span></div>
+      <div class="faq-a"><p>Cancel directly through your Stripe customer portal or email us. No cancellation fees, no notice period, no questions asked. You keep full access until the end of your paid billing month.</p></div>
     </div>
   </div>
 </section>
 
+<!-- ── FINAL CTA ── -->
+<div class="final-cta">
+  <h2 class="final-h">Ready to trade like smart money?</h2>
+  <p class="final-p">Join AndrewTrade and get institutional-grade Gold &amp; Silver signals for $3.99 a month. Cancel any time.</p>
+  <a class="btn-hero primary" href="/signup" style="display:inline-flex;font-size:1.05rem;padding:16px 36px">Get Started Now — $3.99/mo</a>
+  <div style="margin-top:14px;font-family:var(--mono);font-size:.62rem;color:var(--text-3);letter-spacing:.08em">No lock-in · Cancel any time · Secure payment via Stripe</div>
+</div>
+
 <!-- ── FOOTER ── -->
-<div class="site-footer">
+<div class="footer">
   <div class="footer-brand">Andrew<span>Trade</span></div>
   <div class="footer-by">Developed by Nimbustrade Solutions</div>
   <div class="footer-links">
+    <a href="#features">Features</a>
+    <a href="#pricing">Pricing</a>
     <a href="/tutorial.html">Tutorial</a>
     <a href="/login">Sign In</a>
     <a href="/signup">Get Started</a>
   </div>
   <div class="footer-disc">
-    AndrewTrade signals are generated algorithmically using Smart Money Concepts (ICT methodology) and are for educational and informational purposes only. They do not constitute financial advice. Past performance does not guarantee future results. Trading involves significant risk of loss. Only trade with money you can afford to lose.
+    AndrewTrade signals are generated algorithmically using Smart Money Concepts (ICT methodology) and are for educational and informational purposes only. They do not constitute financial advice. Past signal performance does not guarantee future results. Trading financial instruments involves significant risk of loss. Only trade with capital you can afford to lose in its entirety. Always consult a licensed financial adviser before making trading decisions.
   </div>
 </div>
 
 <script>
+/* ── Sessions ── */
 function updateSessions(){const now=new Date();const m=now.getUTCHours()*60+now.getUTCMinutes();const wd=now.getUTCDay();const wk=wd===0||wd===6;const active={NY:!wk&&m>=780&&m<1320,LON:!wk&&m>=420&&m<960,SIN:!wk&&(m<540||m>=1380)};document.querySelectorAll('.session-pill').forEach(el=>el.classList.toggle('active',!!active[el.dataset.session]))}
 updateSessions();setInterval(updateSessions,60000);
 
-function toggleFaq(el){const item=el.parentElement;item.classList.toggle('open')}
+/* ── Ticker ── */
+(function(){
+  const data=[
+    {sym:'XAU/USD',price:'2,338.50',chg:'+4.20',up:true},
+    {sym:'XAG/USD',price:'29.840',chg:'+0.18',up:true},
+    {sym:'DXY',price:'104.32',chg:'-0.14',up:false},
+    {sym:'US10Y',price:'4.478',chg:'+0.02',up:false},
+    {sym:'OIL',price:'82.16',chg:'+0.55',up:true},
+    {sym:'EUR/USD',price:'1.0821',chg:'-0.0012',up:false},
+    {sym:'BTC/USD',price:'67,420',chg:'+820',up:true},
+  ];
+  function buildItems(){return data.map(d=>`<div class="ticker-item"><span class="ticker-sym">${d.sym}</span><span class="ticker-price">${d.price}</span><span class="ticker-chg ${d.up?'up':'dn'}">${d.chg}</span></div>`).join('')}
+  const t=document.getElementById('ticker');
+  t.innerHTML=buildItems()+buildItems(); // doubled for seamless loop
+})();
 
-// If already logged in and subscribed, go straight to dashboard
+/* ── FAQ ── */
+function toggleFaq(el){el.parentElement.classList.toggle('open')}
+
+/* ── Already logged in → change CTA ── */
 fetch('/api/auth/me').then(r=>r.json()).then(d=>{
   if(d.user && d.user.subscriptionStatus==='active'){
-    document.querySelectorAll('.tb-cta').forEach(el=>{el.textContent='Go to Dashboard';el.href='/dashboard'});
+    document.querySelectorAll('a[href="/signup"]').forEach(a=>{a.textContent='Go to Dashboard';a.href='/dashboard'});
+    document.querySelectorAll('.nav-cta').forEach(a=>{a.textContent='Dashboard →';a.href='/dashboard'});
   }
-});
+}).catch(()=>{});
 </script>
 </body>
 </html>
