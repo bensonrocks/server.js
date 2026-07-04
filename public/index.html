@@ -3322,7 +3322,6 @@ function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 
 // ── IDEALINVENTORY ────────────────────────────────────────────────────────────
 let _invItems = [], _invPanelSku = null, _invEditSku = null;
-const fmtMoney = n => '$' + Number(n).toFixed(2);
 const fmtQty   = n => Number(n).toLocaleString();
 
 async function invLoad() {
