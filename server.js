@@ -56,6 +56,7 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/nimbustrade', express.static(path.join(__dirname, 'nimbustrade-site')));
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
 
