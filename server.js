@@ -32,6 +32,8 @@ const auth            = require('./lib/auth');
 const importer        = require('./lib/file-importer');
 const { createClientAuth } = require('./lib/client-auth');
 const staffAuth = require('./lib/staff-auth');
+const createInventory   = require('./lib/inventory');
+const createFulfillment = require('./lib/fulfillment');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
@@ -65,13 +67,13 @@ const tenantCtx = new Map();
 
 function getCtx(tenantId) {
   if (!tenantCtx.has(tenantId)) {
-    const db = getTenantDb(tenantId);
-    tenantCtx.set(tenantId, {
-      db,
-      store:   createStore(db),
-      creds:   createCreds(tenantId),
-      syncLog: createSyncLog(db),
-    });
+    const db         = getTenantDb(tenantId);
+    const store      = createStore(db);
+    const creds      = createCreds(tenantId);
+    const syncLog    = createSyncLog(db);
+    const inventory  = createInventory(db);
+    const fulfillment = createFulfillment({ store, creds, inventory });
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment });
   }
   return tenantCtx.get(tenantId);
 }
@@ -88,6 +90,7 @@ function withTenant(req, res, next) {
 
   const ctx      = getCtx(session.tenantId);
   req.tenantId   = session.tenantId;
+  req.ctx        = ctx;
   req.db         = ctx.db;
   req.store      = ctx.store;
   req.creds      = ctx.creds;
@@ -356,31 +359,6 @@ app.delete('/api/orders', withTenant, (req, res) => {
 app.delete('/api/sync-log', withTenant, (req, res) => {
   req.syncLog.clear();
   res.json({ ok: true });
-});
-
-app.get('/api/orders/:id/waybill', async (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const { store, creds } = getCtx(tenantId);
-
-  const order = store.getOrder(req.params.id);
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-
-  const { type, externalId } = order.source || {};
-  const conn = registry[type];
-  if (!conn?.fetchWaybill) return res.status(404).json({ error: 'Waybill not available for this order type' });
-
-  const c = creds.get(type);
-  if (!c?.accessToken) return res.status(400).json({ error: `${conn.meta.name} not connected — check Connections page` });
-
-  try {
-    const result = await conn.fetchWaybill(c, externalId, order);
-    if (result.url) store.updateOrder(order.id, { source: { waybillUrl: result.url } });
-    res.json(result);
-  } catch (e) {
-    res.status(502).json({ error: e.message });
-  }
 });
 
 app.post('/api/orders/ingest-email', (req, res) => {
@@ -1258,6 +1236,124 @@ app.patch('/api/superadmin/tenants/:id', withSuperAdmin, (req, res) => {
   if (active !== undefined) mainDb.prepare('UPDATE tenants SET active=? WHERE id=?').run(active ? 1 : 0, id);
   if (active === false || active === 0) auth.revokeAllTenantSessions(id);
   res.json(mainDb.prepare('SELECT * FROM tenants WHERE id=?').get(id));
+});
+
+// ── Fulfillment ───────────────────────────────────────────────────────────────
+
+app.post('/api/orders/scan-fulfill', withTenant, async (req, res) => {
+  const { code, trackingNo, pushPlatform = true } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'code is required' });
+  try {
+    const result = await req.ctx.fulfillment.scanFulfill(code, { pushPlatform, trackingNo });
+    if (!result) return res.status(404).json({ error: 'No matching order found', code });
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/orders/:id/fulfill', withTenant, async (req, res) => {
+  const { trackingNo, courier, autoAdvance = true, pushPlatform = true, targetStatus } = req.body || {};
+  try {
+    const result = await req.ctx.fulfillment.fulfill(req.params.id, { trackingNo, courier, autoAdvance, pushPlatform, targetStatus });
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/orders/bulk-fulfill', withTenant, async (req, res) => {
+  const { ids, targetStatus, trackingNumbers = {}, pushPlatform = true } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+  const VALID = ['pending','confirmed','processing','packed','shipped','delivered','cancelled'];
+  if (targetStatus && !VALID.includes(targetStatus)) return res.status(400).json({ error: 'Invalid targetStatus' });
+  const results = await Promise.allSettled(
+    ids.map(id => req.ctx.fulfillment.fulfill(id, { targetStatus, autoAdvance: !targetStatus, trackingNo: trackingNumbers[id] || null, pushPlatform }))
+  );
+  const out = ids.map((id, i) => {
+    const r = results[i];
+    return r.status === 'fulfilled' ? { id, ok: true, ...r.value } : { id, ok: false, error: r.reason.message };
+  });
+  res.json({ results: out, succeeded: out.filter(r => r.ok).length, failed: out.filter(r => !r.ok).length });
+});
+
+app.get('/api/orders/lookup', withTenant, (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  const order = req.store.lookupByCode(q);
+  if (!order) return res.status(404).json({ error: 'No matching order found', code: q });
+  res.json(order);
+});
+
+app.patch('/api/orders/:id/status', withTenant, (req, res) => {
+  const { status } = req.body || {};
+  const VALID = ['pending','confirmed','processing','packed','shipped','delivered','cancelled'];
+  if (!VALID.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const order = req.store.updateStatusAndSource(req.params.id, status, { manuallySetAt: new Date().toISOString() });
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  res.json(order);
+});
+
+app.get('/api/orders/:id/waybill', withTenant, async (req, res) => {
+  try {
+    const result = await req.ctx.fulfillment.getWaybill(req.params.id);
+    if (result.base64) {
+      const buf = Buffer.from(result.base64, 'base64');
+      res.set('Content-Type', result.contentType || 'application/pdf');
+      res.set('Content-Disposition', 'inline; filename="waybill-' + req.params.id + '.pdf"');
+      return res.send(buf);
+    }
+    if (result.url) return res.json({ url: result.url, platform: result.platform });
+    res.status(502).json({ error: 'Platform returned no waybill document' });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// ── Inventory ─────────────────────────────────────────────────────────────────
+
+app.get('/api/inventory', withTenant, (req, res) => {
+  const { category, search, lowStock } = req.query;
+  res.json(req.ctx.inventory.getAll({ category, search, lowStock: lowStock === 'true' }));
+});
+
+app.get('/api/inventory/stats', withTenant, (req, res) => res.json(req.ctx.inventory.getStats()));
+
+app.get('/api/inventory/:sku', withTenant, (req, res) => {
+  const item = req.ctx.inventory.get(req.params.sku);
+  if (!item) return res.status(404).json({ error: 'SKU not found' });
+  res.json(item);
+});
+
+app.post('/api/inventory', withTenant, (req, res) => {
+  try { res.status(201).json(req.ctx.inventory.upsert(req.body)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/inventory/:sku', withTenant, (req, res) => {
+  try { res.json(req.ctx.inventory.upsert({ ...req.body, sku: req.params.sku })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/inventory/:sku', withTenant, (req, res) => {
+  req.ctx.inventory.remove(req.params.sku);
+  res.json({ ok: true });
+});
+
+app.post('/api/inventory/:sku/adjust', withTenant, (req, res) => {
+  const { qty, type = 'adjustment', reason = '' } = req.body || {};
+  if (typeof qty !== 'number') return res.status(400).json({ error: 'qty (number) required' });
+  try { res.json(req.ctx.inventory.adjust(req.params.sku, qty, type, reason)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/inventory/:sku/movements', withTenant, (req, res) => {
+  res.json(req.ctx.inventory.movements(req.params.sku, Number(req.query.limit) || 50));
+});
+
+// ── Webhooks ──────────────────────────────────────────────────────────────────
+
+app.post('/webhook/shopee', (req, res) => {
+  // TODO: verify HMAC signature, then call store.addOrder or update status
+  res.json({ ok: true });
+});
+
+app.post('/webhook/lazada', (req, res) => {
+  res.json({ ok: true });
 });
 
 // ── Client platform connections ───────────────────────────────────────────────

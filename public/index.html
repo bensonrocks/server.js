@@ -558,6 +558,92 @@ a:hover{text-decoration:underline}
 .badge-confirmed{background:#ede9fe;color:#5b21b6}
 .badge-pending{background:#f1f5f9;color:#475569}
 .badge-cancelled{background:#fee2e2;color:#991b1b}
+/* ── IDEALSCAN ── */
+.scan-wrap{display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start}
+.scan-panel{background:#0f172a;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:12px;position:sticky;top:0}
+.scan-panel h3{font-size:13px;font-weight:800;color:#fff;display:flex;align-items:center;gap:6px}
+.scan-panel h3 span{font-size:9px;font-weight:700;background:#0d9488;color:#fff;padding:2px 7px;border-radius:8px;letter-spacing:.5px}
+.scan-cam-box{position:relative;border-radius:10px;overflow:hidden;background:#000;aspect-ratio:4/3}
+.scan-cam-box video{width:100%;height:100%;object-fit:cover;display:block}
+.scan-corners-tl,.scan-corners-tr,.scan-corners-bl,.scan-corners-br{position:absolute;width:22px;height:22px;border-color:#0d9488;border-style:solid}
+.scan-corners-tl{top:10px;left:10px;border-width:3px 0 0 3px;border-radius:3px 0 0 0}
+.scan-corners-tr{top:10px;right:10px;border-width:3px 3px 0 0;border-radius:0 3px 0 0}
+.scan-corners-bl{bottom:10px;left:10px;border-width:0 0 3px 3px;border-radius:0 0 0 3px}
+.scan-corners-br{bottom:10px;right:10px;border-width:0 3px 3px 0;border-radius:0 0 3px 0}
+.scan-sweep{position:absolute;left:6%;right:6%;height:2px;background:linear-gradient(90deg,transparent,#0d9488,transparent);display:none;animation:scanline 1.8s ease-in-out infinite}
+@keyframes scanline{0%,100%{top:15%}50%{top:82%}}
+.scan-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:rgba(255,255,255,.2);font-size:12px;gap:6px}
+.scan-cam-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#475569;margin-bottom:3px}
+.scan-pipeline{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:8px 0 4px}
+.pl-step{font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px;background:#1e293b;color:#475569;transition:all .15s}
+.pl-step.active{background:#0d9488;color:#fff}.pl-step.done{background:#064e3b;color:#6ee7b7}
+.pl-arrow{font-size:10px;color:#334155}
+.scan-cam-select{width:100%;padding:7px 9px;border-radius:8px;border:1.5px solid #334155;background:#1e293b;color:#e2e8f0;font-size:12px}
+.scan-cam-select:focus{outline:none;border-color:#0d9488}
+.scan-manual-row{display:flex;gap:6px}
+.scan-manual-inp{flex:1;padding:8px 10px;border-radius:8px;border:1.5px solid #334155;background:#1e293b;color:#e2e8f0;font-size:13px;font-family:monospace;letter-spacing:.4px}
+.scan-manual-inp::placeholder{color:#475569;font-family:inherit;letter-spacing:0}
+.scan-manual-inp:focus{outline:none;border-color:#0d9488}
+.scan-btn{padding:7px 12px;border-radius:8px;font-size:12px;font-weight:700;transition:background .12s;cursor:pointer;border:none}
+.scan-btn-teal{background:#0d9488;color:#fff}.scan-btn-teal:hover{background:#0f766e}
+.scan-btn-grey{background:#334155;color:#e2e8f0}.scan-btn-grey:hover{background:#475569}
+.scan-btn-red{background:#7f1d1d;color:#fca5a5}.scan-btn-red:hover{background:#991b1b}
+.scan-controls{display:flex;gap:6px;flex-wrap:wrap}
+.scan-status{font-size:11px;font-weight:600;min-height:18px}
+.scan-flash{padding:6px 10px;border-radius:7px;font-size:12px;font-weight:700;text-align:center;min-height:30px;transition:background .15s,color .15s}
+.scan-right{display:flex;flex-direction:column;gap:12px}
+.scan-result-card{background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden;display:none}
+.scan-result-card.show{display:block}
+.src-hero{background:#0f172a;padding:14px 16px;display:flex;justify-content:space-between;align-items:flex-start}
+.src-hero-left{display:flex;flex-direction:column;gap:3px}
+.src-code{font-family:monospace;font-size:13px;font-weight:800;color:#e2e8f0;letter-spacing:.3px}
+.src-date{font-size:11px;color:#64748b}
+.src-sec{border-bottom:1px solid #f1f5f9}
+.src-sec-t{font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;padding:10px 16px 4px}
+.src-row{display:flex;justify-content:space-between;align-items:baseline;padding:3px 16px}
+.src-k{font-size:11px;color:#94a3b8;min-width:80px}
+.src-v{font-size:12px;color:#0f172a;text-align:right;max-width:220px;word-break:break-word}
+.src-items-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.src-items-tbl th{padding:4px 16px;text-align:left;color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.src-items-tbl td{padding:4px 16px}
+.src-totals{background:#f8fafc;padding:8px 16px;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid #f1f5f9}
+.src-t-row{display:flex;justify-content:space-between;font-size:12px;color:#475569}
+.src-t-grand{font-weight:800;font-size:14px;color:#0f172a;border-top:1px solid #e2e8f0;padding-top:5px;margin-top:3px}
+.src-status-sel{width:100%;padding:7px 9px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:12px;margin-bottom:6px}
+.src-actions{padding:12px 16px;display:flex;flex-direction:column;gap:6px}
+.scan-nomatch{background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.07);padding:28px;text-align:center;display:none}
+.scan-nomatch.show{display:block}
+.sess-tbl-wrap{background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}
+.sess-toolbar{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #f1f5f9}
+.sess-count{font-size:12px;font-weight:600;color:#475569}
+.sess-body{max-height:340px;overflow-y:auto}
+@media(max-width:900px){.scan-wrap{grid-template-columns:1fr}.scan-panel{position:static}.sess-body{max-height:200px}}
+/* ── IDEALINVENTORY ── */
+.inv-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.inv-stat{background:#fff;border-radius:10px;padding:13px 15px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.inv-stat-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.inv-stat-val{font-size:22px;font-weight:800;color:#0f172a}
+.inv-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fff;border-radius:10px;padding:10px 13px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.inv-search{flex:1;min-width:140px;padding:6px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px}
+.inv-search:focus{outline:none;border-color:#2563eb}
+.inv-cat-sel{padding:5px 8px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px;background:#fff}
+.stock-bar{width:80px;height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden;display:inline-block;vertical-align:middle}
+.stock-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.inv-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.inv-modal-full{grid-column:1/-1}
+.inv-inp{width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:13px}
+.inv-inp:focus{outline:none;border-color:#2563eb}
+.inv-label{font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px;display:block}
+.inv-mv-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+.inv-mv-type{padding:2px 7px;border-radius:8px;font-weight:700;font-size:10px}
+.mv-inbound{background:#dcfce7;color:#166534}.mv-outbound{background:#fee2e2;color:#991b1b}
+.mv-adjustment{background:#dbeafe;color:#1e40af}.mv-reserved{background:#fef3c7;color:#92400e}
+.low-stock-row{background:#fffbeb!important}.out-stock-row{background:#fff5f5!important}
+.inv-panel{position:fixed;top:0;right:0;width:400px;height:100vh;background:#fff;box-shadow:-4px 0 32px rgba(0,0,0,.15);z-index:200;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
+.inv-panel.open{transform:translateX(0)}
+.inv-panel-hd{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc}
+.inv-panel-body{flex:1;overflow-y:auto;padding:16px 18px}
+@media(max-width:768px){.inv-stats{grid-template-columns:repeat(2,1fr)}.inv-panel{width:100%}}
 </style>
 <!-- Auth gate: runs before first paint to avoid flash -->
 <script>
@@ -633,6 +719,12 @@ a:hover{text-decoration:underline}
         </li>
         <li class="nav-li" id="nav-fulfillment" onclick="switchPage('fulfillment')">
           <span>&#128230;</span><span class="nav-name">Fulfillment</span>
+        </li>
+        <li class="nav-li" id="nav-scan" onclick="switchPage('scan')">
+          <span>&#128247;</span><span class="nav-name">IDEALSCAN</span>
+        </li>
+        <li class="nav-li" id="nav-inventory" onclick="switchPage('inventory')">
+          <span>&#128202;</span><span class="nav-name">Inventory <span id="inv-low-badge" class="nbadge" style="display:none;background:#d97706"></span></span>
         </li>
         <li class="nav-li" onclick="window.open('/about.html','_blank')">
           <span>&#127760;</span><span class="nav-name">About IdealOMS</span>
@@ -844,6 +936,126 @@ a:hover{text-decoration:underline}
       </div>
 
       <!-- ═══════════════════════════════════════
+           IDEALSCAN PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-scan" class="page">
+        <div class="scan-wrap">
+          <!-- Left: camera + controls -->
+          <div class="scan-panel">
+            <h3>&#128247; IDEALSCAN <span>LIVE</span></h3>
+            <div class="scan-pipeline">
+              <span class="pl-step" data-stage="processing">1 Pick</span>
+              <span class="pl-arrow">&#8594;</span>
+              <span class="pl-step" data-stage="packed">2 Pack</span>
+              <span class="pl-arrow">&#8594;</span>
+              <span class="pl-step" data-stage="waybill">3 Waybill</span>
+              <span class="pl-arrow">&#8594;</span>
+              <span class="pl-step" data-stage="shipped">4 Ship</span>
+            </div>
+            <div class="scan-cam-box">
+              <video id="scan-video" playsinline muted></video>
+              <div class="scan-corners-tl"></div><div class="scan-corners-tr"></div>
+              <div class="scan-corners-bl"></div><div class="scan-corners-br"></div>
+              <div class="scan-sweep" id="scan-sweep"></div>
+              <div class="scan-placeholder" id="scan-placeholder">
+                <div style="font-size:32px">&#128247;</div>
+                <div>Click Start</div>
+              </div>
+            </div>
+            <div>
+              <div class="scan-cam-lbl">Camera</div>
+              <select id="scan-cam-sel" class="scan-cam-select" onchange="scanChangeCamera()">
+                <option value="">— select —</option>
+              </select>
+            </div>
+            <div class="scan-controls">
+              <button id="scan-start-btn" class="scan-btn scan-btn-teal" onclick="scanStart()">&#9654; Start</button>
+              <button id="scan-stop-btn" class="scan-btn scan-btn-grey" onclick="scanStop()" style="display:none">&#9646;&#9646; Stop</button>
+              <button class="scan-btn scan-btn-teal" onclick="scanExportCSV()">&#128229; CSV</button>
+              <button class="scan-btn scan-btn-red" onclick="scanClear()">&#128465;</button>
+            </div>
+            <div id="scan-status" class="scan-status" style="color:#475569">Camera stopped.</div>
+            <div id="scan-flash" class="scan-flash"></div>
+            <div>
+              <div class="scan-cam-lbl">Manual / Paste</div>
+              <div class="scan-manual-row">
+                <input id="scan-manual" class="scan-manual-inp" placeholder="Order ID or tracking number…" autocomplete="off"
+                  onkeydown="if(event.key==='Enter')scanAddManual()">
+                <button class="scan-btn scan-btn-teal" onclick="scanAddManual()">&#9654;</button>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #1e293b">
+              <input type="checkbox" id="scan-auto-advance" checked style="accent-color:#0d9488;width:15px;height:15px;cursor:pointer">
+              <label for="scan-auto-advance" style="font-size:12px;color:#94a3b8;cursor:pointer;user-select:none">Auto-advance status on scan</label>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #1e293b;padding-top:10px">
+              <span style="font-size:11px;color:#475569">Session scans</span>
+              <span id="scan-sess-count" style="font-size:18px;font-weight:800;color:#0d9488">0</span>
+            </div>
+          </div>
+          <!-- Right: result card + history -->
+          <div class="scan-right">
+            <div id="scan-result-card" class="scan-result-card"></div>
+            <div id="scan-nomatch" class="scan-nomatch">
+              <div style="font-size:36px;margin-bottom:10px">&#128270;</div>
+              <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px">No order found</div>
+              <div id="scan-nomatch-code" style="font-family:monospace;font-size:12px;color:#94a3b8;margin-bottom:14px"></div>
+              <p style="font-size:12px;color:#64748b">This barcode doesn't match any order ID or tracking number in the system.</p>
+            </div>
+            <div class="sess-tbl-wrap">
+              <div class="sess-toolbar">
+                <span class="sess-count">Scan history — <span id="scan-hist-count">0</span> scans</span>
+                <span id="scan-dupe-label" style="font-size:12px;color:#d97706;display:none"></span>
+              </div>
+              <div id="scan-bulk-bar" style="display:none;padding:8px 14px;background:#f0fdf4;border-bottom:1px solid #bbf7d0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <span style="font-size:12px;color:#166534;font-weight:600">Bulk actions:</span>
+                <button class="scan-btn scan-btn-teal" style="font-size:11px;padding:4px 10px" onclick="scanBulkFulfill('shipped')">&#9658; Mark All Shipped</button>
+                <button class="scan-btn" style="font-size:11px;padding:4px 10px;background:#475569;color:#fff;border-radius:6px;cursor:pointer;border:none" onclick="scanBulkFulfill(null)">&#8635; Auto-Advance All</button>
+              </div>
+              <div class="sess-body">
+                <table class="tbl">
+                  <thead><tr><th>#</th><th>Code Scanned</th><th>Matched Order</th><th>Status</th><th>Time</th><th></th></tr></thead>
+                  <tbody id="scan-sess-tbody">
+                    <tr id="scan-empty-row"><td colspan="6" style="text-align:center;padding:32px;color:#94a3b8">Start the camera or type a code — results appear here.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /scan -->
+
+      <!-- ═══════════════════════════════════════
+           IDEALINVENTORY PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-inventory" class="page">
+        <div class="main">
+          <div class="inv-stats">
+            <div class="inv-stat"><div class="inv-stat-lbl">Total SKUs</div><div class="inv-stat-val" id="inv-s-total">—</div></div>
+            <div class="inv-stat"><div class="inv-stat-lbl">Low Stock</div><div class="inv-stat-val" id="inv-s-low" style="color:#d97706">—</div></div>
+            <div class="inv-stat"><div class="inv-stat-lbl">Out of Stock</div><div class="inv-stat-val" id="inv-s-out" style="color:#dc2626">—</div></div>
+            <div class="inv-stat"><div class="inv-stat-lbl">Stock Value</div><div class="inv-stat-val" id="inv-s-val">—</div></div>
+          </div>
+          <div class="inv-toolbar">
+            <input id="inv-search" class="inv-search" placeholder="Search SKU or name…" oninput="invFilter()">
+            <select id="inv-cat" class="inv-cat-sel" onchange="invFilter()"><option value="">All Categories</option></select>
+            <label style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:5px;cursor:pointer">
+              <input type="checkbox" id="inv-low-only" onchange="invFilter()" style="accent-color:#d97706"> Low stock only
+            </label>
+            <button class="btn btn-p btn-sm" onclick="invOpenAdd()">+ Add SKU</button>
+          </div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th>SKU</th><th>Name</th><th>Category</th><th>In Stock</th><th>Reserved</th><th>Stock Level</th><th>Sell Price</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="inv-tbody"><tr class="empty"><td colspan="8">Loading inventory…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div><!-- /inventory -->
+
+      <!-- ═══════════════════════════════════════
            SYNC LOG PAGE
       ════════════════════════════════════════ -->
       <div id="page-synclog" class="page">
@@ -1038,6 +1250,63 @@ a:hover{text-decoration:underline}
       </div>
 
     </main>
+  </div>
+
+  <!-- ── Inventory side panel ── -->
+  <div id="inv-panel" class="inv-panel">
+    <div class="inv-panel-hd">
+      <div style="flex:1">
+        <div id="inv-panel-sku" style="font-family:monospace;font-size:11px;color:#2563eb;font-weight:700"></div>
+        <div id="inv-panel-name" style="font-size:16px;font-weight:800;color:#0f172a"></div>
+      </div>
+      <button onclick="invClosePanel()" class="btn-x">&#10005;</button>
+    </div>
+    <div class="inv-panel-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px">
+        <div class="inv-stat"><div class="inv-stat-lbl">In Stock</div><div class="inv-stat-val" id="inv-p-qty" style="font-size:28px">—</div></div>
+        <div class="inv-stat"><div class="inv-stat-lbl">Reserved</div><div class="inv-stat-val" id="inv-p-res" style="font-size:28px;color:#d97706">—</div></div>
+        <div class="inv-stat"><div class="inv-stat-lbl">Reorder At</div><div class="inv-stat-val" id="inv-p-reo" style="font-size:28px;color:#94a3b8">—</div></div>
+      </div>
+      <div style="background:#f8fafc;border-radius:10px;padding:14px;margin-bottom:18px">
+        <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">Adjust Stock</div>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1"><label class="inv-label">Qty (+ add / − remove)</label><input id="inv-adj-qty" type="number" class="inv-inp" placeholder="e.g. 50 or -5" style="width:100%"></div>
+          <div style="flex:2"><label class="inv-label">Reason</label><input id="inv-adj-reason" class="inv-inp" placeholder="Restock, Count, Damage…" style="width:100%"></div>
+          <button class="btn btn-p btn-sm" onclick="invAdjust()">Apply</button>
+        </div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Movement History</div>
+      <div id="inv-movements"></div>
+    </div>
+  </div>
+  <div id="inv-panel-ov" class="overlay hidden" onclick="invClosePanel()"></div>
+
+  <!-- ── Inventory add/edit modal ── -->
+  <div id="inv-modal" class="modal hidden">
+    <div class="modal-box" style="max-width:520px">
+      <div class="modal-hd">
+        <h3 id="inv-modal-title">Add SKU</h3>
+        <button onclick="invCloseModal()" class="btn-x">&#10005;</button>
+      </div>
+      <div style="padding:18px;display:flex;flex-direction:column;gap:0">
+        <div class="inv-modal-grid">
+          <div><label class="inv-label">SKU *</label><input id="inv-f-sku" class="inv-inp" placeholder="WIDGET-BLU"></div>
+          <div><label class="inv-label">Name *</label><input id="inv-f-name" class="inv-inp" placeholder="Blue Widget"></div>
+          <div><label class="inv-label">Category</label><input id="inv-f-cat" class="inv-inp" placeholder="Electronics"></div>
+          <div><label class="inv-label">Unit</label><input id="inv-f-unit" class="inv-inp" placeholder="pcs" value="pcs"></div>
+          <div><label class="inv-label">Initial Stock</label><input id="inv-f-qty" type="number" class="inv-inp" value="0"></div>
+          <div><label class="inv-label">Reorder Point</label><input id="inv-f-reo" type="number" class="inv-inp" value="10"></div>
+          <div><label class="inv-label">Cost Price</label><input id="inv-f-cost" type="number" step="0.01" class="inv-inp" value="0"></div>
+          <div><label class="inv-label">Sell Price</label><input id="inv-f-sell" type="number" step="0.01" class="inv-inp" value="0"></div>
+          <div class="inv-modal-full"><label class="inv-label">Description</label><input id="inv-f-desc" class="inv-inp" placeholder="Optional description"></div>
+        </div>
+        <div id="inv-modal-err" style="color:#dc2626;font-size:12px;margin-top:10px;display:none"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+          <button class="btn btn-g" onclick="invCloseModal()">Cancel</button>
+          <button class="btn btn-p" onclick="invSave()">Save SKU</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── Detail panel ── -->
@@ -1752,12 +2021,18 @@ function buildWaybillHTML(o){
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog','admin','client-dash','fulfillment'].forEach(p=>{$(`page-${p}`).classList.toggle('on',p===page);$(`nav-${p}`).classList.toggle('on',p===page);});
+  ['dashboard','connections','synclog','admin','client-dash','fulfillment','scan','inventory'].forEach(p=>{
+    const pg=$(`page-${p}`),nv=$(`nav-${p}`);
+    if(pg)pg.classList.toggle('on',p===page);
+    if(nv)nv.classList.toggle('on',p===page);
+  });
   if(page==='connections')refreshConnectionStatus();
   if(page==='synclog')initSyncLogPage();
   if(page==='admin')initAdminPage();
   if(page==='client-dash')initClientDash();
   if(page==='fulfillment')initFulfillment();
+  if(page==='inventory')invLoad();
+  if(page!=='scan')scanStop();
   closeSidebar();
 }
 
@@ -3031,6 +3306,553 @@ function stopCamera(){
   if(wrap)wrap.classList.add('hidden');
   const btn=$('scan-cam-btn');
   if(btn){btn.classList.remove('active');btn.textContent='📷 Camera';}
+}
+
+// ── Auth-aware fetch helper ───────────────────────────────────────────────────
+function apiFetch(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  return fetch(SERVER + path, { ...opts, headers });
+}
+function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── IDEALINVENTORY ────────────────────────────────────────────────────────────
+let _invItems = [], _invPanelSku = null, _invEditSku = null;
+const fmtMoney = n => '$' + Number(n).toFixed(2);
+const fmtQty   = n => Number(n).toLocaleString();
+
+async function invLoad() {
+  if (!serverAvailable) { $('inv-tbody').innerHTML = '<tr class="empty"><td colspan="8">Server offline.</td></tr>'; return; }
+  try {
+    const res = await apiFetch('/api/inventory');
+    _invItems = await res.json();
+    invRender(_invItems);
+    invLoadStats();
+  } catch (e) {
+    $('inv-tbody').innerHTML = `<tr class="empty"><td colspan="8">Failed to load inventory: ${e.message}</td></tr>`;
+  }
+}
+
+async function invLoadStats() {
+  if (!serverAvailable) return;
+  try {
+    const s = await apiFetch('/api/inventory/stats').then(r => r.json());
+    $('inv-s-total').textContent = s.totalSKUs;
+    $('inv-s-low').textContent   = s.lowStock;
+    $('inv-s-out').textContent   = s.outOfStock;
+    $('inv-s-val').textContent   = fmtMoney(s.totalValue);
+    const sel = $('inv-cat');
+    if (sel && s.categories?.length) {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All Categories</option>' + s.categories.map(c => `<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+    }
+    const badge = $('inv-low-badge');
+    if (badge) { if (s.lowStock > 0) { badge.textContent = s.lowStock; badge.style.display = ''; } else badge.style.display = 'none'; }
+  } catch {}
+}
+
+function invRender(items) {
+  const tbody = $('inv-tbody');
+  if (!items.length) { tbody.innerHTML = '<tr class="empty"><td colspan="8">No SKUs found.</td></tr>'; return; }
+  tbody.innerHTML = items.map(r => {
+    const pct   = r.reorder_point > 0 ? Math.min(100, Math.round(r.stock_qty / (r.reorder_point * 3) * 100)) : 100;
+    const color = r.stock_qty === 0 ? '#dc2626' : r.stock_qty <= r.reorder_point ? '#d97706' : '#16a34a';
+    const rowCls = r.stock_qty === 0 ? 'out-stock-row' : r.stock_qty <= r.reorder_point ? 'low-stock-row' : '';
+    return `<tr class="${rowCls}" onclick="invOpenPanel('${r.sku}')">
+      <td><span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563eb">${_esc(r.sku)}</span></td>
+      <td style="font-weight:600">${_esc(r.name)}</td>
+      <td><span style="font-size:11px;background:#f1f5f9;padding:2px 7px;border-radius:8px;color:#475569">${r.category||'—'}</span></td>
+      <td><strong style="color:${color}">${fmtQty(r.stock_qty)}</strong> <span style="font-size:11px;color:#94a3b8">${r.unit}</span></td>
+      <td style="color:#d97706">${r.reserved_qty > 0 ? fmtQty(r.reserved_qty) : '—'}</td>
+      <td><div class="stock-bar"><div class="stock-bar-fill" style="width:${pct}%;background:${color}"></div></div></td>
+      <td>${fmtMoney(r.sell_price)}</td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn btn-s btn-sm" style="font-size:11px" onclick="invOpenEdit('${_esc(r.sku)}')">Edit</button>
+        <button class="btn btn-sm" style="font-size:11px;color:#dc2626" onclick="invDelete('${_esc(r.sku)}')">Del</button>
+      </td></tr>`;
+  }).join('');
+}
+
+function invFilter() {
+  const q   = ($('inv-search')?.value || '').toLowerCase();
+  const cat = $('inv-cat')?.value || '';
+  const low = $('inv-low-only')?.checked;
+  invRender(_invItems.filter(r =>
+    (!q   || r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)) &&
+    (!cat || r.category === cat) &&
+    (!low || r.stock_qty <= r.reorder_point)
+  ));
+}
+
+async function invOpenPanel(sku) {
+  _invPanelSku = sku;
+  const item = _invItems.find(r => r.sku === sku);
+  if (!item) return;
+  $('inv-panel-sku').textContent  = item.sku;
+  $('inv-panel-name').textContent = item.name;
+  $('inv-p-qty').textContent = fmtQty(item.stock_qty);
+  $('inv-p-res').textContent = fmtQty(item.reserved_qty);
+  $('inv-p-reo').textContent = fmtQty(item.reorder_point);
+  $('inv-panel').classList.add('open');
+  $('inv-panel-ov').classList.remove('hidden');
+  invLoadMovements(sku);
+}
+
+function invClosePanel() {
+  $('inv-panel').classList.remove('open');
+  $('inv-panel-ov').classList.add('hidden');
+  _invPanelSku = null;
+}
+
+async function invLoadMovements(sku) {
+  const el = $('inv-movements');
+  el.innerHTML = '<div style="color:#94a3b8;font-size:12px">Loading…</div>';
+  try {
+    const mvs = await apiFetch(`/api/inventory/${encodeURIComponent(sku)}/movements`).then(r => r.json());
+    if (!mvs.length) { el.innerHTML = '<div style="color:#94a3b8;font-size:12px">No movements yet.</div>'; return; }
+    el.innerHTML = mvs.map(m => {
+      const sign = m.qty > 0 ? '+' : '';
+      const color = m.qty > 0 ? '#16a34a' : '#dc2626';
+      return `<div class="inv-mv-row">
+        <span class="inv-mv-type mv-${m.type}">${m.type}</span>
+        <span style="font-weight:700;color:${color}">${sign}${m.qty}</span>
+        <span style="flex:1;color:#475569">${m.reason||'—'}</span>
+        ${m.order_id ? `<span style="font-family:monospace;font-size:10px;color:#2563eb;cursor:pointer" onclick="openDetail('${_esc(m.order_id)}')">${_esc(m.order_id)}</span>` : ''}
+        <span style="color:#94a3b8;font-size:10px">${new Date(m.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+      </div>`;
+    }).join('');
+  } catch (e) { el.innerHTML = `<div style="color:#dc2626;font-size:12px">${e.message}</div>`; }
+}
+
+async function invAdjust() {
+  const qty    = parseFloat($('inv-adj-qty').value);
+  const reason = $('inv-adj-reason').value.trim();
+  if (isNaN(qty) || qty === 0) { alert('Enter a non-zero quantity'); return; }
+  try {
+    const updated = await apiFetch(`/api/inventory/${encodeURIComponent(_invPanelSku)}/adjust`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qty, reason }),
+    }).then(r => r.json());
+    $('inv-p-qty').textContent = fmtQty(updated.stock_qty);
+    $('inv-adj-qty').value = '';
+    $('inv-adj-reason').value = '';
+    const idx = _invItems.findIndex(r => r.sku === _invPanelSku);
+    if (idx >= 0) _invItems[idx] = updated;
+    invFilter(); invLoadStats(); invLoadMovements(_invPanelSku);
+  } catch (e) { alert('Adjust failed: ' + e.message); }
+}
+
+function invOpenAdd() {
+  _invEditSku = null;
+  $('inv-modal-title').textContent = 'Add SKU';
+  ['sku','name','cat','desc','unit','qty','reo','cost','sell'].forEach(f => {
+    const el = $('inv-f-'+f);
+    if (el) el.value = f==='unit' ? 'pcs' : f==='qty'||f==='reo'||f==='cost'||f==='sell' ? '0' : '';
+  });
+  $('inv-f-sku').disabled = false;
+  $('inv-modal-err').style.display = 'none';
+  $('inv-modal').classList.remove('hidden');
+}
+
+function invOpenEdit(sku) {
+  const item = _invItems.find(r => r.sku === sku);
+  if (!item) return;
+  _invEditSku = sku;
+  $('inv-modal-title').textContent = 'Edit SKU';
+  $('inv-f-sku').value  = item.sku;   $('inv-f-sku').disabled = true;
+  $('inv-f-name').value = item.name;
+  $('inv-f-cat').value  = item.category || '';
+  $('inv-f-desc').value = item.description || '';
+  $('inv-f-unit').value = item.unit || 'pcs';
+  $('inv-f-qty').value  = item.stock_qty;
+  $('inv-f-reo').value  = item.reorder_point;
+  $('inv-f-cost').value = item.cost_price;
+  $('inv-f-sell').value = item.sell_price;
+  $('inv-modal-err').style.display = 'none';
+  $('inv-modal').classList.remove('hidden');
+}
+
+function invCloseModal() { $('inv-modal').classList.add('hidden'); }
+
+async function invSave() {
+  const sku  = $('inv-f-sku').value.trim().toUpperCase();
+  const name = $('inv-f-name').value.trim();
+  const errEl = $('inv-modal-err');
+  if (!sku || !name) { errEl.textContent = 'SKU and Name are required'; errEl.style.display = ''; return; }
+  const body = {
+    sku, name,
+    description: $('inv-f-desc').value.trim(),
+    category:    $('inv-f-cat').value.trim(),
+    unit:        $('inv-f-unit').value.trim() || 'pcs',
+    stock_qty:   parseFloat($('inv-f-qty').value) || 0,
+    reorder_point: parseFloat($('inv-f-reo').value) || 10,
+    cost_price:  parseFloat($('inv-f-cost').value) || 0,
+    sell_price:  parseFloat($('inv-f-sell').value) || 0,
+  };
+  try {
+    const method = _invEditSku ? 'PUT' : 'POST';
+    const url    = _invEditSku ? `/api/inventory/${encodeURIComponent(_invEditSku)}` : `/api/inventory`;
+    const saved  = await apiFetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json());
+    if (saved.error) { errEl.textContent = saved.error; errEl.style.display = ''; return; }
+    invCloseModal(); invLoad();
+  } catch (e) { errEl.textContent = e.message; errEl.style.display = ''; }
+}
+
+async function invDelete(sku) {
+  if (!confirm('Delete SKU ' + sku + '? This cannot be undone.')) return;
+  await apiFetch(`/api/inventory/${encodeURIComponent(sku)}`, { method: 'DELETE' });
+  invLoad();
+}
+</script>
+
+<!-- ZXing barcode library -->
+<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
+<script>
+'use strict';
+// ── IDEALSCAN (ZXing-based) ───────────────────────────────────────────────────
+let _scanReader  = null;
+let _scanRunning = false;
+let _scanSession = [];
+let _scanDupes   = 0;
+let _scanTimer   = null;
+let _scanSecs    = 0;
+let _lastCode    = null;
+
+window.addEventListener('load', async () => {
+  if (!window.ZXingBrowser) return;
+  const sel = $('scan-cam-sel');
+  if (!sel) return;
+  try {
+    const tmp  = new ZXingBrowser.BrowserMultiFormatReader();
+    const devs = await tmp.listVideoInputDevices();
+    sel.innerHTML = '';
+    if (!devs.length) { sel.innerHTML = '<option>No cameras found</option>'; return; }
+    devs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Camera ' + (i + 1));
+      if (/back|rear|environment/i.test(d.label)) o.selected = true;
+      sel.appendChild(o);
+    });
+  } catch { sel.innerHTML = '<option>Camera permission needed</option>'; }
+});
+
+async function scanStart() {
+  if (_scanRunning) return;
+  const video  = $('scan-video');
+  const sweep  = $('scan-sweep');
+  const ph     = $('scan-placeholder');
+  const startB = $('scan-start-btn');
+  const stopB  = $('scan-stop-btn');
+  _scanSetStatus('Starting camera…', '#94a3b8');
+  try {
+    _scanReader = new ZXingBrowser.BrowserMultiFormatReader();
+    const deviceId = $('scan-cam-sel')?.value || undefined;
+    await _scanReader.decodeFromVideoDevice(deviceId || undefined, video, (result, err) => {
+      if (result) {
+        const code = result.getText();
+        if (code === _lastCode) return;
+        _lastCode = code;
+        setTimeout(() => { if (_lastCode === code) _lastCode = null; }, 2500);
+        _scanLookup(code, 'camera');
+      }
+    });
+    _scanRunning = true;
+    ph.style.display = 'none'; sweep.style.display = 'block';
+    startB.style.display = 'none'; stopB.style.display = '';
+    _scanStartTimer();
+  } catch (e) {
+    _scanSetStatus('&#9888; ' + (e.message || 'Cannot access camera.'), '#dc2626');
+  }
+}
+
+function scanStop() {
+  if (_scanReader) { try { _scanReader.reset(); } catch {} _scanReader = null; }
+  _scanRunning = false;
+  const sweep  = $('scan-sweep');
+  const ph     = $('scan-placeholder');
+  const startB = $('scan-start-btn');
+  const stopB  = $('scan-stop-btn');
+  if (sweep)  sweep.style.display  = 'none';
+  if (ph)     ph.style.display     = '';
+  if (startB) startB.style.display = '';
+  if (stopB)  stopB.style.display  = 'none';
+  _scanStopTimer();
+  _scanSetStatus('Camera stopped.', '#475569');
+}
+
+function scanChangeCamera() { if (_scanRunning) { scanStop(); scanStart(); } }
+
+function scanAddManual() {
+  const inp = $('scan-manual');
+  const val = (inp?.value || '').trim();
+  if (!val) return;
+  _scanLookup(val, 'manual');
+  inp.value = '';
+  inp.focus();
+}
+
+async function _scanLookup(code, source) {
+  code = code.trim();
+  if (!code) return;
+  const existing = _scanSession.find(s => s.code === code);
+  if (existing) {
+    if (existing.orderStatus === 'processing') {
+      _scanSession = _scanSession.filter(s => s.code !== code);
+      const oldTr = document.querySelector(`#scan-sess-tbody tr[data-id="${CSS.escape(existing.orderId)}"]`);
+      if (oldTr) oldTr.remove();
+    } else {
+      _scanDupes++;
+      const lbl = $('scan-dupe-label');
+      if (lbl) { lbl.textContent = _scanDupes + ' dupe' + (_scanDupes !== 1 ? 's' : '') + ' skipped'; lbl.style.display = ''; }
+      _scanFlash('Already scanned — ' + _esc(code), false);
+      return;
+    }
+  }
+  _scanFlash('&#128269; Looking up ' + _esc(code) + '…', null);
+  _beep();
+  let order = null, matched = false, previousStatus = null, newStatus = null, platformPush = null, trackingAttached = false;
+  const autoAdvance = $('scan-auto-advance')?.checked !== false;
+  try {
+    if (serverAvailable) {
+      if (autoAdvance) {
+        const res = await apiFetch('/api/orders/scan-fulfill', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ code, pushPlatform: true }),
+        });
+        if (res.ok) {
+          const result = await res.json();
+          order = result.order; matched = true;
+          previousStatus = result.previousStatus; newStatus = result.newStatus;
+          platformPush = result.platformPush; trackingAttached = result.trackingAttached;
+          await loadOrdersFromServer(); render();
+          if (result.waybillReady) invLoadStats();
+        }
+      } else {
+        const res = await apiFetch('/api/orders/lookup?q=' + encodeURIComponent(code));
+        if (res.ok) { order = await res.json(); matched = true; newStatus = order.status; }
+      }
+    } else {
+      const q = code.toLowerCase();
+      order = orders.find(o =>
+        o.id.toLowerCase() === q ||
+        o.id.toLowerCase().includes(q) ||
+        (o.source?.trackingNo && o.source.trackingNo.toLowerCase() === q)
+      ) || null;
+      matched = !!order;
+      if (order) newStatus = order.status;
+    }
+  } catch {}
+  const entry = { code, at: new Date(), source, orderId: order?.id || null, orderStatus: newStatus, previousStatus, matched };
+  _scanSession.push(entry);
+  _scanRenderRow(entry, _scanSession.length);
+  const cnt = $('scan-sess-count'); if (cnt) cnt.textContent = _scanSession.length;
+  const hc  = $('scan-hist-count'); if (hc)  hc.textContent  = _scanSession.length;
+  const empty = $('scan-empty-row'); if (empty) empty.remove();
+  const bulkBar = $('scan-bulk-bar');
+  if (bulkBar && _scanSession.some(s => s.matched)) bulkBar.style.display = 'flex';
+  if (matched && order) {
+    _scanShowOrder(order, { previousStatus, newStatus, platformPush, trackingAttached });
+    _scanSetPipeline(order.status, order.status === 'packed');
+    if (autoAdvance && previousStatus !== newStatus) {
+      const extra = newStatus === 'packed' ? ' — print waybill &#128230;' : '';
+      _scanFlash('&#10003; ' + _esc(order.id) + ' → ' + newStatus + extra, true);
+    } else {
+      _scanFlash('&#10003; Matched → ' + _esc(order.id), true);
+    }
+  } else {
+    _scanShowNoMatch(code);
+    _scanFlash('&#10007; No order found for ' + _esc(code), false);
+  }
+}
+
+function _scanShowOrder(o, meta = {}) {
+  const card = $('scan-result-card');
+  const nm   = $('scan-nomatch');
+  if (!card) return;
+  nm.classList.remove('show');
+  const addr = [o.shipping.addressLine1,o.shipping.addressLine2,o.shipping.city,((o.shipping.state?o.shipping.state+' ':'')+o.shipping.zip),o.shipping.country].filter(Boolean).join(', ');
+  const itemsHTML = o.items.map(i => {
+    const inv = _invItems.find(r => r.sku === i.sku);
+    const stockHint = inv ? (inv.stock_qty===0 ? '<span style="color:#dc2626;font-size:10px;font-weight:700"> &#9888; OUT</span>' : inv.stock_qty<=inv.reorder_point ? `<span style="color:#d97706;font-size:10px"> ${inv.stock_qty} left</span>` : `<span style="color:#16a34a;font-size:10px"> ${inv.stock_qty} in stock</span>`) : '';
+    return `<tr><td><div style="font-weight:600">${_esc(i.name)}${stockHint}</div><div style="font-family:monospace;font-size:10px;color:#94a3b8">${_esc(i.sku)}</div></td><td>${i.qty}</td><td>${fmt(i.unitPrice)}</td><td style="font-weight:700">${fmt(i.qty*i.unitPrice)}</td></tr>`;
+  }).join('');
+  const src = o.source || {};
+  card.innerHTML = `
+    <div class="src-hero">
+      <div class="src-hero-left">
+        <span class="src-code">${_esc(o.id)}</span>
+        <div class="src-date">${new Date(o.orderDate).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        ${meta.previousStatus&&meta.previousStatus!==meta.newStatus?`<div style="display:flex;align-items:center;gap:4px">${stBdg(meta.previousStatus)}<span style="color:#94a3b8;font-size:11px">&#8594;</span>${stBdg(o.status)}</div>`:stBdg(o.status)}
+        ${chBdg(o.channel)}
+      </div>
+    </div>
+    <div class="src-sec">
+      <div class="src-sec-t">Order Info</div>
+      <div class="src-row"><span class="src-k">Client</span><span class="src-v">${_esc(o.clientName)}</span></div>
+      ${src.trackingNo?`<div class="src-row"><span class="src-k">Tracking</span><span class="src-v" style="font-family:monospace;font-size:12px">${_esc(src.trackingNo)}</span></div>`:''}
+    </div>
+    <div class="src-sec">
+      <div class="src-sec-t">Items (${o.items.length})</div>
+      <table class="src-items-tbl"><thead><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Line</th></tr></thead><tbody>${itemsHTML}</tbody></table>
+    </div>
+    <div class="src-totals">
+      <div class="src-t-row"><span>Subtotal</span><span>${fmt(o.subtotal)}</span></div>
+      <div class="src-t-row"><span>Tax</span><span>${fmt(o.tax)}</span></div>
+      <div class="src-t-grand src-t-row"><span>Total</span><span>${fmt(o.total)}</span></div>
+    </div>
+    <div class="src-sec">
+      <div class="src-sec-t">Ship To</div>
+      <div class="src-row"><span class="src-k">Recipient</span><span class="src-v">${_esc(o.shipping.recipient)}</span></div>
+      <div class="src-row"><span class="src-k">Address</span><span class="src-v">${_esc(addr||'—')}</span></div>
+    </div>
+    <div class="src-actions">
+      ${meta.waybillReady||o.status==='packed'?`<button class="btn btn-p btn-sm" style="background:#0d9488;border-color:#0d9488;width:100%;margin-bottom:8px;font-size:13px;padding:10px" onclick="scanPrintWaybill('${_esc(o.id)}')">&#128230; Print Waybill</button>`:''}
+      <select id="scan-status-sel" class="src-status-sel" onchange="scanUpdateStatus('${_esc(o.id)}')">
+        <option value="">Update status…</option>
+        ${['pending','confirmed','processing','packed','shipped','delivered','cancelled'].map(s=>`<option value="${s}"${o.status===s?' selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
+      </select>
+      <button class="btn btn-p btn-sm" onclick="openDetail('${_esc(o.id)}')">&#128203; Full Detail</button>
+    </div>`;
+  card.classList.add('show');
+}
+
+function _scanShowNoMatch(code) {
+  const card = $('scan-result-card'); const nm = $('scan-nomatch');
+  if (card) card.classList.remove('show');
+  if (nm) { $('scan-nomatch-code').textContent = code; nm.classList.add('show'); }
+}
+
+async function scanUpdateStatus(orderId) {
+  const sel = $('scan-status-sel'); const status = sel?.value; if (!status) return;
+  try {
+    if (serverAvailable) {
+      const res = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ status })
+      });
+      if (!res.ok) { const j = await res.json(); _scanFlash('&#9888; ' + (j.error||'Update failed'), false); return; }
+      const updated = await res.json();
+      await loadOrdersFromServer(); render();
+      _scanFlash('&#10003; Status updated → ' + status, true);
+      _scanShowOrder(updated);
+    }
+    const entry = _scanSession.find(s => s.orderId === orderId);
+    if (entry) { entry.orderStatus = status; const tr = document.querySelector(`#scan-sess-tbody tr[data-id="${CSS.escape(orderId)}"]`); if (tr) { const sts = tr.querySelector('.scan-sess-sts'); if (sts) sts.innerHTML = stBdg(status); } }
+  } catch (e) { _scanFlash('&#9888; ' + e.message, false); }
+}
+
+function _scanSetPipeline(status, waybillReady) {
+  let activeIdx = -1;
+  if (status === 'processing') activeIdx = 0;
+  else if (status === 'packed') activeIdx = waybillReady ? 2 : 1;
+  else if (status === 'shipped' || status === 'delivered') activeIdx = 3;
+  document.querySelectorAll('.pl-step').forEach((el, i) => {
+    el.classList.remove('active', 'done');
+    if (i < activeIdx) el.classList.add('done');
+    else if (i === activeIdx) el.classList.add('active');
+  });
+}
+
+async function scanPrintWaybill(orderId) {
+  _scanFlash('&#128230; Fetching waybill…', null);
+  try {
+    const res = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/waybill`);
+    if (!res.ok) { const j = await res.json().catch(()=>({})); _scanFlash('&#9888; Waybill error: '+(j.error||res.statusText), false); return; }
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/pdf')) {
+      const blob = await res.blob(); const url = URL.createObjectURL(blob);
+      const win = window.open(url, '_blank'); if (win) { win.onload = () => win.print(); }
+      _scanFlash('&#10003; Waybill opened — print from new tab', true);
+    } else {
+      const j = await res.json();
+      if (j.url) { window.open(j.url, '_blank'); _scanFlash('&#10003; Waybill opened', true); }
+      else _scanFlash('&#9888; Platform returned no waybill URL', false);
+    }
+  } catch (e) { _scanFlash('&#9888; ' + e.message, false); }
+}
+
+async function scanBulkFulfill(targetStatus) {
+  const matched = _scanSession.filter(s => s.matched && s.orderId);
+  if (!matched.length) { _scanFlash('No matched orders in session', false); return; }
+  const label = targetStatus ? ('mark ' + matched.length + ' orders as ' + targetStatus) : ('auto-advance ' + matched.length + ' orders');
+  if (!confirm(label.charAt(0).toUpperCase() + label.slice(1) + '?')) return;
+  _scanFlash('&#8987; Updating ' + matched.length + ' orders…', null);
+  try {
+    const res = await apiFetch('/api/orders/bulk-fulfill', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: matched.map(s => s.orderId), targetStatus: targetStatus||undefined }),
+    });
+    const j = await res.json();
+    for (const r of j.results) {
+      if (r.ok) {
+        const entry = _scanSession.find(s => s.orderId === r.id);
+        if (entry) { entry.previousStatus = entry.orderStatus; entry.orderStatus = r.newStatus; const tr = document.querySelector(`#scan-sess-tbody tr[data-id="${CSS.escape(r.id)}"]`); if (tr) { const sts = tr.querySelector('.scan-sess-sts'); if (sts) sts.innerHTML = stBdg(r.newStatus); } }
+      }
+    }
+    await loadOrdersFromServer(); render();
+    _scanFlash('&#10003; Bulk done: ' + j.succeeded + ' updated' + (j.failed ? ', ' + j.failed + ' failed' : ''), j.failed === 0);
+  } catch (e) { _scanFlash('&#9888; Bulk failed: ' + e.message, false); }
+}
+
+function _scanRenderRow(e, idx) {
+  const tbody = $('scan-sess-tbody'); if (!tbody) return;
+  const tr = document.createElement('tr');
+  if (e.orderId) tr.dataset.id = e.orderId;
+  const t = e.at.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  tr.innerHTML = `
+    <td style="color:#94a3b8;font-size:12px">${idx}</td>
+    <td><span style="font-family:monospace;font-size:12px;font-weight:700;color:#0d9488">${_esc(e.code)}</span></td>
+    <td>${e.orderId?`<span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563eb;cursor:pointer" onclick="openDetail('${_esc(e.orderId)}')">${_esc(e.orderId)}</span>`:'<span style="color:#94a3b8;font-size:12px">—</span>'}</td>
+    <td class="scan-sess-sts">${e.previousStatus&&e.previousStatus!==e.orderStatus?`<span style="display:flex;align-items:center;gap:3px">${stBdg(e.previousStatus)}<span style="color:#94a3b8;font-size:10px">&#8594;</span>${stBdg(e.orderStatus)}</span>`:e.orderStatus?stBdg(e.orderStatus):'<span style="font-size:11px;color:#d97706;font-weight:700">Not found</span>'}</td>
+    <td style="font-size:12px;color:#64748b">${t}</td>
+    <td><button onclick="this.closest('tr').remove();_scanSession=_scanSession.filter(s=>s.code!=='${_esc(e.code)}');" style="font-size:12px;color:#94a3b8;padding:2px 6px;border-radius:4px;cursor:pointer;border:none;background:none">&#10005;</button></td>`;
+  tbody.insertBefore(tr, tbody.firstChild);
+}
+
+function scanClear() {
+  if (_scanSession.length && !confirm('Clear all ' + _scanSession.length + ' scan(s)?')) return;
+  _scanSession = []; _scanDupes = 0;
+  $('scan-sess-count').textContent = '0';
+  $('scan-hist-count').textContent = '0';
+  const lbl = $('scan-dupe-label'); if (lbl) { lbl.textContent = ''; lbl.style.display = 'none'; }
+  $('scan-sess-tbody').innerHTML = '<tr id="scan-empty-row"><td colspan="6" style="text-align:center;padding:32px;color:#94a3b8">Start the camera or type a code — results appear here.</td></tr>';
+  const bb = $('scan-bulk-bar'); if (bb) bb.style.display = 'none';
+  document.querySelectorAll('.pl-step').forEach(el => el.classList.remove('active', 'done'));
+  $('scan-result-card').classList.remove('show');
+  $('scan-nomatch').classList.remove('show');
+}
+
+function scanExportCSV() {
+  if (!_scanSession.length) { alert('No scans to export yet.'); return; }
+  const rows = [['#','Code Scanned','Matched Order','Order Status','Scanned At','Source']];
+  _scanSession.forEach((e,i) => rows.push([i+1,e.code,e.orderId||'',e.orderStatus||'',e.at.toISOString(),e.source]));
+  const csv = rows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = 'idealscan-' + new Date().toISOString().slice(0,10) + '.csv'; a.click();
+}
+
+function _scanStartTimer() {
+  _scanSecs = 0; clearInterval(_scanTimer);
+  _scanTimer = setInterval(() => {
+    _scanSecs++;
+    const m = String(Math.floor(_scanSecs/60)).padStart(2,'0');
+    const s = String(_scanSecs%60).padStart(2,'0');
+    _scanSetStatus('&#9679; Active — ' + m + ':' + s + ' · ' + _scanSession.length + ' scanned', '#0d9488');
+  }, 1000);
+}
+function _scanStopTimer() { clearInterval(_scanTimer); _scanTimer = null; _scanSecs = 0; }
+function _scanSetStatus(msg, color) { const el=$('scan-status'); if(el){el.innerHTML=msg;el.style.color=color||'#475569';} }
+function _scanFlash(msg, ok) {
+  const el=$('scan-flash'); if(!el)return;
+  el.innerHTML=msg;
+  el.style.background = ok===true?'#064e3b':ok===false?'#7f1d1d':'#1e293b';
+  el.style.color      = ok===true?'#6ee7b7':ok===false?'#fca5a5':'#94a3b8';
+  clearTimeout(el._t); el._t=setTimeout(()=>{el.innerHTML='';el.style.background='transparent';el.style.color='';},2500);
+}
+function _beep() {
+  try{const ctx=new(window.AudioContext||window.webkitAudioContext)(),osc=ctx.createOscillator(),g=ctx.createGain();osc.connect(g);g.connect(ctx.destination);osc.frequency.value=880;g.gain.setValueAtTime(.1,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.1);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+.1);}catch{}
 }
 </script>
 
