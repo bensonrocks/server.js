@@ -31,7 +31,20 @@
   .topbar-right{display:flex;align-items:center;gap:2px}
   .tb-btn{background:none;border:none;color:rgba(255,255,255,.45);font-size:1rem;width:36px;height:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;text-decoration:none;transition:background .15s,color .15s;padding:0;flex-shrink:0}
   .tb-btn:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.9)}
-  @media(max-width:480px){.sessions{display:none}}
+  @media(max-width:480px){
+    .sessions{display:none}
+    .topbar{padding:0 12px;gap:8px}
+    button[title="Notifications"],a[title="Tutorial"]{display:none}
+    #user-name{display:none}
+    .page{padding:14px 14px 40px}
+    .perf-tile{padding:12px 12px}
+    .ptv{font-size:1.25rem}
+    .signal-banner{padding:14px 14px}
+    .signal-levels{grid-template-columns:repeat(3,1fr)}
+    .card-head{padding:12px 14px 10px}
+    .section{padding:10px 14px}
+    .ladder-wrap{padding:12px 14px}
+  }
 
   /* page */
   .page{padding:24px 24px 48px}
