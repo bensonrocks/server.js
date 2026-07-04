@@ -10,7 +10,7 @@ const Stripe  = require('stripe');
 const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
-const { init: initDb, hasDb }        = require('./lib/db');
+const { init: initDb, hasDb, pool }  = require('./lib/db');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -59,13 +59,23 @@ app.post('/api/payment/webhook',
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const sessionStore = hasDb
+  ? new (require('connect-pg-simple')(session))({ pool, createTableIfMissing: true })
+  : undefined;
+
+if (!process.env.SESSION_SECRET) {
+  console.warn('WARNING: SESSION_SECRET not set — sessions will not survive restarts. Set it in Railway env vars.');
+}
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
+  store: sessionStore,
+  secret: process.env.SESSION_SECRET || 'dev-only-secret-set-SESSION_SECRET-in-prod',
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000,
   },
 }));
