@@ -177,9 +177,15 @@ app.post('/api/auth/login', async (req, res) => {
   // Dev mode: auto-activate accounts that are still pending
   if (!useHitPay && !stripe && user.subscriptionStatus === 'pending') {
     const activated = await users.update(user.id, { subscriptionStatus: 'active' });
-    return res.json({ ok: true, user: safeUser(activated) });
+    return req.session.save(err => {
+      if (err) return res.status(500).json({ ok: false, error: 'Session error' });
+      res.json({ ok: true, user: safeUser(activated) });
+    });
   }
-  res.json({ ok: true, user: safeUser(user) });
+  req.session.save(err => {
+    if (err) return res.status(500).json({ ok: false, error: 'Session error' });
+    res.json({ ok: true, user: safeUser(user) });
+  });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -322,7 +328,12 @@ app.post('/api/admin/login', (req, res) => {
   if (req.body.password !== secret)
     return res.status(401).json({ ok: false, error: 'Wrong password' });
   req.session.isAdmin = true;
-  res.json({ ok: true });
+  // Explicitly save before responding so the session is in the store
+  // before the client fires the next request (GET /api/admin/users).
+  req.session.save(err => {
+    if (err) return res.status(500).json({ ok: false, error: 'Session error' });
+    res.json({ ok: true });
+  });
 });
 
 app.post('/api/admin/logout', (req, res) => {

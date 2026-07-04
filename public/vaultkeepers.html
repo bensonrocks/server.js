@@ -149,7 +149,12 @@ async function adminLogout(){
 async function loadData(){
   try{
     const res=await fetch('/api/admin/users');
-    if(res.status===401){ location.reload(); return; }
+    if(res.status===401){
+      // Session expired — show login form without a disorienting full reload
+      document.getElementById('dashboard').style.display='none';
+      document.getElementById('login-screen').style.display='flex';
+      return;
+    }
     const data=await res.json();
     if(!data.ok) return;
     allUsers=data.users;
