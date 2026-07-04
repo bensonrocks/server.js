@@ -693,41 +693,45 @@ a:hover{text-decoration:underline}
     <div class="hdr-r">
       <input id="search" class="search-box" placeholder="Search orders&#8230;" autocomplete="off">
       <div id="session-timer" class="session-timer" title="Session time remaining" onclick="showLoginOverlay()" style="display:none">&#128274; <span id="session-timer-val"></span></div>
-      <button id="sync-all-btn" class="sync-all-btn">&#8635; Sync All</button>
-      <button id="btn-ingest" class="btn btn-p">+ Add Order</button>
+      <button id="lang-toggle-btn" onclick="toggleLang()" style="padding:5px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#94a3b8;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s" title="Toggle language / 切换语言">EN</button>
+      <button id="sync-all-btn" class="sync-all-btn" data-i18n="syncAll">&#8635; Sync All</button>
+      <button id="btn-ingest" class="btn btn-p" data-i18n="addOrder">+ Add Order</button>
     </div>
   </header>
 
   <div class="layout">
     <aside class="sidebar" id="sidebar">
-      <div class="sb-label">Navigation</div>
+      <div class="sb-label" data-i18n="navLabel">Navigation</div>
       <ul>
         <li class="nav-li on" id="nav-dashboard" onclick="switchPage('dashboard')">
-          <span>&#128202;</span><span class="nav-name">Dashboard</span>
+          <span>&#128202;</span><span class="nav-name" data-i18n="navDashboard">Dashboard</span>
         </li>
         <li class="nav-li" id="nav-connections" onclick="switchPage('connections')">
-          <span>&#128279;</span><span class="nav-name">Connections</span>
+          <span>&#128279;</span><span class="nav-name" data-i18n="navConnections">Connections</span>
         </li>
         <li class="nav-li" id="nav-synclog" onclick="switchPage('synclog')">
-          <span>&#128260;</span><span class="nav-name">Sync Log</span>
+          <span>&#128260;</span><span class="nav-name" data-i18n="navSynclog">Sync Log</span>
         </li>
         <li class="nav-li" id="nav-admin" onclick="switchPage('admin')">
-          <span>&#9881;&#65039;</span><span class="nav-name">Administrator</span>
+          <span>&#9881;&#65039;</span><span class="nav-name" data-i18n="navAdmin">Administrator</span>
         </li>
         <li class="nav-li" id="nav-client-dash" onclick="switchPage('client-dash')">
-          <span>&#128196;</span><span class="nav-name">Client Report</span>
+          <span>&#128196;</span><span class="nav-name" data-i18n="navClientDash">Client Report</span>
         </li>
         <li class="nav-li" id="nav-fulfillment" onclick="switchPage('fulfillment')">
-          <span>&#128230;</span><span class="nav-name">Fulfillment</span>
+          <span>&#128230;</span><span class="nav-name" data-i18n="navFulfillment">Fulfillment</span>
         </li>
         <li class="nav-li" id="nav-scan" onclick="switchPage('scan')">
-          <span>&#128247;</span><span class="nav-name">IDEALSCAN</span>
+          <span>&#128247;</span><span class="nav-name" data-i18n="navScan">IDEALSCAN</span>
         </li>
         <li class="nav-li" id="nav-inventory" onclick="switchPage('inventory')">
-          <span>&#128202;</span><span class="nav-name">Inventory <span id="inv-low-badge" class="nbadge" style="display:none;background:#d97706"></span></span>
+          <span>&#128202;</span><span class="nav-name" data-i18n="navInventory">Inventory</span><span id="inv-low-badge" class="nbadge" style="display:none;background:#d97706"></span>
+        </li>
+        <li class="nav-li" onclick="window.open('/tutorial.html','_blank')">
+          <span>&#128209;</span><span class="nav-name" data-i18n="navTutorial">User Guide</span>
         </li>
         <li class="nav-li" onclick="window.open('/about.html','_blank')">
-          <span>&#127760;</span><span class="nav-name">About IdealOMS</span>
+          <span>&#127760;</span><span class="nav-name" data-i18n="navAbout">About IdealOMS</span>
         </li>
 
       </ul>
@@ -3854,6 +3858,45 @@ function _scanFlash(msg, ok) {
 function _beep() {
   try{const ctx=new(window.AudioContext||window.webkitAudioContext)(),osc=ctx.createOscillator(),g=ctx.createGain();osc.connect(g);g.connect(ctx.destination);osc.frequency.value=880;g.gain.setValueAtTime(.1,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.1);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+.1);}catch{}
 }
+
+// ── LANGUAGE TOGGLE ───────────────────────────────────────────────────────────
+const I18N={
+  en:{
+    navLabel:'Navigation',navDashboard:'Dashboard',navConnections:'Connections',
+    navSynclog:'Sync Log',navAdmin:'Administrator',navClientDash:'Client Report',
+    navFulfillment:'Fulfillment',navScan:'IDEALSCAN',navInventory:'Inventory',
+    navTutorial:'User Guide',navAbout:'About IdealOMS',
+    syncAll:'⟳ Sync All',addOrder:'+ Add Order',
+    clientsLabel:'Clients',channelsLabel:'Channels'
+  },
+  zh:{
+    navLabel:'导航',navDashboard:'主页',navConnections:'渠道连接',
+    navSynclog:'同步记录',navAdmin:'管理员',navClientDash:'客户报表',
+    navFulfillment:'发货管理',navScan:'扫码发货',navInventory:'库存管理',
+    navTutorial:'用户手册',navAbout:'关于 IdealOMS',
+    syncAll:'⟳ 全部同步',addOrder:'+ 新建订单',
+    clientsLabel:'客户',channelsLabel:'渠道'
+  }
+};
+let _appLang=(localStorage.getItem('idealoms_lang')||'en');
+function applyLang(l){
+  _appLang=l;
+  localStorage.setItem('idealoms_lang',l);
+  const t=I18N[l]||I18N.en;
+  document.querySelectorAll('[data-i18n]').forEach(el=>{
+    const k=el.getAttribute('data-i18n');
+    if(t[k]!==undefined)el.innerHTML=t[k];
+  });
+  const btn=$('lang-toggle-btn');
+  if(btn){btn.textContent=l==='zh'?'中文':'EN';btn.style.color=l==='zh'?'#fbbf24':'#94a3b8';}
+  // update sidebar section labels
+  const sbLabels=document.querySelectorAll('.sb-label');
+  if(sbLabels[1])sbLabels[1].textContent=t.clientsLabel;
+  if(sbLabels[2])sbLabels[2].textContent=t.channelsLabel;
+}
+function toggleLang(){applyLang(_appLang==='zh'?'en':'zh');}
+// apply on load
+document.addEventListener('DOMContentLoaded',()=>applyLang(_appLang));
 </script>
 
 <!-- ── SCAN OVERLAY ─────────────────────────────────────────────────────── -->

@@ -248,12 +248,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <!-- ── LOGIN PAGE ── -->
 <div id="page-login">
-  <div class="login-header"><div class="brand">Ideal<span>OMS</span></div></div>
+  <div class="login-header"><div class="brand">Ideal<span>OMS</span></div><div style="flex:1"></div><button id="login-lang-btn" onclick="portalToggleLang()" style="padding:5px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#94a3b8;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">EN</button></div>
   <div class="login-body">
     <div class="login-card">
       <div class="login-icon">&#128101;</div>
-      <div class="login-title">Client Portal</div>
-      <div class="login-sub">Enter your credentials to view your orders</div>
+      <div class="login-title" id="login-title-el">Client Portal</div>
+      <div class="login-sub" id="login-sub-el">Enter your credentials to view your orders</div>
       <div class="fg">
         <label>Username</label>
         <input id="inp-user" type="text" placeholder="Your username" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
@@ -277,6 +277,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <div class="dash-client" id="dash-client-name"></div>
     <div class="dash-spacer"></div>
     <button class="hdr-btn hdr-btn-primary" id="btn-upload-orders" onclick="openUpload()">&#8679; Upload Orders</button>
+    <button class="hdr-btn hdr-btn-ghost" onclick="window.open('/tutorial.html','_blank')" title="User Guide / 用户手册">&#128209; Guide</button>
+    <button id="portal-lang-btn" class="hdr-btn hdr-btn-ghost" onclick="portalToggleLang()" title="Toggle language / 切换语言">EN</button>
     <button class="hdr-btn hdr-btn-ghost" onclick="doLogout()">Log Out</button>
   </div>
   <nav class="portal-tabs">
@@ -1041,6 +1043,102 @@ function showConnToast(type, msg) {
   el.style.display = 'block';
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4500);
 }
+
+// ── PORTAL LANGUAGE TOGGLE ────────────────────────────────────────────────────
+const PORTAL_I18N = {
+  en: {
+    loginTitle: 'Client Portal',
+    loginSub: 'Enter your credentials to view your orders',
+    loginBtn: 'Log In →',
+    loginHelp: 'Credentials are issued by your IdealOMS account manager.',
+    tabOrders: 'Orders',
+    tabConnections: 'My Connections',
+    stTotal: 'Total Orders',
+    stDelivered: 'Delivered',
+    stInprog: 'In Progress',
+    stRevenue: 'Revenue (SGD)',
+    filterAll: 'All',
+    filterDelivered: 'Delivered',
+    filterShipped: 'Shipped',
+    filterProcessing: 'Processing',
+    filterPending: 'Pending',
+    uploadBtn: '↑ Upload Orders',
+    guideBtn: '📋 Guide',
+    logoutBtn: 'Log Out',
+  },
+  zh: {
+    loginTitle: '客户门户',
+    loginSub: '输入您的凭据以查看订单',
+    loginBtn: '登录 →',
+    loginHelp: '凭据由您的 IdealOMS 客户经理发放。',
+    tabOrders: '订单',
+    tabConnections: '我的连接',
+    stTotal: '总订单数',
+    stDelivered: '已签收',
+    stInprog: '进行中',
+    stRevenue: '收入 (SGD)',
+    filterAll: '全部',
+    filterDelivered: '已签收',
+    filterShipped: '已发货',
+    filterProcessing: '处理中',
+    filterPending: '待处理',
+    uploadBtn: '↑ 上传订单',
+    guideBtn: '📋 手册',
+    logoutBtn: '退出',
+  }
+};
+
+let _portalLang = (localStorage.getItem('idealoms_portal_lang') || localStorage.getItem('idealoms_lang') || 'en');
+
+function portalApplyLang(l) {
+  _portalLang = l;
+  localStorage.setItem('idealoms_portal_lang', l);
+  localStorage.setItem('idealoms_lang', l);
+  const t = PORTAL_I18N[l] || PORTAL_I18N.en;
+  const _g = id => document.getElementById(id);
+  const _t = (id, val) => { const el = _g(id); if (el) el.textContent = val; };
+  const _html = (id, val) => { const el = _g(id); if (el) el.innerHTML = val; };
+
+  _t('login-title-el', t.loginTitle);
+  _t('login-sub-el', t.loginSub);
+  const loginBtn = _g('login-btn'); if (loginBtn) loginBtn.textContent = t.loginBtn;
+  const loginHelp = document.querySelector('.login-help'); if (loginHelp) loginHelp.textContent = t.loginHelp;
+
+  // tabs
+  document.querySelectorAll('.ptab').forEach(el => {
+    const tab = el.getAttribute('data-tab');
+    if (tab === 'orders') el.textContent = t.tabOrders;
+    if (tab === 'connections') el.textContent = t.tabConnections;
+  });
+
+  // stat labels
+  const stLbls = document.querySelectorAll('.stat-lbl');
+  const lblKeys = ['stTotal','stDelivered','stInprog','stRevenue'];
+  stLbls.forEach((el, i) => { if (lblKeys[i]) el.textContent = t[lblKeys[i]]; });
+
+  // filter pills
+  document.querySelectorAll('.pill').forEach(el => {
+    const s = el.getAttribute('data-status');
+    if (s === '') el.textContent = t.filterAll;
+    else if (s === 'delivered') el.textContent = t.filterDelivered;
+    else if (s === 'shipped') el.textContent = t.filterShipped;
+    else if (s === 'processing') el.textContent = t.filterProcessing;
+    else if (s === 'pending') el.textContent = t.filterPending;
+  });
+
+  // header buttons
+  const uploadBtn = _g('btn-upload-orders'); if (uploadBtn) uploadBtn.innerHTML = t.uploadBtn;
+  const guideBtn = document.querySelector('.hdr-btn[onclick*="tutorial"]'); if (guideBtn) guideBtn.innerHTML = t.guideBtn;
+  const langBtn = _g('portal-lang-btn');
+  if (langBtn) { langBtn.textContent = l === 'zh' ? '中文' : 'EN'; langBtn.style.color = l === 'zh' ? '#fbbf24' : ''; }
+
+  // login page lang toggle btn
+  const loginLangBtn = _g('login-lang-btn'); if (loginLangBtn) loginLangBtn.textContent = l === 'zh' ? '中文' : 'EN';
+}
+
+function portalToggleLang() { portalApplyLang(_portalLang === 'zh' ? 'en' : 'zh'); }
+
+document.addEventListener('DOMContentLoaded', () => portalApplyLang(_portalLang));
 </script>
 </body>
 </html>
