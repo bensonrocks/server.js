@@ -33,6 +33,10 @@
   .topbar-right{display:flex;align-items:center;gap:2px}
   .tb-btn{background:none;border:none;color:rgba(255,255,255,.45);font-size:1rem;width:36px;height:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;text-decoration:none;transition:background .15s,color .15s;padding:0;flex-shrink:0}
   .tb-btn:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.9)}
+  .clock-block{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;margin-right:8px;line-height:1.3;min-width:0}
+  .clock-time{font-family:var(--mono);font-size:.72rem;color:rgba(255,255,255,.75);letter-spacing:.06em;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .clock-date{font-family:var(--mono);font-size:.58rem;color:rgba(255,255,255,.35);letter-spacing:.05em;white-space:nowrap}
+  @media(max-width:600px){.clock-block{display:none}}
   @media(max-width:480px){
     .sessions{display:none}
     .topbar{padding:0 12px;gap:8px}
@@ -69,7 +73,7 @@
   .signal-banner.watch{background:color-mix(in srgb,var(--gold-dim) 12%,transparent)}
   .signal-banner.wait {background:var(--bg-2)}
   .signal-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px}
-  .signal-label{font-family:var(--mono);font-size:1.5rem;font-weight:bold;letter-spacing:.04em;line-height:1}
+  .signal-label{font-family:var(--mono);font-size:1.65rem;font-weight:bold;letter-spacing:.04em;line-height:1}
   .signal-label.buy  {color:var(--bull)}
   .signal-label.sell {color:var(--bear)}
   .signal-label.watch{color:var(--gold)}
@@ -79,16 +83,16 @@
   .signal-status.active-sell{background:var(--bear-bg);color:var(--bear);border-color:var(--bear)}
   .signal-status.watch      {background:color-mix(in srgb,var(--gold-dim) 20%,transparent);color:var(--gold);border-color:var(--gold-dim)}
   .signal-status.wait       {background:var(--bg-3);color:var(--text-3);border-color:var(--border)}
-  .signal-levels{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+  .signal-levels{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:4px}
   @media(max-width:480px){.signal-levels{grid-template-columns:repeat(3,1fr)}}
   .sl-cell{display:flex;flex-direction:column}
   .sl-key{font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-family:var(--mono);margin-bottom:1px}
-  .sl-val{font-family:var(--mono);font-size:.88rem;font-variant-numeric:tabular-nums;font-weight:bold}
+  .sl-val{font-family:var(--mono);font-size:.96rem;font-variant-numeric:tabular-nums;font-weight:bold}
   .sl-val.entry{color:var(--entry)}
   .sl-val.sl   {color:var(--bear)}
   .sl-val.tp   {color:var(--bull)}
   .sl-val.wait {color:var(--text-3)}
-  .signal-note{margin-top:8px;font-size:.68rem;color:var(--text-2);line-height:1.5}
+  .signal-note{margin-top:10px;font-size:.75rem;color:var(--text-2);line-height:1.65}
 
   /* card head */
   .card-head{padding:16px 20px 12px;border-bottom:1px solid var(--border)}
@@ -96,7 +100,7 @@
   .inst-label{font-family:var(--mono);font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:2px}
   .inst-name{font-family:var(--serif);font-size:1.2rem;font-weight:normal}
   .inst-name.gold{color:var(--gold)}.inst-name.silver{color:var(--silver)}
-  .price{font-family:var(--mono);font-size:1.9rem;font-variant-numeric:tabular-nums;line-height:1;margin-bottom:3px}
+  .price{font-family:var(--mono);font-size:2.1rem;font-variant-numeric:tabular-nums;line-height:1;margin-bottom:4px}
   .price-sub{font-family:var(--mono);font-size:.63rem;color:var(--text-3);letter-spacing:.06em}
   .bias{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;padding:3px 9px;font-weight:bold}
   .bias.bull{background:var(--bull-bg);color:var(--bull)}
@@ -215,7 +219,11 @@
     </div>
   </div>
   <div class="topbar-right">
-    <span id="user-name" style="font-family:var(--mono);font-size:.65rem;color:rgba(255,255,255,.4);letter-spacing:.06em"></span>
+    <div class="clock-block">
+      <div class="clock-time" id="clock-time">—</div>
+      <div class="clock-date" id="clock-date">—</div>
+    </div>
+    <span id="user-name" style="font-family:var(--mono);font-size:.65rem;color:rgba(255,255,255,.4);letter-spacing:.06em;margin-right:4px"></span>
     <a class="tb-btn" href="/tutorial.html" title="Tutorial">📖</a>
     <button class="tb-btn" onclick="refresh()" title="Refresh">↻</button>
     <button class="tb-btn" title="Notifications">🔔</button>
@@ -295,6 +303,24 @@ fetch('/api/auth/me').then(r=>r.json()).then(d=>{
 }).catch(()=>{});
 
 function toggleTheme(){const r=document.documentElement;const t=r.getAttribute('data-theme')==='dark'?'light':'dark';r.setAttribute('data-theme',t);const b=document.getElementById('themeBtn');if(b)b.textContent=t==='dark'?'🌙':'☀️'}
+
+// ── Live clock ──────────────────────────────────────────────────────────
+(function(){
+  const tEl=document.getElementById('clock-time');
+  const dEl=document.getElementById('clock-date');
+  const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tzAbbr=()=>new Date().toLocaleTimeString('en',{timeZoneName:'short'}).split(' ').pop();
+  function tick(){
+    const now=new Date();
+    const hms=now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+    const date=now.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    if(tEl)tEl.textContent=hms+' '+tzAbbr();
+    if(dEl)dEl.textContent=date;
+  }
+  tick();
+  setInterval(tick,1000);
+})();
+
 function updateSessions(){const now=new Date();const m=now.getUTCHours()*60+now.getUTCMinutes();const wd=now.getUTCDay();const wk=wd===0||wd===6;const active={NY:!wk&&m>=780&&m<1320,LON:!wk&&m>=420&&m<960,SIN:!wk&&(m<540||m>=1380)};document.querySelectorAll('.session-pill').forEach(el=>el.classList.toggle('active',!!active[el.dataset.session]))}
 updateSessions();setInterval(updateSessions,60000);
 function fmt(n,d=2){return typeof n!=='number'?'—':n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d})}
