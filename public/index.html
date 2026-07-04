@@ -25,8 +25,10 @@ button,a{touch-action:manipulation}
 
 /* ── TOPBAR ── */
 .topbar{display:flex;align-items:center;gap:10px;padding:0 14px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
-.logo{display:flex;align-items:center;gap:7px;font-size:15px;font-weight:800;letter-spacing:1.5px;white-space:nowrap}
-.logo-pulse{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 7px var(--green);animation:pulse 2s infinite}
+.logo{display:flex;align-items:center;gap:0;white-space:nowrap;flex-shrink:0}
+.logo svg{height:34px;width:auto;display:block}
+.mp-word{fill:var(--text)}
+.mp-green{fill:#22c97a}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 .clocks{display:flex;gap:6px;overflow-x:auto;flex:1;align-items:center;scrollbar-width:none}
 .clocks::-webkit-scrollbar{display:none}
@@ -243,7 +245,7 @@ button,a{touch-action:manipulation}
 @media(max-width:600px){
   /* ── Topbar ── */
   .topbar{padding:0 10px;height:44px;gap:6px}
-  .logo{font-size:13px}
+  .logo svg{height:28px}
   .clock-chip .t{display:none}
   .notif-label{display:none}
 
@@ -306,7 +308,34 @@ button,a{touch-action:manipulation}
 
 <!-- TOPBAR -->
 <header class="topbar">
-  <div class="logo"><div class="logo-pulse"></div>MARKET<span style="color:var(--cyan)">PULSE</span></div>
+  <div class="logo">
+    <svg viewBox="0 0 220 60" xmlns="http://www.w3.org/2000/svg" aria-label="MarketPulse">
+      <defs>
+        <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%"   stop-color="#1a3a6e"/>
+          <stop offset="40%"  stop-color="#1e88d4"/>
+          <stop offset="100%" stop-color="#22c97a"/>
+        </linearGradient>
+        <linearGradient id="arcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%"   stop-color="#1a3a6e"/>
+          <stop offset="100%" stop-color="#22c97a"/>
+        </linearGradient>
+      </defs>
+      <!-- Circle arc -->
+      <path d="M30,30 m-22,0 a22,22 0 1,1 44,0" fill="none" stroke="url(#arcGrad)" stroke-width="3.2" stroke-linecap="round"/>
+      <!-- Bar chart (inside circle) -->
+      <rect x="12" y="36" width="5"  height="8"  rx="1" fill="url(#barGrad)" opacity=".9"/>
+      <rect x="19" y="31" width="5"  height="13" rx="1" fill="url(#barGrad)" opacity=".9"/>
+      <rect x="26" y="26" width="5"  height="18" rx="1" fill="url(#barGrad)" opacity=".9"/>
+      <rect x="33" y="22" width="5"  height="22" rx="1" fill="url(#barGrad)"/>
+      <rect x="40" y="17" width="5"  height="27" rx="1" fill="url(#barGrad)"/>
+      <!-- Pulse / chart line -->
+      <polyline points="8,32 16,32 20,24 24,38 28,20 32,36 36,28 44,28 48,22 52,38" fill="none" stroke="url(#arcGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- Wordmark -->
+      <text x="62" y="41" class="mp-word" font-family="'SF Pro Display','Segoe UI',Arial,sans-serif" font-weight="800" font-size="22" letter-spacing="-.3">Market</text>
+      <text x="140" y="41" class="mp-green" font-family="'SF Pro Display','Segoe UI',Arial,sans-serif" font-weight="800" font-size="22" letter-spacing="-.3">Pulse</text>
+    </svg>
+  </div>
   <div class="clocks" id="clocks"></div>
   <div class="ws-dot" id="wsDot"></div>
   <div class="unread" id="unread">0</div>
