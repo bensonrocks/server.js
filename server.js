@@ -101,6 +101,25 @@ async function requireSubscriptionPage(req, res, next) {
   next();
 }
 
+// ── SEO ────────────────────────────────────────────────────────────────
+app.get('/robots.txt', (req, res) => {
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  res.type('text/plain').send(
+    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
+  );
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const today = new Date().toISOString().split('T')[0];
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${base}/</loc><lastmod>${today}</lastmod><priority>1.0</priority></url>
+  <url><loc>${base}/tutorial.html</loc><lastmod>${today}</lastmod><priority>0.8</priority></url>
+  <url><loc>${base}/signup</loc><lastmod>${today}</lastmod><priority>0.7</priority></url>
+</urlset>`);
+});
+
 // ── HTML page routes (defined before static so / is not hijacked) ──────
 app.get('/',          (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
 app.get('/login',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
