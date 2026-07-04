@@ -16,11 +16,13 @@ const express    = require('express');
 const path       = require('path');
 const os         = require('os');
 const fs         = require('fs');
+const crypto     = require('crypto');
 const { exec }   = require('child_process');
 const multer     = require('multer');
 
 const mainDb          = require('./lib/db/main');
 const { getTenantDb } = require('./lib/db/tenant');
+const connectionsDb   = require('./lib/db/connections');
 const createStore     = require('./lib/store');
 const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
@@ -1256,6 +1258,88 @@ app.patch('/api/superadmin/tenants/:id', withSuperAdmin, (req, res) => {
   if (active !== undefined) mainDb.prepare('UPDATE tenants SET active=? WHERE id=?').run(active ? 1 : 0, id);
   if (active === false || active === 0) auth.revokeAllTenantSessions(id);
   res.json(mainDb.prepare('SELECT * FROM tenants WHERE id=?').get(id));
+});
+
+// ── Client platform connections ───────────────────────────────────────────────
+
+const pendingOAuth = new Map(); // nonce → {tenantId, clientId, platform, expiresAt}
+setInterval(() => { const now = Date.now(); for (const [k, v] of pendingOAuth) if (v.expiresAt < now) pendingOAuth.delete(k); }, 300000);
+
+app.get('/api/client/connections', withClientAuth, (req, res) => {
+  const rows = connectionsDb.prepare(
+    'SELECT platform, connected_at FROM client_platform_connections WHERE tenant_id = ? AND client_id = ?'
+  ).all(req.tenantId, req.clientId);
+  const connected = {};
+  for (const r of rows) connected[r.platform] = { connectedAt: r.connected_at };
+  const PLATFORMS = ['tiktok', 'shopify', 'lazada', 'shopee'];
+  const masterCreds = createCreds('default');
+  const result = PLATFORMS.map(p => ({
+    id: p,
+    name: registry[p]?.meta?.name || p,
+    connected: !!connected[p],
+    connectedAt: connected[p]?.connectedAt || null,
+    available: !!(registry[p] && masterCreds.get(p)),
+  }));
+  res.json(result);
+});
+
+app.get('/api/client/connections/:platform/start', (req, res) => {
+  const { platform } = req.params;
+  const rawToken = (req.headers.authorization || '').replace('Bearer ', '').trim() || req.query.token || '';
+  const tenantId = req.headers['x-tenant-id'] || req.query.tenant || 'default';
+  const ctx      = getCtx(tenantId);
+  const session  = createClientAuth(ctx.db).validateToken(rawToken);
+  if (!session) return res.redirect('/portal?conn_error=' + encodeURIComponent('Please log in first.'));
+  const connector = registry[platform];
+  if (!connector || connector.meta.authType !== 'oauth')
+    return res.redirect('/portal?conn_error=' + encodeURIComponent('Platform not supported.'));
+  const masterCreds = createCreds('default').get(platform);
+  if (!masterCreds)
+    return res.redirect('/portal?conn_error=' + encodeURIComponent('This platform is not yet configured. Please contact support.'));
+  const nonce = crypto.randomBytes(16).toString('hex');
+  pendingOAuth.set(nonce, { tenantId, clientId: session.clientId, platform, expiresAt: Date.now() + 600000 });
+  const callbackUrl = `${BASE_URL}/api/client/connections/${platform}/callback?oms=${nonce}`;
+  try {
+    res.redirect(connector.buildAuthUrl(masterCreds, callbackUrl));
+  } catch (err) {
+    pendingOAuth.delete(nonce);
+    res.redirect('/portal?conn_error=' + encodeURIComponent(err.message));
+  }
+});
+
+app.get('/api/client/connections/:platform/callback', async (req, res) => {
+  const { platform } = req.params;
+  const nonce   = req.query.oms;
+  const pending = nonce && pendingOAuth.get(nonce);
+  if (!pending || Date.now() > pending.expiresAt) {
+    pendingOAuth.delete(nonce);
+    return res.redirect('/portal#conn_error=' + encodeURIComponent('Session expired. Please try again.'));
+  }
+  pendingOAuth.delete(nonce);
+  const { tenantId, clientId } = pending;
+  const connector   = registry[platform];
+  const masterCreds = createCreds('default').get(platform);
+  if (!connector || !masterCreds)
+    return res.redirect('/portal#conn_error=' + encodeURIComponent('Platform not configured.'));
+  try {
+    const tokens = await connector.exchangeCode(masterCreds, req.query);
+    connectionsDb.prepare(`
+      INSERT INTO client_platform_connections (tenant_id, client_id, platform, data)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (tenant_id, client_id, platform) DO UPDATE SET
+        data = excluded.data, updated_at = datetime('now')
+    `).run(tenantId, clientId, platform, JSON.stringify({ ...tokens, connectedAt: new Date().toISOString() }));
+    res.redirect('/portal#conn_success=' + encodeURIComponent(connector.meta.name));
+  } catch (err) {
+    res.redirect('/portal#conn_error=' + encodeURIComponent(err.message));
+  }
+});
+
+app.delete('/api/client/connections/:platform', withClientAuth, (req, res) => {
+  connectionsDb.prepare(
+    'DELETE FROM client_platform_connections WHERE tenant_id = ? AND client_id = ? AND platform = ?'
+  ).run(req.tenantId, req.clientId, req.params.platform);
+  res.json({ ok: true });
 });
 
 // ── OAuth result pages ────────────────────────────────────────────────────────

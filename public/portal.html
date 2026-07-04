@@ -210,6 +210,38 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 /* order count badge */
 .result-count{font-size:11px;color:#94a3b8;padding:0 4px;white-space:nowrap}
+
+/* ── PORTAL TABS ── */
+.portal-tabs{background:#0f172a;border-top:1px solid rgba(255,255,255,.1);display:flex;padding:0 20px;flex-shrink:0}
+.ptab{padding:11px 16px;border:none;background:transparent;color:#94a3b8;font-size:13px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;letter-spacing:-.1px}
+.ptab:hover{color:#e2e8f0}
+.ptab.active{color:#fb923c;border-bottom-color:#fb923c}
+
+/* ── CONNECTIONS SECTION ── */
+.connections-section{flex:1;padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.conn-header h2{font-size:16px;font-weight:800;color:#0f172a;margin-bottom:4px}
+.conn-header p{font-size:13px;color:#64748b;line-height:1.5}
+.conn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.conn-tile{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.07);padding:18px;display:flex;flex-direction:column;gap:14px;border:1.5px solid #e2e8f0;transition:box-shadow .15s,border-color .15s}
+.conn-tile:hover{box-shadow:0 4px 16px rgba(0,0,0,.09);border-color:#bfdbfe}
+.conn-tile-top{display:flex;align-items:center;gap:12px}
+.conn-tile-icon{width:46px;height:46px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.conn-tile-name{font-size:14px;font-weight:700;color:#0f172a;margin-bottom:5px}
+.conn-badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.conn-badge.ok{background:#f0fdf4;color:#16a34a}
+.conn-badge.idle{background:#f8fafc;color:#64748b}
+.conn-badge.soon{background:#fffbeb;color:#d97706}
+.conn-tile-bottom{}
+.conn-btn{width:100%;padding:9px 14px;border-radius:8px;border:none;font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;text-align:center}
+.conn-btn-primary{background:#2563eb;color:#fff}
+.conn-btn-primary:hover{background:#1d4ed8}
+.conn-btn-danger{background:#fff;color:#dc2626;border:1.5px solid #fecaca}
+.conn-btn-danger:hover{background:#fef2f2;border-color:#dc2626}
+.conn-since{font-size:11px;color:#94a3b8;margin-bottom:6px}
+.conn-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 22px;border-radius:10px;font-size:13px;font-weight:600;z-index:300;box-shadow:0 4px 20px rgba(0,0,0,.15);display:none;white-space:nowrap;animation:fadeup .2s ease}
+.conn-toast.ok{background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0}
+.conn-toast.error{background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca}
+@keyframes fadeup{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 </style>
 </head>
 <body>
@@ -244,10 +276,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <div class="dash-logo">Ideal<span>OMS</span></div>
     <div class="dash-client" id="dash-client-name"></div>
     <div class="dash-spacer"></div>
-    <button class="hdr-btn hdr-btn-primary" onclick="openUpload()">&#8679; Upload Orders</button>
+    <button class="hdr-btn hdr-btn-primary" id="btn-upload-orders" onclick="openUpload()">&#8679; Upload Orders</button>
     <button class="hdr-btn hdr-btn-ghost" onclick="doLogout()">Log Out</button>
   </div>
-  <div class="dash-body">
+  <nav class="portal-tabs">
+    <button class="ptab active" data-tab="orders" onclick="setPortalTab('orders')">Orders</button>
+    <button class="ptab" data-tab="connections" onclick="setPortalTab('connections')">My Connections</button>
+  </nav>
+  <div id="section-orders" class="dash-body">
     <!-- Stats -->
     <div class="stats-row">
       <div class="stat">
@@ -335,7 +371,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       </div>
     </div>
   </div>
+
+  <!-- ── CONNECTIONS SECTION ── -->
+  <div id="section-connections" class="connections-section" style="display:none">
+    <div class="conn-header">
+      <h2>My Marketplace Connections</h2>
+      <p>Connect your stores so IdealOMS can automatically sync orders and track shipments.</p>
+    </div>
+    <div class="conn-grid" id="connections-grid">
+      <div style="color:#94a3b8;font-size:13px;padding:12px 0">Loading&#8230;</div>
+    </div>
+  </div>
 </div>
+
+<div id="conn-toast" class="conn-toast"></div>
 
 <!-- ── UPLOAD MODAL ── -->
 <div class="modal-overlay" id="upload-modal" style="display:none" onclick="if(event.target===this)closeUpload()">
@@ -405,6 +454,32 @@ function showDash() {
   document.getElementById('page-dash').style.display  = 'flex';
   document.getElementById('page-dash').style.flexDirection = 'column';
   document.getElementById('dash-client-name').textContent = clientInfo.clientName;
+
+  // Handle OAuth callback result in URL hash
+  const hash = window.location.hash.slice(1);
+  if (hash) {
+    const params = new URLSearchParams(hash);
+    const success = params.get('conn_success');
+    const error   = params.get('conn_error');
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (success || error) {
+      setTimeout(() => {
+        setPortalTab('connections');
+        if (success) showConnToast('ok', success + ' connected successfully!');
+        else if (error) showConnToast('error', 'Connection failed: ' + error);
+      }, 150);
+      return;
+    }
+  }
+  // Also handle ?conn_error / ?conn_success in query string (non-hash fallback)
+  const sp = new URLSearchParams(window.location.search);
+  const qerr = sp.get('conn_error');
+  if (qerr) {
+    history.replaceState(null, '', window.location.pathname);
+    setTimeout(() => { setPortalTab('connections'); showConnToast('error', 'Connection failed: ' + qerr); }, 150);
+    return;
+  }
+
   loadOrders();
 }
 
@@ -883,6 +958,88 @@ function showUploadResult(msg, ok) {
   el.textContent = msg;
   el.className = 'upload-result ' + (ok ? 'ok' : 'err');
   el.style.display = 'block';
+}
+
+// ── CONNECTIONS TAB ───────────────────────────────────────────────────────────
+
+const CONN_META = {
+  tiktok:  { emoji: '&#9654;', label: 'TikTok Shop', color: '#15803d', bg: '#f0fdf4' },
+  shopify: { emoji: '&#128722;', label: 'Shopify',     color: '#2563eb', bg: '#eff6ff' },
+  lazada:  { emoji: '&#128179;', label: 'Lazada',      color: '#9333ea', bg: '#fdf4ff' },
+  shopee:  { emoji: '&#128104;', label: 'Shopee',      color: '#ea580c', bg: '#fff7ed' },
+};
+
+function setPortalTab(tab) {
+  document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('section-orders').style.display      = tab === 'orders'      ? 'flex' : 'none';
+  document.getElementById('section-connections').style.display = tab === 'connections' ? 'flex' : 'none';
+  document.getElementById('btn-upload-orders').style.display   = tab === 'orders'      ? ''     : 'none';
+  if (tab === 'connections') loadConnections();
+  else if (tab === 'orders' && !allOrders.length) loadOrders();
+}
+
+async function loadConnections() {
+  const grid = document.getElementById('connections-grid');
+  grid.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:12px 0">Loading&#8230;</div>';
+  try {
+    const r = await fetch(`${SERVER}/api/client/connections`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { if (r.status === 401) { doLogout(); return; } grid.innerHTML = '<div style="color:#dc2626;font-size:13px">Failed to load connections.</div>'; return; }
+    renderConnections(await r.json());
+  } catch { grid.innerHTML = '<div style="color:#dc2626;font-size:13px">Could not reach server.</div>'; }
+}
+
+function renderConnections(platforms) {
+  const grid = document.getElementById('connections-grid');
+  grid.innerHTML = platforms.map(p => {
+    const cfg = CONN_META[p.id] || { emoji: '&#128279;', label: p.name, color: '#64748b', bg: '#f8fafc' };
+    let badge, action;
+    if (!p.available) {
+      badge  = '<span class="conn-badge soon">Coming Soon</span>';
+      action = '<button class="conn-btn" style="opacity:.45;cursor:not-allowed;background:#f1f5f9;color:#94a3b8" disabled>Not Available</button>';
+    } else if (p.connected) {
+      const since = p.connectedAt ? new Date(p.connectedAt).toLocaleDateString('en-SG',{day:'2-digit',month:'short',year:'numeric'}) : '';
+      badge  = '<span class="conn-badge ok">&#10003; Connected</span>';
+      action = `<div class="conn-since">Since ${esc(since)}</div><button class="conn-btn conn-btn-danger" onclick="disconnectPlatform('${p.id}','${esc(cfg.label)}')">Disconnect</button>`;
+    } else {
+      badge  = '<span class="conn-badge idle">Not Connected</span>';
+      action = `<button class="conn-btn conn-btn-primary" onclick="connectPlatform('${p.id}')">Connect &rarr;</button>`;
+    }
+    return `<div class="conn-tile" id="tile-${p.id}">
+      <div class="conn-tile-top">
+        <div class="conn-tile-icon" style="background:${cfg.bg};color:${cfg.color}">${cfg.emoji}</div>
+        <div>
+          <div class="conn-tile-name">${esc(cfg.label)}</div>
+          ${badge}
+        </div>
+      </div>
+      <div class="conn-tile-bottom">${action}</div>
+    </div>`;
+  }).join('');
+}
+
+function connectPlatform(platform) {
+  window.location.href = `${SERVER}/api/client/connections/${platform}/start?token=${encodeURIComponent(token)}`;
+}
+
+async function disconnectPlatform(platform, label) {
+  if (!confirm(`Disconnect ${label || platform}?\n\nOrder syncing will stop for this store.`)) return;
+  try {
+    const r = await fetch(`${SERVER}/api/client/connections/${platform}`, {
+      method: 'DELETE', headers: { Authorization: 'Bearer ' + token }
+    });
+    if (r.ok) { showConnToast('ok', (label || platform) + ' disconnected.'); loadConnections(); }
+    else showConnToast('error', 'Disconnect failed. Please try again.');
+  } catch { showConnToast('error', 'Could not reach server.'); }
+}
+
+let _toastTimer = null;
+function showConnToast(type, msg) {
+  const el = document.getElementById('conn-toast');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  el.className = 'conn-toast ' + type;
+  el.textContent = msg;
+  el.style.display = 'block';
+  _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4500);
 }
 </script>
 </body>
