@@ -1051,9 +1051,9 @@ a:hover{text-decoration:underline}
           <div class="tbl-wrap">
             <table class="tbl">
               <thead>
-                <tr><th>SKU</th><th>Name</th><th>Category</th><th>In Stock</th><th>Reserved</th><th>Stock Level</th><th>Sell Price</th><th>Actions</th></tr>
+                <tr><th>SKU</th><th>Name</th><th>Category</th><th>Location</th><th>In Stock</th><th>Reserved</th><th>Stock Level</th><th>Sell Price</th><th>Actions</th></tr>
               </thead>
-              <tbody id="inv-tbody"><tr class="empty"><td colspan="8">Loading inventory…</td></tr></tbody>
+              <tbody id="inv-tbody"><tr class="empty"><td colspan="9">Loading inventory…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1303,6 +1303,7 @@ a:hover{text-decoration:underline}
           <div><label class="inv-label">Cost Price</label><input id="inv-f-cost" type="number" step="0.01" class="inv-inp" value="0"></div>
           <div><label class="inv-label">Sell Price</label><input id="inv-f-sell" type="number" step="0.01" class="inv-inp" value="0"></div>
           <div class="inv-modal-full"><label class="inv-label">Description</label><input id="inv-f-desc" class="inv-inp" placeholder="Optional description"></div>
+          <div class="inv-modal-full"><label class="inv-label">Location</label><input id="inv-f-loc" class="inv-inp" placeholder="e.g. Aisle 3, Shelf B / Bin A-12"></div>
         </div>
         <div id="inv-modal-err" style="color:#dc2626;font-size:12px;margin-top:10px;display:none"></div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
@@ -2729,7 +2730,7 @@ function renderFulfillment(){
     <th>Order ID</th><th>Client</th><th>Channel</th><th>Items</th><th>Status</th><th>Date</th>
   </tr></thead><tbody>${filtered.map(o=>{
     const sel=ffSelected.has(o.id);
-    const itemStr=o.items.map(i=>`${i.qty}× ${i.name}`).join(', ');
+    const itemStr=o.items.map(i=>{const inv=_invItems.find(r=>r.sku&&r.sku===i.sku);const loc=inv&&inv.location?` [${inv.location}]`:'';return`${i.qty}× ${i.name}${loc}`;}).join(', ');
     return `<tr class="ff-row${sel?' ff-sel':''}" data-id="${o.id}" onclick="ffToggleRow('${o.id}',this)">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="ff-cb" ${sel?'checked':''} onchange="ffToggleRow('${o.id}',this.closest('tr'),this.checked)"></td>
       <td><span class="ff-oid">${o.id}</span></td>
@@ -2780,7 +2781,10 @@ function printPicklist(){
   for(const o of selOrders){
     for(const item of o.items){
       const key=item.sku||item.name;
-      if(!bySkuMap.has(key))bySkuMap.set(key,{sku:item.sku||'—',name:item.name,totalQty:0,orders:[]});
+      if(!bySkuMap.has(key)){
+        const inv=_invItems.find(r=>r.sku&&r.sku===item.sku);
+        bySkuMap.set(key,{sku:item.sku||'—',name:item.name,location:inv&&inv.location?inv.location:'',totalQty:0,orders:[]});
+      }
       const r=bySkuMap.get(key);
       r.totalQty+=item.qty;
       r.orders.push({orderId:o.id,qty:item.qty,client:o.clientName});
@@ -2814,6 +2818,7 @@ tr:nth-child(even) td{background:#f8fafc}
   <th class="chk">&#10003;</th>
   <th>SKU</th>
   <th>Item Name</th>
+  <th>Location</th>
   <th style="text-align:center">Qty to Pick</th>
   <th>Order(s)</th>
 </tr></thead><tbody>
@@ -2821,6 +2826,7 @@ ${rows.map((r,i)=>`<tr>
   <td class="chk"><span class="chk-box"></span></td>
   <td><span class="sku">${r.sku}</span></td>
   <td>${r.name}</td>
+  <td style="font-size:11px;color:#2563eb;font-weight:600">${r.location||'—'}</td>
   <td class="qty">${r.totalQty}</td>
   <td><div>${r.orders.map(o=>`<strong>${o.orderId}</strong> &times;${o.qty} (${o.client})`).join('<br>')}</div></td>
 </tr>`).join('')}
@@ -3325,14 +3331,14 @@ let _invItems = [], _invPanelSku = null, _invEditSku = null;
 const fmtQty   = n => Number(n).toLocaleString();
 
 async function invLoad() {
-  if (!serverAvailable) { $('inv-tbody').innerHTML = '<tr class="empty"><td colspan="8">Server offline.</td></tr>'; return; }
+  if (!serverAvailable) { $('inv-tbody').innerHTML = '<tr class="empty"><td colspan="9">Server offline.</td></tr>'; return; }
   try {
     const res = await apiFetch('/api/inventory');
     _invItems = await res.json();
     invRender(_invItems);
     invLoadStats();
   } catch (e) {
-    $('inv-tbody').innerHTML = `<tr class="empty"><td colspan="8">Failed to load inventory: ${e.message}</td></tr>`;
+    $('inv-tbody').innerHTML = `<tr class="empty"><td colspan="9">Failed to load inventory: ${e.message}</td></tr>`;
   }
 }
 
@@ -3356,7 +3362,7 @@ async function invLoadStats() {
 
 function invRender(items) {
   const tbody = $('inv-tbody');
-  if (!items.length) { tbody.innerHTML = '<tr class="empty"><td colspan="8">No SKUs found.</td></tr>'; return; }
+  if (!items.length) { tbody.innerHTML = '<tr class="empty"><td colspan="9">No SKUs found.</td></tr>'; return; }
   tbody.innerHTML = items.map(r => {
     const pct   = r.reorder_point > 0 ? Math.min(100, Math.round(r.stock_qty / (r.reorder_point * 3) * 100)) : 100;
     const color = r.stock_qty === 0 ? '#dc2626' : r.stock_qty <= r.reorder_point ? '#d97706' : '#16a34a';
@@ -3365,6 +3371,7 @@ function invRender(items) {
       <td><span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563eb">${_esc(r.sku)}</span></td>
       <td style="font-weight:600">${_esc(r.name)}</td>
       <td><span style="font-size:11px;background:#f1f5f9;padding:2px 7px;border-radius:8px;color:#475569">${r.category||'—'}</span></td>
+      <td><span style="font-size:11px;color:#475569">${r.location||'—'}</span></td>
       <td><strong style="color:${color}">${fmtQty(r.stock_qty)}</strong> <span style="font-size:11px;color:#94a3b8">${r.unit}</span></td>
       <td style="color:#d97706">${r.reserved_qty > 0 ? fmtQty(r.reserved_qty) : '—'}</td>
       <td><div class="stock-bar"><div class="stock-bar-fill" style="width:${pct}%;background:${color}"></div></div></td>
@@ -3448,7 +3455,7 @@ async function invAdjust() {
 function invOpenAdd() {
   _invEditSku = null;
   $('inv-modal-title').textContent = 'Add SKU';
-  ['sku','name','cat','desc','unit','qty','reo','cost','sell'].forEach(f => {
+  ['sku','name','cat','desc','loc','unit','qty','reo','cost','sell'].forEach(f => {
     const el = $('inv-f-'+f);
     if (el) el.value = f==='unit' ? 'pcs' : f==='qty'||f==='reo'||f==='cost'||f==='sell' ? '0' : '';
   });
@@ -3466,6 +3473,7 @@ function invOpenEdit(sku) {
   $('inv-f-name').value = item.name;
   $('inv-f-cat').value  = item.category || '';
   $('inv-f-desc').value = item.description || '';
+  $('inv-f-loc').value  = item.location || '';
   $('inv-f-unit').value = item.unit || 'pcs';
   $('inv-f-qty').value  = item.stock_qty;
   $('inv-f-reo').value  = item.reorder_point;
@@ -3486,6 +3494,7 @@ async function invSave() {
     sku, name,
     description: $('inv-f-desc').value.trim(),
     category:    $('inv-f-cat').value.trim(),
+    location:    $('inv-f-loc').value.trim(),
     unit:        $('inv-f-unit').value.trim() || 'pcs',
     stock_qty:   parseFloat($('inv-f-qty').value) || 0,
     reorder_point: parseFloat($('inv-f-reo').value) || 10,
