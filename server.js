@@ -55,8 +55,20 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 app.use(express.json());
+
+const NIMBUSTRADE_HOSTS = (process.env.NIMBUSTRADE_HOSTS || 'nimbustrade.up.railway.app')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+const nimbustradeStatic = express.static(path.join(__dirname, 'nimbustrade-site'));
+
+app.use((req, res, next) => {
+  if (NIMBUSTRADE_HOSTS.includes(req.hostname)) return nimbustradeStatic(req, res, next);
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/nimbustrade', express.static(path.join(__dirname, 'nimbustrade-site')));
+app.use('/nimbustrade', nimbustradeStatic);
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
 
