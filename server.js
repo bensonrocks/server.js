@@ -11,6 +11,7 @@ const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
+const hitpay                         = require('./lib/hitpay');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +19,9 @@ const PORT = process.env.PORT || 3000;
 const stripe = process.env.STRIPE_SECRET_KEY
   ? Stripe(process.env.STRIPE_SECRET_KEY)
   : null;
+
+// HitPay takes priority over Stripe when configured
+const useHitPay = hitpay.configured;
 
 // ── Stripe webhook — must receive raw body ─────────────────────────────
 app.post('/api/payment/webhook',
@@ -142,8 +146,8 @@ app.post('/api/auth/signup', async (req, res) => {
     return res.status(409).json({ ok: false, error: 'Email already registered — please sign in' });
 
   const passwordHash = await bcrypt.hash(password, 12);
-  // No Stripe = dev mode: activate immediately, no payment step needed
-  const subscriptionStatus = stripe ? 'pending' : 'active';
+  // Dev mode (no payment gateway): activate immediately
+  const subscriptionStatus = (useHitPay || stripe) ? 'pending' : 'active';
   const user = await users.create({ name, email, passwordHash, subscriptionStatus });
   req.session.userId = user.id;
   res.json({ ok: true, user: safeUser(user) });
@@ -159,7 +163,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (!valid) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
   req.session.userId = user.id;
   // Dev mode: auto-activate accounts that are still pending
-  if (!stripe && user.subscriptionStatus === 'pending') {
+  if (!useHitPay && !stripe && user.subscriptionStatus === 'pending') {
     const activated = await users.update(user.id, { subscriptionStatus: 'active' });
     return res.json({ ok: true, user: safeUser(activated) });
   }
@@ -182,16 +186,35 @@ function safeUser(u) {
 
 // ── Payment API ────────────────────────────────────────────────────────
 app.post('/api/payment/create-checkout', requireAuth, async (req, res) => {
-  if (!stripe) {
-    // Dev mode: skip payment, activate immediately
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+  // Dev mode — no gateway configured
+  if (!useHitPay && !stripe) {
     await users.update(req.session.userId, { subscriptionStatus: 'active' });
     return res.json({ ok: true, url: '/dashboard' });
   }
+
   const user = await users.findById(req.session.userId);
   if (!user) return res.status(401).json({ ok: false, error: 'Not authenticated' });
 
+  // ── HitPay ──────────────────────────────────────────────────────────
+  if (useHitPay) {
+    try {
+      const billing = await hitpay.createRecurringBilling({
+        userId:      user.id,
+        name:        user.name,
+        email:       user.email,
+        redirectUrl: `${base}/payment/success`,
+        webhookUrl:  `${base}/api/payment/hitpay-webhook`,
+      });
+      return res.json({ ok: true, url: billing.url });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  }
+
+  // ── Stripe fallback ──────────────────────────────────────────────────
   try {
-    const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
     const checkout = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
@@ -206,19 +229,55 @@ app.post('/api/payment/create-checkout', requireAuth, async (req, res) => {
   }
 });
 
+// ── HitPay webhook ─────────────────────────────────────────────────────
+app.post('/api/payment/hitpay-webhook',
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const { hmac, status, reference, payment_id } = req.body;
+
+    if (!hitpay.verifyWebhook(req.body, hmac)) {
+      return res.status(400).send('Invalid signature');
+    }
+
+    if (status === 'succeeded' && reference) {
+      await users.update(reference, {
+        subscriptionStatus:   'active',
+        stripeSubscriptionId: payment_id, // reuse field for HitPay billing ID
+      });
+    }
+
+    if ((status === 'failed' || status === 'cancelled') && reference) {
+      const user = await users.findById(reference);
+      if (user && user.subscriptionStatus === 'active') {
+        await users.update(reference, { subscriptionStatus: 'inactive' });
+      }
+    }
+
+    res.status(200).send('OK');
+  }
+);
+
 app.get('/payment/success', async (req, res) => {
+  // HitPay redirects with ?status=completed&reference={userId}
+  if (useHitPay && req.query.status === 'completed' && req.query.reference) {
+    await users.update(req.query.reference, { subscriptionStatus: 'active' });
+    if (req.session) req.session.userId = req.query.reference;
+  }
+
+  // Stripe redirects with ?session_id=xxx
   if (stripe && req.session.userId && req.query.session_id) {
     try {
       const s = await stripe.checkout.sessions.retrieve(req.query.session_id);
       if (s.payment_status === 'paid') {
         await users.update(req.session.userId, {
-          stripeCustomerId: s.customer,
+          stripeCustomerId:    s.customer,
           stripeSubscriptionId: s.subscription,
-          subscriptionStatus: 'active',
+          subscriptionStatus:  'active',
         });
       }
     } catch { /* webhook will handle it */ }
   }
+
   res.redirect('/dashboard');
 });
 
@@ -251,8 +310,8 @@ initDb()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`VaultSignals running on port ${PORT}`);
-      console.log(`DB: ${hasDb ? 'PostgreSQL' : 'JSON file (add DATABASE_URL to enable Postgres)'}`);
-      console.log(`Stripe: ${stripe ? 'configured' : 'NOT configured — dev mode (no payment required)'}`);
+      console.log(`DB: ${hasDb ? 'PostgreSQL' : 'JSON file'}`);
+      console.log(`Payment: ${useHitPay ? 'HitPay' : stripe ? 'Stripe' : 'dev mode (no payment)'}`);
       console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
     });
   })
