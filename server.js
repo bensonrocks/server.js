@@ -112,7 +112,9 @@ app.post('/api/auth/signup', async (req, res) => {
     return res.status(409).json({ ok: false, error: 'Email already registered — please sign in' });
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const user = users.create({ name, email, passwordHash });
+  // No Stripe = dev mode: activate immediately, no payment step needed
+  const subscriptionStatus = stripe ? 'pending' : 'active';
+  const user = users.create({ name, email, passwordHash, subscriptionStatus });
   req.session.userId = user.id;
   res.json({ ok: true, user: safeUser(user) });
 });
@@ -126,6 +128,11 @@ app.post('/api/auth/login', async (req, res) => {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
   req.session.userId = user.id;
+  // Dev mode: auto-activate accounts that are still pending (e.g. created before the fix)
+  if (!stripe && user.subscriptionStatus === 'pending') {
+    const activated = users.update(user.id, { subscriptionStatus: 'active' });
+    return res.json({ ok: true, user: safeUser(activated) });
+  }
   res.json({ ok: true, user: safeUser(user) });
 });
 

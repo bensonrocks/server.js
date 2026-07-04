@@ -166,6 +166,7 @@ document.getElementById('signup-form').addEventListener('submit', async e => {
     const res = await fetch('/api/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('name').value,email:document.getElementById('email').value,password:document.getElementById('password').value})});
     const data = await res.json();
     if(!data.ok){ err.textContent=data.error; err.style.display='block'; btn.disabled=false; btn.innerHTML='Continue to Payment →'; return; }
+    if(data.user.subscriptionStatus==='active'){ location.href='/dashboard'; return; }
     showPaymentStep(data.user.name);
   } catch {
     err.textContent='Network error — please try again.'; err.style.display='block';
