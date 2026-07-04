@@ -105,11 +105,16 @@ async function requireSubscriptionPage(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  if (!req.session.isAdmin) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  next();
+}
+
 // ── SEO ────────────────────────────────────────────────────────────────
 app.get('/robots.txt', (req, res) => {
   const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
   res.type('text/plain').send(
-    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
+    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /vaultkeepers\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
   );
 });
 
@@ -125,11 +130,17 @@ app.get('/sitemap.xml', (req, res) => {
 });
 
 // ── HTML page routes (defined before static so / is not hijacked) ──────
-app.get('/',          (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
-app.get('/login',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
-app.get('/signup',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
-app.get('/dashboard', requireSubscriptionPage, (req, res) =>
+app.get('/',             (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+app.get('/login',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/signup',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
+app.get('/dashboard',    requireSubscriptionPage, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'))
+);
+app.get('/settings',     requireSubscriptionPage, (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'settings.html'))
+);
+app.get('/vaultkeepers', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
 );
 
 // ── Static assets (tutorial.html, images, etc.) ────────────────────────
@@ -279,6 +290,68 @@ app.get('/payment/success', async (req, res) => {
   }
 
   res.redirect('/dashboard');
+});
+
+// ── Subscription cancel ────────────────────────────────────────────────
+app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
+  const user = await users.findById(req.session.userId);
+  if (!user) return res.status(401).json({ ok: false, error: 'Not authenticated' });
+  if (user.subscriptionStatus !== 'active')
+    return res.status(400).json({ ok: false, error: 'No active subscription to cancel' });
+
+  // Cancel with payment gateway
+  try {
+    if (useHitPay && user.stripeSubscriptionId) {
+      await hitpay.cancelBilling(user.stripeSubscriptionId);
+    } else if (stripe && user.stripeSubscriptionId) {
+      await stripe.subscriptions.cancel(user.stripeSubscriptionId);
+    }
+  } catch (err) {
+    console.warn('Gateway cancel error (proceeding anyway):', err.message);
+  }
+
+  await users.update(user.id, { subscriptionStatus: 'cancelled' });
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+// ── Admin API (VaultKeepers) ───────────────────────────────────────────
+app.post('/api/admin/login', (req, res) => {
+  const secret = process.env.VAULTKEEPERS_SECRET;
+  if (!secret) return res.status(503).json({ ok: false, error: 'Admin not configured' });
+  if (req.body.password !== secret)
+    return res.status(401).json({ ok: false, error: 'Wrong password' });
+  req.session.isAdmin = true;
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  req.session.isAdmin = false;
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  const all = await users.findAll();
+  // Strip password hashes before sending
+  const safe = all.map(u => ({
+    id: u.id, name: u.name, email: u.email,
+    subscriptionStatus: u.subscriptionStatus, createdAt: u.createdAt,
+  }));
+  res.json({ ok: true, users: safe });
+});
+
+app.post('/api/admin/users/:id/status', requireAdmin, async (req, res) => {
+  const { status } = req.body;
+  const allowed = ['active', 'inactive', 'pending', 'cancelled'];
+  if (!allowed.includes(status))
+    return res.status(400).json({ ok: false, error: 'Invalid status' });
+  const updated = await users.update(req.params.id, { subscriptionStatus: status });
+  if (!updated) return res.status(404).json({ ok: false, error: 'User not found' });
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  await users.deleteUser(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Trading API (subscriber-only) ──────────────────────────────────────
