@@ -98,6 +98,7 @@ function requireAuth(req, res, next) {
 }
 
 async function requireSubscriptionAPI(req, res, next) {
+  if (req.session.isAdmin) return next(); // staff preview bypass
   if (!req.session.userId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
   const user = await users.findById(req.session.userId);
   if (!user || user.subscriptionStatus !== 'active')
@@ -106,6 +107,7 @@ async function requireSubscriptionAPI(req, res, next) {
 }
 
 async function requireSubscriptionPage(req, res, next) {
+  if (req.session.isAdmin) return next(); // staff preview bypass
   if (!req.session.userId) return res.redirect('/login');
   const user = await users.findById(req.session.userId);
   if (!user || user.subscriptionStatus !== 'active') return res.redirect('/signup?reason=payment');
@@ -220,6 +222,8 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', async (req, res) => {
+  if (req.session.isAdmin)
+    return res.json({ ok: true, user: { id: 'staff', name: 'Staff', email: '', subscriptionStatus: 'active', isAdmin: true } });
   if (!req.session.userId) return res.json({ ok: true, user: null });
   const user = await users.findById(req.session.userId);
   res.json({ ok: true, user: user ? safeUser(user) : null });

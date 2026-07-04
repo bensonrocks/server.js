@@ -280,7 +280,16 @@
 fetch('/api/auth/me').then(r=>r.json()).then(d=>{
   if(!d.user) location.href='/login';
   else if(d.user.subscriptionStatus!=='active') location.href='/signup?reason=payment';
-  else {const n=document.getElementById('user-name');if(n)n.textContent=d.user.name.split(' ')[0]}
+  else {
+    const n=document.getElementById('user-name');
+    if(n) n.textContent = d.user.isAdmin ? 'STAFF' : d.user.name.split(' ')[0];
+    if(d.user.isAdmin){
+      const bar=document.createElement('div');
+      bar.style.cssText='background:rgba(160,128,255,.12);border-bottom:1px solid rgba(160,128,255,.3);padding:7px 20px;font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;color:#a080ff;display:flex;align-items:center;justify-content:space-between';
+      bar.innerHTML='<span>⬡ STAFF PREVIEW MODE — viewing as subscriber</span><a href="/vaultkeepers" style="color:#a080ff;text-decoration:none;opacity:.7">← Back to VaultKeepers</a>';
+      document.querySelector('.page').insertAdjacentElement('beforebegin',bar);
+    }
+  }
 }).catch(()=>{});
 
 function toggleTheme(){const r=document.documentElement;const t=r.getAttribute('data-theme')==='dark'?'light':'dark';r.setAttribute('data-theme',t);const b=document.getElementById('themeBtn');if(b)b.textContent=t==='dark'?'🌙':'☀️'}
