@@ -10,7 +10,10 @@
     "demo": "node scripts/demo-analysis.js"
   },
   "dependencies": {
-    "express": "^4.22.2"
+    "bcryptjs": "^3.0.3",
+    "express": "^4.22.2",
+    "express-session": "^1.19.0",
+    "stripe": "^22.3.0"
   },
   "engines": {
     "node": ">=18"
