@@ -3,6 +3,8 @@
 const express = require('express');
 const path    = require('path');
 const crypto  = require('crypto');
+const https   = require('https');
+const http    = require('http');
 const bcrypt  = require('bcryptjs');
 const session = require('express-session');
 const Stripe  = require('stripe');
@@ -432,6 +434,90 @@ app.get('/api/stats', requireSubscriptionAPI, async (req, res) => {
     res.json({ ok: true, stats, recent });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── Market News ────────────────────────────────────────────────────────────
+let _newsCache = { articles: [], ts: 0 };
+const NEWS_TTL = 10 * 60 * 1000; // 10 min cache
+
+function _fetchUrl(url, hops = 0) {
+  return new Promise((resolve, reject) => {
+    if (hops > 3) return reject(new Error('Too many redirects'));
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; VaultSignals/1.0)',
+        Accept: 'application/rss+xml, text/xml, application/xml',
+      },
+    }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location)
+        return _fetchUrl(res.headers.location, hops + 1).then(resolve).catch(reject);
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.setTimeout(7000, () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+function _parseRSS(xml, source) {
+  const clean = s => s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/<[^>]+>/g, '').trim();
+  const grab = (chunk, tag) => {
+    const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(chunk);
+    return m ? clean(m[1]) : '';
+  };
+  const items = [];
+  const re = /<item[^>]*>([\s\S]*?)<\/item>/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null && items.length < 8) {
+    const c = m[1];
+    const title = grab(c, 'title');
+    const link  = (/<link>([^<]+)<\/link>/i.exec(c) || [])[1]?.trim() || '';
+    const pubDate = grab(c, 'pubDate') || grab(c, 'dc:date');
+    const desc  = grab(c, 'description').slice(0, 180);
+    if (title && title.length > 8)
+      items.push({
+        title, source,
+        link: link.startsWith('http') ? link : '',
+        date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+        summary: desc,
+      });
+  }
+  return items;
+}
+
+const NEWS_FEEDS = [
+  { url: 'https://www.kitco.com/rss/lo100.rss',  source: 'Kitco'    },
+  { url: 'https://www.fxstreet.com/rss/news',     source: 'FXStreet' },
+];
+
+async function _fetchNews() {
+  const results = await Promise.allSettled(
+    NEWS_FEEDS.map(async f => _parseRSS(await _fetchUrl(f.url), f.source))
+  );
+  const all = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+  const seen = new Set();
+  return all
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .filter(a => { const k = a.title.slice(0, 50); if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, 15);
+}
+
+app.get('/api/news', requireSubscriptionAPI, async (req, res) => {
+  if (Date.now() - _newsCache.ts < NEWS_TTL && _newsCache.articles.length)
+    return res.json({ ok: true, articles: _newsCache.articles });
+  try {
+    const articles = await _fetchNews();
+    if (articles.length) _newsCache = { articles, ts: Date.now() };
+    res.json({ ok: true, articles: _newsCache.articles });
+  } catch (e) {
+    console.error('News fetch error:', e.message);
+    res.json({ ok: true, articles: _newsCache.articles });
   }
 });
 

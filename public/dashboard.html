@@ -178,6 +178,23 @@
   .oc.loss{background:color-mix(in srgb,var(--bear-bg) 60%,transparent);color:var(--bear);border-color:color-mix(in srgb,var(--bear) 35%,transparent)}
   .oc.open{background:var(--bg-3);color:var(--text-3);border-color:var(--border)}
   .dir-buy{color:var(--bull);font-weight:bold}.dir-sell{color:var(--bear);font-weight:bold}
+
+  /* ── MARKET NEWS ── */
+  .news-wrap{margin-top:24px}
+  .news-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .news-grid{display:flex;flex-direction:column;gap:1px;background:var(--border)}
+  .news-card{background:var(--surface);padding:14px 18px;display:flex;flex-direction:column;gap:5px;cursor:pointer;transition:background .15s;text-decoration:none;color:inherit}
+  .news-card:hover{background:var(--bg-2)}
+  .news-top{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+  .news-src{font-family:var(--mono);font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;padding:1px 6px;border:1px solid var(--border);color:var(--text-3)}
+  .news-src.kitco{color:var(--gold);border-color:rgba(196,168,76,.3);background:rgba(196,168,76,.06)}
+  .news-src.fxstreet{color:var(--silver);border-color:rgba(126,164,180,.3);background:rgba(126,164,180,.06)}
+  .news-src.reuters{color:var(--entry);border-color:rgba(90,132,180,.3);background:rgba(90,132,180,.06)}
+  .news-age{font-family:var(--mono);font-size:.58rem;color:var(--text-3);margin-left:auto}
+  .news-title{font-size:.84rem;font-weight:600;line-height:1.45;color:var(--text)}
+  .news-summary{font-size:.72rem;color:var(--text-2);line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .news-empty{font-family:var(--mono);font-size:.72rem;color:var(--text-3);padding:18px;border:1px solid var(--border);background:var(--surface)}
+  @media(max-width:480px){.news-card{padding:12px 14px}}
 </style>
 </head>
 <body>
@@ -240,6 +257,15 @@
         <tbody id="hist-body"></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Market News -->
+  <div class="news-wrap" id="news-wrap">
+    <div class="news-hdr">
+      <span class="perf-label">Market News</span>
+      <span class="perf-count" id="news-age-label"></span>
+    </div>
+    <div id="news-grid"></div>
   </div>
 
   <div class="footer">
@@ -513,6 +539,44 @@ async function refresh(){
 }
 refresh();
 loadStats();
+loadNews();
+
+function timeAgo(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+
+async function loadNews() {
+  try {
+    const res  = await fetch('/api/news');
+    const data = await res.json();
+    if (!data.ok || !data.articles.length) return;
+    renderNews(data.articles);
+  } catch (e) { console.warn('News unavailable:', e.message); }
+}
+
+function renderNews(articles) {
+  const grid  = document.getElementById('news-grid');
+  const label = document.getElementById('news-age-label');
+  if (label && articles.length) label.textContent = 'updated ' + timeAgo(articles[0].date);
+  grid.innerHTML = articles.map(a => {
+    const srcKey = a.source.toLowerCase().replace(/[^a-z]/g, '');
+    const href   = a.link ? `href="${a.link}" target="_blank" rel="noopener"` : '';
+    return `<a class="news-card" ${href}>
+      <div class="news-top">
+        <span class="news-src ${srcKey}">${a.source}</span>
+        <span class="news-age">${timeAgo(a.date)}</span>
+      </div>
+      <div class="news-title">${a.title}</div>
+      ${a.summary ? `<div class="news-summary">${a.summary}</div>` : ''}
+    </a>`;
+  }).join('');
+}
 </script>
 </body>
 </html>
