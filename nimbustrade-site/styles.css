@@ -278,6 +278,56 @@ h2.section-title {
 
 .section-head { text-align: left; }
 
+/* ---------- Pillars flow diagram ---------- */
+.pillars-flow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 52px;
+  padding: 28px;
+  background: var(--cloud);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.flow-node {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.14), rgba(56, 189, 248, 0.14));
+  border: 1.5px solid rgba(20, 184, 166, 0.35);
+  color: var(--teal-dark);
+}
+
+.flow-node svg { width: 28px; height: 28px; }
+
+.flow-arrow {
+  color: var(--slate);
+  font-size: 20px;
+  opacity: 0.55;
+}
+
+.flow-result {
+  padding: 15px 24px;
+  border-radius: 999px;
+  background: var(--navy);
+  color: var(--white);
+  font-weight: 700;
+  font-size: 14.5px;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .pillars-flow { flex-direction: column; padding: 32px 20px; }
+  .flow-arrow { transform: rotate(90deg); }
+}
+
 /* ---------- Pillars ---------- */
 .pillars {
   display: grid;
@@ -296,12 +346,31 @@ h2.section-title {
 
 .pillar-card:hover { transform: translateY(-4px); }
 
+.pillar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.pillar-icon {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--teal), var(--sky));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pillar-icon svg { width: 26px; height: 26px; color: var(--navy); }
+
 .pillar-num {
   font-size: 13px;
   font-weight: 800;
-  color: var(--teal-dark);
+  color: var(--border);
   letter-spacing: 0.06em;
-  margin-bottom: 14px;
 }
 
 .pillar-card h3 {
