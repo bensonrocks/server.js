@@ -61,6 +61,10 @@
   </div>
 </div>
 
+<div style="position:fixed;bottom:18px;width:100%;text-align:center">
+  <a href="/vaultkeepers" style="font-family:'Courier New',monospace;font-size:.6rem;letter-spacing:.14em;color:rgba(255,255,255,.12);text-decoration:none;text-transform:uppercase;transition:color .2s" onmouseover="this.style.color='rgba(255,255,255,.35)'" onmouseout="this.style.color='rgba(255,255,255,.12)'">Staff Access</a>
+</div>
+
 <script>
 // Already logged in?
 fetch('/api/auth/me').then(r=>r.json()).then(d=>{
