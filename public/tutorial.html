@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AndrewTrade — How to Read the Signals</title>
+<style>
+  :root{--bg:#EEE9E0;--bg-2:#E4DFD5;--bg-3:#D8D2C8;--surface:#F7F4EF;--border:#C2BCB0;--text:#1A1810;--text-2:#5A5448;--text-3:#8A8278;--gold:#9A7418;--silver:#4A7080;--bull:#1E6644;--bull-bg:#D4EDE1;--bear:#7A2030;--bear-bg:#F0D4DA;--entry:#2A4E7A;--entry-bg:#D0DEF0;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif;--serif:Georgia,'Times New Roman',serif;}
+  @media(prefers-color-scheme:dark){:root{--bg:#0B0C0F;--bg-2:#111318;--bg-3:#1A1D24;--surface:#141720;--border:#2A2E3A;--text:#E8E2D6;--text-2:#9A9488;--text-3:#5A5650;--gold:#C4A84C;--silver:#7EA4B4;--bull:#2EA86A;--bull-bg:#0A2A1A;--bear:#C04060;--bear-bg:#2A0A10;--entry:#5A84B4;--entry-bg:#0A1828;}}
+  :root[data-theme="light"]{--bg:#EEE9E0;--bg-2:#E4DFD5;--bg-3:#D8D2C8;--surface:#F7F4EF;--border:#C2BCB0;--text:#1A1810;--text-2:#5A5448;--text-3:#8A8278;--gold:#9A7418;--silver:#4A7080;--bull:#1E6644;--bull-bg:#D4EDE1;--bear:#7A2030;--bear-bg:#F0D4DA;--entry:#2A4E7A;--entry-bg:#D0DEF0;}
+  :root[data-theme="dark"]{--bg:#0B0C0F;--bg-2:#111318;--bg-3:#1A1D24;--surface:#141720;--border:#2A2E3A;--text:#E8E2D6;--text-2:#9A9488;--text-3:#5A5650;--gold:#C4A84C;--silver:#7EA4B4;--bull:#2EA86A;--bull-bg:#0A2A1A;--bear:#C04060;--bear-bg:#2A0A10;--entry:#5A84B4;--entry-bg:#0A1828;}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:15px;scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7;min-height:100vh}
+
+  .topbar{background:var(--bg-2);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
+  .brand{font-family:var(--serif);font-size:1.05rem;font-weight:normal;letter-spacing:.04em;text-decoration:none;color:var(--text)}
+  .brand span{color:var(--gold)}
+  .topbar-right{display:flex;align-items:center;gap:10px}
+  .btn{background:none;border:1px solid var(--border);color:var(--text-2);font-size:.75rem;font-family:var(--mono);padding:4px 10px;cursor:pointer;letter-spacing:.06em;text-decoration:none;display:inline-flex;align-items:center}
+  .btn:hover{background:var(--bg-3)}
+  .btn.cta{background:var(--bull-bg);color:var(--bull);border-color:var(--bull)}
+
+  /* Hero */
+  .hero{padding:52px 24px 40px;max-width:760px;margin:0 auto}
+  .hero-eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:12px}
+  .hero-title{font-family:var(--serif);font-size:2.2rem;font-weight:normal;line-height:1.15;text-wrap:balance;margin-bottom:16px}
+  .hero-sub{font-size:1rem;color:var(--text-2);max-width:560px;line-height:1.7}
+
+  /* TOC */
+  .toc{background:var(--surface);border:1px solid var(--border);padding:20px 24px;max-width:760px;margin:0 auto 40px;display:grid;grid-template-columns:1fr 1fr;gap:4px 24px}
+  @media(max-width:600px){.toc{grid-template-columns:1fr}}
+  .toc-title{font-family:var(--mono);font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px;grid-column:1/-1}
+  .toc a{font-size:.82rem;color:var(--text-2);text-decoration:none;padding:3px 0;display:block;border-bottom:1px solid var(--bg-3)}
+  .toc a:hover{color:var(--gold)}
+  .toc a::before{content:'→ ';color:var(--text-3);font-family:var(--mono)}
+
+  /* Sections */
+  .content{max-width:760px;margin:0 auto;padding:0 24px 64px}
+  .chapter{margin-bottom:48px;padding-top:16px}
+  .chapter-num{font-family:var(--mono);font-size:.65rem;letter-spacing:.18em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px}
+  .chapter-title{font-family:var(--serif);font-size:1.5rem;font-weight:normal;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+  .chapter p{color:var(--text-2);margin-bottom:12px;font-size:.95rem}
+  .chapter p:last-child{margin-bottom:0}
+
+  /* Signal cards (examples) */
+  .example-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
+  @media(max-width:580px){.example-grid{grid-template-columns:1fr}}
+  .ex-card{padding:14px 16px;border:1px solid var(--border);background:var(--surface)}
+  .ex-card-title{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+  .ex-card-title.bull{color:var(--bull)}.ex-card-title.bear{color:var(--bear)}.ex-card-title.gold{color:var(--gold)}.ex-card-title.silver{color:var(--silver)}
+  .ex-card p{font-size:.82rem;color:var(--text-2);line-height:1.6}
+
+  /* Signal state examples */
+  .signal-states{display:flex;flex-direction:column;gap:8px;margin:16px 0}
+  .ss-row{padding:12px 16px;display:flex;align-items:flex-start;gap:14px;border:1px solid var(--border)}
+  .ss-badge{font-family:var(--mono);font-size:.72rem;font-weight:bold;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;white-space:nowrap;flex-shrink:0}
+  .ss-badge.buy {background:var(--bull-bg);color:var(--bull)}
+  .ss-badge.sell{background:var(--bear-bg);color:var(--bear)}
+  .ss-badge.watch{background:color-mix(in srgb,var(--gold) 15%,transparent);color:var(--gold);border:1px solid var(--gold)}
+  .ss-badge.wait{background:var(--bg-3);color:var(--text-3)}
+  .ss-desc{font-size:.82rem;color:var(--text-2);line-height:1.6}
+  .ss-desc strong{color:var(--text);font-weight:600}
+
+  /* Level table */
+  .level-table{width:100%;border-collapse:collapse;margin:16px 0;font-size:.85rem;overflow-x:auto;display:block}
+  .level-table th{font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);background:var(--bg-2)}
+  .level-table td{padding:8px 10px;border-bottom:1px solid var(--bg-3);color:var(--text-2);font-size:.82rem}
+  .level-table td:first-child{font-family:var(--mono);font-weight:bold;color:var(--text)}
+
+  /* Concept pills */
+  .concept{display:inline-block;font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;padding:2px 8px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-2);margin:2px 3px}
+
+  /* Callout */
+  .callout{padding:14px 18px;border-left:3px solid;margin:16px 0;font-size:.87rem;line-height:1.7}
+  .callout.tip{border-color:var(--bull);background:var(--bull-bg);color:var(--bull)}
+  .callout.warn{border-color:var(--gold);background:color-mix(in srgb,var(--gold) 10%,transparent);color:var(--text-2)}
+  .callout.danger{border-color:var(--bear);background:var(--bear-bg);color:var(--bear)}
+  .callout strong{display:block;margin-bottom:4px;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase}
+
+  /* Steps */
+  .steps{counter-reset:step;margin:16px 0}
+  .step{display:flex;gap:16px;padding:12px 0;border-bottom:1px solid var(--bg-3)}
+  .step:last-child{border-bottom:none}
+  .step-num{font-family:var(--mono);font-size:1.1rem;font-weight:bold;color:var(--text-3);min-width:28px;padding-top:2px}
+  .step-body{flex:1}
+  .step-title{font-weight:600;font-size:.9rem;margin-bottom:4px}
+  .step-desc{font-size:.82rem;color:var(--text-2);line-height:1.6}
+
+  /* Footer */
+  .page-footer{border-top:1px solid var(--border);padding:28px 24px;text-align:center}
+  .footer-brand{font-family:var(--serif);font-size:1rem;margin-bottom:4px}
+  .footer-brand span{color:var(--gold)}
+  .footer-by{font-size:.75rem;color:var(--text-3);font-family:var(--mono);letter-spacing:.06em;margin-bottom:14px}
+  .footer-disc{font-size:.68rem;color:var(--text-3);max-width:580px;margin:0 auto;line-height:1.7}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a class="brand" href="/">Andrew<span>Trade</span></a>
+  <div class="topbar-right">
+    <a class="btn cta" href="/">← Live Signals</a>
+    <button class="btn" onclick="document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')">◑ Theme</button>
+  </div>
+</div>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-eyebrow">Beginner's Guide · Smart Money Concepts</div>
+  <div class="hero-title">How to Read the Gold &amp; Silver Trading Signals</div>
+  <div class="hero-sub">This page explains every indicator on the AndrewTrade dashboard in plain language — what it means, why it matters, and exactly how to act on the BUY / SELL signals.</div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <div class="toc-title">Contents</div>
+  <a href="#signals">1. Reading the Signal Banner</a>
+  <a href="#structure">2. Market Structure (HH/HL/LH/LL)</a>
+  <a href="#orderblocks">3. Order Blocks</a>
+  <a href="#fvg">4. Fair Value Gaps (FVG)</a>
+  <a href="#ifvg">5. Inverse FVG (IFVG)</a>
+  <a href="#trendline">6. Trendline</a>
+  <a href="#fibonacci">7. Fibonacci Levels</a>
+  <a href="#zone">8. Buy / Sell Zone</a>
+  <a href="#tradeplan">9. Trade Plan (Entry · SL · TP)</a>
+  <a href="#risk">10. Risk Management</a>
+</div>
+
+<div class="content">
+
+  <!-- 1. Signal banner -->
+  <div class="chapter" id="signals">
+    <div class="chapter-num">Chapter 1</div>
+    <div class="chapter-title">Reading the Signal Banner</div>
+    <p>The coloured banner at the top of each instrument card is the most important thing on the page. It tells you immediately whether you should be buying, selling, watching, or waiting.</p>
+
+    <div class="signal-states">
+      <div class="ss-row">
+        <span class="ss-badge buy">▲ BUY NOW</span>
+        <span class="ss-desc"><strong>Price is inside the demand (buy) zone right now.</strong> This is when to enter a BUY trade. Use the entry price shown and set your stop loss and take profit levels exactly as displayed.</span>
+      </div>
+      <div class="ss-row">
+        <span class="ss-badge sell">▼ SELL NOW</span>
+        <span class="ss-desc"><strong>Price is inside the supply (sell) zone right now.</strong> This is when to enter a SELL trade. Use the entry price shown and set your stop loss and take profit levels exactly as displayed.</span>
+      </div>
+      <div class="ss-row">
+        <span class="ss-badge watch">WATCH · ZONE NEAR</span>
+        <span class="ss-desc"><strong>Price is approaching the zone but not inside it yet.</strong> Prepare your trade in advance. Set a limit order at the entry price shown so it triggers automatically when price arrives.</span>
+      </div>
+      <div class="ss-row">
+        <span class="ss-badge wait">WAIT · NO SETUP</span>
+        <span class="ss-desc"><strong>Price is far from the zone.</strong> Do nothing. There is no active trade setup. Chasing price away from the zone is how most traders lose money — patience is the strategy here.</span>
+      </div>
+    </div>
+
+    <div class="callout tip"><strong>Key rule</strong> Only trade when the banner says BUY NOW or SELL NOW. The signal refreshes every time you click Refresh or reload the page.</div>
+
+    <p>Below the signal banner you'll see five levels: <strong>Entry</strong>, <strong>Stop Loss</strong>, <strong>TP1</strong>, <strong>TP2</strong>, and <strong>TP3</strong>. These are your exact trade levels — no guessing required.</p>
+  </div>
+
+  <!-- 2. Market structure -->
+  <div class="chapter" id="structure">
+    <div class="chapter-num">Chapter 2</div>
+    <div class="chapter-title">Market Structure — HH, HL, LH, LL</div>
+    <p>Markets don't move in straight lines. Price swings up to a peak (swing high), then pulls back to a trough (swing low), then swings again. By labelling each peak and trough, we can identify whether the market is trending up, trending down, or going sideways.</p>
+
+    <div class="example-grid">
+      <div class="ex-card">
+        <div class="ex-card-title bull">▲ Uptrend (Bullish)</div>
+        <p>Each swing high is <strong>Higher than the last</strong> (HH = Higher High) and each swing low is also <strong>Higher than the last</strong> (HL = Higher Low). This means buyers are in control and we look for BUY opportunities.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title bear">▼ Downtrend (Bearish)</div>
+        <p>Each swing high is <strong>Lower than the last</strong> (LH = Lower High) and each swing low is also <strong>Lower than the last</strong> (LL = Lower Low). Sellers are in control and we look for SELL opportunities.</p>
+      </div>
+    </div>
+
+    <table class="level-table">
+      <thead><tr><th>Label</th><th>Meaning</th><th>Signals</th></tr></thead>
+      <tbody>
+        <tr><td>HH</td><td>Higher High — new peak above the previous peak</td><td>Bullish continuation</td></tr>
+        <tr><td>HL</td><td>Higher Low — pullback that holds above the previous low</td><td>Buyers defending lows — bullish</td></tr>
+        <tr><td>LH</td><td>Lower High — rally that fails below the previous peak</td><td>Sellers capping price — bearish</td></tr>
+        <tr><td>LL</td><td>Lower Low — new trough below the previous trough</td><td>Bearish continuation</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warn"><strong>Tip</strong> The signal conviction shows HIGH when the last two structure points both agree on direction (e.g. HH + HL together = strong bullish). MODERATE means the signals are mixed.</div>
+  </div>
+
+  <!-- 3. Order blocks -->
+  <div class="chapter" id="orderblocks">
+    <div class="chapter-num">Chapter 3</div>
+    <div class="chapter-title">Order Blocks</div>
+    <p>An order block is a specific candle (or group of candles) where a large institution — a bank or hedge fund — placed a significant buy or sell order. Price often returns to these levels because the institution still has unfilled orders waiting there.</p>
+
+    <div class="example-grid">
+      <div class="ex-card">
+        <div class="ex-card-title bull">Demand / Bullish Order Block</div>
+        <p>The last <strong>bearish (down) candle</strong> before a strong upward move that breaks a recent swing high. When price pulls back to this level, institutions re-enter long (buy) positions. This is a high-probability buy zone.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title bear">Supply / Bearish Order Block</div>
+        <p>The last <strong>bullish (up) candle</strong> before a strong downward move that breaks a recent swing low. When price rallies back to this level, institutions re-enter short (sell) positions. This is a high-probability sell zone.</p>
+      </div>
+    </div>
+
+    <div class="callout tip"><strong>How to use it</strong> When a BUY NOW signal appears and there is a bullish order block below or at the current price, the signal has extra confirmation. More order blocks = higher conviction.</div>
+  </div>
+
+  <!-- 4. FVG -->
+  <div class="chapter" id="fvg">
+    <div class="chapter-num">Chapter 4</div>
+    <div class="chapter-title">Fair Value Gap (FVG)</div>
+    <p>A Fair Value Gap is a price imbalance — a gap between three consecutive candles where no trading took place. Think of it as a "hole" in the market. Price is naturally drawn back to fill these gaps because the market seeks balance (fair value).</p>
+
+    <div class="example-grid">
+      <div class="ex-card">
+        <div class="ex-card-title bull">Bullish FVG</div>
+        <p>The <strong>high of candle 1 is lower than the low of candle 3</strong> — there is a gap between them. This gap acts as support. When price pulls back into it, it is a potential BUY area.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title bear">Bearish FVG</div>
+        <p>The <strong>low of candle 1 is higher than the high of candle 3</strong>. This gap acts as resistance. When price rallies back into it, it is a potential SELL area.</p>
+      </div>
+    </div>
+
+    <p>The dashboard shows how many FVGs are <strong>unfilled</strong> (price has not yet returned to them). A high count of unfilled bullish FVGs below price supports a bullish bias — the market has a lot of unfinished business below.</p>
+    <div class="callout warn"><strong>Filled vs Unfilled</strong> A filled FVG means price has already traded back through the gap. Filled gaps no longer act as support or resistance. The app only counts unfilled ones.</div>
+  </div>
+
+  <!-- 5. IFVG -->
+  <div class="chapter" id="ifvg">
+    <div class="chapter-num">Chapter 5</div>
+    <div class="chapter-title">Inverse Fair Value Gap (IFVG)</div>
+    <p>An Inverse FVG (IFVG) is a Fair Value Gap that has been broken — price closed completely through it — and has therefore flipped its role. A bullish FVG that gets violated becomes a bearish IFVG (now acts as resistance). A bearish FVG that gets violated becomes a bullish IFVG (now acts as support).</p>
+    <p>IFVGs appear on the dashboard as a count. A <strong>high IFVG count</strong> means the market has repeatedly swept through imbalances, which signals that institutions are actively repositioning — often a sign of strong momentum or a significant trend change.</p>
+    <div class="callout warn"><strong>Note</strong> IFVGs are an advanced concept. If you're new to trading, focus on the BUY/SELL signal, entry price, stop loss, and take profit levels first.</div>
+  </div>
+
+  <!-- 6. Trendline -->
+  <div class="chapter" id="trendline">
+    <div class="chapter-num">Chapter 6</div>
+    <div class="chapter-title">Trendline</div>
+    <p>The trendline is drawn by connecting the most recent swing lows (in an uptrend) or swing highs (in a downtrend) using linear regression — a mathematical line of best fit through those points.</p>
+    <p>The dashboard shows the <strong>projected trendline price</strong> — where the trendline sits right now. If the current price is near the trendline, it adds confirmation to a trade signal. A bullish setup is stronger when price is bouncing off an ascending (rising) trendline.</p>
+    <div class="callout tip"><strong>Confluence</strong> When the buy zone, an order block, an FVG, and the trendline all sit at roughly the same price level, that is called confluence. Confluence significantly increases the probability of a successful trade.</div>
+  </div>
+
+  <!-- 7. Fibonacci -->
+  <div class="chapter" id="fibonacci">
+    <div class="chapter-num">Chapter 7</div>
+    <div class="chapter-title">Fibonacci Levels</div>
+    <p>Fibonacci retracement levels are horizontal lines drawn between the most recent significant swing low and swing high (or vice versa). They show where price is likely to retrace (pull back) before continuing in the original direction.</p>
+
+    <table class="level-table">
+      <thead><tr><th>Level</th><th>Name</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>0.382</td><td>38.2% retracement</td><td>Shallow pullback — market is very strong</td></tr>
+        <tr><td>0.500</td><td>50% retracement</td><td>Mid-point equilibrium — common support/resistance</td></tr>
+        <tr><td>0.618 ★</td><td>61.8% — Golden Ratio</td><td>Start of golden pocket — high probability reversal zone</td></tr>
+        <tr><td>0.786 ★</td><td>78.6% retracement</td><td>End of golden pocket — deep but still valid pullback</td></tr>
+        <tr><td>1.272 ext</td><td>Extension level 1</td><td>First target beyond the swing high — used for TP2</td></tr>
+        <tr><td>1.618 ext</td><td>Extension level 2</td><td>Full extension — used for TP3 target</td></tr>
+      </tbody>
+    </table>
+
+    <p>The <strong>Golden Pocket</strong> (61.8%–78.6%) is the most powerful retracement zone. When price pulls back into this range and aligns with an order block or FVG, it produces one of the highest-probability trade entries in smart money trading.</p>
+  </div>
+
+  <!-- 8. Buy/sell zone -->
+  <div class="chapter" id="zone">
+    <div class="chapter-num">Chapter 8</div>
+    <div class="chapter-title">Buy / Sell Zone</div>
+    <p>The buy or sell zone is the price range where the app expects institutions to step in and reverse price. It is built from the confluence of the nearest order block, unfilled FVG, and fibonacci golden pocket — all pointing in the same direction.</p>
+    <p>The zone is always <strong>at least 50 pips wide</strong>. This ensures you have room to set a limit order inside the zone without being too precise. You don't need to catch the exact low — trading within the zone is enough.</p>
+
+    <div class="example-grid">
+      <div class="ex-card">
+        <div class="ex-card-title bull">Buy Zone (Demand)</div>
+        <p>Located <strong>below the current price</strong>. Wait for price to fall into this range, then buy. The entry price shown is the midpoint of the zone. Stop loss goes 80 pips below entry.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title bear">Sell Zone (Supply)</div>
+        <p>Located <strong>above the current price</strong>. Wait for price to rise into this range, then sell. The entry price shown is the midpoint of the zone. Stop loss goes 80 pips above entry.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. Trade plan -->
+  <div class="chapter" id="tradeplan">
+    <div class="chapter-num">Chapter 9</div>
+    <div class="chapter-title">Trade Plan — Entry, Stop Loss, Take Profits</div>
+    <p>Every signal comes with a complete trade plan. Here is what each level means and how to use it:</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <div class="step-title">Entry Price</div>
+          <div class="step-desc">The midpoint of the buy or sell zone. Place a <strong>limit order</strong> at this price — meaning your broker will only fill the trade if price actually reaches this level. Never buy or sell at market just because a signal appeared; wait for price to come to the zone.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <div class="step-title">Stop Loss (SL) — Fixed 80 Pips</div>
+          <div class="step-desc">The stop loss is placed <strong>80 pips below entry</strong> (for buys) or <strong>80 pips above entry</strong> (for sells). If price reaches the stop loss, the trade closes automatically and your loss is limited. For gold, 80 pips = $8.00 per 0.01 lot. <strong>Never trade without a stop loss.</strong></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <div class="step-title">TP1 — First Take Profit</div>
+          <div class="step-desc">The nearest swing point in the direction of the trade. This is the closest realistic target. When price reaches TP1, consider closing <strong>50% of your position</strong> and moving your stop loss to break-even (your entry price) to protect your profit.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <div class="step-title">TP2 — Second Take Profit</div>
+          <div class="step-desc">The next structural level beyond TP1. Close another <strong>30% of your position</strong> here. This typically gives a 2–3× risk-to-reward ratio (shown as R on the dashboard). A 2.5R trade means you make 2.5× more than you risked.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <div class="step-title">TP3 — Final Take Profit</div>
+          <div class="step-desc">The maximum target based on the 1.618 Fibonacci extension of the swing. Close the remaining <strong>20% of your position</strong> here. TP3 represents the best-case outcome and is not always reached — always secure TP1 and TP2 first.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout tip"><strong>Position sizing suggestion</strong> Enter with your full intended size at the entry price. At TP1: close 50%, move stop to break-even. At TP2: close 30% of original. Let the final 20% run to TP3.</div>
+  </div>
+
+  <!-- 10. Risk management -->
+  <div class="chapter" id="risk">
+    <div class="chapter-num">Chapter 10</div>
+    <div class="chapter-title">Risk Management</div>
+    <p>Technical signals increase probability — they do not guarantee profit. Every trade carries risk. These rules protect your account:</p>
+
+    <div class="example-grid">
+      <div class="ex-card">
+        <div class="ex-card-title gold">The 1% Rule</div>
+        <p>Never risk more than 1–2% of your total account on a single trade. If your account is $1,000, your maximum loss per trade should be $10–$20. Size your position so that hitting the stop loss costs only that amount.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title gold">Wait for Confirmation</div>
+        <p>Always verify the signal on your own charting platform (TradingView, MT4, etc.) before entering. These signals are generated from daily candles — allow 1 to 5 trading sessions for price to reach the zone.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title gold">Daily Candles Only</div>
+        <p>All analysis uses the daily timeframe. Do not trade the signal on a 1-minute or 5-minute chart — the zones are too wide. Use the daily or 4-hour chart to confirm and entry the trade.</p>
+      </div>
+      <div class="ex-card">
+        <div class="ex-card-title gold">Demo First</div>
+        <p>If you are new to trading, practice on a demo account for at least 4 weeks before using real money. Get comfortable with placing limit orders, stop losses, and take profits before risking capital.</p>
+      </div>
+    </div>
+
+    <div class="callout danger"><strong>Disclaimer</strong> AndrewTrade signals are for educational and informational purposes only. They do not constitute financial advice. Past performance does not guarantee future results. Only trade with money you can afford to lose entirely.</div>
+  </div>
+
+</div><!-- /content -->
+
+<div class="page-footer">
+  <div class="footer-brand">Andrew<span>Trade</span></div>
+  <div class="footer-by">Developed by Nimbustrade Solutions</div>
+  <div class="footer-disc">
+    This tool applies Smart Money Concepts (ICT methodology) to gold and silver spot prices. Signals are generated algorithmically and are not personalised financial advice. Always conduct your own due diligence and consult a licensed financial advisor before trading.
+  </div>
+</div>
+
+</body>
+</html>
