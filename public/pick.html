@@ -627,7 +627,7 @@ let allInventory = [];
 let selectedStrategy = 'fifo';
 let currentWaveId = null;
 let currentPackOrderId = null;
-const state = { clientId: localStorage.getItem('idealoms_pick_client') || '', defaultLocationId: null };
+const state = { clientId: new URLSearchParams(location.search).get('client') || localStorage.getItem('idealoms_pick_client') || '', defaultLocationId: null };
 
 // ── API ───────────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
