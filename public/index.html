@@ -3173,18 +3173,18 @@ $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();})
 
 // ── SCAN PICKING ──────────────────────────────────────────────────────────────
 
-const ps={orders:[],oIdx:0,iIdx:0,confirmed:[],camActive:false,camStream:null,camTimer:null,detector:null};
+// ps.confirmed[oIdx][iIdx] = number of scans done for that item line
+const ps={orders:[],oIdx:0,confirmed:[],camActive:false,camStream:null,camTimer:null,detector:null};
 
 function startScanning(){
   const sel=orders.filter(o=>ffSelected.has(o.id));
   if(!sel.length){alert('Select at least one order first.');return;}
-  // Filter out orders with no items so they don't trigger instant batch-done
   ps.orders=sel.filter(o=>Array.isArray(o.items)&&o.items.length>0);
   if(!ps.orders.length){alert('Selected orders have no items to scan.');return;}
-  ps.oIdx=0;ps.iIdx=0;
-  ps.confirmed=ps.orders.map(o=>o.items.map(()=>false));
+  ps.oIdx=0;
+  // confirmed[oIdx][iIdx] = count of scans (not boolean)
+  ps.confirmed=ps.orders.map(o=>o.items.map(()=>0));
   ps.camActive=false;
-  // Always reset overlay state in case a previous session left it in done view
   const scanMain=$('scan-main');
   if(scanMain)scanMain.style.display='';
   $('scan-done-view').classList.add('hidden');
@@ -3198,15 +3198,18 @@ function exitScan(){
   stopCamera();
   $('scan-ov').classList.add('hidden');
   document.body.style.overflow='';
-  // Reset for next session
   const scanMain=$('scan-main');
   if(scanMain)scanMain.style.display='';
   $('scan-done-view').classList.add('hidden');
 }
 
+function _orderDone(oi){
+  return ps.orders[oi].items.every((item,ii)=>ps.confirmed[oi][ii]>=item.qty);
+}
+
 function renderScanOverlay(){
   const total=ps.orders.length;
-  const done=ps.confirmed.filter((c,i)=>c.every(Boolean)).length;
+  const done=ps.orders.filter((_,i)=>_orderDone(i)).length;
   $('scan-progress-top').textContent=`Order ${ps.oIdx+1} of ${total} · ${done} packed`;
   renderScanItemCard();
   renderScanItemsList();
@@ -3215,11 +3218,12 @@ function renderScanOverlay(){
 function renderScanItemCard(){
   const o=ps.orders[ps.oIdx];
   if(!o){showBatchDone();return;}
-  const item=o.items[ps.iIdx];
-  if(!item){advanceOrder();return;}
-  $('scan-item-sku').textContent=item.sku||'—';
-  $('scan-item-name').textContent=item.name;
-  $('scan-item-qty').textContent='× '+item.qty;
+  // Show order header + scan progress summary
+  const totalItems=o.items.reduce((s,it)=>s+it.qty,0);
+  const scannedItems=o.items.reduce((s,it,ii)=>s+Math.min(ps.confirmed[ps.oIdx][ii],it.qty),0);
+  $('scan-item-sku').textContent=`${scannedItems} / ${totalItems} items`;
+  $('scan-item-name').textContent=scannedItems===totalItems?'All items scanned ✓':'Scan any item in any order';
+  $('scan-item-qty').textContent='';
   $('scan-item-order').textContent=o.id+' · '+o.clientName;
 }
 
@@ -3229,16 +3233,16 @@ function renderScanItemsList(){
   let html='';
   for(let oi=ps.oIdx;oi<Math.min(ps.oIdx+3,ps.orders.length);oi++){
     const o=ps.orders[oi];
-    const allDone=ps.confirmed[oi].every(Boolean);
+    const allDone=_orderDone(oi);
     html+=`<div class="scan-order-hdr">${o.id} &mdash; ${o.clientName}${allDone?' ✓':''}</div>`;
     o.items.forEach((item,ii)=>{
-      const done=ps.confirmed[oi][ii];
-      const active=oi===ps.oIdx&&ii===ps.iIdx;
-      html+=`<div class="scan-item-row${done?' done':''}${active?' active':''}">
-        <span class="sip-check ${done?'done':'todo'}">${done?'✓':''}</span>
+      const count=ps.confirmed[oi][ii];
+      const done=count>=item.qty;
+      html+=`<div class="scan-item-row${done?' done':''}">
+        <span class="sip-check ${done?'done':'todo'}">${done?'✓':count>0?count:''}</span>
         <span class="sip-sku">${item.sku||'—'}</span>
         <span class="sip-name">${item.name}</span>
-        <span class="sip-qty">×${item.qty}</span>
+        <span class="sip-qty">${count}/${item.qty}</span>
       </div>`;
     });
   }
@@ -3260,37 +3264,66 @@ function processScan(raw){
   const code=normSku(raw);
   const o=ps.orders[ps.oIdx];
   if(!o)return;
-  const item=o.items[ps.iIdx];
-  if(!item)return;
 
-  if(normSku(item.sku)===code||normSku(item.name)===code){
-    scanOk();
-  }else{
-    // Check if this matches something else in the batch — tell the picker
+  // Find matching item anywhere in this order (any-order scanning)
+  let matchIdx=-1;
+  for(let i=0;i<o.items.length;i++){
+    if(normSku(o.items[i].sku)===code||normSku(o.items[i].name)===code){matchIdx=i;break;}
+  }
+
+  if(matchIdx===-1){
+    // Check if it belongs to a different order in the batch
     let hint='';
     for(const bo of ps.orders){
       for(const bi of bo.items){
-        if(normSku(bi.sku)===code||normSku(bi.name)===code){
-          hint=bi.name+' → '+bo.id;break;
-        }
+        if(normSku(bi.sku)===code||normSku(bi.name)===code){hint=`${bi.sku} belongs to order ${bo.id}`;break;}
       }
       if(hint)break;
     }
-    scanErr(hint?`Wrong item — that's ${hint}`:'Item not in this batch');
+    scanErr(hint||'Item not in this order');
+    return;
+  }
+
+  const item=o.items[matchIdx];
+  const count=ps.confirmed[ps.oIdx][matchIdx];
+
+  // Over-scan guard
+  if(count>=item.qty){
+    scanErr(`Already scanned all ${item.qty} unit${item.qty!==1?'s':''} of ${item.sku||item.name}`);
+    return;
+  }
+
+  ps.confirmed[ps.oIdx][matchIdx]++;
+  const newCount=ps.confirmed[ps.oIdx][matchIdx];
+  const msg=item.qty>1?`${item.sku}: ${newCount}/${item.qty}`:`${item.sku} ✓`;
+  flashFeedback(true,msg);
+  vibrate([80]);
+
+  // Check if ALL items in this order are fully scanned
+  if(_orderDone(ps.oIdx)){
+    setTimeout(()=>orderPicked(),600);
+  }else{
+    renderScanOverlay();
+    focusScanInput();
   }
 }
 
+// Confirm Pick button — manually confirms the first unscanned item line
 function confirmCurrentItem(){
   const o=ps.orders[ps.oIdx];
   if(!o)return;
-  scanOk();
-}
-
-function scanOk(){
-  ps.confirmed[ps.oIdx][ps.iIdx]=true;
-  flashFeedback(true);
-  vibrate([80]);
-  advanceItem();
+  for(let i=0;i<o.items.length;i++){
+    if(ps.confirmed[ps.oIdx][i]<o.items[i].qty){
+      ps.confirmed[ps.oIdx][i]++;
+      const item=o.items[i];
+      const newCount=ps.confirmed[ps.oIdx][i];
+      flashFeedback(true,`${item.sku}: ${newCount}/${item.qty}`);
+      vibrate([80]);
+      if(_orderDone(ps.oIdx))setTimeout(()=>orderPicked(),600);
+      else{renderScanOverlay();focusScanInput();}
+      return;
+    }
+  }
 }
 
 function scanErr(msg){
@@ -3301,50 +3334,37 @@ function scanErr(msg){
 function flashFeedback(ok,msg=''){
   const el=$('scan-feedback');
   el.className='scan-feedback '+(ok?'sf-ok':'sf-err');
-  el.textContent=ok?'✓':msg||'✗';
+  el.textContent=ok?(msg||'✓'):(msg||'✗');
   el.classList.remove('hidden');
   el.style.opacity='1';
-  setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.classList.add('hidden'),300);},700);
+  setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.classList.add('hidden'),300);},1200);
 }
 
 function vibrate(pattern){try{navigator.vibrate&&navigator.vibrate(pattern);}catch{}}
 
-function advanceItem(){
-  const o=ps.orders[ps.oIdx];
-  // Find next unconfirmed item
-  for(let i=ps.iIdx+1;i<o.items.length;i++){
-    if(!ps.confirmed[ps.oIdx][i]){ps.iIdx=i;renderScanOverlay();focusScanInput();return;}
-  }
-  // All items in this order done
-  orderPicked();
-}
-
 async function orderPicked(){
   const o=ps.orders[ps.oIdx];
-  // Mark order as processing
-  o.status='processing';
+  o.status='packed';
   if(serverAvailable){
-    try{await fetch(`${SERVER}/api/orders/${o.id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},body:JSON.stringify({status:'processing'})});}catch{}
+    try{await fetch(`${SERVER}/api/orders/${o.id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},body:JSON.stringify({status:'packed'})});}catch{}
   }
   save();
-  flashFeedback(true,'Order packed!');
+  flashFeedback(true,'Order packed! 📦');
   vibrate([100,50,100,50,200]);
   setTimeout(()=>advanceOrder(),900);
 }
 
 function advanceOrder(){
   ps.oIdx++;
-  if(ps.oIdx>=ps.orders.length){showBatchDone();return;}
-  ps.iIdx=0;
-  // Skip already-confirmed orders
-  while(ps.oIdx<ps.orders.length&&ps.confirmed[ps.oIdx].every(Boolean)){ps.oIdx++;}
+  // Skip already-done orders
+  while(ps.oIdx<ps.orders.length&&_orderDone(ps.oIdx)){ps.oIdx++;}
   if(ps.oIdx>=ps.orders.length){showBatchDone();return;}
   renderScanOverlay();
   focusScanInput();
 }
 
 function showBatchDone(){
-  const packed=ps.confirmed.filter(c=>c.every(Boolean)).length;
+  const packed=ps.orders.filter((_,i)=>_orderDone(i)).length;
   const scanMain=$('scan-main');
   if(scanMain)scanMain.style.display='none';
   $('scan-done-view').classList.remove('hidden');
@@ -4190,7 +4210,7 @@ if(document.readyState==='loading'){
     <div class="scan-done-ico">🎉</div>
     <div class="scan-done-ttl">Batch Complete!</div>
     <div id="scan-done-count" class="scan-done-sub"></div>
-    <div class="scan-done-sub">All orders marked as Processing.</div>
+    <div class="scan-done-sub">All orders marked as Packed.</div>
     <button class="scan-done-btn" onclick="exitScan();render()">Done</button>
   </div>
 </div>
