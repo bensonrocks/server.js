@@ -323,6 +323,7 @@ a:hover{text-decoration:underline}
 .logo-lazada{background:#FF6000}.logo-shopee{background:#EE4D2D}
 .logo-tiktok{background:#111;font-size:14px;font-weight:900;letter-spacing:0}
 .logo-shopify{background:#96bf48}
+.logo-api2cart{background:#1a56db;font-size:20px}
 
 /* ── CONNECTION MODAL ── */
 .conn-modal-hdr{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
@@ -811,6 +812,7 @@ a:hover{text-decoration:underline}
               <span class="api-chip" id="chip-lazada" onclick="switchPage('connections')" title="Lazada"><span class="chip-dot" id="chip-dot-lazada"></span>Lazada</span>
               <span class="api-chip" id="chip-tiktok" onclick="switchPage('connections')" title="TikTok Shop"><span class="chip-dot" id="chip-dot-tiktok"></span>TikTok Shop</span>
               <span class="api-chip" id="chip-shopify" onclick="switchPage('connections')" title="Shopify"><span class="chip-dot" id="chip-dot-shopify"></span>Shopify</span>
+              <span class="api-chip" id="chip-api2cart" onclick="switchPage('connections')" title="API2Cart"><span class="chip-dot" id="chip-dot-api2cart"></span>API2Cart</span>
             </div>
             <a class="api-bar-link" onclick="switchPage('connections');return false" href="#">Manage &rsaquo;</a>
           </div>
@@ -944,6 +946,14 @@ a:hover{text-decoration:underline}
             <div class="pt-name">Shopify</div>
             <div class="pt-status off" id="tile-shopify-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
             <div class="pt-sync" id="tile-shopify-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
+          </div>
+          <!-- API2Cart (Paid) -->
+          <div class="plat-tile" data-platform="api2cart" onclick="openConnModal('api2cart')">
+            <div class="pt-logo logo-api2cart">&#128275;</div>
+            <div class="pt-name">API2Cart <span style="font-size:10px;background:#fde68a;color:#92400e;padding:1px 5px;border-radius:4px;font-weight:700">PAID</span></div>
+            <div class="pt-status off" id="tile-api2cart-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-api2cart-sync"></div>
             <div class="pt-cta">Configure &rsaquo;</div>
           </div>
         </div>
@@ -1697,6 +1707,18 @@ const PLAT_CONFIG={
       {id:'accessToken',label:'Admin API Access Token (shpat_…)',type:'password',placeholder:'shpat_&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:false},
     ],hasOAuth:true,
   },
+  api2cart:{
+    name:'API2Cart',sub:'Multi-Cart Connector (Paid)',
+    logoClass:'logo-api2cart',logoIcon:'&#128275;',
+    docsUrl:'https://api2cart.com',
+    docsHint:'Dashboard &#8594; My Apps &#8594; API Key &amp; Store Key &mdash; <strong>Requires licence</strong>',
+    fields:[
+      {id:'licenseKey',label:'API2Cart API Key *',type:'password',placeholder:'&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;',half:false},
+      {id:'storeKey',  label:'Store Key *',       type:'password',placeholder:'Generated when you add a store in API2Cart dashboard',half:false},
+      {id:'storeUrl',  label:'Store URL',          type:'text',    placeholder:'https://mystore.com (optional, for display)',half:false},
+      {id:'storeName', label:'Store Name',         type:'text',    placeholder:'My Store via API2Cart',half:false},
+    ],hasOAuth:false,requiresLicense:true,
+  },
 };
 const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
 
@@ -2264,7 +2286,7 @@ async function refreshConnectionStatus(){
     banner.className='server-banner warn';
     banner.innerHTML='<span>&#9888;</span><span><strong>Server offline &mdash; database unavailable.</strong> Start the server (double-click START.bat / START.command) to save credentials and orders permanently. Browser mode is read-only.</span>';
     banner.classList.remove('hidden');
-    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!c.accessToken,c.lastSync,c.lastSyncCount);}
+    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!(c.accessToken||c.licenseKey),c.lastSync,c.lastSyncCount);}
   }
 }
 
@@ -2398,7 +2420,7 @@ function openConnModal(platform){
   $('cm-logo').innerHTML=cfg.logoIcon;
   $('cm-name').textContent=cfg.name;
   $('cm-sub').textContent=cfg.sub;
-  const connected=!!(saved.accessToken);
+  const connected=!!(saved.accessToken||saved.licenseKey);
   $('cm-status').className='conn-status '+(connected?'status-on':'status-off');
   $('cm-status-txt').textContent=connected?'Connected':'Not Connected';
   $('cm-disconnect-btn').style.display=connected?'':'none';
