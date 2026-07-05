@@ -17,12 +17,14 @@ Object.defineProperty(exports, "auditLogService", { enumerable: true, get: funct
 // ── Pre-wired singleton ────────────────────────────────────────────────────────
 const gateway_service_2 = require("./gateway.service");
 const zort_adapter_1 = require("./adapters/zort/zort.adapter");
+const zetpy_adapter_1 = require("./adapters/zetpy/zetpy.adapter");
 const shopee_direct_adapter_1 = require("./adapters/shopee-direct/shopee-direct.adapter");
 const lazada_direct_adapter_1 = require("./adapters/lazada-direct/lazada-direct.adapter");
 const tiktok_direct_adapter_1 = require("./adapters/tiktok-direct/tiktok-direct.adapter");
 const shopify_direct_adapter_1 = require("./adapters/shopify-direct/shopify-direct.adapter");
 exports.gateway = new gateway_service_2.MarketplaceGatewayService()
     .register(zort_adapter_1.zortAdapter)
+    .register(zetpy_adapter_1.zetpyAdapter)
     .register(shopee_direct_adapter_1.shopeeDirectAdapter)
     .register(lazada_direct_adapter_1.lazadaDirectAdapter)
     .register(tiktok_direct_adapter_1.tiktokDirectAdapter)
