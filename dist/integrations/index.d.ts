@@ -6,6 +6,7 @@ export * from './shopify/shopify.oauth';
 export * from './shopify/shopify.webhooks';
 export * from './api2cart/api2cart.adapter';
 export * from './api2cart/api2cart.mapper';
+export * from './zetpy/zetpy.adapter';
 export * from './lazada/lazada.adapter';
 export * from './shopee/shopee.adapter';
 export * from './tiktok/tiktok.adapter';

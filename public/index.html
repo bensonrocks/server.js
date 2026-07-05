@@ -324,6 +324,7 @@ a:hover{text-decoration:underline}
 .logo-tiktok{background:#111;font-size:14px;font-weight:900;letter-spacing:0}
 .logo-shopify{background:#96bf48}
 .logo-api2cart{background:#1a56db;font-size:20px}
+.logo-zetpy{background:#7c3aed;font-size:13px;font-weight:800;letter-spacing:-.5px}
 
 /* ── CONNECTION MODAL ── */
 .conn-modal-hdr{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
@@ -813,6 +814,7 @@ a:hover{text-decoration:underline}
               <span class="api-chip" id="chip-tiktok" onclick="switchPage('connections')" title="TikTok Shop"><span class="chip-dot" id="chip-dot-tiktok"></span>TikTok Shop</span>
               <span class="api-chip" id="chip-shopify" onclick="switchPage('connections')" title="Shopify"><span class="chip-dot" id="chip-dot-shopify"></span>Shopify</span>
               <span class="api-chip" id="chip-api2cart" onclick="switchPage('connections')" title="API2Cart"><span class="chip-dot" id="chip-dot-api2cart"></span>API2Cart</span>
+              <span class="api-chip" id="chip-zetpy" onclick="switchPage('connections')" title="Zetpy"><span class="chip-dot" id="chip-dot-zetpy"></span>Zetpy</span>
             </div>
             <a class="api-bar-link" onclick="switchPage('connections');return false" href="#">Manage &rsaquo;</a>
           </div>
@@ -954,6 +956,14 @@ a:hover{text-decoration:underline}
             <div class="pt-name">API2Cart <span style="font-size:10px;background:#fde68a;color:#92400e;padding:1px 5px;border-radius:4px;font-weight:700">PAID</span></div>
             <div class="pt-status off" id="tile-api2cart-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
             <div class="pt-sync" id="tile-api2cart-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
+          </div>
+          <!-- Zetpy (Paid) -->
+          <div class="plat-tile" data-platform="zetpy" onclick="openConnModal('zetpy')">
+            <div class="pt-logo logo-zetpy">ZTP</div>
+            <div class="pt-name">Zetpy <span style="font-size:10px;background:#fde68a;color:#92400e;padding:1px 5px;border-radius:4px;font-weight:700">PAID</span></div>
+            <div class="pt-status off" id="tile-zetpy-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-zetpy-sync"></div>
             <div class="pt-cta">Configure &rsaquo;</div>
           </div>
         </div>
@@ -1717,6 +1727,16 @@ const PLAT_CONFIG={
       {id:'storeKey',  label:'Store Key *',       type:'password',placeholder:'Generated when you add a store in API2Cart dashboard',half:false},
       {id:'storeUrl',  label:'Store URL',          type:'text',    placeholder:'https://mystore.com (optional, for display)',half:false},
       {id:'storeName', label:'Store Name',         type:'text',    placeholder:'My Store via API2Cart',half:false},
+    ],hasOAuth:false,requiresLicense:true,
+  },
+  zetpy:{
+    name:'Zetpy',sub:'Multi-Channel Connector — SEA (Paid)',
+    logoClass:'logo-zetpy',logoIcon:'ZTP',
+    docsUrl:'https://developers.zetpy.com',
+    docsHint:'Zetpy Dashboard &#8594; Settings &#8594; API &#8594; Generate API Key &mdash; <strong>Requires Zetpy subscription</strong>',
+    fields:[
+      {id:'licenseKey',label:'Zetpy API Key *',type:'password',placeholder:'Your Zetpy API key',half:false},
+      {id:'storeName', label:'Store / Account Name',type:'text',placeholder:'My Zetpy Account',half:false},
     ],hasOAuth:false,requiresLicense:true,
   },
 };
