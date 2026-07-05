@@ -3636,9 +3636,10 @@ async function toggleCamera(){
     return;
   }
   try{
-    ps.camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    ps.camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
     const vid=$('scan-ov-video');
     vid.srcObject=ps.camStream;
+    await new Promise(res=>{vid.onloadedmetadata=res;});
     await vid.play();
     ps.detector=new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','upc_a']});
     wrap.classList.remove('hidden');
