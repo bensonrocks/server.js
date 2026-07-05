@@ -1,35 +1,52 @@
 import type { IMarketplaceAdapter,
               AdapterCredentials,
-              FetchOrdersOptions }             from '../../interfaces/marketplace-adapter.interface';
-import type { StandardOrder }                  from '../../models/standard-order';
+              FetchOrdersOptions }         from '../../interfaces/marketplace-adapter.interface';
+import type { StandardOrder }              from '../../models/standard-order';
+import type { StandardInventory }          from '../../models/standard-inventory';
 import type { StandardShipment,
-              StandardFulfillmentResult }      from '../../models/standard-shipment';
+              StandardFulfillmentResult } from '../../models/standard-shipment';
 import type { ZetpyOrderListResponse,
-              ZetpyFulfillBody,
-              ZetpyFulfillResponse }           from './zetpy.types';
-import { zetpyClient }                         from './zetpy.client';
-import { mapZetpyOrder }                       from './zetpy.mapper';
-import { auditLogService }                     from '../../audit/audit-log.service';
+              ZetpyRtsBody,
+              ZetpyRtsResponse,
+              ZetpyOrder }                from './zetpy.types';
+import { zetpyClient }                    from './zetpy.client';
+import { mapZetpyOrder }                  from './zetpy.mapper';
+import { auditLogService }                from '../../audit/audit-log.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ZetpyAdapter — wraps Zetpy multi-channel aggregator API
-//  Docs:  https://developers.zetpy.com  (login required)
-//  Auth:  Authorization: Bearer <apiKey>
-//  Rate:  60 req/min
-//
-//  ⚠️  SKELETON — all endpoint paths and field names are best-guess.
-//  Search this file for TODO and verify against real Zetpy docs.
+//  Base URL: https://api.zetpy.com
+//  Auth:     POST /api/account/auth  { email, password } → Bearer JWT (60 min)
+//  Docs:     https://developers.zetpy.com  (login required)
+//  Rate:     60 req/min
 // ─────────────────────────────────────────────────────────────────────────────
 
-function assertCreds(creds: AdapterCredentials): string {
-  const key = String(creds.licenseKey ?? creds.apiKey ?? '');
-  if (!key) {
+function assertCreds(creds: AdapterCredentials): { email: string; password: string } {
+  const email    = String(creds.email    ?? '');
+  const password = String(creds.password ?? '');
+  if (!email || !password) {
     throw Object.assign(
-      new Error('Zetpy requires an API key — obtain one from your Zetpy account settings.'),
+      new Error('Zetpy requires an email address and password — log into app.zetpy.com to verify your credentials.'),
       { status: 401 },
     );
   }
-  return key;
+  return { email, password };
+}
+
+// Flatten Zetpy's nested { orders: { marketplace: { shop: { ref_no: order } } } }
+// into a plain ZetpyOrder[]
+function flattenOrders(
+  nested: Record<string, Record<string, Record<string, ZetpyOrder>>>,
+): ZetpyOrder[] {
+  const result: ZetpyOrder[] = [];
+  for (const shops of Object.values(nested ?? {})) {
+    for (const orderMap of Object.values(shops)) {
+      for (const order of Object.values(orderMap)) {
+        result.push(order);
+      }
+    }
+  }
+  return result;
 }
 
 export class ZetpyAdapter implements IMarketplaceAdapter {
@@ -40,23 +57,23 @@ export class ZetpyAdapter implements IMarketplaceAdapter {
     creds: AdapterCredentials,
     opts: FetchOrdersOptions = {},
   ): Promise<StandardOrder[]> {
-    const apiKey     = assertCreds(creds);
+    const auth       = assertCreds(creds);
     const clientId   = String(creds.storeName ?? 'zetpy');
     const clientName = String(creds.storeName ?? 'Zetpy Store');
 
-    // TODO: confirm endpoint path (may be /orders or /api/orders)
-    // TODO: confirm query param names
     const params: Record<string, string> = {
-      per_page: String(opts.pageSize ?? 50),
-      page:     String(opts.page     ?? 1),
+      limit: String(opts.pageSize ?? 100),
+      page:  String(opts.page     ?? 1),
+      sort_by: 'created_at',
+      sort:    'desc',
     };
-    if (opts.since)  params['created_from'] = opts.since;  // TODO: confirm param name
-    if (opts.status) params['status']        = opts.status;
+    if (opts.since)  params['date_from'] = opts.since.slice(0, 10);  // YYYY-MM-DD
+    if (opts.status) params['status']    = opts.status;
 
-    // ① Fetch raw — Zetpy types stay inside this method
+    // ① Fetch raw — Zetpy types stay inside this adapter
     const raw = await zetpyClient.get<ZetpyOrderListResponse>(
-      { apiKey },
-      '/orders',   // TODO: confirm endpoint path
+      auth,
+      '/api/orders/get-paginated',
       params,
     );
 
@@ -69,8 +86,8 @@ export class ZetpyAdapter implements IMarketplaceAdapter {
       tenantId:   clientId,
     });
 
-    // ③ Map to Standard Models — ZetpyOrder never crosses this boundary
-    const orders = raw.data ?? [];   // TODO: confirm response envelope field
+    // ③ Flatten nested structure, then map to Standard Models
+    const orders = flattenOrders(raw.orders ?? {});
     return orders.map(o =>
       mapZetpyOrder(o, this.channel, clientId, clientName, auditRef),
     );
@@ -80,34 +97,79 @@ export class ZetpyAdapter implements IMarketplaceAdapter {
     creds: AdapterCredentials,
     shipment: StandardShipment,
   ): Promise<StandardFulfillmentResult> {
-    const apiKey   = assertCreds(creds);
+    const auth     = assertCreds(creds);
     const clientId = String(creds.storeName ?? 'zetpy');
+    const refNo    = shipment.externalOrderId;
 
-    // TODO: confirm endpoint path (may be /orders/:id/ship or /fulfillments)
-    const body: ZetpyFulfillBody = {
-      tracking_number: shipment.trackingNumber,
-      carrier:         shipment.carrier ?? '',
-      notify_buyer:    shipment.notifyCustomer ?? true,
-    };
+    // ① Look up the order to get app_name and app_account_identifier
+    const searchRaw = await zetpyClient.get<ZetpyOrderListResponse>(
+      auth,
+      '/api/orders/search_by_ref',
+      { ref_no: refNo },
+    );
+    const found = flattenOrders(searchRaw.orders ?? {});
+    if (!found.length) {
+      return { ok: false, message: `Zetpy: order ${refNo} not found` };
+    }
+    const order = found[0];
 
     auditLogService.save({
       channel:    'zetpy',
       operation:  'pushShipment',
-      externalId: shipment.externalOrderId,
-      rawPayload: body,
+      externalId: refNo,
+      rawPayload: { refNo, order, shipment },
       tenantId:   clientId,
     });
 
-    const result = await zetpyClient.post<ZetpyFulfillResponse>(
-      { apiKey },
-      `/orders/${shipment.externalOrderId}/fulfill`,  // TODO: confirm path
+    // ② Call Ready-to-Ship with self_deliver + tracking number
+    const body: ZetpyRtsBody = {
+      credentials: {
+        app_account_identifier: order.app_account_identifier ?? order.app_internal_ref_id,
+        app_name:               order.app_name,
+      },
+      shipment_type:       'self_deliver',
+      self_deliver_orders: [{ ref_no: refNo, tracking_number: shipment.trackingNumber }],
+    };
+
+    const result = await zetpyClient.post<ZetpyRtsResponse>(
+      auth,
+      '/api/orders/rts',
       body,
     );
 
+    const ok = result.success === true &&
+               (result.successful_ref ?? []).includes(refNo);
+
     return {
-      ok:      result.success !== false && !result.error,
-      message: result.message ?? result.error,
+      ok,
+      externalId: refNo,
+      message:    result.message
+                  ?? (result.error ? `${result.error.code}: ${result.error.message}` : undefined),
     };
+  }
+
+  async syncInventory(
+    creds: AdapterCredentials,
+    items: StandardInventory[],
+  ): Promise<void> {
+    const auth = assertCreds(creds);
+
+    const body = {
+      products: items.map(i => ({
+        sku:      i.sku,
+        quantity: i.qty,
+      })),
+    };
+
+    auditLogService.save({
+      channel:    'zetpy',
+      operation:  'syncInventory',
+      externalId: null,
+      rawPayload: body,
+      tenantId:   String(creds.storeName ?? 'zetpy'),
+    });
+
+    await zetpyClient.post(auth, '/api/products/update-stock', body);
   }
 }
 

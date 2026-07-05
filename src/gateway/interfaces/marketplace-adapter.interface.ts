@@ -14,8 +14,12 @@ export interface AdapterCredentials {
   apikey?:       string;   // ZORT API key  (header)
   apisecret?:    string;   // ZORT API secret (header)
 
-  // Generic paid-connector key (Zetpy, API2Cart, …)
+  // Generic paid-connector key (API2Cart, …)
   licenseKey?:   string;
+
+  // Email + password auth (Zetpy)
+  email?:        string;
+  password?:     string;
 
   // OAuth — per-shop token (Shopee, Lazada, TikTok, Shopify)
   accessToken?:  string;

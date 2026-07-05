@@ -7,6 +7,8 @@ export interface AdapterCredentials {
     apikey?: string;
     apisecret?: string;
     licenseKey?: string;
+    email?: string;
+    password?: string;
     accessToken?: string;
     refreshToken?: string;
     shopId?: string;

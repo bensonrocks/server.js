@@ -1848,10 +1848,11 @@ const PLAT_CONFIG={
     name:'Zetpy',sub:'Multi-Channel Connector — SEA (Paid)',
     logoClass:'logo-zetpy',logoIcon:'ZTP',
     docsUrl:'https://developers.zetpy.com',
-    docsHint:'Zetpy Dashboard &#8594; Settings &#8594; API &#8594; Generate API Key &mdash; <strong>Requires Zetpy subscription</strong>',
+    docsHint:'Use your Zetpy login email &amp; password. <strong>Requires an active Zetpy subscription.</strong>',
     fields:[
-      {id:'licenseKey',label:'Zetpy API Key *',type:'password',placeholder:'Your Zetpy API key',half:false},
-      {id:'storeName', label:'Store / Account Name',type:'text',placeholder:'My Zetpy Account',half:false},
+      {id:'email',    label:'Zetpy Email *',    type:'text',    placeholder:'you@example.com',half:false},
+      {id:'password', label:'Zetpy Password *', type:'password',placeholder:'Your Zetpy login password',half:false},
+      {id:'storeName',label:'Display Name',     type:'text',    placeholder:'My Zetpy Account',half:false},
     ],hasOAuth:false,requiresLicense:true,
   },
   zort:{
@@ -2440,7 +2441,7 @@ async function refreshConnectionStatus(){
     banner.className='server-banner warn';
     banner.innerHTML='<span>&#9888;</span><span><strong>Server offline &mdash; database unavailable.</strong> Start the server (double-click START.bat / START.command) to save credentials and orders permanently. Browser mode is read-only.</span>';
     banner.classList.remove('hidden');
-    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!(c.accessToken||c.licenseKey||c.apikey),c.lastSync,c.lastSyncCount);}
+    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!(c.accessToken||c.licenseKey||c.apikey||c.email),c.lastSync,c.lastSyncCount);}
   }
 }
 
@@ -2574,7 +2575,7 @@ function openConnModal(platform){
   $('cm-logo').innerHTML=cfg.logoIcon;
   $('cm-name').textContent=cfg.name;
   $('cm-sub').textContent=cfg.sub;
-  const connected=!!(saved.accessToken||saved.licenseKey||saved.apikey);
+  const connected=!!(saved.accessToken||saved.licenseKey||saved.apikey||saved.email);
   $('cm-status').className='conn-status '+(connected?'status-on':'status-off');
   $('cm-status-txt').textContent=connected?'Connected':'Not Connected';
   $('cm-disconnect-btn').style.display=connected?'':'none';
