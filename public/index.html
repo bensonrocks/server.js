@@ -1774,9 +1774,11 @@ async function doOverlayLogin(){
     localStorage.setItem('idealoms_token_expiry', Date.now() + 8*60*60*1000);
     serverAvailable=true;adminUnlocked=true;
     startSessionTimer();
+    const _deepPage=new URLSearchParams(location.search).get('page');
     history.replaceState({},'','/');
     document.getElementById('login-ov').style.display='none';
     await fetchOrders();render();
+    if(_deepPage)switchPage(_deepPage);
   }catch(e){errEl.textContent='Cannot reach server — make sure it is running.';errEl.style.display='block';}
   finally{btn.disabled=false;btn.textContent='Sign In →';}
 }
@@ -4658,9 +4660,20 @@ function applyLang(l){
 function toggleLang(){applyLang(_appLang==='zh'?'en':'zh');}
 // apply on DOMContentLoaded; if already loaded, apply immediately
 if(document.readyState==='loading'){
-  document.addEventListener('DOMContentLoaded',function(){applyLang(_appLang);});
+  document.addEventListener('DOMContentLoaded',function(){applyLang(_appLang);_applyDeepLink();});
 }else{
-  applyLang(_appLang);
+  applyLang(_appLang);_applyDeepLink();
+}
+
+// Deep-link: /?page=packing (or any page) — works for already-logged-in users
+function _applyDeepLink(){
+  const p=new URLSearchParams(location.search).get('page');
+  if(p&&authToken){
+    history.replaceState({},'','/');
+    // Wait for app to be ready, then switch
+    const _try=()=>{ if(serverAvailable){switchPage(p);}else{setTimeout(_try,200);} };
+    _try();
+  }
 }
 </script>
 
