@@ -34,6 +34,7 @@ const { createClientAuth } = require('./lib/client-auth');
 const staffAuth = require('./lib/staff-auth');
 const createInventory   = require('./lib/inventory');
 const createFulfillment = require('./lib/fulfillment');
+const shopifyApp        = require('./lib/shopify-app');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
@@ -58,7 +59,8 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-app.use(express.json());
+// verify callback stores the raw Buffer on req so webhook HMAC verification can use it
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
@@ -111,6 +113,9 @@ function withTenant(req, res, next) {
   req.syncLog    = ctx.syncLog;
   next();
 }
+
+// ── Shopify Public App integration ───────────────────────────────────────────
+shopifyApp.init(app, getCtx, withTenant);
 
 // ── Super-admin middleware ────────────────────────────────────────────────────
 
