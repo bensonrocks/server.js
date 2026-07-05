@@ -104,4 +104,22 @@ export interface ZetpyRtsResponse {
     };
     request_id?: string;
 }
+export interface ZetpyAwbBody {
+    credentials: {
+        app_account_identifier: string | number;
+        app_name: string;
+    };
+    orders: string[];
+}
+export interface ZetpyAwbResponse {
+    success: boolean;
+    url?: string;
+    urls?: Record<string, string>;
+    message?: string;
+    error?: {
+        code: string;
+        message: string;
+    };
+    request_id?: string;
+}
 //# sourceMappingURL=zetpy.types.d.ts.map

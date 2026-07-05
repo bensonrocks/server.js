@@ -72,6 +72,15 @@ export interface IMarketplaceAdapter {
     shipment: StandardShipment,
   ): Promise<StandardFulfillmentResult>;
 
+  /**
+   * Fetch the airway bill / shipping label PDF for a shipped order (optional).
+   * Returns an object with at least a `url` string pointing to the PDF.
+   */
+  fetchWaybill?(
+    credentials: AdapterCredentials,
+    externalOrderId: string,
+  ): Promise<{ url: string }>;
+
   /** Pull inventory levels from the platform (optional). */
   fetchInventory?(
     credentials: AdapterCredentials,

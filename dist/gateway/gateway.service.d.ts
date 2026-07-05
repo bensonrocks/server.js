@@ -13,5 +13,8 @@ export declare class MarketplaceGatewayService {
     pushShipment(channel: string, creds: AdapterCredentials, shipment: StandardShipment): Promise<StandardFulfillmentResult>;
     fetchInventory(channel: string, creds: AdapterCredentials): Promise<StandardInventory[]>;
     syncInventory(channel: string, creds: AdapterCredentials, items: StandardInventory[]): Promise<void>;
+    fetchWaybill(channel: string, creds: AdapterCredentials, externalOrderId: string): Promise<{
+        url: string;
+    }>;
 }
 //# sourceMappingURL=gateway.service.d.ts.map

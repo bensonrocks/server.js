@@ -117,3 +117,21 @@ export interface ZetpyRtsResponse {
   error?:           { code: string; message: string };
   request_id?:      string;
 }
+
+// POST /api/orders/airway-bill
+export interface ZetpyAwbBody {
+  credentials: {
+    app_account_identifier: string | number;
+    app_name:               string;
+  };
+  orders: string[];  // ref_no list
+}
+
+export interface ZetpyAwbResponse {
+  success:   boolean;
+  url?:      string;                   // single PDF URL when one order
+  urls?:     Record<string, string>;   // keyed by ref_no when multiple
+  message?:  string;
+  error?:    { code: string; message: string };
+  request_id?: string;
+}

@@ -70,4 +70,16 @@ export class MarketplaceGatewayService {
     if (!a.syncInventory) return Promise.resolve();
     return a.syncInventory(creds, items);
   }
+
+  fetchWaybill(
+    channel: string,
+    creds: AdapterCredentials,
+    externalOrderId: string,
+  ): Promise<{ url: string }> {
+    const a = this.get(channel);
+    if (!a.fetchWaybill) {
+      return Promise.reject(new Error(`Channel "${channel}" does not support waybill fetch`));
+    }
+    return a.fetchWaybill(creds, externalOrderId);
+  }
 }

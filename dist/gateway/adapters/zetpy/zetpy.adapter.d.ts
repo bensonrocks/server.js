@@ -7,6 +7,9 @@ export declare class ZetpyAdapter implements IMarketplaceAdapter {
     readonly requiresLicense = true;
     fetchOrders(creds: AdapterCredentials, opts?: FetchOrdersOptions): Promise<StandardOrder[]>;
     pushShipment(creds: AdapterCredentials, shipment: StandardShipment): Promise<StandardFulfillmentResult>;
+    fetchWaybill(creds: AdapterCredentials, externalOrderId: string): Promise<{
+        url: string;
+    }>;
     syncInventory(creds: AdapterCredentials, items: StandardInventory[]): Promise<void>;
 }
 export declare const zetpyAdapter: ZetpyAdapter;

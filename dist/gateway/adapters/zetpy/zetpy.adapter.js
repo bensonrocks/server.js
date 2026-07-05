@@ -100,6 +100,31 @@ class ZetpyAdapter {
                 ?? (result.error ? `${result.error.code}: ${result.error.message}` : undefined),
         };
     }
+    async fetchWaybill(creds, externalOrderId) {
+        const auth = assertCreds(creds);
+        const refNo = externalOrderId;
+        // Look up the order to get app_name + app_account_identifier
+        const searchRaw = await zetpy_client_1.zetpyClient.get(auth, '/api/orders/search_by_ref', { ref_no: refNo });
+        const found = flattenOrders(searchRaw.orders ?? {});
+        if (!found.length) {
+            throw Object.assign(new Error(`Zetpy: order ${refNo} not found — cannot fetch waybill`), { status: 404 });
+        }
+        const order = found[0];
+        const body = {
+            credentials: {
+                app_account_identifier: order.app_account_identifier ?? order.app_internal_ref_id,
+                app_name: order.app_name,
+            },
+            orders: [refNo],
+        };
+        const result = await zetpy_client_1.zetpyClient.post(auth, '/api/orders/airway-bill', body);
+        const url = result.url ?? result.urls?.[refNo];
+        if (!result.success || !url) {
+            throw new Error(result.message
+                ?? (result.error ? `${result.error.code}: ${result.error.message}` : 'Zetpy AWB fetch failed'));
+        }
+        return { url };
+    }
     async syncInventory(creds, items) {
         const auth = assertCreds(creds);
         const body = {

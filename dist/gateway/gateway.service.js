@@ -43,6 +43,13 @@ class MarketplaceGatewayService {
             return Promise.resolve();
         return a.syncInventory(creds, items);
     }
+    fetchWaybill(channel, creds, externalOrderId) {
+        const a = this.get(channel);
+        if (!a.fetchWaybill) {
+            return Promise.reject(new Error(`Channel "${channel}" does not support waybill fetch`));
+        }
+        return a.fetchWaybill(creds, externalOrderId);
+    }
 }
 exports.MarketplaceGatewayService = MarketplaceGatewayService;
 //# sourceMappingURL=gateway.service.js.map
