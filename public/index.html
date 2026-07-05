@@ -214,6 +214,29 @@ a:hover{text-decoration:underline}
 .t-row.grand{font-weight:800;font-size:15px;color:#0f172a;border-top:1.5px solid #e2e8f0;padding-top:8px;margin-top:2px}
 .notes-b{background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.5}
 
+/* ── PACKING STATION ── */
+.pk-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.pk-count{font-size:13px;font-weight:700;color:#64748b}
+.pk-grid{display:flex;flex-direction:column;gap:12px}
+.pk-card{background:#1e293b;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;border:1.5px solid #334155;transition:border-color .2s}
+.pk-card.waybill-ready{border-color:#22c55e}
+.pk-card.shipped{opacity:.4;pointer-events:none}
+.pk-card-hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.pk-oid{font-family:monospace;font-size:14px;font-weight:800;color:#38bdf8}
+.pk-client-tag{font-size:10px;font-weight:700;color:#94a3b8;background:#0f172a;padding:2px 8px;border-radius:20px;white-space:nowrap}
+.pk-channel{font-size:10px;color:#64748b;margin-top:2px}
+.pk-shipto{font-size:13px;color:#e2e8f0;font-weight:600}
+.pk-items{font-size:12px;color:#94a3b8;line-height:1.7}
+.pk-item-sku{font-family:monospace;color:#38bdf8;font-weight:700}
+.pk-actions{display:flex;gap:8px;margin-top:4px}
+.pk-waybill-btn{flex:2;padding:12px;background:#1d4ed8;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer;transition:background .15s}
+.pk-waybill-btn:active{background:#1e40af}
+.pk-waybill-btn.printed{background:#0f766e}
+.pk-ship-btn{flex:1;padding:12px;background:#15803d;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer}
+.pk-ship-btn:active{background:#166534}
+.pk-ship-btn:disabled{background:#334155;color:#64748b;cursor:default}
+.pk-empty{text-align:center;padding:48px 20px;color:#475569;font-size:14px}
+
 /* ── PICK MODE MODAL ── */
 .pm-card{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;transition:border-color .15s,background .15s}
 .pm-card:hover{border-color:#2563eb;background:#eff6ff}
@@ -742,6 +765,9 @@ a:hover{text-decoration:underline}
         <li class="nav-li" id="nav-fulfillment" onclick="switchPage('fulfillment')">
           <span>&#128230;</span><span class="nav-name" data-i18n="navFulfillment">Fulfillment</span>
         </li>
+        <li class="nav-li" id="nav-packing" onclick="switchPage('packing')">
+          <span>&#128230;</span><span class="nav-name">Packing Station</span><span id="packing-badge" class="nbadge" style="display:none;background:#1d4ed8"></span>
+        </li>
         <li class="nav-li" id="nav-scan" onclick="switchPage('scan')">
           <span>&#128247;</span><span class="nav-name" data-i18n="navScan">IDEALSCAN</span>
         </li>
@@ -958,6 +984,21 @@ a:hover{text-decoration:underline}
         <div class="ff-tbl-wrap">
           <div id="ff-table-body"></div>
         </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════
+           PACKING STATION PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-packing" class="page">
+        <div class="page-hdr">
+          <h2>&#128230; Packing Station</h2>
+          <p>Print waybill, stick on package, ship.</p>
+        </div>
+        <div class="pk-toolbar">
+          <span id="pk-count" class="pk-count"></span>
+          <button class="btn btn-sm" onclick="loadPacking()">&#8635; Refresh</button>
+        </div>
+        <div id="pk-grid" class="pk-grid"></div>
       </div>
 
       <!-- ═══════════════════════════════════════
@@ -2162,7 +2203,7 @@ function buildWaybillHTML(o){
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
 function switchPage(page){
   currentPage=page;
-  ['dashboard','connections','synclog','admin','client-dash','fulfillment','scan','inventory'].forEach(p=>{
+  ['dashboard','connections','synclog','admin','client-dash','fulfillment','packing','scan','inventory'].forEach(p=>{
     const pg=$(`page-${p}`),nv=$(`nav-${p}`);
     if(pg)pg.classList.toggle('on',p===page);
     if(nv)nv.classList.toggle('on',p===page);
@@ -2172,6 +2213,7 @@ function switchPage(page){
   if(page==='admin')initAdminPage();
   if(page==='client-dash')initClientDash();
   if(page==='fulfillment')initFulfillment();
+  if(page==='packing')initPacking();
   if(page==='inventory')invLoad();
   if(page!=='scan')scanStop();
   closeSidebar();
@@ -2477,7 +2519,16 @@ async function disconnectConn(){
 
 async function loadOrdersFromServer(){
   if(!serverAvailable)return;
-  try{const r=await fetch(`${SERVER}/api/orders`);if(r.ok){orders=await r.json();save();}}catch{}
+  try{
+    const r=await fetch(`${SERVER}/api/orders`);
+    if(r.ok){
+      orders=await r.json();save();
+      // Update packing station badge
+      const packedCount=orders.filter(o=>o.status==='packed').length;
+      const badge=$('packing-badge');
+      if(badge){badge.textContent=packedCount||'';badge.style.display=packedCount?'':'none';}
+    }
+  }catch{}
 }
 
 // ── SYNC LOG ──────────────────────────────────────────────────────────────────
@@ -4068,6 +4119,131 @@ async function invDoImport() {
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
 <script>
 'use strict';
+// ── PACKING STATION ───────────────────────────────────────────────────────────
+
+let _packingOrders = [];
+let _pkWaybillPrinted = new Set(); // track which orders have had waybill opened
+
+async function initPacking() {
+  await loadPacking();
+}
+
+async function loadPacking() {
+  try {
+    const res = await apiFetch('/api/orders?status=packed');
+    _packingOrders = await res.json();
+    renderPacking();
+    // Update nav badge
+    const badge = $('packing-badge');
+    if (badge) {
+      badge.textContent = _packingOrders.length || '';
+      badge.style.display = _packingOrders.length ? '' : 'none';
+    }
+  } catch(e) { console.error('loadPacking:', e); }
+}
+
+function renderPacking() {
+  const grid = $('pk-grid');
+  const count = $('pk-count');
+  if (!grid) return;
+  const orders = _packingOrders;
+  if (count) count.textContent = orders.length ? `${orders.length} order${orders.length!==1?'s':''} ready to ship` : '';
+  if (!orders.length) {
+    grid.innerHTML = `<div class="pk-empty">&#128230; No packed orders waiting.<br>Orders will appear here once scanning is complete.</div>`;
+    return;
+  }
+  grid.innerHTML = orders.map(o => {
+    const hasPlatform = !!(o.source?.type && o.source?.externalId);
+    const printed = _pkWaybillPrinted.has(o.id);
+    const shipto = o.shipping?.name || o.source?.shippingName || o.source?.customerName || '—';
+    const addr = [o.shipping?.city, o.shipping?.state, o.shipping?.country].filter(Boolean).join(', ');
+    const itemLines = (o.items||[]).map(i =>
+      `<div><span class="pk-item-sku">${_esc(i.sku||'—')}</span> ${_esc(i.name)} &times;${i.qty}</div>`
+    ).join('');
+    const waybillBtn = hasPlatform
+      ? `<button class="pk-waybill-btn${printed?' printed':''}" onclick="pkPrintWaybill('${o.id}',this)">${printed?'✓ Waybill Printed':'🖨️ Print Waybill'}</button>`
+      : `<span style="flex:2;padding:12px;background:#334155;color:#64748b;border-radius:9px;font-size:12px;text-align:center">No platform waybill</span>`;
+    return `<div class="pk-card${printed?' waybill-ready':''}" id="pkcard-${o.id}">
+      <div class="pk-card-hdr">
+        <div>
+          <div class="pk-oid">${_esc(o.id)}</div>
+          <div class="pk-channel">${_esc(o.channel||'manual')}</div>
+        </div>
+        <span class="pk-client-tag">${_esc(o.clientName||o.client_id||'')}</span>
+      </div>
+      <div>
+        <div class="pk-shipto">&#128205; ${_esc(shipto)}</div>
+        ${addr?`<div style="font-size:11px;color:#64748b">${_esc(addr)}</div>`:''}
+      </div>
+      <div class="pk-items">${itemLines}</div>
+      <div class="pk-actions">
+        ${waybillBtn}
+        <button class="pk-ship-btn" onclick="pkMarkShipped('${o.id}',this)" ${!printed&&hasPlatform?'disabled':''}>&#9989; Shipped</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function pkPrintWaybill(orderId, btn) {
+  btn.disabled = true;
+  btn.textContent = '⏳ Fetching…';
+  try {
+    // Try to get waybill as URL first via a HEAD-like check
+    const res = await apiFetch(`/api/orders/${orderId}/waybill`);
+    if (!res.ok) throw new Error((await res.json()).error || 'Waybill not available');
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const { url } = await res.json();
+      window.open(url, '_blank');
+    } else {
+      // PDF binary — open the URL directly in a new tab for print
+      window.open(`${SERVER}/api/orders/${orderId}/waybill`, '_blank');
+    }
+    _pkWaybillPrinted.add(orderId);
+    // Update card
+    btn.textContent = '✓ Waybill Printed';
+    btn.classList.add('printed');
+    const card = $(`pkcard-${orderId}`);
+    if (card) {
+      card.classList.add('waybill-ready');
+      const shipBtn = card.querySelector('.pk-ship-btn');
+      if (shipBtn) shipBtn.disabled = false;
+    }
+  } catch(e) {
+    alert('Could not fetch waybill: ' + e.message + '\nYou can still mark as shipped manually.');
+    // Enable ship button anyway so order isn't stuck
+    const card = $(`pkcard-${orderId}`);
+    if (card) { const shipBtn = card.querySelector('.pk-ship-btn'); if(shipBtn) shipBtn.disabled = false; }
+    btn.textContent = '🖨️ Print Waybill';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function pkMarkShipped(orderId, btn) {
+  btn.disabled = true;
+  btn.textContent = '⏳ Shipping…';
+  try {
+    const res = await apiFetch(`/api/orders/${orderId}/fulfill`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ targetStatus: 'shipped', pushPlatform: true, autoAdvance: false })
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Failed');
+    // Remove from list
+    _packingOrders = _packingOrders.filter(o => o.id !== orderId);
+    const card = $(`pkcard-${orderId}`);
+    if (card) { card.classList.add('shipped'); setTimeout(()=>card.remove(), 600); }
+    renderPacking();
+    // refresh orders list in background
+    await loadOrders();
+  } catch(e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '✅ Shipped';
+  }
+}
+
 // ── IDEALSCAN (ZXing-based) ───────────────────────────────────────────────────
 let _scanReader  = null;
 let _scanRunning = false;
