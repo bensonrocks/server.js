@@ -756,6 +756,21 @@ app.post('/api/demo/go-live', withTenant, withSuperAdmin, (req, res) => {
   res.json({ ok: true, removed, message: 'Demo data cleared. Connect your marketplace credentials and sync to pull live orders.' });
 });
 
+// ── Seed inventory ────────────────────────────────────────────────────────────
+
+app.post('/api/admin/seed-inventory', withTenant, (req, res) => {
+  try {
+    const { seedInventory } = require('./seed_inventory');
+    const tenantId = req.tenantId;
+    const before = req.ctx.inventory.getAll().length;
+    seedInventory(tenantId);
+    const after = req.ctx.inventory.getAll().length;
+    res.json({ ok: true, seeded: after, message: `Inventory seeded: ${after} SKUs loaded (was ${before})` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Test Order Injection ──────────────────────────────────────────────────────
 
 const TEST_PRODUCTS = [

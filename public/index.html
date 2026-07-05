@@ -1128,6 +1128,18 @@ a:hover{text-decoration:underline}
             </div>
           </div>
 
+          <!-- Inventory Seed -->
+          <div class="adm-card">
+            <div class="adm-card-title">&#128230; Inventory</div>
+            <div class="adm-row">
+              <div class="adm-row-info">
+                <div class="adm-row-label">Load Sample Inventory</div>
+                <div class="adm-row-hint">Seeds 364 SKUs across all 7 clients with locations, prices, and stock levels. Safe to run — replaces existing inventory.</div>
+              </div>
+              <button class="adm-btn adm-btn-primary" id="btn-seed-inv" onclick="seedInventory()">Load Sample Data</button>
+            </div>
+          </div>
+
           <!-- Danger Zone -->
           <div class="adm-card adm-danger-card">
             <div class="adm-card-title" style="color:#991b1b">&#9888;&#65039; Danger Zone</div>
@@ -1827,6 +1839,19 @@ function admConfirm(title,body,onConfirm){
   document.body.appendChild(overlay);
   overlay.querySelector('#adm-cancel').onclick=()=>overlay.remove();
   overlay.querySelector('#adm-confirm').onclick=()=>{overlay.remove();onConfirm();};
+}
+
+async function seedInventory(){
+  const btn=$('btn-seed-inv');
+  if(btn){btn.disabled=true;btn.textContent='Loading…';}
+  try{
+    const r=await fetch(`${SERVER}/api/admin/seed-inventory`,{method:'POST',headers:{'Authorization':`Bearer ${authToken}`}});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||'Failed');
+    alert(j.message);
+    invLoad();
+  }catch(e){alert('Seed failed: '+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent='Load Sample Data';}}
 }
 
 async function adminDeleteAllOrders(){
