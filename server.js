@@ -2,62 +2,16 @@
 
 const express = require('express');
 const path    = require('path');
-const crypto  = require('crypto');
 const bcrypt  = require('bcryptjs');
 const session = require('express-session');
-const Stripe  = require('stripe');
 
-const { analyze }                    = require('./lib/trading/ictAnalysis');
-const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
-const users                          = require('./lib/users');
-const { init: initDb, hasDb, pool }  = require('./lib/db');
-const hitpay                         = require('./lib/hitpay');
+const users                         = require('./lib/users');
+const orders                        = require('./lib/orders');
+const { PROVIDERS }                 = require('./lib/providers');
+const { init: initDb, hasDb, pool } = require('./lib/db');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
-
-const stripe = process.env.STRIPE_SECRET_KEY
-  ? Stripe(process.env.STRIPE_SECRET_KEY)
-  : null;
-
-// HitPay takes priority over Stripe when configured
-const useHitPay = hitpay.configured;
-
-// ── Stripe webhook — must receive raw body ─────────────────────────────
-app.post('/api/payment/webhook',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    if (!stripe) return res.status(400).send('Stripe not configured');
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        req.headers['stripe-signature'],
-        process.env.STRIPE_WEBHOOK_SECRET,
-      );
-    } catch (err) {
-      return res.status(400).send(`Webhook error: ${err.message}`);
-    }
-
-    if (event.type === 'checkout.session.completed') {
-      const s = event.data.object;
-      const uid = s.metadata?.userId;
-      if (uid) await users.update(uid, {
-        stripeCustomerId: s.customer,
-        stripeSubscriptionId: s.subscription,
-        subscriptionStatus: 'active',
-      });
-    }
-
-    if (event.type === 'customer.subscription.deleted') {
-      const sub = event.data.object;
-      const user = await users.findByStripeCustomer(sub.customer);
-      if (user) await users.update(user.id, { subscriptionStatus: 'inactive' });
-    }
-
-    res.json({ received: true });
-  }
-);
 
 // ── Middleware ─────────────────────────────────────────────────────────
 app.use(express.json());
@@ -90,18 +44,8 @@ function requireAuth(req, res, next) {
   next();
 }
 
-async function requireSubscriptionAPI(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
-  const user = await users.findById(req.session.userId);
-  if (!user || user.subscriptionStatus !== 'active')
-    return res.status(403).json({ ok: false, error: 'Active subscription required' });
-  next();
-}
-
-async function requireSubscriptionPage(req, res, next) {
+function requireAuthPage(req, res, next) {
   if (!req.session.userId) return res.redirect('/login');
-  const user = await users.findById(req.session.userId);
-  if (!user || user.subscriptionStatus !== 'active') return res.redirect('/signup?reason=payment');
   next();
 }
 
@@ -114,7 +58,7 @@ function requireAdmin(req, res, next) {
 app.get('/robots.txt', (req, res) => {
   const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
   res.type('text/plain').send(
-    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /vaultkeepers\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
+    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /billing\nDisallow: /settings\nDisallow: /ops-console\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
   );
 });
 
@@ -124,31 +68,25 @@ app.get('/sitemap.xml', (req, res) => {
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>${base}/</loc><lastmod>${today}</lastmod><priority>1.0</priority></url>
-  <url><loc>${base}/tutorial.html</loc><lastmod>${today}</lastmod><priority>0.8</priority></url>
   <url><loc>${base}/signup</loc><lastmod>${today}</lastmod><priority>0.7</priority></url>
 </urlset>`);
 });
 
 // ── HTML page routes (defined before static so / is not hijacked) ──────
-app.get('/',             (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
-app.get('/login',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
-app.get('/signup',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
-app.get('/dashboard',    requireSubscriptionPage, (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'))
-);
-app.get('/settings',     requireSubscriptionPage, (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'settings.html'))
-);
-app.get('/vaultkeepers', (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
-);
+app.get('/',            (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+app.get('/login',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/signup',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
+app.get('/dashboard',   requireAuthPage, (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+app.get('/billing',     requireAuthPage, (req, res) => res.sendFile(path.join(__dirname, 'public', 'billing.html')));
+app.get('/settings',    requireAuthPage, (req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
+app.get('/ops-console', (req, res) => res.sendFile(path.join(__dirname, 'public', 'ops.html')));
 
-// ── Static assets (tutorial.html, images, etc.) ────────────────────────
+// ── Static assets ────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Auth API ───────────────────────────────────────────────────────────
 app.post('/api/auth/signup', async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, company } = req.body;
   if (!name || !email || !password)
     return res.status(400).json({ ok: false, error: 'All fields required' });
   if (password.length < 8)
@@ -157,9 +95,7 @@ app.post('/api/auth/signup', async (req, res) => {
     return res.status(409).json({ ok: false, error: 'Email already registered — please sign in' });
 
   const passwordHash = await bcrypt.hash(password, 12);
-  // Dev mode (no payment gateway): activate immediately
-  const subscriptionStatus = (useHitPay || stripe) ? 'pending' : 'active';
-  const user = await users.create({ name, email, passwordHash, subscriptionStatus });
+  const user = await users.create({ name, email, passwordHash, company });
   req.session.userId = user.id;
   res.json({ ok: true, user: safeUser(user) });
 });
@@ -173,11 +109,6 @@ app.post('/api/auth/login', async (req, res) => {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
   req.session.userId = user.id;
-  // Dev mode: auto-activate accounts that are still pending
-  if (!useHitPay && !stripe && user.subscriptionStatus === 'pending') {
-    const activated = await users.update(user.id, { subscriptionStatus: 'active' });
-    return res.json({ ok: true, user: safeUser(activated) });
-  }
   res.json({ ok: true, user: safeUser(user) });
 });
 
@@ -191,135 +122,109 @@ app.get('/api/auth/me', async (req, res) => {
   res.json({ ok: true, user: user ? safeUser(user) : null });
 });
 
+app.post('/api/account/update', requireAuth, async (req, res) => {
+  const { name, company } = req.body;
+  const patch = {};
+  if (name) patch.name = name;
+  if (company !== undefined) patch.company = company;
+  const updated = await users.update(req.session.userId, patch);
+  if (!updated) return res.status(404).json({ ok: false, error: 'Account not found' });
+  res.json({ ok: true, user: safeUser(updated) });
+});
+
 function safeUser(u) {
-  return { id: u.id, name: u.name, email: u.email, subscriptionStatus: u.subscriptionStatus };
+  return { id: u.id, name: u.name, email: u.email, company: u.company || '', createdAt: u.createdAt };
 }
 
-// ── Payment API ────────────────────────────────────────────────────────
-app.post('/api/payment/create-checkout', requireAuth, async (req, res) => {
-  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+// ── Providers / network API ─────────────────────────────────────────────
+app.get('/api/providers', requireAuth, (req, res) => {
+  res.json({ ok: true, providers: PROVIDERS });
+});
 
-  // Dev mode — no gateway configured
-  if (!useHitPay && !stripe) {
-    await users.update(req.session.userId, { subscriptionStatus: 'active' });
-    return res.json({ ok: true, url: '/dashboard' });
+// ── Orders API (client) ──────────────────────────────────────────────────
+app.post('/api/orders', requireAuth, async (req, res) => {
+  const { recipientName, addressLine1, city, region, postalCode, country, items, serviceLevel, notes } = req.body;
+  if (!recipientName || !addressLine1 || !city || !country)
+    return res.status(400).json({ ok: false, error: 'Recipient name, address, city and country are required' });
+  if (!Array.isArray(items) || items.length === 0)
+    return res.status(400).json({ ok: false, error: 'At least one order item is required' });
+  for (const it of items) {
+    if (!it.description || !it.weightKg || Number(it.weightKg) <= 0)
+      return res.status(400).json({ ok: false, error: 'Each item needs a description and weight in kg' });
   }
 
-  const user = await users.findById(req.session.userId);
-  if (!user) return res.status(401).json({ ok: false, error: 'Not authenticated' });
-
-  // ── HitPay ──────────────────────────────────────────────────────────
-  if (useHitPay) {
-    try {
-      const billing = await hitpay.createRecurringBilling({
-        userId:      user.id,
-        name:        user.name,
-        email:       user.email,
-        redirectUrl: `${base}/payment/success`,
-        webhookUrl:  `${base}/api/payment/hitpay-webhook`,
-      });
-      return res.json({ ok: true, url: billing.url });
-    } catch (err) {
-      return res.status(500).json({ ok: false, error: err.message });
-    }
-  }
-
-  // ── Stripe fallback ──────────────────────────────────────────────────
   try {
-    const checkout = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-      customer_email: user.email,
-      metadata: { userId: user.id },
-      success_url: `${base}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${base}/signup?reason=cancelled`,
+    const order = await orders.create(req.session.userId, {
+      recipientName, addressLine1, city, region, postalCode, country, items, serviceLevel, notes,
     });
-    res.json({ ok: true, url: checkout.url });
+    res.json({ ok: true, order });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ── HitPay webhook ─────────────────────────────────────────────────────
-app.post('/api/payment/hitpay-webhook',
-  express.urlencoded({ extended: false }),
-  async (req, res) => {
-    const { hmac, status, reference, payment_id } = req.body;
-
-    if (!hitpay.verifyWebhook(req.body, hmac)) {
-      return res.status(400).send('Invalid signature');
-    }
-
-    if (status === 'succeeded' && reference) {
-      await users.update(reference, {
-        subscriptionStatus:   'active',
-        stripeSubscriptionId: payment_id, // reuse field for HitPay billing ID
-      });
-    }
-
-    if ((status === 'failed' || status === 'cancelled') && reference) {
-      const user = await users.findById(reference);
-      if (user && user.subscriptionStatus === 'active') {
-        await users.update(reference, { subscriptionStatus: 'inactive' });
-      }
-    }
-
-    res.status(200).send('OK');
-  }
-);
-
-app.get('/payment/success', async (req, res) => {
-  // HitPay redirects with ?status=completed&reference={userId}
-  if (useHitPay && req.query.status === 'completed' && req.query.reference) {
-    await users.update(req.query.reference, { subscriptionStatus: 'active' });
-    if (req.session) req.session.userId = req.query.reference;
-  }
-
-  // Stripe redirects with ?session_id=xxx
-  if (stripe && req.session.userId && req.query.session_id) {
-    try {
-      const s = await stripe.checkout.sessions.retrieve(req.query.session_id);
-      if (s.payment_status === 'paid') {
-        await users.update(req.session.userId, {
-          stripeCustomerId:    s.customer,
-          stripeSubscriptionId: s.subscription,
-          subscriptionStatus:  'active',
-        });
-      }
-    } catch { /* webhook will handle it */ }
-  }
-
-  res.redirect('/dashboard');
+app.get('/api/orders', requireAuth, async (req, res) => {
+  const list = await orders.listByClient(req.session.userId);
+  res.json({ ok: true, orders: list });
 });
 
-// ── Subscription cancel ────────────────────────────────────────────────
-app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
-  const user = await users.findById(req.session.userId);
-  if (!user) return res.status(401).json({ ok: false, error: 'Not authenticated' });
-  if (user.subscriptionStatus !== 'active')
-    return res.status(400).json({ ok: false, error: 'No active subscription to cancel' });
-
-  // Cancel with payment gateway
-  try {
-    if (useHitPay && user.stripeSubscriptionId) {
-      await hitpay.cancelBilling(user.stripeSubscriptionId);
-    } else if (stripe && user.stripeSubscriptionId) {
-      await stripe.subscriptions.cancel(user.stripeSubscriptionId);
-    }
-  } catch (err) {
-    console.warn('Gateway cancel error (proceeding anyway):', err.message);
-  }
-
-  await users.update(user.id, { subscriptionStatus: 'cancelled' });
-  req.session.destroy(() => res.json({ ok: true }));
+app.get('/api/orders/:id', requireAuth, async (req, res) => {
+  const order = await orders.findById(req.params.id);
+  if (!order || order.clientId !== req.session.userId)
+    return res.status(404).json({ ok: false, error: 'Order not found' });
+  res.json({ ok: true, order });
 });
 
-// ── Admin API (VaultKeepers) ───────────────────────────────────────────
+// ── Billing API (client) ─────────────────────────────────────────────────
+app.get('/api/billing/summary', requireAuth, async (req, res) => {
+  const list = await orders.listByClient(req.session.userId);
+  const now = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  const byMonth = {};
+  for (const o of list) {
+    const d = new Date(o.createdAt);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!byMonth[key]) byMonth[key] = { month: key, total: 0, count: 0 };
+    byMonth[key].total += o.priceTotal;
+    byMonth[key].count += 1;
+  }
+
+  const months = Object.values(byMonth).sort((a, b) => b.month.localeCompare(a.month));
+  const current = byMonth[currentMonthKey] || { month: currentMonthKey, total: 0, count: 0 };
+  const lifetimeTotal = list.reduce((sum, o) => sum + o.priceTotal, 0);
+
+  res.json({
+    ok: true,
+    currentMonth: { month: current.month, total: Math.round(current.total * 100) / 100, count: current.count },
+    lifetime: { total: Math.round(lifetimeTotal * 100) / 100, count: list.length },
+    months: months.map(m => ({ ...m, total: Math.round(m.total * 100) / 100 })),
+    currency: 'USD',
+  });
+});
+
+app.get('/api/billing/invoice/:month', requireAuth, async (req, res) => {
+  const month = req.params.month; // YYYY-MM
+  if (!/^\d{4}-\d{2}$/.test(month))
+    return res.status(400).json({ ok: false, error: 'Invalid month format, expected YYYY-MM' });
+
+  const list = await orders.listByClient(req.session.userId);
+  const filtered = list.filter(o => {
+    const d = new Date(o.createdAt);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return key === month;
+  });
+  const total = filtered.reduce((sum, o) => sum + o.priceTotal, 0);
+
+  res.json({ ok: true, month, orders: filtered, total: Math.round(total * 100) / 100, currency: 'USD' });
+});
+
+// ── Ops console API (staff) ──────────────────────────────────────────────
 app.post('/api/admin/login', (req, res) => {
-  const secret = process.env.VAULTKEEPERS_SECRET;
-  if (!secret) return res.status(503).json({ ok: false, error: 'Admin not configured' });
+  const secret = process.env.OPS_SECRET;
+  if (!secret) return res.status(503).json({ ok: false, error: 'Ops console not configured' });
   if (req.body.password !== secret)
-    return res.status(401).json({ ok: false, error: 'Wrong password' });
+    return res.status(401).json({ ok: false, error: 'Wrong access key' });
   req.session.isAdmin = true;
   res.json({ ok: true });
 });
@@ -329,63 +234,47 @@ app.post('/api/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/users', requireAdmin, async (req, res) => {
+app.get('/api/admin/clients', requireAdmin, async (req, res) => {
   const all = await users.findAll();
-  // Strip password hashes before sending
   const safe = all.map(u => ({
-    id: u.id, name: u.name, email: u.email,
-    subscriptionStatus: u.subscriptionStatus, createdAt: u.createdAt,
+    id: u.id, name: u.name, email: u.email, company: u.company, createdAt: u.createdAt,
   }));
-  res.json({ ok: true, users: safe });
+  res.json({ ok: true, clients: safe });
 });
 
-app.post('/api/admin/users/:id/status', requireAdmin, async (req, res) => {
-  const { status } = req.body;
-  const allowed = ['active', 'inactive', 'pending', 'cancelled'];
-  if (!allowed.includes(status))
+app.get('/api/admin/orders', requireAdmin, async (req, res) => {
+  const [allOrders, allUsers] = await Promise.all([orders.listAll(), users.findAll()]);
+  const clientsById = Object.fromEntries(allUsers.map(u => [u.id, u]));
+  const enriched = allOrders.map(o => ({
+    ...o,
+    clientName: clientsById[o.clientId]?.name || 'Unknown',
+    clientEmail: clientsById[o.clientId]?.email || '',
+    clientCompany: clientsById[o.clientId]?.company || '',
+  }));
+  res.json({ ok: true, orders: enriched });
+});
+
+app.post('/api/admin/orders/:id/status', requireAdmin, async (req, res) => {
+  const { status, trackingNumber, carrier, note } = req.body;
+  if (status && !orders.STATUSES.includes(status))
     return res.status(400).json({ ok: false, error: 'Invalid status' });
-  const updated = await users.update(req.params.id, { subscriptionStatus: status });
-  if (!updated) return res.status(404).json({ ok: false, error: 'User not found' });
-  res.json({ ok: true });
+  const updated = await orders.updateStatus(req.params.id, { status, trackingNumber, carrier, note });
+  if (!updated) return res.status(404).json({ ok: false, error: 'Order not found' });
+  res.json({ ok: true, order: updated });
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+app.delete('/api/admin/clients/:id', requireAdmin, async (req, res) => {
   await users.deleteUser(req.params.id);
   res.json({ ok: true });
-});
-
-// ── Trading API (subscriber-only) ──────────────────────────────────────
-app.get('/api/analysis', requireSubscriptionAPI, async (req, res) => {
-  const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
-  const results = {};
-  try {
-    for (const key of Object.keys(SYMBOLS)) {
-      const candles = await fetchDailyCandles(key, { apiKey });
-      results[key] = analyze(candles, key);
-    }
-    res.json({ ok: true, data: results, live: !!apiKey });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
-  const { generateCandles } = require('./lib/trading/demoData');
-  const results = {
-    GOLD:   analyze(generateCandles(2330, 0.1,  100, 'bull'), 'GOLD'),
-    SILVER: analyze(generateCandles(32.5, 0.01, 100, 'bull'), 'SILVER'),
-  };
-  res.json({ ok: true, data: results, live: false });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`VaultSignals running on port ${PORT}`);
+      console.log(`CirroSys running on port ${PORT}`);
       console.log(`DB: ${hasDb ? 'PostgreSQL' : 'JSON file'}`);
-      console.log(`Payment: ${useHitPay ? 'HitPay' : stripe ? 'Stripe' : 'dev mode (no payment)'}`);
-      console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
+      console.log(`Ops console: ${process.env.OPS_SECRET ? 'configured' : 'NOT configured — set OPS_SECRET'}`);
     });
   })
   .catch(err => {
