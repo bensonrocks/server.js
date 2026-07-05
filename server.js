@@ -534,8 +534,8 @@ app.get('/api/connect/status', (req, res) => {
     const conn = registry[id];
     const c    = all[id] || {};
     result[id] = {
-      connected:      !!(c.accessToken || c.licenseKey),
-      hasCredentials: !!(c.appKey || c.partnerId || c.apiKey || c.licenseKey),
+      connected:      !!(c.accessToken || c.licenseKey || c.apikey),
+      hasCredentials: !!(c.appKey || c.partnerId || c.apiKey || c.licenseKey || c.apikey),
       storeName:      c.storeName   || conn.meta.defaultStoreName || null,
       connectedAt:    c.connectedAt || null,
       lastSync:       c.lastSync    || null,
@@ -600,7 +600,7 @@ async function syncPlatform(platform, opts, store, creds, syncLog) {
   if (!conn)             throw new Error(`Unknown platform: ${platform}`);
   if (!conn.fetchOrders) throw new Error(`${conn.meta.name} does not support order sync`);
   const c = creds.get(platform);
-  if (!c?.accessToken && !c?.licenseKey)
+  if (!c?.accessToken && !c?.licenseKey && !c?.apikey)
     throw new Error(`${conn.meta.name} not connected — save credentials first`);
   const storeName = c.storeName || conn.meta.defaultStoreName || conn.meta.name;
   const raw       = await conn.fetchOrders(c, opts);
@@ -1543,7 +1543,7 @@ async function autoSyncAll() {
     const { store, creds, syncLog } = getCtx(tenantId);
     for (const platform of PLATFORMS) {
       const c = creds.get(platform);
-      if (!c?.accessToken && !c?.licenseKey) continue;
+      if (!c?.accessToken && !c?.licenseKey && !c?.apikey) continue;
       try {
         const entry = await syncPlatform(platform, {}, store, creds, syncLog);
         syncLog.push(entry);

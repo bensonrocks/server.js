@@ -325,6 +325,7 @@ a:hover{text-decoration:underline}
 .logo-shopify{background:#96bf48}
 .logo-api2cart{background:#1a56db;font-size:20px}
 .logo-zetpy{background:#7c3aed;font-size:13px;font-weight:800;letter-spacing:-.5px}
+.logo-zort{background:#0ea5e9;font-size:13px;font-weight:800;letter-spacing:-.5px}
 
 /* ── CONNECTION MODAL ── */
 .conn-modal-hdr{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
@@ -815,6 +816,7 @@ a:hover{text-decoration:underline}
               <span class="api-chip" id="chip-shopify" onclick="switchPage('connections')" title="Shopify"><span class="chip-dot" id="chip-dot-shopify"></span>Shopify</span>
               <span class="api-chip" id="chip-api2cart" onclick="switchPage('connections')" title="API2Cart"><span class="chip-dot" id="chip-dot-api2cart"></span>API2Cart</span>
               <span class="api-chip" id="chip-zetpy" onclick="switchPage('connections')" title="Zetpy"><span class="chip-dot" id="chip-dot-zetpy"></span>Zetpy</span>
+              <span class="api-chip" id="chip-zort" onclick="switchPage('connections')" title="ZORT"><span class="chip-dot" id="chip-dot-zort"></span>ZORT</span>
             </div>
             <a class="api-bar-link" onclick="switchPage('connections');return false" href="#">Manage &rsaquo;</a>
           </div>
@@ -964,6 +966,14 @@ a:hover{text-decoration:underline}
             <div class="pt-name">Zetpy <span style="font-size:10px;background:#fde68a;color:#92400e;padding:1px 5px;border-radius:4px;font-weight:700">PAID</span></div>
             <div class="pt-status off" id="tile-zetpy-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
             <div class="pt-sync" id="tile-zetpy-sync"></div>
+            <div class="pt-cta">Configure &rsaquo;</div>
+          </div>
+          <!-- ZORT (Paid) -->
+          <div class="plat-tile" data-platform="zort" onclick="openConnModal('zort')">
+            <div class="pt-logo logo-zort">ZORT</div>
+            <div class="pt-name">ZORT <span style="font-size:10px;background:#fde68a;color:#92400e;padding:1px 5px;border-radius:4px;font-weight:700">PAID</span></div>
+            <div class="pt-status off" id="tile-zort-st"><span class="dot-sm" style="background:#cbd5e1"></span>&ensp;Not Connected</div>
+            <div class="pt-sync" id="tile-zort-sync"></div>
             <div class="pt-cta">Configure &rsaquo;</div>
           </div>
         </div>
@@ -1739,6 +1749,18 @@ const PLAT_CONFIG={
       {id:'storeName', label:'Store / Account Name',type:'text',placeholder:'My Zetpy Account',half:false},
     ],hasOAuth:false,requiresLicense:true,
   },
+  zort:{
+    name:'ZORT',sub:'Multi-Channel OMS Connector (Paid)',
+    logoClass:'logo-zort',logoIcon:'ZORT',
+    docsUrl:'https://developers.zortout.com',
+    docsHint:'ZORT Dashboard &#8594; Settings &#8594; API &#8594; API Key &mdash; <strong>Requires ZORT subscription</strong>',
+    fields:[
+      {id:'storename', label:'Store Name *',    type:'text',    placeholder:'Your ZORT store name',half:false},
+      {id:'apikey',    label:'API Key *',        type:'password',placeholder:'Your ZORT API key',half:true},
+      {id:'apisecret', label:'API Secret *',     type:'password',placeholder:'Your ZORT API secret',half:true},
+      {id:'storeName', label:'Display Name',     type:'text',    placeholder:'My ZORT Store',half:false},
+    ],hasOAuth:false,requiresLicense:true,
+  },
 };
 const ALL_PLATFORMS=Object.keys(PLAT_CONFIG);
 
@@ -2306,7 +2328,7 @@ async function refreshConnectionStatus(){
     banner.className='server-banner warn';
     banner.innerHTML='<span>&#9888;</span><span><strong>Server offline &mdash; database unavailable.</strong> Start the server (double-click START.bat / START.command) to save credentials and orders permanently. Browser mode is read-only.</span>';
     banner.classList.remove('hidden');
-    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!(c.accessToken||c.licenseKey),c.lastSync,c.lastSyncCount);}
+    for(const p of ALL_PLATFORMS){const c=connCreds[p];if(c)updateTileStatus(p,!!(c.accessToken||c.licenseKey||c.apikey),c.lastSync,c.lastSyncCount);}
   }
 }
 
@@ -2440,7 +2462,7 @@ function openConnModal(platform){
   $('cm-logo').innerHTML=cfg.logoIcon;
   $('cm-name').textContent=cfg.name;
   $('cm-sub').textContent=cfg.sub;
-  const connected=!!(saved.accessToken||saved.licenseKey);
+  const connected=!!(saved.accessToken||saved.licenseKey||saved.apikey);
   $('cm-status').className='conn-status '+(connected?'status-on':'status-off');
   $('cm-status-txt').textContent=connected?'Connected':'Not Connected';
   $('cm-disconnect-btn').style.display=connected?'':'none';
