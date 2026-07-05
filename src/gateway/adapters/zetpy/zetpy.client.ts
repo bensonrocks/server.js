@@ -32,21 +32,41 @@ async function getToken(email: string, password: string): Promise<string> {
     body:    JSON.stringify({ email, password }),
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
+  const body = await res.text().catch(() => '');
+  let parsed: unknown = {};
+  try { parsed = JSON.parse(body); } catch { /* keep empty */ }
+
+  const asAuth = parsed as ZetpyAuthResponse;
+  const asErr  = parsed as { error?: { code?: string; message?: string } };
+
+  if (!res.ok || asAuth.success === false) {
+    const code = asErr.error?.code ?? '';
+    const msg  = asErr.error?.message ?? body;
+
+    if (code === 'missing_permissions') {
+      throw Object.assign(
+        new Error(
+          'Your Zetpy account does not have API access. ' +
+          'Please contact Zetpy support or upgrade your plan to enable API access.',
+        ),
+        { status: 403 },
+      );
+    }
+
     throw Object.assign(
-      new Error(`Zetpy auth failed HTTP ${res.status}: ${text}`),
+      new Error(msg || `Zetpy auth failed (HTTP ${res.status})`),
       { status: res.status === 401 ? 401 : 502 },
     );
   }
 
-  const data = await res.json() as ZetpyAuthResponse;
-  if (!data.success || !data.token) {
+  if (!asAuth.token) {
     throw Object.assign(
-      new Error('Zetpy auth rejected — check email and password'),
+      new Error('Zetpy auth returned no token — check email and password'),
       { status: 401 },
     );
   }
+
+  const data = asAuth;
 
   tokenCache.set(email, {
     token:     data.token,
