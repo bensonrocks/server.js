@@ -1,6 +1,6 @@
 {
   "name": "IdealOne OMS",
-  "short_name": "IdealOne",
+  "short_name": "IdealOne OMS",
   "description": "Order Management System for South East Asian e-commerce",
   "start_url": "/",
   "display": "standalone",
