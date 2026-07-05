@@ -2782,13 +2782,14 @@ function renderFulfillment(){
     <th>Order ID</th><th>Client</th><th>Channel</th><th>Items</th><th>Status</th><th>Date</th>
   </tr></thead><tbody>${filtered.map(o=>{
     const sel=ffSelected.has(o.id);
-    const itemStr=o.items.map(i=>{const inv=_invItems.find(r=>r.sku&&r.sku===i.sku);const loc=inv&&inv.location?` [${inv.location}]`:'';return`${i.qty}× ${i.name}${loc}`;}).join(', ');
+    const itemTitle=o.items.map(i=>{const inv=_invItems.find(r=>r.sku&&r.sku===i.sku);const loc=inv&&inv.location?` [${inv.location}]`:'';return`${i.sku||'?'} — ${i.qty}× ${i.name}${loc}`;}).join('\n');
+    const itemHtml=o.items.map(i=>{const inv=_invItems.find(r=>r.sku&&r.sku===i.sku);const loc=inv&&inv.location?`<span style="color:#64748b;font-size:10px"> [${inv.location}]</span>`:'';const sku=i.sku?`<code style="background:#0f2040;color:#7dd3fc;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;margin-right:4px;letter-spacing:.3px">${i.sku}</code>`:'';return`<span style="display:block;line-height:1.6">${sku}${i.qty}× ${i.name}${loc}</span>`;}).join('');
     return `<tr class="ff-row${sel?' ff-sel':''}" data-id="${o.id}" onclick="ffToggleRow('${o.id}',this)">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="ff-cb" ${sel?'checked':''} onchange="ffToggleRow('${o.id}',this.closest('tr'),this.checked)"></td>
       <td><span class="ff-oid">${o.id}</span></td>
       <td style="font-weight:600">${o.clientName}</td>
       <td><span class="bdg b-${o.channel}">${CHANNEL_LABELS[o.channel]||o.channel}</span></td>
-      <td class="ff-items-cell" title="${itemStr}">${itemStr}</td>
+      <td class="ff-items-cell" title="${itemTitle}">${itemHtml}</td>
       <td><span class="sts s-${o.status}">${cap(o.status)}</span></td>
       <td class="ff-date-cell">${fmtDate(o.orderDate)}</td>
     </tr>`;
