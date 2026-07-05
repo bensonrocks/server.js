@@ -3153,10 +3153,16 @@ const ps={orders:[],oIdx:0,iIdx:0,confirmed:[],camActive:false,camStream:null,ca
 function startScanning(){
   const sel=orders.filter(o=>ffSelected.has(o.id));
   if(!sel.length){alert('Select at least one order first.');return;}
-  ps.orders=[...sel];
+  // Filter out orders with no items so they don't trigger instant batch-done
+  ps.orders=sel.filter(o=>Array.isArray(o.items)&&o.items.length>0);
+  if(!ps.orders.length){alert('Selected orders have no items to scan.');return;}
   ps.oIdx=0;ps.iIdx=0;
   ps.confirmed=ps.orders.map(o=>o.items.map(()=>false));
   ps.camActive=false;
+  // Always reset overlay state in case a previous session left it in done view
+  const scanMain=$('scan-main');
+  if(scanMain)scanMain.style.display='';
+  $('scan-done-view').classList.add('hidden');
   renderScanOverlay();
   $('scan-ov').classList.remove('hidden');
   document.body.style.overflow='hidden';
@@ -3167,6 +3173,10 @@ function exitScan(){
   stopCamera();
   $('scan-ov').classList.add('hidden');
   document.body.style.overflow='';
+  // Reset for next session
+  const scanMain=$('scan-main');
+  if(scanMain)scanMain.style.display='';
+  $('scan-done-view').classList.add('hidden');
 }
 
 function renderScanOverlay(){
