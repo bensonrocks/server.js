@@ -1320,11 +1320,11 @@ a:hover{text-decoration:underline}
     <div class="modal-b" style="gap:12px;padding:16px 18px">
       <!-- Interim location input (Wave + Batch only) -->
       <div style="background:#fefce8;border:1.5px solid #fde047;border-radius:10px;padding:12px 14px">
-        <div style="font-size:11px;font-weight:700;color:#854d0e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#128204; Interim / Staging Location <span style="font-weight:400;color:#a16207">(Wave &amp; Batch)</span></div>
-        <input id="pm-interim-loc" type="text" placeholder="e.g. Cart 3 · Bay A · Tote 7 · Staging Zone 2"
+        <div style="font-size:11px;font-weight:700;color:#854d0e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#128204; Cart / Trolley / Bin No. <span style="font-weight:400;color:#a16207">(Wave &amp; Batch)</span></div>
+        <input id="pm-interim-loc" type="text" placeholder="e.g. Cart 3 · Trolley B · Bin 07"
           style="width:100%;padding:8px 10px;border:1px solid #fcd34d;border-radius:7px;font-size:13px;background:#fff;outline:none;font-family:inherit"
           onkeydown="if(event.key==='Enter'){event.preventDefault()}">
-        <div style="font-size:11px;color:#a16207;margin-top:5px">Where the picker will drop items before packing station collects them</div>
+        <div style="font-size:11px;color:#a16207;margin-top:5px">Picker drops items here; packing station collects from this cart/trolley/bin</div>
       </div>
       <div class="pm-card" onclick="printPicklistByClient()">
         <div class="pm-icon">&#128101;</div>
@@ -3002,7 +3002,7 @@ function printPicklistWave(){
   const stagingBanner=interimLoc
     ? `<div style="background:#fef08a;border:2px solid #ca8a04;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
         <span style="font-size:28px">&#128204;</span>
-        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Bring all items to interim location</div>
+        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Place all picked items on</div>
         <div style="font-size:22px;font-weight:800;color:#1e293b;margin-top:2px">${interimLoc}</div></div>
        </div>` : '';
   const bySkuMap=new Map();
@@ -3033,7 +3033,7 @@ function printPicklistWave(){
   const collectBanner=interimLoc
     ? `<div style="background:#fef08a;border:2px solid #ca8a04;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
         <span style="font-size:28px">&#128204;</span>
-        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Collect items from interim location</div>
+        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Collect items from</div>
         <div style="font-size:22px;font-weight:800;color:#1e293b;margin-top:2px">${interimLoc}</div></div>
        </div>` : '';
 
@@ -3092,7 +3092,7 @@ function printPicklistBatch(){
   const stagingBanner=interimLoc
     ? `<div style="background:#fef08a;border:2px solid #ca8a04;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
         <span style="font-size:28px">&#128204;</span>
-        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Drop all items at interim location</div>
+        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Place all picked items on</div>
         <div style="font-size:22px;font-weight:800;color:#1e293b;margin-top:2px">${interimLoc}</div></div>
        </div>` : '';
   // aggregate by location → sku
