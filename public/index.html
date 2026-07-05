@@ -206,6 +206,13 @@ a:hover{text-decoration:underline}
 .t-row.grand{font-weight:800;font-size:15px;color:#0f172a;border-top:1.5px solid #e2e8f0;padding-top:8px;margin-top:2px}
 .notes-b{background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.5}
 
+/* ── PICK MODE MODAL ── */
+.pm-card{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;transition:border-color .15s,background .15s}
+.pm-card:hover{border-color:#2563eb;background:#eff6ff}
+.pm-icon{font-size:28px;line-height:1;flex-shrink:0;margin-top:2px}
+.pm-title{font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px}
+.pm-desc{font-size:12px;color:#64748b;line-height:1.5}
+
 /* ── MODAL ── */
 .modal{position:fixed;top:50%;left:50%;z-index:300;transform:translate(-50%,-50%);background:#fff;border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,.24);width:560px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column}
 .modal.hidden{display:none}
@@ -935,7 +942,7 @@ a:hover{text-decoration:underline}
           <div class="ff-toolbar-r">
             <span id="ff-summary" class="ff-sel-bar"></span>
             <button id="ff-btn-scan" class="btn btn-sm" disabled onclick="startScanning()" style="background:#0f172a;color:#fff;font-weight:800">&#128247; Start Scanning</button>
-            <button id="ff-btn-pick" class="btn btn-s btn-sm" disabled onclick="printPicklist()">&#128203; Picklist</button>
+            <button id="ff-btn-pick" class="btn btn-s btn-sm" disabled onclick="openPicklistModal()">&#128203; Picklist</button>
             <button id="ff-btn-pack" class="btn btn-s btn-sm" disabled onclick="printPackSlips()">&#128196; Pack Slips</button>
             <button id="ff-btn-mani" class="btn btn-p btn-sm" disabled onclick="printManifest()">&#128203; Manifest</button>
           </div>
@@ -1303,6 +1310,41 @@ a:hover{text-decoration:underline}
     </div>
   </div>
   <div id="inv-panel-ov" class="overlay hidden" onclick="invClosePanel()"></div>
+
+  <!-- ── Pick Mode Modal ── -->
+  <div id="pick-mode-modal" class="modal hidden" style="width:480px">
+    <div class="modal-h">
+      <h2>&#128203; Choose Pick Mode</h2>
+      <button class="ic-btn" onclick="closePMModal()">&#10005;</button>
+    </div>
+    <div class="modal-b" style="gap:12px;padding:16px 18px">
+      <div class="pm-card" onclick="printPicklistByClient()">
+        <div class="pm-icon">&#128101;</div>
+        <div>
+          <div class="pm-title">By Client</div>
+          <div class="pm-desc">Orders grouped under each client header. Best when picking for one brand at a time across multiple orders.</div>
+        </div>
+      </div>
+      <div class="pm-card" onclick="printPicklistWave()">
+        <div class="pm-icon">&#127754;</div>
+        <div>
+          <div class="pm-title">Wave Pick &mdash; by SKU</div>
+          <div class="pm-desc">All selected orders collapsed into one SKU list sorted by location. Pick the full qty of each SKU at once, then sort to individual orders.</div>
+        </div>
+      </div>
+      <div class="pm-card" onclick="printPicklistBatch()">
+        <div class="pm-icon">&#128205;</div>
+        <div>
+          <div class="pm-title">Batch Pick &mdash; by Location</div>
+          <div class="pm-desc">Items grouped by warehouse zone and shelf. Picker walks an optimized path &mdash; one location at a time, all SKUs per shelf in one pass.</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-f" style="justify-content:flex-start;padding:10px 18px">
+      <span style="font-size:11px;color:#94a3b8">&#128203; Each mode opens a print-ready sheet in a new window</span>
+    </div>
+  </div>
+  <div id="pick-mode-ov" class="overlay hidden" onclick="closePMModal()"></div>
 
   <!-- ── Inventory add/edit modal ── -->
   <div id="inv-modal" class="modal hidden">
@@ -2851,72 +2893,202 @@ function ffUpdateSummary(){
 
 // ── PICKLIST ──────────────────────────────────────────────────────────────────
 
-function printPicklist(){
-  const selOrders=orders.filter(o=>ffSelected.has(o.id));
-  if(!selOrders.length)return;
+// ── PICK MODE MODAL ──────────────────────────────────────────────────────────
 
-  // Group by SKU
-  const bySkuMap=new Map();
-  for(const o of selOrders){
-    for(const item of o.items){
-      const key=item.sku||item.name;
-      if(!bySkuMap.has(key)){
-        const inv=_invItems.find(r=>r.sku&&r.sku===item.sku);
-        bySkuMap.set(key,{sku:item.sku||'—',name:item.name,location:inv&&inv.location?inv.location:'',totalQty:0,orders:[]});
-      }
-      const r=bySkuMap.get(key);
-      r.totalQty+=item.qty;
-      r.orders.push({orderId:o.id,qty:item.qty,client:o.clientName});
-    }
-  }
-  const rows=[...bySkuMap.values()].sort((a,b)=>b.totalQty-a.totalQty);
-  const now=new Date().toLocaleString('en-GB');
-  const totalItems=rows.reduce((s,r)=>s+r.totalQty,0);
+function openPicklistModal(){
+  if(!ffSelected.size)return;
+  $('pick-mode-modal').classList.remove('hidden');
+  $('pick-mode-ov').classList.remove('hidden');
+}
+function closePMModal(){
+  $('pick-mode-modal').classList.add('hidden');
+  $('pick-mode-ov').classList.add('hidden');
+}
 
-  const html=`<!DOCTYPE html><html><head><title>Picklist</title>
-<style>
+// shared print utilities
+const _PRINT_CSS=`
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:20px}
 h1{font-size:18px;font-weight:800;margin-bottom:2px}
+h2{font-size:13px;font-weight:700;margin:0}
 .meta{font-size:11px;color:#555;margin-bottom:16px}
 table{width:100%;border-collapse:collapse;margin-bottom:20px}
 th{background:#1e293b;color:#fff;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
 td{padding:7px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top}
 tr:nth-child(even) td{background:#f8fafc}
 .sku{font-family:monospace;font-weight:700;color:#1e293b}
-.qty{font-size:18px;font-weight:800;text-align:center;width:60px}
+.qty{font-size:17px;font-weight:800;text-align:center}
 .chk{width:36px;text-align:center}
 .chk-box{display:inline-block;width:20px;height:20px;border:2px solid #94a3b8;border-radius:4px}
-.orders-list{font-size:11px;color:#555;margin-top:3px}
+.loc{font-size:11px;color:#2563eb;font-weight:600}
+.grp-hdr{background:#f1f5f9;padding:8px 10px;font-weight:700;font-size:12px;color:#334155;border-left:3px solid #2563eb;margin:12px 0 4px}
 .footer{font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;margin-top:8px}
-@media print{body{padding:10px}.no-print{display:none}}
-</style></head><body>
-<h1>&#128203; PICK LIST</h1>
-<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; Total items to pick: ${totalItems}</div>
-<table><thead><tr>
-  <th class="chk">&#10003;</th>
-  <th>SKU</th>
-  <th>Item Name</th>
-  <th>Location</th>
-  <th style="text-align:center">Qty to Pick</th>
-  <th>Order(s)</th>
-</tr></thead><tbody>
-${rows.map((r,i)=>`<tr>
-  <td class="chk"><span class="chk-box"></span></td>
-  <td><span class="sku">${r.sku}</span></td>
-  <td>${r.name}</td>
-  <td style="font-size:11px;color:#2563eb;font-weight:600">${r.location||'—'}</td>
-  <td class="qty">${r.totalQty}</td>
-  <td><div>${r.orders.map(o=>`<strong>${o.orderId}</strong> &times;${o.qty} (${o.client})`).join('<br>')}</div></td>
-</tr>`).join('')}
-</tbody></table>
-<div class="footer">IdealOne OMS &mdash; Picklist &mdash; ${now}</div>
-<div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print Picklist</button></div>
-</body></html>`;
-
-  const w=window.open('','_blank','width=900,height=700');
+.badge{display:inline-block;background:#dbeafe;color:#1e40af;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:4px}
+@media print{body{padding:10px}.no-print{display:none}tr{page-break-inside:avoid}}
+`;
+function _openPrint(html){
+  const w=window.open('','_blank','width=960,height=750');
   w.document.write(html);w.document.close();
   setTimeout(()=>w.print(),500);
+}
+function _enrichOrders(selOrders){
+  return selOrders.map(o=>({
+    ...o,
+    items:(o.items||[]).map(item=>{
+      const inv=_invItems.find(r=>r.sku&&r.sku===item.sku);
+      return {...item,location:(inv&&inv.location)||''};
+    })
+  }));
+}
+
+// ── MODE 1: By Client ─────────────────────────────────────────────────────────
+function printPicklistByClient(){
+  closePMModal();
+  const selOrders=_enrichOrders(orders.filter(o=>ffSelected.has(o.id)));
+  if(!selOrders.length)return;
+  const now=new Date().toLocaleString('en-GB');
+  // group by client
+  const byClient=new Map();
+  for(const o of selOrders){
+    const c=o.clientName||o.client_id||'Unknown';
+    if(!byClient.has(c))byClient.set(c,[]);
+    byClient.get(c).push(o);
+  }
+  const totalItems=selOrders.reduce((s,o)=>s+(o.items||[]).reduce((ss,i)=>ss+i.qty,0),0);
+  let body='';
+  for(const [client,cos] of byClient){
+    const cItems=cos.reduce((s,o)=>s+(o.items||[]).reduce((ss,i)=>ss+i.qty,0),0);
+    body+=`<div class="grp-hdr">&#128101; ${client} &nbsp;&mdash;&nbsp; ${cos.length} order${cos.length!==1?'s':''}, ${cItems} item${cItems!==1?'s':''}</div>`;
+    body+=`<table><thead><tr><th class="chk">&#10003;</th><th>Order</th><th>SKU</th><th>Item</th><th>Location</th><th style="text-align:center">Qty</th></tr></thead><tbody>`;
+    for(const o of cos){
+      const sorted=[...(o.items||[])].sort((a,b)=>(a.location||'').localeCompare(b.location||''));
+      sorted.forEach((item,i)=>{
+        body+=`<tr>
+          <td class="chk"><span class="chk-box"></span></td>
+          <td style="font-size:11px;white-space:nowrap">${i===0?`<strong>${o.id}</strong>`:''}</td>
+          <td><span class="sku">${item.sku||'—'}</span></td>
+          <td>${item.name}</td>
+          <td class="loc">${item.location||'—'}</td>
+          <td class="qty">${item.qty}</td>
+        </tr>`;
+      });
+    }
+    body+=`</tbody></table>`;
+  }
+  _openPrint(`<!DOCTYPE html><html><head><title>Pick List – By Client</title><style>${_PRINT_CSS}</style></head><body>
+<h1>&#128203; PICK LIST &mdash; BY CLIENT</h1>
+<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; Total items: ${totalItems} &nbsp;|&nbsp; Clients: ${byClient.size}</div>
+${body}
+<div class="footer">IdealOne OMS &mdash; Pick List (By Client) &mdash; ${now}</div>
+<div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print</button></div>
+</body></html>`);
+}
+
+// ── MODE 2: Wave Pick (by SKU, sorted by location) ────────────────────────────
+function printPicklistWave(){
+  closePMModal();
+  const selOrders=_enrichOrders(orders.filter(o=>ffSelected.has(o.id)));
+  if(!selOrders.length)return;
+  const now=new Date().toLocaleString('en-GB');
+  const bySkuMap=new Map();
+  for(const o of selOrders){
+    for(const item of o.items||[]){
+      const key=item.sku||item.name;
+      if(!bySkuMap.has(key))bySkuMap.set(key,{sku:item.sku||'—',name:item.name,location:item.location,totalQty:0,orders:[]});
+      const r=bySkuMap.get(key);
+      r.totalQty+=item.qty;
+      r.orders.push({orderId:o.id,qty:item.qty,client:o.clientName||o.client_id||''});
+    }
+  }
+  // sort by location then SKU
+  const rows=[...bySkuMap.values()].sort((a,b)=>(a.location||'zzz').localeCompare(b.location||'zzz')||(a.sku||'').localeCompare(b.sku||''));
+  const totalItems=rows.reduce((s,r)=>s+r.totalQty,0);
+  _openPrint(`<!DOCTYPE html><html><head><title>Pick List – Wave</title><style>${_PRINT_CSS}</style></head><body>
+<h1>&#127754; WAVE PICK LIST</h1>
+<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; SKUs: ${rows.length} &nbsp;|&nbsp; Total items to pick: ${totalItems}</div>
+<table><thead><tr>
+  <th class="chk">&#10003;</th>
+  <th>Location</th>
+  <th>SKU</th>
+  <th>Item Name</th>
+  <th style="text-align:center">Qty to Pick</th>
+  <th>Order Breakdown</th>
+</tr></thead><tbody>
+${rows.map(r=>`<tr>
+  <td class="chk"><span class="chk-box"></span></td>
+  <td class="loc">${r.location||'—'}</td>
+  <td><span class="sku">${r.sku}</span></td>
+  <td>${r.name}</td>
+  <td class="qty">${r.totalQty}</td>
+  <td style="font-size:11px">${r.orders.map(o=>`<span class="badge">${o.orderId}</span>&times;${o.qty} ${o.client?'('+o.client+')':''}`).join(' ')}</td>
+</tr>`).join('')}
+</tbody></table>
+<div class="footer">IdealOne OMS &mdash; Wave Pick List &mdash; ${now}</div>
+<div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print</button></div>
+</body></html>`);
+}
+
+// ── MODE 3: Batch Pick (by Location / Zone) ───────────────────────────────────
+function printPicklistBatch(){
+  closePMModal();
+  const selOrders=_enrichOrders(orders.filter(o=>ffSelected.has(o.id)));
+  if(!selOrders.length)return;
+  const now=new Date().toLocaleString('en-GB');
+  // aggregate by location → sku
+  const byLoc=new Map(); // loc → Map(sku → {sku,name,totalQty,orders[]})
+  for(const o of selOrders){
+    for(const item of o.items||[]){
+      const loc=item.location||'UNASSIGNED';
+      if(!byLoc.has(loc))byLoc.set(loc,new Map());
+      const bySkuMap=byLoc.get(loc);
+      const key=item.sku||item.name;
+      if(!bySkuMap.has(key))bySkuMap.set(key,{sku:item.sku||'—',name:item.name,totalQty:0,orders:[]});
+      const r=bySkuMap.get(key);
+      r.totalQty+=item.qty;
+      r.orders.push({orderId:o.id,qty:item.qty,client:o.clientName||o.client_id||''});
+    }
+  }
+  // sort locations; derive zone from first segment before '-' or first char
+  const sortedLocs=[...byLoc.keys()].sort((a,b)=>a.localeCompare(b));
+  const zoneOf=loc=>{ if(!loc||loc==='UNASSIGNED')return'UNASSIGNED'; const m=loc.match(/^([A-Za-z]+)/); return m?m[1].toUpperCase():'?'; };
+  // group locations by zone
+  const byZone=new Map();
+  for(const loc of sortedLocs){
+    const z=zoneOf(loc);
+    if(!byZone.has(z))byZone.set(z,[]);
+    byZone.get(z).push(loc);
+  }
+  const totalItems=[...byLoc.values()].reduce((s,m)=>[...m.values()].reduce((ss,r)=>ss+r.totalQty,s),0);
+  let body='';
+  for(const [zone,locs] of byZone){
+    body+=`<div class="grp-hdr">&#128205; Zone ${zone}</div>`;
+    for(const loc of locs){
+      const skuRows=[...byLoc.get(loc).values()].sort((a,b)=>a.sku.localeCompare(b.sku));
+      body+=`<table><thead><tr>
+        <th class="chk">&#10003;</th>
+        <th colspan="2">Location: <span style="color:#93c5fd">${loc}</span></th>
+        <th>Item</th>
+        <th style="text-align:center">Qty</th>
+        <th>Orders</th>
+      </tr></thead><tbody>`;
+      body+=skuRows.map(r=>`<tr>
+        <td class="chk"><span class="chk-box"></span></td>
+        <td style="width:36px"></td>
+        <td><span class="sku">${r.sku}</span></td>
+        <td>${r.name}</td>
+        <td class="qty">${r.totalQty}</td>
+        <td style="font-size:11px">${r.orders.map(o=>`<span class="badge">${o.orderId}</span>&times;${o.qty}`).join(' ')}</td>
+      </tr>`).join('');
+      body+=`</tbody></table>`;
+    }
+  }
+  _openPrint(`<!DOCTYPE html><html><head><title>Pick List – Batch by Location</title><style>${_PRINT_CSS}</style></head><body>
+<h1>&#128205; BATCH PICK LIST &mdash; BY LOCATION</h1>
+<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; Zones: ${byZone.size} &nbsp;|&nbsp; Locations: ${sortedLocs.length} &nbsp;|&nbsp; Total items: ${totalItems}</div>
+${body}
+<div class="footer">IdealOne OMS &mdash; Batch Pick List (By Location) &mdash; ${now}</div>
+<div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print</button></div>
+</body></html>`);
 }
 
 // ── PACK SLIPS ────────────────────────────────────────────────────────────────
