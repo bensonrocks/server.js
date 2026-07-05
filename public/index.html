@@ -1329,14 +1329,14 @@ a:hover{text-decoration:underline}
         <div class="pm-icon">&#127754;</div>
         <div>
           <div class="pm-title">Wave Pick &mdash; by SKU</div>
-          <div class="pm-desc">All selected orders collapsed into one SKU list sorted by location. Pick the full qty of each SKU at once, then sort to individual orders.</div>
+          <div class="pm-desc">Prints two pages: <strong>Part 1</strong> — pick the full qty of each SKU at once (sorted by location). <strong>Part 2</strong> — sort &amp; pack guide listing exactly what goes in each order box.</div>
         </div>
       </div>
       <div class="pm-card" onclick="printPicklistBatch()">
         <div class="pm-icon">&#128205;</div>
         <div>
           <div class="pm-title">Batch Pick &mdash; by Location</div>
-          <div class="pm-desc">Items grouped by warehouse zone and shelf. Picker walks an optimized path &mdash; one location at a time, all SKUs per shelf in one pass.</div>
+          <div class="pm-desc">Items grouped by warehouse zone and shelf. Picker/packer walks an optimized path &mdash; picks each shelf in one pass, drops items directly into labeled order totes.</div>
         </div>
       </div>
     </div>
@@ -3000,19 +3000,35 @@ function printPicklistWave(){
       r.orders.push({orderId:o.id,qty:item.qty,client:o.clientName||o.client_id||''});
     }
   }
-  // sort by location then SKU
   const rows=[...bySkuMap.values()].sort((a,b)=>(a.location||'zzz').localeCompare(b.location||'zzz')||(a.sku||'').localeCompare(b.sku||''));
   const totalItems=rows.reduce((s,r)=>s+r.totalQty,0);
-  _openPrint(`<!DOCTYPE html><html><head><title>Pick List – Wave</title><style>${_PRINT_CSS}</style></head><body>
-<h1>&#127754; WAVE PICK LIST</h1>
-<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; SKUs: ${rows.length} &nbsp;|&nbsp; Total items to pick: ${totalItems}</div>
+
+  // Sorting guide: one row per order listing what goes in the box
+  const sortRows=selOrders.map(o=>{
+    const itemList=(o.items||[]).map(item=>`<span class="sku">${item.sku||'—'}</span> ${item.name} &times;${item.qty}`).join('<br>');
+    return `<tr>
+      <td class="chk"><span class="chk-box"></span></td>
+      <td><strong>${o.id}</strong></td>
+      <td style="font-size:11px;color:#64748b">${o.clientName||o.client_id||''}</td>
+      <td style="font-size:11px">${o.shippingName||o.source?.shippingName||''}</td>
+      <td style="font-size:11px;line-height:1.8">${itemList}</td>
+    </tr>`;
+  }).join('');
+
+  _openPrint(`<!DOCTYPE html><html><head><title>Pick List – Wave</title><style>${_PRINT_CSS}
+.page-break{page-break-before:always;margin-top:24px}
+.sort-hdr{background:#0f172a;color:#fff;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:4px;border-radius:4px 4px 0 0}
+</style></head><body>
+
+<h1>&#127754; WAVE PICK LIST &mdash; PART 1: PICK</h1>
+<div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; SKUs: ${rows.length} &nbsp;|&nbsp; Total items: ${totalItems}</div>
 <table><thead><tr>
   <th class="chk">&#10003;</th>
   <th>Location</th>
   <th>SKU</th>
   <th>Item Name</th>
   <th style="text-align:center">Qty to Pick</th>
-  <th>Order Breakdown</th>
+  <th>Goes to Orders</th>
 </tr></thead><tbody>
 ${rows.map(r=>`<tr>
   <td class="chk"><span class="chk-box"></span></td>
@@ -3020,10 +3036,25 @@ ${rows.map(r=>`<tr>
   <td><span class="sku">${r.sku}</span></td>
   <td>${r.name}</td>
   <td class="qty">${r.totalQty}</td>
-  <td style="font-size:11px">${r.orders.map(o=>`<span class="badge">${o.orderId}</span>&times;${o.qty} ${o.client?'('+o.client+')':''}`).join(' ')}</td>
+  <td style="font-size:11px;line-height:1.8">${r.orders.map(o=>`<span class="badge">${o.orderId}</span>&times;${o.qty}`).join(' ')}</td>
 </tr>`).join('')}
 </tbody></table>
-<div class="footer">IdealOne OMS &mdash; Wave Pick List &mdash; ${now}</div>
+
+<div class="page-break">
+<h1>&#128230; WAVE PICK LIST &mdash; PART 2: SORT &amp; PACK</h1>
+<div class="meta">Same wave &mdash; ${selOrders.length} boxes to pack &mdash; confirm each item before sealing</div>
+<table><thead><tr>
+  <th class="chk">&#10003;</th>
+  <th>Order</th>
+  <th>Client</th>
+  <th>Ship To</th>
+  <th>Items in this box</th>
+</tr></thead><tbody>
+${sortRows}
+</tbody></table>
+</div>
+
+<div class="footer">IdealOne OMS &mdash; Wave Pick + Sort &amp; Pack &mdash; ${now}</div>
 <div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print</button></div>
 </body></html>`);
 }
