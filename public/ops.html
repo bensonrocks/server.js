@@ -5,89 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CirroSys Ops Console</title>
 <meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="/theme.css">
 <style>
-  :root{--bg:#060709;--bg-2:#0d0f14;--surface:#111520;--border:rgba(255,255,255,.08);--text:#e4e0d8;--text-2:#888480;--text-3:#484440;--accent:#3aa0ff;--accent-2:#00d4b8;--red:#ff4d6a;--amber:#f5b942;--purple:#a080ff;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  html{font-size:14px}body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+  #login-screen{ min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .login-card{ width: 100%; max-width: 380px; text-align: center; }
+  .op-logo{ font-family: var(--serif); font-size: 1.4rem; margin-bottom: 6px; }
+  .op-logo em{ font-style: normal; color: var(--accent); }
+  .op-sub{ font-family: var(--mono); font-size: .68rem; color: var(--text-3); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 28px; }
+  .lfield{ margin-bottom: 16px; text-align: left; }
+  .btn-login{ width: 100%; margin-top: 4px; }
+  .lerr{ font-size: .78rem; color: var(--danger); margin-top: 12px; display: none; }
 
-  #login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-  .login-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:44px 40px;width:100%;max-width:380px;text-align:center}
-  .op-logo{font-size:1.5rem;font-weight:900;letter-spacing:.06em;margin-bottom:6px}
-  .op-logo span{color:var(--purple)}
-  .op-sub{font-size:.78rem;color:var(--text-3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:32px}
-  .lfield{margin-bottom:16px;text-align:left}
-  .lfield label{display:block;font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-2);margin-bottom:7px}
-  .lfield input{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:11px 14px;color:var(--text);font-size:.9rem;outline:none;transition:border-color .15s}
-  .lfield input:focus{border-color:var(--purple)}
-  .btn-login{width:100%;background:var(--purple);color:#fff;font-weight:700;font-size:.9rem;padding:13px;border-radius:6px;border:none;cursor:pointer;margin-top:4px;transition:opacity .15s}
-  .btn-login:hover{opacity:.85}.btn-login:disabled{opacity:.4;cursor:default}
-  .lerr{font-size:.78rem;color:var(--red);margin-top:12px;display:none}
+  #dashboard{ display: none; }
+  .op-topbar{ background: var(--text); color: #fff; }
+  .op-topbar .brand{ color: #fff; }
+  .op-topbar .brand-mark{ background: var(--accent-hover); }
+  .tb-badge{ font-family: var(--mono); font-size: .6rem; letter-spacing: .1em; background: rgba(255,255,255,.12); color: #fff; padding: 3px 10px; border-radius: 4px; }
+  .op-topbar .btn-sm{ color: rgba(255,255,255,.7); border-color: rgba(255,255,255,.25); }
+  .op-topbar .btn-sm:hover{ color: #fff; border-color: rgba(255,255,255,.5); background: rgba(255,255,255,.08); }
 
-  #dashboard{display:none}
-  .topbar{background:var(--bg-2);border-bottom:1px solid var(--border);padding:0 28px;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
-  .op-brand{font-size:.85rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
-  .op-brand span{color:var(--purple)}
-  .tb-right{display:flex;align-items:center;gap:12px}
-  .tb-badge{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;background:rgba(160,128,255,.15);color:var(--purple);border:1px solid rgba(160,128,255,.3);padding:3px 10px;border-radius:4px}
-  .btn-sm{font-family:var(--mono);font-size:.65rem;letter-spacing:.08em;padding:5px 12px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--text-2);cursor:pointer;transition:color .15s,border-color .15s}
-  .btn-sm:hover{color:var(--text);border-color:rgba(255,255,255,.25)}
+  .tabs{ display: flex; gap: 2px; margin-bottom: 18px; }
+  .tab-btn{ font-family: var(--mono); font-size: .72rem; letter-spacing: .06em; padding: 8px 16px; border: 1px solid var(--border-2); background: transparent; color: var(--text-2); cursor: pointer; border-radius: 6px; }
+  .tab-btn.active{ color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+  .tab-panel{ display: none; }
+  .tab-panel.active{ display: block; }
 
-  .content{padding:28px}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
-  .stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px 22px}
-  .stat-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px}
-  .stat-val{font-size:1.9rem;font-weight:800;line-height:1}
-  .stat-val.green{color:var(--accent-2)}.stat-val.gold{color:var(--amber)}.stat-val.purple{color:var(--purple)}.stat-val.blue{color:var(--accent)}
-
-  .tabs{display:flex;gap:2px;margin-bottom:16px}
-  .tab-btn{font-family:var(--mono);font-size:.7rem;letter-spacing:.08em;padding:8px 16px;border:1px solid var(--border);background:transparent;color:var(--text-2);cursor:pointer;border-radius:6px}
-  .tab-btn.active{color:var(--text);background:rgba(160,128,255,.12);border-color:rgba(160,128,255,.3)}
-  .tab-panel{display:none}
-  .tab-panel.active{display:block}
-
-  .table-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
-  .section-title{font-family:var(--mono);font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-2)}
-  .search-box{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:7px 12px;color:var(--text);font-size:.82rem;outline:none;width:220px}
-  .table-wrap{overflow-x:auto}
-  table{width:100%;border-collapse:collapse}
-  th{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
-  td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);font-size:.82rem;vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  tr:hover td{background:rgba(255,255,255,.02)}
-  .mono{font-family:var(--mono);font-size:.76rem}
-  .badge{display:inline-block;font-family:var(--mono);font-size:.58rem;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:3px}
-  .badge.received{background:rgba(136,132,128,.15);color:var(--text-2);border:1px solid rgba(136,132,128,.3)}
-  .badge.transmitted{background:rgba(58,160,255,.12);color:var(--accent);border:1px solid rgba(58,160,255,.3)}
-  .badge.processing{background:rgba(245,185,66,.12);color:var(--amber);border:1px solid rgba(245,185,66,.3)}
-  .badge.shipped{background:rgba(0,212,184,.12);color:var(--accent-2);border:1px solid rgba(0,212,184,.3)}
-  .badge.delivered{background:rgba(33,193,122,.14);color:#21c17a;border:1px solid rgba(33,193,122,.3)}
-  .badge.exception{background:rgba(255,77,106,.12);color:var(--red);border:1px solid rgba(255,77,106,.3)}
-  .qty-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-  .qty-row select, .qty-row input{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:.72rem;padding:4px 6px;outline:none}
-  .qty-row input{width:90px}
-  .action-btn{font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;padding:4px 10px;border-radius:4px;border:1px solid rgba(0,212,184,.3);cursor:pointer;background:transparent;color:var(--accent-2)}
-  .action-btn:hover{background:rgba(0,212,184,.12)}
-  .empty{text-align:center;padding:48px;color:var(--text-3);font-size:.85rem}
+  .table-header{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+  .search-box{ background: var(--surface); border: 1px solid var(--border-2); border-radius: 6px; padding: 7px 12px; color: var(--text); font-size: .82rem; outline: none; width: 220px; }
+  .qty-row{ display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .qty-row select, .qty-row input{ font-size: .72rem; padding: 5px 7px; }
+  .qty-row input{ width: 90px; }
+  .action-btn{ font-family: var(--mono); font-size: .62rem; letter-spacing: .04em; padding: 5px 10px; border-radius: 4px; border: 1px solid var(--accent); cursor: pointer; background: transparent; color: var(--accent); }
+  .action-btn:hover{ background: var(--accent-soft); }
 </style>
 </head>
 <body>
 
 <div id="login-screen">
-  <div class="login-card">
-    <div class="op-logo">Cirro<span>Sys Ops</span></div>
+  <div class="login-card card">
+    <div class="op-logo">Cirro<em>Sys Ops</em></div>
     <div class="op-sub">Staff Access Only</div>
     <div class="lfield">
       <label>Access Key</label>
       <input type="password" id="pw" placeholder="••••••••••••" onkeydown="if(event.key==='Enter')doLogin()">
     </div>
-    <button class="btn-login" id="btn-login" onclick="doLogin()">Enter</button>
+    <button class="btn-primary btn-login" id="btn-login" onclick="doLogin()">Enter</button>
     <div class="lerr" id="lerr"></div>
   </div>
 </div>
 
 <div id="dashboard">
-  <div class="topbar">
-    <div class="op-brand">Cirro<span>Sys Ops</span></div>
+  <div class="topbar op-topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      Cirro<em>Sys Ops</em>
+    </div>
     <div class="tb-right">
       <span class="tb-badge">STAFF</span>
       <button class="btn-sm" onclick="loadData()">↻ Refresh</button>
@@ -95,37 +67,41 @@
     </div>
   </div>
 
-  <div class="content">
+  <div class="page">
     <div class="stats" id="stats"></div>
 
     <div class="tabs">
       <button class="tab-btn active" id="tab-orders-btn" onclick="showTab('orders')">Orders</button>
-      <button class="tab-btn" id="tab-clients-btn" onclick="showTab('clients')">Clients</button>
+      <button class="tab-btn" id="tab-orgs-btn" onclick="showTab('orgs')">Organizations</button>
     </div>
 
     <div class="tab-panel active" id="tab-orders">
-      <div class="table-header">
-        <span class="section-title">All Orders</span>
-        <input class="search-box" id="order-search" placeholder="Search client, city, country…" oninput="filterOrders()">
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Order</th><th>Client</th><th>Destination</th><th>Provider / DC</th><th>Status</th><th>Update</th><th>Price</th></tr></thead>
-          <tbody id="orders-tbody"></tbody>
-        </table>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">All Orders</span>
+          <input class="search-box" id="order-search" placeholder="Search organization, city, country…" oninput="filterOrders()">
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Order</th><th>Organization</th><th>Destination</th><th>Provider / DC</th><th>Status</th><th>Update</th><th>Price</th></tr></thead>
+            <tbody id="orders-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <div class="tab-panel" id="tab-clients">
-      <div class="table-header">
-        <span class="section-title">All Clients</span>
-        <input class="search-box" id="client-search" placeholder="Search name or email…" oninput="filterClients()">
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Joined</th></tr></thead>
-          <tbody id="clients-tbody"></tbody>
-        </table>
+    <div class="tab-panel" id="tab-orgs">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">All Organizations</span>
+          <input class="search-box" id="org-search" placeholder="Search organization or member…" oninput="filterOrgs()">
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Organization</th><th>Members</th><th>Orders</th><th>Total Billed</th><th>Created</th></tr></thead>
+            <tbody id="orgs-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -133,7 +109,7 @@
 
 <script>
 let allOrders = [];
-let allClients = [];
+let allOrgs = [];
 const STATUSES = ['received','transmitted','processing','shipped','delivered','exception'];
 
 function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -164,25 +140,25 @@ async function adminLogout(){
 
 function showTab(name){
   document.getElementById('tab-orders').classList.toggle('active', name==='orders');
-  document.getElementById('tab-clients').classList.toggle('active', name==='clients');
+  document.getElementById('tab-orgs').classList.toggle('active', name==='orgs');
   document.getElementById('tab-orders-btn').classList.toggle('active', name==='orders');
-  document.getElementById('tab-clients-btn').classList.toggle('active', name==='clients');
+  document.getElementById('tab-orgs-btn').classList.toggle('active', name==='orgs');
 }
 
 async function loadData(){
   try{
-    const [ordersRes, clientsRes] = await Promise.all([
-      fetch('/api/admin/orders'), fetch('/api/admin/clients')
+    const [ordersRes, orgsRes] = await Promise.all([
+      fetch('/api/admin/orders'), fetch('/api/admin/organizations')
     ]);
-    if(ordersRes.status===401 || clientsRes.status===401){ location.reload(); return; }
+    if(ordersRes.status===401 || orgsRes.status===401){ location.reload(); return; }
     const ordersData = await ordersRes.json();
-    const clientsData = await clientsRes.json();
-    if(!ordersData.ok || !clientsData.ok) return;
+    const orgsData = await orgsRes.json();
+    if(!ordersData.ok || !orgsData.ok) return;
     allOrders = ordersData.orders;
-    allClients = clientsData.clients;
+    allOrgs = orgsData.organizations;
     renderStats();
     renderOrders(allOrders);
-    renderClients(allClients);
+    renderOrgs(allOrgs);
   }catch(e){ console.error(e); }
 }
 
@@ -191,11 +167,11 @@ function renderStats(){
   const delivered = allOrders.filter(o=>o.status==='delivered').length;
   const revenue = allOrders.reduce((s,o)=>s+o.priceTotal,0);
   document.getElementById('stats').innerHTML = `
-    <div class="stat"><div class="stat-label">Total Clients</div><div class="stat-val purple">${allClients.length}</div></div>
-    <div class="stat"><div class="stat-label">Total Orders</div><div class="stat-val blue">${allOrders.length}</div></div>
-    <div class="stat"><div class="stat-label">In Transit</div><div class="stat-val gold">${inTransit}</div></div>
-    <div class="stat"><div class="stat-label">Delivered</div><div class="stat-val green">${delivered}</div></div>
-    <div class="stat"><div class="stat-label">Total Billed</div><div class="stat-val green">${money(revenue)}</div></div>
+    <div class="stat"><div class="stat-label">Organizations</div><div class="stat-val">${allOrgs.length}</div></div>
+    <div class="stat"><div class="stat-label">Total Orders</div><div class="stat-val">${allOrders.length}</div></div>
+    <div class="stat"><div class="stat-label">In Transit</div><div class="stat-val">${inTransit}</div></div>
+    <div class="stat"><div class="stat-label">Delivered</div><div class="stat-val">${delivered}</div></div>
+    <div class="stat"><div class="stat-label">Total Billed</div><div class="stat-val">${money(revenue)}</div></div>
   `;
 }
 
@@ -205,7 +181,7 @@ function renderOrders(list){
   tbody.innerHTML = list.map(o => `
     <tr>
       <td class="mono">${esc(o.id.slice(0,8))}</td>
-      <td>${esc(o.clientName)}${o.clientCompany?`<br><span style="color:var(--text-3);font-size:.72rem">${esc(o.clientCompany)}</span>`:''}</td>
+      <td>${esc(o.organizationName)}</td>
       <td>${esc(o.city)}, ${esc(o.country)}</td>
       <td>${esc(o.providerName||'—')}<br><span style="color:var(--text-3);font-size:.72rem">${esc(o.dcLocation||'')}</span></td>
       <td><span class="badge ${o.status}">${esc(o.status)}</span></td>
@@ -224,15 +200,16 @@ function renderOrders(list){
   `).join('');
 }
 
-function renderClients(list){
-  const tbody = document.getElementById('clients-tbody');
-  if(!list.length){ tbody.innerHTML = '<tr><td colspan="4" class="empty">No clients yet.</td></tr>'; return; }
-  tbody.innerHTML = list.map(c => `
+function renderOrgs(list){
+  const tbody = document.getElementById('orgs-tbody');
+  if(!list.length){ tbody.innerHTML = '<tr><td colspan="5" class="empty">No organizations yet.</td></tr>'; return; }
+  tbody.innerHTML = list.map(o => `
     <tr>
-      <td>${esc(c.name)}</td>
-      <td>${esc(c.company||'—')}</td>
-      <td class="mono">${esc(c.email)}</td>
-      <td class="mono" style="color:var(--text-3)">${fmtDate(c.createdAt)}</td>
+      <td>${esc(o.name)}</td>
+      <td>${o.members.map(m=>esc(m.name)+(m.role==='owner'?' (owner)':'')).join(', ')}</td>
+      <td class="mono">${o.totalOrders}</td>
+      <td class="mono">${money(o.totalSpend)}</td>
+      <td class="mono" style="color:var(--text-3)">${fmtDate(o.createdAt)}</td>
     </tr>
   `).join('');
 }
@@ -240,13 +217,15 @@ function renderClients(list){
 function filterOrders(){
   const q = document.getElementById('order-search').value.toLowerCase();
   renderOrders(allOrders.filter(o =>
-    o.clientName.toLowerCase().includes(q) || o.city.toLowerCase().includes(q) || o.country.toLowerCase().includes(q)
+    o.organizationName.toLowerCase().includes(q) || o.city.toLowerCase().includes(q) || o.country.toLowerCase().includes(q)
   ));
 }
 
-function filterClients(){
-  const q = document.getElementById('client-search').value.toLowerCase();
-  renderClients(allClients.filter(c => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)));
+function filterOrgs(){
+  const q = document.getElementById('org-search').value.toLowerCase();
+  renderOrgs(allOrgs.filter(o =>
+    o.name.toLowerCase().includes(q) || o.members.some(m=>m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q))
+  ));
 }
 
 async function updateOrder(id){

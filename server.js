@@ -7,6 +7,7 @@ const session = require('express-session');
 
 const users                         = require('./lib/users');
 const orders                        = require('./lib/orders');
+const organizations                 = require('./lib/organizations');
 const { PROVIDERS }                 = require('./lib/providers');
 const { init: initDb, hasDb, pool } = require('./lib/db');
 
@@ -39,13 +40,24 @@ app.use(session({
 }));
 
 // ── Auth helpers ───────────────────────────────────────────────────────
+// Every authenticated request is scoped to req.session.organizationId (the
+// tenant) — orders/billing/team all read and write against that, never the
+// individual user id, so any teammate in the org sees the same data.
 function requireAuth(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
+  if (!req.session.userId || !req.session.organizationId)
+    return res.status(401).json({ ok: false, error: 'Not authenticated' });
   next();
 }
 
 function requireAuthPage(req, res, next) {
-  if (!req.session.userId) return res.redirect('/login');
+  if (!req.session.userId || !req.session.organizationId) return res.redirect('/login');
+  next();
+}
+
+async function requireOwner(req, res, next) {
+  const user = await users.findById(req.session.userId);
+  if (!user || user.role !== 'owner')
+    return res.status(403).json({ ok: false, error: 'Only the organization owner can do this' });
   next();
 }
 
@@ -94,10 +106,15 @@ app.post('/api/auth/signup', async (req, res) => {
   if (await users.findByEmail(email))
     return res.status(409).json({ ok: false, error: 'Email already registered — please sign in' });
 
+  const org = await organizations.create(company || `${name}'s Organization`);
   const passwordHash = await bcrypt.hash(password, 12);
-  const user = await users.create({ name, email, passwordHash, company });
+  const user = await users.create({
+    name, email, passwordHash, company,
+    organizationId: org.id, role: 'owner',
+  });
   req.session.userId = user.id;
-  res.json({ ok: true, user: safeUser(user) });
+  req.session.organizationId = org.id;
+  res.json({ ok: true, user: safeUser(user), organization: org });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -109,6 +126,7 @@ app.post('/api/auth/login', async (req, res) => {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
   req.session.userId = user.id;
+  req.session.organizationId = user.organizationId;
   res.json({ ok: true, user: safeUser(user) });
 });
 
@@ -119,22 +137,75 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   if (!req.session.userId) return res.json({ ok: true, user: null });
   const user = await users.findById(req.session.userId);
-  res.json({ ok: true, user: user ? safeUser(user) : null });
+  if (!user) return res.json({ ok: true, user: null });
+  const org = await organizations.findById(user.organizationId);
+  res.json({ ok: true, user: safeUser(user), organization: org });
 });
 
 app.post('/api/account/update', requireAuth, async (req, res) => {
-  const { name, company } = req.body;
+  const { name } = req.body;
   const patch = {};
   if (name) patch.name = name;
-  if (company !== undefined) patch.company = company;
   const updated = await users.update(req.session.userId, patch);
   if (!updated) return res.status(404).json({ ok: false, error: 'Account not found' });
   res.json({ ok: true, user: safeUser(updated) });
 });
 
 function safeUser(u) {
-  return { id: u.id, name: u.name, email: u.email, company: u.company || '', createdAt: u.createdAt };
+  return { id: u.id, name: u.name, email: u.email, role: u.role, organizationId: u.organizationId, createdAt: u.createdAt };
 }
+
+// ── Organization / Team API ──────────────────────────────────────────────
+app.patch('/api/organization', requireAuth, requireOwner, async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ ok: false, error: 'Organization name is required' });
+  const updated = await organizations.update(req.session.organizationId, { name });
+  if (!updated) return res.status(404).json({ ok: false, error: 'Organization not found' });
+  res.json({ ok: true, organization: updated });
+});
+
+app.get('/api/team', requireAuth, async (req, res) => {
+  const [org, members, me] = await Promise.all([
+    organizations.findById(req.session.organizationId),
+    users.listByOrganization(req.session.organizationId),
+    users.findById(req.session.userId),
+  ]);
+  res.json({
+    ok: true,
+    organization: org,
+    members: members.map(m => ({ id: m.id, name: m.name, email: m.email, role: m.role, createdAt: m.createdAt })),
+    isOwner: me?.role === 'owner',
+  });
+});
+
+app.post('/api/team', requireAuth, requireOwner, async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password)
+    return res.status(400).json({ ok: false, error: 'Name, email and password are required' });
+  if (password.length < 8)
+    return res.status(400).json({ ok: false, error: 'Password must be at least 8 characters' });
+  if (await users.findByEmail(email))
+    return res.status(409).json({ ok: false, error: 'That email is already registered' });
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  const member = await users.create({
+    name, email, passwordHash,
+    organizationId: req.session.organizationId, role: 'member',
+  });
+  res.json({ ok: true, member: { id: member.id, name: member.name, email: member.email, role: member.role, createdAt: member.createdAt } });
+});
+
+app.delete('/api/team/:id', requireAuth, requireOwner, async (req, res) => {
+  if (req.params.id === req.session.userId)
+    return res.status(400).json({ ok: false, error: "You can't remove yourself" });
+  const target = await users.findById(req.params.id);
+  if (!target || target.organizationId !== req.session.organizationId)
+    return res.status(404).json({ ok: false, error: 'Team member not found' });
+  if (target.role === 'owner')
+    return res.status(400).json({ ok: false, error: "The organization owner can't be removed" });
+  await users.deleteUser(req.params.id);
+  res.json({ ok: true });
+});
 
 // ── Providers / network API ─────────────────────────────────────────────
 app.get('/api/providers', requireAuth, (req, res) => {
@@ -154,7 +225,7 @@ app.post('/api/orders', requireAuth, async (req, res) => {
   }
 
   try {
-    const order = await orders.create(req.session.userId, {
+    const order = await orders.create(req.session.organizationId, req.session.userId, {
       recipientName, addressLine1, city, region, postalCode, country, items, serviceLevel, notes,
     });
     res.json({ ok: true, order });
@@ -164,20 +235,20 @@ app.post('/api/orders', requireAuth, async (req, res) => {
 });
 
 app.get('/api/orders', requireAuth, async (req, res) => {
-  const list = await orders.listByClient(req.session.userId);
+  const list = await orders.listByOrganization(req.session.organizationId);
   res.json({ ok: true, orders: list });
 });
 
 app.get('/api/orders/:id', requireAuth, async (req, res) => {
   const order = await orders.findById(req.params.id);
-  if (!order || order.clientId !== req.session.userId)
+  if (!order || order.organizationId !== req.session.organizationId)
     return res.status(404).json({ ok: false, error: 'Order not found' });
   res.json({ ok: true, order });
 });
 
 // ── Billing API (client) ─────────────────────────────────────────────────
 app.get('/api/billing/summary', requireAuth, async (req, res) => {
-  const list = await orders.listByClient(req.session.userId);
+  const list = await orders.listByOrganization(req.session.organizationId);
   const now = new Date();
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -208,7 +279,7 @@ app.get('/api/billing/invoice/:month', requireAuth, async (req, res) => {
   if (!/^\d{4}-\d{2}$/.test(month))
     return res.status(400).json({ ok: false, error: 'Invalid month format, expected YYYY-MM' });
 
-  const list = await orders.listByClient(req.session.userId);
+  const list = await orders.listByOrganization(req.session.organizationId);
   const filtered = list.filter(o => {
     const d = new Date(o.createdAt);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -234,22 +305,44 @@ app.post('/api/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/clients', requireAdmin, async (req, res) => {
-  const all = await users.findAll();
-  const safe = all.map(u => ({
-    id: u.id, name: u.name, email: u.email, company: u.company, createdAt: u.createdAt,
-  }));
-  res.json({ ok: true, clients: safe });
+app.get('/api/admin/organizations', requireAdmin, async (req, res) => {
+  const [allUsers, allOrders] = await Promise.all([users.findAll(), orders.listAll()]);
+
+  const byOrg = {};
+  for (const u of allUsers) {
+    if (!u.organizationId) continue;
+    if (!byOrg[u.organizationId]) byOrg[u.organizationId] = { members: [], totalOrders: 0, totalSpend: 0 };
+    byOrg[u.organizationId].members.push({ id: u.id, name: u.name, email: u.email, role: u.role });
+  }
+  for (const o of allOrders) {
+    if (!byOrg[o.organizationId]) byOrg[o.organizationId] = { members: [], totalOrders: 0, totalSpend: 0 };
+    byOrg[o.organizationId].totalOrders += 1;
+    byOrg[o.organizationId].totalSpend += o.priceTotal;
+  }
+
+  const orgIds = Object.keys(byOrg);
+  const orgRecords = await Promise.all(orgIds.map(id => organizations.findById(id)));
+  const result = orgIds.map((id, i) => ({
+    id,
+    name: orgRecords[i]?.name || 'Unknown',
+    createdAt: orgRecords[i]?.createdAt,
+    members: byOrg[id].members,
+    totalOrders: byOrg[id].totalOrders,
+    totalSpend: Math.round(byOrg[id].totalSpend * 100) / 100,
+  })).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  res.json({ ok: true, organizations: result });
 });
 
 app.get('/api/admin/orders', requireAdmin, async (req, res) => {
-  const [allOrders, allUsers] = await Promise.all([orders.listAll(), users.findAll()]);
-  const clientsById = Object.fromEntries(allUsers.map(u => [u.id, u]));
+  const allOrders = await orders.listAll();
+  const orgIds = [...new Set(allOrders.map(o => o.organizationId))];
+  const orgRecords = await Promise.all(orgIds.map(id => organizations.findById(id)));
+  const orgsById = Object.fromEntries(orgIds.map((id, i) => [id, orgRecords[i]]));
+
   const enriched = allOrders.map(o => ({
     ...o,
-    clientName: clientsById[o.clientId]?.name || 'Unknown',
-    clientEmail: clientsById[o.clientId]?.email || '',
-    clientCompany: clientsById[o.clientId]?.company || '',
+    organizationName: orgsById[o.organizationId]?.name || 'Unknown',
   }));
   res.json({ ok: true, orders: enriched });
 });
@@ -261,11 +354,6 @@ app.post('/api/admin/orders/:id/status', requireAdmin, async (req, res) => {
   const updated = await orders.updateStatus(req.params.id, { status, trackingNumber, carrier, note });
   if (!updated) return res.status(404).json({ ok: false, error: 'Order not found' });
   res.json({ ok: true, order: updated });
-});
-
-app.delete('/api/admin/clients/:id', requireAdmin, async (req, res) => {
-  await users.deleteUser(req.params.id);
-  res.json({ ok: true });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────

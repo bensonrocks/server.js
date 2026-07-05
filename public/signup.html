@@ -6,68 +6,49 @@
 <title>Get Started — CirroSys Client Portal</title>
 <meta name="description" content="Sign up for CirroSys, NImbustrade's 4PL client portal. Drop orders, route them to a worldwide fulfillment network, and track cost and status in real time.">
 <meta name="robots" content="index, follow">
+<link rel="stylesheet" href="/theme.css">
 <style>
-  :root{--bg:#080b11;--bg-2:#0d1119;--surface:#131926;--border:rgba(255,255,255,.09);--text:#e6ecf2;--text-2:#8b95a5;--text-3:#4f5866;--accent:#3aa0ff;--accent-2:#00d4b8;--red:#ff4d6a;--amber:#f5b942;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  html{font-size:15px}body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column}
-  .topbar{background:#0a0e15;border-bottom:1px solid rgba(255,255,255,.07);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
-  .brand{display:flex;align-items:center;gap:9px;font-size:.95rem;font-weight:800;letter-spacing:.06em;text-decoration:none}
-  .brand-dot{width:9px;height:9px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 8px var(--accent-2)}
-  .brand-first{color:#fff}.brand-second{color:var(--accent)}
-  .tb-link{font-family:var(--mono);font-size:.7rem;letter-spacing:.07em;color:rgba(255,255,255,.5);padding:5px 10px;text-decoration:none;transition:color .15s}
-  .tb-link:hover{color:rgba(255,255,255,.9)}
-  .wrap{flex:1;display:flex;align-items:flex-start;justify-content:center;gap:32px;padding:48px 24px;flex-wrap:wrap}
+  .wrap{ display: flex; align-items: flex-start; justify-content: center; gap: 40px; padding: 56px 24px; flex-wrap: wrap; }
+  .form-col{ width: 100%; max-width: 400px; }
+  .form-title{ font-family: var(--serif); font-size: 1.6rem; margin-bottom: 6px; }
+  .form-sub{ font-size: .85rem; color: var(--text-2); margin-bottom: 24px; line-height: 1.6; }
+  .signin-link{ margin-top: 18px; text-align: center; font-size: .84rem; color: var(--text-2); }
+  .btn-submit{ width: 100%; }
 
-  .form-col{width:100%;max-width:400px}
-  .form-title{font-size:1.5rem;font-weight:700;margin-bottom:6px}
-  .form-sub{font-size:.85rem;color:var(--text-2);margin-bottom:24px;line-height:1.6}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px 28px}
-  .field{margin-bottom:16px}
-  label{display:block;font-family:var(--mono);font-size:.63rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-2);margin-bottom:7px}
-  input{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:11px 14px;color:var(--text);font-size:.9rem;font-family:var(--sans);outline:none;transition:border-color .15s}
-  input:focus{border-color:var(--accent)}
-  .hint{font-size:.72rem;color:var(--text-3);margin-top:5px}
-  .btn-submit{width:100%;background:var(--accent-2);color:#00251d;font-weight:700;font-size:.95rem;padding:13px;border-radius:6px;border:none;cursor:pointer;margin-top:6px;transition:opacity .15s}
-  .btn-submit:hover{opacity:.85}
-  .btn-submit:disabled{opacity:.5;cursor:default}
-  .error{background:rgba(255,77,106,.1);border:1px solid rgba(255,77,106,.3);border-radius:6px;padding:10px 14px;font-size:.82rem;color:var(--red);margin-bottom:14px;display:none}
-  .signin-link{margin-top:18px;text-align:center;font-size:.82rem;color:var(--text-2)}
-  .signin-link a{color:var(--accent);text-decoration:none}
-
-  .value-col{width:100%;max-width:340px}
-  .value-title{font-family:var(--mono);font-size:.65rem;letter-spacing:.18em;text-transform:uppercase;color:var(--text-3);margin-bottom:14px}
-  .value-list{display:flex;flex-direction:column;gap:10px}
-  .value-item{display:flex;align-items:flex-start;gap:10px;font-size:.85rem;color:var(--text-2);line-height:1.55}
-  .value-item::before{content:'✓';color:var(--accent-2);font-weight:700;flex-shrink:0;margin-top:1px}
-  .value-price{margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px}
-  .vp-row{display:flex;justify-content:space-between;align-items:center;font-size:.82rem;color:var(--text-2);padding:6px 0}
-  .vp-row:not(:last-child){border-bottom:1px solid var(--border)}
-  .vp-row .vp-val{font-family:var(--mono);font-weight:700;color:var(--text)}
+  .value-col{ width: 100%; max-width: 320px; padding-top: 8px; }
+  .value-title{ font-family: var(--mono); font-size: .64rem; letter-spacing: .14em; text-transform: uppercase; color: var(--text-3); margin-bottom: 16px; }
+  .value-list{ display: flex; flex-direction: column; gap: 12px; }
+  .value-item{ display: flex; align-items: flex-start; gap: 10px; font-size: .86rem; color: var(--text-2); line-height: 1.55; }
+  .value-item::before{ content:'—'; color: var(--accent); flex-shrink:0; }
+  .value-price{ margin-top: 22px; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; }
+  .vp-row{ display: flex; justify-content: space-between; font-size: .82rem; color: var(--text-2); padding: 6px 0; }
+  .vp-row:not(:last-child){ border-bottom: 1px solid var(--border); }
+  .vp-row .vp-val{ font-family: var(--mono); font-weight: 600; color: var(--text); }
 </style>
 </head>
 <body>
 <div class="topbar">
   <a class="brand" href="/">
-    <span class="brand-dot"></span>
-    <span class="brand-first">Cirro</span><span class="brand-second">Sys</span>
+    <span class="brand-mark"></span>
+    Cirro<em>Sys</em>
   </a>
-  <a class="tb-link" href="/login">Already a client? Sign in</a>
+  <a class="btn-sm" href="/login">Already a client? Sign in</a>
 </div>
 
 <div class="wrap">
   <div class="form-col">
-    <div class="form-title">Create your client account</div>
-    <div class="form-sub">Takes 30 seconds. No payment required to get started — you're billed only for orders as they're fulfilled.</div>
+    <div class="form-title">Create your organization</div>
+    <div class="form-sub">Takes 30 seconds. No payment required to get started — you're billed only for orders as they're fulfilled. You'll be the owner and can invite teammates afterward.</div>
     <div class="card">
       <div class="error" id="err"></div>
       <form id="signup-form">
         <div class="field">
-          <label>Full Name</label>
+          <label>Your Name</label>
           <input type="text" id="name" placeholder="Your name" autocomplete="name" required>
         </div>
         <div class="field">
-          <label>Company</label>
-          <input type="text" id="company" placeholder="Your company (optional)" autocomplete="organization">
+          <label>Organization / Company</label>
+          <input type="text" id="company" placeholder="e.g. Best World International" autocomplete="organization" required>
         </div>
         <div class="field">
           <label>Email</label>
@@ -78,7 +59,7 @@
           <input type="password" id="password" placeholder="Min 8 characters" autocomplete="new-password" required minlength="8">
           <div class="hint">Minimum 8 characters</div>
         </div>
-        <button class="btn-submit" type="submit" id="btn-account">Create Account →</button>
+        <button class="btn-primary btn-submit" type="submit" id="btn-account">Create Organization →</button>
       </form>
       <div class="signin-link">Already have an account? <a href="/login">Sign in</a></div>
     </div>
@@ -92,7 +73,7 @@
       <div class="value-item">Live status tracking from transmit through delivery</div>
       <div class="value-item">Transparent, itemized pricing on every order</div>
       <div class="value-item">Monthly invoices or as-incurred cost lookups</div>
-      <div class="value-item">Full visibility into which DC is handling each order</div>
+      <div class="value-item">Invite teammates — everyone in your organization shares one order book</div>
     </div>
     <div class="value-price">
       <div class="vp-row"><span>Account access</span><span class="vp-val">Free</span></div>
@@ -110,7 +91,7 @@ document.getElementById('signup-form').addEventListener('submit', async e => {
   e.preventDefault();
   const btn=document.getElementById('btn-account');
   const err=document.getElementById('err');
-  btn.disabled=true; btn.innerHTML='Creating account…'; err.style.display='none';
+  btn.disabled=true; btn.innerHTML='Creating organization…'; err.style.display='none';
   try {
     const res = await fetch('/api/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       name:document.getElementById('name').value,
@@ -119,11 +100,11 @@ document.getElementById('signup-form').addEventListener('submit', async e => {
       password:document.getElementById('password').value
     })});
     const data = await res.json();
-    if(!data.ok){ err.textContent=data.error; err.style.display='block'; btn.disabled=false; btn.innerHTML='Create Account →'; return; }
+    if(!data.ok){ err.textContent=data.error; err.style.display='block'; btn.disabled=false; btn.innerHTML='Create Organization →'; return; }
     location.href='/dashboard';
   } catch {
     err.textContent='Network error — please try again.'; err.style.display='block';
-    btn.disabled=false; btn.innerHTML='Create Account →';
+    btn.disabled=false; btn.innerHTML='Create Organization →';
   }
 });
 </script>

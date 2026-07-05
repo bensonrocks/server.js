@@ -5,44 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign In — CirroSys</title>
 <meta name="robots" content="noindex, follow">
+<link rel="stylesheet" href="/theme.css">
 <style>
-  :root{--bg:#080b11;--bg-2:#0d1119;--surface:#131926;--border:rgba(255,255,255,.09);--text:#e6ecf2;--text-2:#8b95a5;--text-3:#4f5866;--accent:#3aa0ff;--accent-2:#00d4b8;--red:#ff4d6a;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  html{font-size:15px}body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column}
-  .topbar{background:#0a0e15;border-bottom:1px solid rgba(255,255,255,.07);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
-  .brand{display:flex;align-items:center;gap:9px;font-size:.95rem;font-weight:800;letter-spacing:.06em;text-decoration:none}
-  .brand-dot{width:9px;height:9px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 8px var(--accent-2)}
-  .brand-first{color:#fff}.brand-second{color:var(--accent)}
-  .tb-link{font-family:var(--mono);font-size:.7rem;letter-spacing:.07em;color:rgba(255,255,255,.5);padding:5px 10px;text-decoration:none;transition:color .15s}
-  .tb-link:hover{color:rgba(255,255,255,.9)}
-  .center{flex:1;display:flex;align-items:center;justify-content:center;padding:40px 24px}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px 36px;width:100%;max-width:400px}
-  .card-title{font-size:1.4rem;font-weight:700;margin-bottom:6px}
-  .card-sub{font-size:.85rem;color:var(--text-2);margin-bottom:28px}
-  .field{margin-bottom:18px}
-  label{display:block;font-family:var(--mono);font-size:.65rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-2);margin-bottom:7px}
-  input{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:11px 14px;color:var(--text);font-size:.9rem;font-family:var(--sans);outline:none;transition:border-color .15s}
-  input:focus{border-color:var(--accent)}
-  .btn-submit{width:100%;background:var(--accent-2);color:#00251d;font-weight:700;font-size:.95rem;padding:13px;border-radius:6px;border:none;cursor:pointer;margin-top:8px;transition:opacity .15s}
-  .btn-submit:hover{opacity:.85}
-  .btn-submit:disabled{opacity:.5;cursor:default}
-  .error{background:rgba(255,77,106,.1);border:1px solid rgba(255,77,106,.3);border-radius:6px;padding:10px 14px;font-size:.82rem;color:var(--red);margin-bottom:16px;display:none}
-  .footer-link{margin-top:20px;text-align:center;font-size:.82rem;color:var(--text-2)}
-  .footer-link a{color:var(--accent);text-decoration:none}
-  .footer-link a:hover{text-decoration:underline}
+  body{ display: flex; flex-direction: column; }
+  .center{ flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 24px; }
+  .login-card{ width: 100%; max-width: 400px; }
+  .card-title{ font-family: var(--serif); font-size: 1.5rem; margin-bottom: 6px; }
+  .card-sub{ font-size: .85rem; color: var(--text-2); margin-bottom: 28px; }
+  .btn-submit{ width: 100%; margin-top: 8px; }
+  .footer-link{ margin-top: 20px; text-align: center; font-size: .84rem; color: var(--text-2); }
+  .ops-link{ position: fixed; bottom: 20px; width: 100%; text-align: center; }
+  .ops-link a{ font-family: var(--mono); font-size: .62rem; letter-spacing: .1em; color: var(--text-3); text-decoration: none; text-transform: uppercase; }
+  .ops-link a:hover{ color: var(--text-2); }
 </style>
 </head>
 <body>
 <div class="topbar">
   <a class="brand" href="/">
-    <span class="brand-dot"></span>
-    <span class="brand-first">Cirro</span><span class="brand-second">Sys</span>
+    <span class="brand-mark"></span>
+    Cirro<em>Sys</em>
   </a>
-  <a class="tb-link" href="/signup">New client? Sign up →</a>
+  <a class="btn-sm" href="/signup">New client? Sign up →</a>
 </div>
 
 <div class="center">
-  <div class="card">
+  <div class="login-card card">
     <div class="card-title">Welcome back</div>
     <div class="card-sub">Sign in to your CirroSys client portal.</div>
     <div class="error" id="err"></div>
@@ -55,15 +42,13 @@
         <label>Password</label>
         <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required>
       </div>
-      <button class="btn-submit" type="submit" id="btn">Sign In</button>
+      <button class="btn-primary btn-submit" type="submit" id="btn">Sign In</button>
     </form>
     <div class="footer-link">Don't have an account? <a href="/signup">Sign up</a></div>
   </div>
 </div>
 
-<div style="position:fixed;bottom:18px;width:100%;text-align:center">
-  <a href="/ops-console" style="font-family:'Courier New',monospace;font-size:.6rem;letter-spacing:.14em;color:rgba(255,255,255,.12);text-decoration:none;text-transform:uppercase;transition:color .2s" onmouseover="this.style.color='rgba(255,255,255,.35)'" onmouseout="this.style.color='rgba(255,255,255,.12)'">Ops Access</a>
-</div>
+<div class="ops-link"><a href="/ops-console">Ops Access</a></div>
 
 <script>
 fetch('/api/auth/me').then(r=>r.json()).then(d=>{
