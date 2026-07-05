@@ -5,9 +5,6 @@
 const { getTenantDb } = require('./lib/db/tenant');
 const createInventory  = require('./lib/inventory');
 
-const db  = getTenantDb('default');
-const inv = createInventory(db);
-
 const dr  = (i, m) => ((i * 2654435761) >>> 0) % m;
 const dp  = (i, m, off = 0) => (((i * 1664525 + 1013904223) >>> 0) % m) + off;
 const pick = (i, arr) => arr[dr(i * 6007, arr.length)];
@@ -22,7 +19,7 @@ const loc = i => `Zone ${pick(i*3,ZONES)}-Row ${pick(i*7,ROWS)}-Shelf ${pick(i*1
 const CLIENTS = [
 
   // ── 1. ALMIGHTY — Sports Nutrition (72 SKUs) ─────────────────────────────
-  { name: 'Almighty', items: [
+  { name: 'Almighty', clientId: 'almighty', items: [
     ['WHEY-1KG-CHC', 'Whey Protein 1kg Chocolate',     'Sports Nutrition','unit', 38, 79,  'Whey isolate 1kg, chocolate fudge'],
     ['WHEY-1KG-VAN', 'Whey Protein 1kg Vanilla',       'Sports Nutrition','unit', 38, 79,  'Whey isolate 1kg, vanilla cream'],
     ['WHEY-1KG-STW', 'Whey Protein 1kg Strawberry',    'Sports Nutrition','unit', 38, 79,  'Whey isolate 1kg, strawberry milkshake'],
@@ -79,7 +76,7 @@ const CLIENTS = [
   ]},
 
   // ── 2. ATHENA SCENTS — Fragrance & Home Scents (72 SKUs) ─────────────────
-  { name: 'Athena Scents', items: [
+  { name: 'Athena Scents', clientId: 'athena-scents', items: [
     ['OUD-50',       'Oud Perfume EDP 50ml',           'Fragrance','btl',  35, 88,  'Luxury oud eau de parfum 50ml'],
     ['OUD-100',      'Oud Perfume EDP 100ml',          'Fragrance','btl',  58,148,  'Luxury oud eau de parfum 100ml'],
     ['OUD-MINI',     'Oud EDP Travel Spray 10ml',      'Fragrance','btl',  10, 28,  'Oud eau de parfum travel spray 10ml'],
@@ -137,7 +134,7 @@ const CLIENTS = [
   ]},
 
   // ── 3. BETIME MARKETING — Lifestyle & Gadgets (72 SKUs) ──────────────────
-  { name: 'Betime Marketing', items: [
+  { name: 'Betime Marketing', clientId: 'betime-marketing', items: [
     ['PILLOW-PRO',   'Memory Foam Pillow Pro Queen',   'Lifestyle','pcs',  18, 45,  'Contour memory foam pillow, queen'],
     ['PILLOW-STD',   'Memory Foam Pillow Standard',    'Lifestyle','pcs',  14, 36,  'Memory foam pillow, standard size'],
     ['NECK-PILL',    'Travel Neck Pillow U-Shape',     'Lifestyle','pcs',  10, 28,  'Memory foam U-shape travel neck pillow'],
@@ -190,7 +187,7 @@ const CLIENTS = [
   ]},
 
   // ── 4. CHALGO — Streetwear & Fashion Apparel (72 SKUs) ───────────────────
-  { name: 'Chalgo', items: [
+  { name: 'Chalgo', clientId: 'chalgo', items: [
     ['POLO-PRM',     'Premium Polo Tee Unisex',        'Apparel','pcs',  18, 49,  'Cotton pique premium polo, unisex'],
     ['POLO-WHT-XS',  'Premium Polo White XS',          'Apparel','pcs',  18, 49,  'Cotton pique polo, white, XS'],
     ['POLO-WHT-S',   'Premium Polo White S',           'Apparel','pcs',  18, 49,  'Cotton pique polo, white, S'],
@@ -250,7 +247,7 @@ const CLIENTS = [
   ]},
 
   // ── 5. LZ8 — Fashion Accessories & Bags (72 SKUs) ────────────────────────
-  { name: 'LZ8', items: [
+  { name: 'LZ8', clientId: 'lz8', items: [
     ['WALLET-LTH',   'Slim Bifold Leather Wallet',     'Accessories','pcs', 16, 45,  'Slim bifold genuine leather wallet, black'],
     ['WALLET-BRN',   'Slim Bifold Leather Wallet Tan', 'Accessories','pcs', 16, 45,  'Slim bifold genuine leather wallet, tan'],
     ['WALLET-MINI',  'RFID Card Holder Slim Wallet',   'Accessories','pcs',  9, 24,  'RFID-blocking slim card holder wallet'],
@@ -307,7 +304,7 @@ const CLIENTS = [
   ]},
 
   // ── 6. SIMPLYTOY — Toys & Games (72 SKUs) ────────────────────────────────
-  { name: 'SimplyToy', items: [
+  { name: 'SimplyToy', clientId: 'simplytoy', items: [
     ['BLCK-500',     'Building Blocks 500pcs Classic', 'Toys & Games','set', 16, 45,  'Compatible building blocks 500pcs, classic'],
     ['BLCK-1000',    'Building Blocks 1000pcs',        'Toys & Games','set', 28, 72,  'Compatible building blocks 1000pcs'],
     ['BLCK-CITY',    'City Skyline Blocks Set 680pcs', 'Toys & Games','set', 38, 95,  'City skyline building blocks, 680pcs'],
@@ -362,7 +359,7 @@ const CLIENTS = [
   ]},
 
   // ── 7. SMILEFAM — Oral Care & Dental Wellness (72 SKUs) ──────────────────
-  { name: 'SmileFam', items: [
+  { name: 'SmileFam', clientId: 'smilefam', items: [
     ['ELEC-BRUSH',   'Electric Toothbrush Pro 2-mode', 'Oral Care','pcs', 24, 59.90,'Rechargeable electric toothbrush, 2 modes'],
     ['SONIC-PRO2',   'Sonic Toothbrush Pro Plus 5-mode','Oral Care','pcs', 32, 78,  'Pro sonic 5-mode, 40k VPM, UV sanitiser lid'],
     ['ELEC-KIDS',    'Kids Sonic Toothbrush Timer',    'Oral Care','pcs', 16, 38,  'Kids sonic toothbrush, 2-min smart timer'],
@@ -415,39 +412,50 @@ const CLIENTS = [
 ];
 
 // ── Seed ─────────────────────────────────────────────────────────────────────
-inv.getAll().forEach(r => inv.remove(r.sku));
 
-let seq = 1, imported = 0, skipped = 0;
-for (const client of CLIENTS) {
-  for (const row of client.items) {
-    const [sku, name, category, unit, cost, sell, desc] = row;
-    const stockQty = dp(seq * 17, 220, 5);
-    try {
-      inv.upsert({
-        sku, name, category,
-        location:      loc(seq),
-        unit,
-        stock_qty:     stockQty,
-        reserved_qty:  dr(seq * 29, Math.max(1, Math.floor(stockQty * 0.12))),
-        reorder_point: dp(seq * 5, 15, 5),
-        cost_price:    cost,
-        sell_price:    sell,
-        description:   `[${client.name}] ${desc}`,
-      });
-      imported++;
-    } catch (e) {
-      console.error('SKIP', sku, e.message);
-      skipped++;
+function seedInventory(tenantId = 'default') {
+  const db  = getTenantDb(tenantId);
+  const inv = createInventory(db);
+
+  inv.getAll().forEach(r => inv.remove(r.sku));
+
+  let seq = 1, imported = 0, skipped = 0;
+  for (const client of CLIENTS) {
+    for (const row of client.items) {
+      const [sku, name, category, unit, cost, sell, desc] = row;
+      const stockQty = dp(seq * 17, 220, 5);
+      try {
+        inv.upsert({
+          sku, name, category,
+          location:      loc(seq),
+          unit,
+          stock_qty:     stockQty,
+          reserved_qty:  dr(seq * 29, Math.max(1, Math.floor(stockQty * 0.12))),
+          reorder_point: dp(seq * 5, 15, 5),
+          cost_price:    cost,
+          sell_price:    sell,
+          description:   `[${client.name}] ${desc}`,
+          client_id:     client.clientId,
+        });
+        imported++;
+      } catch (e) {
+        console.error('SKIP', sku, e.message);
+        skipped++;
+      }
+      seq++;
     }
-    seq++;
+  }
+
+  console.log(`\nDone — ${imported} items seeded across ${CLIENTS.length} clients`);
+  if (skipped) console.log(`       ${skipped} skipped`);
+  const all = db.prepare('SELECT * FROM inventory').all();
+  console.log(`Total in DB: ${all.length}\n`);
+  for (const c of CLIENTS) {
+    const n = db.prepare("SELECT COUNT(*) as cnt FROM inventory WHERE description LIKE ?").get(`[${c.name}]%`).cnt;
+    console.log(`  ${c.name.padEnd(22)} ${String(n).padStart(3)} SKUs`);
   }
 }
 
-console.log(`\nDone — ${imported} items seeded across ${CLIENTS.length} clients`);
-if (skipped) console.log(`       ${skipped} skipped`);
-const all = db.prepare('SELECT * FROM inventory').all();
-console.log(`Total in DB: ${all.length}\n`);
-for (const c of CLIENTS) {
-  const n = db.prepare("SELECT COUNT(*) as cnt FROM inventory WHERE description LIKE ?").get(`[${c.name}]%`).cnt;
-  console.log(`  ${c.name.padEnd(22)} ${String(n).padStart(3)} SKUs`);
-}
+module.exports = { seedInventory };
+
+if (require.main === module) { seedInventory(); }

@@ -78,6 +78,20 @@ function getCtx(tenantId) {
   return tenantCtx.get(tenantId);
 }
 
+// Auto-seed default tenant inventory if empty
+setImmediate(() => {
+  try {
+    const inv = getCtx('default').inventory;
+    if (inv.getAll().length === 0) {
+      const { seedInventory } = require('./seed_inventory');
+      seedInventory('default');
+      console.log('[startup] Auto-seeded inventory for default tenant');
+    }
+  } catch (e) {
+    console.warn('[startup] Could not auto-seed inventory:', e.message);
+  }
+});
+
 // ── Auth middleware ───────────────────────────────────────────────────────────
 
 function withTenant(req, res, next) {
@@ -253,6 +267,7 @@ function withClientAuth(req, res, next) {
   req.clientId     = session.clientId;
   req.clientName   = session.clientName;
   req.clientAuth   = ca;
+  req.ctx          = ctx;
   req.store        = ctx.store;
   req.db           = ctx.db;
   next();
@@ -1307,11 +1322,20 @@ app.get('/api/orders/:id/waybill', withTenant, async (req, res) => {
 // ── Inventory ─────────────────────────────────────────────────────────────────
 
 app.get('/api/inventory', withTenant, (req, res) => {
-  const { category, search, lowStock } = req.query;
-  res.json(req.ctx.inventory.getAll({ category, search, lowStock: lowStock === 'true' }));
+  const { category, search, lowStock, clientId } = req.query;
+  res.json(req.ctx.inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId: clientId || null }));
 });
 
-app.get('/api/inventory/stats', withTenant, (req, res) => res.json(req.ctx.inventory.getStats()));
+app.get('/api/inventory/stats', withTenant, (req, res) => {
+  res.json(req.ctx.inventory.getStats({ clientId: req.query.clientId || null }));
+});
+
+// Velocity / best-selling
+app.get('/api/inventory/velocity', withTenant, (req, res) => {
+  const limit = Math.min(50, Number(req.query.limit) || 20);
+  const clientId = req.query.clientId || null;
+  res.json(req.ctx.inventory.velocity(limit, clientId));
+});
 
 app.get('/api/inventory/:sku', withTenant, (req, res) => {
   const item = req.ctx.inventory.get(req.params.sku);
@@ -1456,6 +1480,22 @@ app.delete('/api/client/connections/:platform', withClientAuth, (req, res) => {
     'DELETE FROM client_platform_connections WHERE tenant_id = ? AND client_id = ? AND platform = ?'
   ).run(req.tenantId, req.clientId, req.params.platform);
   res.json({ ok: true });
+});
+
+// ── Client portal inventory routes ────────────────────────────────────────────
+
+app.get('/api/portal/inventory', withClientAuth, (req, res) => {
+  const inv = req.ctx.inventory;
+  const { search, lowStock } = req.query;
+  res.json(inv.getAll({ search, lowStock: lowStock === 'true', clientId: req.clientId }));
+});
+
+app.get('/api/portal/inventory/stats', withClientAuth, (req, res) => {
+  res.json(req.ctx.inventory.getStats({ clientId: req.clientId }));
+});
+
+app.get('/api/portal/inventory/velocity', withClientAuth, (req, res) => {
+  res.json(req.ctx.inventory.velocity(10, req.clientId));
 });
 
 // ── OAuth result pages ────────────────────────────────────────────────────────

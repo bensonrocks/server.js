@@ -242,6 +242,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .conn-toast.ok{background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0}
 .conn-toast.error{background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca}
 @keyframes fadeup{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* ── INVENTORY SECTION ── */
+.inv-stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media(max-width:600px){.inv-stats-row{grid-template-columns:1fr 1fr}}
+.inv-toolbar{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.inv-check-lbl{display:flex;align-items:center;gap:5px;font-size:12px;color:#64748b;cursor:pointer;white-space:nowrap}
+.inv-row{display:grid;grid-template-columns:140px 1fr 110px 160px 80px;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #f8fafc;transition:background .1s}
+.inv-row:hover{background:#f8fafc}
+.inv-row-hdr{background:#f8fafc;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;border-bottom:1.5px solid #e2e8f0}
+.inv-sku{font-family:monospace;font-size:12px;font-weight:700;color:#2563eb}
+.inv-name{font-size:12px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inv-cat{font-size:12px;color:#64748b}
+.inv-loc{font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inv-qty{font-size:13px;font-weight:700;text-align:right}
+.inv-qty.ok{color:#16a34a}
+.inv-qty.low{color:#d97706}
+.inv-qty.out{color:#dc2626}
+@media(max-width:700px){.inv-row{grid-template-columns:120px 1fr 70px}.inv-loc,.inv-cat{display:none}.inv-row-hdr .inv-loc,.inv-row-hdr .inv-cat{display:none}}
 </style>
 </head>
 <body>
@@ -283,6 +301,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   </div>
   <nav class="portal-tabs">
     <button class="ptab active" data-tab="orders" onclick="setPortalTab('orders')">Orders</button>
+    <button class="ptab" data-tab="inventory" onclick="setPortalTab('inventory')">Inventory</button>
     <button class="ptab" data-tab="connections" onclick="setPortalTab('connections')">My Connections</button>
   </nav>
   <div id="section-orders" class="dash-body">
@@ -371,6 +390,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div id="view-analytics" style="display:none">
         <div class="analytics-grid" id="analytics-grid"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── INVENTORY SECTION ── -->
+  <div id="section-inventory" class="dash-body" style="display:none">
+    <!-- Stat Cards -->
+    <div class="inv-stats-row">
+      <div class="stat">
+        <div class="stat-lbl">Total SKUs</div>
+        <div class="stat-val" id="inv-total-skus">—</div>
+        <div class="stat-sub" id="inv-total-skus-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">Low Stock</div>
+        <div class="stat-val" id="inv-low-stock" style="color:#d97706">—</div>
+        <div class="stat-sub" id="inv-low-stock-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">Stock Value</div>
+        <div class="stat-val" id="inv-stock-value">—</div>
+        <div class="stat-sub" id="inv-stock-value-sub"></div>
+      </div>
+    </div>
+    <!-- Best Sellers -->
+    <div class="an-card">
+      <div class="an-title">Best Sellers <span>top 5 by units out</span></div>
+      <div id="inv-velocity-list"><div style="color:#94a3b8;font-size:12px">Loading&#8230;</div></div>
+    </div>
+    <!-- Toolbar + Table -->
+    <div class="orders-panel" style="display:flex;flex-direction:column">
+      <div class="inv-toolbar">
+        <input class="search-inp" id="inv-search" placeholder="&#128269; Search SKU or name&hellip;" oninput="filterInventory()">
+        <label class="inv-check-lbl">
+          <input type="checkbox" id="inv-lowstock-filter" onchange="filterInventory()"> Low stock only
+        </label>
+        <span class="result-count" id="inv-count"></span>
+      </div>
+      <div class="inv-row inv-row-hdr">
+        <div>SKU</div>
+        <div>Name</div>
+        <div>Category</div>
+        <div>Location</div>
+        <div style="text-align:right">In Stock</div>
+      </div>
+      <div class="orders-scroll" id="inv-table-body"></div>
     </div>
   </div>
 
@@ -974,9 +1038,11 @@ const CONN_META = {
 function setPortalTab(tab) {
   document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('section-orders').style.display      = tab === 'orders'      ? 'flex' : 'none';
+  document.getElementById('section-inventory').style.display   = tab === 'inventory'   ? 'flex' : 'none';
   document.getElementById('section-connections').style.display = tab === 'connections' ? 'flex' : 'none';
   document.getElementById('btn-upload-orders').style.display   = tab === 'orders'      ? ''     : 'none';
   if (tab === 'connections') loadConnections();
+  else if (tab === 'inventory') loadInventory();
   else if (tab === 'orders' && !allOrders.length) loadOrders();
 }
 
@@ -1044,6 +1110,89 @@ function showConnToast(type, msg) {
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4500);
 }
 
+// ── INVENTORY TAB ─────────────────────────────────────────────────────────────
+
+let allInventory = [];
+let _invLoaded = false;
+
+async function loadInventory() {
+  if (_invLoaded) { filterInventory(); return; }
+  document.getElementById('inv-table-body').innerHTML = '<div style="padding:20px;color:#94a3b8;font-size:12px">Loading&#8230;</div>';
+  try {
+    const headers = { Authorization: 'Bearer ' + token };
+    const [statsR, velR, invR] = await Promise.all([
+      fetch(`${SERVER}/api/portal/inventory/stats`, { headers }),
+      fetch(`${SERVER}/api/portal/inventory/velocity`, { headers }),
+      fetch(`${SERVER}/api/portal/inventory`, { headers }),
+    ]);
+    if (statsR.status === 401 || invR.status === 401) { doLogout(); return; }
+    const stats    = statsR.ok ? await statsR.json() : null;
+    const velocity = velR.ok   ? await velR.json()   : [];
+    allInventory   = invR.ok   ? await invR.json()   : [];
+    _invLoaded = true;
+    renderInventoryStats(stats);
+    renderInventoryVelocity(velocity);
+    filterInventory();
+  } catch (e) {
+    document.getElementById('inv-table-body').innerHTML = '<div style="padding:20px;color:#dc2626;font-size:12px">Failed to load inventory. Please try again.</div>';
+  }
+}
+
+function renderInventoryStats(stats) {
+  if (!stats) return;
+  document.getElementById('inv-total-skus').textContent     = stats.totalSKUs ?? '—';
+  document.getElementById('inv-total-skus-sub').textContent = stats.outOfStock > 0 ? stats.outOfStock + ' out of stock' : 'All in stock';
+  document.getElementById('inv-low-stock').textContent      = stats.lowStock  ?? '—';
+  document.getElementById('inv-low-stock-sub').textContent  = stats.lowStock > 0 ? 'items below reorder point' : 'All levels OK';
+  document.getElementById('inv-stock-value').textContent    = 'S$' + (stats.totalValue || 0).toFixed(2);
+  document.getElementById('inv-stock-value-sub').textContent= stats.totalSKUs > 0 ? 'Avg S$' + ((stats.totalValue || 0) / stats.totalSKUs).toFixed(2) + ' / SKU' : '';
+}
+
+function renderInventoryVelocity(items) {
+  const el = document.getElementById('inv-velocity-list');
+  if (!items || !items.length) {
+    el.innerHTML = '<div style="color:#94a3b8;font-size:12px;padding:6px 0">No outbound movements recorded yet.</div>';
+    return;
+  }
+  const top5 = items.slice(0, 5);
+  el.innerHTML = '<table class="sku-table"><thead><tr><th>#</th><th>SKU / Product</th><th>Category</th><th style="text-align:right">Units Out</th></tr></thead><tbody>' +
+    top5.map((item, i) => `<tr>
+      <td><span class="sku-rank ${i < 3 ? 'top' : ''}">${i + 1}</span></td>
+      <td><strong>${esc(item.sku)}</strong><br><span style="color:#94a3b8;font-size:11px">${esc(item.name || '')}</span></td>
+      <td style="color:#64748b;font-size:12px">${esc(item.category || '')}</td>
+      <td style="text-align:right;font-weight:700">${item.total_out}</td>
+    </tr>`).join('') +
+    '</tbody></table>';
+}
+
+function filterInventory() {
+  const q       = (document.getElementById('inv-search').value || '').toLowerCase();
+  const lowOnly = document.getElementById('inv-lowstock-filter').checked;
+  let rows = allInventory.slice();
+  if (q)       rows = rows.filter(r => r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
+  if (lowOnly) rows = rows.filter(r => r.stock_qty <= r.reorder_point);
+  document.getElementById('inv-count').textContent = rows.length + ' item' + (rows.length !== 1 ? 's' : '');
+  renderInventoryTable(rows);
+}
+
+function renderInventoryTable(rows) {
+  const el = document.getElementById('inv-table-body');
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128230;</div><p>No items found.</p></div>';
+    return;
+  }
+  el.innerHTML = rows.map(r => {
+    const qtyClass = r.stock_qty === 0 ? 'out' : r.stock_qty <= r.reorder_point ? 'low' : 'ok';
+    return `<div class="inv-row">
+      <div class="inv-sku">${esc(r.sku)}</div>
+      <div class="inv-name" title="${esc(r.name)}">${esc(r.name)}</div>
+      <div class="inv-cat">${esc(r.category || '')}</div>
+      <div class="inv-loc" title="${esc(r.location || '')}">${esc(r.location || '')}</div>
+      <div class="inv-qty ${qtyClass}">${r.stock_qty}</div>
+    </div>`;
+  }).join('');
+}
+
 // ── PORTAL LANGUAGE TOGGLE ────────────────────────────────────────────────────
 const PORTAL_I18N = {
   en: {
@@ -1052,6 +1201,7 @@ const PORTAL_I18N = {
     loginBtn: 'Log In →',
     loginHelp: 'Credentials are issued by your IdealOne OMS account manager.',
     tabOrders: 'Orders',
+    tabInventory: 'Inventory',
     tabConnections: 'My Connections',
     stTotal: 'Total Orders',
     stDelivered: 'Delivered',
@@ -1072,6 +1222,7 @@ const PORTAL_I18N = {
     loginBtn: '登录 →',
     loginHelp: '凭据由您的 IdealOne OMS 客户经理发放。',
     tabOrders: '订单',
+    tabInventory: '库存',
     tabConnections: '我的连接',
     stTotal: '总订单数',
     stDelivered: '已签收',
@@ -1108,6 +1259,7 @@ function portalApplyLang(l) {
   document.querySelectorAll('.ptab').forEach(el => {
     const tab = el.getAttribute('data-tab');
     if (tab === 'orders') el.textContent = t.tabOrders;
+    if (tab === 'inventory') el.textContent = t.tabInventory || 'Inventory';
     if (tab === 'connections') el.textContent = t.tabConnections;
   });
 
