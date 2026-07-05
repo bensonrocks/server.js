@@ -1317,13 +1317,39 @@ app.get('/api/orders/lookup', withTenant, (req, res) => {
   res.json(order);
 });
 
-app.patch('/api/orders/:id/status', withTenant, (req, res) => {
+app.patch('/api/orders/:id/status', withTenant, async (req, res) => {
   const { status } = req.body || {};
-  const VALID = ['pending','confirmed','processing','packed','shipped','delivered','cancelled'];
+  const VALID = ['pending','confirmed','processing','packed','shipped','delivered','cancelled','returned'];
   if (!VALID.includes(status)) return res.status(400).json({ error: 'Invalid status' });
-  const order = req.store.updateStatusAndSource(req.params.id, status, { manuallySetAt: new Date().toISOString() });
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-  res.json(order);
+  // Cancel and return go through fulfillment so inventory is adjusted
+  try {
+    if (status === 'cancelled') {
+      const result = await req.ctx.fulfillment.cancelOrder(req.params.id);
+      return res.json(result.order);
+    }
+    if (status === 'returned') {
+      const result = await req.ctx.fulfillment.returnOrder(req.params.id);
+      return res.json(result.order);
+    }
+    const order = req.store.updateStatusAndSource(req.params.id, status, { manuallySetAt: new Date().toISOString() });
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(order);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Explicit cancel / return endpoints (also callable from UI buttons)
+app.post('/api/orders/:id/cancel', withTenant, async (req, res) => {
+  try {
+    const result = await req.ctx.fulfillment.cancelOrder(req.params.id);
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/orders/:id/return', withTenant, async (req, res) => {
+  try {
+    const result = await req.ctx.fulfillment.returnOrder(req.params.id);
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 app.get('/api/orders/:id/waybill', withTenant, async (req, res) => {
