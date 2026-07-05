@@ -132,6 +132,14 @@ a:hover{text-decoration:underline}
 .scan-confirm-btn:active{background:#16a34a}
 .scan-cam-btn{background:#334155;color:#94a3b8;border:none;border-radius:10px;padding:13px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
 .scan-cam-btn.active{background:#0284c7;color:#fff}
+.scan-mode-row{display:none;gap:6px;padding:6px 16px;background:#1e293b;flex-shrink:0}
+.scan-mode-row.visible{display:flex}
+.scan-mode-btn{flex:1;padding:8px;font-size:12px;font-weight:700;border:1.5px solid #334155;border-radius:8px;background:#0f172a;color:#64748b;cursor:pointer}
+.scan-mode-btn.active{border-color:#0284c7;background:#0c4a6e;color:#38bdf8}
+.scan-ocr-btn{background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:13px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
+.scan-ocr-btn:active{background:#6d28d9}
+.scan-ocr-btn:disabled{background:#334155;color:#64748b;cursor:default}
+.scan-reticle.ocr-mode::after{width:80%;height:60px;border-color:#a78bfa;border-radius:6px}
 .scan-done-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:32px}
 .scan-done-card.hidden{display:none}
 .scan-done-ico{font-size:72px}
@@ -3411,7 +3419,7 @@ $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();})
 // ── SCAN PICKING ──────────────────────────────────────────────────────────────
 
 // ps.confirmed[oIdx][iIdx] = number of scans done for that item line
-const ps={orders:[],oIdx:0,confirmed:[],camActive:false,camStream:null,camTimer:null,detector:null};
+const ps={orders:[],oIdx:0,confirmed:[],camActive:false,camStream:null,camTimer:null,detector:null,ocrMode:false};
 
 function startScanning(){
   const sel=orders.filter(o=>ffSelected.has(o.id));
@@ -3634,6 +3642,7 @@ async function toggleCamera(){
     await vid.play();
     ps.detector=new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','upc_a']});
     wrap.classList.remove('hidden');
+    $('scan-mode-row').classList.add('visible');
     btn.classList.add('active');
     btn.textContent='Stop Camera';
     ps.camActive=true;
@@ -3662,8 +3671,70 @@ function stopCamera(){
   if(ps.camStream){ps.camStream.getTracks().forEach(t=>t.stop());ps.camStream=null;}
   const wrap=$('scan-camera-wrap');
   if(wrap)wrap.classList.add('hidden');
+  $('scan-mode-row').classList.remove('visible');
+  setOcrMode(false);
   const btn=$('scan-cam-btn');
   if(btn){btn.classList.remove('active');btn.textContent='📷 Camera';}
+}
+
+// ── OCR MODE ──────────────────────────────────────────────────────────────────
+
+let _ocrWorker=null, _ocrLoading=false;
+
+function setOcrMode(on){
+  ps.ocrMode=!!on;
+  $('scan-mode-barcode').classList.toggle('active',!on);
+  $('scan-mode-ocr').classList.toggle('active',on);
+  $('scan-ocr-btn').style.display=on?'':'none';
+  $('scan-cam-btn').style.display=on?'none':'';
+  const reticle=$('scan-reticle');
+  if(reticle)reticle.classList.toggle('ocr-mode',on);
+  // In barcode mode resume tick; in OCR mode stop auto-tick
+  if(!on&&ps.camActive){clearTimeout(ps.camTimer);cameraTick();}
+  if(on){clearTimeout(ps.camTimer);}
+}
+
+async function ocrCapture(){
+  const vid=$('scan-ov-video');
+  if(!vid||!vid.videoWidth)return;
+  const btn=$('scan-ocr-btn');
+  btn.disabled=true;
+  btn.textContent='⏳ Reading…';
+  try{
+    // Lazy-load Tesseract.js
+    if(!window.Tesseract){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+        s.onload=res; s.onerror=()=>rej(new Error('Failed to load OCR engine'));
+        document.head.appendChild(s);
+      });
+    }
+    if(!_ocrWorker){
+      btn.textContent='⏳ Loading OCR…';
+      _ocrWorker=await Tesseract.createWorker('eng',1,{
+        workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+        corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
+        logger:()=>{}
+      });
+      await _ocrWorker.setParameters({tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/'});
+    }
+    // Capture frame
+    const canvas=document.createElement('canvas');
+    canvas.width=vid.videoWidth; canvas.height=vid.videoHeight;
+    canvas.getContext('2d').drawImage(vid,0,0);
+    const {data:{text}}=await _ocrWorker.recognize(canvas);
+    // Extract best SKU-like token (longest alphanumeric+dash/underscore run)
+    const tokens=text.trim().split(/\s+/).filter(t=>/^[A-Z0-9\-_\/]{3,}$/.test(t));
+    const best=tokens.sort((a,b)=>b.length-a.length)[0]||text.replace(/[^A-Z0-9\-_\/]/g,' ').trim();
+    $('scan-input').value=best;
+    $('scan-input').focus();
+  }catch(e){
+    alert('OCR error: '+e.message);
+  }finally{
+    btn.disabled=false;
+    btn.textContent='📸 Read Text';
+  }
 }
 
 // ── Auth-aware fetch helper ───────────────────────────────────────────────────
@@ -4426,7 +4497,11 @@ if(document.readyState==='loading'){
   </div>
   <div id="scan-camera-wrap" class="scan-camera-wrap hidden">
     <video id="scan-ov-video" autoplay playsinline muted></video>
-    <div class="scan-reticle"></div>
+    <div id="scan-reticle" class="scan-reticle"></div>
+  </div>
+  <div id="scan-mode-row" class="scan-mode-row">
+    <button id="scan-mode-barcode" class="scan-mode-btn active" onclick="setOcrMode(false)">🔲 Barcode</button>
+    <button id="scan-mode-ocr" class="scan-mode-btn" onclick="setOcrMode(true)">🔤 OCR Text</button>
   </div>
   <div id="scan-main" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative">
     <div class="scan-item-card">
@@ -4442,6 +4517,7 @@ if(document.readyState==='loading'){
       <input id="scan-input" type="text" class="scan-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Scan barcode or type SKU + Enter…" onkeydown="onScanKey(event)">
       <div class="scan-btn-row">
         <button class="scan-confirm-btn" onclick="confirmCurrentItem()">✓ Confirm Pick</button>
+        <button id="scan-ocr-btn" class="scan-ocr-btn" style="display:none" onclick="ocrCapture()">📸 Read Text</button>
         <button id="scan-cam-btn" class="scan-cam-btn" onclick="toggleCamera()">📷 Camera</button>
       </div>
     </div>
