@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IdealOMS — User Guide</title>
+<title>IdealOne OMS — User Guide</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;line-height:1.65}
@@ -109,7 +109,7 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
   <div class="tut-logo">
     <div class="tut-logo-icon">📦</div>
     <div>
-      <div class="tut-logo-name">IdealOMS</div>
+      <div class="tut-logo-name">IdealOne OMS</div>
       <div class="tut-logo-sub">User Guide / 用户手册</div>
     </div>
   </div>
@@ -142,12 +142,12 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
 
     <!-- HERO -->
     <div class="tut-hero">
-      <h1 class="en-content">IdealOMS Complete User Guide</h1>
-      <h1 class="zh-content">IdealOMS 完整用户手册</h1>
+      <h1 class="en-content">IdealOne OMS Complete User Guide</h1>
+      <h1 class="zh-content">IdealOne OMS 完整用户手册</h1>
       <p class="en-content">Everything you need to manage orders, fulfillment, inventory, and client reports across Shopee, Lazada, TikTok Shop, and Shopify — all in one place.</p>
       <p class="zh-content">一站式管理 Shopee、Lazada、TikTok Shop 和 Shopify 的订单、发货、库存及客户报表。</p>
       <div class="badges">
-        <span class="badge">IdealOMS v2</span>
+        <span class="badge">IdealOne OMS v2</span>
         <span class="badge">Admin + Client</span>
         <span class="badge en-content">Multi-tenant</span><span class="badge zh-content">多租户</span>
       </div>
@@ -160,8 +160,8 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
       <h2 class="zh-content">简介</h2>
 
       <div class="en-content">
-        <p>IdealOMS is a multi-tenant Order Management System designed for e-commerce operators. It syncs orders from multiple sales platforms, tracks fulfillment status, manages inventory, and provides clients with a branded order portal.</p>
-        <h3>Who uses IdealOMS?</h3>
+        <p>IdealOne OMS is a multi-tenant Order Management System designed for e-commerce operators. It syncs orders from multiple sales platforms, tracks fulfillment status, manages inventory, and provides clients with a branded order portal.</p>
+        <h3>Who uses IdealOne OMS?</h3>
         <ul>
           <li><strong>Administrators</strong> — Warehouse and operations staff who manage connections, sync orders, fulfill shipments, and adjust inventory.</li>
           <li><strong>Clients</strong> — Merchants whose orders are being fulfilled. They log into the Client Portal to track their order status and download reports.</li>
@@ -170,7 +170,7 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
         <p>Each client account (tenant) has its own isolated database. The administrator OMS is accessed at <code>/</code> and the client portal at <code>/portal</code>.</p>
       </div>
       <div class="zh-content">
-        <p>IdealOMS 是一个多租户订单管理系统，专为电商运营商设计。它可以从多个销售平台同步订单、跟踪发货状态、管理库存，并为客户提供品牌化订单门户。</p>
+        <p>IdealOne OMS 是一个多租户订单管理系统，专为电商运营商设计。它可以从多个销售平台同步订单、跟踪发货状态、管理库存，并为客户提供品牌化订单门户。</p>
         <h3>用户角色</h3>
         <ul>
           <li><strong>管理员</strong> — 仓库和运营人员，负责管理连接、同步订单、履行发货及调整库存。</li>
@@ -276,7 +276,7 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
       <h2 class="zh-content">渠道连接</h2>
 
       <div class="en-content">
-        <p>IdealOMS connects to four e-commerce platforms: <strong>Shopee</strong>, <strong>Lazada</strong>, <strong>TikTok Shop</strong>, and <strong>Shopify</strong>. Navigate to <strong>Connections</strong> in the sidebar to manage these.</p>
+        <p>IdealOne OMS connects to four e-commerce platforms: <strong>Shopee</strong>, <strong>Lazada</strong>, <strong>TikTok Shop</strong>, and <strong>Shopify</strong>. Navigate to <strong>Connections</strong> in the sidebar to manage these.</p>
         <h3>Connecting a Platform</h3>
         <ol class="step-list">
           <li><span>Click on the platform tile (e.g., Shopee).</span></li>
@@ -287,7 +287,7 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
         <h3>Platform Credentials</h3>
       </div>
       <div class="zh-content">
-        <p>IdealOMS 连接四个电商平台：<strong>Shopee</strong>、<strong>Lazada</strong>、<strong>TikTok Shop</strong> 和 <strong>Shopify</strong>。在侧边栏导航至<strong>渠道连接</strong>进行管理。</p>
+        <p>IdealOne OMS 连接四个电商平台：<strong>Shopee</strong>、<strong>Lazada</strong>、<strong>TikTok Shop</strong> 和 <strong>Shopify</strong>。在侧边栏导航至<strong>渠道连接</strong>进行管理。</p>
         <h3>连接平台</h3>
         <ol class="step-list">
           <li><span>点击平台磁贴（如 Shopee）。</span></li>
@@ -308,8 +308,8 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
         <div class="callout-icon">ℹ️</div>
         <div class="callout-body">
           <strong class="en-content">Auto-Sync:</strong><strong class="zh-content">自动同步：</strong>
-          <span class="en-content"> IdealOMS auto-syncs all connected platforms every 15 minutes. You can also trigger manual syncs via the <strong>Sync All</strong> button in the header.</span>
-          <span class="zh-content"> IdealOMS 每 15 分钟自动同步所有已连接平台。也可通过标题栏的<strong>全部同步</strong>按钮触发手动同步。</span>
+          <span class="en-content"> IdealOne OMS auto-syncs all connected platforms every 15 minutes. You can also trigger manual syncs via the <strong>Sync All</strong> button in the header.</span>
+          <span class="zh-content"> IdealOne OMS 每 15 分钟自动同步所有已连接平台。也可通过标题栏的<strong>全部同步</strong>按钮触发手动同步。</span>
         </div>
       </div>
     </div>
@@ -627,7 +627,7 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
           <li><strong>Delete</strong> — Permanently remove a user</li>
         </ul>
         <h3>API Keys</h3>
-        <p>API keys allow programmatic access to the IdealOMS API. Useful for integrations with third-party tools.</p>
+        <p>API keys allow programmatic access to the IdealOne OMS API. Useful for integrations with third-party tools.</p>
         <ul>
           <li>Click <strong>Generate Key</strong> to create a new API key for a client.</li>
           <li>Copy the key immediately — it will not be shown again in full.</li>
@@ -651,7 +651,7 @@ body.zh .en-only{display:none}body.zh .zh-only{display:inline}
           <li><strong>删除</strong> — 永久删除用户</li>
         </ul>
         <h3>API 密钥</h3>
-        <p>API 密钥允许以编程方式访问 IdealOMS API，适用于与第三方工具的集成。</p>
+        <p>API 密钥允许以编程方式访问 IdealOne OMS API，适用于与第三方工具的集成。</p>
         <ul>
           <li>点击<strong>生成密钥</strong>为客户创建新 API 密钥。</li>
           <li>立即复制密钥——之后将不再完整显示。</li>
