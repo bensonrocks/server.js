@@ -1,0 +1,1 @@
+{"version":3,"file":"shopify.mapper.d.ts","sourceRoot":"","sources":["../../../src/integrations/shopify/shopify.mapper.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,QAAQ,EAA0D,MAAM,0CAA0C,CAAC;AAyBjI,wBAAgB,eAAe,CAC7B,KAAK,EAAE,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,EAC9B,SAAS,EAAE,MAAM,EACjB,iBAAiB,CAAC,EAAE,CAAC,SAAS,EAAE,MAAM,GAAG,MAAM,KAAK,MAAM,GAAG,SAAS,GACrE,QAAQ,CAgDV"}
