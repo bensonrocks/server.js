@@ -3629,7 +3629,7 @@ async function toggleCamera(){
   }
   try{
     ps.camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-    const vid=$('scan-video');
+    const vid=$('scan-ov-video');
     vid.srcObject=ps.camStream;
     await vid.play();
     ps.detector=new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','upc_a']});
@@ -3645,7 +3645,7 @@ async function toggleCamera(){
 
 async function cameraTick(){
   if(!ps.camActive)return;
-  const vid=$('scan-video');
+  const vid=$('scan-ov-video');
   try{
     const codes=await ps.detector.detect(vid);
     if(codes.length){
@@ -4425,7 +4425,7 @@ if(document.readyState==='loading'){
     <div style="width:36px"></div>
   </div>
   <div id="scan-camera-wrap" class="scan-camera-wrap hidden">
-    <video id="scan-video" autoplay playsinline muted></video>
+    <video id="scan-ov-video" autoplay playsinline muted></video>
     <div class="scan-reticle"></div>
   </div>
   <div id="scan-main" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative">
