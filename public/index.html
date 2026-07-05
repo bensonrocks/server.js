@@ -290,6 +290,33 @@ a:hover{text-decoration:underline}
 .server-banner.warn{background:#fef9c3;border:1px solid #fde047;color:#854d0e}
 .server-banner.hidden{display:none}
 
+/* ── MARKETPLACE GATEWAY MASTER ── */
+.gw-master{background:var(--card,#fff);border:1.5px solid var(--border,#e2e8f0);border-radius:16px;overflow:hidden;margin-bottom:24px}
+.gw-master-hdr{padding:16px 20px 14px;border-bottom:1px solid var(--border,#e2e8f0);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.gw-master-title{font-size:15px;font-weight:700;color:var(--fg,#0f172a)}
+.gw-master-sub{font-size:12px;color:#64748b;margin-top:2px}
+.gw-section-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;padding:10px 20px 6px;background:var(--bg,#f8fafc);border-top:1px solid var(--border,#f1f5f9)}
+.gw-row{display:flex;align-items:center;gap:14px;padding:13px 20px;border-top:1px solid var(--border,#f1f5f9);cursor:pointer;transition:background .14s}
+.gw-row:hover{background:#f8faff}
+.gw-row.gw-stub{cursor:default;opacity:.6}
+.gw-row.gw-stub:hover{background:transparent}
+.gw-logo{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0}
+.gw-info{flex:1;min-width:0}
+.gw-name{font-size:13px;font-weight:700;color:var(--fg,#0f172a);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.gw-desc{font-size:11px;color:#64748b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gw-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;letter-spacing:.04em;white-space:nowrap}
+.gw-badge.paid{background:#fde68a;color:#92400e}
+.gw-badge.pending{background:#e0f2fe;color:#075985}
+.gw-badge.coming{background:#f1f5f9;color:#475569}
+.gw-status{font-size:11px;font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:5px;min-width:110px}
+.gw-status .dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1;flex-shrink:0}
+.gw-status.on .dot{background:#22c55e}
+.gw-status.off .dot{background:#cbd5e1}
+.gw-status.pend .dot{background:#93c5fd}
+.gw-btn{font-size:11px;font-weight:700;padding:5px 12px;border-radius:8px;border:1.5px solid #dbeafe;background:#eff6ff;color:#2563eb;cursor:pointer;white-space:nowrap;transition:all .14s;flex-shrink:0}
+.gw-btn:hover{background:#dbeafe;border-color:#93c5fd}
+@media(max-width:640px){.gw-status{display:none}.gw-desc{display:none}}
+
 /* ── PLATFORM TILES ── */
 .plat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 .plat-tile{background:#fff;border-radius:16px;padding:22px 14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07);cursor:pointer;transition:all .18s;display:flex;flex-direction:column;align-items:center;gap:9px;border:2px solid transparent;text-align:center;user-select:none}
@@ -919,6 +946,84 @@ a:hover{text-decoration:underline}
           <span id="admin-toggle" onclick="toggleAdminPanel()" style="font-size:10px;color:#e2e8f0;cursor:pointer;user-select:none">&#9679;&#9679;&#9679;</span>
         </div>
 
+        <!-- ── MARKETPLACE GATEWAY MASTER ─────────────────────────── -->
+        <div class="gw-master">
+          <div class="gw-master-hdr">
+            <div>
+              <div class="gw-master-title">&#9889; Marketplace Gateway</div>
+              <div class="gw-master-sub">All registered adapters — configure credentials per client, then run sync.</div>
+            </div>
+          </div>
+
+          <!-- Active paid connectors -->
+          <div class="gw-section-lbl">Active Connectors</div>
+
+          <div class="gw-row" onclick="openConnModal('zetpy')">
+            <div class="gw-logo logo-zetpy">ZTP</div>
+            <div class="gw-info">
+              <div class="gw-name">Zetpy <span class="gw-badge paid">PAID</span></div>
+              <div class="gw-desc">SEA multi-channel — Shopee, Lazada, TikTok Shop, Shopify, Zalora &amp; more</div>
+            </div>
+            <div class="gw-status off" id="gw-zetpy-st"><span class="dot"></span>Not configured</div>
+            <button class="gw-btn" onclick="event.stopPropagation();openConnModal('zetpy')">Configure &rsaquo;</button>
+          </div>
+
+          <div class="gw-row" onclick="openConnModal('zort')">
+            <div class="gw-logo logo-zort">ZORT</div>
+            <div class="gw-info">
+              <div class="gw-name">ZORT <span class="gw-badge paid">PAID</span></div>
+              <div class="gw-desc">SEA multi-channel OMS — Shopee, Lazada, TikTok Shop, Shopify</div>
+            </div>
+            <div class="gw-status off" id="gw-zort-st"><span class="dot"></span>Not configured</div>
+            <button class="gw-btn" onclick="event.stopPropagation();openConnModal('zort')">Configure &rsaquo;</button>
+          </div>
+
+          <!-- Direct API stubs — pending platform partner approval -->
+          <div class="gw-section-lbl">Direct API — Pending Platform Approval</div>
+
+          <div class="gw-row gw-stub">
+            <div class="gw-logo logo-shopee">&#129380;</div>
+            <div class="gw-info">
+              <div class="gw-name">Shopee Direct <span class="gw-badge pending">PENDING</span></div>
+              <div class="gw-desc">Apply at open.shopee.com &mdash; HMAC-SHA256 auth, all SEA regions</div>
+            </div>
+            <div class="gw-status pend"><span class="dot"></span>Awaiting approval</div>
+            <span style="font-size:11px;color:#94a3b8;white-space:nowrap">Coming Soon</span>
+          </div>
+
+          <div class="gw-row gw-stub">
+            <div class="gw-logo logo-lazada">&#128722;</div>
+            <div class="gw-info">
+              <div class="gw-name">Lazada Direct <span class="gw-badge pending">PENDING</span></div>
+              <div class="gw-desc">Apply at open.lazada.com &mdash; HMAC-SHA256 signed params</div>
+            </div>
+            <div class="gw-status pend"><span class="dot"></span>Awaiting approval</div>
+            <span style="font-size:11px;color:#94a3b8;white-space:nowrap">Coming Soon</span>
+          </div>
+
+          <div class="gw-row gw-stub">
+            <div class="gw-logo logo-tiktok">TT</div>
+            <div class="gw-info">
+              <div class="gw-name">TikTok Shop Direct <span class="gw-badge pending">PENDING</span></div>
+              <div class="gw-desc">Apply at partner.tiktokshop.com &mdash; HMAC-SHA256 signed requests</div>
+            </div>
+            <div class="gw-status pend"><span class="dot"></span>Awaiting approval</div>
+            <span style="font-size:11px;color:#94a3b8;white-space:nowrap">Coming Soon</span>
+          </div>
+
+          <div class="gw-row gw-stub">
+            <div class="gw-logo logo-shopify">&#127978;</div>
+            <div class="gw-info">
+              <div class="gw-name">Shopify Direct <span class="gw-badge coming">DIRECT</span></div>
+              <div class="gw-desc">Apply at partners.shopify.com &mdash; Public App OAuth already built</div>
+            </div>
+            <div class="gw-status pend"><span class="dot"></span>Wiring in progress</div>
+            <span style="font-size:11px;color:#94a3b8;white-space:nowrap">Coming Soon</span>
+          </div>
+        </div>
+        <!-- ── END GATEWAY MASTER ──────────────────────────────────── -->
+
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;margin-bottom:10px">Per-Client Platform Credentials</div>
         <div class="plat-grid">
           <!-- Lazada -->
           <div class="plat-tile" data-platform="lazada" onclick="openConnModal('lazada')">
@@ -2302,6 +2407,13 @@ function updateTileStatus(platform,connected,lastSync,lastSyncCount){
     stEl.innerHTML=`<span class="dot-sm" style="background:${dotCol}"></span>&ensp;${connected?'Connected':'Not Connected'}`;
   }
   if(lastSync){const el=$(`tile-${platform}-sync`);if(el)el.textContent=`Synced ${fmtT(lastSync)}`;}
+  // Gateway master row status
+  const gwSt=$(`gw-${platform}-st`);
+  if(gwSt){
+    gwSt.className=`gw-status ${connected?'on':'off'}`;
+    gwSt.innerHTML=`<span class="dot"></span>${connected?'Connected':'Not configured'}`;
+    if(lastSync)gwSt.innerHTML+=`<span style="font-size:10px;color:#94a3b8;margin-left:4px">${fmtT(lastSync)}</span>`;
+  }
   // update modal if open for same platform
   if(currentConnPlatform===platform){
     $('cm-status').className='conn-status '+(connected?'status-on':'status-off');
