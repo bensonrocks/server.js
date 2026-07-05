@@ -1318,6 +1318,14 @@ a:hover{text-decoration:underline}
       <button class="ic-btn" onclick="closePMModal()">&#10005;</button>
     </div>
     <div class="modal-b" style="gap:12px;padding:16px 18px">
+      <!-- Interim location input (Wave + Batch only) -->
+      <div style="background:#fefce8;border:1.5px solid #fde047;border-radius:10px;padding:12px 14px">
+        <div style="font-size:11px;font-weight:700;color:#854d0e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#128204; Interim / Staging Location <span style="font-weight:400;color:#a16207">(Wave &amp; Batch)</span></div>
+        <input id="pm-interim-loc" type="text" placeholder="e.g. Cart 3 · Bay A · Tote 7 · Staging Zone 2"
+          style="width:100%;padding:8px 10px;border:1px solid #fcd34d;border-radius:7px;font-size:13px;background:#fff;outline:none;font-family:inherit"
+          onkeydown="if(event.key==='Enter'){event.preventDefault()}">
+        <div style="font-size:11px;color:#a16207;margin-top:5px">Where the picker will drop items before packing station collects them</div>
+      </div>
       <div class="pm-card" onclick="printPicklistByClient()">
         <div class="pm-icon">&#128101;</div>
         <div>
@@ -1329,14 +1337,14 @@ a:hover{text-decoration:underline}
         <div class="pm-icon">&#127754;</div>
         <div>
           <div class="pm-title">Wave Pick &mdash; by SKU</div>
-          <div class="pm-desc">Prints two pages: <strong>Part 1</strong> — pick the full qty of each SKU at once (sorted by location). <strong>Part 2</strong> — sort &amp; pack guide listing exactly what goes in each order box.</div>
+          <div class="pm-desc">Part 1: pick full qty per SKU (sorted by location), drop at staging. Part 2: sort &amp; pack guide — packing station collects from staging and packs each order.</div>
         </div>
       </div>
       <div class="pm-card" onclick="printPicklistBatch()">
         <div class="pm-icon">&#128205;</div>
         <div>
           <div class="pm-title">Batch Pick &mdash; by Location</div>
-          <div class="pm-desc">Items grouped by warehouse zone and shelf. Picker/packer walks an optimized path &mdash; picks each shelf in one pass, drops items directly into labeled order totes.</div>
+          <div class="pm-desc">Walk zone by zone, pick each shelf in one pass, drop all items at staging. Packing station collects and packs per order.</div>
         </div>
       </div>
     </div>
@@ -2986,10 +2994,17 @@ ${body}
 
 // ── MODE 2: Wave Pick (by SKU, sorted by location) ────────────────────────────
 function printPicklistWave(){
+  const interimLoc=($('pm-interim-loc').value||'').trim();
   closePMModal();
   const selOrders=_enrichOrders(orders.filter(o=>ffSelected.has(o.id)));
   if(!selOrders.length)return;
   const now=new Date().toLocaleString('en-GB');
+  const stagingBanner=interimLoc
+    ? `<div style="background:#fef08a;border:2px solid #ca8a04;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:28px">&#128204;</span>
+        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Bring all items to interim location</div>
+        <div style="font-size:22px;font-weight:800;color:#1e293b;margin-top:2px">${interimLoc}</div></div>
+       </div>` : '';
   const bySkuMap=new Map();
   for(const o of selOrders){
     for(const item of o.items||[]){
@@ -3015,9 +3030,15 @@ function printPicklistWave(){
     </tr>`;
   }).join('');
 
+  const collectBanner=interimLoc
+    ? `<div style="background:#fef08a;border:2px solid #ca8a04;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:28px">&#128204;</span>
+        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Collect items from interim location</div>
+        <div style="font-size:22px;font-weight:800;color:#1e293b;margin-top:2px">${interimLoc}</div></div>
+       </div>` : '';
+
   _openPrint(`<!DOCTYPE html><html><head><title>Pick List – Wave</title><style>${_PRINT_CSS}
 .page-break{page-break-before:always;margin-top:24px}
-.sort-hdr{background:#0f172a;color:#fff;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:4px;border-radius:4px 4px 0 0}
 </style></head><body>
 
 <h1>&#127754; WAVE PICK LIST &mdash; PART 1: PICK</h1>
@@ -3039,10 +3060,12 @@ ${rows.map(r=>`<tr>
   <td style="font-size:11px;line-height:1.8">${r.orders.map(o=>`<span class="badge">${o.orderId}</span>&times;${o.qty}`).join(' ')}</td>
 </tr>`).join('')}
 </tbody></table>
+${stagingBanner}
 
 <div class="page-break">
 <h1>&#128230; WAVE PICK LIST &mdash; PART 2: SORT &amp; PACK</h1>
 <div class="meta">Same wave &mdash; ${selOrders.length} boxes to pack &mdash; confirm each item before sealing</div>
+${collectBanner}
 <table><thead><tr>
   <th class="chk">&#10003;</th>
   <th>Order</th>
@@ -3061,10 +3084,17 @@ ${sortRows}
 
 // ── MODE 3: Batch Pick (by Location / Zone) ───────────────────────────────────
 function printPicklistBatch(){
+  const interimLoc=($('pm-interim-loc').value||'').trim();
   closePMModal();
   const selOrders=_enrichOrders(orders.filter(o=>ffSelected.has(o.id)));
   if(!selOrders.length)return;
   const now=new Date().toLocaleString('en-GB');
+  const stagingBanner=interimLoc
+    ? `<div style="background:#fef08a;border:2px solid #ca8a04;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:28px">&#128204;</span>
+        <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#854d0e">Drop all items at interim location</div>
+        <div style="font-size:22px;font-weight:800;color:#1e293b;margin-top:2px">${interimLoc}</div></div>
+       </div>` : '';
   // aggregate by location → sku
   const byLoc=new Map(); // loc → Map(sku → {sku,name,totalQty,orders[]})
   for(const o of selOrders){
@@ -3117,6 +3147,7 @@ function printPicklistBatch(){
 <h1>&#128205; BATCH PICK LIST &mdash; BY LOCATION</h1>
 <div class="meta">Generated: ${now} &nbsp;|&nbsp; Orders: ${selOrders.length} &nbsp;|&nbsp; Zones: ${byZone.size} &nbsp;|&nbsp; Locations: ${sortedLocs.length} &nbsp;|&nbsp; Total items: ${totalItems}</div>
 ${body}
+${stagingBanner}
 <div class="footer">IdealOne OMS &mdash; Batch Pick List (By Location) &mdash; ${now}</div>
 <div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 20px;background:#1e293b;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">&#128438; Print</button></div>
 </body></html>`);
