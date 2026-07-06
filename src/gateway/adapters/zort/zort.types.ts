@@ -1,27 +1,32 @@
 // ⚠️  INTERNAL — must never be imported outside src/gateway/adapters/zort/
 //     OMS modules must use StandardOrder, StandardInventory, StandardShipment only.
+//     Field names verified against ZORT Api v4.0 Postman collection (2026-01-01).
 
 export interface ZortOrderItem {
   sku:            string;
   name:           string;
-  number:         number;   // quantity (ZORT uses "number" for qty)
+  number:         number;   // qty — ZORT uses "number" for quantity
   pricepernumber: number;   // unit price
-  discount:       number;
+  discount:       number | string;
   totalprice:     number;
 }
 
 export interface ZortOrder {
-  number:           string;   // order reference / human-readable ID
-  orderdate:        string;   // "YYYY-MM-DD" or ISO
-  status:           string;   // see ZORT_STATUS_MAP in mapper
-  currency?:        string;   // TODO: confirm field name in live response
-  amount:           number;   // order total (including shipping + VAT)
+  number:           string;   // order reference / human-readable ID  (e.g. "SO-0005")
+  id?:              number;   // internal integer ID used by UpdateOrderStatus / ReadyToShip
+  orderdate:        string;   // "YYYY-MM-DD"
+  status:           string;   // string status name — see ZORT_STATUS in mapper
+  currency?:        string;
+  amount:           number;   // order total (shipping + VAT included)
+  paymentamount?:   number;
   shippingamount:   number;
   vatamount:        number;
-  customername?:    string;   // TODO: confirm field name
-  customerphone?:   string;   // TODO: confirm field name
-  customeraddress?: string;   // single-string address (confirmed from ZORT docs)
-  note?:            string;   // TODO: confirm field name
+  paymentmethod?:   string;
+  customername?:    string;   // confirmed: present in EditPurchaseOrderInfo body
+  customerphone?:   string;   // confirmed: present in EditPurchaseOrderInfo body
+  customeraddress?: string;   // single-string address
+  description?:     string;   // order-level note (EditPurchaseOrderInfo uses "description")
+  note?:            string;   // alternate note field on sales orders
   list:             ZortOrderItem[];
 }
 
@@ -29,17 +34,34 @@ export interface ZortOrderListResponse {
   total?:  number;
   page?:   number;
   limit?:  number;
-  list?:   ZortOrder[];   // TODO: confirm envelope wrapper field name
+  list?:   ZortOrder[];
 }
 
-export interface ZortUpdateStatusBody {
-  ordernumber:       string;   // TODO: confirm (may be "number")
-  status:            string;
-  trackingnumber?:   string;   // TODO: confirm
-  shippingprovider?: string;   // TODO: confirm
+// UpdateOrderStatus — POST /Order/UpdateOrderStatus?id=&status=&actionDate=
+// All fields are query params (no request body).
+export interface ZortUpdateStatusParams {
+  id?:           string;   // internal ZORT order ID (preferred)
+  number?:       string;   // order number, if id not available
+  status:        string;   // numeric: 1=waiting,2=packing,3=shipping,4=success,5=voided
+  actionDate?:   string;   // "YYYY-MM-DD"
+  warehousecode?: string;
 }
 
-export interface ZortUpdateStatusResponse {
-  result?: string;
-  error?:  string;
+// ReadyToShip — POST /Order/ReadyToShip?id=&shipment=&trackingno=&warehousecode=
+// Used to mark an order as ready-to-ship with an optional tracking number.
+export interface ZortReadyToShipParams {
+  id?:           string;
+  number?:       string;
+  shipment:      string;   // shipping channel name, e.g. "flashexpress", "pickup", "jtexpress"
+  trackingno?:   string;
+  warehousecode?: string;
+  address?:      string;   // required for Shopee Pickup shipment
+}
+
+export interface ZortActionResponse {
+  status?:  boolean;
+  code?:    number;
+  message?: string;
+  result?:  string;
+  error?:   string;
 }

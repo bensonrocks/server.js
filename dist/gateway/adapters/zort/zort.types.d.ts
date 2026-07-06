@@ -3,20 +3,24 @@ export interface ZortOrderItem {
     name: string;
     number: number;
     pricepernumber: number;
-    discount: number;
+    discount: number | string;
     totalprice: number;
 }
 export interface ZortOrder {
     number: string;
+    id?: number;
     orderdate: string;
     status: string;
     currency?: string;
     amount: number;
+    paymentamount?: number;
     shippingamount: number;
     vatamount: number;
+    paymentmethod?: string;
     customername?: string;
     customerphone?: string;
     customeraddress?: string;
+    description?: string;
     note?: string;
     list: ZortOrderItem[];
 }
@@ -26,13 +30,25 @@ export interface ZortOrderListResponse {
     limit?: number;
     list?: ZortOrder[];
 }
-export interface ZortUpdateStatusBody {
-    ordernumber: string;
+export interface ZortUpdateStatusParams {
+    id?: string;
+    number?: string;
     status: string;
-    trackingnumber?: string;
-    shippingprovider?: string;
+    actionDate?: string;
+    warehousecode?: string;
 }
-export interface ZortUpdateStatusResponse {
+export interface ZortReadyToShipParams {
+    id?: string;
+    number?: string;
+    shipment: string;
+    trackingno?: string;
+    warehousecode?: string;
+    address?: string;
+}
+export interface ZortActionResponse {
+    status?: boolean;
+    code?: number;
+    message?: string;
     result?: string;
     error?: string;
 }

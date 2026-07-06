@@ -6,6 +6,7 @@ export interface AdapterCredentials {
     storename?: string;
     apikey?: string;
     apisecret?: string;
+    baseUrl?: string;
     licenseKey?: string;
     email?: string;
     password?: string;
@@ -22,6 +23,7 @@ export interface AdapterCredentials {
 }
 export interface FetchOrdersOptions {
     since?: string;
+    until?: string;
     status?: string;
     pageSize?: number;
     page?: number;

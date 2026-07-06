@@ -6,9 +6,9 @@ const zort_mapper_1 = require("./zort.mapper");
 const audit_log_service_1 = require("../../audit/audit-log.service");
 // ─────────────────────────────────────────────────────────────────────────────
 //  ZortAdapter — wraps ZORT API V4
-//  Docs: https://developers.zortout.com (login required)
-//  Base: https://open-api.zortout.com/v4
-//  Auth: headers storename / apikey / apisecret
+//  Base: {{url}} in Postman — defaults to https://open.zortout.com
+//        Override per-tenant via creds.baseUrl if needed.
+//  Auth: headers storename / apikey / apisecret on every request
 // ─────────────────────────────────────────────────────────────────────────────
 function assertCreds(creds) {
     const storename = String(creds.storename ?? creds.storeName ?? '');
@@ -17,7 +17,12 @@ function assertCreds(creds) {
     if (!storename || !apikey || !apisecret) {
         throw Object.assign(new Error('ZORT requires storename, apikey and apisecret.'), { status: 401 });
     }
-    return { storename, apikey, apisecret };
+    return {
+        storename,
+        apikey,
+        apisecret,
+        baseUrl: creds.baseUrl ? String(creds.baseUrl) : undefined,
+    };
 }
 class ZortAdapter {
     channel = 'zort';
@@ -31,10 +36,12 @@ class ZortAdapter {
             limit: String(opts.pageSize ?? 50),
         };
         if (opts.since)
-            params.createdafter = opts.since; // TODO: confirm param name
+            params.createdafter = opts.since; // confirmed: Postman GetOrders
+        if (opts.until)
+            params.createdbefore = opts.until;
         if (opts.status)
             params.status = opts.status;
-        // ① Fetch raw — ZORT types stay inside this method
+        // ① Fetch raw — ZORT types stay inside this adapter
         const raw = await zort_client_1.zortClient.get(zortCreds, '/Order/GetOrders', params);
         // ② Persist raw payload before any transformation (audit requirement)
         const auditRef = audit_log_service_1.auditLogService.save({
@@ -45,28 +52,54 @@ class ZortAdapter {
             tenantId: clientId,
         });
         // ③ Map to Standard Models — ZortOrder never crosses this boundary
-        const orders = raw.list ?? []; // TODO: confirm envelope field name
+        const orders = raw.list ?? [];
         return orders.map(o => (0, zort_mapper_1.mapZortOrder)(o, this.channel, clientId, clientName, auditRef));
     }
     async pushShipment(creds, shipment) {
         const zortCreds = assertCreds(creds);
         const clientId = String(creds.storeName ?? creds.storename ?? 'zort');
-        const body = {
-            ordernumber: shipment.externalOrderId, // TODO: confirm field name
-            status: 'Shipping', // TODO: confirm ZORT status string
-            trackingnumber: shipment.trackingNumber, // TODO: confirm field name
-            shippingprovider: shipment.carrier ?? '', // TODO: confirm field name
-        };
-        // Audit the outbound push too
-        audit_log_service_1.auditLogService.save({
-            channel: 'zort',
-            operation: 'pushShipment',
-            externalId: shipment.externalOrderId,
-            rawPayload: body,
-            tenantId: clientId,
-        });
-        const result = await zort_client_1.zortClient.post(zortCreds, '/Order/UpdateOrderStatus', body);
-        return { ok: !result.error, message: result.result ?? result.error };
+        // Use ReadyToShip when a tracking number is provided; otherwise UpdateOrderStatus.
+        // Both use query params only — no JSON body.
+        const today = new Date().toISOString().slice(0, 10);
+        let result;
+        if (shipment.trackingNumber) {
+            // POST /Order/ReadyToShip?id=&shipment=&trackingno=
+            const params = {
+                shipment: shipment.carrier ?? 'other',
+                trackingno: shipment.trackingNumber,
+                actionDate: today,
+            };
+            if (shipment.externalOrderId)
+                params.number = shipment.externalOrderId;
+            audit_log_service_1.auditLogService.save({
+                channel: 'zort',
+                operation: 'pushShipment:ReadyToShip',
+                externalId: shipment.externalOrderId,
+                rawPayload: params,
+                tenantId: clientId,
+            });
+            result = await zort_client_1.zortClient.postParams(zortCreds, '/Order/ReadyToShip', params);
+        }
+        else {
+            // POST /Order/UpdateOrderStatus?id=&status=3&actionDate=
+            // status 3 = shipping (confirmed: numeric codes used in Postman collection)
+            const params = {
+                status: '3',
+                actionDate: today,
+            };
+            if (shipment.externalOrderId)
+                params.number = shipment.externalOrderId;
+            audit_log_service_1.auditLogService.save({
+                channel: 'zort',
+                operation: 'pushShipment:UpdateOrderStatus',
+                externalId: shipment.externalOrderId,
+                rawPayload: params,
+                tenantId: clientId,
+            });
+            result = await zort_client_1.zortClient.postParams(zortCreds, '/Order/UpdateOrderStatus', params);
+        }
+        const ok = result.status === true || (!result.error && result.code !== 0);
+        return { ok, message: result.message ?? result.result ?? result.error ?? '' };
     }
 }
 exports.ZortAdapter = ZortAdapter;

@@ -13,6 +13,7 @@ export interface AdapterCredentials {
   storename?:    string;   // ZORT store name (header)
   apikey?:       string;   // ZORT API key  (header)
   apisecret?:    string;   // ZORT API secret (header)
+  baseUrl?:      string;   // ZORT custom base URL override (default: https://open.zortout.com)
 
   // Generic paid-connector key (API2Cart, …)
   licenseKey?:   string;
@@ -40,6 +41,7 @@ export interface AdapterCredentials {
 
 export interface FetchOrdersOptions {
   since?:    string;   // ISO 8601 — fetch orders created after this datetime
+  until?:    string;   // ISO 8601 — fetch orders created before this datetime
   status?:   string;   // platform-native status string to filter by
   pageSize?: number;
   page?:     number;

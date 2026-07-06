@@ -5,17 +5,16 @@ import type { StandardOrder }                  from '../../models/standard-order
 import type { StandardShipment,
               StandardFulfillmentResult }      from '../../models/standard-shipment';
 import type { ZortOrderListResponse,
-              ZortUpdateStatusBody,
-              ZortUpdateStatusResponse }       from './zort.types';
+              ZortActionResponse }             from './zort.types';
 import { zortClient }                          from './zort.client';
 import { mapZortOrder }                        from './zort.mapper';
 import { auditLogService }                     from '../../audit/audit-log.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ZortAdapter — wraps ZORT API V4
-//  Docs: https://developers.zortout.com (login required)
-//  Base: https://open-api.zortout.com/v4
-//  Auth: headers storename / apikey / apisecret
+//  Base: {{url}} in Postman — defaults to https://open.zortout.com
+//        Override per-tenant via creds.baseUrl if needed.
+//  Auth: headers storename / apikey / apisecret on every request
 // ─────────────────────────────────────────────────────────────────────────────
 
 function assertCreds(creds: AdapterCredentials) {
@@ -28,7 +27,12 @@ function assertCreds(creds: AdapterCredentials) {
       { status: 401 },
     );
   }
-  return { storename, apikey, apisecret };
+  return {
+    storename,
+    apikey,
+    apisecret,
+    baseUrl: creds.baseUrl ? String(creds.baseUrl) : undefined,
+  };
 }
 
 export class ZortAdapter implements IMarketplaceAdapter {
@@ -47,10 +51,11 @@ export class ZortAdapter implements IMarketplaceAdapter {
       page:  String(opts.page     ?? 1),
       limit: String(opts.pageSize ?? 50),
     };
-    if (opts.since)  params.createdafter = opts.since;    // TODO: confirm param name
-    if (opts.status) params.status       = opts.status;
+    if (opts.since)  params.createdafter = opts.since;   // confirmed: Postman GetOrders
+    if (opts.until)  params.createdbefore = opts.until;
+    if (opts.status) params.status        = opts.status;
 
-    // ① Fetch raw — ZORT types stay inside this method
+    // ① Fetch raw — ZORT types stay inside this adapter
     const raw = await zortClient.get<ZortOrderListResponse>(
       zortCreds, '/Order/GetOrders', params,
     );
@@ -65,7 +70,7 @@ export class ZortAdapter implements IMarketplaceAdapter {
     });
 
     // ③ Map to Standard Models — ZortOrder never crosses this boundary
-    const orders = raw.list ?? [];  // TODO: confirm envelope field name
+    const orders = raw.list ?? [];
     return orders.map(o =>
       mapZortOrder(o, this.channel, clientId, clientName, auditRef),
     );
@@ -78,27 +83,56 @@ export class ZortAdapter implements IMarketplaceAdapter {
     const zortCreds = assertCreds(creds);
     const clientId  = String(creds.storeName ?? creds.storename ?? 'zort');
 
-    const body: ZortUpdateStatusBody = {
-      ordernumber:       shipment.externalOrderId,  // TODO: confirm field name
-      status:            'Shipping',                 // TODO: confirm ZORT status string
-      trackingnumber:    shipment.trackingNumber,    // TODO: confirm field name
-      shippingprovider:  shipment.carrier ?? '',     // TODO: confirm field name
-    };
+    // Use ReadyToShip when a tracking number is provided; otherwise UpdateOrderStatus.
+    // Both use query params only — no JSON body.
+    const today = new Date().toISOString().slice(0, 10);
 
-    // Audit the outbound push too
-    auditLogService.save({
-      channel:    'zort',
-      operation:  'pushShipment',
-      externalId: shipment.externalOrderId,
-      rawPayload: body,
-      tenantId:   clientId,
-    });
+    let result: ZortActionResponse;
 
-    const result = await zortClient.post<ZortUpdateStatusResponse>(
-      zortCreds, '/Order/UpdateOrderStatus', body,
-    );
+    if (shipment.trackingNumber) {
+      // POST /Order/ReadyToShip?id=&shipment=&trackingno=
+      const params: Record<string, string> = {
+        shipment:   shipment.carrier ?? 'other',
+        trackingno: shipment.trackingNumber,
+        actionDate: today,
+      };
+      if (shipment.externalOrderId) params.number = shipment.externalOrderId;
 
-    return { ok: !result.error, message: result.result ?? result.error };
+      auditLogService.save({
+        channel:    'zort',
+        operation:  'pushShipment:ReadyToShip',
+        externalId: shipment.externalOrderId,
+        rawPayload: params,
+        tenantId:   clientId,
+      });
+
+      result = await zortClient.postParams<ZortActionResponse>(
+        zortCreds, '/Order/ReadyToShip', params,
+      );
+    } else {
+      // POST /Order/UpdateOrderStatus?id=&status=3&actionDate=
+      // status 3 = shipping (confirmed: numeric codes used in Postman collection)
+      const params: Record<string, string> = {
+        status:     '3',
+        actionDate: today,
+      };
+      if (shipment.externalOrderId) params.number = shipment.externalOrderId;
+
+      auditLogService.save({
+        channel:    'zort',
+        operation:  'pushShipment:UpdateOrderStatus',
+        externalId: shipment.externalOrderId,
+        rawPayload: params,
+        tenantId:   clientId,
+      });
+
+      result = await zortClient.postParams<ZortActionResponse>(
+        zortCreds, '/Order/UpdateOrderStatus', params,
+      );
+    }
+
+    const ok = result.status === true || (!result.error && result.code !== 0);
+    return { ok, message: result.message ?? result.result ?? result.error ?? '' };
   }
 }
 

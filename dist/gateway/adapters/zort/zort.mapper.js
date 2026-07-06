@@ -1,9 +1,10 @@
 "use strict";
 // ⚠️  INTERNAL — must never be imported outside src/gateway/adapters/zort/
 // Maps raw ZORT API objects → IDEALone Standard Models.
-// No ZORT types escape this file's return values.
+// Field names verified against ZORT Api v4.0 Postman collection (2026-01-01).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.mapZortOrder = mapZortOrder;
+// Status strings returned in GET /Order/GetOrders list response
 const ZORT_STATUS = {
     'pending': 'pending',
     'waiting': 'confirmed',
@@ -12,7 +13,7 @@ const ZORT_STATUS = {
     'success': 'delivered',
     'returned': 'returned',
     'voided': 'cancelled',
-    'failed shipment': 'pending', // needs re-processing
+    'failed shipment': 'pending',
     'partial transfer': 'processing',
 };
 function toStatus(raw) {
@@ -28,15 +29,14 @@ function toItems(list) {
         total: Number(i.totalprice) || 0,
     }));
 }
-// ZORT returns a single address string — parse best-effort.
-// TODO: verify whether ZORT has a structured address endpoint for order detail.
+// ZORT returns customeraddress as a single string — no structured components available.
 function toAddress(raw, name, phone) {
     return {
         recipient: name,
         phone,
         addressLine1: raw ?? '',
         addressLine2: '',
-        city: '', // not available in ZORT single-string address
+        city: '',
         state: '',
         zip: '',
         country: '',
@@ -66,12 +66,12 @@ function mapZortOrder(raw, channel, clientId, clientName, auditRef) {
         subtotal: Math.max(0, total - shippingAmt - vatAmt),
         shippingCost: shippingAmt,
         tax: vatAmt,
-        discount: 0, // TODO: confirm if ZORT returns order-level discount
+        discount: 0,
         total,
         items,
         customer,
         shipping: toAddress(raw.customeraddress ?? '', customer.name ?? '', customer.phone ?? ''),
-        notes: String(raw.note ?? ''),
+        notes: String(raw.note ?? raw.description ?? ''),
         tags: [],
         source: {
             connector: channel,
