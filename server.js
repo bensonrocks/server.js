@@ -34,6 +34,7 @@ const { createClientAuth } = require('./lib/client-auth');
 const staffAuth = require('./lib/staff-auth');
 const createInventory   = require('./lib/inventory');
 const createFulfillment = require('./lib/fulfillment');
+const createPicking     = require('./lib/picking');
 const shopifyApp        = require('./lib/shopify-app');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
@@ -73,9 +74,10 @@ function getCtx(tenantId) {
     const store      = createStore(db);
     const creds      = createCreds(tenantId);
     const syncLog    = createSyncLog(db);
-    const inventory  = createInventory(db);
+    const inventory   = createInventory(db);
     const fulfillment = createFulfillment({ store, creds, inventory });
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment });
+    const picking     = createPicking({ db, store });
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking });
   }
   return tenantCtx.get(tenantId);
 }
@@ -1363,6 +1365,95 @@ app.get('/api/orders/:id/waybill', withTenant, async (req, res) => {
     }
     if (result.url) return res.json({ url: result.url, platform: result.platform });
     res.status(502).json({ error: 'Platform returned no waybill document' });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// ── Picking ───────────────────────────────────────────────────────────────────
+//
+// Session types:
+//   scan  – exactly 1 order; item-by-item barcode scan; only 1 active scan session at a time
+//   batch – multiple orders; manual confirm per item
+//   wave  – same as batch, semantically grouped by route/zone
+//
+// Lifecycle: create → pick items → complete → orders advance processing → packed
+
+// List sessions
+app.get('/api/picking/sessions', withTenant, (req, res) => {
+  try {
+    const { status, type, limit } = req.query;
+    res.json(req.ctx.picking.listSessions({ status, type, limit: limit ? Number(limit) : 50 }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Active scan session (at most one)
+app.get('/api/picking/sessions/scan/active', withTenant, (req, res) => {
+  try {
+    const s = req.ctx.picking.getActiveScanSession();
+    if (!s) return res.status(404).json({ error: 'No active scan session' });
+    res.json(s);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Get session by id
+app.get('/api/picking/sessions/:id', withTenant, (req, res) => {
+  try {
+    const s = req.ctx.picking.getSession(req.params.id);
+    if (!s) return res.status(404).json({ error: 'Pick session not found' });
+    res.json(s);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Create session
+// Body: { type: 'scan'|'batch'|'wave', orderIds: string[], notes?: string }
+app.post('/api/picking/sessions', withTenant, (req, res) => {
+  try {
+    const { type, orderIds, notes } = req.body || {};
+    const createdBy = req.session?.username || '';
+    const session = req.ctx.picking.createSession(type, orderIds, { notes, createdBy });
+    res.status(201).json(session);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Scan a code (scan-type sessions only)
+// Body: { code: string }   — order ID confirms order loaded; SKU/barcode picks item
+app.post('/api/picking/sessions/:id/scan', withTenant, (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'code is required' });
+    res.json(req.ctx.picking.scan(req.params.id, code));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Update picked qty for one item (batch/wave manual confirm)
+// Body: { qtyPicked: number }
+app.patch('/api/picking/sessions/:id/items/:itemId', withTenant, (req, res) => {
+  try {
+    const { qtyPicked } = req.body || {};
+    if (qtyPicked === undefined) return res.status(400).json({ error: 'qtyPicked is required' });
+    res.json(req.ctx.picking.pickItem(req.params.id, Number(req.params.itemId), Number(qtyPicked)));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Mark ALL remaining items as picked
+app.post('/api/picking/sessions/:id/pick-all', withTenant, (req, res) => {
+  try {
+    res.json(req.ctx.picking.pickAll(req.params.id));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Complete session → advances all orders to 'packed'
+// Body: { force?: boolean }
+app.post('/api/picking/sessions/:id/complete', withTenant, (req, res) => {
+  try {
+    const { force = false } = req.body || {};
+    res.json(req.ctx.picking.completeSession(req.params.id, { force }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Cancel session
+app.post('/api/picking/sessions/:id/cancel', withTenant, (req, res) => {
+  try {
+    res.json(req.ctx.picking.cancelSession(req.params.id));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
