@@ -500,6 +500,34 @@ app.post('/api/orders/bulk-import', (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Dashboard KPI stats ───────────────────────────────────────────────────────
+app.get('/api/dashboard/stats', withTenant, (req, res) => {
+  const db = req.db;
+  const { clientId } = req.query;
+  const cf = clientId ? `AND client_id = '${clientId.replace(/'/g,"''")}'` : '';
+
+  const g = (sql, ...p) => (db.prepare(sql).get(...p) || {}).n || 0;
+
+  const toProcess      = g(`SELECT COUNT(*) AS n FROM orders WHERE status IN ('pending','confirmed') ${cf}`);
+  const toProcessPrev  = g(`SELECT COUNT(*) AS n FROM orders WHERE status IN ('pending','confirmed') ${cf} AND date(created_at) < date('now')`);
+  const unprocessed    = g(`SELECT COUNT(*) AS n FROM orders WHERE status NOT IN ('shipped','delivered','cancelled','returned') ${cf}`);
+  const unprocessedPrev= g(`SELECT COUNT(*) AS n FROM orders WHERE status NOT IN ('shipped','delivered','cancelled','returned') ${cf} AND date(created_at) < date('now')`);
+  const outOfStock     = g(`SELECT COUNT(*) AS n FROM inventory WHERE (stock_qty - reserved_qty) <= 0 ${clientId ? `AND client_id = '${clientId.replace(/'/g,"''")}'` : ''}`);
+  const failedSync     = g(`SELECT COUNT(*) AS n FROM sync_log WHERE error IS NOT NULL AND error != '' AND created_at >= datetime('now','-30 days')`);
+  const orderMonth     = g(`SELECT COUNT(*) AS n FROM orders WHERE date(order_date) >= date('now','start of month') ${cf}`);
+  const orderLastMonth = g(`SELECT COUNT(*) AS n FROM orders WHERE date(order_date) >= date('now','start of month','-1 month') AND date(order_date) < date('now','start of month') ${cf}`);
+  const salesMonth     = (db.prepare(`SELECT COALESCE(SUM(total),0) AS n FROM orders WHERE date(order_date) >= date('now','start of month') AND status NOT IN ('cancelled','returned') ${cf}`).get() || {}).n || 0;
+  const salesLastMonth = (db.prepare(`SELECT COALESCE(SUM(total),0) AS n FROM orders WHERE date(order_date) >= date('now','start of month','-1 month') AND date(order_date) < date('now','start of month') AND status NOT IN ('cancelled','returned') ${cf}`).get() || {}).n || 0;
+
+  const salesByDay = db.prepare(
+    `SELECT date(order_date) as day, COUNT(*) as count, COALESCE(SUM(total),0) as sales
+     FROM orders WHERE date(order_date) >= date('now','-29 days') AND status NOT IN ('cancelled','returned') ${cf}
+     GROUP BY date(order_date) ORDER BY day ASC`
+  ).all();
+
+  res.json({ toProcess, toProcessPrev, unprocessed, unprocessedPrev, outOfStock, failedSync, orderMonth, orderLastMonth, salesMonth, salesLastMonth, salesByDay });
+});
+
 app.get('/api/stats', (req, res) => {
   const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
   const session = auth.validateToken(token);
@@ -1618,6 +1646,31 @@ app.delete('/api/client/connections/:platform', withClientAuth, (req, res) => {
     'DELETE FROM client_platform_connections WHERE tenant_id = ? AND client_id = ? AND platform = ?'
   ).run(req.tenantId, req.clientId, req.params.platform);
   res.json({ ok: true });
+});
+
+// ── Client portal dashboard stats ────────────────────────────────────────────
+app.get('/api/portal/dashboard/stats', withClientAuth, (req, res) => {
+  const db = req.db;
+  const cid = req.clientId.replace(/'/g,"''");
+  const cf = `AND client_id = '${cid}'`;
+
+  const g = (sql, ...p) => (db.prepare(sql).get(...p) || {}).n || 0;
+
+  const toProcess      = g(`SELECT COUNT(*) AS n FROM orders WHERE status IN ('pending','confirmed') ${cf}`);
+  const toProcessPrev  = g(`SELECT COUNT(*) AS n FROM orders WHERE status IN ('pending','confirmed') ${cf} AND date(created_at) < date('now')`);
+  const unprocessed    = g(`SELECT COUNT(*) AS n FROM orders WHERE status NOT IN ('shipped','delivered','cancelled','returned') ${cf}`);
+  const outOfStock     = g(`SELECT COUNT(*) AS n FROM inventory WHERE (stock_qty - reserved_qty) <= 0 AND client_id = '${cid}'`);
+  const orderMonth     = g(`SELECT COUNT(*) AS n FROM orders WHERE date(order_date) >= date('now','start of month') ${cf}`);
+  const orderLastMonth = g(`SELECT COUNT(*) AS n FROM orders WHERE date(order_date) >= date('now','start of month','-1 month') AND date(order_date) < date('now','start of month') ${cf}`);
+  const salesMonth     = (db.prepare(`SELECT COALESCE(SUM(total),0) AS n FROM orders WHERE date(order_date) >= date('now','start of month') AND status NOT IN ('cancelled','returned') ${cf}`).get() || {}).n || 0;
+  const salesLastMonth = (db.prepare(`SELECT COALESCE(SUM(total),0) AS n FROM orders WHERE date(order_date) >= date('now','start of month','-1 month') AND date(order_date) < date('now','start of month') AND status NOT IN ('cancelled','returned') ${cf}`).get() || {}).n || 0;
+  const salesByDay = db.prepare(
+    `SELECT date(order_date) as day, COUNT(*) as count, COALESCE(SUM(total),0) as sales
+     FROM orders WHERE date(order_date) >= date('now','-29 days') AND status NOT IN ('cancelled','returned') ${cf}
+     GROUP BY date(order_date) ORDER BY day ASC`
+  ).all();
+
+  res.json({ toProcess, toProcessPrev, unprocessed, outOfStock, orderMonth, orderLastMonth, salesMonth, salesLastMonth, salesByDay });
 });
 
 // ── Client portal inventory routes ────────────────────────────────────────────

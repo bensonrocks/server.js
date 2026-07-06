@@ -50,6 +50,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .stat-val{font-size:22px;font-weight:800;color:#0f172a;line-height:1.2}
 .stat-sub{font-size:11px;color:#94a3b8;margin-top:2px}
 @media(max-width:600px){.stats-row{grid-template-columns:repeat(2,1fr)}}
+/* ── KPI CARDS ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.kpi-card{background:#fff;border:1px solid #e8edf3;border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.kpi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.kpi-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.kpi-icon-green{background:#dcfce7;color:#16a34a}.kpi-icon-yellow{background:#fef9c3;color:#ca8a04}
+.kpi-icon-red{background:#fee2e2;color:#dc2626}.kpi-icon-blue{background:#dbeafe;color:#2563eb}
+.kpi-lbl{font-size:11px;color:#64748b;font-weight:500}
+.kpi-val{font-size:28px;font-weight:800;color:#0f172a;line-height:1;margin-bottom:10px}
+.kpi-footer{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.kpi-pct{font-size:11px;font-weight:700;padding:2px 6px;border-radius:20px;white-space:nowrap}
+.kpi-up{background:#dcfce7;color:#16a34a}.kpi-dn{background:#fee2e2;color:#dc2626}.kpi-flat{background:#f1f5f9;color:#64748b}
+.kpi-period{font-size:11px;color:#94a3b8}
+/* sale card */
+.sale-card{background:#fff;border:1px solid #e8edf3;border-radius:14px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.sale-hdr{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.sale-title{font-size:13px;font-weight:700;color:#0f172a}
+.sale-sub{font-size:11px;color:#94a3b8;margin-top:3px}
+.sale-chart{position:relative;height:140px}
+.sale-empty{text-align:center;padding:36px 0;color:#94a3b8;font-size:12px}
+@media(max-width:600px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
 
 /* ── TOOLBAR ── */
 .toolbar{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);padding:10px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -305,28 +326,69 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <button class="ptab" data-tab="connections" onclick="setPortalTab('connections')">My Connections</button>
   </nav>
   <div id="section-orders" class="dash-body">
-    <!-- Stats -->
-    <div class="stats-row">
-      <div class="stat">
-        <div class="stat-lbl">Total Orders</div>
-        <div class="stat-val" id="st-total">—</div>
-        <div class="stat-sub" id="st-total-sub"></div>
+    <!-- KPI cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-lbl">To-Process Orders</span>
+          <div class="kpi-icon kpi-icon-green">&#128221;</div>
+        </div>
+        <div class="kpi-val" id="kpi-toprocess">—</div>
+        <div class="kpi-footer">
+          <span class="kpi-pct kpi-flat" id="kpi-toprocess-pct">—</span>
+          <span class="kpi-period">from yesterday</span>
+        </div>
       </div>
-      <div class="stat">
-        <div class="stat-lbl">Delivered</div>
-        <div class="stat-val" id="st-delivered" style="color:#16a34a">—</div>
-        <div class="stat-sub" id="st-delivered-sub"></div>
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-lbl">Total Unprocessed</span>
+          <div class="kpi-icon kpi-icon-yellow">&#128336;</div>
+        </div>
+        <div class="kpi-val" id="kpi-unprocessed">—</div>
+        <div class="kpi-footer">
+          <span class="kpi-period">orders in pipeline</span>
+        </div>
       </div>
-      <div class="stat">
-        <div class="stat-lbl">In Progress</div>
-        <div class="stat-val" id="st-inprog" style="color:#2563eb">—</div>
-        <div class="stat-sub" id="st-inprog-sub"></div>
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-lbl">Out Of Stock Items</span>
+          <div class="kpi-icon kpi-icon-red">&#9888;&#65039;</div>
+        </div>
+        <div class="kpi-val" id="kpi-oos">—</div>
+        <div class="kpi-footer">
+          <span class="kpi-period">your SKUs at 0 available</span>
+        </div>
       </div>
-      <div class="stat">
-        <div class="stat-lbl">Revenue (SGD)</div>
-        <div class="stat-val" id="st-revenue">—</div>
-        <div class="stat-sub" id="st-revenue-sub"></div>
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-lbl">Orders This Month</span>
+          <div class="kpi-icon kpi-icon-blue">&#128202;</div>
+        </div>
+        <div class="kpi-val" id="kpi-ordermonth">—</div>
+        <div class="kpi-footer">
+          <span class="kpi-pct kpi-flat" id="kpi-month-pct">—</span>
+          <span class="kpi-period">vs last month</span>
+        </div>
       </div>
+    </div>
+    <!-- Sale overview -->
+    <div class="sale-card">
+      <div class="sale-hdr">
+        <div>
+          <div class="sale-title">Total Sale Overview (SGD)</div>
+          <div class="sale-sub" id="sale-sub-text">from previous 30 days</div>
+        </div>
+      </div>
+      <div class="sale-chart" id="sale-chart-wrap">
+        <div class="sale-empty" id="sale-empty">Loading…</div>
+      </div>
+    </div>
+    <!-- Hidden legacy stat ids (used by existing render code) -->
+    <div style="display:none">
+      <span id="st-total">—</span><span id="st-total-sub"></span>
+      <span id="st-delivered">—</span><span id="st-delivered-sub"></span>
+      <span id="st-inprog">—</span><span id="st-inprog-sub"></span>
+      <span id="st-revenue">—</span><span id="st-revenue-sub"></span>
     </div>
 
     <!-- Toolbar -->
@@ -547,6 +609,7 @@ function showDash() {
   }
 
   loadOrders();
+  loadPortalDashStats();
 }
 
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
@@ -613,6 +676,96 @@ function renderStats() {
   document.getElementById('st-inprog-sub').textContent   = inprog > 0 ? `${inprog} order${inprog>1?'s':''} en route` : 'All caught up';
   document.getElementById('st-revenue').textContent      = 'S$' + revenue.toFixed(2);
   document.getElementById('st-revenue-sub').textContent  = total > 0 ? 'Avg S$' + (revenue / total).toFixed(2) + ' / order' : '';
+}
+
+// ── Portal KPI dashboard ───────────────────────────────────────────────────────
+async function loadPortalDashStats() {
+  try {
+    const r = await fetch(`${SERVER}/api/portal/dashboard/stats`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) return;
+    const d = await r.json();
+    renderPortalKPI(d);
+  } catch {}
+}
+
+function _portalPct(curr, prev) {
+  if (prev === 0) return null;
+  return Math.round((curr - prev) / prev * 100);
+}
+
+function renderPortalKPI(d) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const badge = (id, curr, prev, invertColor) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const p = _portalPct(curr, prev);
+    if (p === null) { el.textContent = 'New'; el.className = 'kpi-pct kpi-flat'; return; }
+    const up = p >= 0;
+    const cls = invertColor ? (up ? 'kpi-dn' : 'kpi-up') : (up ? 'kpi-up' : 'kpi-dn');
+    el.textContent = (up ? '+' : '') + p + '%';
+    el.className = 'kpi-pct ' + cls;
+  };
+
+  set('kpi-toprocess',   d.toProcess  ?? '—');
+  set('kpi-unprocessed', d.unprocessed ?? '—');
+  set('kpi-oos',         d.outOfStock  ?? '—');
+  set('kpi-ordermonth',  d.orderMonth  ?? '—');
+
+  badge('kpi-toprocess-pct', d.toProcess, d.toProcessPrev, true);
+  badge('kpi-month-pct',     d.orderMonth, d.orderLastMonth, false);
+
+  const sub = document.getElementById('sale-sub-text');
+  if (sub && d.salesLastMonth != null) {
+    sub.textContent = 'Last month: S$' + Number(d.salesLastMonth).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  renderPortalSaleChart(d.salesByDay || []);
+}
+
+function renderPortalSaleChart(rows) {
+  const wrap  = document.getElementById('sale-chart-wrap');
+  const empty = document.getElementById('sale-empty');
+  if (!rows || !rows.length) {
+    if (empty) { empty.style.display = ''; empty.textContent = 'No sales data in the last 30 days'; }
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const W = 800, H = 130, PAD = { t: 8, r: 8, b: 28, l: 50 };
+  const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
+  const maxS = Math.max(...rows.map(r => r.sales), 1);
+  const n = rows.length;
+  const xs = i => PAD.l + (i / Math.max(n - 1, 1)) * cW;
+  const ys = v => PAD.t + cH - (v / maxS) * cH;
+
+  const pts  = rows.map((r, i) => `${xs(i).toFixed(1)},${ys(r.sales).toFixed(1)}`).join(' ');
+  const area = `M${xs(0).toFixed(1)},${ys(0).toFixed(1)} ` +
+    rows.map((r, i) => `L${xs(i).toFixed(1)},${ys(r.sales).toFixed(1)}`).join(' ') +
+    ` L${xs(n-1).toFixed(1)},${(PAD.t+cH).toFixed(1)} L${PAD.l.toFixed(1)},${(PAD.t+cH).toFixed(1)} Z`;
+
+  const ticks = [0, 0.5, 1].map(f => {
+    const v = maxS * f, y = ys(v);
+    const lbl = v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(0);
+    return `<line x1="${PAD.l}" y1="${y.toFixed(1)}" x2="${W-PAD.r}" y2="${y.toFixed(1)}" stroke="#f1f5f9" stroke-width="1"/>
+      <text x="${(PAD.l-4).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#94a3b8">${lbl}</text>`;
+  }).join('');
+
+  const showIdx = new Set([0, Math.floor((n-1)/2), n-1]);
+  const xlabels = rows.map((r,i) => showIdx.has(i)
+    ? `<text x="${xs(i).toFixed(1)}" y="${(H-4).toFixed(1)}" text-anchor="middle" font-size="9" fill="#94a3b8">${r.day.slice(5)}</text>`
+    : '').join('');
+
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%">
+    <defs><linearGradient id="sg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2563eb" stop-opacity=".15"/>
+      <stop offset="100%" stop-color="#2563eb" stop-opacity=".01"/>
+    </linearGradient></defs>
+    ${ticks}
+    <path d="${area}" fill="url(#sg2)"/>
+    <polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${rows.map((r,i) => `<circle cx="${xs(i).toFixed(1)}" cy="${ys(r.sales).toFixed(1)}" r="2.5" fill="#2563eb" fill-opacity=".7"/>`).join('')}
+    ${xlabels}
+  </svg>`;
 }
 
 // ── FILTERS + SORT ────────────────────────────────────────────────────────────
