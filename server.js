@@ -382,7 +382,7 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
   res.json({ ok: true, data: results, live: false });
 });
 
-// ── IdealOne OMS — inbound processing API (login required) ─────────────
+// ── IdealOMS — inbound processing API (login required) ─────────────────
 app.get('/api/oms/shipments', requireAuth, async (req, res) => {
   const shipments = await oms.listShipments();
   res.json({ ok: true, shipments });
