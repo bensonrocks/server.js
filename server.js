@@ -634,7 +634,7 @@ app.get('/api/connect/:platform/callback', async (req, res) => {
 
 app.get('/api/sync/log', withTenant, (req, res) => res.json(req.syncLog.recent(100)));
 
-async function syncPlatform(platform, opts, store, creds, syncLog) {
+async function syncPlatform(platform, opts, store, creds, syncLog, db) {
   const conn = registry[platform];
   if (!conn)             throw new Error(`Unknown platform: ${platform}`);
   if (!conn.fetchOrders) throw new Error(`${conn.meta.name} does not support order sync`);
@@ -643,9 +643,62 @@ async function syncPlatform(platform, opts, store, creds, syncLog) {
     throw new Error(`${conn.meta.name} not connected — save credentials first`);
   const storeName = c.storeName || conn.meta.defaultStoreName || conn.meta.name;
   const raw       = await conn.fetchOrders(c, opts);
+
+  // Zetpy: load store→client mappings so each shop's orders route to the right client
+  let zetpyMappings = null;
+  if (platform === 'zetpy' && db) {
+    try {
+      const rows = db.prepare('SELECT * FROM zetpy_store_mappings').all();
+      zetpyMappings = new Map(rows.map(r => [`${r.app_name}|||${r.app_account_name}`, r]));
+    } catch (_) {}
+  }
+
+  // Auto-match any pending client store registrations against discovered Zetpy stores
+  if (platform === 'zetpy' && db && raw.length) {
+    try {
+      const pending = db.prepare("SELECT * FROM store_connection_requests WHERE status = 'pending'").all();
+      for (const req of pending) {
+        const storeNameL   = req.store_name.toLowerCase();
+        const marketplaceL = req.marketplace.toLowerCase();
+        for (const o of raw) {
+          const src = o.source || {};
+          const appName     = src.zetpyAppName     || '';
+          const accountName = src.zetpyAccountName || '';
+          if (!appName || !accountName) continue;
+          const accountL = accountName.toLowerCase();
+          const appL     = appName.toLowerCase();
+          if ((accountL === storeNameL || accountL.includes(storeNameL) || storeNameL.includes(accountL)) &&
+              appL.includes(marketplaceL.slice(0, 5))) {
+            db.prepare(`
+              INSERT INTO zetpy_store_mappings (app_name, app_account_name, client_id, client_name)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT(app_name, app_account_name) DO UPDATE SET
+                client_id = excluded.client_id, client_name = excluded.client_name
+            `).run(appName, accountName, req.client_id, req.client_name);
+            db.prepare(`UPDATE store_connection_requests SET status = 'approved', resolved_at = datetime('now') WHERE id = ?`).run(req.id);
+            zetpyMappings.set(`${appName}|||${accountName}`, { client_id: req.client_id, client_name: req.client_name });
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   let added = 0;
   for (const item of raw) {
-    try { store.addOrder(conn.mapOrder(item, storeName)); added++; } catch { /* skip duplicates */ }
+    try {
+      let order = conn.mapOrder(item, storeName);
+      if (zetpyMappings) {
+        const src = item.source || {};
+        const key = `${src.zetpyAppName || ''}|||${src.zetpyAccountName || ''}`;
+        const mapped = zetpyMappings.get(key);
+        if (mapped) {
+          order = { ...order, clientId: mapped.client_id, clientName: mapped.client_name || mapped.client_id };
+        }
+      }
+      store.addOrder(order);
+      added++;
+    } catch { /* skip duplicates */ }
   }
   creds.set(platform, { lastSync: new Date().toISOString(), lastSyncCount: added });
   return { platform, at: new Date().toISOString(), fetched: raw.length, added };
@@ -653,7 +706,7 @@ async function syncPlatform(platform, opts, store, creds, syncLog) {
 
 app.post('/api/sync/all', withTenant, async (req, res) => {
   const { store, creds, syncLog } = req;
-  const results = await Promise.allSettled(PLATFORMS.map(p => syncPlatform(p, {}, store, creds, syncLog)));
+  const results = await Promise.allSettled(PLATFORMS.map(p => syncPlatform(p, {}, store, creds, syncLog, req.db)));
   const out = {};
   for (const [i, r] of results.entries()) {
     const p     = PLATFORMS[i];
@@ -670,7 +723,7 @@ app.post('/api/sync/:platform', withTenant, async (req, res) => {
   const { platform } = req.params;
   if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
   try {
-    const entry = await syncPlatform(platform, req.body, req.store, req.creds, req.syncLog);
+    const entry = await syncPlatform(platform, req.body, req.store, req.creds, req.syncLog, req.db);
     req.syncLog.push(entry);
     res.json(entry);
   } catch (e) {
@@ -678,6 +731,73 @@ app.post('/api/sync/:platform', withTenant, async (req, res) => {
     req.syncLog.push(entry);
     res.status(500).json(entry);
   }
+});
+
+// ── Zetpy Store Management (staff) ───────────────────────────────────────────
+
+// Fetch a page of orders from Zetpy and extract all unique (app_name, app_account_name) pairs
+app.get('/api/zetpy/discover', withTenant, async (req, res) => {
+  const c = req.creds.get('zetpy');
+  if (!c?.email) return res.status(400).json({ error: 'Zetpy not connected — save credentials first' });
+  try {
+    const raw  = await registry['zetpy'].fetchOrders(c, { pageSize: 200 });
+    const seen = new Map();
+    for (const o of raw) {
+      const src         = o.source || {};
+      const appName     = src.zetpyAppName     || '';
+      const accountName = src.zetpyAccountName || '';
+      if (appName && accountName) {
+        const key = `${appName}|||${accountName}`;
+        if (!seen.has(key)) seen.set(key, { app_name: appName, app_account_name: accountName });
+      }
+    }
+    res.json(Array.from(seen.values()));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/zetpy/mappings', withTenant, (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM zetpy_store_mappings ORDER BY app_name, app_account_name').all());
+});
+
+app.post('/api/zetpy/mappings', withTenant, (req, res) => {
+  const { app_name, app_account_name, client_id, client_name = '' } = req.body || {};
+  if (!app_name || !app_account_name || !client_id)
+    return res.status(400).json({ error: 'app_name, app_account_name, client_id required' });
+  req.db.prepare(`
+    INSERT INTO zetpy_store_mappings (app_name, app_account_name, client_id, client_name)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(app_name, app_account_name) DO UPDATE SET
+      client_id = excluded.client_id, client_name = excluded.client_name
+  `).run(app_name, app_account_name, client_id, client_name);
+  res.json({ ok: true });
+});
+
+app.delete('/api/zetpy/mappings/:id', withTenant, (req, res) => {
+  req.db.prepare('DELETE FROM zetpy_store_mappings WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+app.get('/api/zetpy/requests', withTenant, (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM store_connection_requests ORDER BY created_at DESC').all());
+});
+
+app.patch('/api/zetpy/requests/:id', withTenant, (req, res) => {
+  const row = req.db.prepare('SELECT * FROM store_connection_requests WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Request not found' });
+  const { status, app_name, app_account_name } = req.body || {};
+  req.db.prepare(`UPDATE store_connection_requests SET status = ?, resolved_at = datetime('now') WHERE id = ?`)
+    .run(status, row.id);
+  if (status === 'approved' && app_name && app_account_name) {
+    req.db.prepare(`
+      INSERT INTO zetpy_store_mappings (app_name, app_account_name, client_id, client_name)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(app_name, app_account_name) DO UPDATE SET
+        client_id = excluded.client_id, client_name = excluded.client_name
+    `).run(app_name, app_account_name, row.client_id, row.client_name);
+  }
+  res.json({ ok: true });
 });
 
 // ── Demo sync ─────────────────────────────────────────────────────────────────
@@ -1696,6 +1816,67 @@ app.get('/api/portal/inventory/stats', withClientAuth, (req, res) => {
 
 app.get('/api/portal/inventory/velocity', withClientAuth, (req, res) => {
   res.json(req.ctx.inventory.velocity(10, req.clientId));
+});
+
+// ── Zetpy-based client connections ───────────────────────────────────────────
+
+// Client: view their connected stores (mapped in Zetpy) + their pending requests
+app.get('/api/portal/my-connections', withClientAuth, (req, res) => {
+  const mappings = req.db.prepare(
+    'SELECT * FROM zetpy_store_mappings WHERE client_id = ? ORDER BY app_name, app_account_name'
+  ).all(req.clientId);
+  const requests = req.db.prepare(
+    'SELECT * FROM store_connection_requests WHERE client_id = ? ORDER BY created_at DESC'
+  ).all(req.clientId);
+  res.json({ mappings, requests });
+});
+
+// Client: connect a store — auto-matches against Zetpy, falls back to pending
+app.post('/api/portal/connection-requests', withClientAuth, async (req, res) => {
+  const { marketplace, store_name, notes = '' } = req.body || {};
+  if (!marketplace || !store_name)
+    return res.status(400).json({ error: 'marketplace and store_name required' });
+
+  const db          = req.db;
+  const zetpyCreds  = createCreds(req.tenantId).get('zetpy');
+  const storeNameL  = store_name.toLowerCase();
+  const marketplaceL = marketplace.toLowerCase();
+
+  // Attempt immediate auto-match from Zetpy
+  let autoConnected = false;
+  if (zetpyCreds?.email) {
+    try {
+      const raw = await registry['zetpy'].fetchOrders(zetpyCreds, { pageSize: 200 });
+      for (const o of raw) {
+        const src = o.source || {};
+        const appName     = src.zetpyAppName     || '';
+        const accountName = src.zetpyAccountName || '';
+        if (!appName || !accountName) continue;
+        const accountL = accountName.toLowerCase();
+        const appL     = appName.toLowerCase();
+        if ((accountL === storeNameL || accountL.includes(storeNameL) || storeNameL.includes(accountL)) &&
+            appL.includes(marketplaceL.slice(0, 5))) {
+          db.prepare(`
+            INSERT INTO zetpy_store_mappings (app_name, app_account_name, client_id, client_name)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(app_name, app_account_name) DO UPDATE SET
+              client_id = excluded.client_id, client_name = excluded.client_name
+          `).run(appName, accountName, req.clientId, req.clientName || req.clientId);
+          autoConnected = true;
+          break;
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!autoConnected) {
+    // Store as pending — will be matched on the next Zetpy sync
+    db.prepare(
+      'INSERT INTO store_connection_requests (client_id, client_name, marketplace, store_name, notes) VALUES (?, ?, ?, ?, ?)'
+    ).run(req.clientId, req.clientName || req.clientId, marketplace, store_name, notes);
+  }
+
+  res.json({ ok: true, autoConnected });
 });
 
 // ── OAuth result pages ────────────────────────────────────────────────────────

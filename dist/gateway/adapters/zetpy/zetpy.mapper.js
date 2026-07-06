@@ -77,6 +77,8 @@ function mapZetpyOrder(raw, channel, clientId, clientName, auditRef) {
             rawId: String(raw.ref_no),
             auditRef,
             fetchedAt: new Date().toISOString(),
+            zetpyAppName:     String(raw.app_name         ?? ''),
+            zetpyAccountName: String(raw.app_account_name ?? ''),
         },
     };
 }

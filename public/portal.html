@@ -504,9 +504,35 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div id="section-connections" class="connections-section" style="display:none">
     <div class="conn-header">
       <h2>My Marketplace Connections</h2>
-      <p>Connect your stores so IdealOne OMS can automatically sync orders and track shipments.</p>
+      <p>Connect your stores and IdealOne OMS will automatically sync your orders.</p>
     </div>
-    <div class="conn-grid" id="connections-grid">
+
+    <!-- Add store form -->
+    <div id="add-store-form" style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:16px">
+      <div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:10px">+ Connect a New Store</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:0 0 160px">
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Marketplace</label>
+          <select id="conn-marketplace" style="width:100%;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px">
+            <option value="lazada">Lazada</option>
+            <option value="shopee">Shopee</option>
+            <option value="tiktok">TikTok Shop</option>
+            <option value="shopify">Shopify</option>
+            <option value="zalora">Zalora</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:180px">
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Your Store Name <span style="font-weight:400">(as shown in your marketplace seller centre)</span></label>
+          <input id="conn-store-name" type="text" placeholder="e.g. My Awesome Shop" style="width:100%;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <button onclick="submitStoreConnect()" style="padding:8px 18px;border:none;border-radius:7px;background:#7c3aed;color:#fff;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Connect Store</button>
+      </div>
+      <div id="conn-add-msg" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <!-- Connected / pending stores list -->
+    <div id="connections-grid">
       <div style="color:#94a3b8;font-size:13px;padding:12px 0">Loading&#8230;</div>
     </div>
   </div>
@@ -1203,55 +1229,104 @@ async function loadConnections() {
   const grid = document.getElementById('connections-grid');
   grid.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:12px 0">Loading&#8230;</div>';
   try {
-    const r = await fetch(`${SERVER}/api/client/connections`, { headers: { Authorization: 'Bearer ' + token } });
+    const r = await fetch(`${SERVER}/api/portal/my-connections`, { headers: { Authorization: 'Bearer ' + token } });
     if (!r.ok) { if (r.status === 401) { doLogout(); return; } grid.innerHTML = '<div style="color:#dc2626;font-size:13px">Failed to load connections.</div>'; return; }
     renderConnections(await r.json());
   } catch { grid.innerHTML = '<div style="color:#dc2626;font-size:13px">Could not reach server.</div>'; }
 }
 
-function renderConnections(platforms) {
+const MARKET_EMOJI = { lazada:'&#128179;', shopee:'&#129380;', tiktok:'&#9654;', shopify:'&#127978;', zalora:'&#128142;', other:'&#128279;' };
+const MARKET_COLOR = { lazada:'#7c3aed', shopee:'#ea580c', tiktok:'#15803d', shopify:'#2563eb', zalora:'#db2777', other:'#64748b' };
+
+function renderConnections(data) {
   const grid = document.getElementById('connections-grid');
-  grid.innerHTML = platforms.map(p => {
-    const cfg = CONN_META[p.id] || { emoji: '&#128279;', label: p.name, color: '#64748b', bg: '#f8fafc' };
-    let badge, action;
-    if (!p.available) {
-      badge  = '<span class="conn-badge soon">Coming Soon</span>';
-      action = '<button class="conn-btn" style="opacity:.45;cursor:not-allowed;background:#f1f5f9;color:#94a3b8" disabled>Not Available</button>';
-    } else if (p.connected) {
-      const since = p.connectedAt ? new Date(p.connectedAt).toLocaleDateString('en-SG',{day:'2-digit',month:'short',year:'numeric'}) : '';
-      badge  = '<span class="conn-badge ok">&#10003; Connected</span>';
-      action = `<div class="conn-since">Since ${esc(since)}</div><button class="conn-btn conn-btn-danger" onclick="disconnectPlatform('${p.id}','${esc(cfg.label)}')">Disconnect</button>`;
-    } else {
-      badge  = '<span class="conn-badge idle">Not Connected</span>';
-      action = `<button class="conn-btn conn-btn-primary" onclick="connectPlatform('${p.id}')">Connect &rarr;</button>`;
-    }
-    return `<div class="conn-tile" id="tile-${p.id}">
+  const { mappings = [], requests = [] } = data;
+  const rows = [];
+
+  for (const m of mappings) {
+    const marketplace = (m.app_name || '').toLowerCase().includes('shopee') ? 'shopee'
+      : (m.app_name || '').toLowerCase().includes('lazada') ? 'lazada'
+      : (m.app_name || '').toLowerCase().includes('tiktok') ? 'tiktok'
+      : (m.app_name || '').toLowerCase().includes('shopify') ? 'shopify'
+      : (m.app_name || '').toLowerCase().includes('zalora') ? 'zalora' : 'other';
+    const emoji = MARKET_EMOJI[marketplace] || '&#128279;';
+    const color = MARKET_COLOR[marketplace] || '#64748b';
+    rows.push(`<div class="conn-tile">
       <div class="conn-tile-top">
-        <div class="conn-tile-icon" style="background:${cfg.bg};color:${cfg.color}">${cfg.emoji}</div>
-        <div>
-          <div class="conn-tile-name">${esc(cfg.label)}</div>
-          ${badge}
+        <div class="conn-tile-icon" style="background:#f8f0ff;color:${color};font-size:20px">${emoji}</div>
+        <div style="flex:1">
+          <div class="conn-tile-name">${escP(m.app_account_name)}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px">${escP(m.app_name)}</div>
+          <span class="conn-badge ok">&#10003; Connected</span>
         </div>
       </div>
-      <div class="conn-tile-bottom">${action}</div>
-    </div>`;
-  }).join('');
+      <div class="conn-tile-bottom">
+        <button class="conn-btn conn-btn-danger" onclick="disconnectStore(${m.id},'${escP(m.app_account_name)}')">Disconnect</button>
+      </div>
+    </div>`);
+  }
+
+  const pendingReqs = requests.filter(q => q.status === 'pending');
+  for (const q of pendingReqs) {
+    const emoji = MARKET_EMOJI[q.marketplace] || '&#128279;';
+    const color = MARKET_COLOR[q.marketplace] || '#64748b';
+    rows.push(`<div class="conn-tile" style="border-color:#fde68a;background:#fffbeb">
+      <div class="conn-tile-top">
+        <div class="conn-tile-icon" style="background:#fef3c7;color:${color};font-size:20px">${emoji}</div>
+        <div style="flex:1">
+          <div class="conn-tile-name">${escP(q.store_name)}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px">${escP(q.marketplace.charAt(0).toUpperCase()+q.marketplace.slice(1))}</div>
+          <span class="conn-badge" style="background:#fde68a;color:#92400e">&#8987; Pending Detection</span>
+        </div>
+      </div>
+      <div class="conn-tile-bottom" style="font-size:11px;color:#92400e">Your store will be detected on the next sync. Make sure your store name matches exactly.</div>
+    </div>`);
+  }
+
+  if (!rows.length) {
+    grid.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:12px 0;text-align:center">No stores connected yet. Add one above.</div>';
+  } else {
+    grid.innerHTML = `<div class="conn-grid">${rows.join('')}</div>`;
+  }
 }
 
-function connectPlatform(platform) {
-  window.location.href = `${SERVER}/api/client/connections/${platform}/start?token=${encodeURIComponent(token)}`;
-}
-
-async function disconnectPlatform(platform, label) {
-  if (!confirm(`Disconnect ${label || platform}?\n\nOrder syncing will stop for this store.`)) return;
+async function submitStoreConnect() {
+  const marketplace = document.getElementById('conn-marketplace')?.value;
+  const store_name  = document.getElementById('conn-store-name')?.value.trim();
+  const msg         = document.getElementById('conn-add-msg');
+  if (!store_name) { if (msg) { msg.textContent = 'Enter your store name.'; msg.style.color = '#dc2626'; } return; }
+  if (msg) { msg.textContent = 'Connecting…'; msg.style.color = '#64748b'; }
   try {
-    const r = await fetch(`${SERVER}/api/client/connections/${platform}`, {
+    const r = await fetch(`${SERVER}/api/portal/connection-requests`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ marketplace, store_name }),
+    });
+    const j = await r.json();
+    if (!r.ok) { if (msg) { msg.textContent = j.error || 'Failed'; msg.style.color = '#dc2626'; } return; }
+    if (msg) {
+      msg.style.color = j.autoConnected ? '#16a34a' : '#b45309';
+      msg.textContent = j.autoConnected
+        ? '&#10003; Store connected! Syncing orders…'
+        : 'Store registered. It will be detected automatically on the next sync.';
+    }
+    document.getElementById('conn-store-name').value = '';
+    loadConnections();
+  } catch (e) { if (msg) { msg.textContent = e.message; msg.style.color = '#dc2626'; } }
+}
+
+async function disconnectStore(mappingId, storeName) {
+  if (!confirm(`Disconnect "${storeName}"?\n\nOrder syncing will stop for this store.`)) return;
+  try {
+    const r = await fetch(`${SERVER}/api/zetpy/mappings/${mappingId}`, {
       method: 'DELETE', headers: { Authorization: 'Bearer ' + token }
     });
-    if (r.ok) { showConnToast('ok', (label || platform) + ' disconnected.'); loadConnections(); }
+    if (r.ok) { showConnToast('ok', storeName + ' disconnected.'); loadConnections(); }
     else showConnToast('error', 'Disconnect failed. Please try again.');
   } catch { showConnToast('error', 'Could not reach server.'); }
 }
+
+function escP(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 let _toastTimer = null;
 function showConnToast(type, msg) {
