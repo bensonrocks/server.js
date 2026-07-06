@@ -60,11 +60,24 @@
   .close-x{background:none;border:none;font-size:1.1rem;color:var(--text-3);cursor:pointer}
   .meta-line{font-size:.8rem;color:var(--text-2);margin-bottom:10px}
   .meta-line strong{color:var(--text)}
-  .scan-grid{display:grid;grid-template-columns:1.4fr .8fr 1fr auto;gap:8px;margin-top:10px;align-items:end}
+  .scan-grid{display:grid;grid-template-columns:1.3fr .7fr 1fr auto auto;gap:8px;margin-top:10px;align-items:end}
   .scan-grid label{margin:0 0 4px}
   .var-pos{color:var(--ok)}
   .var-neg{color:#C0304A}
   .mono{font-family:var(--mono)}
+  .photo-btn{width:38px;height:38px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;font-size:1rem;overflow:hidden;padding:0}
+  .photo-btn.has-preview{border-color:var(--accent)}
+  .photo-btn img{width:100%;height:100%;object-fit:cover;display:block}
+  .photo-section{margin-top:16px}
+  .photo-section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .photo-grid{display:flex;flex-wrap:wrap;gap:10px}
+  .photo-card{display:flex;flex-direction:column;align-items:center;gap:4px;width:76px;text-align:center}
+  .photo-card img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer}
+  .photo-card .cap{font-size:.62rem;color:var(--text-3);line-height:1.2;word-break:break-word}
+  .photo-add-tile{width:76px;height:76px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-3);font-size:1.4rem;background:none}
+  .lightbox-bg{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;padding:24px;z-index:60}
+  .lightbox-bg.open{display:flex}
+  .lightbox-bg img{max-width:100%;max-height:100%;border-radius:6px}
   @media print{.topbar,.no-print{display:none!important}.page{padding:0;max-width:100%}.card{border:none}}
 </style>
 </head>
@@ -139,6 +152,10 @@
   </div>
 </div>
 
+<div class="lightbox-bg no-print" id="lightbox" onclick="this.classList.remove('open')">
+  <img id="lightbox-img" src="">
+</div>
+
 <script>
 const TYPE_CONFIG = {
   air:    { label: 'Air Freight',           sourceLabel: 'Supplier / Shipper',        itemsHint: 'From the air waybill manifest, if available.',
@@ -157,6 +174,7 @@ const CONDITION_LABEL = { unspecified: 'Unspecified', sellable: 'Sellable', dama
 
 let currentInboundId = null;
 let activeTypeFilter = '';
+let scanPhotoFile = null;
 
 function renderMetaFields() {
   const type = document.getElementById('f-type').value;
@@ -276,8 +294,55 @@ function metaLine(inbound) {
   return parts.length ? parts.join(' &nbsp;·&nbsp; ') : '<em>No additional details recorded</em>';
 }
 
+function photoCaption(p) {
+  if (p.caption) return p.caption;
+  if (p.itemId) return 'Item photo';
+  return 'Attachment';
+}
+
+function renderPhotoGallery(inbound) {
+  const photos = inbound.photos || [];
+  const cards = photos.map(p => `
+    <div class="photo-card">
+      <img src="/api/inbounds/${inbound.id}/photos/${p.id}" onclick="openLightbox('/api/inbounds/${inbound.id}/photos/${p.id}')">
+      <div class="cap">${photoCaption(p)}</div>
+    </div>
+  `).join('');
+  return `
+    <div class="photo-grid">
+      ${cards}
+      <div class="photo-add-tile no-print" onclick="document.getElementById('general-photo-input').click()" title="Add photo">+</div>
+    </div>
+    <input type="file" id="general-photo-input" accept="image/*" capture="environment" style="display:none" onchange="uploadGeneralPhoto(this, '${inbound.id}')">
+  `;
+}
+
+function openLightbox(url) {
+  document.getElementById('lightbox-img').src = url;
+  document.getElementById('lightbox').classList.add('open');
+}
+
+async function uploadGeneralPhoto(input, inboundId) {
+  const file = input.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('photo', file);
+  await fetch(`/api/inbounds/${inboundId}/photos`, { method: 'POST', body: formData });
+  openInbound(inboundId);
+}
+
+function onScanPhotoChosen(input) {
+  const file = input.files[0];
+  if (!file) return;
+  scanPhotoFile = file;
+  const btn = document.getElementById('scan-photo-btn');
+  btn.classList.add('has-preview');
+  btn.innerHTML = `<img src="${URL.createObjectURL(file)}">`;
+}
+
 async function openInbound(id) {
   currentInboundId = id;
+  scanPhotoFile = null;
   const res = await fetch(`/api/inbounds/${id}`);
   const data = await res.json();
   if (!data.ok) return;
@@ -308,6 +373,11 @@ async function openInbound(id) {
           ${CONDITIONS.map(c => `<option value="${c}">${CONDITION_LABEL[c]}</option>`).join('')}
         </select>
       </div>
+      <div>
+        <label>Photo</label>
+        <button type="button" class="photo-btn" id="scan-photo-btn" onclick="document.getElementById('scan-photo-input').click()" title="Take / attach photo">📷</button>
+        <input type="file" id="scan-photo-input" accept="image/*" capture="environment" style="display:none" onchange="onScanPhotoChosen(this)">
+      </div>
       <button class="btn small" onclick="receiveScan()">Receive</button>
     </div>
     <div class="err" id="scan-err"></div>
@@ -316,6 +386,10 @@ async function openInbound(id) {
         <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="4" class="empty">No items received yet</td></tr>'}</tbody>
       </table>
+    </div>
+    <div class="photo-section">
+      <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
+      ${renderPhotoGallery(s)}
     </div>
     <div class="btn-row no-print">
       <button class="btn secondary small" onclick="printReport('${s.id}')">View / Print Receiving Report</button>
@@ -333,10 +407,15 @@ async function receiveScan() {
   errEl.style.display = 'none';
   if (!sku || !qty) return;
 
+  const formData = new FormData();
+  formData.append('sku', sku);
+  formData.append('qty', qty);
+  formData.append('condition', condition);
+  if (scanPhotoFile) formData.append('photo', scanPhotoFile);
+
   const res = await fetch(`/api/inbounds/${currentInboundId}/receive`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sku, qty, condition }),
+    body: formData,
   });
   const data = await res.json();
   if (!data.ok) {
@@ -344,6 +423,7 @@ async function receiveScan() {
     errEl.style.display = 'block';
     return;
   }
+  scanPhotoFile = null;
   loadInbounds();
   openInbound(currentInboundId);
 }
@@ -391,6 +471,10 @@ async function printReport(id) {
         <tbody>${rows}</tbody>
       </table>
     </div>
+    <div class="photo-section">
+      <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
+      ${renderPhotoGallery(r)}
+    </div>
     <div class="btn-row no-print">
       <button class="btn small" onclick="window.print()">Print</button>
       <button class="btn secondary small" onclick="openInbound('${r.id}')">Back</button>
@@ -401,6 +485,7 @@ async function printReport(id) {
 function closeModal() {
   document.getElementById('modal').classList.remove('open');
   currentInboundId = null;
+  scanPhotoFile = null;
 }
 
 async function signOut() {

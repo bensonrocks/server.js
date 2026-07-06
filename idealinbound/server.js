@@ -4,6 +4,7 @@ const express = require('express');
 const path    = require('path');
 const bcrypt  = require('bcryptjs');
 const session = require('express-session');
+const multer  = require('multer');
 
 const staff                         = require('./lib/users');
 const { init: initDb, hasDb, pool } = require('./lib/db');
@@ -11,6 +12,24 @@ const inbounds                      = require('./lib/inbounds');
 
 const app  = express();
 const PORT = process.env.IDEALINBOUND_PORT || 4000;
+
+// ── Photo upload (in-memory, persisted to Postgres/JSON as bytes) ──────
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) return cb(new Error('Only image uploads are allowed'));
+    cb(null, true);
+  },
+});
+function uploadPhoto(fieldName) {
+  return (req, res, next) => {
+    upload.single(fieldName)(req, res, err => {
+      if (err) return res.status(400).json({ ok: false, error: err.message });
+      next();
+    });
+  };
+}
 
 // ── Middleware ─────────────────────────────────────────────────────────
 app.use(express.json());
@@ -143,14 +162,25 @@ app.get('/api/inbounds/:id', requireAuth, async (req, res) => {
   res.json({ ok: true, inbound });
 });
 
-app.post('/api/inbounds/:id/receive', requireAuth, async (req, res) => {
-  const { sku, qty, condition, description } = req.body;
+app.post('/api/inbounds/:id/receive', requireAuth, uploadPhoto('photo'), async (req, res) => {
+  const { sku, qty, condition, description, caption } = req.body;
   if (!sku || !Number(qty) || Number(qty) <= 0)
     return res.status(400).json({ ok: false, error: 'SKU and quantity > 0 are required' });
-  const inbound = await inbounds.receiveItem(req.params.id, {
+  const result = await inbounds.receiveItem(req.params.id, {
     sku, qty, condition, description, receivedBy: req.session.userId,
   });
-  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  if (!result) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  if (req.file) {
+    await inbounds.addPhoto(req.params.id, {
+      itemId: result.lastItemId,
+      eventId: result.lastEventId,
+      caption,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      uploadedBy: req.session.userId,
+    });
+  }
+  const inbound = await inbounds.getInbound(req.params.id);
   res.json({ ok: true, inbound });
 });
 
@@ -165,6 +195,29 @@ app.get('/api/inbounds/:id/report', requireAuth, async (req, res) => {
   if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
   const items = inbound.items.map(i => ({ ...i, variance: i.receivedQty - i.expectedQty }));
   res.json({ ok: true, report: { ...inbound, items } });
+});
+
+// ── Photos ─────────────────────────────────────────────────────────────
+app.post('/api/inbounds/:id/photos', requireAuth, uploadPhoto('photo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'Photo file is required' });
+  const existing = await inbounds.getInbound(req.params.id);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  const photo = await inbounds.addPhoto(req.params.id, {
+    itemId: req.body.itemId || null,
+    caption: req.body.caption,
+    buffer: req.file.buffer,
+    mimeType: req.file.mimetype,
+    uploadedBy: req.session.userId,
+  });
+  res.json({ ok: true, photo });
+});
+
+app.get('/api/inbounds/:id/photos/:photoId', requireAuth, async (req, res) => {
+  const photo = await inbounds.getPhotoData(req.params.id, req.params.photoId);
+  if (!photo) return res.status(404).send('Not found');
+  res.set('Content-Type', photo.mimeType);
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.send(photo.buffer);
 });
 
 // ── Start ──────────────────────────────────────────────────────────────
