@@ -16,16 +16,17 @@
   .brand-dot{width:9px;height:9px;border-radius:2px;background:var(--accent)}
   .sign-out{font-size:.8rem;color:var(--text-2);text-decoration:none;background:none;border:none;cursor:pointer;font-family:inherit}
   .sign-out:hover{color:var(--accent)}
-  .page{max-width:1080px;margin:0 auto;padding:28px 20px 60px}
+  .page{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
   h1{font-size:1.4rem;margin-bottom:4px}
   .sub{color:var(--text-3);font-size:.85rem;margin-bottom:24px}
-  .grid{display:grid;grid-template-columns:360px 1fr;gap:20px;align-items:start}
-  @media(max-width:840px){.grid{grid-template-columns:1fr}}
+  .grid{display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}
   .card h2{font-size:1rem;margin-bottom:14px}
   label{display:block;font-size:.72rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
   input,select{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:.85rem;font-family:var(--sans)}
   input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .hint{font-size:.72rem;color:var(--text-3);margin-top:6px}
   .item-row{display:grid;grid-template-columns:1fr 1fr 70px 28px;gap:6px;align-items:end;margin-top:8px}
   .item-row label{margin-top:0}
   .rm-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-3);height:34px;cursor:pointer}
@@ -33,27 +34,34 @@
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:.82rem;font-weight:600;cursor:pointer}
   .btn:hover{opacity:.9}
   .btn.secondary{background:none;color:var(--accent)}
+  .btn.danger{background:none;color:#C0304A;border-color:#C0304A}
   .btn.small{padding:5px 10px;font-size:.72rem}
   .btn-row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
   .err{color:#C0304A;font-size:.78rem;margin-top:8px;display:none}
+  .tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{padding:6px 12px;border-radius:99px;border:1px solid var(--border);background:var(--bg);color:var(--text-2);font-size:.74rem;cursor:pointer;font-weight:600}
+  .tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .table-wrap{overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:.82rem}
-  th{text-align:left;color:var(--text-3);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;border-bottom:1px solid var(--border)}
-  td{padding:9px 10px;border-bottom:1px solid var(--border)}
+  th{text-align:left;color:var(--text-3);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
   tr:last-child td{border-bottom:none}
   .status{display:inline-block;padding:2px 9px;border-radius:99px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
   .status.expected{background:var(--idle-bg);color:var(--idle)}
   .status.receiving{background:var(--warn-bg);color:var(--warn)}
   .status.completed{background:var(--ok-bg);color:var(--ok)}
+  .type-badge{display:inline-block;padding:2px 8px;border-radius:5px;font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:var(--accent-dim);color:var(--accent)}
   .empty{color:var(--text-3);font-size:.85rem;padding:20px 0;text-align:center}
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
   .modal-bg.open{display:flex}
-  .modal{background:var(--surface);border-radius:10px;padding:20px;max-width:560px;width:100%;max-height:88vh;overflow-y:auto}
-  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .modal{background:var(--surface);border-radius:10px;padding:20px;max-width:680px;width:100%;max-height:88vh;overflow-y:auto}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
   .modal-head h2{font-size:1.05rem}
   .close-x{background:none;border:none;font-size:1.1rem;color:var(--text-3);cursor:pointer}
-  .scan-row{display:flex;gap:8px;margin-top:10px}
-  .scan-row input{flex:1}
+  .meta-line{font-size:.8rem;color:var(--text-2);margin-bottom:10px}
+  .meta-line strong{color:var(--text)}
+  .scan-grid{display:grid;grid-template-columns:1.4fr .8fr 1fr auto;gap:8px;margin-top:10px;align-items:end}
+  .scan-grid label{margin:0 0 4px}
   .var-pos{color:var(--ok)}
   .var-neg{color:#C0304A}
   .mono{font-family:var(--mono)}
@@ -69,39 +77,53 @@
 
 <div class="page">
   <h1>Inbound Processing</h1>
-  <div class="sub">Receive shipments (ASNs), scan incoming inventory, and generate receiving reports.</div>
+  <div class="sub">Receive anything, any way it arrives — air freight, LCL, FCL, ecommerce returns, or loose drop-offs.</div>
 
   <div class="grid">
     <div class="card">
-      <h2>New Shipment (ASN)</h2>
-      <label>Reference #</label>
-      <input id="f-reference" placeholder="ASN-1042">
-      <label>Supplier</label>
-      <input id="f-supplier" placeholder="Acme Supply Co.">
+      <h2>New Inbound</h2>
+      <label>Inbound Type</label>
+      <select id="f-type" onchange="renderMetaFields()">
+        <option value="air">Air Freight</option>
+        <option value="lcl">LCL (Shared Container)</option>
+        <option value="fcl">FCL (Full Container)</option>
+        <option value="return">Ecommerce Return</option>
+        <option value="loose">Loose / Ad-hoc</option>
+      </select>
+
+      <label>Reference / Lot #</label>
+      <input id="f-reference" placeholder="INB-1042">
+      <label id="f-source-label">Supplier / Shipper</label>
+      <input id="f-source" placeholder="Acme Supply Co.">
       <label>Expected Date</label>
       <input id="f-date" type="date">
 
+      <div id="meta-fields"></div>
+
+      <label style="margin-top:16px">Pre-declared Line Items (optional)</label>
+      <div class="hint" id="items-hint"></div>
       <div id="item-rows"></div>
 
       <div class="btn-row">
         <button class="btn secondary small" onclick="addItemRow()">+ Add Line Item</button>
       </div>
       <div class="btn-row">
-        <button class="btn" onclick="createShipment()">Create Shipment</button>
+        <button class="btn" onclick="createInbound()">Create Inbound</button>
       </div>
       <div class="err" id="create-err"></div>
     </div>
 
     <div class="card">
-      <h2>Shipments</h2>
+      <h2>Inbounds</h2>
+      <div class="tabs" id="tabs"></div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Reference</th><th>Supplier</th><th>Status</th><th>Progress</th><th></th></tr>
+            <tr><th>Reference</th><th>Type</th><th>Source</th><th>Status</th><th>Progress</th><th></th></tr>
           </thead>
-          <tbody id="shipment-rows"></tbody>
+          <tbody id="inbound-rows"></tbody>
         </table>
-        <div class="empty" id="empty-msg" style="display:none">No shipments yet — create one to get started.</div>
+        <div class="empty" id="empty-msg" style="display:none">No inbounds yet — create one to get started.</div>
       </div>
     </div>
   </div>
@@ -110,7 +132,7 @@
 <div class="modal-bg" id="modal">
   <div class="modal">
     <div class="modal-head">
-      <h2 id="modal-title">Shipment</h2>
+      <h2 id="modal-title">Inbound</h2>
       <button class="close-x no-print" onclick="closeModal()">&times;</button>
     </div>
     <div id="modal-body"></div>
@@ -118,7 +140,36 @@
 </div>
 
 <script>
-let currentShipmentId = null;
+const TYPE_CONFIG = {
+  air:    { label: 'Air Freight',           sourceLabel: 'Supplier / Shipper',        itemsHint: 'From the air waybill manifest, if available.',
+            fields: [ ['awb','AWB #'], ['flightNumber','Flight #'], ['carrier','Carrier'] ] },
+  lcl:    { label: 'LCL (Shared Container)', sourceLabel: 'Supplier / Shipper',        itemsHint: 'From the packing list, if available.',
+            fields: [ ['blNumber','BL #'], ['containerNumber','Container #'], ['cfsLocation','CFS Location'] ] },
+  fcl:    { label: 'FCL (Full Container)',   sourceLabel: 'Supplier / Shipper',        itemsHint: 'From the packing list, if available.',
+            fields: [ ['containerNumber','Container #'], ['sealNumber','Seal #'], ['blNumber','BL #'] ] },
+  return: { label: 'Ecommerce Return',       sourceLabel: 'Customer / Order Source',   itemsHint: 'From the original order, if known — otherwise leave blank and receive/grade items as they\'re opened.',
+            fields: [ ['rmaNumber','RMA #'], ['orderNumber','Order #'], ['returnReason','Return Reason'] ] },
+  loose:  { label: 'Loose / Ad-hoc',         sourceLabel: 'Source / Notes',            itemsHint: 'Usually left empty — just log whatever shows up during receiving.',
+            fields: [ ['notes','Notes'] ] },
+};
+const CONDITIONS = ['unspecified', 'sellable', 'damaged', 'refurbish', 'dispose'];
+const CONDITION_LABEL = { unspecified: 'Unspecified', sellable: 'Sellable', damaged: 'Damaged', refurbish: 'Refurbish', dispose: 'Dispose' };
+
+let currentInboundId = null;
+let activeTypeFilter = '';
+
+function renderMetaFields() {
+  const type = document.getElementById('f-type').value;
+  const cfg = TYPE_CONFIG[type];
+  document.getElementById('f-source-label').textContent = cfg.sourceLabel;
+  document.getElementById('items-hint').textContent = cfg.itemsHint;
+  const wrap = document.getElementById('meta-fields');
+  wrap.innerHTML = cfg.fields.map(([key, label]) => `
+    <label>${label}</label>
+    <input class="meta-input" data-key="${key}" placeholder="${label}">
+  `).join('');
+}
+renderMetaFields();
 
 function addItemRow(sku, desc, qty) {
   const wrap = document.getElementById('item-rows');
@@ -132,25 +183,34 @@ function addItemRow(sku, desc, qty) {
   `;
   wrap.appendChild(row);
 }
-addItemRow();
 
-async function createShipment() {
+function readMetaFields() {
+  const meta = {};
+  document.querySelectorAll('#meta-fields .meta-input').forEach(inp => {
+    if (inp.value.trim()) meta[inp.dataset.key] = inp.value.trim();
+  });
+  return meta;
+}
+
+async function createInbound() {
   const errEl = document.getElementById('create-err');
   errEl.style.display = 'none';
 
+  const type = document.getElementById('f-type').value;
   const reference = document.getElementById('f-reference').value.trim();
-  const supplier = document.getElementById('f-supplier').value.trim();
+  const source = document.getElementById('f-source').value.trim();
   const expectedDate = document.getElementById('f-date').value || null;
+  const metadata = readMetaFields();
   const items = [...document.querySelectorAll('#item-rows .item-row')].map(row => ({
     sku: row.querySelector('.i-sku').value.trim(),
     description: row.querySelector('.i-desc').value.trim(),
     expectedQty: Number(row.querySelector('.i-qty').value),
   })).filter(i => i.sku);
 
-  const res = await fetch('/api/shipments', {
+  const res = await fetch('/api/inbounds', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reference, supplier, expectedDate, items }),
+    body: JSON.stringify({ type, reference, source, expectedDate, metadata, items }),
   });
   const data = await res.json();
   if (!data.ok) {
@@ -160,72 +220,106 @@ async function createShipment() {
   }
 
   document.getElementById('f-reference').value = '';
-  document.getElementById('f-supplier').value = '';
+  document.getElementById('f-source').value = '';
   document.getElementById('f-date').value = '';
   document.getElementById('item-rows').innerHTML = '';
-  addItemRow();
-  loadShipments();
+  renderMetaFields();
+  loadInbounds();
 }
 
 function statusLabel(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
-async function loadShipments() {
-  const res = await fetch('/api/shipments');
+function renderTabs() {
+  const tabs = [['', 'All'], ...Object.entries(TYPE_CONFIG).map(([k, c]) => [k, c.label])];
+  document.getElementById('tabs').innerHTML = tabs.map(([val, label]) => `
+    <button class="tab ${activeTypeFilter === val ? 'active' : ''}" onclick="setTypeFilter('${val}')">${label}</button>
+  `).join('');
+}
+function setTypeFilter(val) {
+  activeTypeFilter = val;
+  renderTabs();
+  loadInbounds();
+}
+renderTabs();
+
+async function loadInbounds() {
+  const qs = activeTypeFilter ? `?type=${activeTypeFilter}` : '';
+  const res = await fetch(`/api/inbounds${qs}`);
   const data = await res.json();
-  const tbody = document.getElementById('shipment-rows');
+  const tbody = document.getElementById('inbound-rows');
   const empty = document.getElementById('empty-msg');
   tbody.innerHTML = '';
-  if (!data.ok || !data.shipments.length) {
+  if (!data.ok || !data.inbounds.length) {
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
-  for (const s of data.shipments) {
+  for (const s of data.inbounds) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="mono">${s.reference}</td>
-      <td>${s.supplier}</td>
+      <td><span class="type-badge">${TYPE_CONFIG[s.type]?.label || s.type}</span></td>
+      <td>${s.source}</td>
       <td><span class="status ${s.status}">${statusLabel(s.status)}</span></td>
-      <td class="mono">${s.totalReceived} / ${s.totalExpected}</td>
-      <td><button class="btn small" onclick="openShipment('${s.id}')">Open</button></td>
+      <td class="mono">${s.totalReceived} / ${s.totalExpected || '—'}</td>
+      <td><button class="btn small" onclick="openInbound('${s.id}')">Open</button></td>
     `;
     tbody.appendChild(tr);
   }
 }
 
-async function openShipment(id) {
-  currentShipmentId = id;
-  const res = await fetch(`/api/shipments/${id}`);
+function metaLine(inbound) {
+  const cfg = TYPE_CONFIG[inbound.type];
+  const parts = cfg.fields
+    .map(([key, label]) => inbound.metadata?.[key] ? `${label}: <strong>${inbound.metadata[key]}</strong>` : null)
+    .filter(Boolean);
+  return parts.length ? parts.join(' &nbsp;·&nbsp; ') : '<em>No additional details recorded</em>';
+}
+
+async function openInbound(id) {
+  currentInboundId = id;
+  const res = await fetch(`/api/inbounds/${id}`);
   const data = await res.json();
   if (!data.ok) return;
-  const s = data.shipment;
+  const s = data.inbound;
+  const cfg = TYPE_CONFIG[s.type];
 
-  document.getElementById('modal-title').textContent = `${s.reference} — ${s.supplier}`;
+  document.getElementById('modal-title').textContent = `${s.reference} — ${s.source}`;
   const rows = s.items.map(i => `
     <tr>
       <td class="mono">${i.sku}</td>
       <td>${i.description || ''}</td>
-      <td class="mono">${i.expectedQty}</td>
+      <td class="mono">${i.expectedQty || '—'}</td>
       <td class="mono">${i.receivedQty}</td>
     </tr>
   `).join('');
 
   document.getElementById('modal-body').innerHTML = `
-    <div style="margin-bottom:6px"><span class="status ${s.status}">${statusLabel(s.status)}</span></div>
-    <div class="scan-row no-print">
-      <input id="scan-sku" placeholder="Scan or type SKU">
-      <input id="scan-qty" type="number" min="1" value="1" style="max-width:80px">
+    <div style="margin-bottom:6px">
+      <span class="type-badge">${cfg.label}</span>
+      <span class="status ${s.status}">${statusLabel(s.status)}</span>
+    </div>
+    <div class="meta-line">${metaLine(s)}</div>
+    <div class="scan-grid no-print">
+      <div><label>Scan or type SKU</label><input id="scan-sku" placeholder="SKU (new SKUs are OK)"></div>
+      <div><label>Qty</label><input id="scan-qty" type="number" min="1" value="1"></div>
+      <div><label>Condition</label>
+        <select id="scan-condition">
+          ${CONDITIONS.map(c => `<option value="${c}">${CONDITION_LABEL[c]}</option>`).join('')}
+        </select>
+      </div>
       <button class="btn small" onclick="receiveScan()">Receive</button>
     </div>
     <div class="err" id="scan-err"></div>
     <div class="table-wrap" style="margin-top:14px">
       <table>
         <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows || '<tr><td colspan="4" class="empty">No items received yet</td></tr>'}</tbody>
       </table>
     </div>
     <div class="btn-row no-print">
       <button class="btn secondary small" onclick="printReport('${s.id}')">View / Print Receiving Report</button>
+      ${s.status !== 'completed' ? `<button class="btn danger small" onclick="closeInbound('${s.id}')">Close Inbound</button>` : ''}
     </div>
   `;
   document.getElementById('modal').classList.add('open');
@@ -234,14 +328,15 @@ async function openShipment(id) {
 async function receiveScan() {
   const sku = document.getElementById('scan-sku').value.trim();
   const qty = Number(document.getElementById('scan-qty').value);
+  const condition = document.getElementById('scan-condition').value;
   const errEl = document.getElementById('scan-err');
   errEl.style.display = 'none';
   if (!sku || !qty) return;
 
-  const res = await fetch(`/api/shipments/${currentShipmentId}/receive`, {
+  const res = await fetch(`/api/inbounds/${currentInboundId}/receive`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sku, qty }),
+    body: JSON.stringify({ sku, qty, condition }),
   });
   const data = await res.json();
   if (!data.ok) {
@@ -249,48 +344,63 @@ async function receiveScan() {
     errEl.style.display = 'block';
     return;
   }
-  loadShipments();
-  openShipment(currentShipmentId);
+  loadInbounds();
+  openInbound(currentInboundId);
+}
+
+async function closeInbound(id) {
+  if (!confirm('Close this inbound? This marks it completed even if quantities don\'t fully match the manifest.')) return;
+  await fetch(`/api/inbounds/${id}/close`, { method: 'POST' });
+  loadInbounds();
+  openInbound(id);
 }
 
 async function printReport(id) {
-  const res = await fetch(`/api/shipments/${id}/report`);
+  const res = await fetch(`/api/inbounds/${id}/report`);
   const data = await res.json();
   if (!data.ok) return;
   const r = data.report;
+  const cfg = TYPE_CONFIG[r.type];
+  const showConditions = r.items.some(i => Object.entries(i.conditionTotals || {}).some(([k, v]) => k !== 'unspecified' && v > 0));
+
   const rows = r.items.map(i => `
     <tr>
       <td class="mono">${i.sku}</td>
       <td>${i.description || ''}</td>
-      <td class="mono">${i.expectedQty}</td>
+      <td class="mono">${i.expectedQty || '—'}</td>
       <td class="mono">${i.receivedQty}</td>
-      <td class="mono ${i.variance < 0 ? 'var-neg' : i.variance > 0 ? 'var-pos' : ''}">${i.variance > 0 ? '+' : ''}${i.variance}</td>
+      <td class="mono ${i.variance < 0 ? 'var-neg' : i.variance > 0 ? 'var-pos' : ''}">${i.expectedQty ? (i.variance > 0 ? '+' : '') + i.variance : '—'}</td>
+      ${showConditions ? CONDITIONS.map(c => `<td class="mono">${i.conditionTotals?.[c] || 0}</td>`).join('') : ''}
     </tr>
   `).join('');
 
   document.getElementById('modal-title').textContent = `Receiving Report — ${r.reference}`;
   document.getElementById('modal-body').innerHTML = `
-    <div style="font-size:.82rem;color:var(--text-2);margin-bottom:12px">
-      Supplier: <strong>${r.supplier}</strong> &nbsp;·&nbsp;
-      Status: <span class="status ${r.status}">${statusLabel(r.status)}</span> &nbsp;·&nbsp;
-      Expected date: ${r.expectedDate ? r.expectedDate.slice(0,10) : '—'}
+    <div style="margin-bottom:6px">
+      <span class="type-badge">${cfg.label}</span>
+      <span class="status ${r.status}">${statusLabel(r.status)}</span>
     </div>
+    <div class="meta-line">${metaLine(r)}</div>
+    <div class="meta-line">Source: <strong>${r.source}</strong> &nbsp;·&nbsp; Expected date: ${r.expectedDate ? r.expectedDate.slice(0,10) : '—'}</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th><th>Variance</th></tr></thead>
+        <thead><tr>
+          <th>SKU</th><th>Description</th><th>Expected</th><th>Received</th><th>Variance</th>
+          ${showConditions ? CONDITIONS.map(c => `<th>${CONDITION_LABEL[c]}</th>`).join('') : ''}
+        </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
     <div class="btn-row no-print">
       <button class="btn small" onclick="window.print()">Print</button>
-      <button class="btn secondary small" onclick="openShipment('${r.id}')">Back</button>
+      <button class="btn secondary small" onclick="openInbound('${r.id}')">Back</button>
     </div>
   `;
 }
 
 function closeModal() {
   document.getElementById('modal').classList.remove('open');
-  currentShipmentId = null;
+  currentInboundId = null;
 }
 
 async function signOut() {
@@ -298,7 +408,7 @@ async function signOut() {
   window.location.href = '/login';
 }
 
-loadShipments();
+loadInbounds();
 </script>
 </body>
 </html>

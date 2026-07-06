@@ -7,7 +7,7 @@ const session = require('express-session');
 
 const staff                         = require('./lib/users');
 const { init: initDb, hasDb, pool } = require('./lib/db');
-const shipments                     = require('./lib/shipments');
+const inbounds                      = require('./lib/inbounds');
 
 const app  = express();
 const PORT = process.env.IDEALINBOUND_PORT || 4000;
@@ -106,50 +106,70 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 // ── Inbound processing API ───────────────────────────────────────────
-app.get('/api/shipments', requireAuth, async (req, res) => {
-  const list = await shipments.listShipments();
-  res.json({ ok: true, shipments: list });
+app.get('/api/inbound-types', requireAuth, (req, res) => {
+  res.json({ ok: true, types: inbounds.TYPES, conditions: inbounds.CONDITIONS });
 });
 
-app.post('/api/shipments', requireAuth, async (req, res) => {
-  const { reference, supplier, expectedDate, items } = req.body;
-  if (!reference || !supplier || !Array.isArray(items) || !items.length)
-    return res.status(400).json({ ok: false, error: 'Reference, supplier, and at least one item are required' });
-  for (const it of items) {
+app.get('/api/inbounds', requireAuth, async (req, res) => {
+  const { type } = req.query;
+  if (type && !inbounds.TYPES.includes(type))
+    return res.status(400).json({ ok: false, error: 'Invalid type filter' });
+  const list = await inbounds.listInbounds({ type });
+  res.json({ ok: true, inbounds: list });
+});
+
+app.post('/api/inbounds', requireAuth, async (req, res) => {
+  const { type, reference, source, expectedDate, metadata, items } = req.body;
+  if (!inbounds.TYPES.includes(type))
+    return res.status(400).json({ ok: false, error: `Type must be one of: ${inbounds.TYPES.join(', ')}` });
+  if (!reference || !source)
+    return res.status(400).json({ ok: false, error: 'Reference and source are required' });
+  const lines = Array.isArray(items) ? items : [];
+  for (const it of lines) {
     if (!it.sku || !Number(it.expectedQty) || Number(it.expectedQty) <= 0)
-      return res.status(400).json({ ok: false, error: 'Each item needs a SKU and expected quantity > 0' });
+      return res.status(400).json({ ok: false, error: 'Each pre-declared line needs a SKU and expected quantity > 0' });
   }
-  const shipment = await shipments.createShipment({
-    reference, supplier, expectedDate, items, createdBy: req.session.userId,
+  const inbound = await inbounds.createInbound({
+    type, reference, source, expectedDate,
+    metadata: metadata && typeof metadata === 'object' ? metadata : {},
+    items: lines, createdBy: req.session.userId,
   });
-  res.json({ ok: true, shipment });
+  res.json({ ok: true, inbound });
 });
 
-app.get('/api/shipments/:id', requireAuth, async (req, res) => {
-  const shipment = await shipments.getShipment(req.params.id);
-  if (!shipment) return res.status(404).json({ ok: false, error: 'Shipment not found' });
-  res.json({ ok: true, shipment });
+app.get('/api/inbounds/:id', requireAuth, async (req, res) => {
+  const inbound = await inbounds.getInbound(req.params.id);
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  res.json({ ok: true, inbound });
 });
 
-app.post('/api/shipments/:id/receive', requireAuth, async (req, res) => {
-  const { sku, qty } = req.body;
+app.post('/api/inbounds/:id/receive', requireAuth, async (req, res) => {
+  const { sku, qty, condition, description } = req.body;
   if (!sku || !Number(qty) || Number(qty) <= 0)
     return res.status(400).json({ ok: false, error: 'SKU and quantity > 0 are required' });
-  const shipment = await shipments.receiveItem(req.params.id, { sku, qty, receivedBy: req.session.userId });
-  if (!shipment) return res.status(404).json({ ok: false, error: 'Shipment or SKU not found' });
-  res.json({ ok: true, shipment });
+  const inbound = await inbounds.receiveItem(req.params.id, {
+    sku, qty, condition, description, receivedBy: req.session.userId,
+  });
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  res.json({ ok: true, inbound });
 });
 
-app.get('/api/shipments/:id/report', requireAuth, async (req, res) => {
-  const shipment = await shipments.getShipment(req.params.id);
-  if (!shipment) return res.status(404).json({ ok: false, error: 'Shipment not found' });
-  const items = shipment.items.map(i => ({ ...i, variance: i.receivedQty - i.expectedQty }));
-  res.json({ ok: true, report: { ...shipment, items } });
+app.post('/api/inbounds/:id/close', requireAuth, async (req, res) => {
+  const inbound = await inbounds.closeInbound(req.params.id);
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  res.json({ ok: true, inbound });
+});
+
+app.get('/api/inbounds/:id/report', requireAuth, async (req, res) => {
+  const inbound = await inbounds.getInbound(req.params.id);
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  const items = inbound.items.map(i => ({ ...i, variance: i.receivedQty - i.expectedQty }));
+  res.json({ ok: true, report: { ...inbound, items } });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
-  .then(() => shipments.init())
+  .then(() => inbounds.init())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`IdealInbound running on port ${PORT}`);
