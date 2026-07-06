@@ -2877,12 +2877,12 @@ async function saveConnCredentials(){
       if(!r.ok){showCMMsg(j.error||'Save failed');return;}
       connCreds[platform]={...connCreds[platform],...payload};saveCreds();
       showCMMsg('Credentials saved to server!',false);
-      updateTileStatus(platform,!!payload.accessToken,null,null);
+      updateTileStatus(platform,!!(payload.accessToken||payload.licenseKey||payload.apikey||payload.email),null,null);
     }catch(e){showCMMsg('Server error: '+e.message);}
   }else{
     connCreds[platform]={...connCreds[platform],...payload};saveCreds();
     showCMMsg('Saved in browser. Start the server for live sync.',false);
-    updateTileStatus(platform,!!payload.accessToken,null,null);
+    updateTileStatus(platform,!!(payload.accessToken||payload.licenseKey||payload.apikey||payload.email),null,null);
   }
 }
 
