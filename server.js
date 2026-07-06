@@ -58,6 +58,15 @@ const app      = express();
 const PORT     = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
+// Resolve the public base URL for OAuth callbacks.
+// Respects BASE_URL env var, then x-forwarded headers (nginx/Cloudflare), then falls back.
+function getBaseUrl(req) {
+  if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto']?.split(',')[0]?.trim() || req.protocol;
+  const host  = req.headers['x-forwarded-host']  || req.headers['host'] || `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // verify callback stores the raw Buffer on req so webhook HMAC verification can use it
@@ -600,7 +609,7 @@ app.get('/api/connect/:platform/oauth-url', withTenant, (req, res) => {
   for (const field of conn.meta.requiredForOAuth || []) {
     if (!c[field]) return res.status(400).json({ error: `Save your ${conn.meta.name} ${field} first` });
   }
-  res.json({ url: conn.buildAuthUrl(c, `${BASE_URL}/api/connect/${platform}/callback`) });
+  res.json({ url: conn.buildAuthUrl(c, `${getBaseUrl(req)}/api/connect/${platform}/callback`) });
 });
 
 app.get('/api/connect/:platform/callback', async (req, res) => {
@@ -1604,7 +1613,7 @@ app.get('/api/client/connections/:platform/start', (req, res) => {
     return res.redirect('/portal?conn_error=' + encodeURIComponent('This platform is not yet configured. Please contact support.'));
   const nonce = crypto.randomBytes(16).toString('hex');
   pendingOAuth.set(nonce, { tenantId, clientId: session.clientId, platform, expiresAt: Date.now() + 600000 });
-  const callbackUrl = `${BASE_URL}/api/client/connections/${platform}/callback?oms=${nonce}`;
+  const callbackUrl = `${getBaseUrl(req)}/api/client/connections/${platform}/callback?oms=${nonce}`;
   try {
     res.redirect(connector.buildAuthUrl(masterCreds, callbackUrl));
   } catch (err) {
