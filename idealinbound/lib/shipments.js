@@ -1,6 +1,6 @@
 'use strict';
 
-// IdealOMS — inbound processing (ASN receiving) for warehouses.
+// IdealInbound — inbound processing (ASN receiving) for warehouses.
 
 const crypto = require('crypto');
 const fs     = require('fs');
@@ -13,8 +13,8 @@ function computeStatus(items) {
   return 'receiving';
 }
 
-// ── JSON fallback (no DATABASE_URL) ───────────────────────────────────
-const FILE = path.join(__dirname, '../data/oms-shipments.json');
+// ── JSON fallback (no IDEALINBOUND_DATABASE_URL) ───────────────────────
+const FILE = path.join(__dirname, '../data/shipments.json');
 
 function jsonRead() {
   try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { return []; }
@@ -105,7 +105,7 @@ function rowToEvent(r) {
 const pg = {
   async init() {
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS oms_shipments (
+      CREATE TABLE IF NOT EXISTS shipments (
         id            TEXT PRIMARY KEY,
         reference     TEXT NOT NULL,
         supplier      TEXT NOT NULL,
@@ -116,9 +116,9 @@ const pg = {
       )
     `);
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS oms_shipment_items (
+      CREATE TABLE IF NOT EXISTS shipment_items (
         id            TEXT PRIMARY KEY,
-        shipment_id   TEXT NOT NULL REFERENCES oms_shipments(id) ON DELETE CASCADE,
+        shipment_id   TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
         sku           TEXT NOT NULL,
         description   TEXT,
         expected_qty  INTEGER NOT NULL,
@@ -126,10 +126,10 @@ const pg = {
       )
     `);
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS oms_receiving_events (
+      CREATE TABLE IF NOT EXISTS receiving_events (
         id            TEXT PRIMARY KEY,
-        shipment_id   TEXT NOT NULL REFERENCES oms_shipments(id) ON DELETE CASCADE,
-        item_id       TEXT NOT NULL REFERENCES oms_shipment_items(id) ON DELETE CASCADE,
+        shipment_id   TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+        item_id       TEXT NOT NULL REFERENCES shipment_items(id) ON DELETE CASCADE,
         sku           TEXT NOT NULL,
         qty           INTEGER NOT NULL,
         received_by   TEXT,
@@ -143,8 +143,8 @@ const pg = {
         COUNT(i.id)::int AS item_count,
         COALESCE(SUM(i.expected_qty),0)::int AS total_expected,
         COALESCE(SUM(i.received_qty),0)::int AS total_received
-      FROM oms_shipments s
-      LEFT JOIN oms_shipment_items i ON i.shipment_id = s.id
+      FROM shipments s
+      LEFT JOIN shipment_items i ON i.shipment_id = s.id
       GROUP BY s.id
       ORDER BY s.created_at DESC
     `);
@@ -155,21 +155,21 @@ const pg = {
     }));
   },
   async getShipment(id) {
-    const { rows: srows } = await pool.query('SELECT * FROM oms_shipments WHERE id = $1', [id]);
+    const { rows: srows } = await pool.query('SELECT * FROM shipments WHERE id = $1', [id]);
     if (!srows[0]) return null;
-    const { rows: irows } = await pool.query('SELECT * FROM oms_shipment_items WHERE shipment_id = $1 ORDER BY sku', [id]);
-    const { rows: erows } = await pool.query('SELECT * FROM oms_receiving_events WHERE shipment_id = $1 ORDER BY received_at', [id]);
+    const { rows: irows } = await pool.query('SELECT * FROM shipment_items WHERE shipment_id = $1 ORDER BY sku', [id]);
+    const { rows: erows } = await pool.query('SELECT * FROM receiving_events WHERE shipment_id = $1 ORDER BY received_at', [id]);
     return rowToShipment(srows[0], irows, erows);
   },
   async createShipment({ reference, supplier, expectedDate, items, createdBy }) {
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO oms_shipments (id, reference, supplier, expected_date, created_by) VALUES ($1,$2,$3,$4,$5)`,
+      `INSERT INTO shipments (id, reference, supplier, expected_date, created_by) VALUES ($1,$2,$3,$4,$5)`,
       [id, reference, supplier, expectedDate || null, createdBy || null]
     );
     for (const it of items) {
       await pool.query(
-        `INSERT INTO oms_shipment_items (id, shipment_id, sku, description, expected_qty) VALUES ($1,$2,$3,$4,$5)`,
+        `INSERT INTO shipment_items (id, shipment_id, sku, description, expected_qty) VALUES ($1,$2,$3,$4,$5)`,
         [crypto.randomUUID(), id, it.sku, it.description || '', Number(it.expectedQty) || 0]
       );
     }
@@ -177,21 +177,21 @@ const pg = {
   },
   async receiveItem(shipmentId, { sku, qty, receivedBy }) {
     const { rows } = await pool.query(
-      `SELECT * FROM oms_shipment_items WHERE shipment_id = $1 AND LOWER(sku) = LOWER($2)`,
+      `SELECT * FROM shipment_items WHERE shipment_id = $1 AND LOWER(sku) = LOWER($2)`,
       [shipmentId, sku]
     );
     const item = rows[0];
     if (!item) return null;
-    await pool.query('UPDATE oms_shipment_items SET received_qty = received_qty + $1 WHERE id = $2', [Number(qty), item.id]);
+    await pool.query('UPDATE shipment_items SET received_qty = received_qty + $1 WHERE id = $2', [Number(qty), item.id]);
     await pool.query(
-      `INSERT INTO oms_receiving_events (id, shipment_id, item_id, sku, qty, received_by) VALUES ($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO receiving_events (id, shipment_id, item_id, sku, qty, received_by) VALUES ($1,$2,$3,$4,$5,$6)`,
       [crypto.randomUUID(), shipmentId, item.id, item.sku, Number(qty), receivedBy || null]
     );
     const { rows: allItems } = await pool.query(
-      'SELECT expected_qty, received_qty FROM oms_shipment_items WHERE shipment_id = $1', [shipmentId]
+      'SELECT expected_qty, received_qty FROM shipment_items WHERE shipment_id = $1', [shipmentId]
     );
     const status = computeStatus(allItems.map(r => ({ expectedQty: r.expected_qty, receivedQty: r.received_qty })));
-    await pool.query('UPDATE oms_shipments SET status = $1 WHERE id = $2', [status, shipmentId]);
+    await pool.query('UPDATE shipments SET status = $1 WHERE id = $2', [status, shipmentId]);
     return pg.getShipment(shipmentId);
   },
 };

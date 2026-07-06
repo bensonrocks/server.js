@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>IdealOMS — Inbound Processing</title>
+<title>IdealInbound — Inbound Processing</title>
 <style>
   :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
   @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B}}
@@ -63,7 +63,7 @@
 <body>
 
 <div class="topbar">
-  <a class="brand" href="/oms/inbound"><span class="brand-dot"></span>IdealOMS</a>
+  <a class="brand" href="/inbound"><span class="brand-dot"></span>IdealInbound</a>
   <button class="sign-out no-print" onclick="signOut()">Sign Out</button>
 </div>
 
@@ -147,7 +147,7 @@ async function createShipment() {
     expectedQty: Number(row.querySelector('.i-qty').value),
   })).filter(i => i.sku);
 
-  const res = await fetch('/api/oms/shipments', {
+  const res = await fetch('/api/shipments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reference, supplier, expectedDate, items }),
@@ -170,7 +170,7 @@ async function createShipment() {
 function statusLabel(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 async function loadShipments() {
-  const res = await fetch('/api/oms/shipments');
+  const res = await fetch('/api/shipments');
   const data = await res.json();
   const tbody = document.getElementById('shipment-rows');
   const empty = document.getElementById('empty-msg');
@@ -195,7 +195,7 @@ async function loadShipments() {
 
 async function openShipment(id) {
   currentShipmentId = id;
-  const res = await fetch(`/api/oms/shipments/${id}`);
+  const res = await fetch(`/api/shipments/${id}`);
   const data = await res.json();
   if (!data.ok) return;
   const s = data.shipment;
@@ -238,7 +238,7 @@ async function receiveScan() {
   errEl.style.display = 'none';
   if (!sku || !qty) return;
 
-  const res = await fetch(`/api/oms/shipments/${currentShipmentId}/receive`, {
+  const res = await fetch(`/api/shipments/${currentShipmentId}/receive`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sku, qty }),
@@ -254,7 +254,7 @@ async function receiveScan() {
 }
 
 async function printReport(id) {
-  const res = await fetch(`/api/oms/shipments/${id}/report`);
+  const res = await fetch(`/api/shipments/${id}/report`);
   const data = await res.json();
   if (!data.ok) return;
   const r = data.report;

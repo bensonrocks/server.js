@@ -12,7 +12,6 @@ const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
-const oms                            = require('./lib/oms');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -142,9 +141,6 @@ app.get('/settings',     requireSubscriptionPage, (req, res) =>
 );
 app.get('/vaultkeepers', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
-);
-app.get('/oms/inbound', requireAuth, (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'oms-inbound.html'))
 );
 
 // ── Static assets (tutorial.html, images, etc.) ────────────────────────
@@ -382,51 +378,8 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
   res.json({ ok: true, data: results, live: false });
 });
 
-// ── IdealOMS — inbound processing API (login required) ─────────────────
-app.get('/api/oms/shipments', requireAuth, async (req, res) => {
-  const shipments = await oms.listShipments();
-  res.json({ ok: true, shipments });
-});
-
-app.post('/api/oms/shipments', requireAuth, async (req, res) => {
-  const { reference, supplier, expectedDate, items } = req.body;
-  if (!reference || !supplier || !Array.isArray(items) || !items.length)
-    return res.status(400).json({ ok: false, error: 'Reference, supplier, and at least one item are required' });
-  for (const it of items) {
-    if (!it.sku || !Number(it.expectedQty) || Number(it.expectedQty) <= 0)
-      return res.status(400).json({ ok: false, error: 'Each item needs a SKU and expected quantity > 0' });
-  }
-  const shipment = await oms.createShipment({
-    reference, supplier, expectedDate, items, createdBy: req.session.userId,
-  });
-  res.json({ ok: true, shipment });
-});
-
-app.get('/api/oms/shipments/:id', requireAuth, async (req, res) => {
-  const shipment = await oms.getShipment(req.params.id);
-  if (!shipment) return res.status(404).json({ ok: false, error: 'Shipment not found' });
-  res.json({ ok: true, shipment });
-});
-
-app.post('/api/oms/shipments/:id/receive', requireAuth, async (req, res) => {
-  const { sku, qty } = req.body;
-  if (!sku || !Number(qty) || Number(qty) <= 0)
-    return res.status(400).json({ ok: false, error: 'SKU and quantity > 0 are required' });
-  const shipment = await oms.receiveItem(req.params.id, { sku, qty, receivedBy: req.session.userId });
-  if (!shipment) return res.status(404).json({ ok: false, error: 'Shipment or SKU not found' });
-  res.json({ ok: true, shipment });
-});
-
-app.get('/api/oms/shipments/:id/report', requireAuth, async (req, res) => {
-  const shipment = await oms.getShipment(req.params.id);
-  if (!shipment) return res.status(404).json({ ok: false, error: 'Shipment not found' });
-  const items = shipment.items.map(i => ({ ...i, variance: i.receivedQty - i.expectedQty }));
-  res.json({ ok: true, report: { ...shipment, items } });
-});
-
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
-  .then(() => oms.init())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`VaultSignals running on port ${PORT}`);

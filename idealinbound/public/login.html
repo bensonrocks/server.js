@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IdealInbound — Sign In</title>
+<style>
+  :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
+  @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF}}
+  :root[data-theme="light"]{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF}
+  :root[data-theme="dark"]{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:32px;width:100%;max-width:360px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;margin-bottom:24px}
+  .brand-dot{width:9px;height:9px;border-radius:2px;background:var(--accent)}
+  h1{font-size:1.1rem;margin-bottom:18px}
+  label{display:block;font-size:.72rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px}
+  input{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:.9rem}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .btn{width:100%;margin-top:20px;padding:10px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:.88rem;font-weight:600;cursor:pointer}
+  .btn:hover{opacity:.9}
+  .err{color:#C0304A;font-size:.8rem;margin-top:10px;display:none}
+  .foot{text-align:center;margin-top:18px;font-size:.82rem;color:var(--text-2)}
+  .foot a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><span class="brand-dot"></span>IdealInbound</div>
+    <h1>Sign in</h1>
+    <label>Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label>Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <button class="btn" onclick="login()">Sign In</button>
+    <div class="err" id="err"></div>
+    <div class="foot">No account? <a href="/signup">Create one</a></div>
+  </div>
+  <script>
+    async function login() {
+      const errEl = document.getElementById('err');
+      errEl.style.display = 'none';
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        errEl.textContent = data.error;
+        errEl.style.display = 'block';
+        return;
+      }
+      window.location.href = '/inbound';
+    }
+    document.getElementById('password').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+  </script>
+</body>
+</html>

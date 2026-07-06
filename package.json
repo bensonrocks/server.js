@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "analyze:metals": "node scripts/analyze-gold-silver.js",
-    "demo": "node scripts/demo-analysis.js"
+    "demo": "node scripts/demo-analysis.js",
+    "start:idealinbound": "node idealinbound/server.js",
+    "dev:idealinbound": "nodemon idealinbound/server.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
