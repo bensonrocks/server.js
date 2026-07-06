@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IdealOne OMS — Inbound Processing</title>
+<style>
+  :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
+  @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B}}
+  :root[data-theme="light"]{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED}
+  :root[data-theme="dark"]{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.5;min-height:100vh}
+  .topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:10}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.02em;text-decoration:none;color:var(--text)}
+  .brand-dot{width:9px;height:9px;border-radius:2px;background:var(--accent)}
+  .brand small{font-weight:500;color:var(--text-3);margin-left:6px;font-size:.75rem;text-transform:uppercase;letter-spacing:.08em}
+  .back{font-size:.8rem;color:var(--text-2);text-decoration:none}
+  .back:hover{color:var(--accent)}
+  .page{max-width:1080px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:1.4rem;margin-bottom:4px}
+  .sub{color:var(--text-3);font-size:.85rem;margin-bottom:24px}
+  .grid{display:grid;grid-template-columns:360px 1fr;gap:20px;align-items:start}
+  @media(max-width:840px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}
+  .card h2{font-size:1rem;margin-bottom:14px}
+  label{display:block;font-size:.72rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+  input,select{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:.85rem;font-family:var(--sans)}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .item-row{display:grid;grid-template-columns:1fr 1fr 70px 28px;gap:6px;align-items:end;margin-top:8px}
+  .item-row label{margin-top:0}
+  .rm-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-3);height:34px;cursor:pointer}
+  .rm-btn:hover{color:#C0304A;border-color:#C0304A}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:.82rem;font-weight:600;cursor:pointer}
+  .btn:hover{opacity:.9}
+  .btn.secondary{background:none;color:var(--accent)}
+  .btn.small{padding:5px 10px;font-size:.72rem}
+  .btn-row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .err{color:#C0304A;font-size:.78rem;margin-top:8px;display:none}
+  .table-wrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th{text-align:left;color:var(--text-3);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:9px 10px;border-bottom:1px solid var(--border)}
+  tr:last-child td{border-bottom:none}
+  .status{display:inline-block;padding:2px 9px;border-radius:99px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .status.expected{background:var(--idle-bg);color:var(--idle)}
+  .status.receiving{background:var(--warn-bg);color:var(--warn)}
+  .status.completed{background:var(--ok-bg);color:var(--ok)}
+  .empty{color:var(--text-3);font-size:.85rem;padding:20px 0;text-align:center}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+  .modal-bg.open{display:flex}
+  .modal{background:var(--surface);border-radius:10px;padding:20px;max-width:560px;width:100%;max-height:88vh;overflow-y:auto}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .modal-head h2{font-size:1.05rem}
+  .close-x{background:none;border:none;font-size:1.1rem;color:var(--text-3);cursor:pointer}
+  .scan-row{display:flex;gap:8px;margin-top:10px}
+  .scan-row input{flex:1}
+  .var-pos{color:var(--ok)}
+  .var-neg{color:#C0304A}
+  .mono{font-family:var(--mono)}
+  @media print{.topbar,.no-print{display:none!important}.page{padding:0;max-width:100%}.card{border:none}}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a class="brand" href="/oms/inbound"><span class="brand-dot"></span>IdealOne <small>OMS</small></a>
+  <a class="back" href="/dashboard">&larr; Back to VaultSignals</a>
+</div>
+
+<div class="page">
+  <h1>Inbound Processing</h1>
+  <div class="sub">Receive shipments (ASNs), scan incoming inventory, and generate receiving reports.</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>New Shipment (ASN)</h2>
+      <label>Reference #</label>
+      <input id="f-reference" placeholder="ASN-1042">
+      <label>Supplier</label>
+      <input id="f-supplier" placeholder="Acme Supply Co.">
+      <label>Expected Date</label>
+      <input id="f-date" type="date">
+
+      <div id="item-rows"></div>
+
+      <div class="btn-row">
+        <button class="btn secondary small" onclick="addItemRow()">+ Add Line Item</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn" onclick="createShipment()">Create Shipment</button>
+      </div>
+      <div class="err" id="create-err"></div>
+    </div>
+
+    <div class="card">
+      <h2>Shipments</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Reference</th><th>Supplier</th><th>Status</th><th>Progress</th><th></th></tr>
+          </thead>
+          <tbody id="shipment-rows"></tbody>
+        </table>
+        <div class="empty" id="empty-msg" style="display:none">No shipments yet — create one to get started.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modal-title">Shipment</h2>
+      <button class="close-x no-print" onclick="closeModal()">&times;</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+let currentShipmentId = null;
+
+function addItemRow(sku, desc, qty) {
+  const wrap = document.getElementById('item-rows');
+  const row = document.createElement('div');
+  row.className = 'item-row';
+  row.innerHTML = `
+    <div><label>SKU</label><input class="i-sku" value="${sku||''}" placeholder="SKU-001"></div>
+    <div><label>Description</label><input class="i-desc" value="${desc||''}" placeholder="Widget"></div>
+    <div><label>Qty</label><input class="i-qty" type="number" min="1" value="${qty||''}" placeholder="10"></div>
+    <button class="rm-btn" onclick="this.parentElement.remove()" title="Remove">&times;</button>
+  `;
+  wrap.appendChild(row);
+}
+addItemRow();
+
+async function createShipment() {
+  const errEl = document.getElementById('create-err');
+  errEl.style.display = 'none';
+
+  const reference = document.getElementById('f-reference').value.trim();
+  const supplier = document.getElementById('f-supplier').value.trim();
+  const expectedDate = document.getElementById('f-date').value || null;
+  const items = [...document.querySelectorAll('#item-rows .item-row')].map(row => ({
+    sku: row.querySelector('.i-sku').value.trim(),
+    description: row.querySelector('.i-desc').value.trim(),
+    expectedQty: Number(row.querySelector('.i-qty').value),
+  })).filter(i => i.sku);
+
+  const res = await fetch('/api/oms/shipments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reference, supplier, expectedDate, items }),
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    errEl.textContent = data.error;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  document.getElementById('f-reference').value = '';
+  document.getElementById('f-supplier').value = '';
+  document.getElementById('f-date').value = '';
+  document.getElementById('item-rows').innerHTML = '';
+  addItemRow();
+  loadShipments();
+}
+
+function statusLabel(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+async function loadShipments() {
+  const res = await fetch('/api/oms/shipments');
+  const data = await res.json();
+  const tbody = document.getElementById('shipment-rows');
+  const empty = document.getElementById('empty-msg');
+  tbody.innerHTML = '';
+  if (!data.ok || !data.shipments.length) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  for (const s of data.shipments) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono">${s.reference}</td>
+      <td>${s.supplier}</td>
+      <td><span class="status ${s.status}">${statusLabel(s.status)}</span></td>
+      <td class="mono">${s.totalReceived} / ${s.totalExpected}</td>
+      <td><button class="btn small" onclick="openShipment('${s.id}')">Open</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function openShipment(id) {
+  currentShipmentId = id;
+  const res = await fetch(`/api/oms/shipments/${id}`);
+  const data = await res.json();
+  if (!data.ok) return;
+  const s = data.shipment;
+
+  document.getElementById('modal-title').textContent = `${s.reference} — ${s.supplier}`;
+  const rows = s.items.map(i => `
+    <tr>
+      <td class="mono">${i.sku}</td>
+      <td>${i.description || ''}</td>
+      <td class="mono">${i.expectedQty}</td>
+      <td class="mono">${i.receivedQty}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('modal-body').innerHTML = `
+    <div style="margin-bottom:6px"><span class="status ${s.status}">${statusLabel(s.status)}</span></div>
+    <div class="scan-row no-print">
+      <input id="scan-sku" placeholder="Scan or type SKU">
+      <input id="scan-qty" type="number" min="1" value="1" style="max-width:80px">
+      <button class="btn small" onclick="receiveScan()">Receive</button>
+    </div>
+    <div class="err" id="scan-err"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table>
+        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="btn-row no-print">
+      <button class="btn secondary small" onclick="printReport('${s.id}')">View / Print Receiving Report</button>
+    </div>
+  `;
+  document.getElementById('modal').classList.add('open');
+}
+
+async function receiveScan() {
+  const sku = document.getElementById('scan-sku').value.trim();
+  const qty = Number(document.getElementById('scan-qty').value);
+  const errEl = document.getElementById('scan-err');
+  errEl.style.display = 'none';
+  if (!sku || !qty) return;
+
+  const res = await fetch(`/api/oms/shipments/${currentShipmentId}/receive`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sku, qty }),
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    errEl.textContent = data.error;
+    errEl.style.display = 'block';
+    return;
+  }
+  loadShipments();
+  openShipment(currentShipmentId);
+}
+
+async function printReport(id) {
+  const res = await fetch(`/api/oms/shipments/${id}/report`);
+  const data = await res.json();
+  if (!data.ok) return;
+  const r = data.report;
+  const rows = r.items.map(i => `
+    <tr>
+      <td class="mono">${i.sku}</td>
+      <td>${i.description || ''}</td>
+      <td class="mono">${i.expectedQty}</td>
+      <td class="mono">${i.receivedQty}</td>
+      <td class="mono ${i.variance < 0 ? 'var-neg' : i.variance > 0 ? 'var-pos' : ''}">${i.variance > 0 ? '+' : ''}${i.variance}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('modal-title').textContent = `Receiving Report — ${r.reference}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:.82rem;color:var(--text-2);margin-bottom:12px">
+      Supplier: <strong>${r.supplier}</strong> &nbsp;·&nbsp;
+      Status: <span class="status ${r.status}">${statusLabel(r.status)}</span> &nbsp;·&nbsp;
+      Expected date: ${r.expectedDate ? r.expectedDate.slice(0,10) : '—'}
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th><th>Variance</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="btn-row no-print">
+      <button class="btn small" onclick="window.print()">Print</button>
+      <button class="btn secondary small" onclick="openShipment('${r.id}')">Back</button>
+    </div>
+  `;
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  currentShipmentId = null;
+}
+
+loadShipments();
+</script>
+</body>
+</html>
