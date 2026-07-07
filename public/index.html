@@ -562,6 +562,7 @@
       <nav>
         <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
         <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
+        <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
         <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
       </nav>
       <div class="header-user">
@@ -663,7 +664,35 @@
       </div>
     </section>
 
-    <!-- ── TAB 3: About ── -->
+    <!-- ── TAB 3: Labels ── -->
+    <section id="tab-labels" class="tab">
+      <div class="label-import-wrap">
+
+        <!-- Upload card -->
+        <div class="card label-upload-card">
+          <h2>&#127991; Import Shipping Labels</h2>
+          <p class="hint">Upload a multi-page carrier PDF. Each page is split, matched to an order automatically, and stored as that order&rsquo;s printable carrier label.</p>
+          <div class="upload-area" id="labelImportDropZone">
+            <input type="file" id="labelImportFileInput" accept=".pdf" hidden />
+            <div class="upload-icon">&#8679;</div>
+            <p>Drag &amp; drop a PDF or <button class="link-btn" id="labelImportBrowseBtn">browse</button></p>
+          </div>
+          <div id="labelImportStatus" class="status-bar hidden"></div>
+        </div>
+
+        <!-- Import history -->
+        <div class="label-history-section">
+          <div class="section-header">
+            <h2>Import History</h2>
+            <button class="link-btn" id="refreshLabelImportsBtn">&#8635; Refresh</button>
+          </div>
+          <div id="labelImportHistoryEmpty" class="empty-state hidden">No label imports yet.</div>
+          <div id="labelImportHistoryList" class="label-history-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TAB 4: About ── -->
     <section id="tab-about" class="tab about-tab">
       <div class="about-hero">
         <div class="about-hero-inner">
@@ -903,6 +932,47 @@
       <div class="modal-actions" style="margin-top:1.2rem">
         <button class="btn-secondary" id="lotCheckCancelBtn">&#8592; Go Back</button>
         <button class="btn-primary"   id="lotCheckConfirmBtn">&#10003; Confirmed &mdash; Complete Order</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Label Import Review Overlay (full-screen) ── -->
+  <div id="labelReviewOverlay" class="label-review-overlay hidden">
+    <div class="label-review-header">
+      <button class="back-btn" id="closeLabelReviewBtn">&#8592; Back</button>
+      <div class="label-review-title-wrap">
+        <h2 class="label-review-filename" id="labelReviewTitle">Review Import</h2>
+        <div id="labelReviewSummary" class="label-review-summary"></div>
+      </div>
+    </div>
+    <div class="label-review-body" id="labelReviewBody"></div>
+  </div>
+
+  <!-- ── Manual Match Modal ── -->
+  <div id="labelManualMatchOverlay" class="modal-overlay hidden">
+    <div class="modal label-manual-match-modal">
+      <div class="modal-title">&#127991; Match Label to Order</div>
+      <p class="modal-desc">Select the order this label page belongs to.</p>
+      <div class="form-group">
+        <input type="text" id="labelMatchSearchInput" class="label-match-search"
+          placeholder="Filter by order number or customer name&hellip;" autocomplete="off" />
+      </div>
+      <div id="labelMatchOrderList" class="label-match-order-list"></div>
+      <div class="modal-actions" style="margin-top:.75rem">
+        <button class="btn-secondary" id="labelMatchCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Print Carrier Label Modal ── -->
+  <div id="printOrderLabelOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#128438;</div>
+      <div class="modal-title">Print Carrier Label</div>
+      <p class="modal-desc">Order <strong id="printLabelOrderNo"></strong> completed &mdash; carrier label ready.</p>
+      <div class="modal-actions" style="margin-top:1.25rem">
+        <button class="btn-secondary" id="printLabelSkipBtn">Skip</button>
+        <button class="btn-primary"   id="printLabelNowBtn">&#128438; Open &amp; Print</button>
       </div>
     </div>
   </div>

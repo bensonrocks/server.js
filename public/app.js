@@ -413,6 +413,7 @@
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
+    if (name === 'labels') { renderLabelsTab(); }
   }
 
   function lockTabsForDownload() {
@@ -1055,7 +1056,8 @@
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
             ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
-            ${ord.has_waybill_pdf ? `<span class="chip chip-waybill">&#128196; Waybill uploaded</span>` : ''}
+            ${ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill uploaded</span>` : ''}
+            ${ord.has_order_label ? `<span class="chip chip-label">&#127991; Label ready</span>` : ''}
             ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
             ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
             ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
@@ -1066,9 +1068,10 @@
             <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
             <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
-            ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
+            ${isDone && !ord.has_waybill_pdf && !ord.has_order_label ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
             ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill PDF">&#128438; Waybill</button>` : ''}
+            ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991; Label</button>` : ''}
             ${kfBtn}
             ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
@@ -1092,11 +1095,20 @@
         if (ord) showPrintWaybillModal(ord);
       })
     );
+    document.querySelectorAll('.btn-print-order-label').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const ord = loadedOrders.find(o => o.order_number === btn.dataset.order);
+        if (ord) showPrintOrderLabelModal(ord);
+      })
+    );
     document.querySelectorAll('.dash-order-card').forEach(card =>
       card.addEventListener('click', () => {
         const ord = loadedOrders.find(o => o.order_number === card.dataset.order);
         if (!ord) return;
-        if (ord.scan_status === 'done' && ord.has_waybill_pdf && ord.batchId) {
+        if (ord.scan_status === 'done' && ord.has_order_label) {
+          showPrintOrderLabelModal(ord);
+        } else if (ord.scan_status === 'done' && ord.has_waybill_pdf && ord.batchId) {
           showPrintWaybillModal(ord);
         } else if (ord.scan_status !== 'done') {
           openScanOverlay(card.dataset.order);
@@ -1159,11 +1171,18 @@
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
     if (!ord) return;
     activeOrder = ord;
-    // Show/hide the waybill PDF button in the scan header
+    // Show/hide the waybill/label PDF button in the scan header
     const waybillBtn = document.getElementById('scanWaybillPdfBtn');
-    if (ord.has_waybill_pdf && ord.batchId) {
+    if (ord.has_order_label) {
+      const token = localStorage.getItem('wms_token') || '';
+      waybillBtn.href = `/api/order-label/${encodeURIComponent(ord.order_number)}/pdf?token=${encodeURIComponent(token)}&dl=1`;
+      waybillBtn.setAttribute('download', `${ord.order_number}_label.pdf`);
+      waybillBtn.innerHTML = '&#8681; Label';
+      waybillBtn.classList.remove('hidden');
+    } else if (ord.has_waybill_pdf && ord.batchId) {
       waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}?dl=1`;
       waybillBtn.setAttribute('download', `${ord.order_number}_waybill.pdf`);
+      waybillBtn.innerHTML = '&#8681; Waybill';
       waybillBtn.classList.remove('hidden');
     } else {
       waybillBtn.classList.add('hidden');
@@ -1684,7 +1703,9 @@
         await refreshOrders();
         renderOrdersDash();
         fetchAndRenderStats();
-        if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
+        if (completedOrder.has_order_label) {
+          showPrintOrderLabelModal(completedOrder);
+        } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
           showPrintWaybillModal(completedOrder);
         } else {
           showPrintLabelPrompt(completedOrder);
@@ -2804,6 +2825,238 @@
       });
     });
   }
+
+  // ── Print Carrier Label Modal ─────────────────────────────────────────────
+  function showPrintOrderLabelModal(order) {
+    document.getElementById('printLabelOrderNo').textContent = order.order_number;
+    document.getElementById('printOrderLabelOverlay').classList.remove('hidden');
+  }
+
+  document.getElementById('printLabelSkipBtn').addEventListener('click', () => {
+    document.getElementById('printOrderLabelOverlay').classList.add('hidden');
+  });
+
+  document.getElementById('printLabelNowBtn').addEventListener('click', () => {
+    const orderNo = document.getElementById('printLabelOrderNo').textContent;
+    const token   = localStorage.getItem('wms_token') || '';
+    window.open(`/api/order-label/${encodeURIComponent(orderNo)}/pdf?token=${encodeURIComponent(token)}`, '_blank');
+    document.getElementById('printOrderLabelOverlay').classList.add('hidden');
+  });
+
+  // ── Labels Tab ────────────────────────────────────────────────────────────
+  let _labelReviewImportId = null;
+
+  async function renderLabelsTab() {
+    const listEl  = document.getElementById('labelImportHistoryList');
+    const emptyEl = document.getElementById('labelImportHistoryEmpty');
+    if (!listEl) return;
+    listEl.innerHTML = '<p class="hint" style="padding:.5rem">Loading&hellip;</p>';
+    emptyEl.classList.add('hidden');
+    try {
+      const resp = await fetch('/api/label-imports');
+      if (!resp.ok) throw new Error('Failed to load imports');
+      const imports = await resp.json();
+      if (imports.length === 0) {
+        listEl.innerHTML = '';
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+      emptyEl.classList.add('hidden');
+      listEl.innerHTML = imports.map(imp => {
+        const dt = new Date(imp.uploadedAt).toLocaleString();
+        return `
+          <div class="label-history-item" data-import-id="${esc(imp.id)}">
+            <div class="lhi-left">
+              <span class="lhi-filename">&#128196; ${esc(imp.filename)}</span>
+              <span class="lhi-date">${esc(dt)}</span>
+            </div>
+            <div class="lhi-right">
+              <span class="lhi-pages">${imp.pageCount} page${imp.pageCount !== 1 ? 's' : ''}</span>
+              ${imp.matched    ? `<span class="lhi-badge lhi-matched">${imp.matched} matched</span>` : ''}
+              ${imp.unmatched  ? `<span class="lhi-badge lhi-unmatched">${imp.unmatched} unmatched</span>` : ''}
+              ${imp.duplicate  ? `<span class="lhi-badge lhi-duplicate">${imp.duplicate} duplicate</span>` : ''}
+              ${imp.error      ? `<span class="lhi-badge lhi-error">${imp.error} error</span>` : ''}
+              <button class="btn-secondary btn-sm lhi-review-btn">Review ›</button>
+            </div>
+          </div>`;
+      }).join('');
+      listEl.querySelectorAll('.label-history-item').forEach(el =>
+        el.addEventListener('click', () => openLabelReview(el.dataset.importId))
+      );
+    } catch (err) {
+      listEl.innerHTML = `<p class="hint" style="color:var(--danger);padding:.5rem">${esc(err.message)}</p>`;
+    }
+  }
+
+  async function doLabelImport(file) {
+    const statusEl = document.getElementById('labelImportStatus');
+    statusEl.className = 'status-bar loading';
+    statusEl.textContent = 'Uploading and processing pages…';
+    statusEl.classList.remove('hidden');
+    const fd = new FormData();
+    fd.append('labelPdf', file);
+    try {
+      const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      statusEl.className = 'status-bar success';
+      statusEl.textContent = `✓ Imported ${data.pageCount} page${data.pageCount !== 1 ? 's' : ''} — ${data.matched} matched`;
+      document.getElementById('labelImportFileInput').value = '';
+      await refreshOrders();
+      await renderLabelsTab();
+      if (data.importId) openLabelReview(data.importId);
+    } catch (err) {
+      statusEl.className = 'status-bar error';
+      statusEl.textContent = err.message;
+    }
+  }
+
+  async function openLabelReview(importId) {
+    _labelReviewImportId = importId;
+    const overlay = document.getElementById('labelReviewOverlay');
+    const body    = document.getElementById('labelReviewBody');
+    const titleEl = document.getElementById('labelReviewTitle');
+    const summEl  = document.getElementById('labelReviewSummary');
+    overlay.classList.remove('hidden');
+    body.innerHTML = '<p class="hint" style="padding:2rem">Loading pages…</p>';
+    try {
+      const resp = await fetch(`/api/label-imports/${importId}`);
+      if (!resp.ok) throw new Error('Failed to load import');
+      const imp = await resp.json();
+      titleEl.textContent = imp.filename;
+      const matched   = imp.pages.filter(p => p.matchStatus === 'matched').length;
+      const unmatched = imp.pages.filter(p => p.matchStatus === 'unmatched').length;
+      const dup       = imp.pages.filter(p => p.matchStatus === 'duplicate').length;
+      const errCount  = imp.pages.filter(p => p.matchStatus === 'error').length;
+      summEl.innerHTML = [
+        matched   ? `<span class="lri-badge lri-matched">${matched} matched</span>` : '',
+        unmatched ? `<span class="lri-badge lri-unmatched">${unmatched} unmatched</span>` : '',
+        dup       ? `<span class="lri-badge lri-dup">${dup} duplicate</span>` : '',
+        errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
+      ].filter(Boolean).join('');
+
+      const token = localStorage.getItem('wms_token') || '';
+      body.innerHTML = imp.pages.map((page, i) => {
+        const pdfUrl = `/api/label-imports/${esc(importId)}/pages/${i}/pdf?token=${encodeURIComponent(token)}`;
+        const statusCls = { matched: 'lri-matched', unmatched: 'lri-unmatched', duplicate: 'lri-dup', error: 'lri-err' }[page.matchStatus] || 'lri-unmatched';
+        const f = page.extracted || {};
+        const fields = [
+          f.trackingNumber ? `<div class="lri-field"><span class="lri-lbl">Tracking</span><span class="lri-val">${esc(f.trackingNumber)}</span></div>` : '',
+          f.orderNumber    ? `<div class="lri-field"><span class="lri-lbl">Order No.</span><span class="lri-val">${esc(f.orderNumber)}</span></div>` : '',
+          f.recipientName  ? `<div class="lri-field"><span class="lri-lbl">Recipient</span><span class="lri-val">${esc(f.recipientName)}</span></div>` : '',
+          f.senderName     ? `<div class="lri-field"><span class="lri-lbl">From</span><span class="lri-val">${esc(f.senderName)}</span></div>` : '',
+          f.address        ? `<div class="lri-field"><span class="lri-lbl">Address</span><span class="lri-val">${esc(f.address)}</span></div>` : '',
+        ].filter(Boolean).join('');
+        const isMatchedOrDup = page.matchStatus === 'matched' || page.matchStatus === 'duplicate';
+        const matchAction = isMatchedOrDup
+          ? `<span class="lri-order-matched">&#10003; ${esc(page.matchedOrderNumber)}</span>
+             <button class="btn-ghost btn-sm lri-unmatch-btn" data-page="${i}">Unmatch</button>`
+          : `<button class="btn-primary btn-sm lri-match-btn" data-page="${i}">&#43; Match to Order</button>`;
+        return `
+          <div class="lri-row" data-page="${i}">
+            <div class="lri-thumb-col">
+              <div class="lri-page-num">Page ${i + 1}</div>
+              <iframe class="lri-pdf-preview" src="${pdfUrl}" title="Label page ${i + 1}"></iframe>
+            </div>
+            <div class="lri-info-col">
+              <div class="lri-status-row">
+                <span class="lri-badge ${statusCls}">${page.matchStatus}</span>
+                ${page.matchMethod ? `<span class="lri-method">via ${page.matchMethod.replace('_', ' ')}</span>` : ''}
+              </div>
+              <div class="lri-fields">${fields || '<span class="hint">No fields extracted</span>'}</div>
+              <div class="lri-match-action">${matchAction}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+      body.querySelectorAll('.lri-match-btn').forEach(btn =>
+        btn.addEventListener('click', () => openManualMatchModal(importId, parseInt(btn.dataset.page)))
+      );
+      body.querySelectorAll('.lri-unmatch-btn').forEach(btn =>
+        btn.addEventListener('click', async () => {
+          const pageIdx = parseInt(btn.dataset.page);
+          if (!confirm('Remove the match for this label page?')) return;
+          try {
+            const r = await fetch(`/api/label-imports/${importId}/pages/${pageIdx}/match`, { method: 'DELETE' });
+            if (!r.ok) throw new Error((await r.json()).error || 'Unmatch failed');
+            await refreshOrders();
+            openLabelReview(importId);
+          } catch (err) { alert(err.message); }
+        })
+      );
+    } catch (err) {
+      body.innerHTML = `<p class="hint" style="color:var(--danger);padding:2rem">${esc(err.message)}</p>`;
+    }
+  }
+
+  function openManualMatchModal(importId, pageIdx) {
+    const modal = document.getElementById('labelManualMatchOverlay');
+    const list  = document.getElementById('labelMatchOrderList');
+    const input = document.getElementById('labelMatchSearchInput');
+    input.value = '';
+
+    function renderList(filter) {
+      const q = filter.trim().toLowerCase();
+      const filtered = loadedOrders.filter(o =>
+        !q ||
+        o.order_number.toLowerCase().includes(q) ||
+        (o.customer_name || '').toLowerCase().includes(q) ||
+        (o.carrier || '').toLowerCase().includes(q)
+      );
+      list.innerHTML = filtered.slice(0, 60).map(o => `
+        <div class="lmm-order-row" data-order="${esc(o.order_number)}">
+          <div class="lmm-order-no">${esc(o.order_number)}</div>
+          <div class="lmm-order-meta">
+            ${o.customer_name ? `<span>${esc(o.customer_name)}</span>` : ''}
+            ${o.carrier ? `<span class="chip chip-carrier">${esc(o.carrier)}</span>` : ''}
+            <span class="status-badge ${esc(o.scan_status)}">${esc(o.scan_status)}</span>
+          </div>
+        </div>`).join('') || '<p class="hint" style="padding:.75rem">No orders match.</p>';
+      list.querySelectorAll('.lmm-order-row').forEach(row =>
+        row.addEventListener('click', async () => {
+          const orderNumber = row.dataset.order;
+          modal.classList.add('hidden');
+          try {
+            const r = await fetch(`/api/label-imports/${importId}/pages/${pageIdx}/match`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ orderNumber }),
+            });
+            if (!r.ok) throw new Error((await r.json()).error || 'Match failed');
+            await refreshOrders();
+            openLabelReview(importId);
+          } catch (err) { alert(err.message); }
+        })
+      );
+    }
+
+    renderList('');
+    const onInput = () => renderList(input.value);
+    input.addEventListener('input', onInput);
+    modal.classList.remove('hidden');
+    setTimeout(() => input.focus(), 100);
+  }
+
+  // Labels tab upload wiring
+  document.getElementById('labelImportDropZone').addEventListener('dragover', e => e.preventDefault());
+  document.getElementById('labelImportDropZone').addEventListener('drop', e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) doLabelImport(file);
+  });
+  document.getElementById('labelImportBrowseBtn').addEventListener('click', () =>
+    document.getElementById('labelImportFileInput').click()
+  );
+  document.getElementById('labelImportFileInput').addEventListener('change', e => {
+    if (e.target.files[0]) doLabelImport(e.target.files[0]);
+  });
+  document.getElementById('refreshLabelImportsBtn').addEventListener('click', renderLabelsTab);
+  document.getElementById('closeLabelReviewBtn').addEventListener('click', () =>
+    document.getElementById('labelReviewOverlay').classList.add('hidden')
+  );
+  document.getElementById('labelMatchCancelBtn').addEventListener('click', () =>
+    document.getElementById('labelManualMatchOverlay').classList.add('hidden')
+  );
 
   // ── Init ───────────────────────────────────────────────────────────────────
   initLogin();

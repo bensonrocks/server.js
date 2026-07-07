@@ -10,6 +10,8 @@ const nodemailer = require('nodemailer');
 const { PDFDocument } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
+let extractLabelFields;
+try { ({ extractLabelFields } = require('./lib/label-extract')); } catch {}
 
 let Docxtemplater, PizZip, DocxImageModule, bwipjs;
 try {
@@ -104,8 +106,10 @@ const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
 // Not DATA_DIR — static reference data, always lives with the app code
 const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json');
 
-fs.mkdirSync(WMS_DIR,          { recursive: true });
-fs.mkdirSync(WAYBILL_DIR,      { recursive: true });
+const LABEL_IMPORT_DIR = path.join(DATA_DIR, 'label_imports');
+fs.mkdirSync(WMS_DIR,            { recursive: true });
+fs.mkdirSync(WAYBILL_DIR,        { recursive: true });
+fs.mkdirSync(LABEL_IMPORT_DIR,   { recursive: true });
 fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
 
 // ── User credentials ─────────────────────────────────────────────────────────
@@ -364,9 +368,10 @@ function summarizeOrders(lines) {
 // Global shared view — reads all orders and their scan states directly from DB.
 // Every browser/device sees the same data; no per-session isolation.
 function globalOrdersWithState() {
-  const db   = readDb();
-  const seen = new Set();
-  const out  = [];
+  const db          = readDb();
+  const orderLabels = db.orderLabels || {};
+  const seen        = new Set();
+  const out         = [];
   for (const batch of db.batches) {
     const states = batch.orderStates || {};
     for (const ord of (batch.orders || [])) {
@@ -376,18 +381,19 @@ function globalOrdersWithState() {
       const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
       out.push({
         ...ord,
-        scan_status:      state.status          || 'pending',
-        scanned:          { ...state.scanned },
-        mismatches:       state.mismatches       || [],
-        startTime:        state.startTime        || null,
-        endTime:          state.endTime          || null,
-        operator:         state.operator         || null,
-        keyfields_closed:  state.keyfields_closed   || false,
-        alert_email_sent:  state.alert_email_sent   ?? null,
-        alert_email_error: state.alert_email_error  || null,
+        scan_status:       state.status           || 'pending',
+        scanned:           { ...state.scanned },
+        mismatches:        state.mismatches        || [],
+        startTime:         state.startTime         || null,
+        endTime:           state.endTime           || null,
+        operator:          state.operator          || null,
+        keyfields_closed:  state.keyfields_closed  || false,
+        alert_email_sent:  state.alert_email_sent  ?? null,
+        alert_email_error: state.alert_email_error || null,
         batchId:           batch.id,
-        client_name:      batch.client_name      || '',
-        has_waybill_pdf:  fs.existsSync(waybillPath),
+        client_name:       batch.client_name       || '',
+        has_waybill_pdf:   fs.existsSync(waybillPath),
+        has_order_label:   !!(orderLabels[ord.order_number]),
       });
     }
   }
@@ -518,6 +524,199 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Bulk Label PDF Import ─────────────────────────────────────────────────────
+
+const labelImportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
+  try {
+    const importId  = uuidv4();
+    const importDir = path.join(LABEL_IMPORT_DIR, importId);
+    fs.mkdirSync(importDir, { recursive: true });
+
+    const pdfDoc   = await PDFDocument.load(req.file.buffer);
+    const numPages = pdfDoc.getPageCount();
+
+    const allOrders = globalOrdersWithState();
+    const byOrderNo = new Map(allOrders.map(o => [normStr(o.order_number), o.order_number]));
+    const byWaybill = new Map(
+      allOrders.filter(o => o.waybill_number).map(o => [normStr(o.waybill_number), o.order_number])
+    );
+
+    const db = readDb();
+    if (!db.labelImports) db.labelImports = [];
+    if (!db.orderLabels)  db.orderLabels  = {};
+
+    const pages              = [];
+    const matchedThisImport  = new Set();
+
+    for (let i = 0; i < numPages; i++) {
+      const single  = await PDFDocument.create();
+      const [pg]    = await single.copyPages(pdfDoc, [i]);
+      single.addPage(pg);
+      const pageBuf  = Buffer.from(await single.save());
+      const pageFile = `page_${i + 1}.pdf`;
+      fs.writeFileSync(path.join(importDir, pageFile), pageBuf);
+
+      let extracted          = {};
+      let matchStatus        = 'unmatched';
+      let matchedOrderNumber = null;
+      let matchMethod        = null;
+
+      if (pdfParse) {
+        try {
+          const parsed  = await pdfParse(pageBuf);
+          const rawText = parsed.text || '';
+          if (extractLabelFields) extracted = extractLabelFields(rawText);
+
+          // Priority 1: order number
+          if (extracted.orderNumber) {
+            const hit = byOrderNo.get(normStr(extracted.orderNumber));
+            if (hit) {
+              matchedOrderNumber = hit;
+              matchStatus  = matchedThisImport.has(hit) ? 'duplicate' : 'matched';
+              matchMethod  = 'order_number';
+              matchedThisImport.add(hit);
+            }
+          }
+          // Priority 2: tracking number
+          if (!matchedOrderNumber && extracted.trackingNumber) {
+            const hit = byWaybill.get(normStr(extracted.trackingNumber));
+            if (hit) {
+              matchedOrderNumber = hit;
+              matchStatus  = matchedThisImport.has(hit) ? 'duplicate' : 'matched';
+              matchMethod  = 'tracking_number';
+              matchedThisImport.add(hit);
+            }
+          }
+        } catch (e) { matchStatus = 'error'; }
+      }
+
+      if (matchedOrderNumber && matchStatus === 'matched') {
+        db.orderLabels[matchedOrderNumber] = {
+          importId, pageIndex: i, pageFile,
+          attachedAt: new Date().toISOString(), attachedBy: req.userId,
+        };
+      }
+
+      pages.push({ pageIndex: i, pageFile, extracted, matchStatus, matchedOrderNumber, matchMethod });
+    }
+
+    const importRecord = {
+      id: importId, filename: req.file.originalname || 'label.pdf',
+      uploadedAt: new Date().toISOString(), uploadedBy: req.userId,
+      pageCount: numPages, pages,
+    };
+    db.labelImports.push(importRecord);
+    writeDb(db);
+
+    const matched = pages.filter(p => p.matchStatus === 'matched').length;
+    res.json({ ok: true, importId, pageCount: numPages, matched, import: importRecord });
+  } catch (err) {
+    console.error('[label-import]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/label-imports', requireAuth, (req, res) => {
+  const db = readDb();
+  const list = (db.labelImports || []).slice().reverse();
+  res.json(list.map(imp => ({
+    id:          imp.id,
+    filename:    imp.filename,
+    uploadedAt:  imp.uploadedAt,
+    uploadedBy:  imp.uploadedBy,
+    pageCount:   imp.pageCount,
+    matched:     (imp.pages || []).filter(p => p.matchStatus === 'matched').length,
+    unmatched:   (imp.pages || []).filter(p => p.matchStatus === 'unmatched').length,
+    duplicate:   (imp.pages || []).filter(p => p.matchStatus === 'duplicate').length,
+    error:       (imp.pages || []).filter(p => p.matchStatus === 'error').length,
+  })));
+});
+
+app.get('/api/label-imports/:id', requireAuth, (req, res) => {
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  res.json(imp);
+});
+
+// PDF served with token query-param support so browser iframes can authenticate
+app.get('/api/label-imports/:id/pages/:idx/pdf', requireAuthOrToken, (req, res) => {
+  const { id, idx } = req.params;
+  const filePath    = path.join(LABEL_IMPORT_DIR, id, `page_${parseInt(idx) + 1}.pdf`);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Page not found' });
+  const disp = req.query.dl === '1' ? 'attachment' : 'inline';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${disp}; filename="label_page_${parseInt(idx) + 1}.pdf"`);
+  fs.createReadStream(filePath).pipe(res);
+});
+
+app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
+  const { id, idx } = req.params;
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  const pageIdx = parseInt(idx);
+  const page    = imp.pages[pageIdx];
+  if (!page) return res.status(404).json({ error: 'Page not found' });
+
+  const order = globalOrdersWithState().find(o => o.order_number === orderNumber);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  if (!db.orderLabels) db.orderLabels = {};
+  // Remove previous mapping for this page if any
+  if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === id
+      && db.orderLabels[page.matchedOrderNumber]?.pageIndex === pageIdx) {
+    delete db.orderLabels[page.matchedOrderNumber];
+  }
+  page.matchedOrderNumber = orderNumber;
+  page.matchStatus        = 'matched';
+  page.matchMethod        = 'manual';
+  db.orderLabels[orderNumber] = {
+    importId: id, pageIndex: pageIdx, pageFile: page.pageFile,
+    attachedAt: new Date().toISOString(), attachedBy: req.userId,
+  };
+  writeDb(db);
+  res.json({ ok: true, page });
+});
+
+app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
+  const { id, idx } = req.params;
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  const pageIdx = parseInt(idx);
+  const page    = imp.pages[pageIdx];
+  if (!page) return res.status(404).json({ error: 'Page not found' });
+  if (!db.orderLabels) db.orderLabels = {};
+  if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === id) {
+    delete db.orderLabels[page.matchedOrderNumber];
+  }
+  page.matchedOrderNumber = null;
+  page.matchStatus        = 'unmatched';
+  page.matchMethod        = null;
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+// Serve the matched label PDF for an order (token-param auth for iframes)
+app.get('/api/order-label/:orderNumber/pdf', requireAuthOrToken, (req, res) => {
+  const { orderNumber } = req.params;
+  const db       = readDb();
+  const labelRef = (db.orderLabels || {})[orderNumber];
+  if (!labelRef) return res.status(404).json({ error: 'No label for this order' });
+  const filePath = path.join(LABEL_IMPORT_DIR, labelRef.importId, labelRef.pageFile);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Label file missing' });
+  const disp = req.query.dl === '1' ? 'attachment' : 'inline';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${disp}; filename="${orderNumber}_label.pdf"`);
+  fs.createReadStream(filePath).pipe(res);
 });
 
 // Keyfields XLSX generation → see lib/keyfields.js
@@ -1242,6 +1441,16 @@ app.post('/api/scan/keyfields-close', (req, res) => {
 // ── Auth / session enforcement ───────────────────────────────────────────────
 // One active session per user. Logging in from a new device invalidates the old one.
 const activeSessions = new Map(); // userId → token
+
+// requireAuthOrToken: accepts token in header OR ?token= query param (for PDF iframes)
+function requireAuthOrToken(req, res, next) {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  if (!token) return res.status(401).json({ error: 'Unauthorised' });
+  for (const [userId, t] of activeSessions) {
+    if (t === token) { req.userId = userId; return next(); }
+  }
+  res.status(401).json({ error: 'Session expired' });
+}
 
 function requireAuth(req, res, next) {
   const token = req.headers['x-auth-token'];
