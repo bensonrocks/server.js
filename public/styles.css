@@ -542,8 +542,8 @@ tr:hover td { background: var(--surface-2); }
 .chip-inprog  { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
 
 /* ── Order action buttons ── */
-.btn-waybill-pdf { display: inline-flex; align-items: center; gap: .3rem; background: var(--success-bg); border: 1px solid var(--success-border); border-radius: var(--radius-sm); padding: .28rem .6rem; font-size: .73rem; font-weight: 600; text-decoration: none; color: #15803d; white-space: nowrap; transition: background .12s; }
-.btn-waybill-pdf:hover { background: #dcfce7; }
+.btn-print-waybill { display: inline-flex; align-items: center; gap: .3rem; background: var(--success-bg); border: 1px solid var(--success-border); border-radius: var(--radius-sm); padding: .28rem .6rem; font-size: .73rem; font-weight: 600; cursor: pointer; color: #15803d; white-space: nowrap; transition: background .12s; }
+.btn-print-waybill:hover { background: #dcfce7; }
 .btn-del-order { background: none; border: 1px solid var(--danger-border); color: var(--danger); border-radius: var(--radius-sm); padding: .2rem .45rem; font-size: .73rem; cursor: pointer; line-height: 1; transition: background .15s, color .15s; flex-shrink: 0; }
 .btn-del-order:hover { background: var(--danger); color: #fff; }
 

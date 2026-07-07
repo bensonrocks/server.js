@@ -1068,7 +1068,7 @@
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
             ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
             ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
-            ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" data-auth-dl="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" data-auth-dl-name="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
+            ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill PDF">&#128438; Waybill</button>` : ''}
             ${kfBtn}
             ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
@@ -1085,10 +1085,22 @@
         if (ord) printWaybillLabel(ord);
       })
     );
+    document.querySelectorAll('.btn-print-waybill').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const ord = loadedOrders.find(o => o.order_number === btn.dataset.order);
+        if (ord) showPrintWaybillModal(ord);
+      })
+    );
     document.querySelectorAll('.dash-order-card').forEach(card =>
       card.addEventListener('click', () => {
         const ord = loadedOrders.find(o => o.order_number === card.dataset.order);
-        if (ord && ord.scan_status !== 'done') openScanOverlay(card.dataset.order);
+        if (!ord) return;
+        if (ord.scan_status === 'done' && ord.has_waybill_pdf && ord.batchId) {
+          showPrintWaybillModal(ord);
+        } else if (ord.scan_status !== 'done') {
+          openScanOverlay(card.dataset.order);
+        }
       })
     );
     document.querySelectorAll('.btn-del-order').forEach(btn => {
