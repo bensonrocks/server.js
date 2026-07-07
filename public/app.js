@@ -1925,6 +1925,7 @@
     loadEmailConfig();
     loadLabelTemplates();
     loadDocTemplates();
+    loadBarcodeMapStats();
   }
 
   // Admin tab switching
@@ -2468,6 +2469,50 @@
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
       statusEl.className = 'status-bar success';
       statusEl.textContent = `Template saved — ${data.count} columns: ${data.headers.slice(0, 5).join(', ')}${data.count > 5 ? '…' : ''}`;
+    } catch (err) {
+      statusEl.className = 'status-bar error';
+      statusEl.textContent = err.message;
+    }
+  }
+
+  // ── Barcode → SKU map upload ─────────────────────────────────────────────
+  const barcodeMapFileInput = document.getElementById('barcodeMapFileInput');
+
+  async function loadBarcodeMapStats() {
+    try {
+      const r = await fetch('/api/master/betime-code2', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      const d = await r.json();
+      const statsEl = document.getElementById('barcodeMapStats');
+      if (d.entries > 0) {
+        statsEl.className = 'barcode-map-stats';
+        statsEl.textContent = `&#10003; ${d.entries.toLocaleString()} barcode entries loaded`;
+        statsEl.classList.remove('hidden');
+      }
+    } catch {}
+  }
+
+  document.getElementById('barcodeMapBrowseBtn').addEventListener('click', e => { e.stopPropagation(); barcodeMapFileInput.click(); });
+  document.getElementById('barcodeMapDropZone').addEventListener('click', () => barcodeMapFileInput.click());
+  document.getElementById('barcodeMapDropZone').addEventListener('dragover', e => { e.preventDefault(); document.getElementById('barcodeMapDropZone').classList.add('dragover'); });
+  document.getElementById('barcodeMapDropZone').addEventListener('dragleave', () => document.getElementById('barcodeMapDropZone').classList.remove('dragover'));
+  document.getElementById('barcodeMapDropZone').addEventListener('drop', e => {
+    e.preventDefault(); document.getElementById('barcodeMapDropZone').classList.remove('dragover');
+    if (e.dataTransfer.files[0]) uploadBarcodeMap(e.dataTransfer.files[0]);
+  });
+  barcodeMapFileInput.addEventListener('change', () => { if (barcodeMapFileInput.files[0]) uploadBarcodeMap(barcodeMapFileInput.files[0]); barcodeMapFileInput.value = ''; });
+
+  async function uploadBarcodeMap(file) {
+    const statusEl = document.getElementById('barcodeMapStatus');
+    statusEl.className = 'status-bar loading'; statusEl.textContent = `Uploading ${file.name}…`; statusEl.classList.remove('hidden');
+    const form = new FormData(); form.append('file', file);
+    try {
+      const resp = await fetch('/api/master/betime-code2', { method: 'POST', headers: { 'x-master-key': LOG_PASSWORD }, body: form });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      statusEl.className = 'status-bar success';
+      statusEl.textContent = `✓ ${data.entries.toLocaleString()} barcodes loaded (${data.skipped} skipped)`;
+      loadBarcodeMapStats();
     } catch (err) {
       statusEl.className = 'status-bar error';
       statusEl.textContent = err.message;

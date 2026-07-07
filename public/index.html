@@ -350,7 +350,23 @@
           <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="kfTplBrowseBtn">browse</button></p>
         </div>
         <div id="kfTplStatus" class="status-bar hidden"></div>
-        <div class="admin-section-header" style="margin-top:1.5rem">
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header" style="margin-top:.5rem">
+          <div>
+            <div class="admin-section-title">&#127991; Barcode &#8594; SKU Map</div>
+            <div class="admin-section-sub">Upload the Keyfields WMS <strong>List Of SKU Report</strong> (.xlsx). Scanned <code>code2</code> barcodes will automatically resolve to the WMS <code>code</code> SKU during picking.</div>
+          </div>
+        </div>
+        <div id="barcodeMapStats" class="barcode-map-stats hidden"></div>
+        <div class="upload-area upload-area-sm" id="barcodeMapDropZone">
+          <input type="file" id="barcodeMapFileInput" accept=".xlsx,.xls" hidden />
+          <div class="upload-icon" style="font-size:1.3rem">&#8679;</div>
+          <p style="font-size:.82rem">Drag &amp; drop XLSX or <button class="link-btn" id="barcodeMapBrowseBtn">browse</button></p>
+        </div>
+        <div id="barcodeMapStatus" class="status-bar hidden"></div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header" style="margin-top:.5rem">
           <div>
             <div class="admin-section-title">Upload New Picklist</div>
             <div class="admin-section-sub">Upload an additional picklist without leaving the admin panel.</div>

@@ -2089,7 +2089,9 @@ app.get('/api/master/betime-code2', (req, res) => {
   res.json({ entries: Object.keys(_beTimeCode2Map).length, map: _beTimeCode2Map });
 });
 
-// POST — upload a new Betime SKU Excel; regenerates and hot-reloads the map
+// POST — upload a barcode→SKU map. Accepts two formats:
+//   1. Keyfields WMS "List Of SKU Report": 3 title rows, row 3 = headers with "code"/"code2"
+//   2. Legacy Betime format: row 0 = headers with "Product Code"/"CODE 2"
 app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
   if (!checkMaster(req, res)) return;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -2097,22 +2099,38 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
     const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
     const ws   = wb.Sheets[wb.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
-    const hdr  = data[0] || [];
-    const code1Idx = hdr.indexOf('Product Code');
-    const code2Idx = hdr.indexOf('CODE 2');
-    if (code1Idx === -1 || code2Idx === -1) {
-      return res.status(400).json({ error: 'Excel must have "Product Code" and "CODE 2" columns' });
+
+    // Auto-detect format
+    let hdr, dataRows;
+    const row3 = data[3] || [];
+    if (row3.indexOf('code') !== -1 && row3.indexOf('code2') !== -1) {
+      // Keyfields WMS SKU Report (3 title rows, headers at row 3)
+      hdr      = row3;
+      dataRows = data.slice(4);
+    } else {
+      // Legacy / Betime format (headers at row 0)
+      hdr      = data[0] || [];
+      dataRows = data.slice(1);
     }
+
+    const code1Idx = hdr.indexOf('code') !== -1          ? hdr.indexOf('code')          : hdr.indexOf('Product Code');
+    const code2Idx = hdr.indexOf('code2') !== -1         ? hdr.indexOf('code2')         : hdr.indexOf('CODE 2');
+    if (code1Idx === -1 || code2Idx === -1) {
+      return res.status(400).json({
+        error: 'Unrecognised format. Expected Keyfields WMS SKU Report (columns "code"/"code2") or Betime format (columns "Product Code"/"CODE 2")',
+      });
+    }
+
     const map = {};
     let skipped = 0;
-    data.slice(1).forEach(row => {
-      const pc = String(row[code1Idx] || '').trim();
-      const c2 = String(row[code2Idx] || '').trim();
-      if (!pc || !c2) { skipped++; return; }
+    dataRows.forEach(row => {
+      const pc = String(row[code1Idx] ?? '').trim();
+      const c2 = String(row[code2Idx] ?? '').trim();
+      if (!pc || !c2 || c2 === 'undefined') { skipped++; return; }
       c2.split(',').forEach(b => { const bc = b.trim(); if (bc) map[bc] = pc; });
     });
     fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
-    _beTimeCode2Map = map;  // hot-reload in memory
+    _beTimeCode2Map = map;
     _rebuildCode2Lengths();
     res.json({ ok: true, entries: Object.keys(map).length, skipped });
   } catch (err) {

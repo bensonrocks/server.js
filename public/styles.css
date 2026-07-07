@@ -1776,6 +1776,19 @@ body.ls-open { overflow: hidden; }
    BULK LABEL IMPORT — Labels Tab, Review Overlay, Manual Match Modal
    ══════════════════════════════════════════════════════════════════════════════ */
 
+/* ── Barcode map stats chip ─────────────────────────────────────────────── */
+.barcode-map-stats {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-sm);
+  padding: .4rem .75rem;
+  font-size: .82rem;
+  font-weight: 600;
+  margin-bottom: .5rem;
+  display: inline-block;
+}
+
 /* ── Labels tab layout ──────────────────────────────────────────────────── */
 .label-import-wrap {
   max-width: var(--content-max);
