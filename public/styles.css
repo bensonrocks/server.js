@@ -1704,6 +1704,57 @@ body.ls-open { overflow: hidden; }
 .clf-use-btn:hover { background: #15803d; }
 .clf-use-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+/* ================================================================
+   DESKTOP SCANNING WORKSTATION  (≥1024px — 20"+ monitor)
+   Everything in the scan overlay is scaled up for arm's-length
+   reading and large-target clicking.
+   ================================================================ */
+@media (min-width: 1024px) {
+  /* Header bar */
+  .scan-order-header { padding: 1rem 1.5rem; gap: 1.1rem; }
+  .scan-order-no     { font-size: 1.35rem; }
+  .scan-progress     { font-size: .95rem; padding: .25em .85em; }
+  .back-btn          { font-size: 1rem; padding: .45rem 1rem; }
+
+  /* Meta strip (carrier / address) */
+  .scan-order-meta   { padding: .75rem 1.5rem; font-size: 1rem; gap: .6rem 2rem; }
+
+  /* Items table */
+  .scan-items-table          { font-size: 1.1rem; }
+  .scan-items-table th       { padding: .75rem 1.25rem; font-size: .85rem; }
+  .scan-items-table td       { padding: 1.1rem 1.25rem; font-size: 1.15rem; }
+  .qty-col                   { width: 110px; }
+  .status-col                { width: 56px; }
+  .row-ok .status-icon,
+  .row-over .status-icon,
+  .row-partial .status-icon  { font-size: 1.4rem; }
+  .qty-input                 { width: 80px; padding: .45rem .55rem; font-size: 1.05rem; }
+  .lot-badge                 { font-size: .88rem; padding: .25rem .7rem; }
+  .lot-info-row td           { padding: .3rem 1.25rem .75rem; }
+
+  /* Scan dock — input + action buttons */
+  .item-scan-dock  { padding: 1rem 1.5rem 1.1rem; }
+  .item-scan-wrap  { border-radius: 12px; border-width: 2.5px; }
+  .scan-icon-prefix { font-size: 1.7rem; padding: 0 1rem; }
+  .big-scan-input  { padding: 1.2rem .6rem; font-size: 1.4rem; }
+  .btn-camera-open { padding: 0 1.6rem; font-size: 1.1rem; min-width: 110px; }
+  .scan-feedback   { font-size: 1rem; padding: .55rem 1rem; margin-bottom: .65rem; }
+
+  /* Complete / Pause / Cancel buttons */
+  .dock-actions              { gap: .75rem; }
+  .dock-actions .btn-danger  { padding: 1.1rem 1rem; font-size: 1.1rem; }
+  .dock-actions .btn-pause   { padding: 1.1rem 1rem; font-size: 1.1rem; }
+  .dock-actions .btn-success { padding: 1.1rem 1rem; font-size: 1.15rem; }
+
+  /* Lot-check modal — readable at desktop distance */
+  .lot-check-modal          { max-width: 720px; padding: 2rem; }
+  .lot-check-table          { font-size: 1rem; }
+  .lot-check-table th       { padding: .6rem 1rem; font-size: .85rem; }
+  .lot-check-table td       { padding: .75rem 1rem; }
+  .modal-actions .btn-secondary,
+  .modal-actions .btn-primary { padding: .9rem 1.5rem; font-size: 1.05rem; }
+}
+
 /* ── Warehouse phone/tablet: larger camera header ──────────────────────────── */
 @media (max-width: 600px) {
   .camera-header { padding: .85rem 1rem; }
