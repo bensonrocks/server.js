@@ -1055,7 +1055,7 @@
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
             ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
-            ${ord.has_waybill_pdf ? `<span class="chip chip-waybill">&#128196; with waybill</span>` : ''}
+            ${ord.has_waybill_pdf ? `<span class="chip chip-waybill">&#128196; Waybill uploaded</span>` : ''}
             ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
             ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
             ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
