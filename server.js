@@ -91,7 +91,13 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'no-rawrows-5', ts: Date.now() }));
+app.use((req, res, next) => { if (req.path.startsWith('/api/')) console.log(`[REQ] ${req.method} ${req.path}`); next(); });
+app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'req-log-6', ts: Date.now() }));
+// Quick multer-free upload test — no auth needed
+app.post('/api/test-upload', upload.single('orderFile'), (req, res) => {
+  console.log('[test-upload] file:', req.file?.originalname, req.file?.size, 'bytes');
+  res.json({ ok: true, filename: req.file?.originalname, size: req.file?.size });
+});
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
