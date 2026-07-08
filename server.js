@@ -108,15 +108,8 @@ setImmediate(() => {
 // ── Auth middleware ───────────────────────────────────────────────────────────
 
 function withTenant(req, res, next) {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  if (!session) return res.status(401).json({ error: 'Authentication required' });
-
-  const tenant = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(session.tenantId);
-  if (!tenant || !tenant.active) return res.status(403).json({ error: 'Tenant not found or suspended' });
-
-  const ctx      = getCtx(session.tenantId);
-  req.tenantId   = session.tenantId;
+  const ctx      = getCtx('default');
+  req.tenantId   = 'default';
   req.ctx        = ctx;
   req.db         = ctx.db;
   req.store      = ctx.store;
