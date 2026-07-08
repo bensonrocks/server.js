@@ -1765,7 +1765,7 @@
       document.getElementById('scanMetaDetails').classList.toggle('hidden');
     });
 
-    scanPage = 0; scanPageManual = false;
+    scanPage = 0; scanPageManual = false; scanFocusSku = null;
     renderItemsTable(order);
     updateProgress(order);
     startTimer(orderTimings[order.order_number]);
@@ -1808,6 +1808,7 @@
   const SCAN_PAGE_SIZE = 5;
   let scanPage       = 0;
   let scanPageManual = false;
+  let scanFocusSku   = null;  // last item the packer counted — keep its page in view while it's unfinished
 
   function renderItemsTable(order) {
     const scanned  = order.scanned || {};
@@ -1818,11 +1819,18 @@
     decorated.sort((a, b) => (a.done - b.done) || (a.idx - b.idx));
     const activeSku = decorated.find(d => !d.done)?.item.sku;
 
-    // Pagination — follow the active item unless the packer paged manually
+    // Pagination — the packer always sees the row they are working on:
+    // follow the just-counted item while it still needs pieces; once it's
+    // finished, follow the next pending item. Manual paging sticks until
+    // the next count.
     const pageCount = Math.max(1, Math.ceil(decorated.length / SCAN_PAGE_SIZE));
     if (!scanPageManual) {
-      const ai = decorated.findIndex(d => d.item.sku === activeSku);
-      scanPage = ai >= 0 ? Math.floor(ai / SCAN_PAGE_SIZE) : 0;
+      let focusIdx = -1;
+      if (scanFocusSku) {
+        focusIdx = decorated.findIndex(d => d.item.sku === scanFocusSku && !d.done);
+      }
+      if (focusIdx < 0) focusIdx = decorated.findIndex(d => d.item.sku === activeSku);
+      scanPage = focusIdx >= 0 ? Math.floor(focusIdx / SCAN_PAGE_SIZE) : 0;
     }
     scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
     const pageRows = decorated.slice(scanPage * SCAN_PAGE_SIZE, (scanPage + 1) * SCAN_PAGE_SIZE);
@@ -2103,7 +2111,8 @@
         if (!activeOrder.scanned) activeOrder.scanned = {};
         activeOrder.scanned[data.sku] = data.scanned_qty;
         activeOrder.scan_status = 'processing';
-        scanPageManual = false; // scanner scan → snap back to the active item's page
+        scanFocusSku   = data.sku; // show the page of the item just scanned
+        scanPageManual = false;
         renderItemsTable(activeOrder);
         updateProgress(activeOrder);
 
@@ -2137,6 +2146,8 @@
       if (!activeOrder.scanned) activeOrder.scanned = {};
       activeOrder.scanned[data.sku] = data.scanned_qty;
       activeOrder.scan_status = 'processing';
+      scanFocusSku   = data.sku; // keep the counted item's page in view
+      scanPageManual = false;
       renderItemsTable(activeOrder);
       updateProgress(activeOrder);
     } catch (err) { alert(err.message); }
