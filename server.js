@@ -220,6 +220,18 @@ app.patch('/api/staff/my-password', withStaff, (req, res) => {
   res.json({ ok: true });
 });
 
+// Change staff user's own username
+app.patch('/api/staff/my-username', withStaff, (req, res) => {
+  const { newUsername } = req.body || {};
+  if (!newUsername || newUsername.trim().length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
+  const trimmed = newUsername.trim();
+  const existing = mainDb.prepare('SELECT username FROM staff_users WHERE username = ? AND username != ?').get(trimmed, req.staffUsername);
+  if (existing) return res.status(409).json({ error: 'Username already taken' });
+  mainDb.prepare('UPDATE staff_users SET username = ? WHERE username = ?').run(trimmed, req.staffUsername);
+  mainDb.prepare('UPDATE staff_sessions SET username = ? WHERE username = ?').run(trimmed, req.staffUsername);
+  res.json({ ok: true, username: trimmed });
+});
+
 // API key management (staff only)
 app.get('/api/staff/api-keys', withStaff, (req, res) => {
   const tenantId = req.headers['x-tenant-id'] || 'default';

@@ -43,6 +43,21 @@ a:hover{text-decoration:underline}
 .sync-all-btn{padding:5px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-size:12px;font-weight:600;transition:all .12s}
 .sync-all-btn:hover{background:rgba(255,255,255,.16)}
 .sync-all-btn:disabled{opacity:.4;cursor:not-allowed}
+.staff-chip{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#94a3b8;font-size:11px;font-weight:600;white-space:nowrap}
+.staff-chip .chip-user{color:#e2e8f0}
+.staff-chip-btn{padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.07);color:#94a3b8;font-size:10px;font-weight:700;cursor:pointer;transition:all .12s;font-family:inherit}
+.staff-chip-btn:hover{background:rgba(255,255,255,.15);color:#fff}
+.staff-login-btn{padding:5px 12px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;transition:all .12s;font-family:inherit}
+.staff-login-btn:hover{background:rgba(255,255,255,.16);color:#fff}
+/* Staff login modal */
+.staff-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center}
+.staff-modal{background:#fff;border-radius:14px;padding:28px 28px 24px;width:340px;max-width:92vw;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.staff-modal h3{font-size:16px;font-weight:800;color:#0f172a;margin-bottom:18px}
+.staff-modal-fields{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.staff-modal-fields input{padding:9px 12px;border-radius:8px;border:1.5px solid #e2e8f0;font-size:14px;font-family:inherit;outline:none;transition:border .15s}
+.staff-modal-fields input:focus{border-color:#2563eb}
+.staff-modal-msg{font-size:12px;padding:8px 10px;border-radius:7px;margin-bottom:10px;display:none}
+.staff-modal-actions{display:flex;gap:8px;justify-content:flex-end}
 .layout{display:flex;flex:1;overflow:hidden}
 
 /* ── SIDEBAR ── */
@@ -776,9 +791,26 @@ a:hover{text-decoration:underline}
       <input id="search" class="search-box" placeholder="Search orders&#8230;" autocomplete="off">
 <button id="lang-toggle-btn" onclick="toggleLang()" style="padding:5px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#94a3b8;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s" title="Toggle language / 切换语言">EN</button>
       <button id="sync-all-btn" class="sync-all-btn" data-i18n="syncAll">&#8635; Sync All</button>
+      <div id="staff-hdr-widget"></div>
       <button id="btn-ingest" class="btn btn-p" data-i18n="addOrder">+ Add Order</button>
     </div>
   </header>
+
+  <!-- Staff login modal -->
+  <div id="staff-login-modal" class="staff-modal-bg" style="display:none" onclick="if(event.target===this)closeStaffModal()">
+    <div class="staff-modal">
+      <h3>&#128274; Staff Login</h3>
+      <div class="staff-modal-fields">
+        <input id="sml-user" type="text" placeholder="Username" autocomplete="username" onkeydown="if(event.key==='Enter')staffLogin()">
+        <input id="sml-pass" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')staffLogin()">
+      </div>
+      <div id="sml-msg" class="staff-modal-msg"></div>
+      <div class="staff-modal-actions">
+        <button class="slk-btn" style="background:#f1f5f9;color:#374151" onclick="closeStaffModal()">Cancel</button>
+        <button class="slk-btn" onclick="staffLogin()">Log In</button>
+      </div>
+    </div>
+  </div>
 
   <div class="layout">
     <aside class="sidebar" id="sidebar">
@@ -1477,12 +1509,26 @@ a:hover{text-decoration:underline}
 
           <!-- Change Password -->
           <div class="adm-card">
-            <div class="adm-card-title">&#128273; Change Password</div>
-            <div class="adm-pw-form">
-              <input id="adm-new-pw" class="slk-input" type="password" placeholder="New password (min. 6 characters)" autocomplete="new-password">
-              <input id="adm-confirm-pw" class="slk-input" type="password" placeholder="Confirm new password" autocomplete="new-password">
-              <div id="adm-pw-msg" style="display:none;font-size:13px;padding:8px 12px;border-radius:8px"></div>
-              <button class="slk-btn" onclick="adminChangePassword()">Update Password</button>
+            <div class="adm-card-title">&#128100; Account Settings</div>
+            <p id="adm-acct-status" style="font-size:13px;color:#64748b;margin-bottom:14px"></p>
+            <!-- Change username -->
+            <div style="margin-bottom:18px">
+              <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Change Username</div>
+              <div class="adm-pw-form">
+                <input id="adm-new-user" class="slk-input" type="text" placeholder="New username (min. 3 chars)" autocomplete="username">
+                <div id="adm-user-msg" style="display:none;font-size:13px;padding:8px 12px;border-radius:8px"></div>
+                <button class="slk-btn" onclick="adminChangeUsername()">Update Username</button>
+              </div>
+            </div>
+            <!-- Change password -->
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Change Password</div>
+              <div class="adm-pw-form">
+                <input id="adm-new-pw" class="slk-input" type="password" placeholder="New password (min. 6 chars)" autocomplete="new-password">
+                <input id="adm-confirm-pw" class="slk-input" type="password" placeholder="Confirm new password" autocomplete="new-password">
+                <div id="adm-pw-msg" style="display:none;font-size:13px;padding:8px 12px;border-radius:8px"></div>
+                <button class="slk-btn" onclick="adminChangePassword()">Update Password</button>
+              </div>
             </div>
           </div>
 
@@ -2076,6 +2122,8 @@ async function doOverlayLogin(){
 // ── STORAGE ───────────────────────────────────────────────────────────────────
 let authToken=localStorage.getItem('idealoms_token')||null;
 let currentTenantId=localStorage.getItem('idealoms_tenant')||'default';
+let staffToken=localStorage.getItem('staff_token')||null;
+let staffUser=localStorage.getItem('staff_user')||null;
 let orders=(()=>{try{const s=localStorage.getItem('od');return s?JSON.parse(s):SEED.map(o=>({...o}));}catch{return SEED.map(o=>({...o}));}})();
 const save=()=>{try{localStorage.setItem('od',JSON.stringify(orders));}catch{}};
 let connCreds=(()=>{try{return JSON.parse(localStorage.getItem('idealoms_creds')||'{}');}catch{return {};}})();
@@ -2177,6 +2225,7 @@ function showAdminLock(){
 
 async function initAdminPage(){
   showAdminContent();
+  renderStaffWidget();
   await loadAdminStats();
   saleRangeChange();
   loadDashboardStats();
@@ -2395,20 +2444,87 @@ async function adminDeleteOrder(id){
   });
 }
 
+// ── STAFF AUTH ────────────────────────────────────────────────────────────────
+function renderStaffWidget(){
+  const el=$('staff-hdr-widget');
+  if(!el)return;
+  if(staffToken&&staffUser){
+    el.innerHTML=`<div class="staff-chip"><span>&#128100;</span><span class="chip-user">${staffUser}</span><button class="staff-chip-btn" onclick="staffLogout()">Log Out</button></div>`;
+  } else {
+    el.innerHTML=`<button class="staff-login-btn" onclick="openStaffModal()">&#128274; Log In</button>`;
+  }
+  const s=$('adm-acct-status');
+  if(s) s.textContent = staffToken&&staffUser ? `Logged in as: ${staffUser}` : 'Not logged in — log in via the header button to change credentials.';
+}
+
+function openStaffModal(){
+  $('staff-login-modal').style.display='flex';
+  setTimeout(()=>$('sml-user')&&$('sml-user').focus(),50);
+}
+function closeStaffModal(){
+  $('staff-login-modal').style.display='none';
+  $('sml-user').value='';$('sml-pass').value='';
+  const m=$('sml-msg');m.style.display='none';
+}
+
+async function staffLogin(){
+  const u=$('sml-user').value.trim();
+  const p=$('sml-pass').value;
+  const msg=$('sml-msg');
+  const show=(t,ok)=>{msg.textContent=t;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
+  if(!u||!p){show('Enter username and password.',false);return;}
+  try{
+    const r=await fetch(`${SERVER}/api/staff/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    const j=await r.json();
+    if(!r.ok){show(j.error||'Login failed.',false);return;}
+    staffToken=j.token;staffUser=j.username;
+    localStorage.setItem('staff_token',staffToken);localStorage.setItem('staff_user',staffUser);
+    closeStaffModal();renderStaffWidget();
+  }catch(e){show('Error: '+e.message,false);}
+}
+
+async function staffLogout(){
+  if(staffToken){
+    try{await fetch(`${SERVER}/api/staff/logout`,{method:'POST',headers:{'Authorization':`Bearer ${staffToken}`}});}catch{}
+  }
+  staffToken=null;staffUser=null;
+  localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');
+  renderStaffWidget();
+}
+
+async function adminChangeUsername(){
+  if(!staffToken){alert('Please log in first (header button).');return;}
+  const nu=$('adm-new-user').value.trim();
+  const msg=$('adm-user-msg');
+  const show=(t,ok)=>{msg.textContent=t;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
+  if(!nu||nu.length<3){show('Username must be at least 3 characters.',false);return;}
+  try{
+    const r=await fetch(`${SERVER}/api/staff/my-username`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({newUsername:nu})});
+    const j=await r.json();
+    if(!r.ok){show(j.error||'Failed.',false);return;}
+    staffUser=j.username;localStorage.setItem('staff_user',staffUser);
+    show('Username updated to: '+staffUser,true);
+    $('adm-new-user').value='';
+    renderStaffWidget();
+  }catch(e){show('Error: '+e.message,false);}
+}
+
 async function adminChangePassword(){
+  if(!staffToken){alert('Please log in first (header button).');return;}
   const np=$('adm-new-pw').value;
   const cp=$('adm-confirm-pw').value;
   const msg=$('adm-pw-msg');
-  const show=(text,ok)=>{msg.textContent=text;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
+  const show=(t,ok)=>{msg.textContent=t;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
   if(!np||np.length<6){show('Password must be at least 6 characters.',false);return;}
   if(np!==cp){show('Passwords do not match.',false);return;}
   try{
-    const r=await fetch(`${SERVER}/api/auth/change-password`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},body:JSON.stringify({newPassword:np})});
+    const r=await fetch(`${SERVER}/api/staff/my-password`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({newPassword:np})});
     if(!r.ok)throw new Error((await r.json()).error||'Failed');
-    show('Password updated. You will be redirected to sign in again.',true);
-    authToken=null;adminUnlocked=false;localStorage.removeItem('idealoms_token');
+    show('Password updated. Please log in again.',true);
+    staffToken=null;staffUser=null;
+    localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');
     $('adm-new-pw').value='';$('adm-confirm-pw').value='';
-    setTimeout(()=>window.location.replace('/about.html'),1800);
+    setTimeout(()=>renderStaffWidget(),1200);
   }catch(e){show('Error: '+e.message,false);}
 }
 
@@ -4064,6 +4180,7 @@ $('synclog-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockSyncLog(
 $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();});
 
 (async()=>{
+  renderStaffWidget();
   await loadOrdersFromServer();
   render();
   saleRangeChange();
