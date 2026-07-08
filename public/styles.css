@@ -41,9 +41,11 @@
   --shadow:    0 1px 3px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.04);
   --shadow-lg: 0 8px 32px rgba(0,0,0,.12);
 
-  --header-h:      60px;
+  --header-h:      0px;
+  --sidebar-w:     220px;
+  --topbar-h:      52px;
   --bottom-nav-h:  0px;
-  --content-max:   1100px;
+  --content-max:   1280px;
   --pad:           1.5rem;
 
   /* ── Z-index scale (edit here — nowhere else) ─────────────────
@@ -78,7 +80,146 @@ body {
   color: var(--text);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  height: 100vh;
 }
+
+/* ================================================================
+   APP SHELL — sidebar + content pane
+   ================================================================ */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: #0d1b2a;
+  color: #c8d6e5;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 50;
+}
+
+.sb-logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: 1.1rem 1rem .9rem;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  flex-shrink: 0;
+}
+.sb-brand-text  { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.sb-brand-name  { font-size: .82rem; font-weight: 900; letter-spacing: .08em; color: #fff; white-space: nowrap; }
+.sb-brand-sub   { font-size: .55rem; color: rgba(200,214,229,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .02em; }
+
+.sb-nav         { display: flex; flex-direction: column; gap: 2px; padding: .6rem .6rem 0; }
+.sb-section-lbl {
+  font-size: .59rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(200,214,229,.35); padding: .75rem 1rem .25rem; flex-shrink: 0;
+}
+
+/* Sidebar nav buttons reuse .tab-btn class from JS — override here */
+.sidebar .tab-btn {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  width: 100%;
+  padding: .52rem .75rem;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: rgba(200,214,229,.75);
+  font-size: .83rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.sidebar .tab-btn .tab-icon { display: inline-block; font-size: .95rem; line-height: 1; }
+.sidebar .tab-btn:hover   { background: rgba(255,255,255,.08); color: #fff; }
+.sidebar .tab-btn.active  { background: rgba(255,255,255,.14); color: #fff; font-weight: 700; }
+.sidebar .tab-btn:disabled,
+.sidebar .tab-btn.tab-locked { opacity: .3; cursor: not-allowed; }
+.sidebar .tab-btn.hidden  { display: none !important; }
+
+/* Client list in sidebar */
+.sb-client-list { display: flex; flex-direction: column; gap: 2px; padding: .25rem .6rem .4rem; overflow-y: auto; flex: 1; min-height: 0; }
+.sb-client-btn {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .38rem .75rem; border-radius: var(--radius-sm);
+  background: transparent; border: none;
+  color: rgba(200,214,229,.65); font-size: .78rem; font-weight: 500;
+  cursor: pointer; text-align: left; transition: background .12s, color .12s;
+}
+.sb-client-btn:hover  { background: rgba(255,255,255,.07); color: #fff; }
+.sb-client-btn.active { background: rgba(255,255,255,.12); color: #fff; font-weight: 700; }
+.sb-client-count { font-size: .67rem; font-weight: 700; background: rgba(255,255,255,.12); color: rgba(200,214,229,.7); border-radius: 99px; padding: .1em .5em; margin-left: .3rem; }
+
+/* Sidebar bottom: user chip + admin btn */
+.sb-bottom {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+  padding: .6rem .7rem;
+  display: flex; flex-direction: column; gap: .4rem;
+}
+.sb-user-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.sb-user-row .user-chip { background: rgba(255,255,255,.12); color: #e2e8f0; border-color: rgba(255,255,255,.18); font-size: .7rem; max-width: 120px; }
+.sb-icon-btn {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
+  color: rgba(200,214,229,.75); border-radius: var(--radius-sm);
+  padding: .22rem .5rem; cursor: pointer; font-size: .88rem;
+  transition: background .12s, color .12s; line-height: 1;
+}
+.sb-icon-btn:hover { background: rgba(255,255,255,.16); color: #fff; }
+.sb-admin-btn {
+  width: 100%;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+  color: rgba(200,214,229,.7); border-radius: var(--radius-sm);
+  padding: .42rem .7rem; cursor: pointer; font-size: .78rem; font-weight: 600;
+  text-align: left; transition: background .12s, color .12s;
+}
+.sb-admin-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+.sb-admin-btn.hidden { display: none !important; }
+
+/* ── Content Pane ────────────────────────────────────────────── */
+.content-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.content-topbar {
+  height: var(--topbar-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  display: flex;
+  align-items: center;
+  padding: 0 1.25rem;
+  gap: .75rem;
+  flex-shrink: 0;
+}
+.sb-hamburger {
+  display: none;
+  background: none; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: .22rem .55rem;
+  font-size: 1rem; cursor: pointer; color: var(--text-light);
+  line-height: 1; transition: background .12s;
+}
+.sb-hamburger:hover { background: var(--bg); }
+.ct-tab-title { font-size: .9rem; font-weight: 700; color: var(--text); flex: 1; }
+
+/* Sidebar overlay (mobile) */
+.sb-drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 49; }
+.sb-drawer-overlay.visible { display: block; }
 
 /* ── Utility ─────────────────────────────────────────────────── */
 .hidden { display: none !important; }
@@ -91,27 +232,12 @@ code { background: var(--surface-2); padding: .1em .35em; border-radius: 4px; fo
 .is-icon-lg  { width: 52px;  height: 52px;  flex-shrink: 0; }
 
 /* ================================================================
-   HEADER
+   HEADER (legacy — kept for login/PIN overlay text only)
    ================================================================ */
-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 1px 8px rgba(0,0,0,.05);
-  position: sticky; top: 0; z-index: var(--z-header);
-  height: var(--header-h);
-}
-.header-inner {
-  max-width: var(--content-max); margin: 0 auto;
-  padding: 0 var(--pad);
-  display: flex; align-items: center; gap: 1.25rem; height: 100%;
-}
-.header-logo { display: flex; align-items: center; gap: .55rem; text-decoration: none; flex-shrink: 0; }
-.header-brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .header-brand-name { font-size: .9rem; font-weight: 800; letter-spacing: .06em; color: #1e3a8a; }
 .header-brand-sub  { font-size: .57rem; color: var(--text-muted); white-space: nowrap; letter-spacing: .02em; }
-.logo { font-weight: 700; font-size: 1rem; color: var(--primary); white-space: nowrap; }
 
-nav { display: flex; gap: 2px; }
+/* .tab-btn — base class also used by sidebar; sidebar overrides below */
 .tab-btn {
   background: none; border: none; padding: .38rem .9rem;
   border-radius: var(--radius-sm); cursor: pointer;
@@ -124,7 +250,7 @@ nav { display: flex; gap: 2px; }
 .tab-btn:disabled,
 .tab-btn.tab-locked { opacity: .35; cursor: not-allowed; }
 
-.header-user { margin-left: auto; display: flex; align-items: center; gap: .4rem; flex-shrink: 0; }
+/* user-chip — reused in sidebar and login */
 .user-chip {
   font-size: .72rem; font-weight: 600;
   background: var(--primary-light); color: var(--primary);
@@ -138,7 +264,6 @@ nav { display: flex; gap: 2px; }
   transition: background .15s; flex-shrink: 0; color: var(--text-light);
 }
 .lock-btn:hover { background: var(--bg); color: var(--text); }
-
 .printer-settings-btn {
   background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: .22rem .5rem; cursor: pointer; font-size: .9rem; line-height: 1;
@@ -172,7 +297,12 @@ nav { display: flex; gap: 2px; }
 /* ================================================================
    MAIN LAYOUT
    ================================================================ */
-main { max-width: var(--content-max); margin: 0 auto; padding: 1.25rem var(--pad); }
+main {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 1.25rem var(--pad);
+}
 .tab { display: none; }
 .tab.active { display: block; }
 
@@ -554,8 +684,8 @@ tr:hover td { background: var(--surface-2); }
 /* ================================================================
    SCAN OVERLAY
    ================================================================ */
-.scanner-tab { padding: 0; display: flex; flex-direction: column; min-height: calc(100vh - var(--header-h) - 2.5rem); }
-.scan-overlay { position: fixed; inset: 0; top: var(--header-h); z-index: var(--z-scan-overlay); background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+.scanner-tab { padding: 0; display: flex; flex-direction: column; min-height: calc(100vh - 2.5rem); }
+.scan-overlay { position: fixed; inset: 0; top: 0; z-index: var(--z-scan-overlay); background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
 .scan-overlay.hidden { display: none !important; }
 body.scan-open { overflow: hidden; }
 
@@ -782,7 +912,7 @@ body.scan-open { overflow: hidden; }
 /* ================================================================
    LOG OVERLAY
    ================================================================ */
-.log-overlay { position: fixed; inset: 0; top: var(--header-h); z-index: var(--z-log-overlay); background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.log-overlay { position: fixed; inset: 0; top: 0; z-index: var(--z-log-overlay); background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .log-overlay.hidden { display: none !important; }
 body.log-open { overflow: hidden; }
 .log-overlay-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem .6rem; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 1; box-shadow: var(--shadow-sm); }
@@ -807,7 +937,7 @@ body.log-open { overflow: hidden; }
 .master-actions { margin: 0; padding: 0; background: none; border: none; }
 
 /* Nav tabs */
-.admin-nav { display: flex; gap: 0; overflow-x: auto; border-bottom: 2px solid var(--border); background: var(--surface); position: sticky; top: var(--header-h); z-index: 2; }
+.admin-nav { display: flex; gap: 0; overflow-x: auto; border-bottom: 2px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 2; }
 .admin-nav-btn { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: .75rem 1.1rem; font-size: .82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s; }
 .admin-nav-btn:hover { color: var(--primary); }
 .admin-nav-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
@@ -972,17 +1102,54 @@ body.log-open { overflow: hidden; }
 .bkd-units { font-size: .63rem; color: var(--text-muted); }
 
 /* ================================================================
-   FOOTER
+   FOOTER (legacy — sidebar bottom replaces it)
    ================================================================ */
-.app-footer { display: flex; flex-direction: column; align-items: center; gap: .55rem; padding: 1.25rem 1rem calc(1.25rem + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); margin-top: 2rem; text-align: center; }
-.footer-brand { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; justify-content: center; }
-.footer-brand-text { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; font-size: .7rem; color: var(--text-muted); }
-.footer-app-name  { font-weight: 900; letter-spacing: .06em; color: #1e3a8a; font-size: .76rem; }
-.footer-company   { color: var(--text-muted); }
-.footer-by        { color: var(--text-muted); font-style: italic; }
-.footer-divider   { color: var(--border); }
-.log-access-link  { background: none; border: none; color: var(--text-muted); font-size: .72rem; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; padding: .25rem .4rem; }
-.log-access-link:hover { color: var(--primary); }
+.app-footer { display: none; }
+.log-access-link { display: none; }
+
+/* ================================================================
+   ORDERS TABLE  (replaces dash-order-card grid)
+   ================================================================ */
+.orders-table-wrap { overflow-x: auto; margin-top: .5rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-sm); }
+.orders-table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+.orders-table thead { background: var(--surface-2); }
+.orders-table thead th {
+  padding: .55rem .85rem; text-align: left;
+  font-size: .67rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+.orders-tr { cursor: pointer; transition: background .1s; }
+.orders-tr:hover td { background: #f8fafc; }
+.orders-tr.status-done td { opacity: .82; }
+.orders-tr td { padding: .65rem .85rem; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+.orders-tr:last-child td { border-bottom: none; }
+
+/* Status stripe (narrow left column) */
+.ord-stripe { width: 4px; padding: 0 !important; }
+.orders-tr.status-pending     .ord-stripe-cell { background: var(--primary); }
+.orders-tr.status-processing  .ord-stripe-cell { background: var(--warning); }
+.orders-tr.status-done        .ord-stripe-cell { background: var(--success); }
+.orders-tr.status-unprocessed .ord-stripe-cell { background: var(--danger);  }
+.ord-stripe-cell { width: 4px; padding: 0 !important; }
+
+.ord-no-link { font-weight: 700; color: var(--primary); font-size: .83rem; word-break: break-all; }
+.ord-waybill-cell { font-size: .76rem; color: #0369a1; font-family: monospace; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.ord-client-cell  { font-size: .75rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+.ord-customer-cell { font-size: .8rem; color: var(--text-light); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ord-items-cell   { white-space: nowrap; font-size: .78rem; color: var(--text-muted); }
+.ord-status-cell  { white-space: nowrap; }
+.ord-date-cell    { font-size: .76rem; color: var(--text-muted); white-space: nowrap; }
+.ord-actions-cell { white-space: nowrap; }
+.ord-actions-cell > * + * { margin-left: .3rem; }
+
+/* progress text on table rows */
+.ord-prog { font-size: .72rem; color: var(--text-muted); margin-left: .35rem; }
+
+/* Meta chips below order number */
+.ord-chips { display: flex; gap: .25rem; flex-wrap: wrap; margin-top: .18rem; }
+.ord-meta-lbl { font-size: .59rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
 
 /* ================================================================
    ABOUT TAB
@@ -1081,52 +1248,26 @@ body.log-open { overflow: hidden; }
 .about-dl-link:hover { text-decoration: underline; }
 
 /* ================================================================
-   RESPONSIVE — MOBILE  (≤ 640px)
+   RESPONSIVE — MOBILE  (≤ 768px)  sidebar becomes a drawer
    ================================================================ */
-@media (max-width: 640px) {
-  :root { --header-h: 68px; --bottom-nav-h: 68px; --pad: 1rem; }
+@media (max-width: 768px) {
+  :root { --pad: 1rem; --topbar-h: 52px; }
 
-  /* ── Header: warehouse-optimized, large and readable ── */
-  .is-icon-hdr { width: 40px; height: 40px; flex-shrink: 0; }
-  .header-inner { gap: .55rem; padding: 0 .85rem; }
-  .header-logo { flex-shrink: 1; min-width: 0; overflow: hidden; }
-  .header-brand-text { min-width: 0; }
-  .header-brand-name { font-size: 1rem; }
-  .header-brand-sub { display: none; }
-  .header-user { gap: .4rem; flex-shrink: 0; }
-  .user-chip {
-    max-width: 110px; font-size: .85rem; font-weight: 700;
-    padding: .3em .85em; letter-spacing: .01em;
+  /* Sidebar: fixed drawer, hidden off-screen by default */
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    z-index: 300;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    width: 220px;
   }
-  .lock-btn,
-  .printer-settings-btn {
-    min-width: 40px; min-height: 40px;
-    font-size: 1.1rem; padding: .3rem .45rem;
-    border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-  }
+  .sidebar.sb-open { transform: translateX(0); }
+  .sb-hamburger { display: flex; }
 
-  /* ── Bottom nav: tabs move to fixed bottom bar ── */
-  header nav {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    height: var(--bottom-nav-h); background: var(--surface);
-    border-top: 2px solid var(--border); display: flex; z-index: var(--z-bottom-nav);
-    padding: 4px 8px calc(4px + env(safe-area-inset-bottom)); gap: 4px;
-    box-shadow: 0 -2px 16px rgba(0,0,0,.1);
-  }
-  .tab-btn {
-    flex: 1; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; padding: .2rem .3rem;
-    font-size: .74rem; font-weight: 600; border-radius: 10px;
-    height: 100%; gap: 3px;
-  }
-  .tab-btn.active { background: var(--primary-light); color: var(--primary); }
-  .tab-icon { display: block; }
-
-  body { padding-bottom: var(--bottom-nav-h); }
-  main { padding: 0; }
-  #tab-upload { padding: .75rem; }
-  #tab-orders { padding: .75rem; }
+  main { padding: .75rem 1rem; }
+  #tab-upload { padding: 0; }
+  #tab-orders { padding: 0; }
 
   .card { padding: 1rem; border-radius: var(--radius); }
   .upload-area { padding: 1.4rem 1rem; }
@@ -1136,15 +1277,15 @@ body.log-open { overflow: hidden; }
   .stat-box .val { font-size: 1.2rem; }
   .stat-box .lbl { font-size: .57rem; }
 
-  .dash-order-card { padding: .7rem .85rem; }
-  .dash-order-right { gap: .3rem; }
-
   .dash-stats-grid { grid-template-columns: repeat(3, 1fr); gap: .35rem; }
   .dstat { padding: .5rem .2rem; }
   .dstat-val { font-size: 1.2rem; }
   .dstat.avg .dstat-val { font-size: .95rem; }
-  .dcs-table { font-size: .7rem; }
-  .dcs-table thead th { font-size: .6rem; }
+
+  /* Orders table on mobile: hide less-important columns */
+  .orders-table .col-waybill,
+  .orders-table .col-client,
+  .orders-table .col-date   { display: none; }
 
   /* ── Login + PIN: slightly bigger for mobile ── */
   .login-box { padding: 1.5rem 1.25rem 1.75rem; }
@@ -1159,9 +1300,7 @@ body.log-open { overflow: hidden; }
   .filter-row  { gap: .3rem; padding: .35rem 0; }
   .filter-chip { font-size: .7rem; padding: .18em .55em; }
 
-  /* ── Scan overlay body ── */
-  .scan-overlay { top: var(--header-h); }
-  .phase-items  { height: calc(100dvh - var(--header-h) - var(--bottom-nav-h)); }
+  .phase-items  { height: 100dvh; }
 
   .scan-order-header { padding: .6rem .9rem; gap: .6rem; }
   .back-btn { padding: .42rem .85rem; font-size: .88rem; }
@@ -1185,9 +1324,6 @@ body.log-open { overflow: hidden; }
 
   .bkd-grid { grid-template-columns: 1fr; }
 
-  .app-footer { margin-bottom: var(--bottom-nav-h); }
-  .footer-brand-text { font-size: .65rem; }
-
   .about-why-grid    { grid-template-columns: 1fr; }
   .about-feature-grid { grid-template-columns: 1fr 1fr; }
   .about-roles       { grid-template-columns: 1fr; }
@@ -1199,17 +1335,9 @@ body.log-open { overflow: hidden; }
 }
 
 /* ================================================================
-   RESPONSIVE — TABLET  (641px – 919px)
+   RESPONSIVE — DESKTOP  (≥ 769px)
    ================================================================ */
-@media (min-width: 641px) and (max-width: 919px) {
-  main { padding: 1rem; }
-  .scanner-hero { padding: 1.5rem 1rem .85rem; }
-}
-
-/* ================================================================
-   RESPONSIVE — DESKTOP  (≥ 920px)
-   ================================================================ */
-@media (min-width: 920px) {
+@media (min-width: 769px) {
   .stats-bar { flex-wrap: nowrap; }
   .big-scan-wrap { max-width: 600px; }
 

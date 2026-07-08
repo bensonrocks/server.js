@@ -224,10 +224,9 @@
     const isWarehouse = (currentUser?.role || 'admin') === 'warehouse';
 
     // Upload tab button — hidden for warehouse
-    const uploadTabBtn = document.querySelector('.tab-btn[data-tab="upload"]');
-    if (uploadTabBtn) uploadTabBtn.classList.toggle('hidden', isWarehouse);
+    document.querySelectorAll('.tab-btn[data-tab="upload"]').forEach(b => b.classList.toggle('hidden', isWarehouse));
 
-    // Upload Log footer button — hidden for warehouse
+    // Admin button — hidden for warehouse
     const logBtn = document.getElementById('logAccessBtn');
     if (logBtn) logBtn.classList.toggle('hidden', isWarehouse);
 
@@ -236,8 +235,7 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.getElementById('tab-orders').classList.add('active');
-      const ordersBtn = document.querySelector('.tab-btn[data-tab="orders"]');
-      if (ordersBtn) ordersBtn.classList.add('active');
+      document.querySelectorAll('.tab-btn[data-tab="orders"]').forEach(b => b.classList.add('active'));
       renderOrdersDash();
     }
   }
@@ -386,9 +384,19 @@
     }
   });
 
+  // ── Sidebar hamburger toggle (mobile) ────────────────────────────────────
+  const _sbToggleBtn     = document.getElementById('sidebarToggleBtn');
+  const _sidebar         = document.getElementById('appSidebar');
+  const _sbDrawerOverlay = document.getElementById('sidebarDrawerOverlay');
+  function openSidebar()  { _sidebar?.classList.add('sb-open');    _sbDrawerOverlay?.classList.add('visible'); }
+  function closeSidebar() { _sidebar?.classList.remove('sb-open'); _sbDrawerOverlay?.classList.remove('visible'); }
+  _sbToggleBtn?.addEventListener('click', () => _sidebar?.classList.contains('sb-open') ? closeSidebar() : openSidebar());
+  _sbDrawerOverlay?.addEventListener('click', closeSidebar);
+
   // ── Tab switching ──────────────────────────────────────────────────────────
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', labels: 'Labels', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
-    btn.addEventListener('click', () => switchTab(btn.dataset.tab))
+    btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
   document.querySelectorAll('[data-tab-link]').forEach(btn =>
     btn.addEventListener('click', () => switchTab(btn.dataset.tabLink))
@@ -402,7 +410,7 @@
       const dlWrap = document.getElementById('uploadDownloadWrap');
       dlWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
       dlWrap.classList.remove('download-shake');
-      void dlWrap.offsetWidth; // reflow to restart animation
+      void dlWrap.offsetWidth;
       dlWrap.classList.add('download-shake');
       setTimeout(() => dlWrap.classList.remove('download-shake'), 400);
       return;
@@ -410,7 +418,9 @@
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
-    document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
+    document.querySelector(`.tab-btn[data-tab="${name}"]`)?.classList.add('active');
+    const ttEl = document.getElementById('ctTabTitle');
+    if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'labels') { renderLabelsTab(); }
@@ -418,12 +428,12 @@
 
   function lockTabsForDownload() {
     pendingDownload = true;
-    document.querySelector('.tab-btn[data-tab="orders"]').classList.add('tab-locked');
+    document.querySelector('.tab-btn[data-tab="orders"]')?.classList.add('tab-locked');
   }
 
   function unlockTabsAfterDownload() {
     pendingDownload = false;
-    document.querySelector('.tab-btn[data-tab="orders"]').classList.remove('tab-locked');
+    document.querySelector('.tab-btn[data-tab="orders"]')?.classList.remove('tab-locked');
     const noteEl = document.getElementById('downloadLockNote');
     if (noteEl) noteEl.remove();
   }
@@ -895,6 +905,34 @@
     section.classList.remove('hidden');
   }
 
+  // ── Sidebar client list ────────────────────────────────────────────────────
+  function renderSidebarClients(orders) {
+    const clients = [...new Set(orders.map(o => o.client_name || '').filter(Boolean))];
+    const lbl     = document.getElementById('sidebarClientsLabel');
+    const list    = document.getElementById('sidebarClientList');
+    if (!list) return;
+    if (!clients.length) { if (lbl) lbl.style.display = 'none'; list.innerHTML = ''; return; }
+    if (lbl) lbl.style.display = '';
+    const counts = {};
+    orders.forEach(o => { const c = o.client_name || ''; if (c) counts[c] = (counts[c] || 0) + 1; });
+    list.innerHTML = `
+      <button class="sb-client-btn ${activeClientFilter === 'all' ? 'active' : ''}" data-sb-client="all">All clients <span class="sb-client-count">${orders.length}</span></button>
+      ${clients.map(c => `<button class="sb-client-btn ${activeClientFilter === c ? 'active' : ''}" data-sb-client="${esc(c)}">${esc(c)} <span class="sb-client-count">${counts[c]||0}</span></button>`).join('')}`;
+    list.querySelectorAll('.sb-client-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeClientFilter = btn.dataset.sbClient;
+        list.querySelectorAll('.sb-client-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // Also sync the inline filter-row if visible
+        document.querySelectorAll('#clientFilterRow .filter-chip').forEach(b => {
+          b.classList.toggle('active', b.dataset.client === activeClientFilter);
+        });
+        renderOrdersList();
+        closeSidebar();
+      });
+    });
+  }
+
   // ── Orders Dashboard ───────────────────────────────────────────────────────
   async function renderOrdersDash() {
     await refreshOrders();
@@ -926,27 +964,10 @@
       kfBanner.classList.add('hidden');
     }
 
-    // Build client filter
-    const clients = [...new Set(loadedOrders.map(o => o.client_name || '').filter(Boolean))];
-    const clientRow = document.getElementById('clientFilterRow');
-    if (clients.length > 0) {
-      clientRow.innerHTML = `
-        <span class="filter-label">Client:</span>
-        <button class="filter-chip ${activeClientFilter === 'all' ? 'active' : ''}" data-client="all">All</button>
-        ${clients.map(c => `<button class="filter-chip ${activeClientFilter === c ? 'active' : ''}" data-client="${esc(c)}">${esc(c)}</button>`).join('')}`;
-      clientRow.querySelectorAll('.filter-chip[data-client]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          activeClientFilter = btn.dataset.client;
-          renderOrdersList();
-          clientRow.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-        });
-      });
-    } else {
-      clientRow.innerHTML = '';
-    }
+    // Sidebar client list (primary filter UI)
+    renderSidebarClients(loadedOrders);
 
-    // Build carrier filter
+    // Carrier filter row (kept as secondary filter below scan bar)
     const carriers = [...new Set(loadedOrders.map(o => o.carrier || ''))];
     const carrierRow = document.getElementById('carrierFilterRow');
     if (carriers.some(c => c)) {
@@ -1036,53 +1057,93 @@
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
     const isAdminView = (currentUser?.role || 'admin') === 'admin';
 
-    document.getElementById('ordersDashList').innerHTML = orders.length ? orders.map(ord => {
+    if (!orders.length) {
+      document.getElementById('ordersDashList').innerHTML = '<p class="empty-state" style="padding:2rem">No orders match the selected filters.</p>';
+      return;
+    }
+
+    const rows = orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
-      const canScan      = ord.scan_status !== 'done';
-      const elapsed      = fmtElapsed(ord.startTime, ord.endTime);
-      const isDone       = ord.scan_status === 'done';
-      const slipUrl      = ord.batchId
+      const canScan  = ord.scan_status !== 'done';
+      const isDone   = ord.scan_status === 'done';
+      const elapsed  = fmtElapsed(ord.startTime, ord.endTime);
+      const slipUrl  = ord.batchId
         ? `/api/completion-slip/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}`
         : null;
+
       const emailIndicator = isDone && isAdminView && ord.alert_email_sent !== null
         ? ord.alert_email_sent
-          ? `<span class="alert-email-ok" title="Completion alert sent">&#128231; Sent</span>`
-          : `<span class="alert-email-fail" title="${esc(ord.alert_email_error || 'Email failed')}">&#9888; Email failed</span>
-             <button class="btn-resend-alert" data-order="${esc(ord.order_number)}" title="Resend completion alert">Resend</button>`
+          ? `<span class="alert-email-ok" title="Completion alert sent">&#128231;</span>`
+          : `<span class="alert-email-fail" title="${esc(ord.alert_email_error || 'Email failed')}">&#9888;</span>
+             <button class="btn-resend-alert" data-order="${esc(ord.order_number)}" title="Resend alert">Resend</button>`
         : '';
       const kfBtn = isDone && isAdminView
         ? ord.keyfields_closed
-          ? `<span class="kf-closed-badge">&#10003; Keyfields closed</span>`
-          : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Acknowledge closed in Keyfields WMS">Close in Keyfields</button>`
+          ? `<span class="kf-closed-badge">&#10003; KF</span>`
+          : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Close in Keyfields">KF</button>`
         : '';
-      return `
-        <div class="dash-order-card status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
-          <div class="dash-order-left">
-            <span class="dash-order-no"><span class="dash-field-lbl">Order</span> ${esc(ord.order_number)}</span>
-            ${ord.waybill_number ? `<span class="dash-order-waybill"><span class="dash-field-lbl">Waybill</span> ${esc(ord.waybill_number)}</span>` : ''}
-            ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
-            <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
-            ${ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill uploaded</span>` : ''}
-            ${ord.has_order_label ? `<span class="chip chip-label">&#127991; Label ready</span>` : ''}
-            ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
-            ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
-            ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
-            ${emailIndicator}
-          </div>
-          <div class="dash-order-right">
-            ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
-            <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
-            <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
-            ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
-            ${isDone && !ord.has_waybill_pdf && !ord.has_order_label ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
-            ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
-            ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill PDF">&#128438; Waybill</button>` : ''}
-            ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991; Label</button>` : ''}
-            ${kfBtn}
-            ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
-          </div>
-        </div>`;
-    }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>';
+
+      // Items column
+      const itemCount = (ord.items || []).length;
+      const itemsCell = `<span class="ord-items-cell">${itemCount} item${itemCount !== 1 ? 's' : ''} <span class="ord-prog">${scannedTotal}/${ord.total_qty}</span></span>`;
+
+      // Carrier badge
+      const carrierBadge = ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : '';
+
+      // Chips under order number
+      const chips = [
+        ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
+        ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill</span>` : '',
+      ].filter(Boolean).join('');
+
+      // Date
+      const dateStr = ord.uploadedAt ? new Date(ord.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—';
+
+      return `<tr class="orders-tr status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
+        <td class="ord-stripe-cell"></td>
+        <td class="col-order">
+          <span class="ord-no-link">${esc(ord.order_number)}</span>
+          ${chips ? `<div class="ord-chips">${chips}</div>` : ''}
+          ${isDone && elapsed ? `<div class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</div>` : ''}
+        </td>
+        <td class="ord-client-cell col-client">${esc(ord.client_name || '—')}</td>
+        <td class="ord-customer-cell col-customer">${esc(ord.customer_name || '—')}</td>
+        <td class="ord-waybill-cell col-waybill">${esc(ord.waybill_number || '—')}</td>
+        <td class="col-items">${itemsCell} ${carrierBadge}</td>
+        <td class="ord-status-cell col-status"><span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span></td>
+        <td class="ord-date-cell col-date">${dateStr}</td>
+        <td class="ord-actions-cell col-actions">
+          ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
+          ${isDone && !ord.has_waybill_pdf && !ord.has_order_label ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint label">&#128438;</button>` : ''}
+          ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download slip">&#128196;</a>` : ''}
+          ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill">&#128438; WB</button>` : ''}
+          ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991;</button>` : ''}
+          ${emailIndicator}
+          ${kfBtn}
+          ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete">&#128465;</button>` : ''}
+        </td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('ordersDashList').innerHTML = `
+      <div class="orders-table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th style="width:4px;padding:0"></th>
+              <th>ORDER NO</th>
+              <th class="col-client">CLIENT</th>
+              <th class="col-customer">CUSTOMER</th>
+              <th class="col-waybill">WAYBILL</th>
+              <th>ITEMS</th>
+              <th class="col-status">STATUS</th>
+              <th class="col-date">DATE</th>
+              <th class="col-actions">ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
@@ -1108,16 +1169,16 @@
         if (ord) showPrintOrderLabelModal(ord);
       })
     );
-    document.querySelectorAll('.dash-order-card').forEach(card =>
-      card.addEventListener('click', () => {
-        const ord = loadedOrders.find(o => o.order_number === card.dataset.order);
+    document.querySelectorAll('.orders-tr').forEach(tr =>
+      tr.addEventListener('click', () => {
+        const ord = loadedOrders.find(o => o.order_number === tr.dataset.order);
         if (!ord) return;
         if (ord.scan_status === 'done' && ord.has_order_label) {
           showPrintOrderLabelModal(ord);
         } else if (ord.scan_status === 'done' && ord.has_waybill_pdf && ord.batchId) {
           showPrintWaybillModal(ord);
         } else if (ord.scan_status !== 'done') {
-          openScanOverlay(card.dataset.order);
+          openScanOverlay(tr.dataset.order);
         }
       })
     );

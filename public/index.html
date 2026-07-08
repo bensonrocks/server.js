@@ -566,28 +566,57 @@
     </div>
   </div>
 
-  <header>
-    <div class="header-inner">
-      <a class="header-logo" href="#" onclick="return false">
-        <svg class="is-icon-hdr" aria-hidden="true"><use href="#is-icon"/></svg>
-        <div class="header-brand-text">
-          <span class="header-brand-name">IDEALSCAN</span>
-          <span class="header-brand-sub">United Logistics &amp; Distribution</span>
-        </div>
-      </a>
-      <nav>
-        <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
-        <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
-        <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
-        <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
-      </nav>
-      <div class="header-user">
-        <span id="userDisplay" class="user-chip hidden"></span>
-        <button id="printerSettingsBtn" class="printer-settings-btn hidden" title="Printer settings">&#128438;</button>
-        <button id="lockBtn" class="lock-btn hidden" title="Lock app">&#128274;</button>
+  <!-- ── Sidebar drawer overlay (mobile) ── -->
+  <div class="sb-drawer-overlay" id="sidebarDrawerOverlay"></div>
+
+  <div class="app-shell">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar" id="appSidebar">
+
+    <!-- Logo -->
+    <div class="sb-logo-wrap">
+      <svg class="is-icon-hdr" aria-hidden="true"><use href="#is-icon"/></svg>
+      <div class="sb-brand-text">
+        <div class="sb-brand-name">IDEALSCAN</div>
+        <div class="sb-brand-sub">United Logistics &amp; Distribution</div>
       </div>
     </div>
-  </header>
+
+    <!-- Navigation -->
+    <div class="sb-section-lbl">NAVIGATION</div>
+    <nav class="sb-nav">
+      <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
+      <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
+      <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
+      <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
+    </nav>
+
+    <!-- Clients -->
+    <div class="sb-section-lbl" id="sidebarClientsLabel" style="display:none">CLIENTS</div>
+    <div class="sb-client-list" id="sidebarClientList"></div>
+
+    <!-- Bottom: user + admin -->
+    <div class="sb-bottom">
+      <div class="sb-user-row">
+        <span id="userDisplay" class="user-chip hidden"></span>
+        <div class="sb-icon-btns" style="display:flex;gap:.3rem;margin-left:auto">
+          <button id="printerSettingsBtn" class="sb-icon-btn hidden" title="Printer settings">&#128438;</button>
+          <button id="lockBtn" class="sb-icon-btn hidden" title="Lock app">&#128274;</button>
+        </div>
+      </div>
+      <button class="sb-admin-btn" id="logAccessBtn">&#9881; Administrator</button>
+    </div>
+  </aside>
+
+  <!-- ── Content Pane ── -->
+  <div class="content-pane">
+
+    <!-- Topbar (mobile hamburger + tab title) -->
+    <div class="content-topbar">
+      <button class="sb-hamburger" id="sidebarToggleBtn" aria-label="Toggle sidebar">&#9776;</button>
+      <span class="ct-tab-title" id="ctTabTitle">Upload</span>
+    </div>
 
   <main>
 
@@ -826,22 +855,9 @@
       </div>
     </section>
 
-  </main>
-
-  <!-- ── Footer ── -->
-  <footer class="app-footer">
-    <div class="footer-brand">
-      <svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>
-      <div class="footer-brand-text">
-        <span class="footer-app-name">IDEALSCAN</span>
-        <span class="footer-divider">&#183;</span>
-        <span class="footer-company">United Logistics &amp; Distribution</span>
-        <span class="footer-divider">&#183;</span>
-        <span class="footer-by">By Benson</span>
-      </div>
-    </div>
-    <button class="log-access-link" id="logAccessBtn">&#9881; Administrator</button>
-  </footer>
+  </main><!-- /content-body -->
+  </div><!-- /content-pane -->
+  </div><!-- /app-shell -->
 
   <!-- Upload Confirm Modal -->
   <div id="uploadConfirmOverlay" class="modal-overlay hidden">
