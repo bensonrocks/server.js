@@ -1778,8 +1778,26 @@ app.post('/api/scan/keyfields-close', (req, res) => {
 });
 
 // ── Auth / session enforcement ───────────────────────────────────────────────
-// One active session per user. Logging in from a new device invalidates the old one.
+// One active session per user. Sessions are persisted in the DB so they
+// survive server restarts and Railway redeploys.
 const activeSessions = new Map(); // userId → token
+
+// Restore sessions from DB on startup
+(function restoreSessions() {
+  try {
+    const db = readDb();
+    for (const [userId, token] of Object.entries(db.sessions || {})) {
+      activeSessions.set(userId, token);
+    }
+    console.log(`[IdealScan] Restored ${activeSessions.size} session(s) from DB`);
+  } catch {}
+})();
+
+function persistSessions() {
+  const db = readDb();
+  db.sessions = Object.fromEntries(activeSessions);
+  writeDb(db);
+}
 
 // requireAuthOrToken: accepts token in header OR ?token= query param (for PDF iframes)
 function requireAuthOrToken(req, res, next) {
@@ -1808,6 +1826,7 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   const token = uuidv4();
   activeSessions.set(user.id, token); // replaces any existing session for this user
+  persistSessions();
   res.json({ id: user.id, name: user.name || user.id, role: user.role || 'admin', token });
 });
 
@@ -1817,6 +1836,7 @@ app.post('/api/auth/logout', (req, res) => {
     for (const [userId, t] of activeSessions) {
       if (t === token) { activeSessions.delete(userId); break; }
     }
+    persistSessions();
   }
   res.json({ ok: true });
 });
