@@ -88,7 +88,7 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'no-email-2', ts: Date.now() }));
+app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'upload-diag-3', ts: Date.now() }));
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
@@ -1229,6 +1229,7 @@ const AUTH_PUBLIC = new Set([
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/')) return next();
+  if (req.method === 'POST' && req.path === '/api/upload') console.log('[upload-mw] auth check, token present:', !!req.headers['x-auth-token']);
   requireAuth(req, res, next);
 });
 
