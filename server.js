@@ -1925,10 +1925,13 @@ app.get('/privacypolicy', (req, res) => res.sendFile(path.join(__dirname, 'publi
 app.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`\n  IdealOMS ready → ${url}\n`);
-  const cmd = process.platform === 'win32' ? `start "" "${url}"`
-            : process.platform === 'darwin' ? `open "${url}"`
-            : `xdg-open "${url}"`;
-  exec(cmd);
+  // Only try to open a browser on local dev machines (not on Railway / CI / headless servers)
+  if (!process.env.RAILWAY_ENVIRONMENT && !process.env.CI) {
+    const cmd = process.platform === 'win32' ? `start "" "${url}"`
+              : process.platform === 'darwin' ? `open "${url}"`
+              : `xdg-open "${url}"`;
+    exec(cmd, () => {});
+  }
 
   // Kick off auto-sync: run immediately, then on interval
   autoSyncAll().catch(() => {});
