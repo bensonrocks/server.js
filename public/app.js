@@ -169,6 +169,31 @@
       currentUser.labelSize   = p.labelSize   || '100x160';
       if (p.tablePrefs) tablePrefs = { widths: p.tablePrefs.widths || {}, hidden: p.tablePrefs.hidden || [] };
     } catch {}
+    fetchNoBarcodeSkus();
+  }
+
+  // ── No-barcode items (GWPs etc.) — counted by button or substitute barcode ─
+  let noBarcodeSkus = new Set();
+  const NO_BARCODE_PAT = /\bGWP\b/i;
+  function isNoBarcodeItem(item) {
+    return noBarcodeSkus.has(item.sku) || NO_BARCODE_PAT.test(item.sku + ' ' + (item.description || ''));
+  }
+  async function fetchNoBarcodeSkus() {
+    try {
+      const r = await fetch('/api/no-barcode-skus', { headers: hdrs() });
+      if (r.ok) noBarcodeSkus = new Set(await r.json());
+    } catch {}
+  }
+  async function learnNoBarcodeSku(item) {
+    if (noBarcodeSkus.has(item.sku)) return;
+    noBarcodeSkus.add(item.sku);
+    try {
+      await fetch('/api/no-barcode-skus', {
+        method: 'POST',
+        headers: { ...hdrs(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sku: item.sku, description: item.description || '', client_name: activeOrder?.client_name || '' }),
+      });
+    } catch {}
   }
 
   // ── Orders table layout prefs (per user) ──────────────────────────────────
@@ -253,6 +278,10 @@
   }
 
   function initOrdersColsToggle() {
+    document.getElementById('gwpSheetBtn')?.addEventListener('click', () => {
+      const token = localStorage.getItem('wms_token') || '';
+      window.open(`/api/no-barcode-sheet?token=${encodeURIComponent(token)}`, '_blank');
+    });
     const btn = document.getElementById('colsToggleBtn');
     const pop = document.getElementById('colsPopover');
     if (!btn || !pop) return;
@@ -273,6 +302,7 @@
   function ordersColsToggleHTML() {
     return `
       <div class="cols-toggle-wrap">
+        <button class="btn-secondary btn-sm" id="gwpSheetBtn" title="Printable substitute barcodes for items with no barcode (GWPs)">&#127991; No-Barcode Sheet</button>
         <button class="btn-secondary btn-sm" id="colsToggleBtn" title="Show/hide and resize columns">&#9881; Columns</button>
         <div id="colsPopover" class="cols-popover hidden">
           ${ORDER_COLS.map(c => `
@@ -1713,20 +1743,27 @@
     }
 
     document.getElementById('scanOrderNo').textContent = order.order_number;
+    // Compact one-line header: picking needs order/progress/carrier only.
+    // Address, tel & platform live behind the Details toggle (label stage
+    // is handled by the print popup on completion).
+    const details = [
+      order.tel              ? `<span><strong>Tel:</strong> ${esc(order.tel)}</span>` : '',
+      order.delivery_address ? `<span class="scan-meta-address"><strong>Address:</strong> ${esc(order.delivery_address)}</span>` : '',
+      order.platform         ? `<span><strong>Platform:</strong> ${esc(order.platform)}${order.shop_name ? ' / ' + esc(order.shop_name) : ''}</span>` : '',
+      order.has_waybill_pdf  ? `<span class="meta-waybill-note">&#128196; Waybill PDF ready to print</span>` : '',
+    ].filter(Boolean).join('');
     document.getElementById('scanOrderMeta').innerHTML = `
-      <span><strong>Customer:</strong> ${esc(order.customer_name || '—')}</span>
-      ${order.client_name ? `<span><strong>Client:</strong> ${esc(order.client_name)}</span>` : ''}
-      <span><strong>Carrier:</strong> ${esc(order.carrier || '—')}</span>
-      <span class="${order.has_waybill_pdf ? 'waybill-ok' : ''}">
-        <strong>Waybill:</strong>
-        ${order.waybill_number
-          ? `${esc(order.waybill_number)}${order.has_waybill_pdf ? ' &#10003;' : ''}`
-          : 'Not provided'}
-      </span>
-      ${order.tel ? `<span><strong>Tel:</strong> ${esc(order.tel)}</span>` : ''}
-      ${order.delivery_address ? `<span class="scan-meta-address"><strong>Address:</strong> ${esc(order.delivery_address)}</span>` : ''}
-      ${order.platform ? `<span><strong>Platform:</strong> ${esc(order.platform)}${order.shop_name ? ' / ' + esc(order.shop_name) : ''}</span>` : ''}
-      ${order.has_waybill_pdf ? `<span class="meta-waybill-note">&#128196; Waybill PDF ready to print</span>` : ''}`;
+      <div class="scan-meta-primary">
+        <span class="meta-pill">${esc(order.customer_name || '—')}</span>
+        ${order.client_name ? `<span class="meta-pill">${esc(order.client_name)}</span>` : ''}
+        <span class="meta-pill meta-pill-carrier">${esc(order.carrier || '—')}</span>
+        ${order.waybill_number ? `<span class="meta-pill meta-pill-waybill">${esc(order.waybill_number)}${order.has_waybill_pdf ? ' &#10003;' : ''}</span>` : ''}
+        ${details ? `<button class="meta-details-btn" id="scanMetaDetailsBtn">&#9432; Details</button>` : ''}
+      </div>
+      ${details ? `<div class="scan-meta-details hidden" id="scanMetaDetails">${details}</div>` : ''}`;
+    document.getElementById('scanMetaDetailsBtn')?.addEventListener('click', () => {
+      document.getElementById('scanMetaDetails').classList.toggle('hidden');
+    });
 
     renderItemsTable(order);
     updateProgress(order);
@@ -1761,12 +1798,41 @@
   }
 
   // ── Items table ────────────────────────────────────────────────────────────
+  // Pending items float to the top (next one highlighted + scrolled into
+  // view); completed rows sink to the bottom and compress. No-barcode items
+  // get one-click count buttons instead of a typed qty box.
   function renderItemsTable(order) {
-    const scanned = order.scanned || {};
-    document.getElementById('scanItemsTbody').innerHTML = order.lines.map(item => {
-      const s        = scanned[item.sku] || 0;
-      const rowClass = s === 0 ? '' : s === item.qty ? 'row-ok' : s > item.qty ? 'row-over' : 'row-partial';
-      const icon     = s === item.qty && s > 0 ? '&#10003;' : s > item.qty ? '&#10007;' : s > 0 ? '&#8230;' : '';
+    const scanned  = order.scanned || {};
+    const decorated = order.lines.map((item, idx) => {
+      const s = scanned[item.sku] || 0;
+      return { item, s, idx, done: s === item.qty && item.qty > 0 };
+    });
+    decorated.sort((a, b) => (a.done - b.done) || (a.idx - b.idx));
+    const activeSku = decorated.find(d => !d.done)?.item.sku;
+
+    document.getElementById('scanItemsTbody').innerHTML = decorated.map(({ item, s, done }) => {
+      const noBarcode = isNoBarcodeItem(item);
+      const over      = s > item.qty;
+      const rowClass  = [
+        s === 0 ? '' : done ? 'row-ok' : over ? 'row-over' : 'row-partial',
+        done ? 'row-compact' : '',
+        !done && item.sku === activeSku ? 'row-active' : '',
+        !done && noBarcode ? 'row-nobarcode' : '',
+      ].filter(Boolean).join(' ');
+      const icon = done ? '&#10003;' : over ? '&#10007;' : s > 0 ? '&#8230;' : '';
+      const desc = (item.description && item.description !== item.sku) ? item.description : '—';
+
+      // Completed rows: slim single line, no lot row, no input
+      if (done) {
+        return `
+        <tr class="${rowClass}" data-sku="${esc(item.sku)}">
+          <td><code class="sku-code sku-code-sm">${esc(item.sku)}</code></td>
+          <td class="desc-cell desc-cell-sm">${esc(desc)}</td>
+          <td class="qty-col">${item.qty}</td>
+          <td class="qty-col done-frac">${s}/${item.qty}</td>
+          <td class="status-icon">${icon}</td>
+        </tr>`;
+      }
 
       const lotParts = [];
       if (item.batch_number)  lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(item.batch_number)}</span>`);
@@ -1776,17 +1842,28 @@
         ? `<tr class="lot-info-row"><td colspan="5" class="lot-info-cell">${lotParts.join('')}</td></tr>`
         : '';
 
-      const desc = (item.description && item.description !== item.sku) ? item.description : '—';
+      // No-barcode item: one-click count buttons (− / +1 / ✓ All)
+      const scannedCell = noBarcode
+        ? `<td class="qty-col nb-cell" colspan="2">
+             <span class="nb-count">${s}/${item.qty}</span>
+             <button class="nb-btn nb-minus" data-sku="${esc(item.sku)}" ${s <= 0 ? 'disabled' : ''}>&#8722;</button>
+             <button class="nb-btn nb-plus"  data-sku="${esc(item.sku)}">+1</button>
+             <button class="nb-btn nb-all"   data-sku="${esc(item.sku)}" data-qty="${item.qty}">&#10003; All ${item.qty}</button>
+           </td>`
+        : `<td class="qty-col">
+             <input type="number" class="qty-input" min="0" value="${s}"
+               data-sku="${esc(item.sku)}" data-ordered="${item.qty}" />
+           </td>
+           <td class="status-icon">${icon}
+             <button class="nb-mark" data-sku="${esc(item.sku)}" title="No barcode on this item? Switch to count buttons">&#9888;</button>
+           </td>`;
+
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
-          <td><code class="sku-code">${esc(item.sku)}</code></td>
+          <td><code class="sku-code">${esc(item.sku)}</code>${noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; click to count or scan bench sheet</div>' : ''}</td>
           <td class="desc-cell">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
-          <td class="qty-col">
-            <input type="number" class="qty-input" min="0" value="${s}"
-              data-sku="${esc(item.sku)}" data-ordered="${item.qty}" />
-          </td>
-          <td class="status-icon">${icon}</td>
+          ${scannedCell}
         </tr>${lotRow}`;
     }).join('');
 
@@ -1796,6 +1873,33 @@
         document.getElementById('itemScanInput').focus();
       });
     });
+
+    const lineOf = sku => (activeOrder.lines || []).find(l => l.sku === sku);
+    document.querySelectorAll('.nb-plus, .nb-minus, .nb-all').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const item = lineOf(btn.dataset.sku);
+        if (!item) return;
+        const cur = (activeOrder.scanned || {})[item.sku] || 0;
+        const target = btn.classList.contains('nb-all') ? item.qty
+                     : btn.classList.contains('nb-plus') ? cur + 1
+                     : Math.max(0, cur - 1);
+        learnNoBarcodeSku(item);
+        await setItemQty(activeOrder.order_number, item.sku, target);
+        document.getElementById('itemScanInput').focus();
+      });
+    });
+    document.querySelectorAll('.nb-mark').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const item = lineOf(btn.dataset.sku);
+        if (!item) return;
+        await learnNoBarcodeSku(item);
+        renderItemsTable(activeOrder);
+      });
+    });
+
+    // Keep the next pending item in view without the packer touching the mouse
+    document.querySelector('#scanItemsTbody tr.row-active')
+      ?.scrollIntoView({ block: 'nearest' });
   }
 
   function updateProgress(order) {
@@ -1829,6 +1933,14 @@
       }
       piecesEl.className = 'scan-pieces-left' +
         (hasOver ? ' spl-over' : remaining <= 0 ? ' spl-done' : '');
+    }
+
+    // Thin progress bar under the header
+    const fill = document.getElementById('scanProgressBarFill');
+    if (fill) {
+      const pct = totalOrdered > 0 ? Math.min(100, Math.round(totalScanned / totalOrdered * 100)) : 0;
+      fill.style.width = pct + '%';
+      fill.className = hasOver ? 'over' : pct >= 100 ? 'full' : '';
     }
   }
 
@@ -2044,6 +2156,24 @@
 
   document.getElementById('completeOrderBtn').addEventListener('click', async () => {
     if (!activeOrder) return;
+
+    // No-barcode sweep: if the ONLY unscanned lines are known no-barcode
+    // items (GWPs etc.), offer to count them all with one click
+    const scannedMap = activeOrder.scanned || {};
+    const unscanned  = (activeOrder.lines || []).filter(l => (scannedMap[l.sku] || 0) < l.qty);
+    if (unscanned.length && unscanned.every(isNoBarcodeItem)) {
+      const pcs = unscanned.reduce((sum, l) => sum + (l.qty - (scannedMap[l.sku] || 0)), 0);
+      const list = unscanned.map(l => l.sku).join(', ');
+      if (confirm(`${pcs} pc(s) of no-barcode item(s) not counted yet:\n${list}\n\nCount them as packed and complete?`)) {
+        for (const l of unscanned) {
+          learnNoBarcodeSku(l);
+          await setItemQty(activeOrder.order_number, l.sku, l.qty);
+        }
+      } else {
+        return; // packer chose to keep scanning
+      }
+    }
+
     const lotLines = (activeOrder.lines || []).filter(l => l.batch_number || l.serial_number || l.expiry_date);
     if (lotLines.length > 0) {
       showLotCheckModal(lotLines, doCompleteOrder);

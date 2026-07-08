@@ -960,6 +960,103 @@ app.get('/api/order-label/:orderNumber/pdf', requireAuthOrToken, (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
+// ── No-barcode SKUs — registry + printable substitute-barcode sheet ─────────
+// Items with no physical barcode (GWPs, samples) can't be scanned. The packer
+// scans a printed substitute barcode (encodes the SKU) from a bench sheet
+// instead — it flows through the normal /api/scan/increment path unchanged.
+// SKUs are learned when the packer uses the +1/All buttons, plus anything
+// matching the GWP pattern in uploaded orders.
+const NO_BARCODE_PAT = /\bGWP\b/i;
+
+app.post('/api/no-barcode-skus', requireAuth, (req, res) => {
+  const sku = String(req.body?.sku || '').trim();
+  if (!sku) return res.status(400).json({ error: 'sku required' });
+  const db = readDb();
+  if (!db.noBarcodeSkus) db.noBarcodeSkus = {};
+  if (!db.noBarcodeSkus[sku]) {
+    db.noBarcodeSkus[sku] = {
+      description: String(req.body?.description || '').slice(0, 200),
+      client_name: String(req.body?.client_name || '').slice(0, 80),
+      addedAt:     new Date().toISOString(),
+      addedBy:     req.userId || '',
+    };
+    writeDb(db);
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/no-barcode-skus', requireAuth, (req, res) => {
+  res.json(Object.keys(readDb().noBarcodeSkus || {}));
+});
+
+// Printable sheet: one CODE128 barcode card per no-barcode SKU, grouped by
+// client. Opened in a new tab (?token= auth), printed and kept at the bench.
+app.get('/api/no-barcode-sheet', requireAuthOrToken, (req, res) => {
+  const db  = readDb();
+  const map = new Map();
+  for (const [sku, info] of Object.entries(db.noBarcodeSkus || {})) {
+    map.set(sku, { description: info.description || '', client_name: info.client_name || '' });
+  }
+  for (const batch of db.batches || []) {
+    for (const ord of batch.orders || []) {
+      for (const l of ord.lines || []) {
+        const known = map.get(l.sku);
+        if (known) {
+          if (!known.description && l.description) known.description = l.description;
+          continue;
+        }
+        if (NO_BARCODE_PAT.test(l.sku) || NO_BARCODE_PAT.test(l.description || '')) {
+          map.set(l.sku, { description: l.description || '', client_name: batch.client_name || '' });
+        }
+      }
+    }
+  }
+  const items = [...map.entries()]
+    .map(([sku, v]) => ({ sku, ...v }))
+    .sort((a, b) => (a.client_name || '').localeCompare(b.client_name || '') || a.sku.localeCompare(b.sku));
+
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const cards = items.map((it, i) => `
+    <div class="card">
+      ${it.client_name ? `<div class="client">${esc(it.client_name)}</div>` : ''}
+      <svg id="bc${i}"></svg>
+      <div class="sku">${esc(it.sku)}</div>
+      ${it.description && it.description !== it.sku ? `<div class="desc">${esc(it.description)}</div>` : ''}
+    </div>`).join('');
+  const scripts = items.map((it, i) =>
+    `JsBarcode("#bc${i}", ${JSON.stringify(it.sku)}, {format:"CODE128", width:2.4, height:64, displayValue:false, margin:6});`
+  ).join('\n');
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>No-Barcode SKU Sheet</title>
+<script src="/vendor/jsbarcode.min.js"></script>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; font-family:Arial,Helvetica,sans-serif; }
+  body { padding:14px; }
+  .toolbar { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+  .toolbar h1 { font-size:18px; }
+  .toolbar .hint { color:#64748b; font-size:13px; flex:1; }
+  .toolbar button { border:0; background:#2563eb; color:#fff; border-radius:8px; padding:10px 22px; font-size:15px; font-weight:700; cursor:pointer; }
+  @media print { .toolbar { display:none; } }
+  .grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; }
+  .card { border:2px solid #000; border-radius:8px; padding:10px 12px; text-align:center; break-inside:avoid; }
+  .card .client { font-size:10px; font-weight:700; letter-spacing:1px; color:#555; text-transform:uppercase; }
+  .card svg { width:100%; height:70px; }
+  .card .sku { font-size:22px; font-weight:800; font-family:Consolas,monospace; letter-spacing:1px; }
+  .card .desc { font-size:11px; color:#333; margin-top:2px; }
+  .empty { color:#64748b; font-size:15px; padding:40px; text-align:center; }
+</style></head><body>
+  <div class="toolbar">
+    <h1>&#127991; No-Barcode SKU Sheet</h1>
+    <span class="hint">Print, laminate, keep at the packing bench. Scanning a card counts the item exactly like scanning the product.</span>
+    <button onclick="window.print()">&#128438; Print</button>
+  </div>
+  ${items.length ? `<div class="grid">${cards}</div>` : '<div class="empty">No no-barcode SKUs known yet. They are added automatically when a packer uses the +1 / All buttons, or when GWP items appear in uploads.</div>'}
+  <script>${scripts}</script>
+</body></html>`);
+});
+
 // Keyfields XLSX generation → see lib/keyfields.js
 
 // ── Header-row detection ─────────────────────────────────────────────────────
