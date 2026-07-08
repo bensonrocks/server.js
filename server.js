@@ -1157,7 +1157,7 @@ async function parsePdfPicklist(buffer) {
     waybill_number:   '',
     issue_no:         giNumber   || '',
     pick_ticket:      pickTicket || '',
-    carrier:          carrier    || '',
+    carrier:          carrier    || 'Offline',
     platform:         '',
     shop_name:        '',
     date:             deliveryDate || null,
