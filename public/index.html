@@ -722,17 +722,27 @@
 
           <div class="waybill-upload-row">
             <label class="waybill-upload-label">
-              <span>&#128196; Waybill PDF <span class="hint-inline">(optional)</span></span>
-              <input type="file" id="waybillPdfInput" accept=".pdf" hidden />
-              <button class="btn-secondary btn-sm" id="browsePdfBtn">Attach PDF</button>
+              <span>&#127991; Shipping Labels PDF <span class="hint-inline">(optional)</span></span>
+              <input type="file" id="labelImportFileInputUpload" accept=".pdf" hidden />
+              <button class="btn-secondary btn-sm" id="browseLabelPdfBtn">Attach PDF</button>
             </label>
-            <span id="waybillPdfName" class="waybill-pdf-name"></span>
+            <span id="labelImportUploadName" class="waybill-pdf-name"></span>
           </div>
+          <div id="labelImportUploadStatus" class="status-bar hidden"></div>
 
           <div id="uploadStatus" class="status-bar hidden"></div>
           <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
             <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
           </div>
+        </div>
+
+        <!-- Label import mini-history (shown in Upload tab) -->
+        <div class="label-mini-history" id="labelMiniHistory" style="display:none">
+          <div class="label-mini-history-header">
+            <span class="label-mini-history-title">&#127991; Label Imports</span>
+            <button class="link-btn" id="labelMiniRefreshBtn">&#8635; Refresh</button>
+          </div>
+          <div id="labelMiniHistoryList"></div>
         </div>
       </div>
 

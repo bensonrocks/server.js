@@ -274,6 +274,7 @@
       fetchUserProfile();
       showUserInHeader();
       fetchAndRenderStats();
+      loadLabelMiniHistory();
       refreshOrders().then(() => {
         if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
       });
@@ -421,7 +422,7 @@
     document.querySelector(`.tab-btn[data-tab="${name}"]`)?.classList.add('active');
     const ttEl = document.getElementById('ctTabTitle');
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
-    if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
+    if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); loadLabelMiniHistory(); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'labels') { renderLabelsTab(); }
   }
@@ -512,12 +513,9 @@
   // ── Upload tab ─────────────────────────────────────────────────────────────
   const dropZone        = document.getElementById('dropZone');
   const fileInput       = document.getElementById('fileInput');
-  const waybillPdfInput = document.getElementById('waybillPdfInput');
-
   const photoInput = document.getElementById('photoInput');
 
   document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
-  document.getElementById('browsePdfBtn').addEventListener('click', () => waybillPdfInput.click());
   document.getElementById('photoUploadBtn').addEventListener('click', e => { e.stopPropagation(); photoInput.click(); });
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -528,10 +526,87 @@
   });
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) previewOrderFile(fileInput.files[0]); });
   photoInput.addEventListener('change', () => { if (photoInput.files[0]) previewPhotoFile(photoInput.files[0]); });
-  waybillPdfInput.addEventListener('change', () => {
-    const f = waybillPdfInput.files[0];
-    document.getElementById('waybillPdfName').textContent = f ? f.name : '';
+
+  // ── Label import from Upload tab ─────────────────────────────────────────
+  const labelImportInputUpload = document.getElementById('labelImportFileInputUpload');
+  document.getElementById('browseLabelPdfBtn')?.addEventListener('click', () => labelImportInputUpload?.click());
+  labelImportInputUpload?.addEventListener('change', () => {
+    const f = labelImportInputUpload.files[0];
+    if (!f) return;
+    document.getElementById('labelImportUploadName').textContent = f.name;
+    doLabelImportFromUploadTab(f);
   });
+
+  async function doLabelImportFromUploadTab(file) {
+    const statusEl = document.getElementById('labelImportUploadStatus');
+    statusEl.className = 'status-bar loading';
+    statusEl.textContent = 'Uploading and matching label pages…';
+    statusEl.classList.remove('hidden');
+    try {
+      const fd = new FormData();
+      fd.append('labelPdf', file);
+      const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      const { matched, pageCount } = data;
+      const unmatched = pageCount - matched;
+      statusEl.className = 'status-bar success';
+      statusEl.textContent = `${pageCount} pages imported — ${matched} matched${unmatched ? `, ${unmatched} unmatched` : ''}.`;
+      document.getElementById('labelImportUploadName').textContent = '';
+      labelImportInputUpload.value = '';
+      await loadLabelMiniHistory();
+      if (unmatched > 0 && data.importId) {
+        if (confirm(`${unmatched} page(s) could not be auto-matched. Open Review to assign manually?`))
+          openLabelReview(data.importId);
+      }
+    } catch (err) {
+      statusEl.className = 'status-bar error';
+      statusEl.textContent = err.message;
+    }
+  }
+
+  async function loadLabelMiniHistory() {
+    const wrap   = document.getElementById('labelMiniHistory');
+    const listEl = document.getElementById('labelMiniHistoryList');
+    if (!wrap || !listEl) return;
+    try {
+      const resp = await fetch('/api/label-imports');
+      if (!resp.ok) return;
+      const imports = await resp.json();
+      if (!imports.length) { wrap.style.display = 'none'; return; }
+      wrap.style.display = '';
+      listEl.innerHTML = imports.slice(0, 5).map(imp => {
+        const hasUnmatched = imp.unmatched > 0;
+        return `<div class="label-mini-item">
+          <span class="label-mini-item-name">&#127991; ${esc(imp.filename)}</span>
+          <span class="label-mini-item-badges">
+            ${imp.matched   ? `<span class="lhi-badge lhi-matched">${imp.matched} matched</span>` : ''}
+            ${imp.unmatched ? `<span class="lhi-badge lhi-unmatched">${imp.unmatched} unmatched</span>` : ''}
+            ${hasUnmatched  ? `<button class="btn-primary btn-sm lhi-automatch-btn" data-import-id="${esc(imp.id)}">&#9889; Auto Match</button>` : ''}
+            <button class="btn-ghost btn-sm lmi-review-btn" data-import-id="${esc(imp.id)}">Review ›</button>
+          </span>
+        </div>`;
+      }).join('');
+      listEl.querySelectorAll('.lhi-automatch-btn').forEach(btn =>
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          btn.disabled = true; btn.textContent = 'Matching…';
+          try {
+            const r = await fetch(`/api/label-imports/${btn.dataset.importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error);
+            await refreshOrders();
+            await loadLabelMiniHistory();
+          } catch (err) { alert(err.message); }
+        })
+      );
+      listEl.querySelectorAll('.lmi-review-btn').forEach(btn =>
+        btn.addEventListener('click', () => openLabelReview(btn.dataset.importId))
+      );
+    } catch {}
+  }
+
+  document.getElementById('labelMiniRefreshBtn')?.addEventListener('click', loadLabelMiniHistory);
 
   document.getElementById('goOrdersBtn').addEventListener('click', () => switchTab('orders'));
 
