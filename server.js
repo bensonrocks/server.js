@@ -248,11 +248,12 @@ function readEmailConfig() {
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(EMAIL_CONFIG_FILE, 'utf8')); } catch {}
   return {
-    from_email: saved.from_email || process.env.EMAIL_USER || '',
-    password:   saved.password   || process.env.EMAIL_PASS  || '',
-    smtp_host:  saved.smtp_host  || process.env.SMTP_HOST   || 'smtp.gmail.com',
-    smtp_port:  saved.smtp_port  || parseInt(process.env.SMTP_PORT || '587', 10),
-    to_email:   saved.to_email   || process.env.EMAIL_TO    || 'opsgroup-sg@uldgroup.net',
+    from_email:  saved.from_email  || process.env.EMAIL_USER  || '',
+    smtp_login:  saved.smtp_login  || process.env.SMTP_LOGIN  || '',  // auth user if different from from_email
+    password:    saved.password    || process.env.EMAIL_PASS  || '',
+    smtp_host:   saved.smtp_host   || process.env.SMTP_HOST   || 'smtp.gmail.com',
+    smtp_port:   saved.smtp_port   || parseInt(process.env.SMTP_PORT || '587', 10),
+    to_email:    saved.to_email    || process.env.EMAIL_TO    || 'opsgroup-sg@uldgroup.net',
   };
 }
 
@@ -275,7 +276,7 @@ function buildTransporter() {
   if (!conf.from_email || !conf.password) return null;
   return nodemailer.createTransport({
     host: conf.smtp_host, port: conf.smtp_port, secure: false,
-    auth: { user: conf.from_email, pass: conf.password },
+    auth: { user: conf.smtp_login || conf.from_email, pass: conf.password },
   });
 }
 
@@ -2055,27 +2056,29 @@ app.get('/api/master/email-config', (req, res) => {
   if (!checkMaster(req, res)) return;
   const conf = readEmailConfig();
   res.json({
-    from_email: conf.from_email,
-    password:   conf.password ? '••••••••' : '',   // never expose the real password
-    smtp_host:  conf.smtp_host,
-    smtp_port:  conf.smtp_port,
-    to_email:   conf.to_email,
+    from_email:   conf.from_email,
+    smtp_login:   conf.smtp_login,
+    password:     conf.password ? '••••••••' : '',   // never expose the real password
+    smtp_host:    conf.smtp_host,
+    smtp_port:    conf.smtp_port,
+    to_email:     conf.to_email,
     has_password: !!conf.password,
   });
 });
 
 app.post('/api/master/email-config', (req, res) => {
   if (!checkMaster(req, res)) return;
-  const { from_email, password, smtp_host, smtp_port, to_email } = req.body;
+  const { from_email, smtp_login, password, smtp_host, smtp_port, to_email } = req.body;
   if (!from_email) return res.status(400).json({ error: 'From email is required' });
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(EMAIL_CONFIG_FILE, 'utf8')); } catch {}
   const updated = {
-    from_email: from_email.trim(),
-    password:   password ? password.trim() : (saved.password || ''),  // keep existing if blank
-    smtp_host:  (smtp_host || 'smtp.gmail.com').trim(),
-    smtp_port:  parseInt(smtp_port || 587, 10),
-    to_email:   (to_email || '').trim(),
+    from_email:  from_email.trim(),
+    smtp_login:  (smtp_login || '').trim(),
+    password:    password ? password.trim() : (saved.password || ''),  // keep existing if blank
+    smtp_host:   (smtp_host || 'smtp.gmail.com').trim(),
+    smtp_port:   parseInt(smtp_port || 587, 10),
+    to_email:    (to_email || '').trim(),
   };
   fs.writeFileSync(EMAIL_CONFIG_FILE, JSON.stringify(updated, null, 2));
   res.json({ ok: true });

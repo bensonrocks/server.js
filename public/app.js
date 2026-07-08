@@ -2108,12 +2108,13 @@
       const resp = await fetch('/api/master/email-config', { headers: { 'x-master-key': LOG_PASSWORD } });
       if (!resp.ok) return;
       const conf = await resp.json();
-      document.getElementById('cfgFromEmail').value = conf.from_email || '';
-      document.getElementById('cfgPassword').value  = '';  // never pre-fill password
+      document.getElementById('cfgFromEmail').value  = conf.from_email  || '';
+      document.getElementById('cfgSmtpLogin').value  = conf.smtp_login  || '';
+      document.getElementById('cfgPassword').value   = '';  // never pre-fill password
       document.getElementById('cfgPassNote').textContent = conf.has_password ? '(saved — leave blank to keep)' : '';
-      document.getElementById('cfgSmtpHost').value  = conf.smtp_host || 'smtp.gmail.com';
-      document.getElementById('cfgSmtpPort').value  = conf.smtp_port || 587;
-      document.getElementById('cfgToEmail').value   = conf.to_email  || '';
+      document.getElementById('cfgSmtpHost').value   = conf.smtp_host || 'smtp.gmail.com';
+      document.getElementById('cfgSmtpPort').value   = conf.smtp_port || 587;
+      document.getElementById('cfgToEmail').value    = conf.to_email  || '';
       defaultRecipientEmail = conf.to_email || '';
     } catch {}
     await loadGmailStatus();
@@ -2247,6 +2248,7 @@
 
   document.getElementById('saveEmailCfgBtn').addEventListener('click', async () => {
     const from_email = document.getElementById('cfgFromEmail').value.trim();
+    const smtp_login = document.getElementById('cfgSmtpLogin').value.trim();
     const password   = document.getElementById('cfgPassword').value.trim();
     const smtp_host  = document.getElementById('cfgSmtpHost').value.trim();
     const smtp_port  = document.getElementById('cfgSmtpPort').value.trim();
@@ -2256,7 +2258,7 @@
       const r = await fetch('/api/master/email-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
-        body: JSON.stringify({ from_email, password, smtp_host, smtp_port, to_email }),
+        body: JSON.stringify({ from_email, smtp_login, password, smtp_host, smtp_port, to_email }),
       });
       const d = await r.json();
       if (!r.ok) { showEmailStatus(d.error, 'error'); return; }
@@ -2288,12 +2290,13 @@
     if (!confirm('Clear all saved email settings? You will need to re-enter credentials.')) return;
     try {
       await fetch('/api/master/email-config', { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
-      document.getElementById('cfgFromEmail').value = '';
-      document.getElementById('cfgPassword').value  = '';
+      document.getElementById('cfgFromEmail').value  = '';
+      document.getElementById('cfgSmtpLogin').value  = '';
+      document.getElementById('cfgPassword').value   = '';
       document.getElementById('cfgPassNote').textContent = '';
-      document.getElementById('cfgSmtpHost').value  = 'smtp.gmail.com';
-      document.getElementById('cfgSmtpPort').value  = '587';
-      document.getElementById('cfgToEmail').value   = '';
+      document.getElementById('cfgSmtpHost').value   = 'smtp.gmail.com';
+      document.getElementById('cfgSmtpPort').value   = '587';
+      document.getElementById('cfgToEmail').value    = '';
       showEmailStatus('Email settings cleared.', 'success');
     } catch (err) { showEmailStatus(err.message, 'error'); }
   });
