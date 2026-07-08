@@ -107,6 +107,7 @@ const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 const DB_FILE     = path.join(DATA_DIR, 'db.json');
+let _dbCache = null;
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
 const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
@@ -200,7 +201,6 @@ function loadCustomHeaders() {
   return null;
 }
 
-let _dbCache = null;
 function readDb() {
   if (_dbCache) return _dbCache;
   try { _dbCache = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
