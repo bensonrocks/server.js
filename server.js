@@ -226,6 +226,39 @@ function writeDb(data) {
   });
 }
 
+// ── Audit ledger — append-only activity trail ───────────────────────────────
+// Every upload, completion, cancellation and DELETION is recorded here.
+// Reports read from this ledger, not from live batches, so deleting an
+// upload (or running Master Reset) never erases the history.
+function logAudit(type, data) {
+  const db = readDb();
+  if (!db.auditLog) db.auditLog = [];
+  db.auditLog.push({ type, at: new Date().toISOString(), ...data });
+  writeDb(db);
+}
+
+// Snapshot of a completed order for the ledger — carries everything the
+// reports need (incl. lot/expiry per line) independently of the batch.
+function completionAuditData(batch, ord, state) {
+  const scanned = state.scanned || {};
+  return {
+    order:     ord.order_number,
+    batchId:   batch.id,
+    client:    batch.client_name  || '',
+    customer:  ord.customer_name  || '',
+    carrier:   ord.carrier        || '',
+    waybill:   ord.waybill_number || '',
+    operator:  state.operator     || '',
+    startTime: state.startTime    || null,
+    endTime:   state.endTime      || null,
+    pieces:    (ord.lines || []).reduce((s, l) => s + (scanned[l.sku] ?? l.qty ?? 0), 0),
+    lines:     (ord.lines || []).map(l => ({
+      sku: l.sku, description: l.description || '', qty: l.qty,
+      scanned: scanned[l.sku] ?? l.qty, lot: l.batch_number || '', expiry: l.expiry_date || '',
+    })),
+  };
+}
+
 // ── Betime CODE 2 → Product Code map ─────────────────────────────────────────
 // Loaded at startup. Translates customer barcodes (EAN-13 / CODE 2 field) to
 // WMS product codes so scanning a barcode finds the correct order line.
@@ -262,6 +295,37 @@ try {
   _skuDescMap = JSON.parse(fs.readFileSync(SKU_DESC_FILE, 'utf8'));
   console.log(`[IdealScan] SKU description map loaded: ${Object.keys(_skuDescMap).length} entries`);
 } catch (e) { /* no desc file yet — populated on first CODE2 upload */ }
+
+// One-time audit backfill — synthesize ledger events from batches that
+// existed before the ledger was introduced, so reports cover old activity.
+(function backfillAuditLedger() {
+  try {
+    const db = readDb();
+    if (db.auditBackfilled) return;
+    if (!db.auditLog) db.auditLog = [];
+    let n = 0;
+    for (const b of db.batches || []) {
+      db.auditLog.push({ type: 'upload', at: b.uploaded_at, batchId: b.id, filename: b.filename, by: b.uploaded_by || '', client: b.client_name || '', orders: b.order_count || (b.orders || []).length, lines: b.row_count || 0 });
+      n++;
+      const states = b.orderStates || {};
+      for (const o of b.orders || []) {
+        const st = states[o.order_number];
+        if (!st) continue;
+        if (st.status === 'done') {
+          db.auditLog.push({ type: 'order_completed', at: st.endTime || st.updated_at || b.uploaded_at, ...completionAuditData(b, o, st) });
+          n++;
+        } else if (st.status === 'unprocessed') {
+          db.auditLog.push({ type: 'order_cancelled', at: st.updated_at || b.uploaded_at, order: o.order_number, batchId: b.id, client: b.client_name || '', operator: st.operator || '', mismatches: st.mismatches || [] });
+          n++;
+        }
+      }
+    }
+    db.auditLog.sort((a, b2) => new Date(a.at) - new Date(b2.at));
+    db.auditBackfilled = true;
+    writeDb(db);
+    console.log(`[IdealScan] Audit ledger backfilled: ${n} events`);
+  } catch (e) { console.error('[IdealScan] audit backfill failed:', e.message); }
+})();
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
@@ -1546,6 +1610,7 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[ocr-upload] XLSX write error:', err.message);
     });
+    logAudit('upload', { batchId, filename: batch.filename || 'photo-scan', by: req.userId || '', client: batch.client_name || '', orders: orders.length, lines: rows.length });
 
     res.json({ batchId, orders, rowCount: rows.length, sessionId: uuidv4() });
   } catch (err) {
@@ -1690,6 +1755,8 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       has_waybill_pdf:   false,
       has_order_label:   false,
     }));
+
+    logAudit('upload', { batchId, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length });
 
     console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}`);
     res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });
@@ -1881,6 +1948,7 @@ app.post('/api/scan/complete', (req, res) => {
     if (operator)  state.operator  = operator;
     batch.orderStates[orderNumber] = state;
     writeDb(db);
+    logAudit('order_completed', completionAuditData(batch, ord, state));
     sendCompletionAlert(orderNumber, ord, operator).then(result => {
       const db2    = readDb();
       const batch2 = findBatchForOrder(db2, orderNumber);
@@ -1928,6 +1996,10 @@ app.post('/api/scan/cancel', (req, res) => {
     ...(operator  && { operator }),
   };
   writeDb(db);
+  logAudit('order_cancelled', {
+    order: orderNumber, batchId: batch.id, client: batch.client_name || '',
+    operator: operator || '', mismatches: Array.isArray(mismatches) ? mismatches : [],
+  });
   res.json({ ok: true });
 });
 
@@ -2195,8 +2267,19 @@ app.post('/api/master/reset', (req, res) => {
   try {
     // Keep users — the UI promises "Users and email settings are preserved",
     // but users live inside db.json now, so a bare reset would wipe them.
+    // The audit ledger ALSO survives reset (deletion-proof reports) and the
+    // reset itself is recorded.
     const prev = readDb();
-    writeDb({ batches: [], users: prev.users || [] });
+    writeDb({
+      batches: [],
+      users: prev.users || [],
+      noBarcodeSkus: prev.noBarcodeSkus || {},
+      auditBackfilled: true,
+      auditLog: [
+        ...(prev.auditLog || []),
+        { type: 'master_reset', at: new Date().toISOString(), by: req.userId || 'master', batchesDeleted: (prev.batches || []).length },
+      ],
+    });
     activeSessions.clear();
     for (const f of fs.readdirSync(WMS_DIR))
       try { fs.unlinkSync(path.join(WMS_DIR, f)); } catch {}
@@ -2212,6 +2295,159 @@ app.post('/api/master/reset', (req, res) => {
 
 // ── Master: delete batch / delete single order ───────────────────────────────
 
+// ── Standard reports — built from the audit ledger, deletion-proof ──────────
+// GET /api/master/report/:kind?from=YYYY-MM-DD&to=YYYY-MM-DD  (manifest: ?date=)
+// Kinds: daily-summary, productivity, client-activity, exceptions,
+//        carrier-manifest, aging, lot-traceability
+app.get('/api/master/report/:kind', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { kind } = req.params;
+  try {
+    const db  = readDb();
+    const log = db.auditLog || [];
+
+    const today = new Date().toISOString().slice(0, 10);
+    const from  = (req.query.from || '').slice(0, 10) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const to    = (req.query.to   || '').slice(0, 10) || today;
+    const day   = at => String(at || '').slice(0, 10);
+    const inRange = ev => day(ev.at) >= from && day(ev.at) <= to;
+    const mins  = ev => (ev.startTime && ev.endTime) ? Math.round((new Date(ev.endTime) - new Date(ev.startTime)) / 6000) / 10 : null;
+    const avg   = a => a.length ? Math.round(a.reduce((s, v) => s + v, 0) / a.length * 10) / 10 : '';
+    const hhmm  = at => at ? new Date(at).toLocaleTimeString('en-SG', { hour12: false }) : '';
+
+    const uploads   = log.filter(e => e.type === 'upload' && inRange(e));
+    const completed = log.filter(e => e.type === 'order_completed' && inRange(e));
+    const cancelled = log.filter(e => e.type === 'order_cancelled' && inRange(e));
+    const deletions = log.filter(e => ['batch_deleted', 'order_deleted', 'master_reset'].includes(e.type) && inRange(e));
+
+    const wb = XLSX.utils.book_new();
+    const addSheet = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+    let title = kind;
+
+    if (kind === 'daily-summary') {
+      title = 'Daily_Operations_Summary';
+      const days = {};
+      const D = d => days[d] ||= { batches: 0, ordUp: 0, lines: 0, done: 0, pieces: 0, durs: [] };
+      for (const e of uploads)   { const x = D(day(e.at)); x.batches++; x.ordUp += e.orders || 0; x.lines += e.lines || 0; }
+      for (const e of completed) { const x = D(day(e.at)); x.done++; x.pieces += e.pieces || 0; const m = mins(e); if (m !== null) x.durs.push(m); }
+      addSheet('Daily', [
+        ['Date', 'Batches Uploaded', 'Orders Uploaded', 'Lines Uploaded', 'Orders Completed', 'Pieces Scanned', 'Avg Mins / Order'],
+        ...Object.keys(days).sort().map(d => { const x = days[d]; return [d, x.batches, x.ordUp, x.lines, x.done, x.pieces, avg(x.durs)]; }),
+      ]);
+      const dc = {};
+      for (const e of completed) { const k = day(e.at) + '|' + (e.client || '—'); dc[k] ||= { done: 0, pieces: 0 }; dc[k].done++; dc[k].pieces += e.pieces || 0; }
+      addSheet('By Client', [
+        ['Date', 'Client', 'Orders Completed', 'Pieces Scanned'],
+        ...Object.keys(dc).sort().map(k => { const [d, c] = k.split('|'); return [d, c, dc[k].done, dc[k].pieces]; }),
+      ]);
+
+    } else if (kind === 'productivity') {
+      title = 'Packer_Productivity';
+      const g = {};
+      for (const e of completed) {
+        const k = day(e.at) + '|' + (e.operator || '—');
+        g[k] ||= { done: 0, pieces: 0, durs: [] };
+        g[k].done++; g[k].pieces += e.pieces || 0;
+        const m = mins(e); if (m !== null) g[k].durs.push(m);
+      }
+      addSheet('Productivity', [
+        ['Date', 'Operator', 'Orders Completed', 'Pieces Scanned', 'Avg Mins / Order', 'Fastest (mins)', 'Slowest (mins)'],
+        ...Object.keys(g).sort().map(k => {
+          const [d, op] = k.split('|'); const x = g[k];
+          return [d, op, x.done, x.pieces, avg(x.durs), x.durs.length ? Math.min(...x.durs) : '', x.durs.length ? Math.max(...x.durs) : ''];
+        }),
+      ]);
+
+    } else if (kind === 'client-activity') {
+      title = 'Client_Activity';
+      const g = {};
+      const G = c => g[c || '—'] ||= { batches: 0, ordUp: 0, lines: 0, done: 0, pieces: 0 };
+      for (const e of uploads)   { const x = G(e.client); x.batches++; x.ordUp += e.orders || 0; x.lines += e.lines || 0; }
+      for (const e of completed) { const x = G(e.client); x.done++; x.pieces += e.pieces || 0; }
+      addSheet('Client Activity', [
+        [`Period: ${from} to ${to}`],
+        ['Client', 'Batches Uploaded', 'Orders Uploaded', 'Lines Uploaded', 'Orders Completed', 'Pieces Scanned'],
+        ...Object.keys(g).sort().map(c => { const x = g[c]; return [c, x.batches, x.ordUp, x.lines, x.done, x.pieces]; }),
+      ]);
+
+    } else if (kind === 'exceptions') {
+      title = 'Exceptions_Discrepancies';
+      const rows = [];
+      for (const e of cancelled) {
+        if ((e.mismatches || []).length) {
+          for (const m of e.mismatches) rows.push([e.at, 'Cancelled - mismatch', e.order, e.client, e.operator, m.sku, m.ordered, m.scanned, m.gap, '']);
+        } else {
+          rows.push([e.at, 'Cancelled', e.order, e.client, e.operator, '', '', '', '', '']);
+        }
+      }
+      for (const e of deletions) {
+        if (e.type === 'batch_deleted') rows.push([e.at, 'BATCH DELETED', '', e.client, e.by, '', '', '', '', `${e.filename} (${e.orders} orders): ${(e.orderNumbers || []).slice(0, 20).join(', ')}${(e.orderNumbers || []).length > 20 ? '…' : ''}`]);
+        else if (e.type === 'order_deleted') rows.push([e.at, 'ORDER DELETED', e.order, e.client, e.by, '', '', '', '', '']);
+        else rows.push([e.at, 'MASTER RESET', '', '', e.by, '', '', '', '', `${e.batchesDeleted} batches wiped`]);
+      }
+      rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      addSheet('Exceptions', [
+        ['Date/Time', 'Type', 'Order', 'Client', 'Operator/By', 'SKU', 'Ordered', 'Scanned', 'Gap', 'Note'],
+        ...rows,
+      ]);
+
+    } else if (kind === 'carrier-manifest') {
+      title = 'Carrier_Manifest';
+      const date = (req.query.date || today).slice(0, 10);
+      const evs  = log.filter(e => e.type === 'order_completed' && day(e.at) === date)
+                      .sort((a, b) => (a.carrier || '').localeCompare(b.carrier || '') || String(a.at).localeCompare(String(b.at)));
+      addSheet('Manifest', [
+        [`Carrier Handover Manifest — ${date}`],
+        ['Carrier', 'Order No', 'Waybill', 'Customer', 'Pieces', 'Completed At', 'Packed By', 'Received By (sign)'],
+        ...evs.map(e => [e.carrier || '—', e.order, e.waybill || '', e.customer || '', e.pieces || '', hhmm(e.endTime || e.at), e.operator || '', '']),
+      ]);
+
+    } else if (kind === 'aging') {
+      title = 'Order_Aging_Backlog';
+      const rows = [];
+      for (const b of db.batches || []) {
+        const states = b.orderStates || {};
+        for (const o of b.orders || []) {
+          const st = states[o.order_number] || { status: 'pending' };
+          if (st.status === 'done') continue;
+          const daysOld = Math.floor((Date.now() - new Date(b.uploaded_at)) / 86400000);
+          rows.push([o.order_number, b.client_name || '', o.carrier || '', st.status || 'pending', day(b.uploaded_at), daysOld, (o.lines || []).length, (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0)]);
+        }
+      }
+      rows.sort((a, b) => b[5] - a[5]);
+      addSheet('Aging', [
+        ['Order No', 'Client', 'Carrier', 'Status', 'Uploaded', 'Days Pending', 'Lines', 'Pieces Ordered'],
+        ...rows,
+      ]);
+
+    } else if (kind === 'lot-traceability') {
+      title = 'Lot_Expiry_Traceability';
+      const rows = [];
+      for (const e of completed) {
+        for (const l of e.lines || []) {
+          if (!l.lot && !l.expiry) continue;
+          rows.push([day(e.at), e.order, e.client, l.sku, l.description, l.lot, l.expiry, l.scanned ?? l.qty, e.operator, e.waybill || '']);
+        }
+      }
+      addSheet('Traceability', [
+        ['Date', 'Order No', 'Client', 'SKU', 'Description', 'Lot / Batch', 'Expiry', 'Qty Shipped', 'Packed By', 'Waybill'],
+        ...rows,
+      ]);
+
+    } else {
+      return res.status(400).json({ error: `Unknown report kind: ${kind}` });
+    }
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${title}_${from}_to_${to}.xlsx"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[report]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/master/batch/:batchId', (req, res) => {
   if (!checkMaster(req, res)) return;
   const { batchId } = req.params;
@@ -2219,8 +2455,14 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
     const db  = readDb();
     const idx = db.batches.findIndex(b => b.id === batchId);
     if (idx === -1) return res.status(404).json({ error: 'Batch not found' });
+    const victim = db.batches[idx];
     db.batches.splice(idx, 1);
     writeDb(db);
+    logAudit('batch_deleted', {
+      batchId, filename: victim.filename || '', client: victim.client_name || '',
+      orders: (victim.orders || []).length, by: req.userId || 'master',
+      orderNumbers: (victim.orders || []).map(o => o.order_number).slice(0, 500),
+    });
     try { fs.unlinkSync(path.join(WMS_DIR, `${batchId}.xlsx`)); } catch {}
     try { fs.rmSync(path.join(WAYBILL_DIR, batchId), { recursive: true, force: true }); } catch {}
     res.json({ ok: true });
@@ -2244,6 +2486,7 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     if (batch.orderStates) delete batch.orderStates[orderNumber];
     try { fs.unlinkSync(path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`)); } catch {}
     writeDb(db);
+    logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master' });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

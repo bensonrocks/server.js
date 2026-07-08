@@ -298,6 +298,7 @@
         <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
         <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
         <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
+        <button class="admin-nav-btn" data-admin-tab="reports">&#128202; Reports</button>
         <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
 
@@ -591,6 +592,34 @@
           <button class="btn-danger-sm"  id="clearEmailCfgBtn">&#215; Clear</button>
         </div>
         <div id="emailCfgStatus" class="status-bar hidden"></div>
+      </div>
+
+      <!-- Tab: Reports -->
+      <div class="admin-tab hidden" id="adminTab-reports">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Standard Reports</div>
+            <div class="admin-section-sub">Built from the permanent activity ledger — history stays in these reports even after uploads are deleted or the system is reset.</div>
+          </div>
+        </div>
+        <div class="report-range-row">
+          <label>From <input type="date" id="reportFrom" /></label>
+          <label>To <input type="date" id="reportTo" /></label>
+        </div>
+        <div class="report-list">
+          <button class="report-btn" data-report="daily-summary"><b>&#128197; Daily Operations Summary</b><span>Uploads, completions, pieces and avg scan time per day, with a per-client sheet</span></button>
+          <button class="report-btn" data-report="productivity"><b>&#128119; Packer Productivity</b><span>Orders, pieces, avg / fastest / slowest time per operator per day</span></button>
+          <button class="report-btn" data-report="client-activity"><b>&#128176; Client Activity (Billing Basis)</b><span>Batches, orders, lines and pieces handled per client for the period</span></button>
+          <button class="report-btn" data-report="exceptions"><b>&#9888; Exceptions &amp; Discrepancies</b><span>Mismatches, cancellations — and every deletion, incl. who deleted what</span></button>
+          <button class="report-btn" data-report="lot-traceability"><b>&#129514; Lot &amp; Expiry Traceability</b><span>Which lot of which SKU shipped in which order — recall-ready</span></button>
+          <button class="report-btn" data-report="aging"><b>&#9203; Order Aging / Backlog</b><span>All uncompleted orders with days pending (live data)</span></button>
+        </div>
+        <div class="admin-section-divider"></div>
+        <div class="report-range-row">
+          <label>Manifest date <input type="date" id="reportManifestDate" /></label>
+          <button class="report-btn report-btn-inline" data-report="carrier-manifest"><b>&#128666; Carrier Handover Manifest</b><span>Completed orders for the day, grouped by carrier, with a signature column</span></button>
+        </div>
+        <div id="reportStatus" class="status-bar hidden"></div>
       </div>
 
       <!-- Tab: System / Danger zone -->

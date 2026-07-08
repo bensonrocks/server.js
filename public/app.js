@@ -31,6 +31,9 @@
   let activeCarrierFilter = 'all';
   let ordersView          = 'active';   // 'active' | 'completed' sub-tab
   let completedSearch     = '';
+  let ordersDateFilter    = 'today';    // 'today' | 'yesterday' | 'week' | 'all' | 'range'
+  let ordersDateFrom      = '';
+  let ordersDateTo        = '';
   let printWaybillTimer   = null;
   let pendingOrderFile    = null;
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
@@ -1263,7 +1266,7 @@
     if (directMatch) {
       if (directMatch.scan_status === 'done') {
         // Completed order — show it in the Completed tab for reference/reprint
-        ordersView = 'completed'; completedSearch = directMatch.order_number;
+        ordersView = 'completed'; completedSearch = directMatch.order_number; ordersDateFilter = 'all';
         renderOrdersList();
         setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
         return;
@@ -1289,7 +1292,7 @@
       const ord = loadedOrders.find(o => o.order_number === data.order_number);
       if (!ord) { setWaybillMsg('Order not in current batch.', true); return; }
       if (ord.scan_status === 'done') {
-        ordersView = 'completed'; completedSearch = ord.order_number;
+        ordersView = 'completed'; completedSearch = ord.order_number; ordersDateFilter = 'all';
         renderOrdersList();
         setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
         return;
@@ -1306,11 +1309,43 @@
     if (activeClientFilter  !== 'all') orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
 
+    // Date filter — default TODAY. Active orders filter on upload date,
+    // completed orders on completion date.
+    const dayOf = v => v ? new Date(v).toISOString().slice(0, 10) : '';
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const yestStr  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const weekStr  = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+    const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
+    const inDateFilter = o => {
+      const d = orderDay(o);
+      if (!d) return true; // never hide records with no usable date
+      switch (ordersDateFilter) {
+        case 'today':     return d === todayStr;
+        case 'yesterday': return d === yestStr;
+        case 'week':      return d >= weekStr && d <= todayStr;
+        case 'range':     return (!ordersDateFrom || d >= ordersDateFrom) && (!ordersDateTo || d <= ordersDateTo);
+        default:          return true; // 'all'
+      }
+    };
+    orders = orders.filter(inDateFilter);
+
     // Active / Completed sub-tabs — completed orders leave the main list and
     // live in their own searchable view for reference and label reprinting
     const doneOrders   = orders.filter(o => o.scan_status === 'done');
     const activeOrders = orders.filter(o => o.scan_status !== 'done');
+    const dateChips = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Last 7 Days'], ['all', 'All'], ['range', 'Date Range&hellip;']]
+      .map(([k, lbl]) => `<button class="filter-chip ${ordersDateFilter === k ? 'active' : ''}" data-odate="${k}">${lbl}</button>`).join('');
+    const dateFilterHTML = `
+      <div class="orders-date-row">
+        <span class="odr-label">SHOW:</span>
+        ${dateChips}
+        ${ordersDateFilter === 'range' ? `
+          <input type="date" id="ordersDateFrom" value="${esc(ordersDateFrom)}" />
+          <span class="odr-to">to</span>
+          <input type="date" id="ordersDateTo" value="${esc(ordersDateTo)}" />` : ''}
+      </div>`;
     const subTabsHTML = `
+      ${dateFilterHTML}
       <div class="orders-subtabs">
         <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
@@ -1345,6 +1380,16 @@
         ordersView = b.dataset.oview;
         renderOrdersList();
       }));
+      document.querySelectorAll('[data-odate]').forEach(b => b.addEventListener('click', () => {
+        ordersDateFilter = b.dataset.odate;
+        if (ordersDateFilter === 'range' && !ordersDateFrom) {
+          ordersDateFrom = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+          ordersDateTo   = new Date().toISOString().slice(0, 10);
+        }
+        renderOrdersList();
+      }));
+      document.getElementById('ordersDateFrom')?.addEventListener('change', e => { ordersDateFrom = e.target.value; renderOrdersList(); });
+      document.getElementById('ordersDateTo')?.addEventListener('change',   e => { ordersDateTo   = e.target.value; renderOrdersList(); });
       const si = document.getElementById('completedSearchInput');
       si?.addEventListener('input', () => {
         completedSearch = si.value;
@@ -3137,6 +3182,40 @@
       a.click(); URL.revokeObjectURL(url);
     } catch (err) { alert(err.message); }
   });
+
+  // Master: standard reports (from the deletion-proof audit ledger)
+  (() => {
+    const today = () => new Date().toISOString().slice(0, 10);
+    const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+    const fromEl = document.getElementById('reportFrom');
+    const toEl   = document.getElementById('reportTo');
+    const mdEl   = document.getElementById('reportManifestDate');
+    if (fromEl) { fromEl.value = daysAgo(30); toEl.value = today(); mdEl.value = today(); }
+
+    document.querySelectorAll('.report-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const kind = btn.dataset.report;
+        const st   = document.getElementById('reportStatus');
+        st.className = 'status-bar'; st.textContent = 'Generating report…'; st.classList.remove('hidden');
+        try {
+          const qs = kind === 'carrier-manifest'
+            ? `date=${encodeURIComponent(mdEl.value || today())}`
+            : `from=${encodeURIComponent(fromEl.value || daysAgo(30))}&to=${encodeURIComponent(toEl.value || today())}`;
+          const resp = await fetch(`/api/master/report/${kind}?${qs}`, { headers: { 'x-master-key': LOG_PASSWORD } });
+          if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || resp.statusText);
+          const blob = await resp.blob();
+          const a    = document.createElement('a');
+          a.href     = URL.createObjectURL(blob);
+          a.download = `${kind}_${fromEl?.value || today()}_${toEl?.value || today()}.xlsx`;
+          a.click(); URL.revokeObjectURL(a.href);
+          st.className = 'status-bar success'; st.textContent = 'Report downloaded.';
+        } catch (e) {
+          st.className = 'status-bar error'; st.textContent = 'Report failed: ' + e.message;
+        }
+        setTimeout(() => st.classList.add('hidden'), 4000);
+      });
+    });
+  })();
 
   // Master: download full backup (db + settings) as a JSON file
   document.getElementById('masterBackupBtn').addEventListener('click', async () => {
