@@ -5,12 +5,8 @@ const db       = new Database(path.join(__dirname, 'data/tenants/default.db'));
 
 // ── Clear existing orders ─────────────────────────────────────────────────────
 db.prepare('DELETE FROM orders').run();
-console.log('Cleared existing orders');
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const pad  = (n, len) => String(n).padStart(len, '0');
-const rnd  = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-
+// ── Data ──────────────────────────────────────────────────────────────────────
 const CLIENTS = [
   { id: 'betime-marketing', name: 'Betime Marketing' },
   { id: 'smilefam',         name: 'SmileFam' },
@@ -21,19 +17,33 @@ const CLIENTS = [
   { id: 'chalgo',           name: 'Chalgo' },
 ];
 
+const CHANNELS = ['shopee', 'tiktok', 'lazada', 'shopify'];
+
 const PRODUCTS = [
-  { sku: 'SKU-001', name: 'Premium Pillow', price: 45 },
-  { sku: 'SKU-002', name: 'LED Desk Lamp',  price: 49 },
-  { sku: 'SKU-003', name: 'Electric Toothbrush Pro', price: 59.90 },
-  { sku: 'SKU-004', name: 'Whey Protein 1kg', price: 79 },
-  { sku: 'SKU-005', name: 'RC Monster Truck', price: 69 },
-  { sku: 'SKU-006', name: 'Oud Perfume 50ml', price: 88 },
-  { sku: 'SKU-007', name: 'Casual Watch',    price: 89 },
-  { sku: 'SKU-008', name: 'Bomber Jacket',   price: 89 },
+  { sku: 'SKU-001', name: 'Memory Foam Pillow Pro',    price: 45.00 },
+  { sku: 'SKU-002', name: 'LED Desk Lamp',             price: 49.00 },
+  { sku: 'SKU-003', name: 'Electric Toothbrush Pro',   price: 59.90 },
+  { sku: 'SKU-004', name: 'Whey Protein 1kg',          price: 79.00 },
+  { sku: 'SKU-005', name: 'RC Monster Truck',          price: 69.00 },
+  { sku: 'SKU-006', name: 'Oud Perfume 50ml',          price: 88.00 },
+  { sku: 'SKU-007', name: 'Casual Watch',              price: 89.00 },
+  { sku: 'SKU-008', name: 'Bomber Jacket',             price: 89.00 },
+  { sku: 'SKU-009', name: 'Plush Bear 40cm',           price: 55.00 },
+  { sku: 'SKU-010', name: 'Rose Garden EDP',           price: 65.00 },
+  { sku: 'SKU-011', name: 'BCAA 300g',                 price: 49.00 },
+  { sku: 'SKU-012', name: 'Leather Wallet',            price: 45.00 },
+  { sku: 'SKU-013', name: 'Premium Polo Tee',          price: 49.00 },
+  { sku: 'SKU-014', name: 'Whitening Kit',             price: 49.00 },
 ];
 
-const NAMES = ['B***u','G***h','P**m','R***g','C***y','N***l','J***8','S***a','K***i','T***n',
-               'W***g','M***h','F***a','D***p','Z***i','A***n','H***g','E***r','V***k','L***u'];
+const RECIPIENTS = [
+  'Hui Ling Lim', 'Ahmad Fadzillah', 'Siti Nurhaliza', 'Kavitha Pillai',
+  'Rajesh Kumar',  'Nurul Ain',       'Deepak Sharma',  'Wei Ling Tan',
+  'James Ong',     'Priya Nair',      'Bryan Chua',     'Fatimah Binte',
+];
+
+const rnd    = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const pick   = arr => arr[rnd(0, arr.length - 1)];
 
 const insert = db.prepare(`
   INSERT INTO orders
@@ -42,46 +52,62 @@ const insert = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-const now = new Date();
+// Total = 118: 117 pending + 1 processing
+// Order IDs: ORD-SG-1 through ORD-SG-118
+const TOTAL = 118;
+const now   = new Date('2026-07-08T10:00:00.000Z');
 
-let count = 0;
+for (let i = 1; i <= TOTAL; i++) {
+  const orderId  = `ORD-SG-${i}`;
+  const client   = CLIENTS[(i - 1) % CLIENTS.length];
+  const channel  = CHANNELS[(i - 1) % CHANNELS.length];
+  const status   = i === TOTAL ? 'processing' : 'pending';
 
-const insertOrder = (i, status) => {
-  const shopeeOrderNo = `260707${pad(rnd(1000000, 9999999), 7)}${String.fromCharCode(65 + rnd(0,25))}${String.fromCharCode(65 + rnd(0,25))}${String.fromCharCode(48 + rnd(0,9))}`;
-  const waybill       = `SPXSG0${pad(rnd(100000000, 999999999), 9)}`;
-  const client        = CLIENTS[i % CLIENTS.length];
-  const product       = PRODUCTS[rnd(0, PRODUCTS.length - 1)];
-  const qty           = rnd(1, 4);
-  const subtotal      = Math.round(product.price * qty * 100) / 100;
-  const total         = subtotal;
-  const customer      = NAMES[i % NAMES.length];
+  // Spread over last 7 days, more orders today
+  const daysAgo  = i <= 30 ? 0 : i <= 60 ? 1 : i <= 80 ? 2 : i <= 95 ? 3 : i <= 105 ? 4 : i <= 112 ? 5 : 6;
+  const hourOff  = rnd(0, 23);
+  const orderDate = new Date(now - daysAgo * 86400000 - hourOff * 3600000).toISOString();
 
-  // Spread orders over today and the past 2 days so dashboard shows today's data
-  const offsetHours   = rnd(0, 48);
-  const orderDate     = new Date(now - offsetHours * 3600000).toISOString();
+  // Pick 1-2 products
+  const numItems = rnd(1, 2);
+  const items = [];
+  for (let j = 0; j < numItems; j++) {
+    const p = pick(PRODUCTS);
+    const qty = rnd(1, 3);
+    items.push({ sku: p.sku, name: p.name, qty, unitPrice: p.price });
+  }
+  const subtotal = Math.round(items.reduce((s, it) => s + it.qty * it.unitPrice, 0) * 100) / 100;
+  const tax      = Math.round(subtotal * 0.09 * 100) / 100;
+  const total    = Math.round((subtotal + tax) * 100) / 100;
+  const recipient = pick(RECIPIENTS);
 
   insert.run(
-    `ISCAN-${shopeeOrderNo}`,
+    orderId,
     client.id,
     client.name,
-    'shopee',
+    channel,
     orderDate,
     status,
     'SGD',
-    `Waybill: ${waybill}`,
-    JSON.stringify([{ sku: product.sku, name: product.name, qty, unitPrice: product.price }]),
-    JSON.stringify({ recipient: customer, addressLine1: '', addressLine2: '', city: 'Singapore', state: '', zip: '', country: 'SG' }),
-    subtotal, 0, 0, total,
-    JSON.stringify({ type: 'shopee', waybill, carrier: 'SPX', externalId: shopeeOrderNo, ingestedAt: now.toISOString() })
+    '',
+    JSON.stringify(items),
+    JSON.stringify({
+      recipient,
+      addressLine1: '',
+      addressLine2: '',
+      city: 'Singapore',
+      state: '',
+      zip: '',
+      country: 'SG',
+    }),
+    subtotal, 0, tax, total,
+    JSON.stringify({ type: channel, ingestedAt: now.toISOString() })
   );
-  count++;
-};
+}
 
-// 117 pending, 1 processing (matches IDEALSCAN: 117 PENDING, 1 IN PROGRESS)
-for (let i = 0; i < 117; i++) insertOrder(i, 'pending');
-insertOrder(117, 'processing');
-
-console.log(`Seeded ${count} orders (117 pending + 1 processing)`);
 const stats = db.prepare("SELECT status, COUNT(*) as n FROM orders GROUP BY status").all();
+const total_count = db.prepare("SELECT COUNT(*) as n FROM orders").get().n;
+console.log(`Seeded ${total_count} orders`);
 console.log('Status breakdown:', stats);
+console.log('ID sample:', db.prepare("SELECT id, client_name, channel, status FROM orders ORDER BY ROWID DESC LIMIT 5").all());
 db.close();
