@@ -187,13 +187,16 @@ function hashPass(password, salt) {
   if (changed) writeUsers(users);
 })();
 
+let _customHeadersCache = undefined;
 function loadCustomHeaders() {
+  if (_customHeadersCache !== undefined) return _customHeadersCache;
   try {
     const data = JSON.parse(fs.readFileSync(KEYFIELDS_TEMPLATE_FILE, 'utf8'));
-    if (Array.isArray(data.headers) && data.headers.length > 0) return data.headers;
-  } catch {}
-  return null;
+    _customHeadersCache = (Array.isArray(data.headers) && data.headers.length > 0) ? data.headers : null;
+  } catch { _customHeadersCache = null; }
+  return _customHeadersCache;
 }
+function invalidateCustomHeadersCache() { _customHeadersCache = undefined; }
 
 function readDb() {
   if (_dbCache) return _dbCache;
@@ -2046,6 +2049,7 @@ app.post('/api/master/keyfields-template', upload.single('templateFile'), (req, 
     const headers = (aoa[0] || []).map(h => String(h).trim()).filter(Boolean);
     if (headers.length === 0) return res.status(400).json({ error: 'No headers found in row 1' });
     fs.writeFileSync(KEYFIELDS_TEMPLATE_FILE, JSON.stringify({ headers, uploadedAt: new Date().toISOString() }, null, 2));
+    invalidateCustomHeadersCache();
     res.json({ ok: true, headers, count: headers.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2057,6 +2061,7 @@ app.delete('/api/master/keyfields-template', (req, res) => {
   try {
     fs.unlinkSync(KEYFIELDS_TEMPLATE_FILE);
   } catch {}
+  invalidateCustomHeadersCache();
   res.json({ ok: true, headers: KEYFIELDS_HEADERS });
 });
 
