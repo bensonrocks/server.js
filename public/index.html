@@ -1431,6 +1431,24 @@ a:hover{text-decoration:underline}
             </div>
           </div>
 
+          <!-- IDEALSCAN Import -->
+          <div class="adm-card">
+            <div class="adm-card-title">&#128279; IDEALSCAN Import</div>
+            <div class="adm-row">
+              <div class="adm-row-info">
+                <div class="adm-row-label">Client name for imported orders</div>
+                <div class="adm-row-hint">Optional — leave blank to use the client from IDEALSCAN, or enter a name to tag all orders under one client.</div>
+              </div>
+              <input id="iscan-client-name" class="slk-input" style="width:200px" placeholder="e.g. Betime Marketing">
+            </div>
+            <div class="adm-row" style="flex-wrap:wrap;gap:8px">
+              <button class="adm-btn adm-btn-primary" onclick="iscanProbe()">&#128270; Probe API</button>
+              <button class="adm-btn" style="background:#f59e0b;color:#fff" onclick="iscanImport(true)">&#128196; Dry Run</button>
+              <button class="adm-btn adm-btn-primary" style="background:#16a34a" onclick="iscanImport(false)">&#8659; Import Orders</button>
+            </div>
+            <div id="iscan-msg" style="display:none;margin-top:10px;font-size:13px;padding:10px 14px;border-radius:8px;background:#f1f5f9;white-space:pre-wrap;font-family:monospace;max-height:220px;overflow:auto"></div>
+          </div>
+
           <!-- Danger Zone -->
           <div class="adm-card adm-danger-card">
             <div class="adm-card-title" style="color:#991b1b">&#9888;&#65039; Danger Zone</div>
@@ -2392,6 +2410,56 @@ async function adminChangePassword(){
     $('adm-new-pw').value='';$('adm-confirm-pw').value='';
     setTimeout(()=>window.location.replace('/about.html'),1800);
   }catch(e){show('Error: '+e.message,false);}
+}
+
+// ── IDEALSCAN IMPORT ──────────────────────────────────────────────────────────
+function _iscanMsg(text, ok) {
+  const el = $('iscan-msg');
+  el.textContent = text;
+  el.style.display = 'block';
+  el.style.background = ok === false ? '#fee2e2' : ok === true ? '#dcfce7' : '#f1f5f9';
+  el.style.color = ok === false ? '#991b1b' : ok === true ? '#166534' : '#374151';
+}
+
+async function iscanProbe() {
+  _iscanMsg('Probing IDEALSCAN API…');
+  try {
+    const r = await fetch(`${SERVER}/api/idealscan/probe`);
+    const j = await r.json();
+    if (!r.ok) { _iscanMsg('Error: ' + (j.error || r.status), false); return; }
+    _iscanMsg(
+      `HTTP ${j.status}\n\n` +
+      (j.json !== null ? JSON.stringify(j.json, null, 2).slice(0, 3000) : j.raw || '(empty)'),
+      j.ok
+    );
+  } catch (e) { _iscanMsg('Fetch error: ' + e.message, false); }
+}
+
+async function iscanImport(dryRun) {
+  const clientName = ($('iscan-client-name')?.value || '').trim();
+  const clientId   = clientName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  _iscanMsg((dryRun ? '[DRY RUN] ' : '') + 'Importing from IDEALSCAN…');
+  try {
+    const r = await fetch(`${SERVER}/api/idealscan/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun, clientId: clientId || undefined, clientName: clientName || undefined }),
+    });
+    const j = await r.json();
+    if (!r.ok) { _iscanMsg('Error: ' + (j.error || r.status), false); return; }
+    if (j.error) { _iscanMsg('IDEALSCAN error: ' + j.error, false); return; }
+    if (j.sample) {
+      _iscanMsg('Unexpected response shape — raw sample:\n\n' + JSON.stringify(j.sample, null, 2).slice(0, 2000));
+      return;
+    }
+    const msg = (dryRun ? '[DRY RUN] ' : '') +
+      `Total in IDEALSCAN: ${j.total}\nWould import: ${j.imported}\nAlready exist / skipped: ${j.skipped}` +
+      (j.errors?.length ? `\n\nErrors (first 10):\n${j.errors.map(e => `• ${e.id}: ${e.error}`).join('\n')}` : '');
+    _iscanMsg(msg, !dryRun && j.imported > 0 ? true : null);
+    if (!dryRun && j.imported > 0) {
+      await loadOrdersFromServer(); render(); saleRangeChange(); loadDashboardStats();
+    }
+  } catch (e) { _iscanMsg('Fetch error: ' + e.message, false); }
 }
 
 // ── COMPUTE ───────────────────────────────────────────────────────────────────

@@ -922,6 +922,116 @@ app.post('/api/demo/go-live', withTenant, withSuperAdmin, (req, res) => {
   res.json({ ok: true, removed, message: 'Demo data cleared. Connect your marketplace credentials and sync to pull live orders.' });
 });
 
+// ── IDEALSCAN import ──────────────────────────────────────────────────────────
+
+const IDEALSCAN_BASE = process.env.IDEALSCAN_URL || 'https://idealscan.up.railway.app';
+
+// Probe: return raw IDEALSCAN API response so we can inspect the structure
+app.get('/api/idealscan/probe', withTenant, async (req, res) => {
+  try {
+    const path = req.query.path || '/api/orders';
+    const r = await fetch(`${IDEALSCAN_BASE}${path}`);
+    const text = await r.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = null; }
+    res.json({ status: r.status, ok: r.ok, json, raw: json ? undefined : text.slice(0, 2000) });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Import: fetch all orders from IDEALSCAN and upsert into OMS
+app.post('/api/idealscan/import', withTenant, async (req, res) => {
+  const { dryRun = false, clientId = '', clientName = '' } = req.body || {};
+  try {
+    // Try common IDEALSCAN order endpoints
+    let raw = null;
+    for (const path of ['/api/orders', '/orders', '/api/v1/orders']) {
+      const r = await fetch(`${IDEALSCAN_BASE}${path}`);
+      if (r.ok) { raw = await r.json(); break; }
+    }
+    if (!raw) return res.status(502).json({ error: 'Could not reach IDEALSCAN orders API' });
+
+    // Normalise: handle both array and { orders: [...] } shapes
+    const list = Array.isArray(raw) ? raw
+               : Array.isArray(raw.orders) ? raw.orders
+               : Array.isArray(raw.data)   ? raw.data
+               : [];
+
+    if (!list.length) return res.json({ ok: true, imported: 0, skipped: 0, total: 0, sample: raw });
+
+    const STATUS_MAP = {
+      pending: 'pending', 'in progress': 'processing', 'in_progress': 'processing',
+      done: 'shipped', completed: 'delivered', cancelled: 'cancelled',
+    };
+
+    let imported = 0, skipped = 0;
+    const errors = [];
+
+    for (const o of list) {
+      // Flexible field extraction — cover camelCase and snake_case
+      const orderId   = String(o.orderNo || o.order_no || o.orderNumber || o.order_number || o.id || '').trim();
+      const waybill   = String(o.waybill || o.trackingNo || o.tracking_no || o.waybillNo || o.waybill_no || '').trim();
+      const customer  = String(o.customer || o.customerName || o.customer_name || o.recipient || '').trim();
+      const rawStatus = String(o.status || 'pending').toLowerCase();
+      const status    = STATUS_MAP[rawStatus] || 'pending';
+      const carrier   = String(o.carrier || o.courier || '').trim();
+      const orderDate = o.date || o.orderDate || o.order_date || o.createdAt || o.created_at || new Date().toISOString();
+      const cid       = clientId || String(o.clientId || o.client_id || o.client || 'idealscan').toLowerCase().replace(/\s+/g, '-');
+      const cname     = clientName || String(o.clientName || o.client_name || o.client || 'IDEALSCAN').trim();
+      const items     = Array.isArray(o.items) ? o.items.map(i => ({
+        sku: String(i.sku || i.code || 'ITEM'),
+        name: String(i.name || i.description || 'Item'),
+        qty: parseInt(i.qty || i.quantity || 1) || 1,
+        unitPrice: parseFloat(i.unitPrice || i.unit_price || i.price || 0) || 0,
+      })) : [{ sku: 'ITEM', name: 'Order Item', qty: parseInt(o.itemCount || o.item_count || 1) || 1, unitPrice: 0 }];
+
+      if (!orderId) { skipped++; continue; }
+
+      const subtotal = items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+      const order = {
+        id: `ISCAN-${orderId}`,
+        clientId: cid,
+        clientName: cname,
+        channel: carrier ? carrier.toLowerCase().replace(/\s+/g, '-') : 'shopee',
+        orderDate: new Date(orderDate).toISOString(),
+        status,
+        currency: 'SGD',
+        notes: waybill ? `Waybill: ${waybill}` : '',
+        items,
+        shipping: {
+          recipient: customer,
+          addressLine1: String(o.address || o.addressLine1 || '').trim(),
+          addressLine2: '',
+          city: 'Singapore',
+          state: '',
+          zip: '',
+          country: 'SG',
+        },
+        subtotal,
+        shippingCost: 0,
+        tax: 0,
+        total: parseFloat(o.total || o.amount || subtotal) || subtotal,
+        source: { type: 'idealscan', waybill, carrier, externalId: orderId, ingestedAt: new Date().toISOString() },
+      };
+
+      if (!dryRun) {
+        try { req.store.addOrder(order); imported++; }
+        catch (e) {
+          if (e.message.includes('already exists')) skipped++;
+          else { errors.push({ id: orderId, error: e.message }); skipped++; }
+        }
+      } else {
+        imported++;
+      }
+    }
+
+    res.json({ ok: true, imported, skipped, total: list.length, dryRun, errors: errors.slice(0, 10) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Seed inventory ────────────────────────────────────────────────────────────
 
 app.post('/api/admin/seed-inventory', withTenant, (req, res) => {
