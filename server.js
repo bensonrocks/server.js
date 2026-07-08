@@ -204,12 +204,22 @@ function writeDb(data) {
 // barcode is its own key. Empty CODE 2 rows are omitted entirely.
 let _beTimeCode2Map = {};
 let _beTimeCode2Lengths = []; // unique key lengths, descending — rebuilt whenever map changes
+let _beTimeCode2NormMap = {}; // stripped-key index: leading zeros removed from every barcode key
 let _skuDescMap = {};         // SKU → description, loaded from the CODE 2 reference file
 
 function _rebuildCode2Lengths() {
   const lens = [...new Set(Object.keys(_beTimeCode2Map).map(k => k.length))];
   lens.sort((a, b) => b - a); // longest first so we match the most-specific prefix
   _beTimeCode2Lengths = lens;
+  // Build secondary index with leading zeros stripped from every key so lookups
+  // succeed when the reference file stored a barcode with a leading zero but the
+  // scanner transmits it without (or vice-versa — existing keys without zeros are
+  // also indexed so they remain reachable after stripping the scan value).
+  _beTimeCode2NormMap = {};
+  for (const [k, v] of Object.entries(_beTimeCode2Map)) {
+    const stripped = k.replace(/^0+(?=.)/, '');
+    if (!_beTimeCode2NormMap[stripped]) _beTimeCode2NormMap[stripped] = v;
+  }
 }
 
 try {
@@ -236,10 +246,20 @@ try {
 function resolveBeTimeCode2(scanned) {
   if (!scanned) return scanned;
   const k = scanned.trim();
+  // 1. Exact match
   if (_beTimeCode2Map[k]) return _beTimeCode2Map[k];
-  // Try without leading zeros — scanners may zero-pad but map keys may not (or vice versa)
+  // 2. Strip leading zeros from the scanned value and try both the exact map
+  //    and the normalized index — covers scanner-adds-zeros AND scanner-strips-zeros
   const kStripped = k.replace(/^0+(?=.)/, '');
-  if (kStripped !== k && _beTimeCode2Map[kStripped]) return _beTimeCode2Map[kStripped];
+  if (kStripped !== k) {
+    if (_beTimeCode2Map[kStripped])     return _beTimeCode2Map[kStripped];
+    if (_beTimeCode2NormMap[kStripped]) return _beTimeCode2NormMap[kStripped];
+  }
+  // 3. Also try the normalized index with the original value in case the map
+  //    key had a leading zero that was already stripped when building the index
+  if (_beTimeCode2NormMap[k]) return _beTimeCode2NormMap[k];
+  // 4. Multi-barcode burst: all-digit input longer than any known key length —
+  //    try every known key-length as a prefix, longest first
   const minLen = _beTimeCode2Lengths[_beTimeCode2Lengths.length - 1] || 8;
   if (/^\d+$/.test(k) && k.length > minLen) {
     for (const len of _beTimeCode2Lengths) {
