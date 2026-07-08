@@ -796,7 +796,30 @@ a:hover{text-decoration:underline}
     </div>
   </header>
 
-  <!-- Staff login modal -->
+  <!-- Full-screen login gate -->
+  <div id="login-gate" style="display:none;position:fixed;inset:0;background:#0f172a;z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column">
+    <div style="background:#1e293b;border-radius:16px;padding:36px 36px 28px;width:360px;max-width:92vw;box-shadow:0 24px 64px rgba(0,0,0,.5)">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px">
+        <svg width="38" height="38" viewBox="0 0 38 38" fill="none"><rect width="38" height="38" rx="7" fill="#1d4ed8"/><rect x="4" y="8" width="3" height="22" rx="1" fill="white"/><rect x="9" y="13" width="1.5" height="17" rx=".75" fill="white"/><rect x="12.5" y="8" width="3" height="22" rx="1" fill="white"/><rect x="17.5" y="11" width="1.5" height="16" rx=".75" fill="white"/><rect x="21" y="8" width="3" height="22" rx="1" fill="white"/><rect x="26" y="13" width="1.5" height="17" rx=".75" fill="white"/><rect x="29.5" y="8" width="2.5" height="22" rx="1" fill="white"/></svg>
+        <div>
+          <div style="color:#f1f5f9;font-size:17px;font-weight:800">IDEALONE OMS</div>
+          <div style="color:#64748b;font-size:12px">United Logistics &amp; Distribution</div>
+        </div>
+      </div>
+      <div style="color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Staff Login</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
+        <input id="gate-user" type="text" placeholder="Username" autocomplete="username" style="padding:10px 13px;border-radius:9px;border:1.5px solid #334155;background:#0f172a;color:#f1f5f9;font-size:14px;font-family:inherit;outline:none" onkeydown="if(event.key==='Enter')$('gate-pass').focus()">
+        <input id="gate-pass" type="password" placeholder="Password" autocomplete="current-password" style="padding:10px 13px;border-radius:9px;border:1.5px solid #334155;background:#0f172a;color:#f1f5f9;font-size:14px;font-family:inherit;outline:none" onkeydown="if(event.key==='Enter')staffGateLogin()">
+      </div>
+      <div id="gate-msg" style="display:none;font-size:12px;padding:8px 10px;border-radius:7px;margin-bottom:10px;background:#450a0a;color:#fca5a5"></div>
+      <button onclick="staffGateLogin()" style="width:100%;padding:11px;border-radius:9px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;transition:background .15s" onmouseover="this.style.background='#1e40af'" onmouseout="this.style.background='#1d4ed8'">Log In</button>
+      <div style="text-align:center;margin-top:16px">
+        <a href="/portal.html" style="color:#64748b;font-size:13px;text-decoration:none" onmouseover="this.style.color='#94a3b8'" onmouseout="this.style.color='#64748b'">Client Portal &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Staff re-login modal (header button) -->
   <div id="staff-login-modal" class="staff-modal-bg" style="display:none" onclick="if(event.target===this)closeStaffModal()">
     <div class="staff-modal">
       <h3>&#128274; Staff Login</h3>
@@ -1532,6 +1555,33 @@ a:hover{text-decoration:underline}
             </div>
           </div>
 
+          <!-- Staff Users (admin only) -->
+          <div class="adm-card" id="staff-users-card" style="display:none">
+            <div class="adm-card-title">&#128101; Staff Users</div>
+            <!-- Create new user -->
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:flex-end">
+              <div style="flex:1;min-width:130px">
+                <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px">Username</div>
+                <input id="new-staff-user" class="slk-input" type="text" placeholder="e.g. warehouse1" style="width:100%">
+              </div>
+              <div style="flex:1;min-width:130px">
+                <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px">Password</div>
+                <input id="new-staff-pass" class="slk-input" type="password" placeholder="min. 6 chars" style="width:100%">
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px">Role</div>
+                <select id="new-staff-role" class="slk-input">
+                  <option value="warehouse">Warehouse</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <button class="slk-btn" onclick="createStaffUser()">+ Add User</button>
+            </div>
+            <div id="staff-users-msg" style="display:none;font-size:13px;padding:8px 12px;border-radius:8px;margin-bottom:10px"></div>
+            <!-- User list -->
+            <div id="staff-users-list"><p style="color:#94a3b8;font-size:13px">Loading…</p></div>
+          </div>
+
         </div>
       </div>
 
@@ -2124,6 +2174,7 @@ let authToken=localStorage.getItem('idealoms_token')||null;
 let currentTenantId=localStorage.getItem('idealoms_tenant')||'default';
 let staffToken=localStorage.getItem('staff_token')||null;
 let staffUser=localStorage.getItem('staff_user')||null;
+let staffRole=localStorage.getItem('staff_role')||null;
 let orders=(()=>{try{const s=localStorage.getItem('od');return s?JSON.parse(s):SEED.map(o=>({...o}));}catch{return SEED.map(o=>({...o}));}})();
 const save=()=>{try{localStorage.setItem('od',JSON.stringify(orders));}catch{}};
 let connCreds=(()=>{try{return JSON.parse(localStorage.getItem('idealoms_creds')||'{}');}catch{return {};}})();
@@ -2226,6 +2277,9 @@ function showAdminLock(){
 async function initAdminPage(){
   showAdminContent();
   renderStaffWidget();
+  // Show staff users card only for admins
+  const card=$('staff-users-card');
+  if(card){ card.style.display=staffRole==='admin'?'':'none'; if(staffRole==='admin')loadStaffUsers(); }
   await loadAdminStats();
   saleRangeChange();
   loadDashboardStats();
@@ -2444,17 +2498,55 @@ async function adminDeleteOrder(id){
   });
 }
 
-// ── STAFF AUTH ────────────────────────────────────────────────────────────────
+// ── STAFF AUTH & ROLE-BASED ACCESS ───────────────────────────────────────────
+const ADMIN_ONLY_NAV = ['nav-connections','nav-synclog','nav-admin','nav-client-dash'];
+
+function applyRoleNav(){
+  const isAdmin = staffRole === 'admin';
+  ADMIN_ONLY_NAV.forEach(id => {
+    const el=$(id);
+    if(el) el.style.display = isAdmin ? '' : 'none';
+  });
+}
+
+function showLoginGate(){
+  const g=$('login-gate');
+  if(g){ g.style.display='flex'; setTimeout(()=>$('gate-user')&&$('gate-user').focus(),100); }
+}
+function hideLoginGate(){ const g=$('login-gate'); if(g) g.style.display='none'; }
+
+async function staffGateLogin(){
+  const u=$('gate-user').value.trim();
+  const p=$('gate-pass').value;
+  const msg=$('gate-msg');
+  const showErr=t=>{msg.textContent=t;msg.style.display='block';};
+  if(!u||!p){showErr('Enter username and password.');return;}
+  try{
+    const r=await fetch(`${SERVER}/api/staff/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    const j=await r.json();
+    if(!r.ok){showErr(j.error||'Login failed.');return;}
+    staffToken=j.token;staffUser=j.username;staffRole=j.role||'warehouse';
+    localStorage.setItem('staff_token',staffToken);
+    localStorage.setItem('staff_user',staffUser);
+    localStorage.setItem('staff_role',staffRole);
+    hideLoginGate();
+    applyRoleNav();
+    renderStaffWidget();
+    await loadOrdersFromServer();render();saleRangeChange();loadDashboardStats();
+  }catch(e){showErr('Error: '+e.message);}
+}
+
 function renderStaffWidget(){
   const el=$('staff-hdr-widget');
   if(!el)return;
   if(staffToken&&staffUser){
-    el.innerHTML=`<div class="staff-chip"><span>&#128100;</span><span class="chip-user">${staffUser}</span><button class="staff-chip-btn" onclick="staffLogout()">Log Out</button></div>`;
+    const roleLabel=staffRole==='admin'?'Admin':'Warehouse';
+    el.innerHTML=`<div class="staff-chip"><span>&#128100;</span><span class="chip-user">${staffUser}</span><span style="color:#475569;font-size:10px">${roleLabel}</span><button class="staff-chip-btn" onclick="staffLogout()">Log Out</button></div>`;
   } else {
     el.innerHTML=`<button class="staff-login-btn" onclick="openStaffModal()">&#128274; Log In</button>`;
   }
   const s=$('adm-acct-status');
-  if(s) s.textContent = staffToken&&staffUser ? `Logged in as: ${staffUser}` : 'Not logged in — log in via the header button to change credentials.';
+  if(s) s.textContent = staffToken&&staffUser ? `Logged in as: ${staffUser} (${staffRole==='admin'?'Admin':'Warehouse'})` : 'Not logged in — log in to change credentials.';
 }
 
 function openStaffModal(){
@@ -2464,7 +2556,7 @@ function openStaffModal(){
 function closeStaffModal(){
   $('staff-login-modal').style.display='none';
   $('sml-user').value='';$('sml-pass').value='';
-  const m=$('sml-msg');m.style.display='none';
+  const m=$('sml-msg');if(m)m.style.display='none';
 }
 
 async function staffLogin(){
@@ -2477,9 +2569,11 @@ async function staffLogin(){
     const r=await fetch(`${SERVER}/api/staff/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     const j=await r.json();
     if(!r.ok){show(j.error||'Login failed.',false);return;}
-    staffToken=j.token;staffUser=j.username;
-    localStorage.setItem('staff_token',staffToken);localStorage.setItem('staff_user',staffUser);
-    closeStaffModal();renderStaffWidget();
+    staffToken=j.token;staffUser=j.username;staffRole=j.role||'warehouse';
+    localStorage.setItem('staff_token',staffToken);
+    localStorage.setItem('staff_user',staffUser);
+    localStorage.setItem('staff_role',staffRole);
+    closeStaffModal();applyRoleNav();renderStaffWidget();
   }catch(e){show('Error: '+e.message,false);}
 }
 
@@ -2487,13 +2581,14 @@ async function staffLogout(){
   if(staffToken){
     try{await fetch(`${SERVER}/api/staff/logout`,{method:'POST',headers:{'Authorization':`Bearer ${staffToken}`}});}catch{}
   }
-  staffToken=null;staffUser=null;
-  localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');
-  renderStaffWidget();
+  staffToken=null;staffUser=null;staffRole=null;
+  localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');localStorage.removeItem('staff_role');
+  applyRoleNav();renderStaffWidget();
+  showLoginGate();
 }
 
 async function adminChangeUsername(){
-  if(!staffToken){alert('Please log in first (header button).');return;}
+  if(!staffToken){alert('Please log in first.');return;}
   const nu=$('adm-new-user').value.trim();
   const msg=$('adm-user-msg');
   const show=(t,ok)=>{msg.textContent=t;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
@@ -2504,13 +2599,12 @@ async function adminChangeUsername(){
     if(!r.ok){show(j.error||'Failed.',false);return;}
     staffUser=j.username;localStorage.setItem('staff_user',staffUser);
     show('Username updated to: '+staffUser,true);
-    $('adm-new-user').value='';
-    renderStaffWidget();
+    $('adm-new-user').value='';renderStaffWidget();
   }catch(e){show('Error: '+e.message,false);}
 }
 
 async function adminChangePassword(){
-  if(!staffToken){alert('Please log in first (header button).');return;}
+  if(!staffToken){alert('Please log in first.');return;}
   const np=$('adm-new-pw').value;
   const cp=$('adm-confirm-pw').value;
   const msg=$('adm-pw-msg');
@@ -2521,11 +2615,54 @@ async function adminChangePassword(){
     const r=await fetch(`${SERVER}/api/staff/my-password`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({newPassword:np})});
     if(!r.ok)throw new Error((await r.json()).error||'Failed');
     show('Password updated. Please log in again.',true);
-    staffToken=null;staffUser=null;
-    localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');
+    staffToken=null;staffUser=null;staffRole=null;
+    localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');localStorage.removeItem('staff_role');
     $('adm-new-pw').value='';$('adm-confirm-pw').value='';
-    setTimeout(()=>renderStaffWidget(),1200);
+    setTimeout(()=>{renderStaffWidget();showLoginGate();},1200);
   }catch(e){show('Error: '+e.message,false);}
+}
+
+// ── STAFF USER MANAGEMENT (admin only) ───────────────────────────────────────
+async function loadStaffUsers(){
+  if(staffRole!=='admin')return;
+  const el=$('staff-users-list');if(!el)return;
+  try{
+    const r=await fetch(`${SERVER}/api/staff/users`,{headers:{'Authorization':`Bearer ${staffToken}`}});
+    if(!r.ok){el.innerHTML='<p style="color:#ef4444;font-size:13px">Failed to load users</p>';return;}
+    const users=await r.json();
+    el.innerHTML=users.map(u=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9">
+        <span style="flex:1;font-size:14px;font-weight:600;color:#0f172a">${u.username}</span>
+        <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:${u.role==='admin'?'#dbeafe':'#f0fdf4'};color:${u.role==='admin'?'#1e40af':'#166534'};font-weight:700">${u.role}</span>
+        <span style="font-size:11px;color:${u.active?'#16a34a':'#dc2626'}">${u.active?'Active':'Inactive'}</span>
+        ${u.username!=='administrator'?`<button onclick="deleteStaffUser('${u.username}')" style="padding:3px 8px;border-radius:6px;border:1px solid #fecaca;background:#fff5f5;color:#dc2626;font-size:11px;cursor:pointer;font-family:inherit">Remove</button>`:''}
+      </div>`).join('');
+  }catch(e){el.innerHTML='<p style="color:#ef4444;font-size:13px">'+e.message+'</p>';}
+}
+
+async function createStaffUser(){
+  const u=$('new-staff-user').value.trim();
+  const p=$('new-staff-pass').value;
+  const role=$('new-staff-role').value;
+  const msg=$('staff-users-msg');
+  const show=(t,ok)=>{msg.textContent=t;msg.style.display='block';msg.style.background=ok?'#dcfce7':'#fee2e2';msg.style.color=ok?'#166534':'#991b1b';};
+  if(!u||!p){show('Username and password required.',false);return;}
+  try{
+    const r=await fetch(`${SERVER}/api/staff/users`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({username:u,password:p,role})});
+    const j=await r.json();
+    if(!r.ok){show(j.error||'Failed.',false);return;}
+    show('User created: '+j.username,true);
+    $('new-staff-user').value='';$('new-staff-pass').value='';
+    loadStaffUsers();
+  }catch(e){show('Error: '+e.message,false);}
+}
+
+async function deleteStaffUser(username){
+  if(!confirm(`Remove user "${username}"?`))return;
+  try{
+    await fetch(`${SERVER}/api/staff/users/${encodeURIComponent(username)}`,{method:'DELETE',headers:{'Authorization':`Bearer ${staffToken}`}});
+    loadStaffUsers();
+  }catch(e){alert('Error: '+e.message);}
 }
 
 // ── IDEALSCAN IMPORT ──────────────────────────────────────────────────────────
@@ -4180,7 +4317,12 @@ $('synclog-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockSyncLog(
 $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();});
 
 (async()=>{
+  applyRoleNav();
   renderStaffWidget();
+  if(!staffToken){
+    showLoginGate();
+    return;
+  }
   await loadOrdersFromServer();
   render();
   saleRangeChange();

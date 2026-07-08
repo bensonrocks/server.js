@@ -142,7 +142,15 @@ function withStaff(req, res, next) {
   const session = staffAuth.validateToken(token);
   if (!session) return res.status(401).json({ error: 'Staff authentication required' });
   req.staffUsername = session.username;
+  req.staffRole = session.role || 'warehouse';
   next();
+}
+
+function withAdmin(req, res, next) {
+  withStaff(req, res, () => {
+    if (req.staffRole !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    next();
+  });
 }
 
 // ── Staff portal routes ───────────────────────────────────────────────────────
@@ -152,7 +160,7 @@ app.post('/api/staff/login', (req, res) => {
   if (!username) return res.status(400).json({ error: 'Username required' });
   const user = staffAuth.checkPassword(username, password || '');
   if (!user) return res.status(401).json({ error: 'Invalid username or password' });
-  res.json({ token: staffAuth.generateToken(username), username });
+  res.json({ token: staffAuth.generateToken(username), username, role: user.role || 'warehouse' });
 });
 
 app.post('/api/staff/logout', withStaff, (req, res) => {
@@ -162,7 +170,46 @@ app.post('/api/staff/logout', withStaff, (req, res) => {
 });
 
 app.get('/api/staff/me', withStaff, (req, res) => {
-  res.json({ username: req.staffUsername });
+  res.json({ username: req.staffUsername, role: req.staffRole });
+});
+
+// Staff user management (admin only)
+app.get('/api/staff/users', withAdmin, (req, res) => {
+  res.json(staffAuth.listStaff());
+});
+
+app.post('/api/staff/users', withAdmin, (req, res) => {
+  const { username, password, role } = req.body || {};
+  if (!username || username.trim().length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const validRoles = ['admin', 'warehouse'];
+  const assignedRole = validRoles.includes(role) ? role : 'warehouse';
+  try {
+    staffAuth.createUser(username.trim(), password, assignedRole);
+    res.json({ ok: true, username: username.trim(), role: assignedRole });
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Username already exists' });
+    throw e;
+  }
+});
+
+app.patch('/api/staff/users/:username/role', withAdmin, (req, res) => {
+  const { role } = req.body || {};
+  if (!['admin', 'warehouse'].includes(role)) return res.status(400).json({ error: 'Role must be admin or warehouse' });
+  staffAuth.setRole(req.params.username, role);
+  res.json({ ok: true });
+});
+
+app.patch('/api/staff/users/:username/active', withAdmin, (req, res) => {
+  staffAuth.setActive(req.params.username, req.body?.active !== false);
+  res.json({ ok: true });
+});
+
+app.delete('/api/staff/users/:username', withAdmin, (req, res) => {
+  if (req.params.username === req.staffUsername) return res.status(400).json({ error: 'Cannot delete yourself' });
+  mainDb.prepare('DELETE FROM staff_users WHERE username = ?').run(req.params.username);
+  mainDb.prepare('DELETE FROM staff_sessions WHERE username = ?').run(req.params.username);
+  res.json({ ok: true });
 });
 
 // List client portal users (all tenants — for now defaults to 'default')
