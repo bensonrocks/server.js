@@ -200,12 +200,19 @@ function loadCustomHeaders() {
   return null;
 }
 
+let _dbCache = null;
 function readDb() {
-  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { return { batches: [] }; }
+  if (_dbCache) return _dbCache;
+  try { _dbCache = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
+  catch { _dbCache = { batches: [] }; }
+  return _dbCache;
 }
 function writeDb(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  _dbCache = data;
+  // Write to disk async so uploads don't block on Railway volume I/O
+  fs.writeFile(DB_FILE, JSON.stringify(data, null, 2), err => {
+    if (err) console.error('[writeDb] persist error:', err.message);
+  });
 }
 
 // ── Betime CODE 2 → Product Code map ─────────────────────────────────────────
