@@ -109,4 +109,3 @@ const total_count = db.prepare("SELECT COUNT(*) as n FROM orders").get().n;
 console.log(`Seeded ${total_count} orders`);
 console.log('Status breakdown:', stats);
 console.log('ID sample:', db.prepare("SELECT id, client_name, channel, status FROM orders ORDER BY ROWID DESC LIMIT 5").all());
-db.close();

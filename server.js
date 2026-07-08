@@ -37,6 +37,10 @@ const createFulfillment = require('./lib/fulfillment');
 const createPicking     = require('./lib/picking');
 const shopifyApp        = require('./lib/shopify-app');
 
+// ── Presentation seed ─────────────────────────────────────────────────────────
+// Always seed fresh demo orders on startup so the dashboard looks right.
+require('./seed_idealscan.js');
+
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
 (function migrateLegacy() {
