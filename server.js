@@ -2442,7 +2442,16 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
       const pc = String(row[code1Idx] ?? '').trim();
       const c2 = String(row[code2Idx] ?? '').trim();
       if (!pc || !c2 || c2 === 'undefined') { skipped++; return; }
-      c2.split(',').forEach(b => { const bc = b.trim(); if (bc) map[bc] = pc; });
+      c2.split(',').forEach(b => {
+        const bc = b.trim();
+        if (!bc) return;
+        map[bc] = pc;
+        // Excel stores EAN-13 barcodes as numbers, dropping the leading 0.
+        // A 12-digit all-numeric value is almost certainly an EAN-13 with its
+        // leading 0 stripped — store the padded version too so scanners that
+        // transmit all 13 digits still match.
+        if (/^\d{12}$/.test(bc)) map['0' + bc] = map['0' + bc] || pc;
+      });
       if (descIdx !== -1) {
         const desc = String(row[descIdx] ?? '').trim();
         if (pc && desc) descMap[pc] = desc;
