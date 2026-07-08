@@ -1241,6 +1241,18 @@ app.use((req, res, next) => {
   requireAuth(req, res, next);
 });
 
+// Temporary debug: return raw pdfParse text so we can diagnose unknown PDF formats
+app.post('/api/pdf-debug', upload.single('orderFile'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file' });
+    if (!pdfParse) return res.status(501).json({ error: 'pdf-parse not installed' });
+    const parsed = await pdfParse(req.file.buffer);
+    res.json({ text: parsed.text, pages: parsed.numpages });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Parse-only preview — returns stats without saving anything
 app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
   try {
