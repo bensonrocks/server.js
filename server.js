@@ -1639,6 +1639,27 @@ function checkMaster(req, res) {
   return true;
 }
 
+app.get('/api/master/inspect-descriptions', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const results = [];
+  for (const batch of (db.batches || []).slice(0, 3)) {
+    for (const order of (batch.orders || []).slice(0, 5)) {
+      for (const line of (order.lines || []).slice(0, 3)) {
+        results.push({
+          batch: batch.filename,
+          order: order.order_number,
+          sku: line.sku,
+          description: line.description,
+          desc_equals_sku: line.description === line.sku,
+          desc_empty: !line.description,
+        });
+      }
+    }
+  }
+  res.json(results);
+});
+
 app.get('/api/master/export-status', (req, res) => {
   if (!checkMaster(req, res)) return;
   const db   = readDb();
