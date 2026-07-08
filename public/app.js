@@ -1089,7 +1089,11 @@
 
     // Priority 1: direct order number match (client-side, instant)
     const valLower = val.toLowerCase();
-    const directMatch = loadedOrders.find(o => o.order_number.trim().toLowerCase() === valLower);
+    const strip0 = s => s.replace(/^0+(?=.)/, '');
+    const directMatch = loadedOrders.find(o => {
+      const on = o.order_number.trim().toLowerCase();
+      return on === valLower || strip0(on) === strip0(valLower);
+    });
     if (directMatch) {
       if (directMatch.scan_status === 'done') { setWaybillMsg('Order already completed.', true); return; }
       setWaybillMsg('', false);

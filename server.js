@@ -231,6 +231,9 @@ function resolveBeTimeCode2(scanned) {
   if (!scanned) return scanned;
   const k = scanned.trim();
   if (_beTimeCode2Map[k]) return _beTimeCode2Map[k];
+  // Try without leading zeros — scanners may zero-pad but map keys may not (or vice versa)
+  const kStripped = k.replace(/^0+(?=.)/, '');
+  if (kStripped !== k && _beTimeCode2Map[kStripped]) return _beTimeCode2Map[kStripped];
   const minLen = _beTimeCode2Lengths[_beTimeCode2Lengths.length - 1] || 8;
   if (/^\d+$/.test(k) && k.length > minLen) {
     for (const len of _beTimeCode2Lengths) {
@@ -1371,7 +1374,12 @@ app.post('/api/scan/increment', (req, res) => {
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
-  const item = ord.lines.find(l => l.sku.trim().toLowerCase() === sku.trim().toLowerCase());
+  const stripLeadZeros = s => s.trim().toLowerCase().replace(/^0+(?=.)/, '');
+  const skuNorm = stripLeadZeros(sku);
+  const item = ord.lines.find(l => {
+    const ls = l.sku.trim().toLowerCase();
+    return ls === sku.trim().toLowerCase() || stripLeadZeros(ls) === skuNorm;
+  });
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
