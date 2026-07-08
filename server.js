@@ -1485,9 +1485,9 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    const allOrders = globalOrdersWithState();
-    L(`orders state built: ${allOrders.length} orders — sending response`);
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: allOrders });
+    // Return immediately — client fetches full order list via /api/orders separately
+    L('sending response');
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: [] });
     L('response sent');
   } catch (err) {
     console.error('[upload] ERROR:', err.message);

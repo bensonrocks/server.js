@@ -797,12 +797,16 @@
       }
       SESSION_ID = data.sessionId;
       sessionStorage.setItem('wms_session', SESSION_ID);
-      loadedOrders = data.orders;
-      activeOrder  = null;
+      activeOrder = null;
+
+      // Fetch fresh order list separately so the upload response is instant
+      const ordersResp = await fetch('/api/orders');
+      loadedOrders = ordersResp.ok ? await ordersResp.json() : [];
+      const uploadedOrderCount = loadedOrders.filter(o => o.batchId === data.batchId).length;
 
       const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       setUploadStatus('success',
-        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${pdfMsg}`
+        `Converted ${data.rowCount} line(s) across ${uploadedOrderCount} order(s) from "${file.name}".${pdfMsg}`
       );
 
       // Show download button immediately and lock tabs until downloaded
@@ -823,8 +827,8 @@
       dlWrap.classList.remove('hidden');
       lockTabsForDownload();
 
-      renderUploadList(data.orders);
-      renderBreakdowns(data.orders);
+      renderUploadList(loadedOrders);
+      renderBreakdowns(loadedOrders);
       fetchAndRenderStats();
       pendingOrderFile = null;
       fileInput.value  = '';
