@@ -1951,10 +1951,41 @@ app.get('/api/master/export-status', (req, res) => {
   res.end(buf);
 });
 
+// Full JSON backup — DB (batches, orders, scan states, users, sessions) plus
+// the small config files. WMS XLSX / waybill PDF binaries are excluded: they
+// are regenerable from the batch data and would bloat the download.
+app.get('/api/master/backup', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  try {
+    const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+    const backup = {
+      kind:       'idealscan-backup',
+      version:    1,
+      created_at: new Date().toISOString(),
+      db:         readDb(),
+      config: {
+        keyfields_template: readJson(KEYFIELDS_TEMPLATE_FILE),
+        label_templates:    readJson(LABEL_TEMPLATES_FILE),
+        sku_descriptions:   readJson(SKU_DESC_FILE),
+        email:              readJson(EMAIL_CONFIG_FILE),
+      },
+    };
+    const name = `idealscan-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.send(JSON.stringify(backup));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/master/reset', (req, res) => {
   if (!checkMaster(req, res)) return;
   try {
-    writeDb({ batches: [] });
+    // Keep users — the UI promises "Users and email settings are preserved",
+    // but users live inside db.json now, so a bare reset would wipe them.
+    const prev = readDb();
+    writeDb({ batches: [], users: prev.users || [] });
     activeSessions.clear();
     for (const f of fs.readdirSync(WMS_DIR))
       try { fs.unlinkSync(path.join(WMS_DIR, f)); } catch {}

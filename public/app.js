@@ -2674,6 +2674,26 @@
     } catch (err) { alert(err.message); }
   });
 
+  // Master: download full backup (db + settings) as a JSON file
+  document.getElementById('masterBackupBtn').addEventListener('click', async () => {
+    const btn  = document.getElementById('masterBackupBtn');
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try {
+      const resp = await fetch('/api/master/backup', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        alert('Backup failed: ' + (d.error || resp.statusText)); return;
+      }
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = `idealscan-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch (err) { alert('Backup error: ' + err.message);
+    } finally { btn.disabled = false; btn.textContent = orig; }
+  });
+
   // Master: reset all data
   document.getElementById('masterResetBtn').addEventListener('click', async () => {
     if (!confirm('MASTER RESET — permanently delete ALL batches, orders, and WMS files?')) return;

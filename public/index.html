@@ -594,9 +594,17 @@
         <div class="admin-section-header">
           <div>
             <div class="admin-section-title">System</div>
-            <div class="admin-section-sub">Destructive actions. These cannot be undone.</div>
+            <div class="admin-section-sub">Backup and maintenance.</div>
           </div>
         </div>
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">&#128190; Backup</div>
+            <div class="admin-section-sub">Download a full backup of the database — all batches, orders, scan states, users, and settings. Keep a copy somewhere safe; it survives even if the server storage is lost.</div>
+          </div>
+          <button class="btn-primary btn-sm" id="masterBackupBtn">&#8681; Download Backup</button>
+        </div>
+        <div class="admin-section-divider"></div>
         <div class="danger-zone-card">
           <div class="danger-zone-label">Master Reset</div>
           <p class="danger-zone-desc">Deletes all uploaded batches, order states, and WMS files. Users and email settings are preserved.</p>
