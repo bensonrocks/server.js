@@ -2229,3 +2229,62 @@ body.ls-open { overflow: hidden; }
   .meta-details-btn { font-size: 1.3rem; }
   .scan-meta-details { font-size: 1.35rem; }
 }
+
+/* ── IDEALONE brand mark — top-left of every module/activity ─────────────── */
+.brand-corner {
+  display: inline-flex; align-items: center; gap: .38rem;
+  font-size: .88rem; font-weight: 800; letter-spacing: 1.5px;
+  color: var(--text, #1e293b); white-space: nowrap; user-select: none;
+}
+.brand-corner svg { width: 20px; height: 20px; flex-shrink: 0; }
+.content-topbar .brand-corner { margin-right: .9rem; }
+.scan-order-header .brand-corner { margin-right: .9rem; }
+.log-overlay-title .brand-corner { margin-right: .9rem; padding-right: .9rem; border-right: 1px solid var(--border, #e2e8f0); }
+
+/* ── Phone / small screens: scale the scan table down so 4–5 rows fit ────── */
+@media (max-width: 700px) {
+  .scan-items-table .sku-code            { font-size: 1.5rem; }
+  .scan-items-table td.desc-cell         { font-size: 1.2rem; }   /* 80% of SKU */
+  .scan-items-table td.qty-col           { font-size: 1.2rem; }
+  .scan-items-table td                   { padding: .5rem .6rem; }
+  .qty-col                               { width: 74px; }
+  .qty-input                             { width: 60px; font-size: 1.2rem; padding: .12rem .2rem; }
+  .nb-count                              { font-size: 1.2rem; margin-right: .3rem; }
+  .nb-btn                                { height: 38px; }
+  .nb-minus                              { width: 34px; font-size: 1rem; }
+  .nb-plus                               { width: 44px; font-size: .95rem; }
+  .nb-all                                { padding: 0 .5rem; font-size: .78rem; }
+  .nb-cell                               { white-space: normal; }
+  .nb-badge                              { font-size: .6rem; }
+  .nb-inline-bc-wrap svg                 { max-width: 130px; height: 40px; }
+  .scan-meta-primary .meta-pill          { font-size: .95rem; padding: .3rem .7rem; }
+  .meta-details-btn                      { font-size: .9rem; }
+  .scan-meta-details                     { font-size: .95rem; }
+  .scan-pager                            { gap: .6rem; padding: .4rem .5rem; }
+  .scan-pager-btn                        { padding: .55rem 1rem; font-size: .95rem; }
+  .scan-pager-info                       { font-size: .8rem; }
+  .brand-corner                          { font-size: .72rem; letter-spacing: 1px; }
+  .brand-corner svg                      { width: 16px; height: 16px; }
+}
+
+/* Ultra-short screens (phone landscape): compact header + dock so items stay visible */
+@media (max-height: 500px) {
+  .scan-order-header { padding: .3rem .8rem; }
+  .scan-order-no     { font-size: 1.1rem; }
+  .scan-order-meta   { padding: .25rem .8rem; }
+  .scan-meta-primary .meta-pill { font-size: .8rem; padding: .18rem .55rem; }
+  .item-scan-dock    { padding: .35rem .6rem .45rem; }
+  .item-scan-wrap    { margin-bottom: .3rem; }
+  .big-scan-input    { padding: .5rem .5rem; font-size: 1rem; }
+  .btn-camera-open   { padding: 0 .9rem; font-size: .85rem; min-width: 70px; }
+  .dock-actions .btn-danger,
+  .dock-actions .btn-pause,
+  .dock-actions .btn-success { padding: .5rem .4rem; font-size: .85rem; }
+  .scan-pager        { padding: .25rem .5rem; }
+  .scan-pager-btn    { padding: .35rem .8rem; font-size: .85rem; }
+  .scan-items-table .sku-code    { font-size: 1.15rem; }
+  .scan-items-table td.desc-cell { font-size: .95rem; }
+  .scan-items-table td.qty-col   { font-size: .95rem; }
+  .scan-items-table td           { padding: .3rem .6rem; }
+  .qty-input                     { width: 52px; font-size: .95rem; }
+}
