@@ -300,6 +300,8 @@ function buildTransporter() {
       auth: { type: 'OAuth2', user: oauth.email,
               clientId: oauth.client_id, clientSecret: oauth.client_secret,
               refreshToken: oauth.refresh_token },
+      connectionTimeout: 15000,
+      socketTimeout: 30000,
     });
   }
   const conf = readEmailConfig();
@@ -307,6 +309,8 @@ function buildTransporter() {
   return nodemailer.createTransport({
     host: conf.smtp_host, port: conf.smtp_port, secure: false,
     auth: { user: conf.smtp_login || conf.from_email, pass: conf.password },
+    connectionTimeout: 15000,
+    socketTimeout: 30000,
   });
 }
 
