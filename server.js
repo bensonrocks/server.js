@@ -2384,17 +2384,29 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
       });
     }
 
-    // Find description column — check common names in priority order
-    const descCandidates = ['description','desc','name','item_name','product_name','item description','product description','goods name','short_name','long_name'];
+    // Find description column: name-match first, then data-driven fallback
     const hdrNorm = hdr.map(h => String(h ?? '').toLowerCase().trim().replace(/\s+/g, '_'));
+    const descCandidates = ['description','desc','name','item_name','product_name','item_description',
+      'product_description','goods_name','goods_description','short_name','long_name','item_desc',
+      'goods','product','commodity','model','title','label','spec','specification','detail','remark'];
     let descIdx = -1;
     for (const c of descCandidates) {
-      const i = hdrNorm.indexOf(c.replace(/\s+/g,'_'));
-      if (i !== -1) { descIdx = i; break; }
+      const i = hdrNorm.indexOf(c);
+      if (i !== -1 && i !== code1Idx && i !== code2Idx) { descIdx = i; break; }
     }
-    // Fallback: any remaining column that looks text-heavy and isn't code/code2/qty
+    // Data-driven fallback: score every column by avg text length and non-numeric ratio
     if (descIdx === -1) {
-      descIdx = hdrNorm.findIndex((h, i) => i !== code1Idx && i !== code2Idx && /desc|name|product|goods|item|detail|spec|label/.test(h));
+      let bestScore = -1;
+      hdr.forEach((_, ci) => {
+        if (ci === code1Idx || ci === code2Idx) return;
+        const vals = dataRows.map(r => String(r[ci] ?? '').trim()).filter(Boolean);
+        if (vals.length < 3) return;
+        const numRatio = vals.filter(v => /^\d+(\.\d+)?$/.test(v)).length / vals.length;
+        const avgLen   = vals.reduce((s, v) => s + v.length, 0) / vals.length;
+        if (numRatio > 0.5 || avgLen < 3) return;
+        const score = avgLen * (1 - numRatio);
+        if (score > bestScore) { bestScore = score; descIdx = ci; }
+      });
     }
 
     const map = {};
@@ -2417,7 +2429,14 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
       fs.writeFileSync(SKU_DESC_FILE, JSON.stringify(descMap, null, 2));
       _skuDescMap = descMap;
     }
-    res.json({ ok: true, entries: Object.keys(map).length, skipped, descriptions: Object.keys(descMap).length });
+    res.json({
+      ok: true,
+      entries: Object.keys(map).length,
+      skipped,
+      descriptions: Object.keys(descMap).length,
+      headers_found: hdr.map(String),
+      desc_column: descIdx !== -1 ? hdr[descIdx] : null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
