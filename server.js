@@ -1035,152 +1035,122 @@ async function parsePdfPicklist(buffer) {
   if (!pdfParse) throw new Error('pdf-parse not installed. Run: npm install pdf-parse');
   const parsed = await pdfParse(buffer);
   const text   = parsed.text || '';
-  const lines  = text.split('\n');
+  // T[i] = trimmed version of each raw line (keeps index for lookahead)
+  const T = text.split('\n').map(l => l.trim());
 
-  // Index of non-empty (trimmed) lines, preserving original array position
-  const nonEmpty = lines
-    .map((raw, idx) => ({ raw, trimmed: raw.trim(), idx }))
-    .filter(l => l.trimmed);
-
-  // ── Phase 1: header fields (before the item table) ───────────────────────
-  let giNumber     = '';
-  let pickTicket   = '';
-  let accountName  = '';
-  let reference    = '';
-  let deliveryDate = '';
-  let consignee    = '';
-  let carrier      = '';
-
-  // GI number — first occurrence anywhere
-  for (const { trimmed } of nonEmpty) {
-    const m = trimmed.match(/\b(GI-\d{4,})\b/);
+  // ── GI number (order identifier) ─────────────────────────────────────────
+  let giNumber = '';
+  for (const t of T) {
+    const m = t.match(/\b(GI-\d{4,})\b/);
     if (m) { giNumber = m[1]; break; }
   }
 
-  const tableStartIdx = nonEmpty.findIndex(l => /^SNo\s+Location/i.test(l.trimmed));
-  const headerLines   = tableStartIdx === -1 ? nonEmpty : nonEmpty.slice(0, tableStartIdx);
+  // ── Header fields ─────────────────────────────────────────────────────────
+  // pdfParse reads the 2-column header in reading order: labels and values
+  // appear on separate lines (e.g. "Pick Ticket" then "539937" on next line).
+  let pickTicket   = '';
+  let accountName  = '';
+  let deliveryDate = '';
+  let carrier      = '';
 
-  for (let i = 0; i < headerLines.length; i++) {
-    const { trimmed } = headerLines[i];
-    const next = headerLines[i + 1]?.trimmed || '';
+  // Return next non-empty T[i] after index i
+  const nextVal = (i) => {
+    for (let j = i + 1; j < T.length; j++) if (T[j]) return T[j];
+    return '';
+  };
 
-    const acm = trimmed.match(/^Account\s+(.*)/i);
-    if (acm) accountName = acm[1].trim();
-
-    const ptm = trimmed.match(/^Pick\s*Ticket\s+(\S+)/i);
-    if (ptm) pickTicket = ptm[1].trim();
-
-    const ddm = trimmed.match(/^Delivery\s+Date\s+(\S+)/i);
-    if (ddm) deliveryDate = ddm[1].trim();
-
-    // "Consignee" as a label — value is on the next non-empty line
-    if (/^Consignee\s*$/i.test(trimmed) && next &&
-        !/^(Reference|GI-|Pick|Account|Delivery|Status|Issuing)/i.test(next)) {
-      consignee = next;
+  for (let i = 0; i < T.length; i++) {
+    const t = T[i];
+    // Handle both "Label VALUE" on one line AND "Label" + value on next line
+    let m;
+    if ((m = t.match(/^Account\s+(.*\S)/i)))       { accountName  = m[1]; continue; }
+    if (t === 'Account')                            { accountName  = nextVal(i); continue; }
+    if ((m = t.match(/^Pick\s*Ticket\s+(\S+)/i)))  { pickTicket   = m[1]; continue; }
+    if (/^Pick\s*Ticket$/i.test(t))                { pickTicket   = nextVal(i); continue; }
+    if ((m = t.match(/^Delivery\s+Date\s+(\S+)/i))){ deliveryDate = m[1]; continue; }
+    if (/^Delivery\s+Date$/i.test(t))              { deliveryDate = nextVal(i); continue; }
+    if (/^Remarks?:?\s*$/i.test(t)) {
+      const v = nextVal(i);
+      if (v && !/^(Total|Grand|Print)/i.test(v)) carrier = v;
     }
-
-    // "Reference" as a label — value is next non-empty line (skip if it's the GI number itself)
-    if (/^Reference\s*$/i.test(trimmed) && next && !/^GI-/i.test(next) &&
-        !/^(Consignee|Pick|Account|Delivery|Status|Issuing)/i.test(next)) {
-      reference = next;
-    }
+    if ((m = t.match(/^Remarks?:\s+(\S.*)/i))) carrier = m[1].trim();
   }
 
-  // ── Phase 3: carrier from footer (after Total Whole Qty) ─────────────────
-  const footerStartIdx = nonEmpty.findIndex(l => /^Total\s+Whole\s+Qty/i.test(l.trimmed));
-  if (footerStartIdx !== -1) {
-    const footerLines = nonEmpty.slice(footerStartIdx);
-    for (let i = 0; i < footerLines.length; i++) {
-      const { trimmed } = footerLines[i];
-      const rem = trimmed.match(/^Remarks?:?\s+(\S+)/i);
-      if (rem) { carrier = rem[1].trim(); break; }
-      if (/^Remarks?:?\s*$/i.test(trimmed) && footerLines[i + 1]) {
-        carrier = footerLines[i + 1].trimmed;
-        break;
+  // ── Item table ────────────────────────────────────────────────────────────
+  // pdfParse concatenates PDF columns. Each item produces lines like:
+  //   "433411AC-011-002-A18156SS"  → {batch}{location}{sno}{sku}  (data line)
+  //   "Uriage Cica Daily Serum "   → description text
+  //   "Sample 1ml"                 → description continuation
+  //   "CARTON 1 1EACH"             → WholeUom + LHU + qty (or " 1EACH" no carton)
+  //   "19/Jan/2029"                → expiry date on its own line
+
+  // Parse a concatenated batch+location+sno+sku data line.
+  // Uses exec loop to find leftmost location code; try 2-letter prefix first
+  // (handles batch trailing letters like "40311J" + "AC-012-003-A" correctly),
+  // then fall back to 1-4 letter prefix.
+  function parseDataLine(line) {
+    const pats = [
+      /[A-Z]{2}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
+      /[A-Z]{1,4}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
+    ];
+    for (const PAT of pats) {
+      PAT.lastIndex = 0;
+      let m;
+      while ((m = PAT.exec(line)) !== null) {
+        const batchStr  = line.slice(0, m.index);
+        const remainder = line.slice(m.index + m[0].length);
+        if (!/^\d{4,}[A-Z]{0,2}$/i.test(batchStr)) continue;
+        const rm = remainder.match(/^(\d{1,3}?)([A-Z0-9]{4,})$/i);
+        if (!rm) continue;
+        return { batch: batchStr, sku: rm[2] };
       }
     }
+    return null;
   }
 
-  // ── Phase 2: item table ───────────────────────────────────────────────────
-  // Item header line: {SNo} {LOCATION_CODE} {SKU} {desc tokens...} {BatchNo}
-  const ITEM_START = /^(\d{1,3})\s+([A-Z]{1,4}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?)\s+(\S+)\s+(.*)/i;
-  // Qty line: leading whitespace + digit + EACH
-  const QTY_LINE   = /^\s+(\d+)\s+EACH/i;
-  // Stop at totals section
-  const STOP_PAT   = /^Total\s+(Whole|Loose)\s+Qty/i;
-  // Skip table-header continuation lines
-  const SKIP_PAT   = /^(LotNo|WholeUom|LooseUom|Total\s+LHU|ExpiryDate|Sku\s+Desc|BatchNo\/)/i;
-  // Batch token: 4-10 alphanumeric chars containing at least one digit, no unit suffixes
-  const BATCH_TOK  = (tok) =>
-    /^[A-Z0-9]{4,10}$/i.test(tok) &&
-    /\d/.test(tok) &&
-    !/\d(?:ml|mg|mcg|kg|oz|lb|pcs|pc)$/i.test(tok);
-  // Expiry date anywhere in a line
-  const EXPIRY_PAT = /\b(\d{1,2}[\/\-]\w+[\/\-]\d{2,4})\b/;
+  const STOP_PAT  = /^Total\s+(Whole|Loose)\s+Qty/i;
+  const QTY_EACH  = /(\d+)EACH$/i;           // "1EACH" or "CARTON 1 1EACH"
+  const EXPIRY_RE = /^\d{1,2}[\/\-]\w+[\/\-]\d{2,4}$/; // "19/Jan/2029" on its own line
+  const SKIP_DASH = /^-\s+\S+$/;             // "- 8750" repeated-SKU markers
+  const NUM_ONLY  = /^\d+$/;                 // bare LHU count lines like "1"
 
   let inTable = false;
   let current = null;
   const items = [];
 
-  for (const { raw, trimmed } of lines.map((r, i) => ({ raw: r, trimmed: r.trim() }))) {
-    if (!inTable) {
-      if (/^SNo\s+Location/i.test(trimmed)) inTable = true;
-      continue;
-    }
-
-    if (STOP_PAT.test(trimmed)) {
+  for (const t of T) {
+    if (STOP_PAT.test(t)) {
       if (current) { items.push(current); current = null; }
       break;
     }
+    if (!t) continue;
 
-    // Qty line must be checked against `raw` (leading whitespace is the signal)
-    if (QTY_LINE.test(raw)) {
-      if (current) {
-        const qm = raw.match(/^\s+(\d+)/);
-        if (qm) current.qty = parseInt(qm[1], 10) || 1;
-        const em = trimmed.match(EXPIRY_PAT);
-        if (em) current.expiry_date = em[1];
-      }
-      continue;
-    }
-
-    if (!trimmed || SKIP_PAT.test(trimmed)) continue;
-
-    // New item header
-    const im = trimmed.match(ITEM_START);
-    if (im) {
+    // Item data line: batch+location+sno+sku concatenated
+    const di = parseDataLine(t);
+    if (di) {
       if (current) items.push(current);
-      const sku  = im[3];
-      const rest = im[4].trim();
-      let descStart = rest;
-      let batchNo   = '';
-      if (rest) {
-        const tokens  = rest.split(/\s+/);
-        const lastTok = tokens[tokens.length - 1];
-        if (BATCH_TOK(lastTok)) {
-          batchNo   = lastTok;
-          descStart = tokens.slice(0, -1).join(' ').trim();
-        }
-      }
-      current = { sku, description: descStart, batch_number: batchNo, expiry_date: '', qty: 1 };
+      current = { sku: di.sku, batch_number: di.batch, description: '', expiry_date: '', qty: 1 };
+      inTable = true;
       continue;
     }
 
-    // Continuation line — skip repeated-SKU markers like "- 8750"
-    if (current) {
-      if (/^-\s+\S+$/.test(trimmed)) continue;
-      current.description = current.description
-        ? current.description + ' ' + trimmed
-        : trimmed;
-    }
+    if (!inTable || !current) continue;
+
+    const qm = t.match(QTY_EACH);
+    if (qm) { current.qty = parseInt(qm[1], 10) || 1; continue; }
+
+    if (EXPIRY_RE.test(t)) { current.expiry_date = t; continue; }
+
+    if (SKIP_DASH.test(t) || NUM_ONLY.test(t)) continue;
+
+    current.description = current.description ? current.description + ' ' + t : t;
   }
   if (current) items.push(current);
   if (!items.length) return [];
 
-  // ── Build rows matching mapRow() output shape ─────────────────────────────
   return items.map(item => ({
     order_number:     giNumber   || pickTicket || 'UNKNOWN',
-    customer_name:    consignee  || accountName || '',
+    customer_name:    accountName || '',
     client_name:      accountName || '',
     tel:              '',
     delivery_address: '',
@@ -1197,8 +1167,8 @@ async function parsePdfPicklist(buffer) {
     batch_number:     item.batch_number || '',
     expiry_date:      item.expiry_date  || null,
     serial_number:    '',
-    remarks:          reference || '',
-    remarks_betime:   reference || '',
+    remarks:          '',
+    remarks_betime:   '',
   }));
 }
 
