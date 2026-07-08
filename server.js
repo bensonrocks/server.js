@@ -385,7 +385,7 @@ function summarizeOrders(lines) {
     }
     map[key].lines.push({
       sku:            line.sku,
-      description:    line.sku,
+      description:    line.description || '',
       qty:            line.qty,
       uom:            'EACH',
       batch_number:   line.batch_number   || '',

@@ -1650,8 +1650,8 @@
 
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
-          <td><code>${esc(item.sku)}</code></td>
-          <td>${esc(item.description || '—')}</td>
+          <td><code class="sku-code">${esc(item.sku)}</code></td>
+          <td class="desc-cell">${esc(item.description || '—')}</td>
           <td class="qty-col">${item.qty}</td>
           <td class="qty-col">
             <input type="number" class="qty-input" min="0" value="${s}"

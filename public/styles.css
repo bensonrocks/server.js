@@ -743,6 +743,10 @@ body.scan-open { overflow: hidden; }
 .row-over .status-icon   { color: var(--danger);  font-size: 1rem; font-weight: 700; }
 .row-partial .status-icon{ color: var(--warning); font-size: 1rem; font-weight: 700; }
 
+/* SKU cell — 3× enlarged for easy warehouse reading */
+.sku-code { font-size: 2.4rem; font-weight: 700; background: none; padding: 0; border-radius: 0; letter-spacing: .03em; }
+.desc-cell { font-size: .85rem; color: var(--text-muted); vertical-align: middle; }
+
 /* Lot / serial / expiry info row below each SKU */
 .lot-info-row td { padding: .18rem .85rem .55rem; border-bottom: 1px solid var(--border-light); background: inherit; }
 .lot-info-cell  { display: flex; flex-wrap: wrap; gap: .35rem; }
@@ -1887,6 +1891,8 @@ body.ls-open { overflow: hidden; }
   .qty-input                 { width: 80px; padding: .45rem .55rem; font-size: 1.05rem; }
   .lot-badge                 { font-size: .88rem; padding: .25rem .7rem; }
   .lot-info-row td           { padding: .3rem 1.25rem .75rem; }
+  .sku-code                  { font-size: 3rem; }
+  .desc-cell                 { font-size: .95rem; }
 
   /* Scan dock — input + action buttons */
   .item-scan-dock  { padding: 1rem 1.5rem 1.1rem; }
