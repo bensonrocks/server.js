@@ -4054,8 +4054,14 @@ $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();})
       else{authToken=null;localStorage.removeItem('idealoms_token');localStorage.removeItem('idealoms_token_expiry');}
     }
   }catch{}
-  if(serverAvailable)await loadOrdersFromServer();
-  render();
+  if(serverAvailable){
+    await loadOrdersFromServer();
+    render();
+    saleRangeChange();
+    loadDashboardStats();
+  } else {
+    render();
+  }
 })();
 
 // ── SCAN PICKING ──────────────────────────────────────────────────────────────
