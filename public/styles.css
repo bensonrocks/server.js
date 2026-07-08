@@ -2288,3 +2288,20 @@ body.ls-open { overflow: hidden; }
   .scan-items-table td           { padding: .3rem .6rem; }
   .qty-input                     { width: 52px; font-size: .95rem; }
 }
+
+/* Orders: Active / Completed sub-tabs + completed search */
+.orders-subtabs { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; flex-wrap: wrap; }
+.subtab-btn {
+  border: 1px solid var(--border, #cbd5e1); background: var(--surface, #fff);
+  border-radius: 10px; padding: .55rem 1.2rem; font-size: .95rem; font-weight: 700;
+  color: var(--text-light, #64748b); cursor: pointer;
+}
+.subtab-btn.active { background: var(--primary, #2563eb); border-color: var(--primary, #2563eb); color: #fff; }
+.subtab-count { background: rgba(0,0,0,.12); border-radius: 12px; padding: .05rem .5rem; font-size: .8rem; margin-left: .25rem; }
+.subtab-btn.active .subtab-count { background: rgba(255,255,255,.25); }
+.completed-search {
+  flex: 1; min-width: 220px; max-width: 440px; margin-left: .4rem;
+  border: 1.5px solid var(--border, #cbd5e1); border-radius: 10px;
+  padding: .55rem .9rem; font-size: .95rem; background: var(--surface, #fff);
+}
+.completed-search:focus { outline: 2px solid var(--primary, #2563eb); }

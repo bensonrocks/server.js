@@ -29,6 +29,8 @@
   let defaultRecipientEmail = '';
   let activeClientFilter  = 'all';
   let activeCarrierFilter = 'all';
+  let ordersView          = 'active';   // 'active' | 'completed' sub-tab
+  let completedSearch     = '';
   let printWaybillTimer   = null;
   let pendingOrderFile    = null;
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
@@ -1259,7 +1261,13 @@
              (pt && (pt === valLower || strip0(pt) === strip0(valLower)));
     });
     if (directMatch) {
-      if (directMatch.scan_status === 'done') { setWaybillMsg('Order already completed.', true); return; }
+      if (directMatch.scan_status === 'done') {
+        // Completed order — show it in the Completed tab for reference/reprint
+        ordersView = 'completed'; completedSearch = directMatch.order_number;
+        renderOrdersList();
+        setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
+        return;
+      }
       setWaybillMsg('', false);
       openScanOverlay(directMatch.order_number);
       return;
@@ -1280,7 +1288,12 @@
       }
       const ord = loadedOrders.find(o => o.order_number === data.order_number);
       if (!ord) { setWaybillMsg('Order not in current batch.', true); return; }
-      if (ord.scan_status === 'done') { setWaybillMsg('Order already completed.', true); return; }
+      if (ord.scan_status === 'done') {
+        ordersView = 'completed'; completedSearch = ord.order_number;
+        renderOrdersList();
+        setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
+        return;
+      }
       setWaybillMsg('', false);
       openScanOverlay(data.order_number);
     } catch (err) {
@@ -1293,15 +1306,65 @@
     if (activeClientFilter  !== 'all') orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
 
-    const sortPriority = { processing: 0, pending: 1, unprocessed: 2, done: 3 };
-    orders = [...orders].sort((a, b) =>
-      (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
-    );
+    // Active / Completed sub-tabs — completed orders leave the main list and
+    // live in their own searchable view for reference and label reprinting
+    const doneOrders   = orders.filter(o => o.scan_status === 'done');
+    const activeOrders = orders.filter(o => o.scan_status !== 'done');
+    const subTabsHTML = `
+      <div class="orders-subtabs">
+        <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
+        <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
+        ${ordersView === 'completed' ? `<input type="search" id="completedSearchInput" class="completed-search" placeholder="Search waybill, GI / order no, pick ticket, customer&hellip;" value="${esc(completedSearch)}" autocomplete="off" />` : ''}
+      </div>`;
+
+    if (ordersView === 'completed') {
+      orders = doneOrders;
+      const norm = s => String(s || '').toLowerCase().replace(/[\s\-_]/g, '');
+      const q = norm(completedSearch);
+      if (q) {
+        orders = orders.filter(o =>
+          [o.order_number, o.waybill_number, o.issue_no, o.pick_ticket, o.po_number, o.customer_name, o.client_name]
+            .some(v => norm(v).includes(q))
+        );
+      }
+      // Most recently completed first
+      orders = [...orders].sort((a, b) => new Date(b.endTime || 0) - new Date(a.endTime || 0));
+    } else {
+      orders = activeOrders;
+      const sortPriority = { processing: 0, pending: 1, unprocessed: 2 };
+      orders = [...orders].sort((a, b) =>
+        (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
+      );
+    }
+
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
     const isAdminView = (currentUser?.role || 'admin') === 'admin';
 
+    function wireOrdersSubtabs() {
+      document.querySelectorAll('[data-oview]').forEach(b => b.addEventListener('click', () => {
+        ordersView = b.dataset.oview;
+        renderOrdersList();
+      }));
+      const si = document.getElementById('completedSearchInput');
+      si?.addEventListener('input', () => {
+        completedSearch = si.value;
+        clearTimeout(si._t);
+        si._t = setTimeout(() => {
+          renderOrdersList();
+          const el = document.getElementById('completedSearchInput');
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        }, 250);
+      });
+    }
+
     if (!orders.length) {
-      document.getElementById('ordersDashList').innerHTML = '<p class="empty-state" style="padding:2rem">No orders match the selected filters.</p>';
+      document.getElementById('ordersDashList').innerHTML = subTabsHTML +
+        `<p class="empty-state" style="padding:2rem">${
+          ordersView === 'completed'
+            ? (completedSearch ? 'No completed orders match the search.' : 'No completed orders yet.')
+            : 'No active orders match the selected filters.'
+        }</p>`;
+      wireOrdersSubtabs();
       return;
     }
 
@@ -1370,6 +1433,7 @@
 
     const rz = id => `<span class="col-resize" data-col="${id}"></span>`;
     document.getElementById('ordersDashList').innerHTML = `
+      ${subTabsHTML}
       ${ordersColsToggleHTML()}
       <div class="orders-table-wrap">
         <table class="orders-table">
@@ -1392,6 +1456,7 @@
     applyOrdersTablePrefs();
     initOrdersColResize();
     initOrdersColsToggle();
+    wireOrdersSubtabs();
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
