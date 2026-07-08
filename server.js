@@ -1465,14 +1465,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    const conf = readEmailConfig();
-    const actualRecipient = emailTo || conf.to_email || '';
-
-    // Return immediately — email sends in the background so the upload never hangs
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState(), emailSent: false, emailError: '', emailTo: actualRecipient });
-
-    sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction)
-      .catch(err => console.error('[email]', err.message));
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

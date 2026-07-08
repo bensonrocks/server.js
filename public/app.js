@@ -691,10 +691,8 @@
       errEl.classList.add('hidden');
     }
 
-    document.getElementById('confirmEmailError').classList.add('hidden');
     document.getElementById('confirmApproveBtn').disabled    = false;
     document.getElementById('confirmApproveBtn').textContent = 'Approve & Upload →';
-    document.getElementById('confirmEmail').value = defaultRecipientEmail;
     // Reset direction toggle to Outbound
     uploadDirection = 'Outbound';
     document.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'Outbound'));
@@ -718,20 +716,13 @@
 
 
   document.getElementById('confirmApproveBtn').addEventListener('click', async () => {
-    const email  = document.getElementById('confirmEmail').value.trim();
-    const errEl  = document.getElementById('confirmEmailError');
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errEl.textContent = 'Please enter a valid email address, or leave blank to skip.';
-      errEl.classList.remove('hidden'); return;
-    }
-    errEl.classList.add('hidden');
     document.getElementById('confirmApproveBtn').disabled    = true;
     document.getElementById('confirmApproveBtn').textContent = 'Uploading…';
-    await doUpload(email);
+    await doUpload();
   });
 
   // ── Step 3: Actual upload ──────────────────────────────────────────────────
-  async function doUpload(emailTo) {
+  async function doUpload() {
     if (!pendingOrderFile && !pendingOcrRows) return;
 
     // OCR path — upload the pre-parsed rows as JSON
@@ -777,7 +768,6 @@
     form.append('orderFile', file);
     if (pdfFile)     form.append('waybillPdf', pdfFile);
     if (clientName)  form.append('client_name', clientName);
-    if (emailTo)     form.append('email_to', emailTo);
     form.append('direction', uploadDirection);
 
     try {
@@ -802,10 +792,9 @@
       loadedOrders = data.orders;
       activeOrder  = null;
 
-      const pdfMsg   = pdfFile ? ' Waybill PDF is being split in the background.' : '';
-      const emailMsg = data.emailSent ? ` Also emailed to ${data.emailTo}.` : '';
+      const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       setUploadStatus('success',
-        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${emailMsg}${pdfMsg}`
+        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${pdfMsg}`
       );
 
       // Show download button immediately and lock tabs until downloaded
