@@ -277,6 +277,17 @@
     });
   }
 
+  // Window resized (or zoom changed) while scanning → re-measure page fit
+  let _scanResizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_scanResizeTimer);
+    _scanResizeTimer = setTimeout(() => {
+      if (!activeOrder || document.getElementById('scanOverlay')?.classList.contains('hidden')) return;
+      scanPageSize = SCAN_PAGE_MAX;
+      renderItemsTable(activeOrder);
+    }, 250);
+  });
+
   function initOrdersColsToggle() {
     document.getElementById('gwpSheetBtn')?.addEventListener('click', () => {
       const token = localStorage.getItem('wms_token') || '';
@@ -1491,9 +1502,11 @@
     } else {
       waybillBtn.classList.add('hidden');
     }
-    enterItemsPhase(ord);
+    // Unhide BEFORE rendering — the adaptive page-fit measures the visible
+    // list height, which is 0 while the overlay is display:none
     document.getElementById('scanOverlay').classList.remove('hidden');
     document.body.classList.add('scan-open');
+    enterItemsPhase(ord);
     attachGlobalScanCapture();
   }
 
@@ -1766,6 +1779,7 @@
     });
 
     scanPage = 0; scanPageManual = false; scanFocusSku = null;
+    scanPageSize = SCAN_PAGE_MAX; // re-measure fit for this screen
     renderItemsTable(order);
     updateProgress(order);
     startTimer(orderTimings[order.order_number]);
@@ -1805,7 +1819,8 @@
   // page, Previous/Next buttons) — warehouse staff never scroll. After a
   // scanner scan the view snaps to the page holding the next pending item;
   // manual page browsing sticks until the next scan.
-  const SCAN_PAGE_SIZE = 5;
+  const SCAN_PAGE_MAX = 5;    // never more than 5 SKUs per page
+  let scanPageSize   = SCAN_PAGE_MAX; // shrinks automatically until a page fits the screen with no scrollbar
   let scanPage       = 0;
   let scanPageManual = false;
   let scanFocusSku   = null;  // last item the packer counted — keep its page in view while it's unfinished
@@ -1823,17 +1838,17 @@
     // follow the just-counted item while it still needs pieces; once it's
     // finished, follow the next pending item. Manual paging sticks until
     // the next count.
-    const pageCount = Math.max(1, Math.ceil(decorated.length / SCAN_PAGE_SIZE));
+    const pageCount = Math.max(1, Math.ceil(decorated.length / scanPageSize));
     if (!scanPageManual) {
       let focusIdx = -1;
       if (scanFocusSku) {
         focusIdx = decorated.findIndex(d => d.item.sku === scanFocusSku && !d.done);
       }
       if (focusIdx < 0) focusIdx = decorated.findIndex(d => d.item.sku === activeSku);
-      scanPage = focusIdx >= 0 ? Math.floor(focusIdx / SCAN_PAGE_SIZE) : 0;
+      scanPage = focusIdx >= 0 ? Math.floor(focusIdx / scanPageSize) : 0;
     }
     scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
-    const pageRows = decorated.slice(scanPage * SCAN_PAGE_SIZE, (scanPage + 1) * SCAN_PAGE_SIZE);
+    const pageRows = decorated.slice(scanPage * scanPageSize, (scanPage + 1) * scanPageSize);
     // Only ONE on-screen substitute barcode at a time — the first incomplete
     // no-barcode item. The next one appears when this one is fully counted,
     // so the scanner can never pick up the wrong code from the monitor.
@@ -1936,6 +1951,15 @@
       try {
         JsBarcode(bcEl, bcEl.dataset.bcSku, { format: 'CODE128', width: 2.4, height: 54, displayValue: false, margin: 6, background: '#ffffff' });
       } catch {}
+    }
+
+    // Adaptive fit — if this page overflows the visible list area (short or
+    // zoomed monitors), drop the page size and re-render until it fits.
+    // "Up to 5 SKUs per screen" = as many as physically fit, never more.
+    const scrollEl = document.querySelector('.scan-items-scroll');
+    if (scrollEl && scrollEl.scrollHeight > scrollEl.clientHeight + 2 && pageRows.length > 1) {
+      scanPageSize = pageRows.length - 1;
+      return renderItemsTable(order);
     }
 
     // Pager — hidden for single-page orders
