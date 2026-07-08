@@ -3127,7 +3127,7 @@
             const d = await r.json();
             if (!r.ok) throw new Error(d.error || 'Rematch failed');
             await refreshOrders();
-            await loadLabelImportHistory();
+            await renderLabelsTab();
             if (d.newMatches > 0) alert(`Auto-matched ${d.newMatches} label${d.newMatches !== 1 ? 's' : ''}. ${d.unmatched} still unmatched.`);
             else alert(`No new matches found. ${d.unmatched} page${d.unmatched !== 1 ? 's' : ''} still unmatched — use Review to assign manually.`);
           } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = '⚡ Auto Match'; }
