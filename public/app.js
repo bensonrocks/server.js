@@ -772,7 +772,7 @@
 
     try {
       const _uploadAbort = new AbortController();
-      const _uploadTimer = setTimeout(() => _uploadAbort.abort(), 30000);
+      const _uploadTimer = setTimeout(() => _uploadAbort.abort(), 90000);
       let resp;
       try {
         resp = await fetch('/api/upload', {

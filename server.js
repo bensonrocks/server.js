@@ -206,9 +206,17 @@ function readDb() {
 }
 function writeDb(data) {
   _dbCache = data;
-  // Write to disk async so uploads don't block on Railway volume I/O
-  fs.writeFile(DB_FILE, JSON.stringify(data, null, 2), err => {
-    if (err) console.error('[writeDb] persist error:', err.message);
+  // Defer JSON.stringify to the NEXT event loop tick so any pending res.json()
+  // calls in the current tick are not blocked by a potentially-slow stringify.
+  // (A large db.json with many batches was causing 30s+ event-loop stalls.)
+  setImmediate(() => {
+    try {
+      fs.writeFile(DB_FILE, JSON.stringify(data), err => {
+        if (err) console.error('[writeDb] persist error:', err.message);
+      });
+    } catch (e) {
+      console.error('[writeDb] stringify error:', e.message);
+    }
   });
 }
 
@@ -1488,6 +1496,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       has_order_label:   false,
     }));
 
+    console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}`);
     res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
