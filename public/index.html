@@ -603,8 +603,8 @@
           </div>
         </div>
         <div class="report-range-row">
-          <label>From <input type="date" id="reportFrom" /></label>
-          <label>To <input type="date" id="reportTo" /></label>
+          <label>From <input type="date" class="rep-from" /></label>
+          <label>To <input type="date" class="rep-to" /></label>
         </div>
         <div class="report-list">
           <button class="report-btn" data-report="daily-summary"><b>&#128197; Daily Operations Summary</b><span>Uploads, completions, pieces and avg scan time per day, with a per-client sheet</span></button>
@@ -616,10 +616,10 @@
         </div>
         <div class="admin-section-divider"></div>
         <div class="report-range-row">
-          <label>Manifest date <input type="date" id="reportManifestDate" /></label>
+          <label>Manifest date <input type="date" class="rep-mdate" /></label>
           <button class="report-btn report-btn-inline" data-report="carrier-manifest"><b>&#128666; Carrier Handover Manifest</b><span>Completed orders for the day, grouped by carrier, with a signature column</span></button>
         </div>
-        <div id="reportStatus" class="status-bar hidden"></div>
+        <div class="status-bar report-status hidden"></div>
       </div>
 
       <!-- Tab: System / Danger zone -->
@@ -698,6 +698,7 @@
       <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
       <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
       <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
+      <button class="tab-btn" data-tab="reports"><span class="tab-icon">&#128202;</span>Reports</button>
       <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
     </nav>
 
@@ -854,6 +855,30 @@
           <div id="labelImportHistoryEmpty" class="empty-state hidden">No label imports yet.</div>
           <div id="labelImportHistoryList" class="label-history-list"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ── TAB: Reports (admin logins — operational reports only) ── -->
+    <section id="tab-reports" class="tab">
+      <div class="panel">
+        <h2 class="panel-title">&#128202; Operational Reports</h2>
+        <p class="hint" style="margin-bottom:.8rem">Built from the permanent activity ledger — history remains even after uploads are deleted. Billing and audit reports are available to management in the Administrator panel.</p>
+        <div class="report-range-row">
+          <label>From <input type="date" class="rep-from" /></label>
+          <label>To <input type="date" class="rep-to" /></label>
+        </div>
+        <div class="report-list">
+          <button class="report-btn" data-report="daily-summary"><b>&#128197; Daily Operations Summary</b><span>Uploads, completions, pieces and avg scan time per day, with a per-client sheet</span></button>
+          <button class="report-btn" data-report="productivity"><b>&#128119; Packer Productivity</b><span>Orders, pieces, avg / fastest / slowest time per operator per day</span></button>
+          <button class="report-btn" data-report="aging"><b>&#9203; Order Aging / Backlog</b><span>All uncompleted orders with days pending (live data)</span></button>
+          <button class="report-btn" data-report="lot-traceability"><b>&#129514; Lot &amp; Expiry Traceability</b><span>Which lot of which SKU shipped in which order — recall-ready</span></button>
+        </div>
+        <div class="admin-section-divider"></div>
+        <div class="report-range-row">
+          <label>Manifest date <input type="date" class="rep-mdate" /></label>
+          <button class="report-btn report-btn-inline" data-report="carrier-manifest"><b>&#128666; Carrier Handover Manifest</b><span>Completed orders for the day, grouped by carrier, with a signature column</span></button>
+        </div>
+        <div class="status-bar report-status hidden"></div>
       </div>
     </section>
 

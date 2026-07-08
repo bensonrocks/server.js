@@ -386,6 +386,7 @@
 
     // Upload tab button — hidden for warehouse
     document.querySelectorAll('.tab-btn[data-tab="upload"]').forEach(b => b.classList.toggle('hidden', isWarehouse));
+    document.querySelectorAll('.tab-btn[data-tab="reports"]').forEach(b => b.classList.toggle('hidden', isWarehouse));
 
     // Admin button — hidden for warehouse
     const logBtn = document.getElementById('logAccessBtn');
@@ -556,7 +557,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', labels: 'Labels', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', labels: 'Labels', reports: 'Reports', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -566,7 +567,7 @@
 
   function switchTab(name) {
     // Warehouse users cannot access the upload tab
-    if (name === 'upload' && (currentUser?.role || 'admin') === 'warehouse') return;
+    if ((name === 'upload' || name === 'reports') && (currentUser?.role || 'admin') === 'warehouse') return;
     if (!document.getElementById(`tab-${name}`)) return;
     if (pendingDownload && name === 'orders') {
       const dlWrap = document.getElementById('uploadDownloadWrap');
@@ -3183,34 +3184,43 @@
     } catch (err) { alert(err.message); }
   });
 
-  // Master: standard reports (from the deletion-proof audit ledger)
+  // Standard reports (from the deletion-proof audit ledger).
+  // Two panes share this wiring: #tab-reports (admin logins — operational
+  // reports, plain session auth) and #adminTab-reports (master panel — all
+  // seven, master-key auth).
   (() => {
     const today = () => new Date().toISOString().slice(0, 10);
     const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
-    const fromEl = document.getElementById('reportFrom');
-    const toEl   = document.getElementById('reportTo');
-    const mdEl   = document.getElementById('reportManifestDate');
-    if (fromEl) { fromEl.value = daysAgo(30); toEl.value = today(); mdEl.value = today(); }
+    document.querySelectorAll('.rep-from').forEach(el => el.value = daysAgo(30));
+    document.querySelectorAll('.rep-to').forEach(el => el.value = today());
+    document.querySelectorAll('.rep-mdate').forEach(el => el.value = today());
 
     document.querySelectorAll('.report-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const pane = btn.closest('#adminTab-reports, #tab-reports');
+        if (!pane) return;
+        const isMasterPane = pane.id === 'adminTab-reports';
         const kind = btn.dataset.report;
-        const st   = document.getElementById('reportStatus');
-        st.className = 'status-bar'; st.textContent = 'Generating report…'; st.classList.remove('hidden');
+        const from = pane.querySelector('.rep-from')?.value  || daysAgo(30);
+        const to   = pane.querySelector('.rep-to')?.value    || today();
+        const md   = pane.querySelector('.rep-mdate')?.value || today();
+        const st   = pane.querySelector('.report-status');
+        st.className = 'status-bar report-status'; st.textContent = 'Generating report…';
         try {
           const qs = kind === 'carrier-manifest'
-            ? `date=${encodeURIComponent(mdEl.value || today())}`
-            : `from=${encodeURIComponent(fromEl.value || daysAgo(30))}&to=${encodeURIComponent(toEl.value || today())}`;
-          const resp = await fetch(`/api/master/report/${kind}?${qs}`, { headers: { 'x-master-key': LOG_PASSWORD } });
+            ? `date=${encodeURIComponent(md)}`
+            : `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+          const resp = await fetch(`/api/master/report/${kind}?${qs}`,
+            isMasterPane ? { headers: { 'x-master-key': LOG_PASSWORD } } : {});
           if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || resp.statusText);
           const blob = await resp.blob();
           const a    = document.createElement('a');
           a.href     = URL.createObjectURL(blob);
-          a.download = `${kind}_${fromEl?.value || today()}_${toEl?.value || today()}.xlsx`;
+          a.download = `${kind}_${kind === 'carrier-manifest' ? md : from + '_' + to}.xlsx`;
           a.click(); URL.revokeObjectURL(a.href);
-          st.className = 'status-bar success'; st.textContent = 'Report downloaded.';
+          st.className = 'status-bar report-status success'; st.textContent = 'Report downloaded.';
         } catch (e) {
-          st.className = 'status-bar error'; st.textContent = 'Report failed: ' + e.message;
+          st.className = 'status-bar report-status error'; st.textContent = 'Report failed: ' + e.message;
         }
         setTimeout(() => st.classList.add('hidden'), 4000);
       });

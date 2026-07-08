@@ -2297,11 +2297,24 @@ app.post('/api/master/reset', (req, res) => {
 
 // ── Standard reports — built from the audit ledger, deletion-proof ──────────
 // GET /api/master/report/:kind?from=YYYY-MM-DD&to=YYYY-MM-DD  (manifest: ?date=)
-// Kinds: daily-summary, productivity, client-activity, exceptions,
-//        carrier-manifest, aging, lot-traceability
+//
+// Access split:
+//   • Operational reports → any ADMIN login (daily-summary, productivity,
+//     carrier-manifest, aging, lot-traceability). Warehouse role: none.
+//   • Commercial/oversight reports → MASTER key only (client-activity =
+//     billing data; exceptions = includes the deletion audit that watches
+//     the admins themselves).
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability']);
+
 app.get('/api/master/report/:kind', (req, res) => {
-  if (!checkMaster(req, res)) return;
   const { kind } = req.params;
+  const isMaster = req.headers['x-master-key'] === MASTER_PASS;
+  if (!isMaster) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin' || !ADMIN_REPORT_KINDS.has(kind)) {
+      return res.status(403).json({ error: 'This report requires Administrator access' });
+    }
+  }
   try {
     const db  = readDb();
     const log = db.auditLog || [];
