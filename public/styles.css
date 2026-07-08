@@ -2210,3 +2210,22 @@ body.ls-open { overflow: hidden; }
 .nb-inline-bc-wrap { margin-top: .35rem; display: inline-block; background: #fff; border: 2px solid #f59e0b; border-radius: 8px; padding: .3rem .5rem .15rem; }
 .nb-inline-bc { display: block; }
 .nb-inline-bc-hint { text-align: center; font-size: .68rem; color: #92400e; font-weight: 600; padding-bottom: .1rem; }
+
+/* scan table pager — no scrolling for warehouse staff */
+.scan-pager { flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 1.2rem; padding: .5rem 1rem; background: var(--surface-2, #eef2f7); border-top: 1px solid var(--border, #e2e8f0); }
+.scan-pager-btn { border: 1px solid var(--border, #cbd5e1); background: var(--surface, #fff); border-radius: 10px; padding: .7rem 1.6rem; font-size: 1.05rem; font-weight: 700; color: var(--primary, #2563eb); cursor: pointer; }
+.scan-pager-btn:disabled { opacity: .35; cursor: default; }
+.scan-pager-info { font-size: .95rem; font-weight: 600; color: var(--text-light, #64748b); }
+/* lot badges inside the SKU cell */
+.lot-inline { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .3rem; }
+
+/* header details enlarged — bigger than before, smaller than product info */
+.scan-meta-primary .meta-pill { font-size: 1.3rem; padding: .4rem 1rem; }
+.meta-details-btn { font-size: 1.15rem; padding: .38rem 1.1rem; }
+.scan-meta-details { font-size: 1.2rem; }
+@media (min-width: 1024px) {
+  .scan-order-no { font-size: 1.9rem; }
+  .scan-meta-primary .meta-pill { font-size: 1.5rem; padding: .45rem 1.15rem; }
+  .meta-details-btn { font-size: 1.3rem; }
+  .scan-meta-details { font-size: 1.35rem; }
+}

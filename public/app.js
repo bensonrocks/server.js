@@ -1765,6 +1765,7 @@
       document.getElementById('scanMetaDetails').classList.toggle('hidden');
     });
 
+    scanPage = 0; scanPageManual = false;
     renderItemsTable(order);
     updateProgress(order);
     startTimer(orderTimings[order.order_number]);
@@ -1798,9 +1799,16 @@
   }
 
   // ── Items table ────────────────────────────────────────────────────────────
-  // Pending items float to the top (next one highlighted + scrolled into
-  // view); completed rows sink to the bottom and compress. No-barcode items
-  // get one-click count buttons instead of a typed qty box.
+  // Pending items float to the top (next one highlighted); completed rows
+  // sink to the bottom and compress. No-barcode items get one-click count
+  // buttons instead of a typed qty box. The list is PAGINATED (5 SKUs per
+  // page, Previous/Next buttons) — warehouse staff never scroll. After a
+  // scanner scan the view snaps to the page holding the next pending item;
+  // manual page browsing sticks until the next scan.
+  const SCAN_PAGE_SIZE = 5;
+  let scanPage       = 0;
+  let scanPageManual = false;
+
   function renderItemsTable(order) {
     const scanned  = order.scanned || {};
     const decorated = order.lines.map((item, idx) => {
@@ -1809,12 +1817,21 @@
     });
     decorated.sort((a, b) => (a.done - b.done) || (a.idx - b.idx));
     const activeSku = decorated.find(d => !d.done)?.item.sku;
+
+    // Pagination — follow the active item unless the packer paged manually
+    const pageCount = Math.max(1, Math.ceil(decorated.length / SCAN_PAGE_SIZE));
+    if (!scanPageManual) {
+      const ai = decorated.findIndex(d => d.item.sku === activeSku);
+      scanPage = ai >= 0 ? Math.floor(ai / SCAN_PAGE_SIZE) : 0;
+    }
+    scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
+    const pageRows = decorated.slice(scanPage * SCAN_PAGE_SIZE, (scanPage + 1) * SCAN_PAGE_SIZE);
     // Only ONE on-screen substitute barcode at a time — the first incomplete
     // no-barcode item. The next one appears when this one is fully counted,
     // so the scanner can never pick up the wrong code from the monitor.
     const inlineBcSku = decorated.find(d => !d.done && isNoBarcodeItem(d.item))?.item.sku;
 
-    document.getElementById('scanItemsTbody').innerHTML = decorated.map(({ item, s, done }) => {
+    document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s, done }) => {
       const noBarcode = isNoBarcodeItem(item);
       const over      = s > item.qty;
       const rowClass  = [
@@ -1838,13 +1855,13 @@
         </tr>`;
       }
 
+      // Lot badges live inside the SKU cell (an extra table row per item
+      // would break the fixed 5-rows-per-page layout)
       const lotParts = [];
       if (item.batch_number)  lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(item.batch_number)}</span>`);
       if (item.serial_number) lotParts.push(`<span class="lot-badge lot-serial">S/N&nbsp;${esc(item.serial_number)}</span>`);
       if (item.expiry_date)   lotParts.push(`<span class="lot-badge lot-expiry">Exp&nbsp;${esc(item.expiry_date)}</span>`);
-      const lotRow = lotParts.length
-        ? `<tr class="lot-info-row"><td colspan="5" class="lot-info-cell">${lotParts.join('')}</td></tr>`
-        : '';
+      const lotBadges = lotParts.length ? `<div class="lot-inline">${lotParts.join('')}</div>` : '';
 
       // No-barcode item: one-click count buttons (− / +1 / ✓ All)
       const scannedCell = noBarcode
@@ -1867,11 +1884,11 @@
         : (noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; count buttons, or wait for on-screen barcode</div>' : '');
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
-          <td><code class="sku-code">${esc(item.sku)}</code>${inlineBc}</td>
+          <td><code class="sku-code">${esc(item.sku)}</code>${lotBadges}${inlineBc}</td>
           <td class="desc-cell">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
           ${scannedCell}
-        </tr>${lotRow}`;
+        </tr>`;
     }).join('');
 
     document.querySelectorAll('.qty-input').forEach(inp => {
@@ -1913,9 +1930,27 @@
       } catch {}
     }
 
-    // Keep the next pending item in view without the packer touching the mouse
-    document.querySelector('#scanItemsTbody tr.row-active')
-      ?.scrollIntoView({ block: 'nearest' });
+    // Pager — hidden for single-page orders
+    const pager = document.getElementById('scanPager');
+    if (pageCount > 1) {
+      const donePages = decorated.filter(d => d.done).length;
+      pager.innerHTML = `
+        <button class="scan-pager-btn" id="scanPagePrev" ${scanPage === 0 ? 'disabled' : ''}>&#8592; Previous</button>
+        <span class="scan-pager-info">Page ${scanPage + 1} of ${pageCount} &nbsp;&middot;&nbsp; ${decorated.length - donePages} item(s) to go</span>
+        <button class="scan-pager-btn" id="scanPageNext" ${scanPage >= pageCount - 1 ? 'disabled' : ''}>Next &#8594;</button>`;
+      pager.classList.remove('hidden');
+      document.getElementById('scanPagePrev').addEventListener('click', () => {
+        scanPageManual = true; scanPage--; renderItemsTable(activeOrder);
+        document.getElementById('itemScanInput').focus();
+      });
+      document.getElementById('scanPageNext').addEventListener('click', () => {
+        scanPageManual = true; scanPage++; renderItemsTable(activeOrder);
+        document.getElementById('itemScanInput').focus();
+      });
+    } else {
+      pager.classList.add('hidden');
+      pager.innerHTML = '';
+    }
   }
 
   function updateProgress(order) {
@@ -2068,6 +2103,7 @@
         if (!activeOrder.scanned) activeOrder.scanned = {};
         activeOrder.scanned[data.sku] = data.scanned_qty;
         activeOrder.scan_status = 'processing';
+        scanPageManual = false; // scanner scan → snap back to the active item's page
         renderItemsTable(activeOrder);
         updateProgress(activeOrder);
 
