@@ -2,6 +2,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "node server.js"
+startCommand = "node seed_idealscan.js && node server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
