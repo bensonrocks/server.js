@@ -103,6 +103,7 @@ const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
 const DOC_TEMPLATE_DIR        = path.join(DATA_DIR, 'label_doc_templates');
 const USERS_FILE              = path.join(DATA_DIR, 'users.json');
 const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
+const GMAIL_OAUTH_FILE        = path.join(DATA_DIR, 'gmail_oauth.json');
 // Not DATA_DIR — static reference data, always lives with the app code
 const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json');
 
@@ -255,20 +256,54 @@ function readEmailConfig() {
   };
 }
 
-// ── Email ───────────────────────────────────────────────────────────────────
-async function sendCompletionAlert(orderNumber, ord, operator) {
-  const conf = readEmailConfig();
-  if (!conf.from_email || !conf.password || !conf.to_email) {
-    console.warn(`[IdealScan] Completion alert for ${orderNumber} skipped — email not configured.`);
-    return { sent: false, reason: 'not_configured' };
+// ── Gmail OAuth2 helpers ─────────────────────────────────────────────────────
+function readGmailOAuth() {
+  try { return JSON.parse(fs.readFileSync(GMAIL_OAUTH_FILE, 'utf8')); } catch { return null; }
+}
+
+function buildTransporter() {
+  const oauth = readGmailOAuth();
+  if (oauth?.refresh_token && oauth?.client_id && oauth?.client_secret && oauth?.email) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: { type: 'OAuth2', user: oauth.email,
+              clientId: oauth.client_id, clientSecret: oauth.client_secret,
+              refreshToken: oauth.refresh_token },
+    });
   }
-  const transporter = nodemailer.createTransport({
+  const conf = readEmailConfig();
+  if (!conf.from_email || !conf.password) return null;
+  return nodemailer.createTransport({
     host: conf.smtp_host, port: conf.smtp_port, secure: false,
     auth: { user: conf.from_email, pass: conf.password },
   });
+}
+
+function getFromEmail() {
+  const oauth = readGmailOAuth();
+  return (oauth?.email) || readEmailConfig().from_email;
+}
+
+function getDefaultRecipient() {
+  const oauth = readGmailOAuth();
+  return (oauth?.to_email) || readEmailConfig().to_email;
+}
+
+// Pending OAuth handshakes: state token → { client_id, client_secret, email, to_email, expires }
+const _pendingOAuthStates = new Map();
+
+// ── Email ───────────────────────────────────────────────────────────────────
+async function sendCompletionAlert(orderNumber, ord, operator) {
+  const transporter = buildTransporter();
+  const fromEmail   = getFromEmail();
+  const toEmail     = getDefaultRecipient();
+  if (!transporter || !fromEmail || !toEmail) {
+    console.warn(`[IdealScan] Completion alert for ${orderNumber} skipped — email not configured.`);
+    return { sent: false, reason: 'not_configured' };
+  }
   const opLine = operator ? `Operator: ${operator}\n` : '';
   await transporter.sendMail({
-    from: conf.from_email, to: conf.to_email,
+    from: fromEmail, to: toEmail,
     subject: `[IdealScan] Order ${orderNumber} completed — please close in Keyfields`,
     text: [
       `Order ${orderNumber} has been fully scanned and marked completed.`,
@@ -281,23 +316,17 @@ async function sendCompletionAlert(orderNumber, ord, operator) {
       'Once closed, acknowledge it in IdealScan under the Orders tab.',
     ].join('\n'),
   });
-  console.log(`[IdealScan] Completion alert sent to ${conf.to_email} for order ${orderNumber}.`);
+  console.log(`[IdealScan] Completion alert sent to ${toEmail} for order ${orderNumber}.`);
   return { sent: true };
 }
 
 async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
-  const conf = readEmailConfig();
-  const recipient = emailTo || conf.to_email;
-  if (!conf.from_email || !conf.password)
-    throw new Error('Email not configured — add credentials in the Master panel (Upload Log → Email Settings)');
+  const transporter = buildTransporter();
+  const fromEmail   = getFromEmail();
+  if (!transporter || !fromEmail)
+    throw new Error('Email not configured — add credentials in the Master panel (Admin → Email Settings)');
+  const recipient = emailTo || getDefaultRecipient();
   if (!recipient) throw new Error('No recipient email address provided');
-
-  const transporter = nodemailer.createTransport({
-    host: conf.smtp_host,
-    port: conf.smtp_port,
-    secure: false,
-    auth: { user: conf.from_email, pass: conf.password },
-  });
 
   const orderList = orders.map(o =>
     `• ${o.order_number} | ${o.customer_name} | Waybill: ${o.waybill_number} | ${o.total_qty} units`
@@ -312,7 +341,7 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
   const subject     = `${dateStr} / ${clientLabel} / ${dirLabel} Upload`;
 
   await transporter.sendMail({
-    from: conf.from_email, to: recipient,
+    from: fromEmail, to: recipient,
     subject,
     text: [
       `New ${dirLabel.toLowerCase()} order batch uploaded on ${uploadDate.toLocaleString()}.`,
@@ -2054,20 +2083,17 @@ app.post('/api/master/email-config', (req, res) => {
 
 app.post('/api/master/email-config/test', async (req, res) => {
   if (!checkMaster(req, res)) return;
-  const conf = readEmailConfig();
-  if (!conf.from_email || !conf.password)
+  const transporter = buildTransporter();
+  const fromEmail   = getFromEmail();
+  if (!transporter || !fromEmail)
     return res.status(400).json({ error: 'Email credentials not configured yet' });
-  const to = (req.body?.to || conf.to_email || '').trim();
+  const to = (req.body?.to || getDefaultRecipient() || '').trim();
   if (!to) return res.status(400).json({ error: 'No recipient address — enter one or set Default Recipient' });
   try {
-    const transporter = nodemailer.createTransport({
-      host: conf.smtp_host, port: conf.smtp_port, secure: false,
-      auth: { user: conf.from_email, pass: conf.password },
-    });
     await transporter.sendMail({
-      from: conf.from_email, to,
+      from: fromEmail, to,
       subject: 'IDEALSCAN — Email Test',
-      text: `This is a test email from IDEALSCAN Fulfillment Scanner.\n\nSMTP: ${conf.smtp_host}:${conf.smtp_port}\nFrom: ${conf.from_email}\nSent: ${new Date().toLocaleString()}`,
+      text: `This is a test email from IDEALSCAN Fulfillment Scanner.\n\nFrom: ${fromEmail}\nSent: ${new Date().toLocaleString()}`,
     });
     res.json({ ok: true });
   } catch (err) {
@@ -2079,6 +2105,129 @@ app.delete('/api/master/email-config', (req, res) => {
   if (!checkMaster(req, res)) return;
   try { fs.unlinkSync(EMAIL_CONFIG_FILE); } catch {}
   res.json({ ok: true });
+});
+
+// ── Gmail OAuth2 routes ──────────────────────────────────────────────────────
+
+// Returns connection status
+app.get('/api/master/gmail/status', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const oauth = readGmailOAuth();
+  if (oauth?.refresh_token) {
+    res.json({ connected: true, email: oauth.email, to_email: oauth.to_email, connected_at: oauth.connected_at });
+  } else {
+    res.json({ connected: false });
+  }
+});
+
+// Starts the OAuth flow — returns the authorization URL and stores pending state
+app.post('/api/master/gmail/connect', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { client_id, client_secret, email, to_email } = req.body;
+  if (!client_id || !client_secret || !email)
+    return res.status(400).json({ error: 'client_id, client_secret and email are required' });
+
+  const crypto = require('crypto');
+  const state  = crypto.randomBytes(20).toString('hex');
+  _pendingOAuthStates.set(state, {
+    client_id:     client_id.trim(),
+    client_secret: client_secret.trim(),
+    email:         email.trim(),
+    to_email:      (to_email || '').trim(),
+    expires:       Date.now() + 10 * 60 * 1000,
+  });
+
+  const redirectUri = `${req.protocol}://${req.get('host')}/oauth2callback`;
+  const params = new URLSearchParams({
+    client_id:     client_id.trim(),
+    redirect_uri:  redirectUri,
+    response_type: 'code',
+    scope:         'https://mail.google.com/',
+    access_type:   'offline',
+    prompt:        'consent',
+    state,
+  });
+  res.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}`, redirect_uri: redirectUri });
+});
+
+// Google redirects here after user approves
+app.get('/oauth2callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  const closeScript = (ok, msg) =>
+    `<html><body style="font-family:sans-serif;text-align:center;padding:3rem">
+      <h2 style="color:${ok ? '#16a34a' : '#dc2626'}">${ok ? '✓' : '✗'} ${msg}</h2>
+      <p>${ok ? 'You can close this tab and return to IDEALSCAN.' : 'Please close this tab and try again.'}</p>
+      <script>window.opener?.postMessage({type:"gmail-oauth",ok:${ok}},"*");setTimeout(()=>window.close(),2500);</script>
+     </body></html>`;
+
+  if (error) return res.send(closeScript(false, `Authorization denied: ${error}`));
+
+  const pending = _pendingOAuthStates.get(state);
+  if (!pending || Date.now() > pending.expires) {
+    return res.status(400).send(closeScript(false, 'Request expired — please try again'));
+  }
+  _pendingOAuthStates.delete(state);
+
+  const redirectUri = `${req.protocol}://${req.get('host')}/oauth2callback`;
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id:     pending.client_id,
+        client_secret: pending.client_secret,
+        redirect_uri:  redirectUri,
+        grant_type:    'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (tokens.error)
+      return res.send(closeScript(false, tokens.error_description || tokens.error));
+    if (!tokens.refresh_token)
+      return res.send(closeScript(false, 'No refresh token — revoke IDEALSCAN in Google Account → Security → Third-party access, then try again'));
+
+    fs.writeFileSync(GMAIL_OAUTH_FILE, JSON.stringify({
+      client_id:     pending.client_id,
+      client_secret: pending.client_secret,
+      refresh_token: tokens.refresh_token,
+      email:         pending.email,
+      to_email:      pending.to_email,
+      connected_at:  new Date().toISOString(),
+    }, null, 2));
+    res.send(closeScript(true, 'Gmail connected!'));
+  } catch (err) {
+    res.status(500).send(closeScript(false, err.message));
+  }
+});
+
+// Disconnect Gmail OAuth
+app.delete('/api/master/gmail/disconnect', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  try { fs.unlinkSync(GMAIL_OAUTH_FILE); } catch {}
+  res.json({ ok: true });
+});
+
+// Update Gmail test to use OAuth2 transporter when available
+app.post('/api/master/gmail/test', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const transporter = buildTransporter();
+  const fromEmail   = getFromEmail();
+  if (!transporter || !fromEmail)
+    return res.status(400).json({ error: 'Email not configured' });
+  const to = (req.body?.to || getDefaultRecipient() || '').trim();
+  if (!to) return res.status(400).json({ error: 'No recipient address — set Default Alert Recipient first' });
+  try {
+    await transporter.sendMail({
+      from: fromEmail, to,
+      subject: 'IDEALSCAN — Email Test',
+      text: `This is a test email from IDEALSCAN.\n\nSent: ${new Date().toLocaleString()}\nFrom: ${fromEmail}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Betime CODE 2 map management ─────────────────────────────────────────────

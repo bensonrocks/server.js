@@ -2116,7 +2116,127 @@
       document.getElementById('cfgToEmail').value   = conf.to_email  || '';
       defaultRecipientEmail = conf.to_email || '';
     } catch {}
+    await loadGmailStatus();
   }
+
+  // ── Gmail OAuth2 ─────────────────────────────────────────────────────────────
+  function showGmailStatus(msg, type) {
+    const el = document.getElementById('gmailOauthStatus');
+    if (!el) return;
+    el.textContent = msg; el.className = `status-bar ${type}`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 6000);
+  }
+
+  async function loadGmailStatus() {
+    try {
+      const r = await fetch('/api/master/gmail/status', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      const d = await r.json();
+      const badge   = document.getElementById('gmailStatusBadge');
+      const connBlk = document.getElementById('gmailConnectedBlock');
+      const connFrm = document.getElementById('gmailConnectBlock');
+      if (d.connected) {
+        if (badge)   { badge.textContent = '● Connected'; badge.className = 'gmail-status-badge connected'; }
+        if (connBlk) { connBlk.classList.remove('hidden'); }
+        if (connFrm) { connFrm.style.display = 'none'; }
+        const emailEl = document.getElementById('gmailConnectedEmail');
+        if (emailEl) emailEl.textContent = d.email || '';
+        const toEl = document.getElementById('gmailToEmail');
+        if (toEl) toEl.value = d.to_email || '';
+        defaultRecipientEmail = d.to_email || defaultRecipientEmail;
+      } else {
+        if (badge)   { badge.textContent = '○ Not connected'; badge.className = 'gmail-status-badge disconnected'; }
+        if (connBlk) { connBlk.classList.add('hidden'); }
+        if (connFrm) { connFrm.style.display = ''; }
+      }
+    } catch {}
+  }
+
+  document.getElementById('gmailConnectBtn')?.addEventListener('click', async () => {
+    const client_id     = document.getElementById('gmailClientId').value.trim();
+    const client_secret = document.getElementById('gmailClientSecret').value.trim();
+    const email         = document.getElementById('gmailOauthEmail').value.trim();
+    const to_email      = document.getElementById('gmailOauthToEmail').value.trim();
+    if (!client_id || !client_secret || !email) {
+      showGmailStatus('Gmail address, Client ID and Client Secret are required.', 'error'); return;
+    }
+    showGmailStatus('Opening Google authorization…', '');
+    try {
+      const r = await fetch('/api/master/gmail/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ client_id, client_secret, email, to_email }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showGmailStatus(`Failed: ${d.error}`, 'error'); return; }
+      const popup = window.open(d.url, 'gmailOauth', 'width=520,height=640');
+      showGmailStatus('Complete the sign-in in the popup window…', '');
+      const onMsg = async (ev) => {
+        if (ev.data?.type !== 'gmail-oauth') return;
+        window.removeEventListener('message', onMsg);
+        if (ev.data.ok) {
+          showGmailStatus('Gmail connected! Emails will now send via Google.', 'success');
+          await loadGmailStatus();
+        } else {
+          showGmailStatus('Connection failed — please try again.', 'error');
+        }
+      };
+      window.addEventListener('message', onMsg);
+      const pollTimer = setInterval(async () => {
+        if (popup?.closed) {
+          clearInterval(pollTimer);
+          window.removeEventListener('message', onMsg);
+          await loadGmailStatus();
+        }
+      }, 1000);
+    } catch (err) { showGmailStatus(err.message, 'error'); }
+  });
+
+  document.getElementById('gmailDisconnectBtn')?.addEventListener('click', async () => {
+    if (!confirm('Disconnect Gmail? Emails will fall back to SMTP settings.')) return;
+    await fetch('/api/master/gmail/disconnect', { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+    await loadGmailStatus();
+  });
+
+  document.getElementById('gmailSaveRecipientBtn')?.addEventListener('click', async () => {
+    const to_email = document.getElementById('gmailToEmail').value.trim();
+    try {
+      const r = await fetch('/api/master/gmail/status', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const d = await r.json();
+      if (!d.connected) return;
+      // Patch the stored oauth file via a mini endpoint (reuse disconnect+reconnect is complex;
+      // instead we save it via the SMTP config recipient field which buildTransporter also checks)
+      await fetch('/api/master/email-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ from_email: d.email, to_email, smtp_host: 'smtp.gmail.com', smtp_port: 587 }),
+      });
+      defaultRecipientEmail = to_email;
+      showGmailStatus('Recipient saved.', 'success');
+    } catch (err) { showGmailStatus(err.message, 'error'); }
+  });
+
+  document.getElementById('gmailTestBtn')?.addEventListener('click', async () => {
+    const to = document.getElementById('gmailToEmail').value.trim() || defaultRecipientEmail;
+    if (!to) { showGmailStatus('Enter a recipient first.', 'error'); return; }
+    showGmailStatus('Sending test email via Gmail…', '');
+    try {
+      const r = await fetch('/api/master/gmail/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ to }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showGmailStatus(`Failed: ${d.error}`, 'error'); return; }
+      showGmailStatus(`Test email sent to ${to}`, 'success');
+    } catch (err) { showGmailStatus(err.message, 'error'); }
+  });
+
+  // Listen for postMessage from OAuth popup in case it fires after polling detects close
+  window.addEventListener('message', (ev) => {
+    if (ev.data?.type === 'gmail-oauth' && ev.data.ok) loadGmailStatus();
+  });
 
   function showEmailStatus(msg, type) {
     const el = document.getElementById('emailCfgStatus');
