@@ -91,13 +91,7 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use((req, res, next) => { if (req.path.startsWith('/api/')) console.log(`[REQ] ${req.method} ${req.path}`); next(); });
-app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'req-log-6', ts: Date.now() }));
-// Quick multer-free upload test — no auth needed
-app.post('/api/test-upload', upload.single('orderFile'), (req, res) => {
-  console.log('[test-upload] file:', req.file?.originalname, req.file?.size, 'bytes');
-  res.json({ ok: true, filename: req.file?.originalname, size: req.file?.size });
-});
+app.get('/api/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
@@ -1245,20 +1239,7 @@ const AUTH_PUBLIC = new Set([
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/')) return next();
-  if (req.method === 'POST' && req.path === '/api/upload') console.log('[upload-mw] auth check, token present:', !!req.headers['x-auth-token']);
   requireAuth(req, res, next);
-});
-
-// Temporary debug: return raw pdfParse text so we can diagnose unknown PDF formats
-app.post('/api/pdf-debug', upload.single('orderFile'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No file' });
-    if (!pdfParse) return res.status(501).json({ error: 'pdf-parse not installed' });
-    const parsed = await pdfParse(req.file.buffer);
-    res.json({ text: parsed.text, pages: parsed.numpages });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 // Parse-only preview — returns stats without saving anything
@@ -1419,15 +1400,11 @@ const uploadFields = upload.fields([
 ]);
 
 app.post('/api/upload', uploadFields, async (req, res) => {
-  const T = Date.now();
-  const L = (s) => console.log(`[upload +${Date.now()-T}ms] ${s}`);
   try {
-    L('start');
     const orderFile  = req.files?.orderFile?.[0];
     const waybillPdf = req.files?.waybillPdf?.[0];
 
     if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
-    L(`file received: ${orderFile.originalname} ${orderFile.size}b`);
 
     const orderExt = path.extname(orderFile.originalname).toLowerCase();
     const mapped = orderExt === '.pdf'
@@ -1459,9 +1436,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     }
     // ── Validation passed — proceed ─────────────────────────────────────────
 
-    L('generating XLSX');
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
-    L('XLSX done');
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
@@ -1477,13 +1452,10 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       orders,
     };
 
-    L('writing DB');
     const db = readDb();
     db.batches.unshift(batch);
     writeDb(db);
-    L('writing XLSX file');
     fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
-    L('done — building orders state');
 
     // Split waybill PDF if provided
     if (waybillPdf) {
@@ -1492,10 +1464,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    // Return immediately — client fetches full order list via /api/orders separately
-    L('sending response');
     res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: [] });
-    L('response sent');
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
     res.status(500).json({ error: err.message });
