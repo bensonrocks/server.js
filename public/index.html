@@ -702,7 +702,7 @@
 
         <div class="card">
           <h2>Upload Client Picklist</h2>
-          <p class="hint">Upload the client's XLSX or CSV picklist. Optionally attach the waybill PDF to split and match per order.</p>
+          <p class="hint">Upload the client's XLSX, CSV, or Keyfields WMS Picking List PDF. Optionally attach the waybill PDF to split and match per order.</p>
 
           <div class="form-group">
             <label>Client Name</label>
@@ -710,7 +710,7 @@
           </div>
 
           <div class="upload-area" id="dropZone">
-            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
+            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.pdf" hidden />
             <input type="file" id="photoInput" accept="image/*" capture="environment" hidden />
             <div class="upload-icon">&#8679;</div>
             <p>Drag &amp; drop or <button class="link-btn" id="browseBtn">browse</button></p>
@@ -720,8 +720,8 @@
             <button class="btn-photo-upload" id="photoUploadBtn" title="Take a photo of a printed picking list">&#128247; Take Photo of Picklist</button>
           </div>
           <p class="upload-cap-hint">
-            XLSX &nbsp;·&nbsp; XLS &nbsp;·&nbsp; CSV &nbsp;&nbsp;|&nbsp;&nbsp; up to <strong>10 MB</strong> &nbsp;·&nbsp; up to <strong>5,000 rows</strong> per file
-            &nbsp;&nbsp;|&nbsp;&nbsp; Column names are <strong>auto-detected</strong> — any layout converts to Keyfields
+            XLSX &nbsp;·&nbsp; XLS &nbsp;·&nbsp; CSV &nbsp;·&nbsp; PDF (Keyfields Picking List) &nbsp;&nbsp;|&nbsp;&nbsp; up to <strong>10 MB</strong> &nbsp;·&nbsp; up to <strong>5,000 rows</strong> per file
+            &nbsp;&nbsp;|&nbsp;&nbsp; Column names are <strong>auto-detected</strong> — any layout converts to Keyfields. PDF uses GI number as order ID.
           </p>
 
           <div class="waybill-upload-row">

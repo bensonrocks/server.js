@@ -1027,6 +1027,39 @@ function _isFooterRow(rec) {
   return /^(total\s+whole|total\s+loose|grand\s+total|subtotal|remarks?[\s:]|picked\s+by|checked\s+by|released\s+by)/i.test(String(first).trim());
 }
 
+// ── PDF Picking List parser ──────────────────────────────────────────────────
+// Extracts text from a Keyfields WMS Picking List PDF and parses it with the
+// same OCR parser used for photo uploads.  The GI / Issue No becomes the
+// order_number (takes priority over Reference which ORDER_PATTERNS finds first).
+async function parsePdfPicklist(buffer) {
+  if (!pdfParse) throw new Error('pdf-parse not installed. Run: npm install pdf-parse');
+  const parsed = await pdfParse(buffer);
+  const text   = parsed.text || '';
+
+  const rows = parseOcrPicklist(text);
+  if (!rows.length) return rows;
+
+  // issue_no is already correctly extracted by parseOcrPicklist via the
+  // dedicated extractKV call — use it as the canonical order identifier.
+  const issueNo = rows[0]?.issue_no;
+  if (issueNo && issueNo.length >= 3) {
+    for (const row of rows) row.order_number = issueNo;
+  }
+
+  // Extract carrier from Remarks line (clean PDF text — no OCR noise).
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^Remarks?\s+(\S+)/i);
+    if (m) {
+      const carrier = m[1].trim();
+      for (const row of rows) row.carrier = carrier;
+      break;
+    }
+  }
+
+  return rows;
+}
+
 // ── File parsing ────────────────────────────────────────────────────────────
 function parseUploadedFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
@@ -1067,22 +1100,21 @@ app.use((req, res, next) => {
 });
 
 // Parse-only preview — returns stats without saving anything
-app.post('/api/preview', upload.single('orderFile'), (req, res) => {
+app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const ext = path.extname(req.file.originalname).toLowerCase();
-    if (!['.xlsx', '.xls', '.csv'].includes(ext)) {
-      return res.json({ rowCount: 0, orderCount: 0, errors: ['Unsupported file type. Upload XLSX or CSV.'], converted: false });
-    }
 
     let allRows = [], skipped = 0;
-    if (ext === '.csv') {
+    if (ext === '.pdf') {
+      allRows = await parsePdfPicklist(req.file.buffer);
+    } else if (ext === '.csv') {
       const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
       const detected = detectColumnMap(records);
       const all      = records.map(r => mapRow(r, detected));
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = all.length - allRows.length;
-    } else {
+    } else if (ext === '.xlsx' || ext === '.xls') {
       const wb                   = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
       const ws                   = wb.Sheets[wb.SheetNames[0]];
       const { records, headers } = _parseExcelSheet(ws);
@@ -1093,6 +1125,8 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       const all                  = cleanRecs.map(r => mapRow(r, detected));
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = cleanRecs.length - allRows.length;
+    } else {
+      return res.json({ rowCount: 0, orderCount: 0, errors: ['Unsupported file type. Upload XLSX, CSV, or PDF.'], converted: false });
     }
 
     if (allRows.length > UPLOAD_MAX_ROWS) {
@@ -1230,7 +1264,10 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
 
-    const mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
+    const orderExt = path.extname(orderFile.originalname).toLowerCase();
+    const mapped = orderExt === '.pdf'
+      ? await parsePdfPicklist(orderFile.buffer)
+      : parseUploadedFile(orderFile.buffer, orderFile.originalname);
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
