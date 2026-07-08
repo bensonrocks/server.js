@@ -2197,3 +2197,8 @@ body.ls-open { overflow: hidden; }
 .nb-mark  { border: 0; background: none; cursor: pointer; opacity: 0; font-size: .85rem; padding: .1rem .25rem; }
 .scan-items-table tr:hover .nb-mark { opacity: .55; }
 .nb-mark:hover { opacity: 1 !important; }
+
+/* on-screen substitute barcode for the current no-barcode item */
+.nb-inline-bc-wrap { margin-top: .35rem; display: inline-block; background: #fff; border: 2px solid #f59e0b; border-radius: 8px; padding: .3rem .5rem .15rem; }
+.nb-inline-bc { display: block; }
+.nb-inline-bc-hint { text-align: center; font-size: .68rem; color: #92400e; font-weight: 600; padding-bottom: .1rem; }

@@ -1809,6 +1809,10 @@
     });
     decorated.sort((a, b) => (a.done - b.done) || (a.idx - b.idx));
     const activeSku = decorated.find(d => !d.done)?.item.sku;
+    // Only ONE on-screen substitute barcode at a time — the first incomplete
+    // no-barcode item. The next one appears when this one is fully counted,
+    // so the scanner can never pick up the wrong code from the monitor.
+    const inlineBcSku = decorated.find(d => !d.done && isNoBarcodeItem(d.item))?.item.sku;
 
     document.getElementById('scanItemsTbody').innerHTML = decorated.map(({ item, s, done }) => {
       const noBarcode = isNoBarcodeItem(item);
@@ -1858,9 +1862,12 @@
              <button class="nb-mark" data-sku="${esc(item.sku)}" title="No barcode on this item? Switch to count buttons">&#9888;</button>
            </td>`;
 
+      const inlineBc = item.sku === inlineBcSku
+        ? `<div class="nb-inline-bc-wrap"><svg class="nb-inline-bc" data-bc-sku="${esc(item.sku)}"></svg><div class="nb-inline-bc-hint">&#9535; scan this barcode off the screen</div></div>`
+        : (noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; count buttons, or wait for on-screen barcode</div>' : '');
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
-          <td><code class="sku-code">${esc(item.sku)}</code>${noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; click to count or scan bench sheet</div>' : ''}</td>
+          <td><code class="sku-code">${esc(item.sku)}</code>${inlineBc}</td>
           <td class="desc-cell">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
           ${scannedCell}
@@ -1896,6 +1903,15 @@
         renderItemsTable(activeOrder);
       });
     });
+
+    // Render the single on-screen substitute barcode (CODE128 of the SKU) —
+    // scanning it off the monitor goes through the normal scan path
+    const bcEl = document.querySelector('#scanItemsTbody svg.nb-inline-bc');
+    if (bcEl && window.JsBarcode) {
+      try {
+        JsBarcode(bcEl, bcEl.dataset.bcSku, { format: 'CODE128', width: 2.4, height: 54, displayValue: false, margin: 6, background: '#ffffff' });
+      } catch {}
+    }
 
     // Keep the next pending item in view without the packer touching the mouse
     document.querySelector('#scanItemsTbody tr.row-active')
