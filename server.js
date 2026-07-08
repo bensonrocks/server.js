@@ -106,7 +106,8 @@ const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
 const GMAIL_OAUTH_FILE        = path.join(DATA_DIR, 'gmail_oauth.json');
 // Not DATA_DIR — static reference data, always lives with the app code
 const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json');
-const SKU_DESC_FILE           = path.join(__dirname, 'lib', 'sku-descriptions.json');
+// DATA_DIR (persistent volume) so descriptions survive redeploys
+const SKU_DESC_FILE           = path.join(DATA_DIR, 'sku-descriptions.json');
 
 const LABEL_IMPORT_DIR = path.join(DATA_DIR, 'label_imports');
 fs.mkdirSync(WMS_DIR,            { recursive: true });
@@ -438,10 +439,15 @@ function globalOrdersWithState() {
       seen.add(ord.order_number);
       const state       = states[ord.order_number] || { status: 'pending', scanned: {} };
       const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
-      const enrichedLines = (ord.lines || []).map(l => ({
-        ...l,
-        description: l.description || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
-      }));
+      const enrichedLines = (ord.lines || []).map(l => {
+        const stored = l.description || '';
+        // Ignore stored description if it equals the SKU (legacy data bug)
+        const realDesc = (stored && stored !== l.sku) ? stored : '';
+        return {
+          ...l,
+          description: realDesc || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
+        };
+      });
       out.push({
         ...ord,
         lines:             enrichedLines,

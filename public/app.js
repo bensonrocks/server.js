@@ -1688,7 +1688,17 @@
     const piecesEl = document.getElementById('scanPiecesLeft');
     const numEl    = document.getElementById('scanPiecesNum');
     if (piecesEl && numEl) {
-      numEl.textContent = remaining > 0 ? remaining : (remaining < 0 ? `+${-remaining}` : '✓');
+      const labelEl = piecesEl.querySelector('.spl-label');
+      if (hasOver) {
+        numEl.textContent = -remaining;
+        if (labelEl) labelEl.textContent = 'over';
+      } else if (remaining <= 0) {
+        numEl.textContent = '✓';
+        if (labelEl) labelEl.textContent = 'done';
+      } else {
+        numEl.textContent = remaining;
+        if (labelEl) labelEl.textContent = 'pcs left';
+      }
       piecesEl.className = 'scan-pieces-left' +
         (hasOver ? ' spl-over' : remaining <= 0 ? ' spl-done' : '');
     }
