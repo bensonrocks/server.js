@@ -507,7 +507,8 @@ tr:hover td { background: var(--surface-2); }
 .dash-order-no { font-weight: 700; font-size: .9rem; word-break: break-all; }
 .dash-order-client  { font-size: .67rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .04em; }
 .dash-order-customer { font-size: .78rem; color: var(--text-light); }
-.dash-order-waybill  { font-size: .73rem; color: var(--primary); font-family: monospace; }
+.dash-order-waybill  { font-size: .8rem; color: var(--primary); font-family: monospace; font-weight: 600; }
+.dash-field-lbl { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-right: .25em; font-family: inherit; }
 .dash-order-right { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
 .dash-order-prog  { font-size: .73rem; color: var(--text-muted); white-space: nowrap; }
 

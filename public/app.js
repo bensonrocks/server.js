@@ -990,6 +990,18 @@
     const val = e.target.value.trim();
     if (!val) return;
     e.target.value = '';
+
+    // Priority 1: direct order number match (client-side, instant)
+    const valLower = val.toLowerCase();
+    const directMatch = loadedOrders.find(o => o.order_number.trim().toLowerCase() === valLower);
+    if (directMatch) {
+      if (directMatch.scan_status === 'done') { setWaybillMsg('Order already completed.', true); return; }
+      setWaybillMsg('', false);
+      openScanOverlay(directMatch.order_number);
+      return;
+    }
+
+    // Priority 2: waybill / tracking number lookup (server-side)
     setWaybillMsg('Searching...', false);
     try {
       const r = await fetch('/api/waybill-lookup', {
@@ -999,18 +1011,12 @@
       });
       const data = await r.json();
       if (!r.ok || !data.order_number) {
-        setWaybillMsg('No order found for that waybill.', true);
+        setWaybillMsg('No order found for that number.', true);
         return;
       }
       const ord = loadedOrders.find(o => o.order_number === data.order_number);
-      if (!ord) {
-        setWaybillMsg('Order not in current batch.', true);
-        return;
-      }
-      if (ord.scan_status === 'done') {
-        setWaybillMsg('Order already completed.', true);
-        return;
-      }
+      if (!ord) { setWaybillMsg('Order not in current batch.', true); return; }
+      if (ord.scan_status === 'done') { setWaybillMsg('Order already completed.', true); return; }
       setWaybillMsg('', false);
       openScanOverlay(data.order_number);
     } catch (err) {
@@ -1052,10 +1058,10 @@
       return `
         <div class="dash-order-card status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
           <div class="dash-order-left">
-            <span class="dash-order-no">${esc(ord.order_number)}</span>
+            <span class="dash-order-no"><span class="dash-field-lbl">Order</span> ${esc(ord.order_number)}</span>
+            ${ord.waybill_number ? `<span class="dash-order-waybill"><span class="dash-field-lbl">Waybill</span> ${esc(ord.waybill_number)}</span>` : ''}
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
-            ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
             ${ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill uploaded</span>` : ''}
             ${ord.has_order_label ? `<span class="chip chip-label">&#127991; Label ready</span>` : ''}
             ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
