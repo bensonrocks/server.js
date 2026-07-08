@@ -142,6 +142,8 @@
 </head>
 <body>
 
+<div class="scroll-progress" id="scroll-progress"></div>
+
 <header class="site-header">
   <div class="container">
     <a href="#home" class="brand">
@@ -150,7 +152,6 @@
     </a>
     <nav class="main-nav" id="main-nav">
       <a href="#pillars">What We Do</a>
-      <a href="#white-glove">White-Glove</a>
       <a href="#why-not-distributor">Why Us</a>
       <a href="#process">Process</a>
       <a href="#team">Team</a>
@@ -182,9 +183,9 @@
     <a href="#contact" class="btn btn-primary">Book a scoping call</a>
 
     <div class="hero-stats">
-      <div><div class="num">3</div><div class="label">Integrated pillars, one team</div></div>
-      <div><div class="num">11</div><div class="label">Markets covered from Singapore</div></div>
-      <div><div class="num">30 min</div><div class="label">Complimentary scoping call</div></div>
+      <div><div class="num" data-count="3">3</div><div class="label">Integrated pillars, one team</div></div>
+      <div><div class="num" data-count="11">11</div><div class="label">Markets covered from Singapore</div></div>
+      <div><div class="num" data-count="30" data-suffix=" min">30 min</div><div class="label">Complimentary scoping call</div></div>
     </div>
   </div>
 </section>
@@ -237,7 +238,26 @@
         <p>Full 4PL orchestration or standalone 3PL execution — whichever your operation
           needs. 3PL selection and vendor management, warehouse strategy, inbound freight and
           customs clearance, WMS advisory, last-mile delivery, cross-border logistics across
-          the region.</p>
+          the region — end to end, including white-glove delivery for goods that can't just
+          be dropped at the door.</p>
+        <button class="pillar-expand-toggle" type="button" aria-expanded="false" aria-controls="wg-panel">
+          <span>White-glove delivery &amp; installation</span>
+          <span class="expand-icon" aria-hidden="true">+</span>
+        </button>
+        <div class="pillar-expand-panel" id="wg-panel">
+          <div class="pillar-expand-inner">
+            <p>High-value furniture, décor, and machinery that need careful handling and
+              professional on-site installation — run as a specialised extension of the same
+              3PL/4PL capability. Same single point of contact, same white-label discipline, no
+              extra vendors for you to manage.</p>
+            <ul class="wg-list-compact">
+              <li>Specialist crating, transport, and handling for furniture and décor</li>
+              <li>Machinery delivery with professional installation and commissioning</li>
+              <li>Site coordination and scheduled delivery windows</li>
+              <li>Full-service from origin through to final placement</li>
+            </ul>
+          </div>
+        </div>
       </div>
       <div class="pillar-card">
         <div class="pillar-top">
@@ -253,33 +273,6 @@
       </div>
     </div>
     <p class="pillars-foot">One team, all three pillars — so nothing falls into the gap between vendors.</p>
-  </div>
-</section>
-
-<section id="white-glove" class="section-alt">
-  <div class="container">
-    <div class="wg-grid">
-      <div>
-        <p class="eyebrow">White-Glove Services</p>
-        <h2 class="section-title">Delivery and installation, done properly</h2>
-        <p class="section-lede" style="margin-bottom:24px;">
-          Beyond standard fulfillment, we run white-glove logistics for goods that can't just
-          be dropped at the door — high-value furniture, décor, and machinery that need
-          careful handling and professional on-site installation.
-        </p>
-        <ul class="wg-list">
-          <li>Specialist crating, transport, and handling for furniture and décor</li>
-          <li>Machinery delivery with professional installation and commissioning</li>
-          <li>Site coordination and scheduled delivery windows</li>
-          <li>Full-service from origin through to final placement</li>
-        </ul>
-      </div>
-      <div class="wg-note">
-        <strong>Same team, same standard.</strong><br /><br />
-        This runs as a specialised extension of our 3PL/4PL capability — same single point of
-        contact, same white-label discipline, no extra vendors for you to manage.
-      </div>
-    </div>
   </div>
 </section>
 

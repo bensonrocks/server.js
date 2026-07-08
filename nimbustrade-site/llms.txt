@@ -9,7 +9,7 @@ NimbusTrade Solutions Pte Ltd (云腾贸易方案私人有限公司, UEN 2024260
 - [Market Entry & Regulatory](https://www.nimbustrade.co/#pillars): Singapore Customs licensing, HS code classification, MES/ME permits, JTC and SCDF submissions, import/export permits, cross-border documentation.
 - [Fulfillment & Logistics (4PL & 3PL)](https://www.nimbustrade.co/#pillars): full 4PL orchestration or standalone 3PL execution, 3PL selection and vendor management, warehouse strategy, inbound freight and customs clearance, WMS advisory, last-mile delivery, cross-border logistics.
 - [Omnichannel Growth](https://www.nimbustrade.co/#pillars): modern trade entry, marketplace enablement (Shopee, Lazada, Amazon), distributor identification, D2C launch, trade marketing, regional expansion.
-- [White-Glove Delivery](https://www.nimbustrade.co/#white-glove): specialist crating, transport, and professional on-site installation and commissioning for high-value furniture, décor, and machinery.
+- [White-Glove Delivery](https://www.nimbustrade.co/#pillars): specialist crating, transport, and professional on-site installation and commissioning for high-value furniture, décor, and machinery, delivered as part of the Fulfillment & Logistics pillar.
 
 ## Engagement models
 
