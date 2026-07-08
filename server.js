@@ -1050,6 +1050,7 @@ async function parsePdfPicklist(buffer) {
   // appear on separate lines (e.g. "Pick Ticket" then "539937" on next line).
   let pickTicket   = '';
   let accountName  = '';
+  let reference    = '';
   let deliveryDate = '';
   let carrier      = '';
 
@@ -1058,13 +1059,28 @@ async function parsePdfPicklist(buffer) {
     for (let j = i + 1; j < T.length; j++) if (T[j]) return T[j];
     return '';
   };
+  // Return index of next non-empty T[i] after index i, or -1
+  const nextValIdx = (i) => {
+    for (let j = i + 1; j < T.length; j++) if (T[j]) return j;
+    return -1;
+  };
 
   for (let i = 0; i < T.length; i++) {
     const t = T[i];
     // Handle both "Label VALUE" on one line AND "Label" + value on next line
     let m;
-    if ((m = t.match(/^Account\s+(.*\S)/i)))       { accountName  = m[1]; continue; }
-    if (t === 'Account')                            { accountName  = nextVal(i); continue; }
+    if ((m = t.match(/^Account\s+(.*\S)/i))) {
+      accountName = m[1];
+      // In 2-column PDF layout, Reference value appears on the very next non-empty
+      // line after the Account value (before the "Reference" label itself appears)
+      reference = nextVal(i);
+      continue;
+    }
+    if (t === 'Account') {
+      const accIdx = nextValIdx(i);
+      if (accIdx !== -1) { accountName = T[accIdx]; reference = nextVal(accIdx); }
+      continue;
+    }
     if ((m = t.match(/^Pick\s*Ticket\s+(\S+)/i)))  { pickTicket   = m[1]; continue; }
     if (/^Pick\s*Ticket$/i.test(t))                { pickTicket   = nextVal(i); continue; }
     if ((m = t.match(/^Delivery\s+Date\s+(\S+)/i))){ deliveryDate = m[1]; continue; }
@@ -1149,7 +1165,7 @@ async function parsePdfPicklist(buffer) {
   if (!items.length) return [];
 
   return items.map(item => ({
-    order_number:     giNumber   || pickTicket || 'UNKNOWN',
+    order_number:     reference  || giNumber   || pickTicket || 'UNKNOWN',
     customer_name:    accountName || '',
     client_name:      accountName || '',
     tel:              '',
