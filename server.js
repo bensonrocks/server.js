@@ -1465,19 +1465,14 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    let emailSent = false, emailError = '', actualRecipient = '';
-    try {
-      const conf = readEmailConfig();
-      actualRecipient = emailTo || conf.to_email;
-      await sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction);
-      emailSent = true;
-    } catch (err) {
-      console.error('[email]', err.message);
-      emailError = err.message;
-    }
+    const conf = readEmailConfig();
+    const actualRecipient = emailTo || conf.to_email || '';
 
-    // Return the global view so every client immediately sees the same data
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState(), emailSent, emailError, emailTo: actualRecipient });
+    // Return immediately — email sends in the background so the upload never hangs
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState(), emailSent: false, emailError: '', emailTo: actualRecipient });
+
+    sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction)
+      .catch(err => console.error('[email]', err.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
