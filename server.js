@@ -1337,7 +1337,9 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     const db = readDb();
     db.batches.unshift(batch);
     writeDb(db);
-    fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
+    fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
+      if (err) console.error('[ocr-upload] XLSX write error:', err.message);
+    });
 
     res.json({ batchId, orders, rowCount: rows.length, sessionId: uuidv4() });
   } catch (err) {
@@ -1410,13 +1412,11 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const mapped = orderExt === '.pdf'
       ? await parsePdfPicklist(orderFile.buffer)
       : parseUploadedFile(orderFile.buffer, orderFile.originalname);
-    L(`parsed: ${mapped.length} rows`);
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const orders    = summarizeOrders(mapped);
-    L(`summarized: ${orders.length} orders`);
 
     // ── Validation (lib/validation.js) — ABORT if any error found ──────────
     const wmsRows = [];
@@ -1427,7 +1427,6 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       }
     }
     const validation = validateRows(wmsRows);
-    L(`validation: ${validation.passed ? 'passed' : 'FAILED'}`);
     if (!validation.passed) {
       return res.status(422).json({
         error:      validation.abortMessage,
@@ -1455,7 +1454,9 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const db = readDb();
     db.batches.unshift(batch);
     writeDb(db);
-    fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
+    fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
+      if (err) console.error('[upload] XLSX write error:', err.message);
+    });
 
     // Split waybill PDF if provided
     if (waybillPdf) {
