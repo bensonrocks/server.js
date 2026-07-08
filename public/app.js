@@ -797,12 +797,12 @@
       }
       SESSION_ID = data.sessionId;
       sessionStorage.setItem('wms_session', SESSION_ID);
-      activeOrder = null;
+      loadedOrders = data.orders;
+      activeOrder  = null;
 
-      // Show success immediately — don't wait for order list fetch
       const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       setUploadStatus('success',
-        `Converted ${data.rowCount} line(s) across ${data.orderCount} order(s) from "${file.name}".${pdfMsg}`
+        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${pdfMsg}`
       );
 
       // Show download button immediately and lock tabs until downloaded
@@ -823,16 +823,11 @@
       dlWrap.classList.remove('hidden');
       lockTabsForDownload();
 
+      renderUploadList(loadedOrders);
+      renderBreakdowns(loadedOrders);
+      fetchAndRenderStats();
       pendingOrderFile = null;
       fileInput.value  = '';
-
-      // Fetch orders in background without blocking the success UI
-      fetch('/api/orders').then(r => r.ok ? r.json() : []).then(orders => {
-        loadedOrders = orders;
-        renderUploadList(loadedOrders);
-        renderBreakdowns(loadedOrders);
-      }).catch(() => {});
-      fetchAndRenderStats();
     } catch (err) {
       document.getElementById('uploadConfirmOverlay').classList.add('hidden');
       setUploadStatus('error', err.message);

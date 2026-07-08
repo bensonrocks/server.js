@@ -1465,7 +1465,27 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: [] });
+    // Build order state inline — avoids calling globalOrdersWithState() which
+    // does fs.existsSync per order. A freshly uploaded batch is always pending
+    // with no waybill or label yet.
+    const ordersWithState = orders.map(ord => ({
+      ...ord,
+      scan_status:       'pending',
+      scanned:           {},
+      mismatches:        [],
+      startTime:         null,
+      endTime:           null,
+      operator:          null,
+      keyfields_closed:  false,
+      alert_email_sent:  null,
+      alert_email_error: null,
+      batchId,
+      client_name:       clientName,
+      has_waybill_pdf:   false,
+      has_order_label:   false,
+    }));
+
+    res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
     res.status(500).json({ error: err.message });
