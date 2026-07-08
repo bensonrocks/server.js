@@ -1403,21 +1403,27 @@ const uploadFields = upload.fields([
 ]);
 
 app.post('/api/upload', uploadFields, async (req, res) => {
+  const T = Date.now();
+  const L = (s) => console.log(`[upload +${Date.now()-T}ms] ${s}`);
   try {
+    L('start');
     const orderFile  = req.files?.orderFile?.[0];
     const waybillPdf = req.files?.waybillPdf?.[0];
 
     if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
+    L(`file received: ${orderFile.originalname} ${orderFile.size}b`);
 
     const orderExt = path.extname(orderFile.originalname).toLowerCase();
     const mapped = orderExt === '.pdf'
       ? await parsePdfPicklist(orderFile.buffer)
       : parseUploadedFile(orderFile.buffer, orderFile.originalname);
+    L(`parsed: ${mapped.length} rows`);
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const orders    = summarizeOrders(mapped);
+    L(`summarized: ${orders.length} orders`);
 
     // ── Validation (lib/validation.js) — ABORT if any error found ──────────
     const wmsRows = [];
@@ -1428,6 +1434,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       }
     }
     const validation = validateRows(wmsRows);
+    L(`validation: ${validation.passed ? 'passed' : 'FAILED'}`);
     if (!validation.passed) {
       return res.status(422).json({
         error:      validation.abortMessage,
@@ -1436,11 +1443,12 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     }
     // ── Validation passed — proceed ─────────────────────────────────────────
 
+    L('generating XLSX');
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
+    L('XLSX done');
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
-    const emailTo    = (req.body?.email_to   || '').trim();
     const direction  = req.body?.direction === 'Inbound' ? 'Inbound' : 'Outbound';
 
     const batch = {
@@ -1454,10 +1462,13 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       rawRows: mapped,
     };
 
+    L('writing DB');
     const db = readDb();
     db.batches.unshift(batch);
     writeDb(db);
+    L('writing XLSX file');
     fs.writeFileSync(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer);
+    L('done — building orders state');
 
     // Split waybill PDF if provided
     if (waybillPdf) {
@@ -1466,8 +1477,12 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       );
     }
 
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: globalOrdersWithState() });
+    const allOrders = globalOrdersWithState();
+    L(`orders state built: ${allOrders.length} orders — sending response`);
+    res.json({ sessionId, batchId, rowCount: mapped.length, orders: allOrders });
+    L('response sent');
   } catch (err) {
+    console.error('[upload] ERROR:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
