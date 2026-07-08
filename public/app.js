@@ -771,11 +771,19 @@
     form.append('direction', uploadDirection);
 
     try {
-      const resp = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'x-session-id': SESSION_ID },
-        body: form,
-      });
+      const _uploadAbort = new AbortController();
+      const _uploadTimer = setTimeout(() => _uploadAbort.abort(), 30000);
+      let resp;
+      try {
+        resp = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'x-session-id': SESSION_ID },
+          body: form,
+          signal: _uploadAbort.signal,
+        });
+      } finally {
+        clearTimeout(_uploadTimer);
+      }
       const data = await resp.json();
       document.getElementById('uploadConfirmOverlay').classList.add('hidden');
 
