@@ -76,6 +76,7 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 
 // verify callback stores the raw Buffer on req so webhook HMAC verification can use it
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (req, res) => res.redirect('/about.html'));
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
 
