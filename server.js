@@ -106,6 +106,7 @@ const EMAIL_CONFIG_FILE       = path.join(DATA_DIR, 'email_config.json');
 const GMAIL_OAUTH_FILE        = path.join(DATA_DIR, 'gmail_oauth.json');
 // Not DATA_DIR — static reference data, always lives with the app code
 const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json');
+const SKU_DESC_FILE           = path.join(__dirname, 'lib', 'sku-descriptions.json');
 
 const LABEL_IMPORT_DIR = path.join(DATA_DIR, 'label_imports');
 fs.mkdirSync(WMS_DIR,            { recursive: true });
@@ -203,6 +204,7 @@ function writeDb(data) {
 // barcode is its own key. Empty CODE 2 rows are omitted entirely.
 let _beTimeCode2Map = {};
 let _beTimeCode2Lengths = []; // unique key lengths, descending — rebuilt whenever map changes
+let _skuDescMap = {};         // SKU → description, loaded from the CODE 2 reference file
 
 function _rebuildCode2Lengths() {
   const lens = [...new Set(Object.keys(_beTimeCode2Map).map(k => k.length))];
@@ -217,6 +219,10 @@ try {
 } catch (e) {
   console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
 }
+try {
+  _skuDescMap = JSON.parse(fs.readFileSync(SKU_DESC_FILE, 'utf8'));
+  console.log(`[IdealScan] SKU description map loaded: ${Object.keys(_skuDescMap).length} entries`);
+} catch (e) { /* no desc file yet — populated on first CODE2 upload */ }
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
@@ -412,8 +418,13 @@ function globalOrdersWithState() {
       seen.add(ord.order_number);
       const state       = states[ord.order_number] || { status: 'pending', scanned: {} };
       const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
+      const enrichedLines = (ord.lines || []).map(l => ({
+        ...l,
+        description: l.description || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
+      }));
       out.push({
         ...ord,
+        lines:             enrichedLines,
         scan_status:       state.status           || 'pending',
         scanned:           { ...state.scanned },
         mismatches:        state.mismatches        || [],
@@ -2373,18 +2384,40 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
       });
     }
 
+    // Find description column — check common names in priority order
+    const descCandidates = ['description','desc','name','item_name','product_name','item description','product description','goods name','short_name','long_name'];
+    const hdrNorm = hdr.map(h => String(h ?? '').toLowerCase().trim().replace(/\s+/g, '_'));
+    let descIdx = -1;
+    for (const c of descCandidates) {
+      const i = hdrNorm.indexOf(c.replace(/\s+/g,'_'));
+      if (i !== -1) { descIdx = i; break; }
+    }
+    // Fallback: any remaining column that looks text-heavy and isn't code/code2/qty
+    if (descIdx === -1) {
+      descIdx = hdrNorm.findIndex((h, i) => i !== code1Idx && i !== code2Idx && /desc|name|product|goods|item|detail|spec|label/.test(h));
+    }
+
     const map = {};
+    const descMap = {};
     let skipped = 0;
     dataRows.forEach(row => {
       const pc = String(row[code1Idx] ?? '').trim();
       const c2 = String(row[code2Idx] ?? '').trim();
       if (!pc || !c2 || c2 === 'undefined') { skipped++; return; }
       c2.split(',').forEach(b => { const bc = b.trim(); if (bc) map[bc] = pc; });
+      if (descIdx !== -1) {
+        const desc = String(row[descIdx] ?? '').trim();
+        if (pc && desc) descMap[pc] = desc;
+      }
     });
     fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
     _beTimeCode2Map = map;
     _rebuildCode2Lengths();
-    res.json({ ok: true, entries: Object.keys(map).length, skipped });
+    if (Object.keys(descMap).length > 0) {
+      fs.writeFileSync(SKU_DESC_FILE, JSON.stringify(descMap, null, 2));
+      _skuDescMap = descMap;
+    }
+    res.json({ ok: true, entries: Object.keys(map).length, skipped, descriptions: Object.keys(descMap).length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
