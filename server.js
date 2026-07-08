@@ -1035,29 +1035,171 @@ async function parsePdfPicklist(buffer) {
   if (!pdfParse) throw new Error('pdf-parse not installed. Run: npm install pdf-parse');
   const parsed = await pdfParse(buffer);
   const text   = parsed.text || '';
+  const lines  = text.split('\n');
 
-  const rows = parseOcrPicklist(text);
-  if (!rows.length) return rows;
+  // Index of non-empty (trimmed) lines, preserving original array position
+  const nonEmpty = lines
+    .map((raw, idx) => ({ raw, trimmed: raw.trim(), idx }))
+    .filter(l => l.trimmed);
 
-  // issue_no is already correctly extracted by parseOcrPicklist via the
-  // dedicated extractKV call — use it as the canonical order identifier.
-  const issueNo = rows[0]?.issue_no;
-  if (issueNo && issueNo.length >= 3) {
-    for (const row of rows) row.order_number = issueNo;
+  // ── Phase 1: header fields (before the item table) ───────────────────────
+  let giNumber     = '';
+  let pickTicket   = '';
+  let accountName  = '';
+  let reference    = '';
+  let deliveryDate = '';
+  let consignee    = '';
+  let carrier      = '';
+
+  // GI number — first occurrence anywhere
+  for (const { trimmed } of nonEmpty) {
+    const m = trimmed.match(/\b(GI-\d{4,})\b/);
+    if (m) { giNumber = m[1]; break; }
   }
 
-  // Extract carrier from Remarks line (clean PDF text — no OCR noise).
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    const m = line.match(/^Remarks?\s+(\S+)/i);
-    if (m) {
-      const carrier = m[1].trim();
-      for (const row of rows) row.carrier = carrier;
-      break;
+  const tableStartIdx = nonEmpty.findIndex(l => /^SNo\s+Location/i.test(l.trimmed));
+  const headerLines   = tableStartIdx === -1 ? nonEmpty : nonEmpty.slice(0, tableStartIdx);
+
+  for (let i = 0; i < headerLines.length; i++) {
+    const { trimmed } = headerLines[i];
+    const next = headerLines[i + 1]?.trimmed || '';
+
+    const acm = trimmed.match(/^Account\s+(.*)/i);
+    if (acm) accountName = acm[1].trim();
+
+    const ptm = trimmed.match(/^Pick\s*Ticket\s+(\S+)/i);
+    if (ptm) pickTicket = ptm[1].trim();
+
+    const ddm = trimmed.match(/^Delivery\s+Date\s+(\S+)/i);
+    if (ddm) deliveryDate = ddm[1].trim();
+
+    // "Consignee" as a label — value is on the next non-empty line
+    if (/^Consignee\s*$/i.test(trimmed) && next &&
+        !/^(Reference|GI-|Pick|Account|Delivery|Status|Issuing)/i.test(next)) {
+      consignee = next;
+    }
+
+    // "Reference" as a label — value is next non-empty line (skip if it's the GI number itself)
+    if (/^Reference\s*$/i.test(trimmed) && next && !/^GI-/i.test(next) &&
+        !/^(Consignee|Pick|Account|Delivery|Status|Issuing)/i.test(next)) {
+      reference = next;
     }
   }
 
-  return rows;
+  // ── Phase 3: carrier from footer (after Total Whole Qty) ─────────────────
+  const footerStartIdx = nonEmpty.findIndex(l => /^Total\s+Whole\s+Qty/i.test(l.trimmed));
+  if (footerStartIdx !== -1) {
+    const footerLines = nonEmpty.slice(footerStartIdx);
+    for (let i = 0; i < footerLines.length; i++) {
+      const { trimmed } = footerLines[i];
+      const rem = trimmed.match(/^Remarks?:?\s+(\S+)/i);
+      if (rem) { carrier = rem[1].trim(); break; }
+      if (/^Remarks?:?\s*$/i.test(trimmed) && footerLines[i + 1]) {
+        carrier = footerLines[i + 1].trimmed;
+        break;
+      }
+    }
+  }
+
+  // ── Phase 2: item table ───────────────────────────────────────────────────
+  // Item header line: {SNo} {LOCATION_CODE} {SKU} {desc tokens...} {BatchNo}
+  const ITEM_START = /^(\d{1,3})\s+([A-Z]{1,4}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?)\s+(\S+)\s+(.*)/i;
+  // Qty line: leading whitespace + digit + EACH
+  const QTY_LINE   = /^\s+(\d+)\s+EACH/i;
+  // Stop at totals section
+  const STOP_PAT   = /^Total\s+(Whole|Loose)\s+Qty/i;
+  // Skip table-header continuation lines
+  const SKIP_PAT   = /^(LotNo|WholeUom|LooseUom|Total\s+LHU|ExpiryDate|Sku\s+Desc|BatchNo\/)/i;
+  // Batch token: 4-10 alphanumeric chars containing at least one digit, no unit suffixes
+  const BATCH_TOK  = (tok) =>
+    /^[A-Z0-9]{4,10}$/i.test(tok) &&
+    /\d/.test(tok) &&
+    !/\d(?:ml|mg|mcg|kg|oz|lb|pcs|pc)$/i.test(tok);
+  // Expiry date anywhere in a line
+  const EXPIRY_PAT = /\b(\d{1,2}[\/\-]\w+[\/\-]\d{2,4})\b/;
+
+  let inTable = false;
+  let current = null;
+  const items = [];
+
+  for (const { raw, trimmed } of lines.map((r, i) => ({ raw: r, trimmed: r.trim() }))) {
+    if (!inTable) {
+      if (/^SNo\s+Location/i.test(trimmed)) inTable = true;
+      continue;
+    }
+
+    if (STOP_PAT.test(trimmed)) {
+      if (current) { items.push(current); current = null; }
+      break;
+    }
+
+    // Qty line must be checked against `raw` (leading whitespace is the signal)
+    if (QTY_LINE.test(raw)) {
+      if (current) {
+        const qm = raw.match(/^\s+(\d+)/);
+        if (qm) current.qty = parseInt(qm[1], 10) || 1;
+        const em = trimmed.match(EXPIRY_PAT);
+        if (em) current.expiry_date = em[1];
+      }
+      continue;
+    }
+
+    if (!trimmed || SKIP_PAT.test(trimmed)) continue;
+
+    // New item header
+    const im = trimmed.match(ITEM_START);
+    if (im) {
+      if (current) items.push(current);
+      const sku  = im[3];
+      const rest = im[4].trim();
+      let descStart = rest;
+      let batchNo   = '';
+      if (rest) {
+        const tokens  = rest.split(/\s+/);
+        const lastTok = tokens[tokens.length - 1];
+        if (BATCH_TOK(lastTok)) {
+          batchNo   = lastTok;
+          descStart = tokens.slice(0, -1).join(' ').trim();
+        }
+      }
+      current = { sku, description: descStart, batch_number: batchNo, expiry_date: '', qty: 1 };
+      continue;
+    }
+
+    // Continuation line — skip repeated-SKU markers like "- 8750"
+    if (current) {
+      if (/^-\s+\S+$/.test(trimmed)) continue;
+      current.description = current.description
+        ? current.description + ' ' + trimmed
+        : trimmed;
+    }
+  }
+  if (current) items.push(current);
+  if (!items.length) return [];
+
+  // ── Build rows matching mapRow() output shape ─────────────────────────────
+  return items.map(item => ({
+    order_number:     giNumber   || pickTicket || 'UNKNOWN',
+    customer_name:    consignee  || accountName || '',
+    client_name:      accountName || '',
+    tel:              '',
+    delivery_address: '',
+    waybill_number:   '',
+    issue_no:         giNumber   || '',
+    pick_ticket:      pickTicket || '',
+    carrier:          carrier    || '',
+    platform:         '',
+    shop_name:        '',
+    date:             deliveryDate || null,
+    sku:              item.sku,
+    qty:              item.qty,
+    description:      item.description.trim(),
+    batch_number:     item.batch_number || '',
+    expiry_date:      item.expiry_date  || null,
+    serial_number:    '',
+    remarks:          reference || '',
+    remarks_betime:   reference || '',
+  }));
 }
 
 // ── File parsing ────────────────────────────────────────────────────────────
