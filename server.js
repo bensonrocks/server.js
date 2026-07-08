@@ -1060,9 +1060,10 @@ function _isFooterRow(rec) {
 }
 
 // ── PDF Picking List parser ──────────────────────────────────────────────────
-// Extracts text from a Keyfields WMS Picking List PDF and parses it with the
-// same OCR parser used for photo uploads.  The GI / Issue No becomes the
-// order_number (takes priority over Reference which ORDER_PATTERNS finds first).
+// Extracts text from a Keyfields WMS Picking List PDF.
+// Field mapping: GI number → order_number (matches the *GI-…* barcode on the
+// sheet, scanned to open the order), customer reference → waybill_number,
+// pick ticket kept as a scan fallback (the second barcode on the sheet).
 async function parsePdfPicklist(buffer) {
   if (!pdfParse) throw new Error('pdf-parse not installed. Run: npm install pdf-parse');
   const parsed = await pdfParse(buffer);
@@ -1197,12 +1198,16 @@ async function parsePdfPicklist(buffer) {
   if (!items.length) return [];
 
   return items.map(item => ({
-    order_number:     reference  || giNumber   || pickTicket || 'UNKNOWN',
+    // GI number is the order identifier — it matches the scannable *GI-…*
+    // barcode printed on the picking list, so scanning it opens the order.
+    // The customer reference (e.g. Shopee order sn) goes to waybill_number
+    // so the waybill-lookup path also resolves it.
+    order_number:     giNumber   || reference  || pickTicket || 'UNKNOWN',
     customer_name:    accountName || '',
     client_name:      accountName || '',
     tel:              '',
     delivery_address: '',
-    waybill_number:   '',
+    waybill_number:   reference  || '',
     issue_no:         giNumber   || '',
     pick_ticket:      pickTicket || '',
     carrier:          carrier    || 'Offline',

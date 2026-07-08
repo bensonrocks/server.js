@@ -1091,12 +1091,16 @@
     if (!val) return;
     e.target.value = '';
 
-    // Priority 1: direct order number match (client-side, instant)
+    // Priority 1: direct order number match (client-side, instant).
+    // Also matches the pick-ticket number — PDF picking lists carry two
+    // barcodes (GI number + pick ticket) and either should open the order.
     const valLower = val.toLowerCase();
     const strip0 = s => s.replace(/^0+(?=.)/, '');
     const directMatch = loadedOrders.find(o => {
       const on = o.order_number.trim().toLowerCase();
-      return on === valLower || strip0(on) === strip0(valLower);
+      const pt = (o.pick_ticket || '').trim().toLowerCase();
+      return on === valLower || strip0(on) === strip0(valLower) ||
+             (pt && (pt === valLower || strip0(pt) === strip0(valLower)));
     });
     if (directMatch) {
       if (directMatch.scan_status === 'done') { setWaybillMsg('Order already completed.', true); return; }
