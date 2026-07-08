@@ -1787,7 +1787,7 @@
     const input = document.getElementById('itemScanInput');
     input.value = '';
     document.getElementById('itemScanFeedback').classList.add('hidden');
-    setTimeout(() => input.focus(), 80);
+    setTimeout(focusActiveQty, 80);
   }
 
   // ── Timer ──────────────────────────────────────────────────────────────────
@@ -1849,10 +1849,11 @@
     }
     scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
     const pageRows = decorated.slice(scanPage * scanPageSize, (scanPage + 1) * scanPageSize);
-    // Only ONE on-screen substitute barcode at a time — the first incomplete
-    // no-barcode item. The next one appears when this one is fully counted,
-    // so the scanner can never pick up the wrong code from the monitor.
-    const inlineBcSku = decorated.find(d => !d.done && isNoBarcodeItem(d.item))?.item.sku;
+    // Only ONE on-screen substitute barcode at a time — it belongs to the
+    // item currently being worked on (the same one whose qty field gets the
+    // cursor). The next one appears when this item is fully counted, so the
+    // scanner can never pick up the wrong code from the monitor.
+    const inlineBcSku = activeSku;
 
     document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s, done }) => {
       const noBarcode = isNoBarcodeItem(item);
@@ -1904,7 +1905,7 @@
 
       const inlineBc = item.sku === inlineBcSku
         ? `<div class="nb-inline-bc-wrap"><svg class="nb-inline-bc" data-bc-sku="${esc(item.sku)}"></svg><div class="nb-inline-bc-hint">&#9535; scan this barcode off the screen</div></div>`
-        : (noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; count buttons, or wait for on-screen barcode</div>' : '');
+        : (noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; count buttons, or wait for its turn</div>' : '');
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
           <td><code class="sku-code">${esc(item.sku)}</code>${lotBadges}${inlineBc}</td>
@@ -1917,7 +1918,6 @@
     document.querySelectorAll('.qty-input').forEach(inp => {
       inp.addEventListener('change', async () => {
         await setItemQty(activeOrder.order_number, inp.dataset.sku, parseInt(inp.value, 10) || 0);
-        document.getElementById('itemScanInput').focus();
       });
     });
 
@@ -1932,7 +1932,6 @@
                      : Math.max(0, cur - 1);
         learnNoBarcodeSku(item);
         await setItemQty(activeOrder.order_number, item.sku, target);
-        document.getElementById('itemScanInput').focus();
       });
     });
     document.querySelectorAll('.nb-mark').forEach(btn => {
@@ -1973,16 +1972,27 @@
       pager.classList.remove('hidden');
       document.getElementById('scanPagePrev').addEventListener('click', () => {
         scanPageManual = true; scanPage--; renderItemsTable(activeOrder);
-        document.getElementById('itemScanInput').focus();
       });
       document.getElementById('scanPageNext').addEventListener('click', () => {
         scanPageManual = true; scanPage++; renderItemsTable(activeOrder);
-        document.getElementById('itemScanInput').focus();
       });
     } else {
       pager.classList.add('hidden');
       pager.innerHTML = '';
     }
+
+    focusActiveQty();
+  }
+
+  // Cursor defaults to the qty field of the item being worked on (the one
+  // with the on-screen barcode). Skipped on touch devices where focusing an
+  // input pops the on-screen keyboard over the list.
+  function focusActiveQty() {
+    if (window.matchMedia('(pointer: coarse)').matches) return;
+    const inp = document.querySelector('#scanItemsTbody tr.row-active .qty-input')
+             || document.querySelector('#scanItemsTbody tr:not(.row-compact) .qty-input');
+    if (inp) { inp.focus(); inp.select(); }
+    else document.getElementById('itemScanInput').focus();
   }
 
   function updateProgress(order) {
@@ -2046,25 +2056,72 @@
     if (val && activeOrder) handleItemScan(val);
   }
 
+  // Scanner-burst detection for qty fields: the cursor now rests in a qty
+  // input by default, and a barcode gun "types" its code wherever the cursor
+  // is. Guns emit characters with tiny gaps (<40ms); humans don't. Three
+  // rapid characters = scanner → restore the qty value and route the code
+  // through the normal scan path. Slow typing = manual qty entry, untouched.
+  let _qtyBurst = null; // { el, chars, last, base, scanner }
+  const QTY_BURST_GAP_MS = 90;
+
+  function _qtyBurstToScan() {
+    if (!_qtyBurst) return;
+    const code = _qtyBurst.chars.join('');
+    _qtyBurst.el.value = _qtyBurst.base;
+    _qtyBurst = null;
+    _scanBuf = code;
+    _flushScanBuf();
+  }
+
   function _globalScanKeydown(e) {
     // Never intercept while any modal dialog is visible
     if (document.querySelector('.modal-overlay:not(.hidden)')) return;
 
-    // Let normal input inside qty fields or modal inputs work uninterrupted
-    const tag = document.activeElement?.tagName;
+    const ae    = document.activeElement;
+    const tag   = ae?.tagName;
+    const isQty = !!ae?.classList?.contains('qty-input');
     if (tag === 'INPUT' || tag === 'TEXTAREA') {
-      // Only intercept the dedicated scan input; pass everything else through
-      if (document.activeElement.id !== 'itemScanInput') return;
+      // Intercept the dedicated scan input and (for burst detection) qty
+      // fields; pass every other input through untouched
+      if (ae.id !== 'itemScanInput' && !isQty) return;
     }
 
     if (e.key === 'Enter') {
+      if (isQty) {
+        if (_qtyBurst?.scanner) { e.preventDefault(); _qtyBurstToScan(); }
+        // else: manual qty entry — let Enter commit via the change event
+        return;
+      }
       // Add whatever is in the visible input field too (manual typing path)
       const inp = document.getElementById('itemScanInput');
-      if (document.activeElement.id === 'itemScanInput' && inp.value) {
+      if (ae.id === 'itemScanInput' && inp.value) {
         _scanBuf += inp.value;
       }
       _flushScanBuf();
       e.preventDefault();
+      return;
+    }
+
+    // Qty field: watch typing speed to tell gun from human
+    if (isQty && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const now = Date.now();
+      if (!_qtyBurst || _qtyBurst.el !== ae || now - _qtyBurst.last > QTY_BURST_GAP_MS) {
+        _qtyBurst = { el: ae, chars: [], last: 0, base: ae.value, scanner: false };
+      }
+      _qtyBurst.chars.push(e.key);
+      _qtyBurst.last = now;
+      if (_qtyBurst.scanner) {
+        e.preventDefault();
+      } else if (_qtyBurst.chars.length >= 3) {
+        _qtyBurst.scanner = true;
+        ae.value = _qtyBurst.base; // strip the characters that leaked in
+        e.preventDefault();
+      }
+      clearTimeout(_scanFlushTimer);
+      _scanFlushTimer = setTimeout(() => {
+        if (_qtyBurst?.scanner) _qtyBurstToScan();
+        else _qtyBurst = null;
+      }, SCAN_IDLE_MS);
       return;
     }
 
@@ -2156,7 +2213,7 @@
       }
     }
     _scanBusy = false;
-    document.getElementById('itemScanInput').focus();
+    focusActiveQty();
   }
 
   async function setItemQty(orderNumber, sku, qty) {
