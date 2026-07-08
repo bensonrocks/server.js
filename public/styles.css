@@ -723,6 +723,13 @@ body.scan-open { overflow: hidden; }
 .scan-order-no { font-weight: 700; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scan-progress { background: var(--bg); border: 1px solid var(--border); padding: .15em .6em; border-radius: 99px; font-size: .73rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
 .scan-progress.all-done { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+
+/* ── Piece counter (top-left of scan header) ── */
+.scan-pieces-left { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 3.2rem; background: var(--accent, #2563eb); color: #fff; border-radius: var(--radius-sm); padding: .15rem .65rem .2rem; flex-shrink: 0; transition: background .18s; }
+.scan-pieces-left #scanPiecesNum { font-size: 2rem; font-weight: 800; line-height: 1; }
+.scan-pieces-left .spl-label { font-size: .5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; opacity: .9; }
+.scan-pieces-left.spl-over  { background: var(--danger, #dc2626); }
+.scan-pieces-left.spl-done  { background: var(--success, #16a34a); }
 .scan-order-meta { display: flex; gap: .5rem 1.5rem; flex-wrap: wrap; padding: .5rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: .8rem; flex-shrink: 0; }
 .scan-order-meta span { display: flex; gap: .3rem; }
 .scan-meta-address { width: 100%; }
@@ -1873,6 +1880,8 @@ body.ls-open { overflow: hidden; }
   /* Header bar */
   .scan-order-header { padding: 1rem 1.5rem; gap: 1.1rem; }
   .scan-order-no     { font-size: 1.35rem; }
+  .scan-pieces-left #scanPiecesNum { font-size: 2.6rem; }
+  .scan-pieces-left .spl-label     { font-size: .58rem; }
   .scan-progress     { font-size: .95rem; padding: .25em .85em; }
   .back-btn          { font-size: 1rem; padding: .45rem 1rem; }
 

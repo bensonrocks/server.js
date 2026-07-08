@@ -1648,10 +1648,11 @@
         ? `<tr class="lot-info-row"><td colspan="5" class="lot-info-cell">${lotParts.join('')}</td></tr>`
         : '';
 
+      const desc = (item.description && item.description !== item.sku) ? item.description : '—';
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
           <td><code class="sku-code">${esc(item.sku)}</code></td>
-          <td class="desc-cell">${esc(item.description || '—')}</td>
+          <td class="desc-cell">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
           <td class="qty-col">
             <input type="number" class="qty-input" min="0" value="${s}"
@@ -1670,11 +1671,27 @@
   }
 
   function updateProgress(order) {
-    const scanned   = order.scanned || {};
+    const scanned = order.scanned || {};
+
+    // Line-item progress pill (existing)
     const doneCount = order.lines.filter(l => (scanned[l.sku] || 0) === l.qty).length;
-    const el        = document.getElementById('scanProgress');
-    el.textContent  = `${doneCount}/${order.lines.length} items`;
-    el.className    = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
+    const el = document.getElementById('scanProgress');
+    el.textContent = `${doneCount}/${order.lines.length} items`;
+    el.className = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
+
+    // Piece counter — shows remaining pieces, turns red on over-scan
+    const totalOrdered = order.lines.reduce((s, l) => s + (l.qty || 0), 0);
+    const totalScanned = order.lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
+    const remaining    = totalOrdered - totalScanned;
+    const hasOver      = order.lines.some(l => (scanned[l.sku] || 0) > l.qty);
+
+    const piecesEl = document.getElementById('scanPiecesLeft');
+    const numEl    = document.getElementById('scanPiecesNum');
+    if (piecesEl && numEl) {
+      numEl.textContent = remaining > 0 ? remaining : (remaining < 0 ? `+${-remaining}` : '✓');
+      piecesEl.className = 'scan-pieces-left' +
+        (hasOver ? ' spl-over' : remaining <= 0 ? ' spl-done' : '');
+    }
   }
 
   // ── Global barcode capture ─────────────────────────────────────────────────
