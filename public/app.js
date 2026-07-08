@@ -167,7 +167,122 @@
       const p = await r.json();
       currentUser.printerName = p.printerName || '';
       currentUser.labelSize   = p.labelSize   || '100x160';
+      if (p.tablePrefs) tablePrefs = { widths: p.tablePrefs.widths || {}, hidden: p.tablePrefs.hidden || [] };
     } catch {}
+  }
+
+  // ── Orders table layout prefs (per user) ──────────────────────────────────
+  const ORDER_COLS = [
+    { id: 'orderno',  label: 'Order No',  fixed: true },  // cannot be hidden
+    { id: 'client',   label: 'Client' },
+    { id: 'customer', label: 'Customer' },
+    { id: 'waybill',  label: 'Waybill' },
+    { id: 'items',    label: 'Items' },
+    { id: 'status',   label: 'Status' },
+    { id: 'date',     label: 'Date' },
+    { id: 'actions',  label: 'Actions' },
+  ];
+  let tablePrefs = { widths: {}, hidden: [] };
+  let _tpTimer   = null;
+
+  function saveTablePrefs() {
+    clearTimeout(_tpTimer);
+    _tpTimer = setTimeout(async () => {
+      try {
+        await fetch('/api/profile/table-prefs', {
+          method: 'PUT',
+          headers: { ...hdrs(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(tablePrefs),
+        });
+      } catch {}
+    }, 600);
+  }
+
+  // Re-applied after every orders render: widths + hidden columns.
+  // Cell index = column index + 1 (first td is the status stripe).
+  function applyOrdersTablePrefs() {
+    const table = document.querySelector('#ordersDashList .orders-table');
+    if (!table) return;
+    if (Object.keys(tablePrefs.widths).length) table.style.tableLayout = 'fixed';
+    ORDER_COLS.forEach((c, ci) => {
+      const hide = tablePrefs.hidden.includes(c.id) && !c.fixed;
+      table.querySelectorAll('tr').forEach(tr => {
+        const cell = tr.children[ci + 1];
+        if (cell) cell.style.display = hide ? 'none' : '';
+      });
+      const th = table.querySelector(`th[data-col="${c.id}"]`);
+      const w  = tablePrefs.widths[c.id];
+      if (th && w && !hide) th.style.width = w + 'px';
+    });
+  }
+
+  function initOrdersColResize() {
+    const table = document.querySelector('#ordersDashList .orders-table');
+    if (!table) return;
+    table.querySelectorAll('th .col-resize').forEach(h => {
+      h.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        const th     = h.closest('th');
+        const colId  = th.dataset.col;
+        const startX = e.clientX;
+        const startW = th.getBoundingClientRect().width;
+        // First drag: freeze all current widths so nothing jumps when the
+        // table switches to fixed layout
+        if (table.style.tableLayout !== 'fixed') {
+          table.querySelectorAll('thead th[data-col]').forEach(t => {
+            const w = Math.round(t.getBoundingClientRect().width);
+            t.style.width = w + 'px';
+            tablePrefs.widths[t.dataset.col] = w;
+          });
+          table.style.tableLayout = 'fixed';
+        }
+        const move = ev => {
+          const w = Math.max(40, Math.min(800, Math.round(startW + (ev.clientX - startX))));
+          th.style.width = w + 'px';
+          tablePrefs.widths[colId] = w;
+        };
+        const up = () => {
+          document.removeEventListener('pointermove', move);
+          document.removeEventListener('pointerup', up);
+          saveTablePrefs();
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+      });
+    });
+  }
+
+  function initOrdersColsToggle() {
+    const btn = document.getElementById('colsToggleBtn');
+    const pop = document.getElementById('colsPopover');
+    if (!btn || !pop) return;
+    btn.addEventListener('click', e => { e.stopPropagation(); pop.classList.toggle('hidden'); });
+    pop.addEventListener('click', e => e.stopPropagation());
+    document.addEventListener('click', () => pop.classList.add('hidden'), { once: true });
+    pop.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.col;
+        tablePrefs.hidden = tablePrefs.hidden.filter(h => h !== id);
+        if (!cb.checked) tablePrefs.hidden.push(id);
+        applyOrdersTablePrefs();
+        saveTablePrefs();
+      });
+    });
+  }
+
+  function ordersColsToggleHTML() {
+    return `
+      <div class="cols-toggle-wrap">
+        <button class="btn-secondary btn-sm" id="colsToggleBtn" title="Show/hide and resize columns">&#9881; Columns</button>
+        <div id="colsPopover" class="cols-popover hidden">
+          ${ORDER_COLS.map(c => `
+            <label class="cols-popover-row${c.fixed ? ' disabled' : ''}">
+              <input type="checkbox" data-col="${c.id}" ${tablePrefs.hidden.includes(c.id) ? '' : 'checked'} ${c.fixed ? 'disabled' : ''} />
+              ${c.label}
+            </label>`).join('')}
+          <div class="cols-popover-hint">Drag column edges in the header to resize</div>
+        </div>
+      </div>`;
   }
 
   const LABEL_SIZE_MAP = {
@@ -1212,25 +1327,30 @@
       </tr>`;
     }).join('');
 
+    const rz = id => `<span class="col-resize" data-col="${id}"></span>`;
     document.getElementById('ordersDashList').innerHTML = `
+      ${ordersColsToggleHTML()}
       <div class="orders-table-wrap">
         <table class="orders-table">
           <thead>
             <tr>
               <th style="width:4px;padding:0"></th>
-              <th>ORDER NO</th>
-              <th class="col-client">CLIENT</th>
-              <th class="col-customer">CUSTOMER</th>
-              <th class="col-waybill">WAYBILL</th>
-              <th>ITEMS</th>
-              <th class="col-status">STATUS</th>
-              <th class="col-date">DATE</th>
-              <th class="col-actions">ACTIONS</th>
+              <th data-col="orderno">ORDER NO${rz('orderno')}</th>
+              <th class="col-client" data-col="client">CLIENT${rz('client')}</th>
+              <th class="col-customer" data-col="customer">CUSTOMER${rz('customer')}</th>
+              <th class="col-waybill" data-col="waybill">WAYBILL${rz('waybill')}</th>
+              <th data-col="items">ITEMS${rz('items')}</th>
+              <th class="col-status" data-col="status">STATUS${rz('status')}</th>
+              <th class="col-date" data-col="date">DATE${rz('date')}</th>
+              <th class="col-actions" data-col="actions">ACTIONS</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+    applyOrdersTablePrefs();
+    initOrdersColResize();
+    initOrdersColsToggle();
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })

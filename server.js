@@ -1960,7 +1960,29 @@ app.get('/api/profile', requireAuth, (req, res) => {
     role:        user.role || 'admin',
     printerName: user.printerName || '',
     labelSize:   user.labelSize   || '100x160',
+    tablePrefs:  user.tablePrefs  || null,
   });
+});
+
+// Per-user orders-table layout: column widths (px) and hidden columns
+app.put('/api/profile/table-prefs', requireAuth, (req, res) => {
+  const users = readUsers();
+  const idx   = users.findIndex(u => u.id === req.userId);
+  if (idx < 0) return res.status(404).json({ error: 'User not found' });
+  const { widths, hidden } = req.body || {};
+  const clean = { widths: {}, hidden: [] };
+  if (widths && typeof widths === 'object') {
+    for (const [k, v] of Object.entries(widths)) {
+      const px = Math.round(Number(v));
+      if (/^[a-z_]{2,20}$/.test(k) && px >= 40 && px <= 800) clean.widths[k] = px;
+    }
+  }
+  if (Array.isArray(hidden)) {
+    clean.hidden = hidden.filter(h => /^[a-z_]{2,20}$/.test(h)).slice(0, 12);
+  }
+  users[idx].tablePrefs = clean;
+  writeUsers(users);
+  res.json({ ok: true, tablePrefs: clean });
 });
 
 app.put('/api/profile/printer', requireAuth, (req, res) => {
