@@ -282,11 +282,17 @@
     });
   }
 
-  // Window resized (or zoom changed) while scanning → re-measure page fit
+  // Window resized (or zoom changed) while scanning → re-measure page fit.
+  // Height-only changes are IGNORED: on phones the on-screen keyboard
+  // shrinks the viewport height when a qty field is tapped, and re-rendering
+  // then would destroy the focused input and dismiss the keyboard.
   let _scanResizeTimer = null;
+  let _scanLastWidth   = window.innerWidth;
   window.addEventListener('resize', () => {
     clearTimeout(_scanResizeTimer);
     _scanResizeTimer = setTimeout(() => {
+      if (window.innerWidth === _scanLastWidth) return; // keyboard, not a real resize
+      _scanLastWidth = window.innerWidth;
       if (!activeOrder || document.getElementById('scanOverlay')?.classList.contains('hidden')) return;
       scanPageSize = SCAN_PAGE_MAX;
       renderItemsTable(activeOrder);
