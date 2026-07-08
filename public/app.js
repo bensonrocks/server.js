@@ -1849,11 +1849,12 @@
     }
     scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
     const pageRows = decorated.slice(scanPage * scanPageSize, (scanPage + 1) * scanPageSize);
-    // Only ONE on-screen substitute barcode at a time — it belongs to the
-    // item currently being worked on (the same one whose qty field gets the
-    // cursor). The next one appears when this item is fully counted, so the
+    // Only ONE on-screen substitute barcode at a time, and ONLY for
+    // no-barcode items (GWPs etc.) — normal products must be scanned
+    // physically so the gun actually verifies the right item was picked.
+    // The next code appears when the current one is fully counted, so the
     // scanner can never pick up the wrong code from the monitor.
-    const inlineBcSku = activeSku;
+    const inlineBcSku = decorated.find(d => !d.done && isNoBarcodeItem(d.item))?.item.sku;
 
     document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s, done }) => {
       const noBarcode = isNoBarcodeItem(item);
