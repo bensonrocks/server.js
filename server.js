@@ -91,7 +91,7 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'crash-catch-4', ts: Date.now() }));
+app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'no-rawrows-5', ts: Date.now() }));
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
@@ -1339,7 +1339,6 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       row_count:   rows.length,
       orderStates: {},
       orders,
-      rawRows: rows,
     };
     const db = readDb();
     db.batches.unshift(batch);
@@ -1463,7 +1462,6 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       order_count: orders.length, row_count: mapped.length,
       orderStates: {},
       orders,
-      rawRows: mapped,
     };
 
     L('writing DB');
@@ -1959,7 +1957,7 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     batch.orders  = (batch.orders || []).filter(o => o.order_number !== orderNumber);
     if (batch.orders.length === before) return res.status(404).json({ error: 'Order not found in batch' });
     batch.order_count = batch.orders.length;
-    if (batch.rawRows) batch.rawRows = batch.rawRows.filter(r => r.order_number !== orderNumber);
+    // rawRows no longer persisted in DB — nothing to filter here
     if (batch.orderStates) delete batch.orderStates[orderNumber];
     try { fs.unlinkSync(path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`)); } catch {}
     writeDb(db);
