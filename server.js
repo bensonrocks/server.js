@@ -1,3 +1,6 @@
+process.on('uncaughtException',  (err) => console.error('[CRASH] uncaughtException:', err.stack || err.message));
+process.on('unhandledRejection', (err) => console.error('[CRASH] unhandledRejection:', err?.stack || err));
+
 const express    = require('express');
 const multer     = require('multer');
 const { parse }  = require('csv-parse/sync');
@@ -88,7 +91,7 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'upload-diag-3', ts: Date.now() }));
+app.get('/api/ping', (_req, res) => res.json({ ok: true, version: 'crash-catch-4', ts: Date.now() }));
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
