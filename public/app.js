@@ -1339,6 +1339,11 @@
     attachGlobalScanCapture();
   }
 
+  function focusWaybillInput() {
+    const el = document.getElementById('waybillScanInput');
+    if (el) setTimeout(() => { el.focus(); el.select(); }, 60);
+  }
+
   function closeScanOverlay() {
     document.getElementById('scanOverlay').classList.add('hidden');
     document.body.classList.remove('scan-open');
@@ -1347,6 +1352,7 @@
     _scanBusy = false;
     stopTimer();
     activeOrder = null;
+    focusWaybillInput();
   }
 
   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
@@ -1375,6 +1381,7 @@
     clearInterval(_pltTimer);
     document.getElementById('printLabelToast').classList.add('hidden');
     _pltOrder = null;
+    focusWaybillInput();
   }
 
   document.getElementById('pltPrintBtn').addEventListener('click', () => {
@@ -1958,6 +1965,7 @@
 
   function closePrintWaybillModal() {
     document.getElementById('printWaybillOverlay').classList.add('hidden');
+    focusWaybillInput();
   }
 
   // ── Mismatch modal ─────────────────────────────────────────────────────────
@@ -3148,6 +3156,7 @@
 
   document.getElementById('printLabelSkipBtn').addEventListener('click', () => {
     document.getElementById('printOrderLabelOverlay').classList.add('hidden');
+    focusWaybillInput();
   });
 
   document.getElementById('printLabelNowBtn').addEventListener('click', () => {
@@ -3155,6 +3164,7 @@
     const token   = localStorage.getItem('wms_token') || '';
     window.open(`/api/order-label/${encodeURIComponent(orderNo)}/pdf?token=${encodeURIComponent(token)}`, '_blank');
     document.getElementById('printOrderLabelOverlay').classList.add('hidden');
+    focusWaybillInput();
   });
 
   // ── Labels Tab ────────────────────────────────────────────────────────────
