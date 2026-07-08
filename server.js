@@ -735,6 +735,77 @@ app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) =>
   res.json({ ok: true });
 });
 
+// Re-run auto-matching for all unmatched (and optionally all) pages in an import
+app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const rematchAll = req.body?.all === true;   // if true, also retry already-matched pages
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  if (!db.orderLabels) db.orderLabels = {};
+
+  const allOrders = globalOrdersWithState();
+  const byOrderNo = new Map(allOrders.map(o => [normStr(o.order_number), o.order_number]));
+  const byWaybill = new Map(
+    allOrders.filter(o => o.waybill_number).map(o => [normStr(o.waybill_number), o.order_number])
+  );
+
+  // Track which orders are already matched in THIS import (to detect duplicates)
+  const matchedInImport = new Set(
+    imp.pages
+      .filter(p => p.matchStatus === 'matched' && !rematchAll)
+      .map(p => p.matchedOrderNumber)
+      .filter(Boolean)
+  );
+
+  let newMatches = 0;
+  for (const page of imp.pages) {
+    if (page.matchStatus === 'matched' && !rematchAll) continue;
+    const f = page.extracted || {};
+
+    let hit = null;
+    let method = null;
+
+    // Try order number
+    if (f.orderNumber) {
+      hit = byOrderNo.get(normStr(f.orderNumber));
+      if (hit) method = 'order_number';
+    }
+    // Try tracking / waybill
+    if (!hit && f.trackingNumber) {
+      hit = byWaybill.get(normStr(f.trackingNumber));
+      if (hit) method = 'tracking_number';
+    }
+
+    if (hit) {
+      if (matchedInImport.has(hit)) {
+        page.matchStatus        = 'duplicate';
+        page.matchedOrderNumber = hit;
+        page.matchMethod        = method;
+      } else {
+        // Remove stale label reference from previous match if any
+        if (page.matchedOrderNumber && page.matchedOrderNumber !== hit) {
+          delete db.orderLabels[page.matchedOrderNumber];
+        }
+        page.matchedOrderNumber = hit;
+        page.matchStatus        = 'matched';
+        page.matchMethod        = method;
+        db.orderLabels[hit] = {
+          importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile,
+          attachedAt: new Date().toISOString(), attachedBy: req.userId,
+        };
+        matchedInImport.add(hit);
+        newMatches++;
+      }
+    }
+  }
+
+  writeDb(db);
+  const matched   = imp.pages.filter(p => p.matchStatus === 'matched').length;
+  const unmatched = imp.pages.filter(p => p.matchStatus === 'unmatched').length;
+  res.json({ ok: true, newMatches, matched, unmatched });
+});
+
 // Serve the matched label PDF for an order (token-param auth for iframes)
 app.get('/api/order-label/:orderNumber/pdf', requireAuthOrToken, (req, res) => {
   const { orderNumber } = req.params;

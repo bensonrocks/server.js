@@ -3099,6 +3099,7 @@
       emptyEl.classList.add('hidden');
       listEl.innerHTML = imports.map(imp => {
         const dt = new Date(imp.uploadedAt).toLocaleString();
+        const hasUnmatched = imp.unmatched > 0;
         return `
           <div class="label-history-item" data-import-id="${esc(imp.id)}">
             <div class="lhi-left">
@@ -3111,12 +3112,32 @@
               ${imp.unmatched  ? `<span class="lhi-badge lhi-unmatched">${imp.unmatched} unmatched</span>` : ''}
               ${imp.duplicate  ? `<span class="lhi-badge lhi-duplicate">${imp.duplicate} duplicate</span>` : ''}
               ${imp.error      ? `<span class="lhi-badge lhi-error">${imp.error} error</span>` : ''}
+              ${hasUnmatched   ? `<button class="btn-primary btn-sm lhi-automatch-btn" data-import-id="${esc(imp.id)}">&#9889; Auto Match</button>` : ''}
               <button class="btn-secondary btn-sm lhi-review-btn">Review ›</button>
             </div>
           </div>`;
       }).join('');
+      listEl.querySelectorAll('.lhi-automatch-btn').forEach(btn =>
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const importId = btn.dataset.importId;
+          btn.disabled = true; btn.textContent = 'Matching…';
+          try {
+            const r = await fetch(`/api/label-imports/${importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Rematch failed');
+            await refreshOrders();
+            await loadLabelImportHistory();
+            if (d.newMatches > 0) alert(`Auto-matched ${d.newMatches} label${d.newMatches !== 1 ? 's' : ''}. ${d.unmatched} still unmatched.`);
+            else alert(`No new matches found. ${d.unmatched} page${d.unmatched !== 1 ? 's' : ''} still unmatched — use Review to assign manually.`);
+          } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = '⚡ Auto Match'; }
+        })
+      );
       listEl.querySelectorAll('.label-history-item').forEach(el =>
-        el.addEventListener('click', () => openLabelReview(el.dataset.importId))
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('.lhi-automatch-btn')) return;
+          openLabelReview(el.dataset.importId);
+        })
       );
     } catch (err) {
       listEl.innerHTML = `<p class="hint" style="color:var(--danger);padding:.5rem">${esc(err.message)}</p>`;
@@ -3168,7 +3189,20 @@
         unmatched ? `<span class="lri-badge lri-unmatched">${unmatched} unmatched</span>` : '',
         dup       ? `<span class="lri-badge lri-dup">${dup} duplicate</span>` : '',
         errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
+        unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
       ].filter(Boolean).join('');
+
+      document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('lriAutoMatchBtn');
+        btn.disabled = true; btn.textContent = 'Matching…';
+        try {
+          const r = await fetch(`/api/label-imports/${importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Rematch failed');
+          await refreshOrders();
+          openLabelReview(importId);
+        } catch (err) { alert(err.message); }
+      });
 
       const token = localStorage.getItem('wms_token') || '';
       body.innerHTML = imp.pages.map((page, i) => {
