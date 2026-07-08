@@ -435,6 +435,7 @@ function summarizeOrders(lines) {
         waybill_number:   line.waybill_number,
         issue_no:         line.issue_no         || '',
         pick_ticket:      line.pick_ticket       || '',
+        po_number:        line.po_number         || '',
         platform:         line.platform         || '',
         shop_name:        line.shop_name        || '',
         date:             line.date,
@@ -514,6 +515,29 @@ function findBatchForOrder(db, orderNumber) {
 // Normalize a string for comparison: uppercase, strip spaces/hyphens/underscores
 function normStr(s) { return String(s || '').replace(/[\s\-_]/g, '').toUpperCase(); }
 
+// Extract the text of every page from the ORIGINAL PDF buffer, in page order.
+// Never run pdf-parse on pdf-lib re-saved single pages: pdf-parse (pdf.js
+// 1.10) frequently fails on pdf-lib output ("Invalid PDF structure" /
+// "bad XRef entry"), while original client/courier PDFs parse fine.
+async function extractPdfPageTexts(buffer) {
+  const pageTexts = [];
+  if (!pdfParse) return pageTexts;
+  await pdfParse(buffer, {
+    pagerender: async (pageData) => {
+      const tc = await pageData.getTextContent();
+      let last = null, text = '';
+      for (const item of tc.items) {
+        if (last && last.transform[5] !== item.transform[5]) text += '\n';
+        text += item.str;
+        last = item;
+      }
+      pageTexts.push(text);
+      return text;
+    },
+  });
+  return pageTexts;
+}
+
 async function splitWaybillPdf(pdfBuffer, batchId, orders) {
   const matched = {};
   try {
@@ -535,6 +559,12 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
       if (o.pick_ticket)    byPickTicket.set(normStr(o.pick_ticket),   o.order_number);
     }
 
+    // Per-page text from the ORIGINAL buffer (re-saved pages don't parse
+    // reliably); a parse failure just means no text matching, fallback below.
+    let pageTexts = [];
+    try { pageTexts = await extractPdfPageTexts(pdfBuffer); }
+    catch (e) { console.error('[pdf-split] text extraction:', e.message); }
+
     for (let i = 0; i < numPages; i++) {
       const single = await PDFDocument.create();
       const [pg]   = await single.copyPages(pdfDoc, [i]);
@@ -543,10 +573,9 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
 
       let assignedOrder = null;
 
-      if (pdfParse && (byWaybill.size || byOrder.size || byIssueNo.size || byPickTicket.size)) {
+      if (pageTexts[i] && (byWaybill.size || byOrder.size || byIssueNo.size || byPickTicket.size)) {
         try {
-          const parsed   = await pdfParse(buf);
-          const rawText  = (parsed.text || '').toUpperCase();
+          const rawText  = pageTexts[i].toUpperCase();
           const normText = rawText.replace(/[\s\-_]/g, '');
 
           // Priority 1: match by waybill number (most specific)
@@ -632,6 +661,59 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
 
 const labelImportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
+// ── Label→order matching ─────────────────────────────────────────────────────
+// Two strategies, tried in order:
+//   1. extract-then-lookup — extractLabelFields pulls an order/tracking number
+//      from the page and we look it up (fast, but format-specific)
+//   2. reverse known-key scan — we search the page text for ANY known order
+//      key (order number / GI, waybill/reference, PO/shipment number). This is
+//      format-agnostic: any client label matches as long as it prints one of
+//      the numbers we already hold for the order.
+// All-digit keys need 10+ chars (8-digit keys collide with SG phone numbers
+// printed on labels); keys containing letters need 8+.
+function buildLabelMatchIndex() {
+  const allOrders = globalOrdersWithState();
+  const byOrderNo = new Map();
+  const byWaybill = new Map();
+  const scanKeys  = [];
+  for (const o of allOrders) {
+    const keys = [
+      [normStr(o.order_number),   'order_number'],
+      [normStr(o.waybill_number), 'waybill_number'],
+      [normStr(o.po_number),      'po_number'],
+    ];
+    if (keys[0][0]) byOrderNo.set(keys[0][0], o.order_number);
+    if (keys[1][0]) byWaybill.set(keys[1][0], o.order_number);
+    if (keys[2][0]) byWaybill.set(keys[2][0], o.order_number);
+    for (const [key, field] of keys) {
+      if (!key) continue;
+      const minLen = /[A-Z]/.test(key) ? 8 : 10;
+      if (key.length >= minLen) scanKeys.push({ key, orderNumber: o.order_number, method: field + '_scan' });
+    }
+  }
+  scanKeys.sort((a, b) => b.key.length - a.key.length); // longest key wins
+  return { byOrderNo, byWaybill, scanKeys };
+}
+
+function matchLabelPage(rawText, extracted, index) {
+  const f = extracted || {};
+  if (f.orderNumber) {
+    const hit = index.byOrderNo.get(normStr(f.orderNumber));
+    if (hit) return { hit, method: 'order_number' };
+  }
+  if (f.trackingNumber) {
+    const hit = index.byWaybill.get(normStr(f.trackingNumber));
+    if (hit) return { hit, method: 'tracking_number' };
+  }
+  if (rawText) {
+    const hay = normStr(rawText);
+    for (const k of index.scanKeys) {
+      if (hay.includes(k.key)) return { hit: k.orderNumber, method: k.method };
+    }
+  }
+  return null;
+}
+
 app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
@@ -642,11 +724,7 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
     const pdfDoc   = await PDFDocument.load(req.file.buffer);
     const numPages = pdfDoc.getPageCount();
 
-    const allOrders = globalOrdersWithState();
-    const byOrderNo = new Map(allOrders.map(o => [normStr(o.order_number), o.order_number]));
-    const byWaybill = new Map(
-      allOrders.filter(o => o.waybill_number).map(o => [normStr(o.waybill_number), o.order_number])
-    );
+    const matchIndex = buildLabelMatchIndex();
 
     const db = readDb();
     if (!db.labelImports) db.labelImports = [];
@@ -654,6 +732,13 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
 
     const pages              = [];
     const matchedThisImport  = new Set();
+
+    // Per-page text from the ORIGINAL upload — pdf-lib re-saved single pages
+    // frequently fail to parse, so text extraction must happen before the split
+    let pageTexts  = [];
+    let parseError = false;
+    try { pageTexts = await extractPdfPageTexts(req.file.buffer); }
+    catch (e) { parseError = true; console.error('[label-import] text extraction:', e.message); }
 
     for (let i = 0; i < numPages; i++) {
       const single  = await PDFDocument.create();
@@ -663,36 +748,21 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
       const pageFile = `page_${i + 1}.pdf`;
       fs.writeFileSync(path.join(importDir, pageFile), pageBuf);
 
+      const rawText          = pageTexts[i] || '';
       let extracted          = {};
-      let matchStatus        = 'unmatched';
+      let matchStatus        = parseError ? 'error' : 'unmatched';
       let matchedOrderNumber = null;
       let matchMethod        = null;
 
-      if (pdfParse) {
+      if (rawText) {
         try {
-          const parsed  = await pdfParse(pageBuf);
-          const rawText = parsed.text || '';
           if (extractLabelFields) extracted = extractLabelFields(rawText);
-
-          // Priority 1: order number
-          if (extracted.orderNumber) {
-            const hit = byOrderNo.get(normStr(extracted.orderNumber));
-            if (hit) {
-              matchedOrderNumber = hit;
-              matchStatus  = matchedThisImport.has(hit) ? 'duplicate' : 'matched';
-              matchMethod  = 'order_number';
-              matchedThisImport.add(hit);
-            }
-          }
-          // Priority 2: tracking number
-          if (!matchedOrderNumber && extracted.trackingNumber) {
-            const hit = byWaybill.get(normStr(extracted.trackingNumber));
-            if (hit) {
-              matchedOrderNumber = hit;
-              matchStatus  = matchedThisImport.has(hit) ? 'duplicate' : 'matched';
-              matchMethod  = 'tracking_number';
-              matchedThisImport.add(hit);
-            }
+          const hit = matchLabelPage(rawText, extracted, matchIndex);
+          if (hit) {
+            matchedOrderNumber = hit.hit;
+            matchStatus  = matchedThisImport.has(hit.hit) ? 'duplicate' : 'matched';
+            matchMethod  = hit.method;
+            matchedThisImport.add(hit.hit);
           }
         } catch (e) { matchStatus = 'error'; }
       }
@@ -704,7 +774,9 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
         };
       }
 
-      pages.push({ pageIndex: i, pageFile, extracted, matchStatus, matchedOrderNumber, matchMethod });
+      // rawText kept (truncated) so later rematches can reverse-scan without
+      // re-parsing the PDF from the volume
+      pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000), matchStatus, matchedOrderNumber, matchMethod });
     }
 
     const importRecord = {
@@ -816,11 +888,7 @@ app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
   if (!imp) return res.status(404).json({ error: 'Import not found' });
   if (!db.orderLabels) db.orderLabels = {};
 
-  const allOrders = globalOrdersWithState();
-  const byOrderNo = new Map(allOrders.map(o => [normStr(o.order_number), o.order_number]));
-  const byWaybill = new Map(
-    allOrders.filter(o => o.waybill_number).map(o => [normStr(o.waybill_number), o.order_number])
-  );
+  const matchIndex = buildLabelMatchIndex();
 
   // Track which orders are already matched in THIS import (to detect duplicates)
   const matchedInImport = new Set(
@@ -833,21 +901,21 @@ app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
   let newMatches = 0;
   for (const page of imp.pages) {
     if (page.matchStatus === 'matched' && !rematchAll) continue;
-    const f = page.extracted || {};
 
-    let hit = null;
-    let method = null;
+    // Older imports predate stored rawText — re-parse the page PDF so the
+    // reverse known-key scan can run on them too
+    let rawText = page.rawText || '';
+    if (!rawText && pdfParse) {
+      try {
+        const pageBuf = fs.readFileSync(path.join(LABEL_IMPORT_DIR, id, page.pageFile));
+        rawText = (await pdfParse(pageBuf)).text || '';
+        page.rawText = rawText.slice(0, 4000);
+      } catch {}
+    }
 
-    // Try order number
-    if (f.orderNumber) {
-      hit = byOrderNo.get(normStr(f.orderNumber));
-      if (hit) method = 'order_number';
-    }
-    // Try tracking / waybill
-    if (!hit && f.trackingNumber) {
-      hit = byWaybill.get(normStr(f.trackingNumber));
-      if (hit) method = 'tracking_number';
-    }
+    const found  = matchLabelPage(rawText, page.extracted, matchIndex);
+    const hit    = found?.hit    || null;
+    const method = found?.method || null;
 
     if (hit) {
       if (matchedInImport.has(hit)) {
@@ -1125,6 +1193,24 @@ async function parsePdfPicklist(buffer) {
     if ((m = t.match(/^Remarks?:\s+(\S.*)/i))) carrier = m[1].trim();
   }
 
+  // ── PO / shipment number ──────────────────────────────────────────────────
+  // Column concatenation puts the value on the line BEFORE the "PO Number"
+  // label (e.g. "SHPM2673183962" then "PO Number"). This is often the courier
+  // tracking number printed on the client's shipping label, so it is a key
+  // for label-to-order matching.
+  let poNumber = '';
+  for (let i = 0; i < T.length; i++) {
+    if (!/^PO\s*Number$/i.test(T[i])) continue;
+    for (let j = i - 1; j >= 0; j--) {
+      if (!T[j]) continue;
+      // Must look like a shipment id (8+ alphanumeric with a digit), not a
+      // neighbouring header label like "Address" or "Consignee"
+      if (/^[A-Z0-9-]{8,}$/i.test(T[j]) && /\d/.test(T[j])) poNumber = T[j];
+      break;
+    }
+    if (poNumber) break;
+  }
+
   // ── Item table ────────────────────────────────────────────────────────────
   // pdfParse concatenates PDF columns. Each item produces lines like:
   //   "433411AC-011-002-A18156SS"  → {batch}{location}{sno}{sku}  (data line)
@@ -1210,6 +1296,7 @@ async function parsePdfPicklist(buffer) {
     waybill_number:   reference  || '',
     issue_no:         giNumber   || '',
     pick_ticket:      pickTicket || '',
+    po_number:        poNumber   || '',
     carrier:          carrier    || 'Offline',
     platform:         '',
     shop_name:        '',
