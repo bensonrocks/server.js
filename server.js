@@ -1487,7 +1487,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     // Return immediately — client fetches full order list via /api/orders separately
     L('sending response');
-    res.json({ sessionId, batchId, rowCount: mapped.length, orders: [] });
+    res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: [] });
     L('response sent');
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
