@@ -716,9 +716,19 @@
 
 
   document.getElementById('confirmApproveBtn').addEventListener('click', async () => {
-    document.getElementById('confirmApproveBtn').disabled    = true;
-    document.getElementById('confirmApproveBtn').textContent = 'Uploading…';
-    await doUpload();
+    const btn = document.getElementById('confirmApproveBtn');
+    btn.disabled    = true;
+    btn.textContent = 'Uploading…';
+    try {
+      await doUpload();
+    } catch (err) {
+      // A JS error before/around the fetch must never freeze the dialog silently
+      document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+      setUploadStatus('error', 'Upload failed: ' + err.message);
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Approve & Upload →';
+    }
   });
 
   // ── Step 3: Actual upload ──────────────────────────────────────────────────
@@ -762,11 +772,9 @@
     if (!pendingOrderFile) return;
     const file       = pendingOrderFile;
     const clientName = document.getElementById('clientNameInput').value.trim();
-    const pdfFile    = waybillPdfInput.files[0];
 
     const form = new FormData();
     form.append('orderFile', file);
-    if (pdfFile)     form.append('waybillPdf', pdfFile);
     if (clientName)  form.append('client_name', clientName);
     form.append('direction', uploadDirection);
 
@@ -800,9 +808,8 @@
       loadedOrders = data.orders;
       activeOrder  = null;
 
-      const pdfMsg = pdfFile ? ' Waybill PDF is being split in the background.' : '';
       setUploadStatus('success',
-        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".${pdfMsg}`
+        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".`
       );
 
       // Show download button immediately and lock tabs until downloaded
