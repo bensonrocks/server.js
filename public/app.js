@@ -442,7 +442,6 @@
       fetchUserProfile();
       showUserInHeader();
       fetchAndRenderStats();
-      loadLabelMiniHistory();
       refreshOrders().then(() => {
         if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
       });
@@ -590,7 +589,7 @@
     document.querySelector(`.tab-btn[data-tab="${name}"]`)?.classList.add('active');
     const ttEl = document.getElementById('ctTabTitle');
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
-    if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); loadLabelMiniHistory(); }
+    if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'labels') { renderLabelsTab(); }
   }
@@ -716,65 +715,45 @@
       const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
-      const { matched, pageCount } = data;
-      const unmatched = pageCount - matched;
-      statusEl.className = 'status-bar success';
-      statusEl.textContent = `${pageCount} pages imported — ${matched} matched${unmatched ? `, ${unmatched} unmatched` : ''}.`;
-      document.getElementById('labelImportUploadName').textContent = '';
+      statusEl.classList.add('hidden');
       labelImportInputUpload.value = '';
-      await loadLabelMiniHistory();
-      if (unmatched > 0 && data.importId) {
-        if (confirm(`${unmatched} page(s) could not be auto-matched. Open Review to assign manually?`))
-          openLabelReview(data.importId);
-      }
+      renderCurrentLabelImport({
+        importId:  data.importId,
+        filename:  file.name,
+        matched:   data.matched,
+        unmatched: data.pageCount - data.matched,
+      });
     } catch (err) {
       statusEl.className = 'status-bar error';
       statusEl.textContent = err.message;
     }
   }
 
-  async function loadLabelMiniHistory() {
-    const wrap   = document.getElementById('labelMiniHistory');
-    const listEl = document.getElementById('labelMiniHistoryList');
-    if (!wrap || !listEl) return;
-    try {
-      const resp = await fetch('/api/label-imports');
-      if (!resp.ok) return;
-      const imports = await resp.json();
-      if (!imports.length) { wrap.style.display = 'none'; return; }
-      wrap.style.display = '';
-      listEl.innerHTML = imports.slice(0, 5).map(imp => {
-        const hasUnmatched = imp.unmatched > 0;
-        return `<div class="label-mini-item">
-          <span class="label-mini-item-name">&#127991; ${esc(imp.filename)}</span>
-          <span class="label-mini-item-badges">
-            ${imp.matched   ? `<span class="lhi-badge lhi-matched">${imp.matched} matched</span>` : ''}
-            ${imp.unmatched ? `<span class="lhi-badge lhi-unmatched">${imp.unmatched} unmatched</span>` : ''}
-            ${hasUnmatched  ? `<button class="btn-primary btn-sm lhi-automatch-btn" data-import-id="${esc(imp.id)}">&#9889; Auto Match</button>` : ''}
-            <button class="btn-ghost btn-sm lmi-review-btn" data-import-id="${esc(imp.id)}">Review ›</button>
-          </span>
-        </div>`;
-      }).join('');
-      listEl.querySelectorAll('.lhi-automatch-btn').forEach(btn =>
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          btn.disabled = true; btn.textContent = 'Matching…';
-          try {
-            const r = await fetch(`/api/label-imports/${btn.dataset.importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-            const d = await r.json();
-            if (!r.ok) throw new Error(d.error);
-            await refreshOrders();
-            await loadLabelMiniHistory();
-          } catch (err) { alert(err.message); }
-        })
-      );
-      listEl.querySelectorAll('.lmi-review-btn').forEach(btn =>
-        btn.addEventListener('click', () => openLabelReview(btn.dataset.importId))
-      );
-    } catch {}
+  // Only THIS session's label upload is shown, right next to Attach PDF —
+  // no import history on the Upload tab (full history lives in the Labels tab)
+  function renderCurrentLabelImport(cur) {
+    const el = document.getElementById('labelImportCurrent');
+    if (!el) return;
+    document.getElementById('labelImportUploadName').textContent = cur.filename;
+    el.innerHTML = `
+      ${cur.matched   ? `<span class="lhi-badge lhi-matched">${cur.matched} matched</span>` : ''}
+      ${cur.unmatched ? `<span class="lhi-badge lhi-unmatched">${cur.unmatched} unmatched</span>` : ''}
+      ${cur.unmatched ? `<button class="btn-primary btn-sm" id="labelCurAutoMatch">&#9889; Auto Match</button>` : ''}
+      ${cur.unmatched ? `<button class="btn-ghost btn-sm" id="labelCurReview">Review ›</button>` : `<span class="lhi-badge lhi-matched">&#10003; all pages matched</span>`}`;
+    el.classList.remove('hidden');
+    document.getElementById('labelCurAutoMatch')?.addEventListener('click', async () => {
+      const btn = document.getElementById('labelCurAutoMatch');
+      btn.disabled = true; btn.textContent = 'Matching…';
+      try {
+        const r = await fetch(`/api/label-imports/${cur.importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        await refreshOrders();
+        renderCurrentLabelImport({ ...cur, matched: d.matched, unmatched: d.unmatched });
+      } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = '⚡ Auto Match'; }
+    });
+    document.getElementById('labelCurReview')?.addEventListener('click', () => openLabelReview(cur.importId));
   }
-
-  document.getElementById('labelMiniRefreshBtn')?.addEventListener('click', loadLabelMiniHistory);
 
   document.getElementById('goOrdersBtn').addEventListener('click', () => switchTab('orders'));
 

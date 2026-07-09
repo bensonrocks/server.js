@@ -2326,3 +2326,6 @@ body.ls-open { overflow: hidden; }
 .report-btn b { font-size: .95rem; }
 .report-btn span { font-size: .78rem; color: var(--text-light, #64748b); }
 .report-btn-inline { max-width: 480px; }
+
+/* Current label upload strip — next to Attach PDF, no history */
+.label-current-strip { display: inline-flex; align-items: center; gap: .45rem; flex-wrap: wrap; }

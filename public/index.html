@@ -775,6 +775,8 @@
               <button class="btn-secondary btn-sm" id="browseLabelPdfBtn">Attach PDF</button>
             </label>
             <span id="labelImportUploadName" class="waybill-pdf-name"></span>
+            <!-- Current upload's result only — matched/unmatched + next action -->
+            <span id="labelImportCurrent" class="label-current-strip hidden"></span>
           </div>
           <div id="labelImportUploadStatus" class="status-bar hidden"></div>
 
@@ -782,15 +784,6 @@
           <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
             <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
           </div>
-        </div>
-
-        <!-- Label import mini-history (shown in Upload tab) -->
-        <div class="label-mini-history" id="labelMiniHistory" style="display:none">
-          <div class="label-mini-history-header">
-            <span class="label-mini-history-title">&#127991; Label Imports</span>
-            <button class="link-btn" id="labelMiniRefreshBtn">&#8635; Refresh</button>
-          </div>
-          <div id="labelMiniHistoryList"></div>
         </div>
       </div>
 
