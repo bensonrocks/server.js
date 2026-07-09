@@ -1389,17 +1389,22 @@ async function parsePdfPicklistDetailed(buffer) {
       issues.push({ gi: g.gi || '(no GI)', critical: true, problem: 'Picking list recognised but NO item lines could be parsed — layout not understood. Upload blocked so this order is not silently lost.' });
       continue;
     }
-    // Cross-check parsed pieces against the printed grand total — ONLY when
-    // the number sits unambiguously on the same line as its label. The
-    // column-jumbled layout puts totals on detached lines mixed with other
-    // digits; guessing there produced false alarms, and a safety net that
-    // cries wolf gets ignored.
-    const tm = text.match(/Grand\s+Total\s+Loose\s*:\s*(\d{1,5})\s*$/im);
-    if (tm) {
-      const printed      = Number(tm[1]);
-      const parsedPieces = groupRows.reduce((s, r) => s + (r.qty || 0), 0);
-      if (printed > 0 && printed !== parsedPieces) {
-        issues.push({ gi: g.gi || '(no GI)', critical: false, problem: `Printed total is ${printed} pc(s) but ${parsedPieces} pc(s) were parsed — verify this order after upload.` });
+    // Completeness proof: the picking list numbers its own item lines
+    // (SNo 1..N). If every sequence number up to the highest is present,
+    // nothing was missed — no guessing against printed totals, whose
+    // whole/loose carton arithmetic doesn't equal the sum of line
+    // quantities and produced false alarms.
+    const snos = groupRows.map(r => r.sno).filter(n => Number.isFinite(n) && n > 0);
+    if (snos.length) {
+      const maxSno   = Math.max(...snos);
+      const seen     = new Set(snos);
+      const missing  = [];
+      for (let n = 1; n <= maxSno; n++) if (!seen.has(n)) missing.push(n);
+      if (missing.length) {
+        issues.push({
+          gi: g.gi || '(no GI)', critical: false,
+          problem: `Item line(s) #${missing.join(', #')} of ${maxSno} could not be parsed — check these lines on the picking list and amend below.`,
+        });
       }
     }
     rows.push(...groupRows);
@@ -1522,7 +1527,7 @@ function parsePicklistText(text) {
         // optionally followed by a run-on description ("...Topicrem PINK TOWELS")
         const rm = remainder.match(/^(\d{1,3}?)([A-Z0-9][A-Z0-9-]{2,}[A-Z0-9])((?:\s|[A-Z][a-z]).*)?$/);
         if (!rm) continue;
-        return { batch: batchStr, sku: rm[2], desc: (rm[3] || '').trim() };
+        return { batch: batchStr, sno: parseInt(rm[1], 10), sku: rm[2], desc: (rm[3] || '').trim() };
       }
     }
     return null;
@@ -1559,7 +1564,7 @@ function parsePicklistText(text) {
           if (_skuDescMap[sku.slice(0, l)]) { sku = sku.slice(0, l); break; }
         }
       }
-      current = { sku, batch_number: di.batch, description: di.desc || '', expiry_date: '', qty: 1 };
+      current = { sku, sno: di.sno, batch_number: di.batch, description: di.desc || '', expiry_date: '', qty: 1 };
       inTable = true;
       continue;
     }
