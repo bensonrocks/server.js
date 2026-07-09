@@ -869,8 +869,20 @@
       adjWrap.innerHTML = '';
     }
 
-    document.getElementById('confirmApproveBtn').disabled    = false;
-    document.getElementById('confirmApproveBtn').textContent = 'Approve & Upload →';
+    // Flagged uploads demand an explicit decision: approve (with any
+    // amendments) or abort — the buttons say exactly that.
+    const approveBtn = document.getElementById('confirmApproveBtn');
+    const cancelBtn  = document.getElementById('confirmCancelBtn');
+    approveBtn.disabled = false;
+    if (flagged.length) {
+      approveBtn.textContent = `Approve with ${flagged.length} flagged order(s) →`;
+      cancelBtn.textContent  = '✕ Abort Upload';
+      cancelBtn.classList.add('abort-mode');
+    } else {
+      approveBtn.textContent = 'Approve & Upload →';
+      cancelBtn.textContent  = 'Cancel';
+      cancelBtn.classList.remove('abort-mode');
+    }
     // Reset direction toggle to Outbound
     uploadDirection = 'Outbound';
     document.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'Outbound'));

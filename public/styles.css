@@ -2341,3 +2341,6 @@ body.ls-open { overflow: hidden; }
 .adjust-qty { width: 64px; text-align: center; border: 1.5px solid var(--border, #cbd5e1); border-radius: 6px; padding: .2rem .3rem; font-size: .85rem; font-weight: 700; }
 .adjust-qty.changed { border-color: var(--primary, #2563eb); background: #eff6ff; }
 .adjust-hint { font-size: .7rem; color: #92400e; margin-top: .3rem; }
+
+/* Abort styling when the upload carries flagged orders */
+#confirmCancelBtn.abort-mode { color: #dc2626; border-color: #fca5a5; font-weight: 700; }
