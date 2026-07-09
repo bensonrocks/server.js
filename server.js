@@ -303,6 +303,19 @@ try {
   _skuDescMap = JSON.parse(fs.readFileSync(SKU_DESC_FILE, 'utf8'));
   console.log(`[IdealScan] SKU description map loaded: ${Object.keys(_skuDescMap).length} entries`);
 } catch (e) { /* no desc file yet — populated on first CODE2 upload */ }
+// Repo-shipped description seed fills any SKUs the volume file doesn't have
+// (explicit UI uploads keep priority for SKUs they cover)
+try {
+  const seed = JSON.parse(fs.readFileSync(path.join(__dirname, 'lib', 'sku-descriptions-seed.json'), 'utf8'));
+  let added = 0;
+  for (const [sku, desc] of Object.entries(seed)) {
+    if (!_skuDescMap[sku]) { _skuDescMap[sku] = desc; added++; }
+  }
+  if (added > 0) {
+    console.log(`[IdealScan] SKU descriptions seeded from repo: +${added} (total ${Object.keys(_skuDescMap).length})`);
+    fs.writeFile(SKU_DESC_FILE, JSON.stringify(_skuDescMap, null, 2), () => {});
+  }
+} catch (e) { /* no seed shipped — fine */ }
 
 // One-time audit backfill — synthesize ledger events from batches that
 // existed before the ledger was introduced, so reports cover old activity.
