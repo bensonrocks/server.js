@@ -4318,6 +4318,20 @@ $('synclog-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockSyncLog(
 $('admin-pw').addEventListener('keydown',e=>{if(e.key==='Enter')unlockAdmin();});
 
 (async()=>{
+  // Validate stored token against server before trusting it
+  if(staffToken){
+    try{
+      const r=await fetch(`${SERVER}/api/staff/me`,{headers:{'Authorization':`Bearer ${staffToken}`}});
+      if(!r.ok){
+        staffToken=null;staffUser=null;staffRole=null;
+        localStorage.removeItem('staff_token');localStorage.removeItem('staff_user');localStorage.removeItem('staff_role');
+      } else {
+        const j=await r.json();
+        staffUser=j.username;staffRole=j.role||staffRole||'warehouse';
+        localStorage.setItem('staff_user',staffUser);localStorage.setItem('staff_role',staffRole);
+      }
+    }catch{ /* offline — fall through to gate */ staffToken=null; }
+  }
   applyRoleNav();
   renderStaffWidget();
   if(!staffToken){
