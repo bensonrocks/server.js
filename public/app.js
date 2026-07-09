@@ -1924,6 +1924,7 @@
     });
 
     scanPage = 0; scanPageManual = false; scanFocusSku = null;
+    _autoCompleteFired = false;
     scanPageSize = SCAN_PAGE_MAX; // re-measure fit for this screen
     renderItemsTable(order);
     updateProgress(order);
@@ -2342,6 +2343,7 @@
         scanPageManual = false;
         renderItemsTable(activeOrder);
         updateProgress(activeOrder);
+        maybeAutoComplete();
 
         const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
         if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
@@ -2377,6 +2379,7 @@
       scanPageManual = false;
       renderItemsTable(activeOrder);
       updateProgress(activeOrder);
+      maybeAutoComplete();
     } catch (err) { alert(err.message); }
   }
 
@@ -2413,6 +2416,7 @@
         await refreshOrders();
         renderOrdersDash();
         fetchAndRenderStats();
+        setTimeout(() => focusWaybillInput(), 350); // ready for the next order scan
         if (completedOrder.has_order_label) {
           showPrintOrderLabelModal(completedOrder);
         } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
@@ -2444,7 +2448,9 @@
     };
   }
 
-  document.getElementById('completeOrderBtn').addEventListener('click', async () => {
+  document.getElementById('completeOrderBtn').addEventListener('click', () => attemptCompleteOrder());
+
+  async function attemptCompleteOrder() {
     if (!activeOrder) return;
 
     // No-barcode sweep: if the ONLY unscanned lines are known no-barcode
@@ -2470,7 +2476,25 @@
       return;
     }
     await doCompleteOrder();
-  });
+  }
+
+  // Hands-free completion: when the LAST piece is counted (no over-scan),
+  // the order completes itself — no Complete click, no Enter. Orders with
+  // lot/expiry data still auto-open the Verify Lot modal for the physical
+  // check; everything else closes straight back to the orders screen.
+  let _autoCompleteFired = false;
+  function maybeAutoComplete() {
+    if (_autoCompleteFired || !activeOrder) return;
+    const scanned      = activeOrder.scanned || {};
+    const lines        = activeOrder.lines || [];
+    const totalOrdered = lines.reduce((s, l) => s + (l.qty || 0), 0);
+    const totalScanned = lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
+    const hasOver      = lines.some(l => (scanned[l.sku] || 0) > l.qty);
+    if (totalOrdered === 0 || hasOver || totalScanned !== totalOrdered) return;
+    _autoCompleteFired = true;
+    showFeedback(document.getElementById('itemScanFeedback'), 'success', '✓ All pieces scanned — completing order…');
+    setTimeout(() => attemptCompleteOrder(), 450);
+  }
 
   // ── Cancel order ───────────────────────────────────────────────────────────
   document.getElementById('cancelOrderBtn').addEventListener('click', () => {
