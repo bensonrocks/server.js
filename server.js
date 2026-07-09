@@ -1342,10 +1342,36 @@ function _isFooterRow(rec) {
 // Field mapping: GI number → order_number (matches the *GI-…* barcode on the
 // sheet, scanned to open the order), customer reference → waybill_number,
 // pick ticket kept as a scan fallback (the second barcode on the sheet).
+// A PDF may hold MANY picking lists back to back (e.g. 44 GIs in one file).
+// Every page of a picking list carries its GI number, so pages are grouped
+// by GI and each group is parsed as one document.
 async function parsePdfPicklist(buffer) {
   if (!pdfParse) throw new Error('pdf-parse not installed. Run: npm install pdf-parse');
-  const parsed = await pdfParse(buffer);
-  const text   = parsed.text || '';
+  const pageTexts = await extractPdfPageTexts(buffer);
+  if (!pageTexts.length) return [];
+
+  const groups = [];
+  let cur = null;
+  for (const t of pageTexts) {
+    const gi = (t.match(/\bGI-\d{4,}\b/) || [])[0] || null;
+    if (!cur || (gi && cur.gi && gi !== cur.gi)) {
+      cur = { gi, texts: [] };
+      groups.push(cur);
+    }
+    if (gi && !cur.gi) cur.gi = gi;
+    cur.texts.push(t);
+  }
+
+  const rows = [];
+  for (const g of groups) {
+    try { rows.push(...parsePicklistText(g.texts.join('\n'))); }
+    catch (e) { console.error('[pdf-picklist] section', g.gi || '?', 'failed:', e.message); }
+  }
+  return rows;
+}
+
+// Parse ONE picking list document from its extracted text
+function parsePicklistText(text) {
   // T[i] = trimmed version of each raw line (keeps index for lookahead)
   const T = text.split('\n').map(l => l.trim());
 
@@ -1437,6 +1463,7 @@ async function parsePdfPicklist(buffer) {
     const pats = [
       /[A-Z]{2}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
       /[A-Z]{1,4}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
+      /\d{3}(?:-\d{3}){1,3}(?:-[A-Z]{1,2})?/g,   // numeric locations e.g. 699-001-001 (fixed 3-digit groups)
     ];
     for (const PAT of pats) {
       PAT.lastIndex = 0;
@@ -1444,10 +1471,16 @@ async function parsePdfPicklist(buffer) {
       while ((m = PAT.exec(line)) !== null) {
         const batchStr  = line.slice(0, m.index);
         const remainder = line.slice(m.index + m[0].length);
-        if (!/^\d{4,}[A-Z]{0,2}$/i.test(batchStr)) continue;
-        const rm = remainder.match(/^(\d{1,3}?)([A-Z0-9]{4,})$/i);
+        // Batch/lot before the location may be digits (433411), digits+suffix
+        // (40311J), alphanumeric (C7980), pure letters (RT, NA) or even a
+        // date-formatted lot (10/28/2029). Empty = no batch on this line.
+        if (!/^[A-Z0-9]{0,12}$/i.test(batchStr) &&
+            !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(batchStr)) continue;
+        // After the location: SNo + SKU (may contain hyphens, e.g. TP-GWP2),
+        // optionally followed by a run-on description ("...Topicrem PINK TOWELS")
+        const rm = remainder.match(/^(\d{1,3}?)([A-Z0-9][A-Z0-9-]{2,}[A-Z0-9])((?:\s|[A-Z][a-z]).*)?$/);
         if (!rm) continue;
-        return { batch: batchStr, sku: rm[2] };
+        return { batch: batchStr, sku: rm[2], desc: (rm[3] || '').trim() };
       }
     }
     return null;
@@ -1474,7 +1507,7 @@ async function parsePdfPicklist(buffer) {
     const di = parseDataLine(t);
     if (di) {
       if (current) items.push(current);
-      current = { sku: di.sku, batch_number: di.batch, description: '', expiry_date: '', qty: 1 };
+      current = { sku: di.sku, batch_number: di.batch, description: di.desc || '', expiry_date: '', qty: 1 };
       inTable = true;
       continue;
     }
