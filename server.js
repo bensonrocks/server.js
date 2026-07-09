@@ -1407,6 +1407,16 @@ async function parsePdfPicklistDetailed(buffer) {
         });
       }
     }
+    // One-sided total check catches TRUNCATED TAILS the SNo gaps cannot see
+    // (if the last lines are missing, SNos 1..k still look contiguous)
+    const tm = text.match(/Grand\s+Total\s+Loose\s*:\s*(\d{1,5})\s*$/im);
+    if (tm) {
+      const printed      = Number(tm[1]);
+      const parsedPieces = groupRows.reduce((s, r) => s + (r.qty || 0), 0);
+      if (printed > parsedPieces) {
+        issues.push({ gi: g.gi || '(no GI)', critical: false, problem: `Picking list total is ${printed} pc(s) but only ${parsedPieces} pc(s) were captured — some lines may be missing; check and amend below.` });
+      }
+    }
     rows.push(...groupRows);
   }
   return { rows, issues };
@@ -1505,32 +1515,56 @@ function parsePicklistText(text) {
   // Uses exec loop to find leftmost location code; try 2-letter prefix first
   // (handles batch trailing letters like "40311J" + "AC-012-003-A" correctly),
   // then fall back to 1-4 letter prefix.
-  function parseDataLine(line) {
+  // Enumerates every plausible batch/location/SNo/SKU split of a data line
+  // and scores the candidates: the expected next line number and a SKU known
+  // to the SKU master outweigh everything. A single greedy regex kept
+  // swallowing digits (DMG-2 lines, 2-digit SNos) — enumeration + scoring
+  // cannot be fooled that way.
+  const LOC_ANCHORED = /^(?:[A-Z]{1,4}|\d{2,3})(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?$/i;
+  function parseDataLine(line, expectedSno) {
     const pats = [
-      /[A-Z]{2}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
       /[A-Z]{1,4}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
-      /\d{2,3}(?:-\d{3}){1,3}(?:-[A-Z]{1,2})?/g,   // numeric locations e.g. 699-001-001 or 99-001-001
+      /\d{2,3}(?:-\d{3}){1,3}(?:-[A-Z]{1,2})?/g,
     ];
+    const isBatchOk = s =>
+      /^[A-Z0-9._]{0,12}$/i.test(s) ||
+      /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s) ||
+      /^\d{1,2}-[A-Z]{3}-\d{2,4}$/i.test(s);
+
+    const candidates = [];
     for (const PAT of pats) {
       PAT.lastIndex = 0;
       let m;
       while ((m = PAT.exec(line)) !== null) {
-        const batchStr  = line.slice(0, m.index);
-        const remainder = line.slice(m.index + m[0].length);
-        // Batch/lot before the location may be digits (433411), digits+suffix
-        // (40311J), alphanumeric (C7980), pure letters (RT, NA) or even a
-        // date-formatted lot (10/28/2029). Empty = no batch on this line.
-        if (!/^[A-Z0-9.]{0,12}$/i.test(batchStr) &&   // dots allowed: date-lots like 2028.02
-            !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(batchStr) &&
-            !/^\d{1,2}-[A-Z]{3}-\d{2,4}$/i.test(batchStr)) continue;  // hyphen date-lots like 28-Oct-30
-        // After the location: SNo + SKU (may contain hyphens, e.g. TP-GWP2),
-        // optionally followed by a run-on description ("...Topicrem PINK TOWELS")
-        const rm = remainder.match(/^(\d{1,3}?)([A-Z0-9][A-Z0-9-]{2,}[A-Z0-9])((?:\s|[A-Z][a-z]).*)?$/);
-        if (!rm) continue;
-        return { batch: batchStr, sno: parseInt(rm[1], 10), sku: rm[2], desc: (rm[3] || '').trim() };
+        const full = m[0];
+        // The location's trailing digits may really belong to SNo+SKU —
+        // consider giving back 0..6 of them
+        const tailDigits = (full.match(/(\d+)$/) || ['', ''])[1].length;
+        for (let give = 0; give <= Math.min(tailDigits, 6); give++) {
+          const loc = full.slice(0, full.length - give);
+          if (!LOC_ANCHORED.test(loc)) continue;
+          const batchStr  = line.slice(0, m.index);
+          if (!isBatchOk(batchStr)) continue;
+          const remainder = line.slice(m.index + loc.length);
+          // Try each SNo length explicitly (1-3 digits)
+          for (let snoLen = 1; snoLen <= 3; snoLen++) {
+            const rm = remainder.match(new RegExp('^(\\d{' + snoLen + '})([A-Z0-9][A-Z0-9-]{2,}[A-Z0-9])((?:\\s|[A-Z][a-z]).*)?$'));
+            if (!rm) continue;
+            const sno = parseInt(rm[1], 10);
+            let score = 0;
+            if (Number.isFinite(expectedSno) && sno === expectedSno) score += 100;
+            if (_skuDescMap[rm[2]]) score += 50;
+            if (/^[A-Z]{2,}/i.test(loc) || /^\d/.test(loc)) score += 5;
+            score += m.index / 100; // tie-break: longer batch (later location start)
+            candidates.push({ score, batch: batchStr, sno, sku: rm[2], desc: (rm[3] || '').trim() });
+          }
+        }
+        PAT.lastIndex = m.index + 1; // overlapping starts — try every position
       }
     }
-    return null;
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0];
   }
 
   const STOP_PAT  = /^Total\s+(Whole|Loose)\s+Qty/i;
@@ -1550,9 +1584,13 @@ function parsePicklistText(text) {
       break;
     }
     if (!t) continue;
+    // Header/barcode lines (order id, *540026*, Reference value) contain
+    // GI-numbers that the permissive candidate parser could mistake for
+    // item rows — they are never item lines
+    if (/\bGI-\d{4,}\b/.test(t) || t.startsWith('*')) continue;
 
     // Item data line: batch+location+sno+sku concatenated
-    const di = parseDataLine(t);
+    const di = parseDataLine(t, items.length + (current ? 2 : 1));
     if (di) {
       if (current) items.push(current);
       // Run-on ALL-CAPS descriptions can glue onto the SKU
