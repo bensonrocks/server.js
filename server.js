@@ -1345,10 +1345,23 @@ function _isFooterRow(rec) {
 // A PDF may hold MANY picking lists back to back (e.g. 44 GIs in one file).
 // Every page of a picking list carries its GI number, so pages are grouped
 // by GI and each group is parsed as one document.
-async function parsePdfPicklist(buffer) {
+//
+// SAFETY RULES — a picking list must never be silently dropped:
+//  • hard cap on page count (runaway files)
+//  • every GI found in the file must yield at least one item line, else the
+//    upload is rejected naming the failing GIs (this exact failure once lost
+//    43 of 44 orders without a word)
+//  • when the printed "Grand Total" can be read, it is cross-checked against
+//    the parsed piece count and mismatches are reported as warnings
+const PDF_MAX_PAGES = 400;
+
+async function parsePdfPicklistDetailed(buffer) {
   if (!pdfParse) throw new Error('pdf-parse not installed. Run: npm install pdf-parse');
   const pageTexts = await extractPdfPageTexts(buffer);
-  if (!pageTexts.length) return [];
+  if (!pageTexts.length) return { rows: [], issues: [{ gi: '(file)', critical: true, problem: 'No readable pages in PDF' }] };
+  if (pageTexts.length > PDF_MAX_PAGES) {
+    return { rows: [], issues: [{ gi: '(file)', critical: true, problem: `PDF has ${pageTexts.length} pages — maximum is ${PDF_MAX_PAGES}. Split the export into parts.` }] };
+  }
 
   const groups = [];
   let cur = null;
@@ -1362,12 +1375,40 @@ async function parsePdfPicklist(buffer) {
     cur.texts.push(t);
   }
 
-  const rows = [];
+  const rows   = [];
+  const issues = [];
   for (const g of groups) {
-    try { rows.push(...parsePicklistText(g.texts.join('\n'))); }
-    catch (e) { console.error('[pdf-picklist] section', g.gi || '?', 'failed:', e.message); }
+    const text = g.texts.join('\n');
+    let groupRows = [];
+    try { groupRows = parsePicklistText(text); }
+    catch (e) {
+      issues.push({ gi: g.gi || '(no GI)', critical: true, problem: `Parse error: ${e.message}` });
+      continue;
+    }
+    if (!groupRows.length) {
+      issues.push({ gi: g.gi || '(no GI)', critical: true, problem: 'Picking list recognised but NO item lines could be parsed — layout not understood. Upload blocked so this order is not silently lost.' });
+      continue;
+    }
+    // Cross-check parsed pieces against the printed grand total — ONLY when
+    // the number sits unambiguously on the same line as its label. The
+    // column-jumbled layout puts totals on detached lines mixed with other
+    // digits; guessing there produced false alarms, and a safety net that
+    // cries wolf gets ignored.
+    const tm = text.match(/Grand\s+Total\s+Loose\s*:\s*(\d{1,5})\s*$/im);
+    if (tm) {
+      const printed      = Number(tm[1]);
+      const parsedPieces = groupRows.reduce((s, r) => s + (r.qty || 0), 0);
+      if (printed > 0 && printed !== parsedPieces) {
+        issues.push({ gi: g.gi || '(no GI)', critical: false, problem: `Printed total is ${printed} pc(s) but ${parsedPieces} pc(s) were parsed — verify this order after upload.` });
+      }
+    }
+    rows.push(...groupRows);
   }
-  return rows;
+  return { rows, issues };
+}
+
+async function parsePdfPicklist(buffer) {
+  return (await parsePdfPicklistDetailed(buffer)).rows;
 }
 
 // Parse ONE picking list document from its extracted text
@@ -1463,7 +1504,7 @@ function parsePicklistText(text) {
     const pats = [
       /[A-Z]{2}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
       /[A-Z]{1,4}(?:-\d{1,6}){1,3}(?:-[A-Z]{1,2})?/gi,
-      /\d{3}(?:-\d{3}){1,3}(?:-[A-Z]{1,2})?/g,   // numeric locations e.g. 699-001-001 (fixed 3-digit groups)
+      /\d{2,3}(?:-\d{3}){1,3}(?:-[A-Z]{1,2})?/g,   // numeric locations e.g. 699-001-001 or 99-001-001
     ];
     for (const PAT of pats) {
       PAT.lastIndex = 0;
@@ -1474,8 +1515,9 @@ function parsePicklistText(text) {
         // Batch/lot before the location may be digits (433411), digits+suffix
         // (40311J), alphanumeric (C7980), pure letters (RT, NA) or even a
         // date-formatted lot (10/28/2029). Empty = no batch on this line.
-        if (!/^[A-Z0-9]{0,12}$/i.test(batchStr) &&
-            !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(batchStr)) continue;
+        if (!/^[A-Z0-9.]{0,12}$/i.test(batchStr) &&   // dots allowed: date-lots like 2028.02
+            !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(batchStr) &&
+            !/^\d{1,2}-[A-Z]{3}-\d{2,4}$/i.test(batchStr)) continue;  // hyphen date-lots like 28-Oct-30
         // After the location: SNo + SKU (may contain hyphens, e.g. TP-GWP2),
         // optionally followed by a run-on description ("...Topicrem PINK TOWELS")
         const rm = remainder.match(/^(\d{1,3}?)([A-Z0-9][A-Z0-9-]{2,}[A-Z0-9])((?:\s|[A-Z][a-z]).*)?$/);
@@ -1487,7 +1529,8 @@ function parsePicklistText(text) {
   }
 
   const STOP_PAT  = /^Total\s+(Whole|Loose)\s+Qty/i;
-  const QTY_EACH  = /(\d+)EACH$/i;           // "1EACH" or "CARTON 1 1EACH"
+  // "1EACH" / "CARTON 4 4PACK" / "2SET" — qty is the number glued to the UOM
+  const QTY_EACH  = /(\d+)(?:EACH|PACK|PACKS|SET|SETS|PCS|PC|PIECE|PIECES|BOX|BOXES|CTN|CARTON|PAIR|PAIRS|KIT|KITS|BTL|TUBE|ROLL|UNIT|UNITS)$/i;
   const EXPIRY_RE = /^\d{1,2}[\/\-]\w+[\/\-]\d{2,4}$/; // "19/Jan/2029" on its own line
   const SKIP_DASH = /^-\s+\S+$/;             // "- 8750" repeated-SKU markers
   const NUM_ONLY  = /^\d+$/;                 // bare LHU count lines like "1"
@@ -1507,7 +1550,16 @@ function parsePicklistText(text) {
     const di = parseDataLine(t);
     if (di) {
       if (current) items.push(current);
-      current = { sku: di.sku, batch_number: di.batch, description: di.desc || '', expiry_date: '', qty: 1 };
+      // Run-on ALL-CAPS descriptions can glue onto the SKU
+      // ("KOLI-GWP6KOLI GWP Pouch"). If the token isn't a known SKU but a
+      // prefix of it is (per the shipped SKU master), trim to that prefix.
+      let sku = di.sku;
+      if (!_skuDescMap[sku]) {
+        for (let l = sku.length - 1; l >= 3; l--) {
+          if (_skuDescMap[sku.slice(0, l)]) { sku = sku.slice(0, l); break; }
+        }
+      }
+      current = { sku, batch_number: di.batch, description: di.desc || '', expiry_date: '', qty: 1 };
       inTable = true;
       continue;
     }
@@ -1601,8 +1653,13 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     const ext = path.extname(req.file.originalname).toLowerCase();
 
     let allRows = [], skipped = 0;
+    const pdfWarnings = [];
     if (ext === '.pdf') {
-      allRows = await parsePdfPicklist(req.file.buffer);
+      const detailed = await parsePdfPicklistDetailed(req.file.buffer);
+      allRows = detailed.rows;
+      for (const i of detailed.issues) {
+        pdfWarnings.push(`${i.critical ? '⛔' : '⚠'} ${i.gi}: ${i.problem}`);
+      }
     } else if (ext === '.csv') {
       const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
       const detected = detectColumnMap(records);
@@ -1629,6 +1686,14 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     }
     const orders     = summarizeOrders(allRows);
     const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
+    errors.push(...pdfWarnings);
+    // Duplicate check so the Confirm dialog warns BEFORE approving
+    {
+      const existing = new Set();
+      for (const b of readDb().batches || []) for (const o of b.orders || []) existing.add(o.order_number);
+      const dups = [...new Set(orders.map(o => o.order_number).filter(n => existing.has(n)))];
+      if (dups.length) errors.push(`⛔ ${dups.length} order(s) already uploaded earlier: ${dups.slice(0, 8).join(', ')}${dups.length > 8 ? '…' : ''} — upload will be blocked`);
+    }
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
     res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames });
@@ -1762,14 +1827,60 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
 
     const orderExt = path.extname(orderFile.originalname).toLowerCase();
-    const mapped = orderExt === '.pdf'
-      ? await parsePdfPicklist(orderFile.buffer)
-      : parseUploadedFile(orderFile.buffer, orderFile.originalname);
+    let pdfIssues = [];
+    let mapped;
+    if (orderExt === '.pdf') {
+      const detailed = await parsePdfPicklistDetailed(orderFile.buffer);
+      mapped = detailed.rows;
+      pdfIssues = detailed.issues;
+    } else {
+      mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
+    }
+    // SAFETY RULE — no picking list may be silently dropped
+    const criticalPdf = pdfIssues.filter(i => i.critical);
+    if (criticalPdf.length) {
+      return res.status(422).json({
+        error: 'UPLOAD ABORTED:\nPDF safety check failed — some picking lists could not be parsed.\nNothing was saved.',
+        validation: {
+          passed: false, status: 'FAILED', totalErrors: criticalPdf.length,
+          totalRowsProcessed: mapped.length, rowsWithErrors: criticalPdf.length, hasCritical: true,
+          errors: criticalPdf.map(i => ({
+            excelRow: '—', orderId: i.gi, field: 'pdf',
+            issue: 'PICKING LIST NOT PARSED', description: i.problem,
+            action: 'Check this picking list in the PDF; if the format is new, send one sample for support.',
+            critical: true,
+          })),
+        },
+      });
+    }
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const orders    = summarizeOrders(mapped);
+
+    // SAFETY RULE — duplicate order numbers: re-uploading the same file (or
+    // the same picking lists in another file) would create twin orders
+    {
+      const existing = new Set();
+      for (const b of readDb().batches || []) for (const o of b.orders || []) existing.add(o.order_number);
+      const dups = [...new Set(orders.map(o => o.order_number).filter(n => existing.has(n)))];
+      if (dups.length) {
+        return res.status(422).json({
+          error: `UPLOAD ABORTED:\n${dups.length} order(s) in this file already exist in the system.\nNothing was saved.`,
+          validation: {
+            passed: false, status: 'FAILED', totalErrors: dups.length,
+            totalRowsProcessed: mapped.length, rowsWithErrors: dups.length, hasCritical: true,
+            errors: dups.slice(0, 50).map(n => ({
+              excelRow: '—', orderId: n, field: 'order_number',
+              issue: 'DUPLICATE ORDER NUMBER', description: `Order "${n}" was already uploaded earlier.`,
+              action: 'If this is a re-upload, delete the earlier batch in Administrator → Upload History first.',
+              critical: true,
+            })),
+          },
+        });
+      }
+    }
 
     // ── Validation (lib/validation.js) — ABORT if any error found ──────────
     const wmsRows = [];
