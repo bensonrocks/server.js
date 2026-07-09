@@ -1971,9 +1971,27 @@
   let scanPageManual = false;
   let scanFocusSku   = null;  // last item the packer counted — keep its page in view while it's unfinished
 
+  // A SKU can appear on MULTIPLE lines of one order (client files sometimes
+  // split the same product across lines). Scan counts are stored per SKU, so
+  // the scan screen pools those lines into ONE row per SKU — two rows sharing
+  // a single counter would double-count and could never reconcile.
+  function mergedScanLines(order) {
+    const map = new Map();
+    for (const l of (order.lines || [])) {
+      const m = map.get(l.sku);
+      if (!m) { map.set(l.sku, { ...l }); continue; }
+      m.qty += l.qty || 0;
+      for (const f of ['batch_number', 'serial_number', 'expiry_date']) {
+        if (l[f] && m[f] && !String(m[f]).includes(String(l[f]))) m[f] = `${m[f]} / ${l[f]}`;
+        else if (l[f] && !m[f]) m[f] = l[f];
+      }
+    }
+    return [...map.values()];
+  }
+
   function renderItemsTable(order) {
     const scanned  = order.scanned || {};
-    const decorated = order.lines.map((item, idx) => {
+    const decorated = mergedScanLines(order).map((item, idx) => {
       const s = scanned[item.sku] || 0;
       return { item, s, idx, done: s === item.qty && item.qty > 0 };
     });
@@ -2068,7 +2086,7 @@
       });
     });
 
-    const lineOf = sku => (activeOrder.lines || []).find(l => l.sku === sku);
+    const lineOf = sku => mergedScanLines(activeOrder).find(l => l.sku === sku);
     document.querySelectorAll('.nb-plus, .nb-minus, .nb-all').forEach(btn => {
       btn.addEventListener('click', async () => {
         const item = lineOf(btn.dataset.sku);
@@ -2144,18 +2162,19 @@
 
   function updateProgress(order) {
     const scanned = order.scanned || {};
+    const lines   = mergedScanLines(order); // one pool per SKU — never double-count
 
     // Line-item progress pill (existing)
-    const doneCount = order.lines.filter(l => (scanned[l.sku] || 0) === l.qty).length;
+    const doneCount = lines.filter(l => (scanned[l.sku] || 0) === l.qty).length;
     const el = document.getElementById('scanProgress');
-    el.textContent = `${doneCount}/${order.lines.length} items`;
-    el.className = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
+    el.textContent = `${doneCount}/${lines.length} items`;
+    el.className = doneCount === lines.length ? 'scan-progress all-done' : 'scan-progress';
 
     // Piece counter — shows remaining pieces, turns red on over-scan
-    const totalOrdered = order.lines.reduce((s, l) => s + (l.qty || 0), 0);
-    const totalScanned = order.lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
+    const totalOrdered = lines.reduce((s, l) => s + (l.qty || 0), 0);
+    const totalScanned = lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
     const remaining    = totalOrdered - totalScanned;
-    const hasOver      = order.lines.some(l => (scanned[l.sku] || 0) > l.qty);
+    const hasOver      = lines.some(l => (scanned[l.sku] || 0) > l.qty);
 
     const piecesEl = document.getElementById('scanPiecesLeft');
     const numEl    = document.getElementById('scanPiecesNum');
@@ -2456,7 +2475,7 @@
     // No-barcode sweep: if the ONLY unscanned lines are known no-barcode
     // items (GWPs etc.), offer to count them all with one click
     const scannedMap = activeOrder.scanned || {};
-    const unscanned  = (activeOrder.lines || []).filter(l => (scannedMap[l.sku] || 0) < l.qty);
+    const unscanned  = mergedScanLines(activeOrder).filter(l => (scannedMap[l.sku] || 0) < l.qty);
     if (unscanned.length && unscanned.every(isNoBarcodeItem)) {
       const pcs = unscanned.reduce((sum, l) => sum + (l.qty - (scannedMap[l.sku] || 0)), 0);
       const list = unscanned.map(l => l.sku).join(', ');
@@ -2486,7 +2505,7 @@
   function maybeAutoComplete() {
     if (_autoCompleteFired || !activeOrder) return;
     const scanned      = activeOrder.scanned || {};
-    const lines        = activeOrder.lines || [];
+    const lines        = mergedScanLines(activeOrder);
     const totalOrdered = lines.reduce((s, l) => s + (l.qty || 0), 0);
     const totalScanned = lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
     const hasOver      = lines.some(l => (scanned[l.sku] || 0) > l.qty);

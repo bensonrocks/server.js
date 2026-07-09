@@ -239,6 +239,25 @@ function logAudit(type, data) {
 
 // Snapshot of a completed order for the ledger — carries everything the
 // reports need (incl. lot/expiry per line) independently of the batch.
+// A SKU can appear on MULTIPLE lines of one order (client files sometimes
+// split the same product across lines). Scan counts are stored per SKU, so
+// every comparison of scanned-vs-ordered must first pool those lines into
+// one entry per SKU — otherwise the shared counter is double-counted and
+// the order can never reconcile.
+function uniqueSkuLines(ord) {
+  const map = new Map();
+  for (const l of (ord.lines || [])) {
+    const m = map.get(l.sku);
+    if (!m) { map.set(l.sku, { ...l }); continue; }
+    m.qty += l.qty || 0;
+    for (const f of ['batch_number', 'serial_number', 'expiry_date']) {
+      if (l[f] && m[f] && !String(m[f]).includes(String(l[f]))) m[f] = `${m[f]} / ${l[f]}`;
+      else if (l[f] && !m[f]) m[f] = l[f];
+    }
+  }
+  return [...map.values()];
+}
+
 function completionAuditData(batch, ord, state) {
   const scanned = state.scanned || {};
   return {
@@ -251,8 +270,8 @@ function completionAuditData(batch, ord, state) {
     operator:  state.operator     || '',
     startTime: state.startTime    || null,
     endTime:   state.endTime      || null,
-    pieces:    (ord.lines || []).reduce((s, l) => s + (scanned[l.sku] ?? l.qty ?? 0), 0),
-    lines:     (ord.lines || []).map(l => ({
+    pieces:    uniqueSkuLines(ord).reduce((s, l) => s + (scanned[l.sku] ?? l.qty ?? 0), 0),
+    lines:     uniqueSkuLines(ord).map(l => ({
       sku: l.sku, description: l.description || '', qty: l.qty,
       scanned: scanned[l.sku] ?? l.qty, lot: l.batch_number || '', expiry: l.expiry_date || '',
     })),
@@ -2150,7 +2169,7 @@ app.post('/api/scan/increment', (req, res) => {
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
   const stripLeadZeros = s => s.trim().toLowerCase().replace(/^0+(?=.)/, '');
   const skuNorm = stripLeadZeros(sku);
-  const item = ord.lines.find(l => {
+  const item = uniqueSkuLines(ord).find(l => {
     const ls = l.sku.trim().toLowerCase();
     return ls === sku.trim().toLowerCase() || stripLeadZeros(ls) === skuNorm;
   });
@@ -2172,7 +2191,7 @@ app.post('/api/scan/setqty', (req, res) => {
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
-  const item = ord.lines.find(l => l.sku === sku);
+  const item = uniqueSkuLines(ord).find(l => l.sku === sku);
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not found` });
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
@@ -2208,7 +2227,7 @@ app.post('/api/scan/complete', (req, res) => {
   const ord   = batch.orders.find(o => o.order_number === orderNumber);
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
-  const mismatches = ord.lines.map(item => {
+  const mismatches = uniqueSkuLines(ord).map(item => {
     const s = state.scanned[item.sku] || 0;
     return s !== item.qty ? { sku: item.sku, description: item.description, ordered: item.qty, scanned: s, gap: s - item.qty } : null;
   }).filter(Boolean);
@@ -3551,7 +3570,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
     ['Elapsed',      elapsedStr],
     [],
     ['SKU', 'Description', 'Ordered Qty', 'Scanned Qty', 'Result'],
-    ...ord.lines.map(l => {
+    ...uniqueSkuLines(ord).map(l => {
       const s  = (state.scanned || {})[l.sku] || 0;
       const ok = s === l.qty;
       return [l.sku, l.description || '', l.qty, s, ok ? 'OK' : s > l.qty ? 'Over-scanned' : 'Short'];
