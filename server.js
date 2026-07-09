@@ -284,10 +284,18 @@ function _rebuildCode2Lengths() {
   }
 }
 
+// CODE2 map: the repo ships a baseline (lib/betime-code2.json); a copy on the
+// persistent volume (written by the Barcode→SKU Map upload) overrides it so
+// UI uploads survive redeploys, which wipe the app directory.
+const BETIME_CODE2_VOLUME_FILE = path.join(DATA_DIR, 'betime-code2.json');
 try {
-  _beTimeCode2Map = JSON.parse(fs.readFileSync(BETIME_CODE2_FILE, 'utf8'));
+  let src = BETIME_CODE2_FILE;
+  try {
+    if (fs.existsSync(BETIME_CODE2_VOLUME_FILE)) src = BETIME_CODE2_VOLUME_FILE;
+  } catch {}
+  _beTimeCode2Map = JSON.parse(fs.readFileSync(src, 'utf8'));
   _rebuildCode2Lengths();
-  console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries`);
+  console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries (${src === BETIME_CODE2_VOLUME_FILE ? 'volume' : 'built-in'})`);
 } catch (e) {
   console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
 }
@@ -3223,7 +3231,10 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
         if (pc && desc) descMap[pc] = desc;
       }
     });
-    fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
+    // Volume copy is authoritative (survives redeploys); app-dir copy is
+    // best-effort for consistency within this deploy
+    fs.writeFileSync(BETIME_CODE2_VOLUME_FILE, JSON.stringify(map, null, 2));
+    try { fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2)); } catch {}
     _beTimeCode2Map = map;
     _rebuildCode2Lengths();
     if (Object.keys(descMap).length > 0) {
