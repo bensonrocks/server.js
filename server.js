@@ -1654,12 +1654,21 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
 
     let allRows = [], skipped = 0;
     const pdfWarnings = [];
+    let flagged = [];
     if (ext === '.pdf') {
       const detailed = await parsePdfPicklistDetailed(req.file.buffer);
       allRows = detailed.rows;
       for (const i of detailed.issues) {
         pdfWarnings.push(`${i.critical ? '⛔' : '⚠'} ${i.gi}: ${i.problem}`);
       }
+      // Flagged orders carry their parsed lines so the Confirm window can
+      // offer inline quantity adjustment before approval
+      flagged = detailed.issues.map(i => ({
+        gi: i.gi, problem: i.problem, critical: !!i.critical,
+        lines: detailed.rows
+          .filter(r => r.order_number === i.gi)
+          .map(r => ({ sku: r.sku, description: String(r.description || '').slice(0, 70), qty: r.qty })),
+      }));
     } else if (ext === '.csv') {
       const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
       const detected = detectColumnMap(records);
@@ -1696,7 +1705,7 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     }
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
-    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames });
+    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames, flagged });
   } catch (err) {
     res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
   }
@@ -1853,6 +1862,24 @@ app.post('/api/upload', uploadFields, async (req, res) => {
         },
       });
     }
+    // Quantity amendments approved by the user in the Confirm window
+    let adjustmentsApplied = 0;
+    if (req.body?.adjustments) {
+      try {
+        for (const a of JSON.parse(req.body.adjustments)) {
+          const qty = Math.floor(Number(a.qty));
+          if (!Number.isFinite(qty) || qty < 0 || qty > 99999) continue;
+          for (const r of mapped) {
+            if (r.order_number === a.order && r.sku === a.sku && r.qty !== qty) {
+              r.qty = qty;
+              adjustmentsApplied++;
+            }
+          }
+        }
+        if (adjustmentsApplied) mapped = mapped.filter(r => (r.qty ?? 0) > 0); // qty 0 = line removed
+      } catch { /* malformed adjustments are ignored */ }
+    }
+
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
@@ -1958,7 +1985,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       has_order_label:   false,
     }));
 
-    logAudit('upload', { batchId, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length });
+    logAudit('upload', { batchId, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
 
     console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}`);
     res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });

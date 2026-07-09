@@ -838,6 +838,37 @@
       errEl.classList.add('hidden');
     }
 
+    // Flagged orders: review & amend quantities right here before approving
+    const adjWrap = document.getElementById('confirmAdjustSection');
+    const flagged = (preview.flagged || []).filter(f => (f.lines || []).length);
+    if (flagged.length) {
+      adjWrap.innerHTML = `
+        <div class="adjust-title">&#9998; Review flagged order(s) — amend quantities before approving</div>
+        ${flagged.map(f => `
+          <div class="adjust-order">
+            <div class="adjust-order-head"><strong>${esc(f.gi)}</strong> — ${esc(f.problem)}</div>
+            <table class="adjust-table">
+              <thead><tr><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
+              <tbody>${f.lines.map(l => `
+                <tr>
+                  <td><code>${esc(l.sku)}</code></td>
+                  <td>${esc(l.description)}</td>
+                  <td><input type="number" min="0" max="99999" class="adjust-qty"
+                        data-order="${esc(f.gi)}" data-sku="${esc(l.sku)}" data-orig="${l.qty}" value="${l.qty}" /></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`).join('')}
+        <div class="adjust-hint">Set a quantity to 0 to remove that line. Changes apply on Approve &amp; Upload.</div>`;
+      adjWrap.classList.remove('hidden');
+      adjWrap.querySelectorAll('.adjust-qty').forEach(inp =>
+        inp.addEventListener('input', () => inp.classList.toggle('changed', inp.value !== inp.dataset.orig))
+      );
+    } else {
+      adjWrap.classList.add('hidden');
+      adjWrap.innerHTML = '';
+    }
+
     document.getElementById('confirmApproveBtn').disabled    = false;
     document.getElementById('confirmApproveBtn').textContent = 'Approve & Upload →';
     // Reset direction toggle to Outbound
@@ -924,6 +955,12 @@
     form.append('orderFile', file);
     if (clientName)  form.append('client_name', clientName);
     form.append('direction', uploadDirection);
+    // Quantity amendments made in the flagged-orders review panel
+    const adjustments = [...document.querySelectorAll('#confirmAdjustSection .adjust-qty')]
+      .filter(inp => inp.value !== inp.dataset.orig)
+      .map(inp => ({ order: inp.dataset.order, sku: inp.dataset.sku, qty: parseInt(inp.value, 10) }))
+      .filter(a => Number.isFinite(a.qty) && a.qty >= 0);
+    if (adjustments.length) form.append('adjustments', JSON.stringify(adjustments));
 
     try {
       const _uploadAbort = new AbortController();
