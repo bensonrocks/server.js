@@ -2094,15 +2094,27 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: 'Session expired' });
 }
 
+// Client info for the login audit trail
+function clientInfo(req) {
+  return {
+    ip: String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim(),
+    device: String(req.headers['user-agent'] || '').slice(0, 160),
+  };
+}
+
 app.post('/api/auth/login', (req, res) => {
   const { id, password } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
   const user = readUsers().find(u => u.id === String(id).trim());
-  if (!user || hashPass(password, user.salt) !== user.passwordHash)
+  if (!user || hashPass(password, user.salt) !== user.passwordHash) {
+    logAudit('login_failed', { user: String(id).trim().slice(0, 60), ...clientInfo(req) });
     return res.status(401).json({ error: 'Invalid credentials' });
+  }
   const token = uuidv4();
+  const kickedOther = activeSessions.has(user.id);
   activeSessions.set(user.id, token); // replaces any existing session for this user
   persistSessions();
+  logAudit('login', { user: user.id, replacedSession: kickedOther, ...clientInfo(req) });
   res.json({ id: user.id, name: user.name || user.id, role: user.role || 'admin', token });
 });
 
@@ -2110,7 +2122,11 @@ app.post('/api/auth/logout', (req, res) => {
   const token = req.headers['x-auth-token'];
   if (token) {
     for (const [userId, t] of activeSessions) {
-      if (t === token) { activeSessions.delete(userId); break; }
+      if (t === token) {
+        activeSessions.delete(userId);
+        logAudit('logout', { user: userId, ...clientInfo(req) });
+        break;
+      }
     }
     persistSessions();
   }
@@ -2431,6 +2447,28 @@ app.get('/api/master/report/:kind', (req, res) => {
       addSheet('Aging', [
         ['Order No', 'Client', 'Carrier', 'Status', 'Uploaded', 'Days Pending', 'Lines', 'Pieces Ordered'],
         ...rows,
+      ]);
+
+    } else if (kind === 'login-audit') {
+      title = 'User_Login_Audit';
+      const evs = log.filter(e => ['login', 'login_failed', 'logout'].includes(e.type) && inRange(e));
+      const label = { login: 'Login', login_failed: 'FAILED LOGIN', logout: 'Logout' };
+      addSheet('Login Audit', [
+        ['Date/Time', 'User', 'Event', 'IP Address', 'Device', 'Note'],
+        ...evs.map(e => [e.at, e.user || '—', label[e.type], e.ip || '', e.device || '',
+                         e.replacedSession ? 'Signed in elsewhere — previous session ended' : '']),
+      ]);
+      // Per-user summary: first/last activity and counts
+      const byUser = {};
+      for (const e of evs) {
+        const u = byUser[e.user || '—'] ||= { logins: 0, failed: 0, logouts: 0, first: e.at, last: e.at };
+        if (e.type === 'login') u.logins++; else if (e.type === 'login_failed') u.failed++; else u.logouts++;
+        if (e.at < u.first) u.first = e.at;
+        if (e.at > u.last)  u.last  = e.at;
+      }
+      addSheet('Per User', [
+        ['User', 'Logins', 'Failed Attempts', 'Logouts', 'First Activity', 'Last Activity'],
+        ...Object.keys(byUser).sort().map(u => { const x = byUser[u]; return [u, x.logins, x.failed, x.logouts, x.first, x.last]; }),
       ]);
 
     } else if (kind === 'lot-traceability') {
