@@ -316,6 +316,25 @@ try {
     fs.writeFile(SKU_DESC_FILE, JSON.stringify(_skuDescMap, null, 2), () => {});
   }
 } catch (e) { /* no seed shipped — fine */ }
+// No-barcode SKU seed: SKUs the client's own listing marks as having no
+// barcode. They get the on-screen substitute barcode and count buttons
+// automatically — no GWP text or manual marking needed.
+try {
+  const seed = JSON.parse(fs.readFileSync(path.join(__dirname, 'lib', 'no-barcode-skus-seed.json'), 'utf8'));
+  const db = readDb();
+  if (!db.noBarcodeSkus) db.noBarcodeSkus = {};
+  let added = 0;
+  for (const [sku, info] of Object.entries(seed)) {
+    if (!db.noBarcodeSkus[sku]) {
+      db.noBarcodeSkus[sku] = { ...info, addedAt: new Date().toISOString(), addedBy: 'seed' };
+      added++;
+    }
+  }
+  if (added > 0) {
+    writeDb(db);
+    console.log(`[IdealScan] No-barcode SKUs seeded: +${added} (total ${Object.keys(db.noBarcodeSkus).length})`);
+  }
+} catch (e) { /* no seed shipped — fine */ }
 
 // One-time audit backfill — synthesize ledger events from batches that
 // existed before the ledger was introduced, so reports cover old activity.
@@ -736,7 +755,16 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
     const matchResult = await splitWaybillPdf(req.file.buffer, batchId, batch.orders || []);
-    res.json({ ok: true, matched: Object.keys(matchResult).length, total: (batch.orders || []).length });
+    const rec = {
+      filename: req.file.originalname || 'waybill.pdf',
+      at: new Date().toISOString(), by: req.userId || '',
+      matched: Object.keys(matchResult).length, total: (batch.orders || []).length,
+    };
+    batch.waybill_uploads = batch.waybill_uploads || [];
+    batch.waybill_uploads.push(rec);
+    writeDb(db);
+    logAudit('waybill_upload', { batchId, ...rec });
+    res.json({ ok: true, matched: rec.matched, total: rec.total });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1750,9 +1778,18 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       if (err) console.error('[upload] XLSX write error:', err.message);
     });
 
-    // Split waybill PDF if provided
+    // Split waybill PDF if provided — record the upload once matching is done
     if (waybillPdf) {
-      splitWaybillPdf(waybillPdf.buffer, batchId, orders).catch(err =>
+      const wbName = waybillPdf.originalname || 'waybill.pdf';
+      const wbBy   = req.userId || '';
+      splitWaybillPdf(waybillPdf.buffer, batchId, orders).then(matchResult => {
+        const rec = { filename: wbName, at: new Date().toISOString(), by: wbBy,
+                      matched: Object.keys(matchResult || {}).length, total: orders.length };
+        const db2 = readDb();
+        const b2  = db2.batches.find(x => x.id === batchId);
+        if (b2) { b2.waybill_uploads = b2.waybill_uploads || []; b2.waybill_uploads.push(rec); writeDb(db2); }
+        logAudit('waybill_upload', { batchId, ...rec });
+      }).catch(err =>
         console.error('[waybill-pdf]', err.message)
       );
     }
@@ -1814,8 +1851,9 @@ app.get('/api/batches', (_req, res) => {
   const db = readDb();
   res.json(db.batches.map(b => ({
     id: b.id, filename: b.filename, uploaded_at: b.uploaded_at,
-    client_name: b.client_name || '',
+    client_name: b.client_name || '', uploaded_by: b.uploaded_by || '',
     order_count: b.order_count, row_count: b.row_count, orderStates: b.orderStates,
+    waybill_uploads: b.waybill_uploads || [],
   })));
 });
 

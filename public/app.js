@@ -3390,18 +3390,51 @@
     const emptyEl = document.getElementById('logOverlayEmpty');
     listEl.innerHTML = '<p class="hint" style="padding:.5rem 0">Loading…</p>';
     try {
-      const resp    = await fetch('/api/batches');
-      const batches = await resp.json();
-      if (!batches.length) {
+      const [batchResp, labelResp] = await Promise.all([
+        fetch('/api/batches'),
+        fetch('/api/label-imports'),
+      ]);
+      const batches = await batchResp.json();
+      const labelImports = labelResp.ok ? await labelResp.json() : [];
+      if (!batches.length && !labelImports.length) {
         listEl.innerHTML = ''; emptyEl.classList.remove('hidden'); return;
       }
       emptyEl.classList.add('hidden');
-      listEl.innerHTML = batches.map(b => {
+
+      // Picklist batches and label-PDF imports interleaved, newest first
+      const entries = [
+        ...batches.map(b => ({ at: b.uploaded_at, kind: 'batch', b })),
+        ...labelImports.map(li => ({ at: li.uploadedAt, kind: 'labels', li })),
+      ].sort((a, b) => new Date(b.at) - new Date(a.at));
+
+      listEl.innerHTML = entries.map(entry => {
+        if (entry.kind === 'labels') {
+          const li = entry.li;
+          return `
+          <div class="log-card log-card-labels">
+            <div class="log-card-left">
+              <span class="log-filename">&#127991; ${esc(li.filename)} <span class="log-kind-badge">Labels PDF</span></span>
+              <span class="log-date">${new Date(li.uploadedAt).toLocaleString()}${li.uploadedBy ? ` &nbsp;·&nbsp; <strong>${esc(li.uploadedBy)}</strong>` : ''}</span>
+              <div class="log-chips">
+                <span class="chip">${li.pageCount} page${li.pageCount !== 1 ? 's' : ''}</span>
+                ${li.matched   ? `<span class="chip chip-done">${li.matched} matched</span>` : ''}
+                ${li.unmatched ? `<span class="chip chip-unproc">${li.unmatched} unmatched</span>` : ''}
+              </div>
+            </div>
+            <div class="log-card-actions">
+              <button class="btn-download log-review-labels" data-import-id="${esc(li.id)}">Review &rsaquo;</button>
+            </div>
+          </div>`;
+        }
+        const b      = entry.b;
         const date   = new Date(b.uploaded_at).toLocaleString();
         const states = b.orderStates || {};
         const done   = Object.values(states).filter(s => s.status === 'done').length;
         const inprog = Object.values(states).filter(s => s.status === 'processing').length;
         const unproc = Object.values(states).filter(s => s.status === 'unprocessed').length;
+        const wbChips = (b.waybill_uploads || []).map(w =>
+          `<span class="chip chip-waybill" title="${esc(w.filename)} — uploaded ${new Date(w.at).toLocaleString()}${w.by ? ' by ' + esc(w.by) : ''}">&#128196; ${esc(w.filename)} &middot; ${w.matched}/${w.total} matched</span>`
+        ).join('');
         return `
           <div class="log-card">
             <div class="log-card-left">
@@ -3414,6 +3447,7 @@
                 ${done   ? `<span class="chip chip-done">${done} done</span>` : ''}
                 ${inprog ? `<span class="chip chip-inprog">${inprog} in progress</span>` : ''}
                 ${unproc ? `<span class="chip chip-unproc">${unproc} unprocessed</span>` : ''}
+                ${wbChips}
               </div>
             </div>
             <div class="log-card-actions">
@@ -3423,6 +3457,10 @@
             </div>
           </div>`;
       }).join('');
+
+      listEl.querySelectorAll('.log-review-labels').forEach(btn =>
+        btn.addEventListener('click', () => openLabelReview(btn.dataset.importId))
+      );
 
       listEl.querySelectorAll('.btn-attach-waybill').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3446,6 +3484,7 @@
               btn.style.color = d.matched > 0 ? 'var(--success)' : 'var(--danger)';
               await refreshOrders();
               renderOrdersDash();
+              await renderLogContent(); // show the new waybill chip on the batch card
             } catch (err) {
               btn.textContent = '✗ Error';
               btn.title = err.message;
