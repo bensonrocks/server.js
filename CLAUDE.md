@@ -95,6 +95,14 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 - Take: next alphanumeric token (2+ chars) → batch number (can be pure-digit like `533601` or letters like `RT`)
 - Take: date-like token matching `\d{1,2}[/-]\w+[/-]\d{2,4}` → expiry date
 
+## Betime scanning exceptions (server.js — `/api/scan/increment`)
+
+1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the
+   plain code — `8006NP` scanned counts against order line `8006`, and scanning
+   `8006` counts against a line listed as `8006NP`. Exact matches ALWAYS win first;
+   the suffix fallback only fires when nothing matched as scanned, so orders that
+   genuinely contain both `8006` and `8006NP` lines still count separately.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

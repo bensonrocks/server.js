@@ -2356,10 +2356,22 @@ app.post('/api/scan/increment', (req, res) => {
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
   const stripLeadZeros = s => s.trim().toLowerCase().replace(/^0+(?=.)/, '');
   const skuNorm = stripLeadZeros(sku);
-  const item = uniqueSkuLines(ord).find(l => {
-    const ls = l.sku.trim().toLowerCase();
-    return ls === sku.trim().toLowerCase() || stripLeadZeros(ls) === skuNorm;
-  });
+  const lines = uniqueSkuLines(ord);
+  const findBySku = q => {
+    const ql = q.trim().toLowerCase();
+    const qn = stripLeadZeros(ql);
+    return lines.find(l => {
+      const ls = l.sku.trim().toLowerCase();
+      return ls === ql || stripLeadZeros(ls) === qn;
+    });
+  };
+  let item = findBySku(sku);
+  // Betime scanning exception: an "NP" suffix on the product barcode is the
+  // same product as the plain code — 8006NP scanned counts against line 8006
+  // (and vice versa). Exact matches always win; the suffix only comes into
+  // play when nothing matched as scanned.
+  if (!item && /np$/i.test(sku.trim()))  item = findBySku(sku.trim().replace(/np$/i, ''));
+  if (!item && !/np$/i.test(sku.trim())) item = findBySku(sku.trim() + 'NP');
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
