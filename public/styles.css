@@ -2344,3 +2344,25 @@ body.ls-open { overflow: hidden; }
 
 /* Abort styling when the upload carries flagged orders */
 #confirmCancelBtn.abort-mode { color: #dc2626; border-color: #fca5a5; font-weight: 700; }
+
+/* ── Label lightbox (enlarge waybill/label to check details) ── */
+.label-lightbox {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(10, 14, 24, 0.82);
+  display: flex; flex-direction: column; padding: 1rem;
+}
+.label-lightbox.hidden { display: none; }
+.label-lightbox-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  color: #fff; font-weight: 700; padding: 0 .25rem .6rem;
+}
+.label-lightbox iframe {
+  flex: 1; width: 100%; border: none; border-radius: 10px; background: #fff;
+}
+.lri-thumb-wrap { position: relative; }
+.lri-zoom-btn {
+  position: absolute; right: .35rem; bottom: .35rem;
+  background: rgba(17, 26, 46, 0.78); color: #fff; border: none; border-radius: 6px;
+  font-size: .72rem; font-weight: 600; padding: .28rem .55rem; cursor: pointer;
+}
+.lri-zoom-btn:hover { background: var(--primary); }

@@ -8,9 +8,10 @@ const { v4: uuidv4 } = require('uuid');
 const path       = require('path');
 const fs         = require('fs');
 const crypto     = require('crypto');
+const zlib       = require('zlib');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFRawStream, PDFArray, decodePDFRawStream } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
 let extractLabelFields;
@@ -61,22 +62,37 @@ async function preprocessForOcr(buffer) {
   }
 }
 
+// The English language model ships in the repo (lib/tessdata) so OCR needs no
+// network download at runtime — CDN fetch remains the fallback if it's missing.
+const TESSDATA_DIR = path.join(__dirname, 'lib', 'tessdata');
+function createOcrWorker() {
+  const opts = { logger: () => {} };
+  if (fs.existsSync(path.join(TESSDATA_DIR, 'eng.traineddata.gz'))) {
+    opts.langPath    = TESSDATA_DIR;
+    opts.gzip        = true;
+    opts.cacheMethod = 'none'; // data is already local — don't write a decompressed copy to the app dir
+  }
+  return Tesseract.createWorker('eng', 1, opts);
+}
+
 // Run Tesseract with LSTM engine (OEM 1) + auto page segmentation (PSM 3).
 // Extra Tesseract params can be passed as extraParams (e.g. char whitelist, PSM override).
-async function runOcr(buffer, extraParams = {}) {
+// Pass a `worker` to reuse one Tesseract instance across many images (batch OCR) —
+// creating a worker costs ~1s, so per-page workers would dominate a 25-label run.
+async function runOcr(buffer, extraParams = {}, worker = null) {
   const img = await preprocessForOcr(buffer);
   // OEM 1 = LSTM neural-net engine only (more accurate than legacy)
-  const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+  const w = worker || await createOcrWorker();
   try {
-    await worker.setParameters({
+    await w.setParameters({
       tessedit_pageseg_mode: '3',      // PSM_AUTO — let Tesseract detect layout
       preserve_interword_spaces: '1',  // keeps column spacing intact
       ...extraParams,
     });
-    const { data: { text } } = await worker.recognize(img);
+    const { data: { text } } = await w.recognize(img);
     return text;
   } finally {
-    await worker.terminate();
+    if (!worker) await w.terminate();
   }
 }
 
@@ -803,6 +819,124 @@ const labelImportUpload = multer({ storage: multer.memoryStorage(), limits: { fi
 //      the numbers we already hold for the order.
 // All-digit keys need 10+ chars (8-digit keys collide with SG phone numbers
 // printed on labels); keys containing letters need 8+.
+// ── Image-only label pages (e.g. Shopee SPX) ────────────────────────────────
+// Some client label PDFs have no text layer at all — each page is one big
+// bitmap, so pdf-parse returns nothing and both matching strategies are blind.
+// For those pages we pull the embedded image straight out of the PDF (no
+// rasterizer needed) and OCR it with the existing photo pipeline.
+
+// Minimal PNG writer for raw pixel data (gray or RGB, 8-bit) so the Flate
+// image path works even where sharp is unavailable.
+function rawPixelsToPng(raw, width, height, channels) {
+  const crcTable = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  const crc32 = buf => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const scan = Buffer.alloc(height * (width * channels + 1));
+  for (let y = 0; y < height; y++) {
+    scan[y * (width * channels + 1)] = 0;
+    raw.copy(scan, y * (width * channels + 1) + 1, y * width * channels, (y + 1) * width * channels);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = channels === 1 ? 0 : 2; // greyscale / truecolour
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(scan)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// Returns { buf (JPEG or PNG), rotate } for the largest image on the page, or null.
+function extractLargestPageImage(pdfDoc, pageIndex) {
+  const page = pdfDoc.getPage(pageIndex);
+  const resources = page.node.Resources();
+  const xobjects = resources && resources.lookup(PDFName.of('XObject'));
+  if (!xobjects || typeof xobjects.keys !== 'function') return null;
+
+  let best = null;
+  for (const key of xobjects.keys()) {
+    const stream = xobjects.lookup(key);
+    if (!(stream instanceof PDFRawStream)) continue;
+    const dict = stream.dict;
+    const subtype = dict.get(PDFName.of('Subtype'));
+    if (!subtype || subtype.toString() !== '/Image') continue;
+    const width  = dict.lookup(PDFName.of('Width'))?.asNumber?.()  || 0;
+    const height = dict.lookup(PDFName.of('Height'))?.asNumber?.() || 0;
+    if (!width || !height) continue;
+    if (best && width * height <= best.width * best.height) continue;
+    best = { stream, dict, width, height };
+  }
+  if (!best) return null;
+
+  const rotate = (page.getRotation?.().angle || 0) % 360;
+  let filter = best.dict.get(PDFName.of('Filter'));
+  if (filter instanceof PDFArray) filter = filter.get(filter.size() - 1);
+  const filterName = filter ? filter.toString() : '';
+
+  if (filterName === '/DCTDecode') {
+    // JPEG bytes stored as-is
+    return { buf: Buffer.from(best.stream.getContents()), rotate };
+  }
+  if (filterName === '/FlateDecode' || filterName === '') {
+    const raw = Buffer.from(filterName ? decodePDFRawStream(best.stream).decode() : best.stream.getContents());
+    const bpc = best.dict.lookup(PDFName.of('BitsPerComponent'))?.asNumber?.() || 8;
+    const cs  = best.dict.get(PDFName.of('ColorSpace'));
+    const csName = cs ? cs.toString() : '/DeviceRGB';
+    let channels = csName === '/DeviceGray' ? 1 : csName === '/DeviceRGB' ? 3 : 0;
+    if (!channels) return null; // indexed/CMYK raw — not worth handling until seen
+    let pixels = raw;
+    if (bpc === 1 && channels === 1) {
+      // unpack 1-bit rows to 8-bit
+      const rowBytes = Math.ceil(best.width / 8);
+      pixels = Buffer.alloc(best.width * best.height);
+      for (let y = 0; y < best.height; y++) {
+        for (let x = 0; x < best.width; x++) {
+          const bit = (raw[y * rowBytes + (x >> 3)] >> (7 - (x & 7))) & 1;
+          pixels[y * best.width + x] = bit ? 255 : 0;
+        }
+      }
+    } else if (bpc !== 8) return null;
+    if (pixels.length < best.width * best.height * channels) return null;
+    return { buf: rawPixelsToPng(pixels, best.width, best.height, channels), rotate };
+  }
+  return null; // JPX/CCITT etc. — unsupported
+}
+
+// OCR one stored single-page label PDF. Returns text ('' if nothing readable).
+async function ocrLabelPageFile(filePath, worker) {
+  const pageDoc = await PDFDocument.load(fs.readFileSync(filePath));
+  const img = extractLargestPageImage(pageDoc, 0);
+  if (!img) return '';
+  let buf = img.buf;
+  if (img.rotate && sharp) {
+    try { buf = await sharp(buf).rotate(img.rotate).png().toBuffer(); } catch {}
+  }
+  let text = await runOcr(buf, {}, worker) || '';
+  // A label always carries long alphanumeric codes — almost none means the
+  // image is probably sideways without a /Rotate flag; try once at 90°.
+  const density = t => t.replace(/[^A-Z0-9]/gi, '').length;
+  if (density(text) < 12 && sharp) {
+    try {
+      const t2 = await runOcr(await sharp(img.buf).rotate(90).png().toBuffer(), {}, worker) || '';
+      if (density(t2) > density(text)) text = t2;
+    } catch {}
+  }
+  return text;
+}
+
 function buildLabelMatchIndex() {
   const allOrders = globalOrdersWithState();
   const byOrderNo = new Map();
@@ -921,6 +1055,13 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
 
     const matched = pages.filter(p => p.matchStatus === 'matched').length;
     res.json({ ok: true, importId, pageCount: numPages, matched, import: importRecord });
+
+    // Image-only pages (no text layer) can't match yet — kick off a background
+    // OCR pass so they're matched by the time anyone opens the review screen.
+    if (pages.some(p => p.matchStatus === 'unmatched' && !(p.rawText || '').trim())) {
+      setImmediate(() => rematchLabelImport(importId, false)
+        .catch(e => console.error('[label-ocr-bg]', e.message)));
+    }
   } catch (err) {
     console.error('[label-import]', err.message);
     res.status(500).json({ error: err.message });
@@ -1012,12 +1153,13 @@ app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) =>
 });
 
 // Re-run auto-matching for all unmatched (and optionally all) pages in an import
-app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const rematchAll = req.body?.all === true;   // if true, also retry already-matched pages
+// Core rematch, shared by the Auto Match endpoint and the post-upload
+// background pass. OCRs image-only pages (once — the text is stored) so
+// label PDFs without a text layer can still auto-match.
+async function rematchLabelImport(id, rematchAll) {
   const db  = readDb();
   const imp = (db.labelImports || []).find(i => i.id === id);
-  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  if (!imp) return null;
   if (!db.orderLabels) db.orderLabels = {};
 
   const matchIndex = buildLabelMatchIndex();
@@ -1031,6 +1173,11 @@ app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
   );
 
   let newMatches = 0;
+  let ocrWorker  = null;
+  let ocrCount   = 0;
+  const OCR_PAGE_CAP = 80; // bound worst-case runtime on huge imports
+
+  try {
   for (const page of imp.pages) {
     if (page.matchStatus === 'matched' && !rematchAll) continue;
 
@@ -1043,6 +1190,27 @@ app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
         rawText = (await pdfParse(pageBuf)).text || '';
         page.rawText = rawText.slice(0, 4000);
       } catch {}
+    }
+
+    // Image-only page (no text layer): pull the embedded bitmap and OCR it.
+    // Done once per page — the text is stored so later rematches are instant.
+    if (!rawText.trim() && Tesseract && !page.ocrFailed && ocrCount < OCR_PAGE_CAP) {
+      try {
+        if (!ocrWorker) ocrWorker = await createOcrWorker();
+        const text = await ocrLabelPageFile(path.join(LABEL_IMPORT_DIR, id, page.pageFile), ocrWorker);
+        ocrCount++;
+        if (text.trim()) {
+          rawText       = text;
+          page.rawText  = text.slice(0, 4000);
+          page.ocr      = true;
+          if (extractLabelFields) page.extracted = extractLabelFields(text);
+        } else {
+          page.ocrFailed = true; // don't burn OCR time on this page again
+        }
+      } catch (e) {
+        console.error(`[label-ocr] page ${page.pageIndex + 1}:`, e.message);
+        page.ocrFailed = true;
+      }
     }
 
     const found  = matchLabelPage(rawText, page.extracted, matchIndex);
@@ -1064,18 +1232,33 @@ app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
         page.matchMethod        = method;
         db.orderLabels[hit] = {
           importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile,
-          attachedAt: new Date().toISOString(), attachedBy: req.userId,
+          attachedAt: new Date().toISOString(), attachedBy: 'auto-match',
         };
         matchedInImport.add(hit);
         newMatches++;
       }
     }
   }
+  } finally {
+    if (ocrWorker) await ocrWorker.terminate().catch(() => {});
+  }
 
   writeDb(db);
   const matched   = imp.pages.filter(p => p.matchStatus === 'matched').length;
   const unmatched = imp.pages.filter(p => p.matchStatus === 'unmatched').length;
-  res.json({ ok: true, newMatches, matched, unmatched });
+  if (ocrCount) console.log(`[label-ocr] import ${id}: OCR'd ${ocrCount} image-only page(s), ${newMatches} new match(es)`);
+  return { newMatches, matched, unmatched, ocrCount };
+}
+
+app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
+  try {
+    const result = await rematchLabelImport(req.params.id, req.body?.all === true);
+    if (!result) return res.status(404).json({ error: 'Import not found' });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[label-rematch]', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Serve the matched label PDF for an order (token-param auth for iframes)

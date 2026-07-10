@@ -743,7 +743,7 @@
     el.classList.remove('hidden');
     document.getElementById('labelCurAutoMatch')?.addEventListener('click', async () => {
       const btn = document.getElementById('labelCurAutoMatch');
-      btn.disabled = true; btn.textContent = 'Matching…';
+      btn.disabled = true; btn.textContent = 'Matching… (reading label images)';
       try {
         const r = await fetch(`/api/label-imports/${cur.importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
         const d = await r.json();
@@ -4003,7 +4003,7 @@
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
         const btn = document.getElementById('lriAutoMatchBtn');
-        btn.disabled = true; btn.textContent = 'Matching…';
+        btn.disabled = true; btn.textContent = 'Matching… (reading label images can take a minute)';
         try {
           const r = await fetch(`/api/label-imports/${importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
           const d = await r.json();
@@ -4030,22 +4030,34 @@
           ? `<span class="lri-order-matched">&#10003; ${esc(page.matchedOrderNumber)}</span>
              <button class="btn-ghost btn-sm lri-unmatch-btn" data-page="${i}">Unmatch</button>`
           : `<button class="btn-primary btn-sm lri-match-btn" data-page="${i}">&#43; Match to Order</button>`;
+        const noText = !(page.rawText || '').trim();
+        const noFieldsHint = noText
+          ? 'Image-only label (no text layer) — Auto Match reads it with OCR'
+          : 'No key fields recognized — enlarge the label and use Match to Order';
         return `
           <div class="lri-row" data-page="${i}">
             <div class="lri-thumb-col">
               <div class="lri-page-num">Page ${i + 1}</div>
-              <iframe class="lri-pdf-preview" src="${pdfUrl}" title="Label page ${i + 1}"></iframe>
+              <div class="lri-thumb-wrap">
+                <iframe class="lri-pdf-preview" src="${pdfUrl}#toolbar=0" title="Label page ${i + 1}"></iframe>
+                <button class="lri-zoom-btn" data-url="${pdfUrl}" data-page="${i + 1}" title="Enlarge label">&#x26F6; Enlarge</button>
+              </div>
             </div>
             <div class="lri-info-col">
               <div class="lri-status-row">
                 <span class="lri-badge ${statusCls}">${page.matchStatus}</span>
                 ${page.matchMethod ? `<span class="lri-method">via ${page.matchMethod.replace('_', ' ')}</span>` : ''}
+                ${page.ocr ? '<span class="lri-method">&#128269; read by OCR</span>' : ''}
               </div>
-              <div class="lri-fields">${fields || '<span class="hint">No fields extracted</span>'}</div>
+              <div class="lri-fields">${fields || `<span class="hint">${noFieldsHint}</span>`}</div>
               <div class="lri-match-action">${matchAction}</div>
             </div>
           </div>`;
       }).join('');
+
+      body.querySelectorAll('.lri-zoom-btn').forEach(btn =>
+        btn.addEventListener('click', () => openLabelLightbox(btn.dataset.url, `Label — Page ${btn.dataset.page}`))
+      );
 
       body.querySelectorAll('.lri-match-btn').forEach(btn =>
         btn.addEventListener('click', () => openManualMatchModal(importId, parseInt(btn.dataset.page)))
@@ -4066,6 +4078,26 @@
       body.innerHTML = `<p class="hint" style="color:var(--danger);padding:2rem">${esc(err.message)}</p>`;
     }
   }
+
+  // ── Label lightbox — full-screen enlarge for checking label details ────────
+  function openLabelLightbox(pdfUrl, title) {
+    const box = document.getElementById('labelLightbox');
+    document.getElementById('labelLightboxTitle').textContent = title || 'Label';
+    document.getElementById('labelLightboxFrame').src = pdfUrl;
+    box.classList.remove('hidden');
+  }
+  function closeLabelLightbox() {
+    const box = document.getElementById('labelLightbox');
+    box.classList.add('hidden');
+    document.getElementById('labelLightboxFrame').src = 'about:blank';
+  }
+  document.getElementById('labelLightboxClose').addEventListener('click', closeLabelLightbox);
+  document.getElementById('labelLightbox').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeLabelLightbox();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !document.getElementById('labelLightbox').classList.contains('hidden')) closeLabelLightbox();
+  });
 
   function openManualMatchModal(importId, pageIdx) {
     const modal = document.getElementById('labelManualMatchOverlay');
