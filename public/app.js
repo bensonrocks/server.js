@@ -1283,10 +1283,63 @@
 
   document.getElementById('waybillScanInput').addEventListener('keydown', async e => {
     if (e.key !== 'Enter') return;
-    const val = e.target.value.trim();
+    const inp = e.target;
+    clearTimeout(inp._auto);
+    const val = inp.value.trim();
     if (!val) return;
-    e.target.value = '';
+    inp.value = '';
+    waybillLookupGo(val);
+  });
 
+  // Auto-search: scan guns configured without an Enter suffix just leave the
+  // code sitting in the field. When characters arrive scanner-fast (or are
+  // pasted) and then stop, run the lookup automatically. Hand-typed input
+  // still waits for Enter so a pause mid-typing never wipes the field.
+  (() => {
+    const inp = document.getElementById('waybillScanInput');
+    let trace = [];
+    inp.addEventListener('input', e => {
+      const now = Date.now();
+      trace.push({ t: now, len: inp.value.length, paste: e.inputType === 'insertFromPaste' });
+      trace = trace.filter(x => now - x.t < 1000);
+      clearTimeout(inp._auto);
+      const val = inp.value.trim();
+      if (val.length < 5) return;
+      const grew = trace.length >= 2 ? trace[trace.length - 1].len - trace[0].len : 0;
+      const span = trace.length >= 2 ? trace[trace.length - 1].t - trace[0].t : Infinity;
+      const scanned = trace.some(x => x.paste) || (grew >= 4 && span <= grew * 90);
+      if (!scanned) return;
+      inp._auto = setTimeout(() => {
+        if (inp.value.trim() !== val) return;
+        inp.value = '';
+        trace = [];
+        waybillLookupGo(val);
+      }, 250);
+    });
+  })();
+
+  // The waybill field is the packer's home position — whenever focus falls on
+  // nothing (empty-space clicks, buttons, closed dialogs), return the cursor
+  // there so the next gun scan always lands in the field. Never steals focus
+  // from text inputs (search boxes, date filters, etc).
+  function _wbFocusGuard() {
+    setTimeout(() => {
+      const ordersTab = document.getElementById('tab-orders');
+      if (!ordersTab || !ordersTab.classList.contains('active')) return;
+      if (!document.getElementById('scanOverlay').classList.contains('hidden')) return;
+      if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+      const lb = document.getElementById('labelLightbox');
+      if (lb && !lb.classList.contains('hidden')) return;
+      const ae = document.activeElement;
+      if (ae && ae !== document.body &&
+          ae.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]), textarea, select, [contenteditable="true"], iframe')) return;
+      focusWaybillInput();
+    }, 40);
+  }
+  document.addEventListener('click', _wbFocusGuard);
+  window.addEventListener('focus', _wbFocusGuard);
+
+  async function waybillLookupGo(val) {
     // Priority 1: direct order number match (client-side, instant).
     // Also matches the pick-ticket number — PDF picking lists carry two
     // barcodes (GI number + pick ticket) and either should open the order.
@@ -1337,7 +1390,7 @@
     } catch (err) {
       setWaybillMsg('Lookup failed. Try again.', true);
     }
-  });
+  }
 
   function renderOrdersList() {
     let orders = loadedOrders;

@@ -2335,8 +2335,12 @@ app.get('/api/orders', (_req, res) => {
 app.post('/api/waybill-lookup', (req, res) => {
   const { waybill } = req.body;
   if (!waybill) return res.status(400).json({ error: 'waybill required' });
+  const q = String(waybill).trim().toLowerCase();
+  // Picking lists carry several scannable numbers — accept any of them:
+  // waybill/reference, or the PO/shipment number (SHPM…)
   const order = globalOrdersWithState().find(o =>
-    o.waybill_number && o.waybill_number.trim().toLowerCase() === waybill.trim().toLowerCase()
+    (o.waybill_number && o.waybill_number.trim().toLowerCase() === q) ||
+    (o.po_number      && String(o.po_number).trim().toLowerCase() === q)
   );
   if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });
   res.json(order);
