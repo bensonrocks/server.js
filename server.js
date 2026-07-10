@@ -35,6 +35,7 @@ const staffAuth = require('./lib/staff-auth');
 const createInventory   = require('./lib/inventory');
 const createFulfillment = require('./lib/fulfillment');
 const createPicking     = require('./lib/picking');
+const createDrivers     = require('./lib/drivers');
 const shopifyApp        = require('./lib/shopify-app');
 const inventorySync     = require('./lib/inventory-sync');
 
@@ -92,7 +93,8 @@ function getCtx(tenantId) {
     const inventory   = createInventory(db);
     const fulfillment = createFulfillment({ store, creds, inventory });
     const picking     = createPicking({ db, store });
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking });
+    const drivers     = createDrivers({ db, store });
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, drivers });
   }
   return tenantCtx.get(tenantId);
 }
@@ -1868,6 +1870,143 @@ app.post('/api/picking/sessions/:id/cancel', withTenant, (req, res) => {
   try {
     res.json(req.ctx.picking.cancelSession(req.params.id));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// ── Driver tracking ───────────────────────────────────────────────────────────
+
+// Driver-app auth: Bearer token issued by POST /api/driver/login
+function withDriver(req, res, next) {
+  withTenant(req, res, () => {
+    const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+    const driver = req.ctx.drivers.validateToken(token);
+    if (!driver) return res.status(401).json({ error: 'Driver authentication required' });
+    req.driver = driver;
+    req.driverToken = token;
+    next();
+  });
+}
+
+// — staff/admin side —
+
+app.get('/api/drivers', withTenant, (req, res) => {
+  res.json(req.ctx.drivers.listDrivers());
+});
+
+app.post('/api/drivers', withTenant, (req, res) => {
+  try {
+    res.status(201).json(req.ctx.drivers.createDriver(req.body || {}));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.get('/api/drivers/locations', withTenant, (req, res) => {
+  res.json(req.ctx.drivers.latestLocations());
+});
+
+app.get('/api/drivers/stats', withTenant, (req, res) => {
+  res.json(req.ctx.drivers.stats());
+});
+
+app.get('/api/drivers/:id', withTenant, (req, res) => {
+  const driver = req.ctx.drivers.getDriver(req.params.id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  res.json({
+    ...driver,
+    deliveries: req.ctx.drivers.listDeliveries({ driverId: driver.id, limit: 100 }),
+    route: req.ctx.drivers.getRoute(driver.id, Number(req.query.route) || 50),
+  });
+});
+
+app.patch('/api/drivers/:id', withTenant, (req, res) => {
+  try {
+    res.json(req.ctx.drivers.updateDriver(req.params.id, req.body || {}));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.delete('/api/drivers/:id', withTenant, (req, res) => {
+  try {
+    req.ctx.drivers.deleteDriver(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/drivers/:id/assign', withTenant, (req, res) => {
+  try {
+    const { orderIds, assignedBy } = req.body || {};
+    res.status(201).json(req.ctx.drivers.assign(req.params.id, orderIds, assignedBy || ''));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.get('/api/deliveries', withTenant, (req, res) => {
+  const { driverId, status, active, limit } = req.query;
+  res.json(req.ctx.drivers.listDeliveries({
+    driverId, status, activeOnly: active === 'true', limit,
+  }));
+});
+
+app.patch('/api/deliveries/:id/status', withTenant, (req, res) => {
+  try {
+    const { status, reason, podName, podNote } = req.body || {};
+    res.json(req.ctx.drivers.updateStatus(req.params.id, status, { reason, podName, podNote }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.delete('/api/deliveries/:id', withTenant, (req, res) => {
+  try {
+    req.ctx.drivers.unassign(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// — driver app side —
+
+app.post('/api/driver/login', withTenant, (req, res) => {
+  const { phone, pin } = req.body || {};
+  const result = req.ctx.drivers.login(phone, pin);
+  if (!result) return res.status(401).json({ error: 'Invalid phone or PIN' });
+  res.json(result);
+});
+
+app.post('/api/driver/logout', withDriver, (req, res) => {
+  req.ctx.drivers.revokeToken(req.driverToken);
+  res.json({ ok: true });
+});
+
+app.get('/api/driver/me', withDriver, (req, res) => {
+  res.json(req.driver);
+});
+
+app.get('/api/driver/deliveries', withDriver, (req, res) => {
+  const all = req.ctx.drivers.listDeliveries({ driverId: req.driver.id, limit: 100 });
+  // active first, then today's completed
+  const today = new Date().toISOString().slice(0, 10);
+  res.json(all.filter(d =>
+    ['assigned', 'picked_up', 'in_transit'].includes(d.status)
+    || (d.delivered_at || d.failed_at || '').slice(0, 10) === today
+  ));
+});
+
+app.post('/api/driver/deliveries/:id/status', withDriver, (req, res) => {
+  try {
+    const { status, reason, podName, podNote, lat, lng } = req.body || {};
+    res.json(req.ctx.drivers.updateStatus(req.params.id, status, {
+      driverId: req.driver.id, reason, podName, podNote, lat, lng,
+    }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/driver/location', withDriver, (req, res) => {
+  try {
+    req.ctx.drivers.recordLocation(req.driver.id, req.body || {});
+    res.json({ ok: true });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// — public order tracking (no auth; returns a safe subset only) —
+
+app.get('/api/track/:orderId', withTenant, (req, res) => {
+  const info = req.ctx.drivers.track(req.params.orderId);
+  if (!info) return res.status(404).json({ error: 'Order not found' });
+  res.json(info);
 });
 
 // ── Inventory ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#1d4ed8">
+<title>IdealOne Driver</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,-apple-system,sans-serif}
+body{background:#f1f5f9;color:#0f172a;min-height:100vh}
+.topbar{background:#0f172a;color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10}
+.topbar .logo{font-size:15px;font-weight:800;letter-spacing:.3px;flex:1}
+.topbar .logo span{color:#60a5fa}
+.gps-dot{width:9px;height:9px;border-radius:50%;background:#64748b}
+.gps-dot.on{background:#22c55e;box-shadow:0 0 6px #22c55e}
+.btn{border:none;border-radius:9px;font-weight:700;cursor:pointer;transition:opacity .12s}
+.btn:active{opacity:.75}
+.btn-sm{padding:7px 12px;font-size:12px}
+.btn-lg{width:100%;padding:13px;font-size:15px}
+.btn-blue{background:#1d4ed8;color:#fff}
+.btn-green{background:#16a34a;color:#fff}
+.btn-amber{background:#d97706;color:#fff}
+.btn-red{background:#dc2626;color:#fff}
+.btn-gray{background:#e2e8f0;color:#334155}
+.wrap{max-width:520px;margin:0 auto;padding:14px}
+/* login */
+.login-card{background:#fff;border-radius:14px;padding:26px 22px;margin-top:12vh;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+.login-card h1{font-size:19px;margin-bottom:4px}
+.login-card p{font-size:13px;color:#64748b;margin-bottom:18px}
+.fld{margin-bottom:13px}
+.fld label{display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px}
+.fld input,.fld textarea{width:100%;padding:11px 12px;border:1.5px solid #cbd5e1;border-radius:9px;font-size:15px;background:#fff}
+.fld input:focus,.fld textarea:focus{outline:none;border-color:#2563eb}
+.err{color:#dc2626;font-size:13px;font-weight:600;margin-bottom:10px;display:none}
+/* header stats */
+.hi{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.hi .who{flex:1}
+.hi .who .nm{font-size:16px;font-weight:800}
+.hi .who .sub{font-size:12px;color:#64748b}
+.counters{display:flex;gap:8px;margin-bottom:14px}
+.counter{flex:1;background:#fff;border-radius:11px;padding:10px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.counter .v{font-size:20px;font-weight:800}
+.counter .l{font-size:10.5px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+/* delivery cards */
+.sec-lbl{font-size:11.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.6px;margin:16px 2px 8px}
+.card{background:#fff;border-radius:13px;padding:14px;margin-bottom:11px;box-shadow:0 1px 5px rgba(0,0,0,.07)}
+.card .row1{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.card .oid{font-weight:800;font-size:14px;flex:1}
+.chip{padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
+.st-assigned{background:#dbeafe;color:#1e40af}
+.st-picked_up{background:#ede9fe;color:#5b21b6}
+.st-in_transit{background:#fef3c7;color:#92400e}
+.st-delivered{background:#dcfce7;color:#166534}
+.st-failed{background:#fee2e2;color:#991b1b}
+.card .cust{font-size:14px;font-weight:700;margin-bottom:2px}
+.card .addr{font-size:13px;color:#475569;line-height:1.45;margin-bottom:8px}
+.card .meta{display:flex;gap:12px;font-size:12px;color:#64748b;margin-bottom:11px;flex-wrap:wrap}
+.card .meta b{color:#0f172a}
+.card .acts{display:flex;gap:8px}
+.card .acts .btn{flex:1;padding:11px 6px;font-size:13.5px}
+.maplink{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:#2563eb;font-weight:700;text-decoration:none;margin-bottom:10px}
+.empty{text-align:center;color:#94a3b8;font-size:14px;padding:40px 10px}
+.done-line{font-size:12px;color:#64748b;margin-top:6px}
+/* modal */
+.mask{position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(15,23,42,.55);display:none;align-items:flex-end;z-index:50}
+.mask.on{display:flex}
+.sheet{background:#fff;width:100%;border-radius:18px 18px 0 0;padding:20px 18px 26px;max-width:520px;margin:0 auto}
+.sheet h3{font-size:16px;margin-bottom:14px}
+.sheet .btns{display:flex;gap:9px;margin-top:6px}
+.sheet .btns .btn{flex:1;padding:12px;font-size:14px}
+.toastbox{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:99;max-width:90vw}
+.toastbox.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">IdealOne <span>DRIVER</span></div>
+  <div class="gps-dot" id="gps-dot" title="GPS status"></div>
+  <button class="btn btn-sm btn-gray" id="logout-btn" style="display:none" onclick="logout()">Logout</button>
+</div>
+
+<!-- LOGIN -->
+<div class="wrap" id="v-login">
+  <div class="login-card">
+    <h1>Driver Sign In</h1>
+    <p>Use the phone number and PIN given by your dispatcher.</p>
+    <div class="err" id="login-err"></div>
+    <div class="fld">
+      <label>Phone number</label>
+      <input id="login-phone" type="tel" inputmode="tel" placeholder="0123456789" autocomplete="tel">
+    </div>
+    <div class="fld">
+      <label>PIN</label>
+      <input id="login-pin" type="password" inputmode="numeric" placeholder="••••" maxlength="8">
+    </div>
+    <button class="btn btn-lg btn-blue" onclick="login()">Sign In</button>
+  </div>
+</div>
+
+<!-- TASKS -->
+<div class="wrap" id="v-tasks" style="display:none">
+  <div class="hi">
+    <div class="who">
+      <div class="nm" id="drv-name">—</div>
+      <div class="sub" id="drv-sub">—</div>
+    </div>
+    <button class="btn btn-sm btn-gray" onclick="loadDeliveries()">&#8635; Refresh</button>
+  </div>
+  <div class="counters">
+    <div class="counter"><div class="v" id="c-active">0</div><div class="l">To deliver</div></div>
+    <div class="counter"><div class="v" id="c-done" style="color:#16a34a">0</div><div class="l">Delivered</div></div>
+    <div class="counter"><div class="v" id="c-failed" style="color:#dc2626">0</div><div class="l">Failed</div></div>
+  </div>
+  <div class="sec-lbl">Active deliveries</div>
+  <div id="list-active"><div class="empty">Nothing assigned yet.</div></div>
+  <div class="sec-lbl">Completed today</div>
+  <div id="list-done"><div class="empty">No completed deliveries today.</div></div>
+</div>
+
+<!-- PROOF-OF-DELIVERY SHEET -->
+<div class="mask" id="pod-mask">
+  <div class="sheet">
+    <h3>Confirm delivery — <span id="pod-oid"></span></h3>
+    <div class="fld">
+      <label>Received by (name)</label>
+      <input id="pod-name" placeholder="Recipient name">
+    </div>
+    <div class="fld">
+      <label>Note (optional)</label>
+      <textarea id="pod-note" rows="2" placeholder="Left at guardhouse, etc."></textarea>
+    </div>
+    <div class="btns">
+      <button class="btn btn-gray" onclick="closeSheets()">Cancel</button>
+      <button class="btn btn-green" onclick="confirmDelivered()">&#10003; Delivered</button>
+    </div>
+  </div>
+</div>
+
+<!-- FAILED SHEET -->
+<div class="mask" id="fail-mask">
+  <div class="sheet">
+    <h3>Delivery failed — <span id="fail-oid"></span></h3>
+    <div class="fld">
+      <label>Reason</label>
+      <textarea id="fail-reason" rows="2" placeholder="Customer unreachable, wrong address…"></textarea>
+    </div>
+    <div class="btns">
+      <button class="btn btn-gray" onclick="closeSheets()">Cancel</button>
+      <button class="btn btn-red" onclick="confirmFailed()">Mark Failed</button>
+    </div>
+  </div>
+</div>
+
+<div class="toastbox" id="toast"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+let token = localStorage.getItem('driverToken') || '';
+let me = null;
+let deliveries = [];
+let currentSheetId = null;
+let lastFix = null;        // latest geolocation fix
+let watchId = null;
+let pingTimer = null;
+
+function toast(msg) {
+  $('toast').textContent = msg;
+  $('toast').classList.add('on');
+  setTimeout(() => $('toast').classList.remove('on'), 2600);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (r.status === 401 && me) { doLocalLogout(); throw new Error('Session expired — sign in again'); }
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || ('Request failed (' + r.status + ')'));
+  return body;
+}
+
+// ── auth ──────────────────────────────────────────────────────────────────────
+
+async function login() {
+  $('login-err').style.display = 'none';
+  try {
+    const result = await api('/api/driver/login', {
+      method: 'POST',
+      body: JSON.stringify({ phone: $('login-phone').value, pin: $('login-pin').value }),
+    });
+    token = result.token;
+    localStorage.setItem('driverToken', token);
+    me = result.driver;
+    enterApp();
+  } catch (e) {
+    $('login-err').textContent = e.message;
+    $('login-err').style.display = 'block';
+  }
+}
+
+async function restore() {
+  if (!token) return;
+  try {
+    me = await api('/api/driver/me');
+    enterApp();
+  } catch { doLocalLogout(); }
+}
+
+function doLocalLogout() {
+  token = ''; me = null;
+  localStorage.removeItem('driverToken');
+  stopGps();
+  $('v-tasks').style.display = 'none';
+  $('logout-btn').style.display = 'none';
+  $('v-login').style.display = '';
+}
+
+async function logout() {
+  try { await api('/api/driver/logout', { method: 'POST' }); } catch {}
+  doLocalLogout();
+}
+
+function enterApp() {
+  $('v-login').style.display = 'none';
+  $('v-tasks').style.display = '';
+  $('logout-btn').style.display = '';
+  $('drv-name').textContent = me.name;
+  $('drv-sub').textContent = [me.vehicle, me.plate].filter(Boolean).join(' · ') || me.phone;
+  loadDeliveries();
+  startGps();
+}
+
+// ── deliveries ────────────────────────────────────────────────────────────────
+
+async function loadDeliveries() {
+  try {
+    deliveries = await api('/api/driver/deliveries');
+    render();
+  } catch (e) { toast(e.message); }
+}
+
+const STATUS_LABEL = { assigned: 'Assigned', picked_up: 'Picked up', in_transit: 'In transit', delivered: 'Delivered', failed: 'Failed' };
+
+function card(d, done) {
+  const o = d.order || {};
+  const maps = o.address ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(o.address) : null;
+  let acts = '';
+  if (!done) {
+    if (d.status === 'assigned')
+      acts = `<button class="btn btn-blue" onclick="advance('${d.id}','picked_up')">&#128230; Picked up</button>`;
+    else if (d.status === 'picked_up')
+      acts = `<button class="btn btn-amber" onclick="advance('${d.id}','in_transit')">&#128666; Start delivery</button>`;
+    if (d.status === 'picked_up' || d.status === 'in_transit')
+      acts += `<button class="btn btn-green" onclick="openPod('${d.id}')">&#10003; Delivered</button>`;
+    acts += `<button class="btn btn-gray" onclick="openFail('${d.id}')">&#10005;</button>`;
+  }
+  return `<div class="card">
+    <div class="row1">
+      <div class="oid">${esc(o.orderId || d.order_id)}</div>
+      <span class="chip st-${d.status}">${STATUS_LABEL[d.status] || d.status}</span>
+    </div>
+    <div class="cust">${esc(o.recipient || '—')}${o.phone ? ` · <a href="tel:${esc(o.phone)}" style="color:#2563eb;text-decoration:none">${esc(o.phone)}</a>` : ''}</div>
+    <div class="addr">${esc(o.address || 'No address on order')}</div>
+    ${maps ? `<a class="maplink" target="_blank" rel="noopener" href="${maps}">&#128205; Open in Maps</a>` : ''}
+    <div class="meta">
+      <span>Items: <b>${o.itemCount ?? '—'}</b></span>
+      <span>Total: <b>${o.currency || ''} ${o.total != null ? Number(o.total).toFixed(2) : '—'}</b></span>
+      <span>${esc(o.channel || '')}</span>
+    </div>
+    ${done
+      ? `<div class="done-line">${d.status === 'delivered'
+          ? '&#10003; ' + new Date(d.delivered_at + 'Z').toLocaleTimeString() + (d.pod_name ? ' — received by ' + esc(d.pod_name) : '')
+          : '&#10005; ' + esc(d.failed_reason || 'Failed')}</div>`
+      : `<div class="acts">${acts}</div>`}
+  </div>`;
+}
+
+function render() {
+  const active = deliveries.filter(d => ['assigned', 'picked_up', 'in_transit'].includes(d.status));
+  const done   = deliveries.filter(d => d.status === 'delivered' || d.status === 'failed');
+  $('c-active').textContent = active.length;
+  $('c-done').textContent   = done.filter(d => d.status === 'delivered').length;
+  $('c-failed').textContent = done.filter(d => d.status === 'failed').length;
+  $('list-active').innerHTML = active.length ? active.map(d => card(d, false)).join('') : '<div class="empty">Nothing assigned yet.</div>';
+  $('list-done').innerHTML   = done.length   ? done.map(d => card(d, true)).join('')   : '<div class="empty">No completed deliveries today.</div>';
+}
+
+async function advance(id, status, extra = {}) {
+  try {
+    await api('/api/driver/deliveries/' + id + '/status', {
+      method: 'POST',
+      body: JSON.stringify({ status, ...extra }),
+    });
+    toast(STATUS_LABEL[status] + ' ✓');
+    loadDeliveries();
+  } catch (e) { toast(e.message); }
+}
+
+function openPod(id)  { currentSheetId = id; $('pod-oid').textContent = orderIdOf(id); $('pod-name').value = ''; $('pod-note').value = ''; $('pod-mask').classList.add('on'); }
+function openFail(id) { currentSheetId = id; $('fail-oid').textContent = orderIdOf(id); $('fail-reason').value = ''; $('fail-mask').classList.add('on'); }
+function closeSheets(){ $('pod-mask').classList.remove('on'); $('fail-mask').classList.remove('on'); currentSheetId = null; }
+function orderIdOf(id){ const d = deliveries.find(x => x.id === id); return d ? d.order_id : id; }
+
+function confirmDelivered() {
+  const extra = { podName: $('pod-name').value, podNote: $('pod-note').value };
+  if (lastFix) { extra.lat = lastFix.lat; extra.lng = lastFix.lng; }
+  const id = currentSheetId; closeSheets();
+  advance(id, 'delivered', extra);
+}
+
+function confirmFailed() {
+  const reason = $('fail-reason').value.trim();
+  if (!reason) { toast('Please enter a reason'); return; }
+  const id = currentSheetId; closeSheets();
+  advance(id, 'failed', { reason });
+}
+
+// ── GPS pings ────────────────────────────────────────────────────────────────
+
+function startGps() {
+  if (!('geolocation' in navigator)) return;
+  if (watchId !== null) return;
+  watchId = navigator.geolocation.watchPosition(pos => {
+    lastFix = {
+      lat: pos.coords.latitude, lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy, speed: pos.coords.speed, heading: pos.coords.heading,
+    };
+    $('gps-dot').classList.add('on');
+  }, () => $('gps-dot').classList.remove('on'), { enableHighAccuracy: true, maximumAge: 15000 });
+  pingTimer = setInterval(sendPing, 30000);
+  setTimeout(sendPing, 4000);
+}
+
+function stopGps() {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  $('gps-dot').classList.remove('on');
+}
+
+async function sendPing() {
+  if (!token || !lastFix) return;
+  try { await api('/api/driver/location', { method: 'POST', body: JSON.stringify(lastFix) }); } catch {}
+}
+
+// auto-refresh task list every 60s while signed in
+setInterval(() => { if (me) loadDeliveries(); }, 60000);
+
+restore();
+</script>
+</body>
+</html>
