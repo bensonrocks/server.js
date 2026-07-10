@@ -1354,6 +1354,12 @@ a:hover{text-decoration:underline}
           <div class="drv-kpi"><div class="v" id="drv-kpi-failed" style="color:#dc2626">—</div><div class="l">Failed Today</div></div>
         </div>
 
+        <div class="drv-card" style="padding:0;overflow:hidden;position:relative">
+          <h3 style="padding:14px 16px 0;margin-bottom:8px">&#128506;&#65039; Live Fleet Map <span style="font-size:10.5px;color:#94a3b8;font-weight:600;margin-left:4px">updates every 30s</span></h3>
+          <div id="drv-map" style="height:380px;width:100%"></div>
+          <div id="drv-map-empty" style="display:none;position:absolute;top:44px;right:0;bottom:0;left:0;align-items:center;justify-content:center;background:rgba(248,250,252,.85);z-index:500;font-size:13px;color:#64748b;font-weight:600;text-align:center;padding:0 20px">No GPS positions yet — drivers appear here once they sign in to the driver app and allow location access.</div>
+        </div>
+
         <div class="drv-card">
           <h3>&#128587; Drivers <button class="btn btn-g btn-xs" style="margin-left:auto" onclick="drvLoad()">&#8635; Refresh</button></h3>
           <div style="overflow-x:auto">
@@ -5238,6 +5244,7 @@ async function drvLoad(){
       fetch(`${SERVER}/api/drivers/locations`).then(r=>r.json()),
     ]);
     drvList=drivers;drvDeliveries=deliveries;drvLocs=locs;
+    drvRenderMap();
     $('drv-kpi-active').textContent=stats.activeDrivers;
     $('drv-kpi-out').textContent=stats.out;
     $('drv-kpi-delivered').textContent=stats.deliveredToday;
@@ -5247,6 +5254,69 @@ async function drvLoad(){
     drvRenderDrivers();drvRenderDeliveries();
   }catch(e){
     $('drv-tbody').innerHTML=`<tr><td colspan="8" style="color:#dc2626;text-align:center;padding:18px">Could not load drivers — ${esc(e.message)}</td></tr>`;
+  }
+}
+
+// — live fleet map (Leaflet + OpenStreetMap; self-hosted library, free tiles) —
+let drvMapObj=null,drvMarkers={},drvMapLib=null,drvMapFitted=false;
+
+function drvLoadLeaflet(){
+  if(window.L)return Promise.resolve();
+  if(drvMapLib)return drvMapLib;
+  drvMapLib=new Promise((resolve,reject)=>{
+    const css=document.createElement('link');
+    css.rel='stylesheet';css.href='/vendor/leaflet/leaflet.css';
+    document.head.appendChild(css);
+    const js=document.createElement('script');
+    js.src='/vendor/leaflet/leaflet.js';
+    js.onload=resolve;
+    js.onerror=()=>{drvMapLib=null;reject(new Error('map library failed to load'));};
+    document.body.appendChild(js);
+  });
+  return drvMapLib;
+}
+
+async function drvRenderMap(){
+  const mapEl=$('drv-map');
+  if(!mapEl)return;
+  try{
+    await drvLoadLeaflet();
+    if(!drvMapObj){
+      drvMapObj=L.map('drv-map',{scrollWheelZoom:false}).setView([3.139,101.687],11);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+        maxZoom:19,
+        attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+      }).addTo(drvMapObj);
+    }
+    drvMapObj.invalidateSize();
+    const seen=new Set(),bounds=[];
+    drvLocs.forEach(l=>{
+      if(!l.active)return;
+      seen.add(l.driver_id);
+      const at=new Date(l.at.includes('T')?l.at:l.at.replace(' ','T')+'Z').getTime();
+      const stale=Date.now()-at>10*60000;
+      const popup=`<div style="font-size:12.5px;line-height:1.5"><b>${esc(l.name)}</b>${stale?' <span style="color:#d97706">(stale)</span>':''}<br>`+
+        `${esc([l.vehicle,l.plate].filter(Boolean).join(' · '))||'—'}<br>`+
+        `${l.activeDeliveries} active job${l.activeDeliveries===1?'':'s'} · seen ${drvAgo(l.at)}</div>`;
+      if(drvMarkers[l.driver_id]){
+        drvMarkers[l.driver_id].setLatLng([l.lat,l.lng]).setOpacity(stale?0.45:1);
+        drvMarkers[l.driver_id].getPopup().setContent(popup);
+      }else{
+        drvMarkers[l.driver_id]=L.marker([l.lat,l.lng],{opacity:stale?0.45:1,title:l.name}).addTo(drvMapObj).bindPopup(popup);
+      }
+      bounds.push([l.lat,l.lng]);
+    });
+    Object.keys(drvMarkers).forEach(id=>{
+      if(!seen.has(id)){drvMapObj.removeLayer(drvMarkers[id]);delete drvMarkers[id];}
+    });
+    if(bounds.length&&!drvMapFitted){
+      drvMapObj.fitBounds(bounds,{padding:[36,36],maxZoom:14});
+      drvMapFitted=true;
+    }
+    $('drv-map-empty').style.display=bounds.length?'none':'flex';
+  }catch(e){
+    $('drv-map-empty').textContent='Map unavailable: '+e.message;
+    $('drv-map-empty').style.display='flex';
   }
 }
 
