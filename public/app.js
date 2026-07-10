@@ -2149,7 +2149,7 @@
                      : btn.classList.contains('nb-plus') ? cur + 1
                      : Math.max(0, cur - 1);
         learnNoBarcodeSku(item);
-        await setItemQty(activeOrder.order_number, item.sku, target);
+        await setItemQty(activeOrder.order_number, item.sku, target, btn);
       });
     });
     document.querySelectorAll('.nb-mark').forEach(btn => {
@@ -2505,7 +2505,38 @@
     };
   }
 
-  async function setItemQty(orderNumber, sku, qty) {
+  // ── Busy shield: a count/complete click gets instant feedback, and any
+  // click on something else while the request runs shows a wait prompt
+  // instead of silently doing nothing (or double-counting).
+  let _scanBusyDepth = 0;
+  function beginScanBusy(btn) {
+    _scanBusyDepth++;
+    document.getElementById('scanBusyShield').classList.remove('hidden');
+    if (btn) {
+      btn.classList.add('nb-busy');
+      btn.dataset.busyLabel = btn.innerHTML;
+      btn.innerHTML = '&#8987;';
+    }
+  }
+  function endScanBusy(btn) {
+    _scanBusyDepth = Math.max(0, _scanBusyDepth - 1);
+    if (_scanBusyDepth === 0) {
+      const shield = document.getElementById('scanBusyShield');
+      shield.classList.add('hidden');
+      shield.classList.remove('sbs-clicked');
+    }
+    if (btn && btn.isConnected) {
+      btn.classList.remove('nb-busy');
+      if (btn.dataset.busyLabel) btn.innerHTML = btn.dataset.busyLabel;
+    }
+  }
+  document.getElementById('scanBusyShield').addEventListener('mousedown', () => {
+    // Clicked somewhere while a request is running → show the prompt NOW
+    document.getElementById('scanBusyShield').classList.add('sbs-clicked');
+  });
+
+  async function setItemQty(orderNumber, sku, qty, btn) {
+    beginScanBusy(btn);
     try {
       const resp = await fetch('/api/scan/setqty', {
         method: 'POST', headers: hdrs(),
@@ -2522,6 +2553,7 @@
       updateProgress(activeOrder);
       maybeAutoComplete();
     } catch (err) { alert(err.message); }
+    finally { endScanBusy(btn); }
   }
 
   function showFeedback(el, type, msg) {
@@ -2534,6 +2566,8 @@
 
   // ── Complete order ─────────────────────────────────────────────────────────
   async function doCompleteOrder() {
+    const completeBtn = document.getElementById('completeOrderBtn');
+    beginScanBusy(completeBtn);
     try {
       const resp = await fetch('/api/scan/complete', {
         method: 'POST', headers: hdrs(),
@@ -2569,6 +2603,7 @@
         showMismatchModal(data.mismatches);
       }
     } catch (err) { alert(err.message); }
+    finally { endScanBusy(document.getElementById('completeOrderBtn')); }
   }
 
   function showLotCheckModal(lotLines, onConfirm) {

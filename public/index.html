@@ -102,6 +102,12 @@
   <!-- ── Scan Overlay ── -->
   <div id="scanOverlay" class="scan-overlay hidden">
 
+    <!-- Busy shield: covers the scan screen while a count/complete request is
+         in flight — clicking anything during the wait shows the prompt -->
+    <div id="scanBusyShield" class="scan-busy-shield hidden">
+      <div class="sbs-msg" id="scanBusyMsg">&#8987; Processing &mdash; please wait&hellip;</div>
+    </div>
+
     <div class="scan-order-header">
       <span class="brand-corner"><svg class="is-icon-xs" aria-hidden="true"><use href="#is-icon"/></svg>IDEALONE</span>
       <button class="back-btn" id="backToOrdersBtn">&#8592; Orders</button>

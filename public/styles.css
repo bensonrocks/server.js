@@ -2394,3 +2394,26 @@ body.ls-open { overflow: hidden; }
   border-radius: 6px; padding: .2rem .6rem; font-size: .76rem; cursor: pointer;
 }
 .learned-bc-row .btn-danger-sm:hover { background: #fecaca; }
+
+/* ── Scan busy shield: blocks double-clicks while a count request is in flight ── */
+.scan-busy-shield {
+  position: absolute; inset: 0; z-index: 300;
+  cursor: wait; display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 18vh; background: transparent;
+}
+.scan-busy-shield.hidden { display: none; }
+.sbs-msg {
+  background: #111a2e; color: #fff; font-weight: 700; font-size: 1rem;
+  padding: .65rem 1.3rem; border-radius: 99px; box-shadow: 0 6px 24px rgba(0,0,0,.25);
+  opacity: 0; transform: translateY(6px); pointer-events: none;
+  animation: sbs-appear .2s ease .45s forwards; /* only shows if the wait is real */
+}
+.scan-busy-shield.sbs-clicked .sbs-msg {
+  animation: none; opacity: 1; transform: translateY(0) scale(1.06);
+  background: #b91c1c;
+}
+@keyframes sbs-appear { to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .sbs-msg { animation-delay: .45s; } }
+
+/* Pressed state on the clicked count button while its request runs */
+.nb-btn.nb-busy, .btn-complete.nb-busy { opacity: .6; pointer-events: none; }
