@@ -411,9 +411,9 @@ try {
 // that exists in the map (derived at load time, updated on hot-reload) as a
 // prefix — longest first. This works for any barcode format in any future
 // upload without hardcoded lengths.
-function resolveBeTimeCode2(scanned) {
-  if (!scanned) return scanned;
-  const k = scanned.trim();
+// Official CODE2 listing lookup only (no learned mappings). Returns the WMS
+// product code, or null when the listing doesn't cover this barcode.
+function officialResolveCode2(k) {
   // 1. Exact match
   if (_beTimeCode2Map[k]) return _beTimeCode2Map[k];
   // 2. Strip leading zeros from the scanned value and try both the exact map
@@ -437,10 +437,26 @@ function resolveBeTimeCode2(scanned) {
       }
     }
   }
-  // 5. Teach-on-scan learned mappings — always LOWER priority than the
-  //    official CODE2 listing above, so a client refresh stays authoritative
+  return null;
+}
+
+function resolveBeTimeCode2(scanned) {
+  if (!scanned) return scanned;
+  const k = scanned.trim();
+  const official = officialResolveCode2(k);
+  if (official) return official;
+  // Teach-on-scan learned mappings — always LOWER priority than the official
+  // CODE2 listing above, so a client refresh stays authoritative
+  const kStripped = k.replace(/^0+(?=.)/, '');
   if (_learnedBarcodeMap[k]) return _learnedBarcodeMap[k].sku;
   if (kStripped !== k && _learnedBarcodeMap[kStripped]) return _learnedBarcodeMap[kStripped].sku;
+  // Double-pull concatenation rescue for learned barcodes too (step 4 only
+  // covers official keys): two fast trigger pulls glue two codes together
+  if (/^\d+$/.test(k)) {
+    for (const key of Object.keys(_learnedBarcodeMap)) {
+      if (k.length > key.length && k.startsWith(key)) return _learnedBarcodeMap[key].sku;
+    }
+  }
   return k;
 }
 
@@ -449,11 +465,22 @@ function resolveBeTimeCode2(scanned) {
 // yet updated for new products), the packer confirms which order line it is;
 // the mapping is stored here and applies everywhere from then on.
 let _learnedBarcodeMap = {}; // barcode → { sku, learnedBy, learnedAt, order }
+let _learnedSkuAliases = []; // [{ a, b, learnedBy, learnedAt, order }] — a=official name, b=order-file name
 try {
-  _learnedBarcodeMap = readDb().learnedBarcodes || {};
-  const n = Object.keys(_learnedBarcodeMap).length;
-  if (n) console.log(`[IdealScan] Learned barcode mappings loaded: ${n}`);
+  const _db0 = readDb();
+  _learnedBarcodeMap = _db0.learnedBarcodes  || {};
+  _learnedSkuAliases = _db0.learnedSkuAliases || [];
+  const n = Object.keys(_learnedBarcodeMap).length + _learnedSkuAliases.length;
+  if (n) console.log(`[IdealScan] Learned barcode mappings loaded: ${Object.keys(_learnedBarcodeMap).length} barcodes, ${_learnedSkuAliases.length} aliases`);
 } catch {}
+
+// Per-order scan history — every count action is recorded so the completed
+// order's slip can show exactly what was scanned, when, and by whom.
+function appendScanLog(state, evt) {
+  if (!state.scanLog) state.scanLog = [];
+  state.scanLog.push({ at: new Date().toISOString(), ...evt });
+  if (state.scanLog.length > 800) state.scanLog.splice(0, state.scanLog.length - 800);
+}
 
 // A teachable scan must look like a product barcode: 8+ chars, mostly digits,
 // and not a warehouse location code.
@@ -2397,14 +2424,25 @@ app.post('/api/scan/increment', (req, res) => {
   // play when nothing matched as scanned.
   if (!item && /np$/i.test(sku.trim()))  item = findBySku(sku.trim().replace(/np$/i, ''));
   if (!item && !/np$/i.test(sku.trim())) item = findBySku(sku.trim() + 'NP');
+  // Learned SKU aliases: the official listing sometimes names a product
+  // differently from the client's order file (e.g. 9005 vs BC010). Aliases
+  // are packer-taught pairs, tried only after every direct match fails.
   if (!item) {
-    // Unknown product barcode? Offer teach-on-scan: the packer can confirm
-    // which line this is and the mapping is remembered for good.
+    for (const al of _learnedSkuAliases) {
+      if (al.a === sku) item = findBySku(al.b);
+      else if (al.b === sku) item = findBySku(al.a);
+      if (item) break;
+    }
+  }
+  if (!item) {
+    // Unknown (or differently-named) product barcode? Offer teach-on-scan:
+    // the packer confirms which line this is and it's remembered for good.
     const raw = String(req.body.sku || '').trim();
     return res.status(404).json({
       error: `SKU "${sku}" not in this order`,
-      teachable: isTeachableBarcode(raw) && resolveBeTimeCode2(raw) === raw,
+      teachable: isTeachableBarcode(raw),
       barcode: raw,
+      resolved: sku !== raw ? sku : null, // official mapping that missed
     });
   }
   if (!batch.orderStates) batch.orderStates = {};
@@ -2412,6 +2450,7 @@ app.post('/api/scan/increment', (req, res) => {
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'scan', raw: String(req.body.sku || '').trim(), sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
@@ -2426,12 +2465,6 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   const bc = String(barcode).trim();
   if (!isTeachableBarcode(bc)) return res.status(400).json({ error: 'That scan does not look like a product barcode.' });
 
-  // The official CODE2 listing stays authoritative — refuse to shadow it
-  const official = resolveBeTimeCode2(bc);
-  if (official !== bc && !_learnedBarcodeMap[bc]) {
-    return res.status(409).json({ error: `Barcode already maps to SKU "${official}" in the reference listing.` });
-  }
-
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
@@ -2439,17 +2472,40 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   const item = uniqueSkuLines(ord).find(l => l.sku === sku);
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
 
-  if (!db.learnedBarcodes) db.learnedBarcodes = {};
-  const entry = {
-    sku: item.sku,
-    description: item.description || _skuDescMap[item.sku] || '',
-    learnedBy: req.userId || '',
-    learnedAt: new Date().toISOString(),
-    order: orderNumber,
-  };
-  db.learnedBarcodes[bc] = entry;
-  _learnedBarcodeMap[bc] = entry;
-  logAudit('barcode_learned', { barcode: bc, sku: item.sku, order: orderNumber, by: req.userId || '' });
+  // Two teaching modes:
+  //  - barcode unknown to the official listing → learn barcode → SKU
+  //  - barcode officially maps to a DIFFERENT code than the order file uses
+  //    (e.g. listing says 9005, order says BC010) → learn a SKU alias pair.
+  //    The official listing itself is never modified.
+  const official = officialResolveCode2(bc);
+  let learnedKind;
+  if (official && official !== item.sku) {
+    if (!db.learnedSkuAliases) db.learnedSkuAliases = [];
+    const exists = db.learnedSkuAliases.some(al =>
+      (al.a === official && al.b === item.sku) || (al.a === item.sku && al.b === official));
+    if (!exists) {
+      const alias = { a: official, b: item.sku, learnedBy: req.userId || '', learnedAt: new Date().toISOString(), order: orderNumber };
+      db.learnedSkuAliases.push(alias);
+      _learnedSkuAliases.push(alias);
+      logAudit('sku_alias_learned', { official, orderSku: item.sku, barcode: bc, order: orderNumber, by: req.userId || '' });
+    }
+    learnedKind = 'alias';
+  } else if (!official) {
+    if (!db.learnedBarcodes) db.learnedBarcodes = {};
+    const entry = {
+      sku: item.sku,
+      description: item.description || _skuDescMap[item.sku] || '',
+      learnedBy: req.userId || '',
+      learnedAt: new Date().toISOString(),
+      order: orderNumber,
+    };
+    db.learnedBarcodes[bc] = entry;
+    _learnedBarcodeMap[bc] = entry;
+    logAudit('barcode_learned', { barcode: bc, sku: item.sku, order: orderNumber, by: req.userId || '' });
+    learnedKind = 'barcode';
+  } else {
+    learnedKind = 'none'; // official mapping already points at this line — just count
+  }
 
   // Count the piece the packer is holding
   if (!batch.orderStates) batch.orderStates = {};
@@ -2457,17 +2513,34 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'teach', raw: bc, sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   writeDb(db);
-  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc });
+  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind });
 });
 
 app.get('/api/master/learned-barcodes', (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
-  const list = Object.entries(db.learnedBarcodes || {}).map(([barcode, e]) => ({ barcode, ...e }));
-  list.sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
-  res.json(list);
+  const barcodes = Object.entries(db.learnedBarcodes || {}).map(([barcode, e]) => ({ barcode, ...e }));
+  barcodes.sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
+  const aliases = [...(db.learnedSkuAliases || [])].sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
+  res.json({ barcodes, aliases });
+});
+
+app.delete('/api/master/learned-aliases/:a/:b', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { a, b } = req.params;
+  const db = readDb();
+  const match = al => (al.a === a && al.b === b) || (al.a === b && al.b === a);
+  const idx = (db.learnedSkuAliases || []).findIndex(match);
+  if (idx < 0) return res.status(404).json({ error: 'Alias not found' });
+  db.learnedSkuAliases.splice(idx, 1);
+  const idx2 = _learnedSkuAliases.findIndex(match);
+  if (idx2 >= 0) _learnedSkuAliases.splice(idx2, 1);
+  writeDb(db);
+  logAudit('sku_alias_removed', { a, b, by: req.userId || 'master' });
+  res.json({ ok: true });
 });
 
 app.delete('/api/master/learned-barcodes/:barcode', (req, res) => {
@@ -2497,6 +2570,7 @@ app.post('/api/scan/setqty', (req, res) => {
   state.status = 'processing';
   state.scanned[item.sku] = Math.max(0, parseInt(qty, 10) || 0);
   state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'count', raw: '', sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
@@ -3878,6 +3952,18 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa, { cellDates: true }), 'Completion Slip');
+
+  // Sheet 2 — the full scan history: every gun scan, manual count, and
+  // taught barcode, in the order they happened
+  const KIND_LABEL = { scan: 'Gun scan', count: 'Manual count', teach: 'Taught barcode' };
+  const logAoa = [
+    ['Time', 'Action', 'Scanned Code', 'SKU', 'Count After', 'By'],
+    ...((state.scanLog || []).map(e => [
+      new Date(e.at).toLocaleString(), KIND_LABEL[e.kind] || e.kind, e.raw || '', e.sku, e.qty, e.by || '',
+    ])),
+  ];
+  if (logAoa.length === 1) logAoa.push(['(no scan events recorded — order predates scan logging)', '', '', '', '', '']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(logAoa), 'Scan Log');
   const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   const date = (endTime || new Date()).toISOString().slice(0, 10);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

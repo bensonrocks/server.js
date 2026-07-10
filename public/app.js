@@ -2263,7 +2263,10 @@
   // A 120 ms idle timeout also fires (handles scanners that omit Enter).
   let _scanBuf = '';
   let _scanFlushTimer = null;
-  const SCAN_IDLE_MS = 120;
+  // 250ms: long enough that a gun pausing mid-code (laggy browser, long
+  // barcode) never gets split into two fragments — a split's front half can
+  // look like an unknown barcode and wrongly trigger the teach dialog
+  const SCAN_IDLE_MS = 250;
 
   function _flushScanBuf() {
     clearTimeout(_scanFlushTimer);
@@ -2408,7 +2411,7 @@
           // Unknown product barcode → teach-on-scan: packer confirms which
           // line it is, mapping is remembered everywhere from then on
           if (data.teachable && data.barcode) {
-            openTeachBarcodeModal(data.barcode);
+            openTeachBarcodeModal(data.barcode, data.resolved);
           } else {
             showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
           }
@@ -2443,7 +2446,7 @@
   }
 
   // ── Teach-on-scan: unknown barcode → packer picks the matching line ────────
-  function openTeachBarcodeModal(barcode) {
+  function openTeachBarcodeModal(barcode, resolved) {
     if (!activeOrder) return;
     const overlay = document.getElementById('teachBarcodeOverlay');
     const scanned = activeOrder.scanned || {};
@@ -2453,7 +2456,12 @@
         `Barcode ${barcode} not recognized — and no items are left to count.`);
       return;
     }
+    // Two flavours: barcode entirely unknown, or officially listed under a
+    // code this order's file doesn't use (e.g. listing says 9005, order says BC010)
     document.getElementById('teachBarcodeValue').textContent = barcode;
+    document.getElementById('teachBarcodeIntro').innerHTML = resolved
+      ? `is listed as <strong>${esc(resolved)}</strong> — but that code is not in this order.`
+      : 'is not in the barcode listing yet.';
     document.getElementById('teachBarcodeList').innerHTML = pending.map(l => `
       <button class="teach-line-btn" data-sku="${esc(l.sku)}">
         <span class="tlb-sku">${esc(l.sku)}</span>
@@ -3571,18 +3579,37 @@
     try {
       const r = await fetch('/api/master/learned-barcodes', { headers: { 'x-master-key': LOG_PASSWORD } });
       if (!r.ok) { el.innerHTML = '<span class="hint">Could not load learned barcodes.</span>'; return; }
-      const list = await r.json();
-      if (!list.length) { el.innerHTML = '<span class="hint">None yet — packers teach these during scanning when a barcode is missing from the listing.</span>'; return; }
-      el.innerHTML = list.map(e => `
-        <div class="learned-bc-row" data-barcode="${esc(e.barcode)}">
+      const d = await r.json();
+      const barcodes = d.barcodes || (Array.isArray(d) ? d : []);
+      const aliases  = d.aliases  || [];
+      if (!barcodes.length && !aliases.length) {
+        el.innerHTML = '<span class="hint">None yet — packers teach these during scanning when a barcode is missing from the listing.</span>';
+        return;
+      }
+      el.innerHTML = barcodes.map(e => `
+        <div class="learned-bc-row">
           <code>${esc(e.barcode)}</code> &#8594; <code>${esc(e.sku)}</code>
           <span class="learned-bc-meta">${esc(e.description || '')}</span>
           <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString()} &middot; order ${esc(e.order || '')}</span>
           <button class="btn-danger-sm learned-bc-del" data-barcode="${esc(e.barcode)}">Remove</button>
+        </div>`).join('') + aliases.map(e => `
+        <div class="learned-bc-row">
+          <span class="learned-bc-meta">SKU alias</span>
+          <code>${esc(e.a)}</code> &#8646; <code>${esc(e.b)}</code>
+          <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString()} &middot; order ${esc(e.order || '')}</span>
+          <button class="btn-danger-sm learned-alias-del" data-a="${esc(e.a)}" data-b="${esc(e.b)}">Remove</button>
         </div>`).join('');
       el.querySelectorAll('.learned-bc-del').forEach(btn => btn.addEventListener('click', async () => {
         if (!confirm(`Remove learned mapping ${btn.dataset.barcode}? Scans of it will stop matching until re-taught.`)) return;
         const dr = await fetch(`/api/master/learned-barcodes/${encodeURIComponent(btn.dataset.barcode)}`, {
+          method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
+        });
+        if (!dr.ok) { alert((await dr.json()).error || 'Delete failed'); return; }
+        loadLearnedBarcodes();
+      }));
+      el.querySelectorAll('.learned-alias-del').forEach(btn => btn.addEventListener('click', async () => {
+        if (!confirm(`Remove SKU alias ${btn.dataset.a} ⇄ ${btn.dataset.b}?`)) return;
+        const dr = await fetch(`/api/master/learned-aliases/${encodeURIComponent(btn.dataset.a)}/${encodeURIComponent(btn.dataset.b)}`, {
           method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
         });
         if (!dr.ok) { alert((await dr.json()).error || 'Delete failed'); return; }

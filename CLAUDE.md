@@ -111,6 +111,12 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
   (learned lookup is step 5, after all official steps, in `resolveBeTimeCode2`), and
   `/api/scan/learn-barcode` refuses (409) to teach a barcode the official map covers.
 - Master reviews/removes learned entries: Administrator → WMS → Learned Barcodes.
+- SKU ALIASES: when the official listing names a product differently from the order
+  file (barcode → 9005 but order line says BC010), teaching stores a SKU alias pair
+  in `db.learnedSkuAliases` instead (the official map is never modified). Aliases are
+  tried at order-line matching, after exact + NP fallbacks.
+- Per-order scan history: every increment/setqty/teach appends to `state.scanLog`
+  (capped 800) — exported as the "Scan Log" sheet of the completion slip.
 
 ## Git
 
