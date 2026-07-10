@@ -36,6 +36,7 @@ const createInventory   = require('./lib/inventory');
 const createFulfillment = require('./lib/fulfillment');
 const createPicking     = require('./lib/picking');
 const shopifyApp        = require('./lib/shopify-app');
+const inventorySync     = require('./lib/inventory-sync');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -676,6 +677,74 @@ app.delete('/api/connect/:platform', withTenant, (req, res) => {
   req.creds.remove(platform);
   res.json({ ok: true });
 });
+
+// ── Inventory sync routes ─────────────────────────────────────────────────────
+
+// Auto-discover SKU→marketplace mappings from existing order history
+app.post('/api/connect/:platform/inventory/discover', withStaff, withTenant, (req, res) => {
+  const { platform } = req.params;
+  if (!inventorySync.SUPPORTED.has(platform)) return res.status(400).json({ error: `Inventory sync not supported for ${platform}` });
+  try {
+    res.json(inventorySync.discover(platform, req.ctx.db));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// List current SKU mappings for a platform
+app.get('/api/connect/:platform/inventory/map', withStaff, withTenant, (req, res) => {
+  const { platform } = req.params;
+  res.json(req.ctx.db.prepare('SELECT * FROM channel_sku_map WHERE platform = ? ORDER BY oms_sku').all(platform));
+});
+
+// Add or update a SKU mapping manually
+app.post('/api/connect/:platform/inventory/map', withStaff, withTenant, (req, res) => {
+  const { platform } = req.params;
+  const { oms_sku, external_id, external_sku_id, external_name } = req.body || {};
+  if (!oms_sku) return res.status(400).json({ error: 'oms_sku required' });
+  req.ctx.db.prepare(`
+    INSERT INTO channel_sku_map (platform, oms_sku, external_id, external_sku_id, external_name, last_seen_at)
+    VALUES (?,?,?,?,?,datetime('now'))
+    ON CONFLICT(platform, oms_sku) DO UPDATE SET
+      external_id=excluded.external_id, external_sku_id=excluded.external_sku_id,
+      external_name=excluded.external_name, last_seen_at=excluded.last_seen_at
+  `).run(platform, oms_sku, external_id || '', external_sku_id || '', external_name || '');
+  res.json({ ok: true });
+});
+
+// Delete a SKU mapping
+app.delete('/api/connect/:platform/inventory/map/:sku', withStaff, withTenant, (req, res) => {
+  req.ctx.db.prepare('DELETE FROM channel_sku_map WHERE platform = ? AND oms_sku = ?').run(req.params.platform, req.params.sku);
+  res.json({ ok: true });
+});
+
+// Pull inventory FROM marketplace → update OMS stock
+app.post('/api/connect/:platform/inventory/pull', withStaff, withTenant, async (req, res) => {
+  const { platform } = req.params;
+  if (!inventorySync.SUPPORTED.has(platform)) return res.status(400).json({ error: `Not supported for ${platform}` });
+  const creds = req.ctx.creds.get(platform);
+  if (!creds?.accessToken) return res.status(400).json({ error: `${platform} not connected — save credentials first` });
+  try {
+    res.json(await inventorySync.syncInventory('pull', platform, creds, req.ctx.db, req.ctx.inventory));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Push OMS stock → marketplace
+app.post('/api/connect/:platform/inventory/push', withStaff, withTenant, async (req, res) => {
+  const { platform } = req.params;
+  if (!inventorySync.SUPPORTED.has(platform)) return res.status(400).json({ error: `Not supported for ${platform}` });
+  const creds = req.ctx.creds.get(platform);
+  if (!creds?.accessToken) return res.status(400).json({ error: `${platform} not connected — save credentials first` });
+  try {
+    res.json(await inventorySync.syncInventory('push', platform, creds, req.ctx.db, req.ctx.inventory));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.get('/api/connect/:platform/oauth-url', withTenant, (req, res) => {
   const { platform } = req.params;

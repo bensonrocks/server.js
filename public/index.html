@@ -223,6 +223,7 @@ a:hover{text-decoration:underline}
 .btn-g{background:transparent;color:#64748b}.btn-g:hover{background:#f1f5f9}
 .btn-s{background:#e2e8f0;color:#0f172a}.btn-s:hover{background:#cbd5e1}
 .btn-sm{padding:4px 10px;font-size:12px}
+.btn-xs{padding:3px 8px;font-size:11px}
 .btn-x{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:15px}
 .btn-x:hover{background:#f1f5f9;color:#0f172a}
 
@@ -1965,10 +1966,21 @@ a:hover{text-decoration:underline}
       </div>
     </div>
     <div class="modal-b" id="cm-body" style="gap:10px"></div>
+    <div id="inv-sync-bar" style="display:none;padding:10px 16px;border-top:1px solid var(--border,#e2e8f0);background:var(--bg2,#f8fafc);gap:6px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;font-weight:600;color:#64748b;margin-right:4px">INVENTORY SYNC</span>
+      <button class="btn btn-g btn-xs" onclick="invSyncDiscover()" title="Auto-map OMS SKUs from past orders">&#128269; Discover SKUs</button>
+      <button class="btn btn-s btn-xs" onclick="invSyncAction('pull')" title="Pull stock levels from marketplace into OMS">&#8595; Pull Stock</button>
+      <button class="btn btn-p btn-xs" onclick="invSyncAction('push')" title="Push OMS stock levels to marketplace">&#8593; Push Stock</button>
+      <button class="btn btn-g btn-xs" onclick="invSyncShowMap()" title="View SKU mappings">&#128214; SKU Map</button>
+      <span id="inv-sync-msg" style="font-size:11px;color:#64748b;margin-left:4px"></span>
+    </div>
+    <div id="inv-map-panel" style="display:none;padding:10px 16px;border-top:1px solid var(--border,#e2e8f0);max-height:180px;overflow-y:auto">
+      <div id="inv-map-list" style="font-size:11px"></div>
+    </div>
     <div class="modal-f">
       <button id="cm-disconnect-btn" class="btn btn-g" style="margin-right:auto;display:none" onclick="disconnectConn()">Disconnect</button>
       <button class="btn btn-g" onclick="closeConnModal()">Close</button>
-      <button class="btn btn-s" onclick="syncConnNow()">&#8635; Sync Now</button>
+      <button class="btn btn-s" onclick="syncConnNow()">&#8635; Sync Orders</button>
       <button class="btn btn-p" onclick="saveConnCredentials()">Save &amp; Connect</button>
     </div>
   </div>
@@ -3137,6 +3149,14 @@ function openConnModal(platform){
   }
   html+='<div id="cm-msg" class="conn-msg"></div>';
   $('cm-body').innerHTML=html;
+
+  // Show inventory sync bar for supported platforms
+  const invBar=$('inv-sync-bar');
+  const invPanel=$('inv-map-panel');
+  if(invBar){invBar.style.display=INV_SYNC_PLATFORMS.has(platform)?'flex':'none';}
+  if(invPanel){invPanel.style.display='none';}
+  _invSyncMsg('');
+
   $('conn-modal').classList.remove('hidden');
   $('conn-modal-ov').classList.remove('hidden');
 }
@@ -3203,7 +3223,7 @@ async function syncConnNow(){
   if(!serverAvailable){showCMMsg('Start the server first, then sync.');return;}
   showCMMsg('Syncing…',false);
   try{
-    const r=await fetch(`${SERVER}/api/sync/${platform}`,{method:'POST'});
+    const r=await fetch(`${SERVER}/api/sync/${platform}`,{method:'POST',headers:staffAuthHeader()});
     const j=await r.json();
     if(j.error){showCMMsg(j.error);return;}
     await loadOrdersFromServer();
@@ -3212,6 +3232,77 @@ async function syncConnNow(){
     showCMMsg(`Done — fetched ${j.fetched}, added ${j.added} new orders.`,false);
     localSyncLog.unshift(j);render();
   }catch(e){showCMMsg('Server error: '+e.message);}
+}
+
+// ── Inventory sync UI ─────────────────────────────────────────────────────────
+const INV_SYNC_PLATFORMS = new Set(['shopee','lazada','tiktok','shopify']);
+
+function _invSyncMsg(msg, isErr=false){
+  const el=$('inv-sync-msg');
+  if(el){el.textContent=msg;el.style.color=isErr?'#ef4444':'#64748b';}
+}
+
+async function invSyncDiscover(){
+  const platform=currentConnPlatform; if(!platform)return;
+  _invSyncMsg('Discovering from orders…');
+  try{
+    const r=await fetch(`${SERVER}/api/connect/${platform}/inventory/discover`,{method:'POST',headers:staffAuthHeader()});
+    const j=await r.json();
+    if(j.error){_invSyncMsg(j.error,true);return;}
+    _invSyncMsg(`Mapped ${j.discovered} SKU${j.discovered!==1?'s':''} from order history`);
+    invSyncShowMap();
+  }catch(e){_invSyncMsg('Error: '+e.message,true);}
+}
+
+async function invSyncAction(action){
+  const platform=currentConnPlatform; if(!platform)return;
+  _invSyncMsg(action==='pull'?'Pulling stock from marketplace…':'Pushing stock to marketplace…');
+  try{
+    const r=await fetch(`${SERVER}/api/connect/${platform}/inventory/${action}`,{method:'POST',headers:staffAuthHeader()});
+    const j=await r.json();
+    if(j.error){_invSyncMsg(j.error,true);return;}
+    if(j.warning){_invSyncMsg(j.warning,true);return;}
+    if(action==='pull') _invSyncMsg(`Pull done — ${j.synced} SKU${j.synced!==1?'s':''} updated`);
+    else                _invSyncMsg(`Push done — ${j.pushed} SKU${j.pushed!==1?'s':''} sent to ${platform}`);
+  }catch(e){_invSyncMsg('Error: '+e.message,true);}
+}
+
+async function invSyncShowMap(){
+  const platform=currentConnPlatform; if(!platform)return;
+  const panel=$('inv-map-panel'); const list=$('inv-map-list');
+  if(!panel||!list)return;
+  try{
+    const r=await fetch(`${SERVER}/api/connect/${platform}/inventory/map`,{headers:staffAuthHeader()});
+    const maps=await r.json();
+    if(!maps.length){list.innerHTML='<em style="color:#94a3b8">No mappings yet — click Discover SKUs or Pull Stock</em>';panel.style.display='block';return;}
+    list.innerHTML=`<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="color:#64748b;border-bottom:1px solid #e2e8f0">
+        <th style="padding:3px 6px;text-align:left">OMS SKU</th>
+        <th style="padding:3px 6px;text-align:left">Name</th>
+        <th style="padding:3px 6px;text-align:left">External ID</th>
+        <th style="padding:3px 6px;text-align:left">Updated</th>
+        <th></th>
+      </tr></thead><tbody>${maps.map(m=>`<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:3px 6px;font-weight:600">${esc(m.oms_sku)}</td>
+        <td style="padding:3px 6px;color:#475569">${esc(m.external_name||'—')}</td>
+        <td style="padding:3px 6px;color:#94a3b8;font-size:10px">${esc(m.external_id||'—')}</td>
+        <td style="padding:3px 6px;color:#94a3b8">${(m.last_seen_at||'').slice(0,10)}</td>
+        <td style="padding:3px 6px"><button onclick="invSyncDeleteMap(${JSON.stringify(m.oms_sku)})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:11px">&#10005;</button></td>
+      </tr>`).join('')}</tbody></table>`;
+    panel.style.display='block';
+  }catch(e){_invSyncMsg('Error loading map: '+e.message,true);}
+}
+
+async function invSyncDeleteMap(sku){
+  const platform=currentConnPlatform; if(!platform||!sku)return;
+  try{
+    await fetch(`${SERVER}/api/connect/${platform}/inventory/map/${encodeURIComponent(sku)}`,{method:'DELETE',headers:staffAuthHeader()});
+    invSyncShowMap();
+  }catch{}
+}
+
+function staffAuthHeader(){
+  return staffToken ? {Authorization:`Bearer ${staffToken}`} : {};
 }
 
 async function disconnectConn(){
