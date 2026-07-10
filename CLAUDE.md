@@ -103,6 +103,15 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
    the suffix fallback only fires when nothing matched as scanned, so orders that
    genuinely contain both `8006` and `8006NP` lines still count separately.
 
+## Teach-on-scan learned barcodes (server.js)
+
+- Unknown product barcodes scanned during picking can be taught: packer picks the
+  order line, mapping saved to `db.learnedBarcodes` + `_learnedBarcodeMap`, audit-logged.
+- PRIORITY INVARIANT: the official CODE2 listing ALWAYS wins over learned mappings
+  (learned lookup is step 5, after all official steps, in `resolveBeTimeCode2`), and
+  `/api/scan/learn-barcode` refuses (409) to teach a barcode the official map covers.
+- Master reviews/removes learned entries: Administrator → WMS → Learned Barcodes.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

@@ -2405,7 +2405,13 @@
         });
         const data = await resp.json();
         if (!resp.ok) {
-          showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
+          // Unknown product barcode → teach-on-scan: packer confirms which
+          // line it is, mapping is remembered everywhere from then on
+          if (data.teachable && data.barcode) {
+            openTeachBarcodeModal(data.barcode);
+          } else {
+            showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
+          }
           continue;
         }
         if (!activeOrder.scanned) activeOrder.scanned = {};
@@ -2434,6 +2440,61 @@
     }
     _scanBusy = false;
     focusActiveQty();
+  }
+
+  // ── Teach-on-scan: unknown barcode → packer picks the matching line ────────
+  function openTeachBarcodeModal(barcode) {
+    if (!activeOrder) return;
+    const overlay = document.getElementById('teachBarcodeOverlay');
+    const scanned = activeOrder.scanned || {};
+    const pending = mergedScanLines(activeOrder).filter(l => (scanned[l.sku] || 0) < l.qty);
+    if (!pending.length) {
+      showFeedback(document.getElementById('itemScanFeedback'), 'error',
+        `Barcode ${barcode} not recognized — and no items are left to count.`);
+      return;
+    }
+    document.getElementById('teachBarcodeValue').textContent = barcode;
+    document.getElementById('teachBarcodeList').innerHTML = pending.map(l => `
+      <button class="teach-line-btn" data-sku="${esc(l.sku)}">
+        <span class="tlb-sku">${esc(l.sku)}</span>
+        <span class="tlb-desc">${esc(l.description && l.description !== l.sku ? l.description : '')}</span>
+        <span class="tlb-count">${scanned[l.sku] || 0}/${l.qty}</span>
+      </button>`).join('');
+    overlay.classList.remove('hidden');
+
+    document.querySelectorAll('#teachBarcodeList .teach-line-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const resp = await fetch('/api/scan/learn-barcode', {
+            method: 'POST', headers: hdrs(),
+            body: JSON.stringify({ orderNumber: activeOrder.order_number, barcode, sku: btn.dataset.sku }),
+          });
+          const data = await resp.json();
+          overlay.classList.add('hidden');
+          if (!resp.ok) { alert(data.error); return; }
+          if (!activeOrder.scanned) activeOrder.scanned = {};
+          activeOrder.scanned[data.sku] = data.scanned_qty;
+          activeOrder.scan_status = 'processing';
+          scanFocusSku = data.sku; scanPageManual = false;
+          renderItemsTable(activeOrder);
+          updateProgress(activeOrder);
+          maybeAutoComplete();
+          showFeedback(document.getElementById('itemScanFeedback'), 'success',
+            `✓ Learned: ${barcode} = ${data.sku} — counted ${data.scanned_qty}/${data.ordered_qty}`);
+          const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
+          if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
+          focusActiveQty();
+        } catch (err) {
+          overlay.classList.add('hidden');
+          alert(err.message);
+        }
+      });
+    });
+    document.getElementById('teachBarcodeCancel').onclick = () => {
+      overlay.classList.add('hidden');
+      setTimeout(() => document.getElementById('itemScanInput').focus(), 50);
+    };
   }
 
   async function setItemQty(orderNumber, sku, qty) {
@@ -2751,6 +2812,7 @@
     loadLabelTemplates();
     loadDocTemplates();
     loadBarcodeMapStats();
+    loadLearnedBarcodes();
   }
 
   // Admin tab switching
@@ -3501,6 +3563,32 @@
         statsEl.classList.remove('hidden');
       }
     } catch {}
+  }
+
+  async function loadLearnedBarcodes() {
+    const el = document.getElementById('learnedBarcodesList');
+    if (!el) return;
+    try {
+      const r = await fetch('/api/master/learned-barcodes', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) { el.innerHTML = '<span class="hint">Could not load learned barcodes.</span>'; return; }
+      const list = await r.json();
+      if (!list.length) { el.innerHTML = '<span class="hint">None yet — packers teach these during scanning when a barcode is missing from the listing.</span>'; return; }
+      el.innerHTML = list.map(e => `
+        <div class="learned-bc-row" data-barcode="${esc(e.barcode)}">
+          <code>${esc(e.barcode)}</code> &#8594; <code>${esc(e.sku)}</code>
+          <span class="learned-bc-meta">${esc(e.description || '')}</span>
+          <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString()} &middot; order ${esc(e.order || '')}</span>
+          <button class="btn-danger-sm learned-bc-del" data-barcode="${esc(e.barcode)}">Remove</button>
+        </div>`).join('');
+      el.querySelectorAll('.learned-bc-del').forEach(btn => btn.addEventListener('click', async () => {
+        if (!confirm(`Remove learned mapping ${btn.dataset.barcode}? Scans of it will stop matching until re-taught.`)) return;
+        const dr = await fetch(`/api/master/learned-barcodes/${encodeURIComponent(btn.dataset.barcode)}`, {
+          method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
+        });
+        if (!dr.ok) { alert((await dr.json()).error || 'Delete failed'); return; }
+        loadLearnedBarcodes();
+      }));
+    } catch { el.innerHTML = '<span class="hint">Could not load learned barcodes.</span>'; }
   }
 
   document.getElementById('barcodeMapBrowseBtn').addEventListener('click', e => { e.stopPropagation(); barcodeMapFileInput.click(); });

@@ -437,7 +437,32 @@ function resolveBeTimeCode2(scanned) {
       }
     }
   }
+  // 5. Teach-on-scan learned mappings — always LOWER priority than the
+  //    official CODE2 listing above, so a client refresh stays authoritative
+  if (_learnedBarcodeMap[k]) return _learnedBarcodeMap[k].sku;
+  if (kStripped !== k && _learnedBarcodeMap[kStripped]) return _learnedBarcodeMap[kStripped].sku;
   return k;
+}
+
+// ── Teach-on-scan: packer-confirmed barcode → SKU mappings ───────────────────
+// When a scanned product barcode isn't in the CODE2 listing (item master not
+// yet updated for new products), the packer confirms which order line it is;
+// the mapping is stored here and applies everywhere from then on.
+let _learnedBarcodeMap = {}; // barcode → { sku, learnedBy, learnedAt, order }
+try {
+  _learnedBarcodeMap = readDb().learnedBarcodes || {};
+  const n = Object.keys(_learnedBarcodeMap).length;
+  if (n) console.log(`[IdealScan] Learned barcode mappings loaded: ${n}`);
+} catch {}
+
+// A teachable scan must look like a product barcode: 8+ chars, mostly digits,
+// and not a warehouse location code.
+function isTeachableBarcode(s) {
+  const v = String(s || '').trim();
+  if (v.length < 8 || v.length > 30) return false;
+  if ((v.match(/\d/g) || []).length < 6) return false;
+  if (/^[A-Z]{1,4}(-\d{1,6}){1,3}(-[A-Z]{1,2})?$/i.test(v)) return false; // location code
+  return /^[A-Z0-9]+$/i.test(v);
 }
 
 // ── Email config ─────────────────────────────────────────────────────────────
@@ -2372,7 +2397,16 @@ app.post('/api/scan/increment', (req, res) => {
   // play when nothing matched as scanned.
   if (!item && /np$/i.test(sku.trim()))  item = findBySku(sku.trim().replace(/np$/i, ''));
   if (!item && !/np$/i.test(sku.trim())) item = findBySku(sku.trim() + 'NP');
-  if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
+  if (!item) {
+    // Unknown product barcode? Offer teach-on-scan: the packer can confirm
+    // which line this is and the mapping is remembered for good.
+    const raw = String(req.body.sku || '').trim();
+    return res.status(404).json({
+      error: `SKU "${sku}" not in this order`,
+      teachable: isTeachableBarcode(raw) && resolveBeTimeCode2(raw) === raw,
+      barcode: raw,
+    });
+  }
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
@@ -2381,6 +2415,72 @@ app.post('/api/scan/increment', (req, res) => {
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
+});
+
+// Teach-on-scan: packer confirms an unrecognized product barcode belongs to
+// one of the order's lines. Stores the mapping (audit-logged, master-reviewable)
+// and counts the piece in the same call so packing never stalls.
+app.post('/api/scan/learn-barcode', (req, res) => {
+  const { orderNumber, barcode, sku } = req.body;
+  if (!orderNumber || !barcode || !sku) return res.status(400).json({ error: 'orderNumber, barcode and sku required' });
+  const bc = String(barcode).trim();
+  if (!isTeachableBarcode(bc)) return res.status(400).json({ error: 'That scan does not look like a product barcode.' });
+
+  // The official CODE2 listing stays authoritative — refuse to shadow it
+  const official = resolveBeTimeCode2(bc);
+  if (official !== bc && !_learnedBarcodeMap[bc]) {
+    return res.status(409).json({ error: `Barcode already maps to SKU "${official}" in the reference listing.` });
+  }
+
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord  = batch.orders.find(o => o.order_number === orderNumber);
+  const item = uniqueSkuLines(ord).find(l => l.sku === sku);
+  if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
+
+  if (!db.learnedBarcodes) db.learnedBarcodes = {};
+  const entry = {
+    sku: item.sku,
+    description: item.description || _skuDescMap[item.sku] || '',
+    learnedBy: req.userId || '',
+    learnedAt: new Date().toISOString(),
+    order: orderNumber,
+  };
+  db.learnedBarcodes[bc] = entry;
+  _learnedBarcodeMap[bc] = entry;
+  logAudit('barcode_learned', { barcode: bc, sku: item.sku, order: orderNumber, by: req.userId || '' });
+
+  // Count the piece the packer is holding
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  state.status = 'processing';
+  state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
+  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc });
+});
+
+app.get('/api/master/learned-barcodes', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const list = Object.entries(db.learnedBarcodes || {}).map(([barcode, e]) => ({ barcode, ...e }));
+  list.sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
+  res.json(list);
+});
+
+app.delete('/api/master/learned-barcodes/:barcode', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const bc = req.params.barcode;
+  const db = readDb();
+  if (!db.learnedBarcodes?.[bc]) return res.status(404).json({ error: 'Mapping not found' });
+  const removed = db.learnedBarcodes[bc];
+  delete db.learnedBarcodes[bc];
+  delete _learnedBarcodeMap[bc];
+  writeDb(db);
+  logAudit('barcode_unlearned', { barcode: bc, sku: removed.sku, by: req.userId || 'master' });
+  res.json({ ok: true });
 });
 
 app.post('/api/scan/setqty', (req, res) => {

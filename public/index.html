@@ -384,6 +384,14 @@
         </div>
         <div id="barcodeMapStatus" class="status-bar hidden"></div>
 
+        <div class="admin-section-header" style="margin-top:1rem">
+          <div>
+            <div class="admin-section-title">&#128218; Learned Barcodes</div>
+            <div class="admin-section-sub">Barcodes packers confirmed during scanning (teach-on-scan). The official listing above always wins — remove any mapping that was taught wrongly.</div>
+          </div>
+        </div>
+        <div id="learnedBarcodesList" class="learned-bc-list"><span class="hint">Loading&hellip;</span></div>
+
         <div class="admin-section-divider"></div>
         <div class="admin-section-header" style="margin-top:.5rem">
           <div>
@@ -1139,6 +1147,20 @@
       <div id="labelMatchOrderList" class="label-match-order-list"></div>
       <div class="modal-actions" style="margin-top:.75rem">
         <button class="btn-secondary" id="labelMatchCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Teach-on-scan: unknown barcode → pick the matching item ── -->
+  <div id="teachBarcodeOverlay" class="modal-overlay hidden">
+    <div class="modal teach-barcode-modal">
+      <div class="modal-icon">&#128270;</div>
+      <div class="modal-title">Barcode Not Recognized</div>
+      <p class="modal-desc"><code id="teachBarcodeValue"></code> is not in the barcode listing yet.<br/>
+        <strong>Which item are you holding?</strong> Tap it to count the piece — the barcode will be remembered for all future scans.</p>
+      <div id="teachBarcodeList" class="teach-barcode-list"></div>
+      <div class="modal-actions" style="margin-top:.75rem">
+        <button class="btn-secondary" id="teachBarcodeCancel">&#10005; Not sure — skip</button>
       </div>
     </div>
   </div>

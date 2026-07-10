@@ -2366,3 +2366,31 @@ body.ls-open { overflow: hidden; }
   font-size: .72rem; font-weight: 600; padding: .28rem .55rem; cursor: pointer;
 }
 .lri-zoom-btn:hover { background: var(--primary); }
+
+/* ── Teach-on-scan modal ── */
+.teach-barcode-modal { max-width: 560px; }
+.teach-barcode-list { display: flex; flex-direction: column; gap: .5rem; margin-top: .9rem; max-height: 46vh; overflow-y: auto; }
+.teach-line-btn {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .8rem;
+  padding: .8rem .9rem; border: 2px solid var(--primary-border); border-radius: 10px;
+  background: var(--primary-light); cursor: pointer; text-align: left; width: 100%;
+}
+.teach-line-btn:hover:not(:disabled) { border-color: var(--primary); background: #dbeafe; }
+.teach-line-btn:disabled { opacity: .55; cursor: wait; }
+.tlb-sku   { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; font-size: 1.15rem; }
+.tlb-desc  { font-size: .88rem; color: var(--text-secondary, #475569); }
+.tlb-count { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--primary); }
+
+/* ── Learned barcodes (admin) ── */
+.learned-bc-list { display: flex; flex-direction: column; gap: .35rem; margin-top: .5rem; }
+.learned-bc-row {
+  display: flex; align-items: center; gap: .7rem; flex-wrap: wrap;
+  border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: .45rem .7rem; font-size: .84rem;
+}
+.learned-bc-row code { font-weight: 700; }
+.learned-bc-meta { color: var(--text-secondary, #64748b); font-size: .76rem; }
+.learned-bc-row .btn-danger-sm {
+  margin-left: auto; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca;
+  border-radius: 6px; padding: .2rem .6rem; font-size: .76rem; cursor: pointer;
+}
+.learned-bc-row .btn-danger-sm:hover { background: #fecaca; }
