@@ -31,6 +31,7 @@
   let activeCarrierFilter = 'all';
   let ordersView          = 'active';   // 'active' | 'completed' sub-tab
   let completedSearch     = '';
+  let _archSearch         = { q: '', results: null }; // archive search cache
   let ordersDateFilter    = 'today';    // 'today' | 'yesterday' | 'week' | 'all' | 'range'
   let ordersDateFrom      = '';
   let ordersDateTo        = '';
@@ -1355,6 +1356,7 @@
       if (directMatch.scan_status === 'done') {
         // Completed order — show it in the Completed tab for reference/reprint
         ordersView = 'completed'; completedSearch = directMatch.order_number; ordersDateFilter = 'all';
+        refreshOrders().then(renderOrdersList);
         renderOrdersList();
         setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
         return;
@@ -1377,10 +1379,11 @@
         setWaybillMsg('No order found for that number.', true);
         return;
       }
-      const ord = loadedOrders.find(o => o.order_number === data.order_number);
-      if (!ord) { setWaybillMsg('Order not in current batch.', true); return; }
+      let ord = loadedOrders.find(o => o.order_number === data.order_number);
+      if (!ord) { ord = data; loadedOrders.push(data); } // outside the loaded date window
       if (ord.scan_status === 'done') {
         ordersView = 'completed'; completedSearch = ord.order_number; ordersDateFilter = 'all';
+        refreshOrders().then(renderOrdersList);
         renderOrdersList();
         setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
         return;
@@ -1449,6 +1452,25 @@
           [o.order_number, o.waybill_number, o.issue_no, o.pick_ticket, o.po_number, o.customer_name, o.client_name]
             .some(v => norm(v).includes(q))
         );
+        // Also search the ARCHIVE (orders older than 60 days) — async fetch,
+        // cached per search string, merged into the list on arrival
+        const rawQ = completedSearch.trim();
+        if (rawQ.length >= 3) {
+          if (_archSearch.q === rawQ && _archSearch.results) {
+            const have = new Set(orders.map(o => o.order_number + '|' + (o.batchId || '')));
+            orders = orders.concat(_archSearch.results.filter(o => !have.has(o.order_number + '|' + (o.batchId || ''))));
+          } else if (_archSearch.q !== rawQ) {
+            _archSearch = { q: rawQ, results: null };
+            fetch(`/api/orders/archived?q=${encodeURIComponent(rawQ)}`)
+              .then(r => r.ok ? r.json() : [])
+              .then(results => {
+                if (_archSearch.q !== rawQ) return; // search changed meanwhile
+                _archSearch.results = results;
+                if (results.length && ordersView === 'completed' && completedSearch.trim() === rawQ) renderOrdersList();
+              })
+              .catch(() => {});
+          }
+        }
       }
       // Most recently completed first
       orders = [...orders].sort((a, b) => new Date(b.endTime || 0) - new Date(a.endTime || 0));
@@ -1474,10 +1496,11 @@
           ordersDateFrom = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
           ordersDateTo   = new Date().toISOString().slice(0, 10);
         }
-        renderOrdersList();
+        renderOrdersList();                          // instant chip feedback
+        refreshOrders().then(renderOrdersList);      // then the real window
       }));
-      document.getElementById('ordersDateFrom')?.addEventListener('change', e => { ordersDateFrom = e.target.value; renderOrdersList(); });
-      document.getElementById('ordersDateTo')?.addEventListener('change',   e => { ordersDateTo   = e.target.value; renderOrdersList(); });
+      document.getElementById('ordersDateFrom')?.addEventListener('change', e => { ordersDateFrom = e.target.value; refreshOrders().then(renderOrdersList); });
+      document.getElementById('ordersDateTo')?.addEventListener('change',   e => { ordersDateTo   = e.target.value; refreshOrders().then(renderOrdersList); });
       const si = document.getElementById('completedSearchInput');
       si?.addEventListener('input', () => {
         completedSearch = si.value;
@@ -1531,6 +1554,7 @@
 
       // Chips under order number
       const chips = [
+        ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
         ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
         ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill</span>` : '',
       ].filter(Boolean).join('');
@@ -1557,9 +1581,9 @@
           ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download slip">&#128196;</a>` : ''}
           ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill">&#128438; WB</button>` : ''}
           ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991;</button>` : ''}
-          ${emailIndicator}
-          ${kfBtn}
-          ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete">&#128465;</button>` : ''}
+          ${ord.archived ? '' : emailIndicator}
+          ${ord.archived ? '' : kfBtn}
+          ${logUnlocked && !ord.archived ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete">&#128465;</button>` : ''}
         </td>
       </tr>`;
     }).join('');
@@ -3608,6 +3632,19 @@
     } catch {}
   }
 
+  document.getElementById('learnedExportBtn')?.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/master/learned-barcodes/export', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) throw new Error('Export failed');
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `Learned_Barcodes_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) { alert(err.message); }
+  });
+
   async function loadLearnedBarcodes() {
     const el = document.getElementById('learnedBarcodesList');
     if (!el) return;
@@ -3813,7 +3850,16 @@
   // ── Helpers ────────────────────────────────────────────────────────────────
   async function refreshOrders() {
     try {
-      const resp = await fetch('/api/orders');
+      // Ask only for the selected date window — keeps the payload small no
+      // matter how much history accumulates on the server
+      const rangeMap = { today: 'today', yesterday: 'yesterday', week: 'week', all: 'all', range: 'range' };
+      const range = rangeMap[ordersDateFilter] || 'all';
+      let url = `/api/orders?range=${range}`;
+      if (range === 'range') {
+        if (ordersDateFrom) url += `&from=${encodeURIComponent(ordersDateFrom)}`;
+        if (ordersDateTo)   url += `&to=${encodeURIComponent(ordersDateTo)}`;
+      }
+      const resp = await fetch(url);
       const data = await resp.json();
       if (Array.isArray(data)) loadedOrders = data;
     } catch {}

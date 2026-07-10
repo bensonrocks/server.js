@@ -118,6 +118,22 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 - Per-order scan history: every increment/setqty/teach appends to `state.scanLog`
   (capped 800) — exported as the "Scan Log" sheet of the completion slip.
 
+## Data lifecycle (server.js)
+
+- ATOMIC WRITES: db.json persists via tmp+rename (`_persistDb`), serialized. Never
+  revert to a bare fs.writeFile — a crash mid-write must not corrupt the db.
+- SCAN JOURNAL: every order-state change appends to `DATA_DIR/scan-journal.ndjson`
+  immediately; replayed at startup (last-wins per order, only if newer than stored
+  state), then truncated. Protects the deferred-write window.
+- AUTO-ARCHIVE: settled batches (all orders done/unprocessed) older than 60 days
+  move to `DATA_DIR/archive/archive-YYYY-MM.json` daily. Completed-tab search hits
+  archives via `/api/orders/archived?q=`; completion-slip falls back to
+  `readArchivedBatch`. Audit ledger unaffected.
+- NIGHTLY BACKUP: gzipped full backup to `DATA_DIR/backups/` (keep 14) + emailed
+  via configured mail, after 02:00 SGT (30-min checks + 2-min post-boot catch-up).
+- `/api/orders` accepts `?range=today|yesterday|week|all|range&from&to` — dashboard
+  fetches only the selected window. Order rows include `uploadedAt` and `items`.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

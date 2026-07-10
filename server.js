@@ -226,20 +226,89 @@ function readDb() {
   catch { _dbCache = { batches: [] }; }
   return _dbCache;
 }
+// Persist is ATOMIC (tmp file + rename) so a crash mid-write can never leave
+// a corrupt half-written db.json, and writes are serialized so concurrent
+// writeDb calls coalesce instead of racing each other.
+let _dbWriting = false;
+let _dbWritePending = false;
+function _persistDb() {
+  if (_dbWriting) { _dbWritePending = true; return; }
+  _dbWriting = true;
+  let json;
+  try { json = JSON.stringify(_dbCache); }
+  catch (e) { console.error('[writeDb] stringify error:', e.message); _dbWriting = false; return; }
+  const tmp = DB_FILE + '.tmp';
+  fs.writeFile(tmp, json, err => {
+    if (err) {
+      console.error('[writeDb] persist error:', err.message);
+      _dbWriting = false;
+      if (_dbWritePending) { _dbWritePending = false; setImmediate(_persistDb); }
+      return;
+    }
+    fs.rename(tmp, DB_FILE, err2 => {
+      if (err2) console.error('[writeDb] rename error:', err2.message);
+      _dbWriting = false;
+      if (_dbWritePending) { _dbWritePending = false; setImmediate(_persistDb); }
+    });
+  });
+}
 function writeDb(data) {
   _dbCache = data;
   // Defer JSON.stringify to the NEXT event loop tick so any pending res.json()
   // calls in the current tick are not blocked by a potentially-slow stringify.
   // (A large db.json with many batches was causing 30s+ event-loop stalls.)
-  setImmediate(() => {
-    try {
-      fs.writeFile(DB_FILE, JSON.stringify(data), err => {
-        if (err) console.error('[writeDb] persist error:', err.message);
-      });
-    } catch (e) {
-      console.error('[writeDb] stringify error:', e.message);
-    }
+  setImmediate(_persistDb);
+}
+
+// ── Scan journal — crash-proof record of in-flight scan progress ────────────
+// db.json persistence is deferred; a hard crash could lose the last moments
+// of scanning. Every order-state change is ALSO appended (immediately) to an
+// NDJSON journal; on startup any journal entries newer than the stored state
+// are replayed. The journal is truncated after replay — it only ever needs
+// to cover the gap since the last clean write.
+const SCAN_JOURNAL_FILE = path.join(DATA_DIR, 'scan-journal.ndjson');
+function journalOrderState(orderNumber, state) {
+  const line = JSON.stringify({
+    at: state.updated_at, order: orderNumber, status: state.status,
+    scanned: state.scanned || {}, startTime: state.startTime || null,
+    endTime: state.endTime || null, operator: state.operator || null,
   });
+  fs.appendFile(SCAN_JOURNAL_FILE, line + '\n', err => {
+    if (err) console.error('[scan-journal]', err.message);
+  });
+}
+function replayScanJournal() {
+  let raw = '';
+  try { raw = fs.readFileSync(SCAN_JOURNAL_FILE, 'utf8'); } catch { return; }
+  if (!raw.trim()) return;
+  const latest = new Map(); // order → last journal entry (last-wins, idempotent)
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try { const e = JSON.parse(line); if (e.order) latest.set(e.order, e); } catch {}
+  }
+  const db = readDb();
+  let recovered = 0;
+  for (const [orderNumber, e] of latest) {
+    const batch = (db.batches || []).find(b => (b.orders || []).some(o => o.order_number === orderNumber));
+    if (!batch) continue;
+    if (!batch.orderStates) batch.orderStates = {};
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    if (state.updated_at && e.at && e.at <= state.updated_at) continue; // db already has it
+    state.status     = e.status || state.status;
+    state.scanned    = e.scanned || state.scanned;
+    state.updated_at = e.at || state.updated_at;
+    if (e.startTime) state.startTime = e.startTime;
+    if (e.endTime)   state.endTime   = e.endTime;
+    if (e.operator)  state.operator  = e.operator;
+    appendScanLog(state, { kind: 'recovered', raw: '', sku: '(scan journal replay after restart)', qty: '', by: '' });
+    batch.orderStates[orderNumber] = state;
+    recovered++;
+  }
+  if (recovered > 0) {
+    writeDb(db);
+    console.log(`[IdealScan] Scan journal: recovered ${recovered} order state(s) lost in an unclean shutdown`);
+  }
+  try { fs.truncateSync(SCAN_JOURNAL_FILE, 0); } catch {}
 }
 
 // ── Audit ledger — append-only activity trail ───────────────────────────────
@@ -401,6 +470,9 @@ try {
     console.log(`[IdealScan] Audit ledger backfilled: ${n} events`);
   } catch (e) { console.error('[IdealScan] audit backfill failed:', e.message); }
 })();
+
+// Recover any scan progress that a crash prevented from reaching db.json
+try { replayScanJournal(); } catch (e) { console.error('[IdealScan] scan journal replay failed:', e.message); }
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
@@ -651,6 +723,18 @@ function summarizeOrders(lines) {
 
 // Global shared view — reads all orders and their scan states directly from DB.
 // Every browser/device sees the same data; no per-session isolation.
+// Waybill-PDF existence cache — one readdir per batch instead of one
+// fs.existsSync per order per dashboard refresh
+const _waybillDirCache = new Map(); // batchId → Set of filenames
+function batchWaybillSet(batchId) {
+  let set = _waybillDirCache.get(batchId);
+  if (set) return set;
+  try { set = new Set(fs.readdirSync(path.join(WAYBILL_DIR, batchId))); } catch { set = new Set(); }
+  _waybillDirCache.set(batchId, set);
+  return set;
+}
+function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
+
 function globalOrdersWithState() {
   const db          = readDb();
   const orderLabels = db.orderLabels || {};
@@ -658,11 +742,11 @@ function globalOrdersWithState() {
   const out         = [];
   for (const batch of db.batches) {
     const states = batch.orderStates || {};
+    const wbSet  = batchWaybillSet(batch.id);
     for (const ord of (batch.orders || [])) {
       if (seen.has(ord.order_number)) continue; // newest batch wins
       seen.add(ord.order_number);
       const state       = states[ord.order_number] || { status: 'pending', scanned: {} };
-      const waybillPath = path.join(WAYBILL_DIR, batch.id, `${ord.order_number}.pdf`);
       const enrichedLines = (ord.lines || []).map(l => {
         const stored = l.description || '';
         // Ignore stored description if it equals the SKU (legacy data bug)
@@ -675,6 +759,8 @@ function globalOrdersWithState() {
       out.push({
         ...ord,
         lines:             enrichedLines,
+        items:             enrichedLines,
+        uploadedAt:        batch.uploaded_at,
         scan_status:       state.status           || 'pending',
         scanned:           { ...state.scanned },
         mismatches:        state.mismatches        || [],
@@ -686,7 +772,7 @@ function globalOrdersWithState() {
         alert_email_error: state.alert_email_error || null,
         batchId:           batch.id,
         client_name:       batch.client_name       || '',
-        has_waybill_pdf:   fs.existsSync(waybillPath),
+        has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
       });
     }
@@ -700,6 +786,112 @@ function findBatchForOrder(db, orderNumber) {
     if ((batch.orders || []).some(o => o.order_number === orderNumber)) return batch;
   }
   return null;
+}
+
+// ── Auto-archive ─────────────────────────────────────────────────────────────
+// db.json is rewritten on every scan, so it must stay small forever. Batches
+// whose orders are ALL settled (done/unprocessed) and untouched for 60 days
+// move to monthly archive files on the volume. Archived orders stay
+// reachable: slips/waybills fall back to the archive, and the Completed tab
+// searches archives explicitly. The audit ledger is unaffected — reports
+// keep covering archived activity.
+const ARCHIVE_DIR = path.join(DATA_DIR, 'archive');
+const ARCHIVE_AFTER_DAYS = 60;
+
+function batchArchivable(batch, cutoffIso) {
+  const orders = batch.orders || [];
+  if (!orders.length) return (batch.uploaded_at || '') < cutoffIso;
+  const states = batch.orderStates || {};
+  let newest = batch.uploaded_at || '';
+  for (const o of orders) {
+    const st = states[o.order_number];
+    if (!st || (st.status !== 'done' && st.status !== 'unprocessed')) return false; // still open work
+    const t = st.endTime || st.updated_at || '';
+    if (t > newest) newest = t;
+  }
+  return newest < cutoffIso;
+}
+
+function runAutoArchive() {
+  try {
+    const db = readDb();
+    const cutoff = new Date(Date.now() - ARCHIVE_AFTER_DAYS * 86400000).toISOString();
+    const keep = [], move = [];
+    for (const b of db.batches || []) (batchArchivable(b, cutoff) ? move : keep).push(b);
+    if (!move.length) return;
+    fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+    const byMonth = {};
+    for (const b of move) {
+      const m = (b.uploaded_at || '').slice(0, 7) || 'unknown';
+      (byMonth[m] = byMonth[m] || []).push(b);
+    }
+    for (const [m, batches] of Object.entries(byMonth)) {
+      const file = path.join(ARCHIVE_DIR, `archive-${m}.json`);
+      let existing = [];
+      try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+      existing.push(...batches);
+      const tmp = file + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(existing));
+      fs.renameSync(tmp, file);
+    }
+    db.batches = keep;
+    writeDb(db);
+    logAudit('batches_archived', { count: move.length, months: Object.keys(byMonth).sort() });
+    console.log(`[IdealScan] Auto-archive: moved ${move.length} settled batch(es) → ${Object.keys(byMonth).sort().join(', ')}`);
+  } catch (e) {
+    console.error('[IdealScan] auto-archive failed:', e.message);
+  }
+}
+setTimeout(runAutoArchive, 60 * 1000);           // shortly after boot
+setInterval(runAutoArchive, 24 * 3600 * 1000);   // then daily
+
+function listArchiveFiles() {
+  try { return fs.readdirSync(ARCHIVE_DIR).filter(f => /^archive-.*\.json$/.test(f)).sort().reverse(); }
+  catch { return []; }
+}
+// Find an archived batch by id (used by slip/label endpoints as fallback)
+function readArchivedBatch(batchId) {
+  for (const f of listArchiveFiles()) {
+    try {
+      const batches = JSON.parse(fs.readFileSync(path.join(ARCHIVE_DIR, f), 'utf8'));
+      const hit = batches.find(b => b.id === batchId);
+      if (hit) return hit;
+    } catch {}
+  }
+  return null;
+}
+// Search archived orders (Completed-tab search). Returns order rows in the
+// same shape the dashboard uses, newest first, capped.
+function searchArchivedOrders(q, cap = 60) {
+  const needle = String(q || '').trim().toLowerCase();
+  if (needle.length < 3) return [];
+  const out = [];
+  for (const f of listArchiveFiles()) {
+    let batches;
+    try { batches = JSON.parse(fs.readFileSync(path.join(ARCHIVE_DIR, f), 'utf8')); } catch { continue; }
+    for (const batch of batches) {
+      for (const o of batch.orders || []) {
+        const hay = [o.order_number, o.waybill_number, o.pick_ticket, o.po_number, o.customer_name, batch.client_name]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(needle)) continue;
+        const st = (batch.orderStates || {})[o.order_number] || {};
+        out.push({
+          ...o,
+          items: o.lines || [],
+          client_name: batch.client_name || '',
+          batchId: batch.id,
+          uploadedAt: batch.uploaded_at,
+          scan_status: st.status === 'done' ? 'done' : (st.status || 'pending'),
+          scanned: st.scanned || {},
+          startTime: st.startTime || null, endTime: st.endTime || null,
+          operator: st.operator || null,
+          archived: true,
+        });
+        if (out.length >= cap) return out;
+      }
+    }
+  }
+  return out;
 }
 
 // ── PDF waybill splitting ───────────────────────────────────────────────────
@@ -842,6 +1034,7 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
     const matchResult = await splitWaybillPdf(req.file.buffer, batchId, batch.orders || []);
+    invalidateWaybillCache(batchId);
     const rec = {
       filename: req.file.originalname || 'waybill.pdf',
       at: new Date().toISOString(), by: req.userId || '',
@@ -2251,6 +2444,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       const wbName = waybillPdf.originalname || 'waybill.pdf';
       const wbBy   = req.userId || '';
       splitWaybillPdf(waybillPdf.buffer, batchId, orders).then(matchResult => {
+        invalidateWaybillCache(batchId);
         const rec = { filename: wbName, at: new Date().toISOString(), by: wbBy,
                       matched: Object.keys(matchResult || {}).length, total: orders.length };
         const db2 = readDb();
@@ -2380,20 +2574,54 @@ app.get('/api/stats', (_req, res) => {
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats });
 });
 
-app.get('/api/orders', (_req, res) => {
-  res.json(globalOrdersWithState());
+// Date-windowed orders: the dashboard asks only for the selected range, so
+// payloads stay small no matter how much history accumulates. Same day rules
+// as the client always used: active orders filter on upload date, completed
+// orders on completion date.
+app.get('/api/orders', (req, res) => {
+  const { range, from, to } = req.query;
+  let orders = globalOrdersWithState();
+  if (range && range !== 'all') {
+    const dayOf    = v => v ? new Date(v).toISOString().slice(0, 10) : '';
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const yestStr  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const weekStr  = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+    const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
+    orders = orders.filter(o => {
+      const d = orderDay(o);
+      if (!d) return true; // never hide records with no usable date
+      if (range === 'today')     return d === todayStr;
+      if (range === 'yesterday') return d === yestStr;
+      if (range === 'week')     return d >= weekStr;
+      if (range === 'range')    return (!from || d >= from) && (!to || d <= to);
+      return true;
+    });
+  }
+  res.json(orders);
+});
+
+// Completed-tab search across ARCHIVED orders (older than 60 days)
+app.get('/api/orders/archived', (req, res) => {
+  res.json(searchArchivedOrders(req.query.q));
 });
 
 app.post('/api/waybill-lookup', (req, res) => {
   const { waybill } = req.body;
   if (!waybill) return res.status(400).json({ error: 'waybill required' });
   const q = String(waybill).trim().toLowerCase();
+  const strip0 = s => s.replace(/^0+(?=.)/, '');
   // Picking lists carry several scannable numbers — accept any of them:
-  // waybill/reference, or the PO/shipment number (SHPM…)
-  const order = globalOrdersWithState().find(o =>
-    (o.waybill_number && o.waybill_number.trim().toLowerCase() === q) ||
-    (o.po_number      && String(o.po_number).trim().toLowerCase() === q)
-  );
+  // order/GI number, pick ticket, waybill/reference, PO/shipment (SHPM…).
+  // Matching here (not just client-side) means any order opens from the scan
+  // bar even when it's outside the dashboard's loaded date window.
+  const order = globalOrdersWithState().find(o => {
+    const on = (o.order_number || '').trim().toLowerCase();
+    const pt = (o.pick_ticket  || '').trim().toLowerCase();
+    return on === q || strip0(on) === strip0(q) ||
+      (pt && (pt === q || strip0(pt) === strip0(q))) ||
+      (o.waybill_number && o.waybill_number.trim().toLowerCase() === q) ||
+      (o.po_number      && String(o.po_number).trim().toLowerCase() === q);
+  });
   if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });
   res.json(order);
 });
@@ -2452,6 +2680,7 @@ app.post('/api/scan/increment', (req, res) => {
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'scan', raw: String(req.body.sku || '').trim(), sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
   writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
 });
@@ -2515,6 +2744,7 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'teach', raw: bc, sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
   writeDb(db);
   res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind });
 });
@@ -2526,6 +2756,29 @@ app.get('/api/master/learned-barcodes', (req, res) => {
   barcodes.sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
   const aliases = [...(db.learnedSkuAliases || [])].sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
   res.json({ barcodes, aliases });
+});
+
+// Export learned entries as XLSX — send this to the client (Betime) so their
+// official listing gets corrected at the source; learned entries are meant to
+// be a stop-gap, not a second source of truth.
+app.get('/api/master/learned-barcodes/export', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const barcodes = Object.entries(db.learnedBarcodes || {}).map(([barcode, e]) => ({ barcode, ...e }));
+  const aliases  = db.learnedSkuAliases || [];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Barcode', 'SKU', 'Description', 'Taught By', 'Taught At', 'On Order'],
+    ...barcodes.map(e => [e.barcode, e.sku, e.description || '', e.learnedBy || '', e.learnedAt || '', e.order || '']),
+  ]), 'Missing Barcodes');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Listing SKU', 'Order-File SKU', 'Taught By', 'Taught At', 'On Order'],
+    ...aliases.map(e => [e.a, e.b, e.learnedBy || '', e.learnedAt || '', e.order || '']),
+  ]), 'SKU Name Differences');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Learned_Barcodes_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.end(buf);
 });
 
 app.delete('/api/master/learned-aliases/:a/:b', (req, res) => {
@@ -2572,6 +2825,7 @@ app.post('/api/scan/setqty', (req, res) => {
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'count', raw: '', sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
   writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
 });
@@ -2612,6 +2866,7 @@ app.post('/api/scan/complete', (req, res) => {
     if (endTime)   state.endTime   = endTime;
     if (operator)  state.operator  = operator;
     batch.orderStates[orderNumber] = state;
+    journalOrderState(orderNumber, state);
     writeDb(db);
     logAudit('order_completed', completionAuditData(batch, ord, state));
     sendCompletionAlert(orderNumber, ord, operator).then(result => {
@@ -2918,30 +3173,87 @@ app.get('/api/master/export-status', (req, res) => {
 // Full JSON backup — DB (batches, orders, scan states, users, sessions) plus
 // the small config files. WMS XLSX / waybill PDF binaries are excluded: they
 // are regenerable from the batch data and would bloat the download.
+function buildBackupObject() {
+  const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+  return {
+    kind:       'idealscan-backup',
+    version:    1,
+    created_at: new Date().toISOString(),
+    db:         readDb(),
+    config: {
+      keyfields_template: readJson(KEYFIELDS_TEMPLATE_FILE),
+      label_templates:    readJson(LABEL_TEMPLATES_FILE),
+      sku_descriptions:   readJson(SKU_DESC_FILE),
+      email:              readJson(EMAIL_CONFIG_FILE),
+    },
+  };
+}
+
 app.get('/api/master/backup', (req, res) => {
   if (!checkMaster(req, res)) return;
   try {
-    const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-    const backup = {
-      kind:       'idealscan-backup',
-      version:    1,
-      created_at: new Date().toISOString(),
-      db:         readDb(),
-      config: {
-        keyfields_template: readJson(KEYFIELDS_TEMPLATE_FILE),
-        label_templates:    readJson(LABEL_TEMPLATES_FILE),
-        sku_descriptions:   readJson(SKU_DESC_FILE),
-        email:              readJson(EMAIL_CONFIG_FILE),
-      },
-    };
     const name = `idealscan-backup-${new Date().toISOString().slice(0, 10)}.json`;
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-    res.send(JSON.stringify(backup));
+    res.send(JSON.stringify(buildBackupObject()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── Nightly automatic backup ─────────────────────────────────────────────────
+// Every night (after 02:00 Singapore time) the full backup is gzipped to the
+// volume (last 14 kept) and emailed to the configured recipient. The manual
+// Download Backup button remains; this just removes the "remembering" part.
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+function sgDateStr(d = new Date()) {
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }); // YYYY-MM-DD
+}
+function sgHour(d = new Date()) {
+  return parseInt(d.toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hour12: false }), 10);
+}
+async function runNightlyBackup(reason) {
+  const day  = sgDateStr();
+  const file = path.join(BACKUP_DIR, `idealscan-backup-${day}.json.gz`);
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(buildBackupObject())));
+  fs.writeFileSync(file, gz);
+  // prune: keep the newest 14
+  const old = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith('idealscan-backup-')).sort().slice(0, -14);
+  for (const f of old) { try { fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch {} }
+  console.log(`[IdealScan] Nightly backup written (${reason}): ${file} (${(gz.length / 1024).toFixed(0)} KB)`);
+
+  try {
+    const transporter = buildTransporter();
+    const to = getDefaultRecipient();
+    if (transporter && to) {
+      await transporter.sendMail({
+        from: getFromEmail(), to,
+        subject: `IDEALSCAN nightly backup — ${day}`,
+        text: `Automatic nightly backup attached.\n\nRestore: Administrator → System → Download Backup holds the same format; keep this file safe.\nGenerated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT.`,
+        attachments: [{ filename: `idealscan-backup-${day}.json.gz`, content: gz }],
+      });
+      console.log(`[IdealScan] Nightly backup emailed to ${to}`);
+    } else {
+      console.log('[IdealScan] Nightly backup email skipped — email not configured');
+    }
+  } catch (e) {
+    console.error('[IdealScan] Nightly backup email FAILED:', e.message);
+  }
+}
+function nightlyBackupDue() {
+  const day = sgDateStr();
+  if (sgHour() < 2) return false; // wait for the quiet window after 2am SGT
+  try { return !fs.existsSync(path.join(BACKUP_DIR, `idealscan-backup-${day}.json.gz`)); }
+  catch { return true; }
+}
+setInterval(() => {
+  if (nightlyBackupDue()) runNightlyBackup('scheduled').catch(e => console.error('[IdealScan] nightly backup failed:', e.message));
+}, 30 * 60 * 1000);
+// also check shortly after boot — covers redeploys that skip the 2am window
+setTimeout(() => {
+  if (nightlyBackupDue()) runNightlyBackup('startup catch-up').catch(e => console.error('[IdealScan] nightly backup failed:', e.message));
+}, 2 * 60 * 1000);
 
 app.post('/api/master/reset', (req, res) => {
   if (!checkMaster(req, res)) return;
@@ -3181,6 +3493,7 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
     });
     try { fs.unlinkSync(path.join(WMS_DIR, `${batchId}.xlsx`)); } catch {}
     try { fs.rmSync(path.join(WAYBILL_DIR, batchId), { recursive: true, force: true }); } catch {}
+    invalidateWaybillCache(batchId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3915,7 +4228,7 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
 app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   const { batchId, orderNumber } = req.params;
   const db    = readDb();
-  const batch = db.batches.find(b => b.id === batchId);
+  const batch = db.batches.find(b => b.id === batchId) || readArchivedBatch(batchId);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
   const ord = (batch.orders || []).find(o => o.order_number === orderNumber);
   if (!ord) return res.status(404).json({ error: 'Order not found' });
