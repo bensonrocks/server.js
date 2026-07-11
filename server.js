@@ -3294,7 +3294,7 @@ app.get('/api/master/export-status', (req, res) => {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Status');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="IDEALSCAN_Status_${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.setHeader('Content-Disposition', `attachment; filename="IDEALONE_Status_${new Date().toISOString().slice(0,10)}.xlsx"`);
   res.end(buf);
 });
 
@@ -3357,7 +3357,7 @@ async function runNightlyBackup(reason) {
     if (transporter && to) {
       await transporter.sendMail({
         from: getFromEmail(), to,
-        subject: `IDEALSCAN nightly backup — ${day}`,
+        subject: `IDEALONE nightly backup — ${day}`,
         text: `Automatic nightly backup attached.\n\nRestore: Administrator → System → Download Backup holds the same format; keep this file safe.\nGenerated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT.`,
         attachments: [{ filename: `idealscan-backup-${day}.json.gz`, content: gz }],
       });
@@ -4104,8 +4104,8 @@ app.post('/api/master/email-config/test', async (req, res) => {
   try {
     await transporter.sendMail({
       from: fromEmail, to,
-      subject: 'IDEALSCAN — Email Test',
-      text: `This is a test email from IDEALSCAN Fulfillment Scanner.\n\nFrom: ${fromEmail}\nSent: ${new Date().toLocaleString()}`,
+      subject: 'IDEALONE — Email Test',
+      text: `This is a test email from IDEALONE.\n\nFrom: ${fromEmail}\nSent: ${new Date().toLocaleString()}`,
     });
     res.json({ ok: true });
   } catch (err) {
@@ -4169,7 +4169,7 @@ app.get('/oauth2callback', async (req, res) => {
   const closeScript = (ok, msg) =>
     `<html><body style="font-family:sans-serif;text-align:center;padding:3rem">
       <h2 style="color:${ok ? '#16a34a' : '#dc2626'}">${ok ? '✓' : '✗'} ${msg}</h2>
-      <p>${ok ? 'You can close this tab and return to IDEALSCAN.' : 'Please close this tab and try again.'}</p>
+      <p>${ok ? 'You can close this tab and return to IDEALONE.' : 'Please close this tab and try again.'}</p>
       <script>window.opener?.postMessage({type:"gmail-oauth",ok:${ok}},"*");setTimeout(()=>window.close(),2500);</script>
      </body></html>`;
 
@@ -4198,7 +4198,7 @@ app.get('/oauth2callback', async (req, res) => {
     if (tokens.error)
       return res.send(closeScript(false, tokens.error_description || tokens.error));
     if (!tokens.refresh_token)
-      return res.send(closeScript(false, 'No refresh token — revoke IDEALSCAN in Google Account → Security → Third-party access, then try again'));
+      return res.send(closeScript(false, 'No refresh token — revoke IDEALONE in Google Account → Security → Third-party access, then try again'));
 
     fs.writeFileSync(GMAIL_OAUTH_FILE, JSON.stringify({
       client_id:     pending.client_id,
@@ -4233,7 +4233,7 @@ app.post('/api/master/gmail/test', async (req, res) => {
   try {
     await transporter.sendMail({
       from: fromEmail, to,
-      subject: 'IDEALSCAN — Email Test',
+      subject: 'IDEALONE — Email Test',
       text: `This is a test email from IDEALSCAN.\n\nSent: ${new Date().toLocaleString()}\nFrom: ${fromEmail}`,
     });
     res.json({ ok: true });
@@ -4370,7 +4370,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
     : '—';
 
   const aoa = [
-    ['IDEALSCAN Completion Slip'],
+    ['IDEALONE Completion Slip'],
     [],
     ['IdealScan Job', batch.idealscan_code || '—'],
     ['Order Number', orderNumber],

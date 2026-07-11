@@ -2428,3 +2428,6 @@ body.ls-open { overflow: hidden; }
 
 /* ── Order claim chip: which station is packing this order right now ── */
 .chip-claimed { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
+
+/* ── Official IdealOne mark (bitmap) — keep aspect inside the old square slots ── */
+img.is-icon-xs, img.is-icon-sm, img.is-icon-hdr, img.is-icon-lg { object-fit: contain; }
