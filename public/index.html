@@ -2181,6 +2181,8 @@ a:hover{text-decoration:underline}
     <div class="drv-modal" style="max-width:430px">
       <div class="drv-modal-h">&#128279; Share Tracking — <span id="drv-share-oid" style="margin-left:6px"></span></div>
       <div class="drv-modal-b" style="text-align:center">
+        <img src="/brand/idealone-logo-sm.png" alt="" style="width:46px;height:46px;border-radius:11px">
+        <div style="font-size:8.5px;letter-spacing:3px;color:#2563eb;font-weight:800;margin:3px 0 12px">TRANSPORT</div>
         <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Tracking number</div>
         <div id="drv-share-code" style="font-size:22px;font-weight:800;font-family:monospace;letter-spacing:1px;margin:6px 0 14px">—</div>
         <div id="drv-share-qr" style="display:flex;justify-content:center;margin-bottom:14px"></div>
@@ -5952,7 +5954,16 @@ async function drvRenderRoutePlan(plan){
 }
 
 // — POD PDF export —
-let _jspdfLoading=null;
+let _jspdfLoading=null,_brandLogo=null;
+
+async function drvBrandLogo(){
+  if(_brandLogo!==null)return _brandLogo;
+  try{
+    const b=await (await fetch('/brand/idealone-logo-sm.png')).blob();
+    _brandLogo=await new Promise(ok=>{const fr=new FileReader();fr.onload=()=>ok(fr.result);fr.readAsDataURL(b);});
+  }catch(_){_brandLogo='';}
+  return _brandLogo;
+}
 function drvLoadJsPdf(){
   if(window.jspdf)return Promise.resolve();
   if(_jspdfLoading)return _jspdfLoading;
@@ -5982,12 +5993,22 @@ async function drvPodPdf(){
     const doc=new jsPDF({unit:'mm',format:'a4'});
     const W=210,M=16;let y=0;
 
-    // header band
+    // header band with the system logo, TRANSPORT wordmark at its base
     doc.setFillColor(15,23,42);doc.rect(0,0,W,26,'F');
+    const logo=await drvBrandLogo();
+    let tx=M;
+    if(logo){
+      try{
+        doc.addImage(logo,'PNG',M,4,18,18);
+        doc.setTextColor(96,165,250);doc.setFont('helvetica','bold');doc.setFontSize(5.5);
+        doc.text('T R A N S P O R T',M+9,24.6,{align:'center'});
+        tx=M+24;
+      }catch(_){}
+    }
     doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(15);
-    doc.text('PROOF OF DELIVERY',M,11);
+    doc.text('PROOF OF DELIVERY',tx,11);
     doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(148,163,184);
-    doc.text('IdealOne OMS — United Logistics & Distribution',M,18);
+    doc.text('IdealOne Transport — United Logistics & Distribution',tx,18);
     doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(12);
     doc.text(String(d.order_id),W-M,11,{align:'right'});
     doc.setFontSize(8);doc.setFont('helvetica','normal');doc.setTextColor(148,163,184);
@@ -6052,7 +6073,7 @@ async function drvPodPdf(){
     // footer
     doc.setDrawColor(226,232,240);doc.line(M,285,W-M,285);
     doc.setTextColor(148,163,184);doc.setFont('helvetica','normal');doc.setFontSize(7.5);
-    doc.text(`Generated ${new Date().toLocaleString()}  ·  Delivery ${d.id}  ·  This document was produced from the IdealOne OMS delivery record.`,M,290);
+    doc.text(`Generated ${new Date().toLocaleString()}  ·  Delivery ${d.id}  ·  This document was produced from the IdealOne Transport delivery record.`,M,290);
 
     doc.save(`POD-${d.order_id}.pdf`);
   }catch(e){alert('PDF failed: '+e.message);}
