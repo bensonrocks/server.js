@@ -2160,7 +2160,18 @@
 
     document.querySelectorAll('.qty-input').forEach(inp => {
       inp.addEventListener('change', async () => {
-        await setItemQty(activeOrder.order_number, inp.dataset.sku, parseInt(inp.value, 10) || 0);
+        const v = inp.value.trim();
+        // A gun whose characters arrive slower than the burst detector's
+        // threshold "types" its barcode into the qty box. No real count is
+        // 7+ digits — restore the box and route the code to the scan path,
+        // so the scan still lands on the right item.
+        if (/^\d{7,}$/.test(v) || (parseInt(v, 10) || 0) > 99999) {
+          inp.value = (activeOrder.scanned || {})[inp.dataset.sku] || 0;
+          _scanBuf = v;
+          _flushScanBuf();
+          return;
+        }
+        await setItemQty(activeOrder.order_number, inp.dataset.sku, parseInt(v, 10) || 0);
       });
     });
 
@@ -2309,7 +2320,10 @@
   // rapid characters = scanner → restore the qty value and route the code
   // through the normal scan path. Slow typing = manual qty entry, untouched.
   let _qtyBurst = null; // { el, chars, last, base, scanner }
-  const QTY_BURST_GAP_MS = 90;
+  // 140ms: guns usually emit <40ms apart, but a busy browser can stretch the
+  // gaps — 90ms let some real scans slip through as "human typing" and land
+  // in the qty box. Humans entering a 1-3 digit count rarely beat 140ms.
+  const QTY_BURST_GAP_MS = 140;
 
   function _qtyBurstToScan() {
     if (!_qtyBurst) return;

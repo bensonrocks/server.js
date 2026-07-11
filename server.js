@@ -2865,10 +2865,18 @@ app.post('/api/scan/setqty', (req, res) => {
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
   const item = uniqueSkuLines(ord).find(l => l.sku === sku);
   if (!item) return res.status(404).json({ error: `SKU "${sku}" not found` });
+  // Sanity cap: a barcode "typed" into the qty field by a slow-bursting gun
+  // arrives here as a gigantic number. No real count is ever this large.
+  const qn = Math.max(0, parseInt(qty, 10) || 0);
+  if (qn > 99999) {
+    return res.status(400).json({
+      error: `"${qty}" looks like a scanned barcode, not a quantity — nothing was counted. Scan the item again, or type the real count.`,
+    });
+  }
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
-  state.scanned[item.sku] = Math.max(0, parseInt(qty, 10) || 0);
+  state.scanned[item.sku] = qn;
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'count', raw: '', sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
