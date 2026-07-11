@@ -2074,6 +2074,13 @@ app.post('/api/driver/location', withDriver, (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
+// Get or create the customer-facing tracking number for an order (any staff)
+app.post('/api/orders/:id/tracking-code', withStaff, withTenant, (req, res) => {
+  try {
+    res.json({ orderId: req.params.id, trackingCode: req.ctx.drivers.ensureTrackingCode(req.params.id) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
 // — public order tracking (no auth; returns a safe subset only) —
 
 app.get('/api/track/:orderId', withTenant, (req, res) => {
