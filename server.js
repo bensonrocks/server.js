@@ -658,7 +658,7 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
     `• ${o.order_number} | ${o.customer_name} | Waybill: ${o.waybill_number} | ${o.total_qty} units`
   ).join('\n');
 
-  const wmsName = `WMS_${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`;
+  const wmsName = `WMS_${batch.idealscan_code ? batch.idealscan_code + '_' : ''}${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`;
 
   const uploadDate  = new Date(batch.uploaded_at);
   const dateStr     = uploadDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -761,6 +761,7 @@ function globalOrdersWithState() {
         lines:             enrichedLines,
         items:             enrichedLines,
         uploadedAt:        batch.uploaded_at,
+        idealscan_code:    batch.idealscan_code || '',
         scan_status:       state.status           || 'pending',
         scanned:           { ...state.scanned },
         mismatches:        state.mismatches        || [],
@@ -779,6 +780,48 @@ function globalOrdersWithState() {
   }
   return out;
 }
+
+// ── IdealScan job codes ──────────────────────────────────────────────────────
+// Every uploaded job gets a unique IS-YYMMDD-NN code — the reference that ties
+// the client's file, IdealScan, and the Keyfields WMS upload together (it is
+// stamped into the WMS export filename). Visible to admins; the warehouse
+// scan screens never show it.
+function nextIdealscanCode(db) {
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+  if (!db.jobCodeSeq) db.jobCodeSeq = {};
+  db.jobCodeSeq[day] = (db.jobCodeSeq[day] || 0) + 1;
+  // keep only today's counter — past days never mint new codes
+  for (const k of Object.keys(db.jobCodeSeq)) if (k !== day) delete db.jobCodeSeq[k];
+  return `IS-${day}-${String(db.jobCodeSeq[day]).padStart(2, '0')}`;
+}
+
+// One-time backfill: give pre-existing batches codes based on their upload date
+(function backfillJobCodes() {
+  try {
+    const db = readDb();
+    if (db.jobCodesBackfilled) return;
+    const perDay = {};
+    let n = 0;
+    const sorted = [...(db.batches || [])].sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at));
+    for (const b of sorted) {
+      if (b.idealscan_code) continue;
+      const day = new Date(b.uploaded_at || Date.now())
+        .toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+      perDay[day] = (perDay[day] || 0) + 1;
+      b.idealscan_code = `IS-${day}-${String(perDay[day]).padStart(2, '0')}`;
+      n++;
+    }
+    // seed today's counter so new uploads continue after the backfilled ones
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+    if (perDay[today]) {
+      if (!db.jobCodeSeq) db.jobCodeSeq = {};
+      db.jobCodeSeq[today] = Math.max(db.jobCodeSeq[today] || 0, perDay[today]);
+    }
+    db.jobCodesBackfilled = true;
+    writeDb(db);
+    if (n) console.log(`[IdealScan] Job codes backfilled on ${n} existing batch(es)`);
+  } catch (e) { console.error('[IdealScan] job code backfill failed:', e.message); }
+})();
 
 // Find which batch holds a given order number (newest batch first).
 function findBatchForOrder(db, orderNumber) {
@@ -871,7 +914,7 @@ function searchArchivedOrders(q, cap = 60) {
     try { batches = JSON.parse(fs.readFileSync(path.join(ARCHIVE_DIR, f), 'utf8')); } catch { continue; }
     for (const batch of batches) {
       for (const o of batch.orders || []) {
-        const hay = [o.order_number, o.waybill_number, o.pick_ticket, o.po_number, o.customer_name, batch.client_name]
+        const hay = [o.order_number, o.waybill_number, o.pick_ticket, o.po_number, o.customer_name, batch.client_name, batch.idealscan_code]
           .filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(needle)) continue;
         const st = (batch.orderStates || {})[o.order_number] || {};
@@ -881,6 +924,7 @@ function searchArchivedOrders(q, cap = 60) {
           client_name: batch.client_name || '',
           batchId: batch.id,
           uploadedAt: batch.uploaded_at,
+          idealscan_code: batch.idealscan_code || '',
           scan_status: st.status === 'done' ? 'done' : (st.status || 'pending'),
           scanned: st.scanned || {},
           startTime: st.startTime || null, endTime: st.endTime || null,
@@ -2239,9 +2283,11 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
 
     const wmsBuffer = generateKeyfieldsXLSX(orders, loadCustomHeaders());
     const batchId   = uuidv4();
+    const db = readDb();
     const batch = {
       id: batchId,
       filename:    `photo-scan-${new Date().toISOString().slice(0, 10)}.jpg`,
+      idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',
       client_name: client_name.trim(),
@@ -2250,13 +2296,12 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       orderStates: {},
       orders,
     };
-    const db = readDb();
     db.batches.unshift(batch);
     writeDb(db);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[ocr-upload] XLSX write error:', err.message);
     });
-    logAudit('upload', { batchId, filename: batch.filename || 'photo-scan', by: req.userId || '', client: batch.client_name || '', orders: orders.length, lines: rows.length });
+    logAudit('upload', { batchId, jobCode: batch.idealscan_code, filename: batch.filename || 'photo-scan', by: req.userId || '', client: batch.client_name || '', orders: orders.length, lines: rows.length });
 
     res.json({ batchId, orders, rowCount: rows.length, sessionId: uuidv4() });
   } catch (err) {
@@ -2422,8 +2467,10 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
     const direction  = req.body?.direction === 'Inbound' ? 'Inbound' : 'Outbound';
 
+    const db = readDb();
     const batch = {
       id: batchId, filename: orderFile.originalname,
+      idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',
       client_name: clientName,
@@ -2432,7 +2479,6 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       orders,
     };
 
-    const db = readDb();
     db.batches.unshift(batch);
     writeDb(db);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
@@ -2476,10 +2522,10 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       has_order_label:   false,
     }));
 
-    logAudit('upload', { batchId, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
+    logAudit('upload', { batchId, jobCode: batch.idealscan_code, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
 
     console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}`);
-    res.json({ sessionId, batchId, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });
+    res.json({ sessionId, batchId, idealscanCode: batch.idealscan_code, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
     res.status(500).json({ error: err.message });
@@ -2492,7 +2538,7 @@ app.get('/api/download-wms/:batchId', (req, res) => {
   const db    = readDb();
   const batch = db.batches.find(b => b.id === req.params.batchId);
   const name  = batch
-    ? `WMS_${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`
+    ? `WMS_${batch.idealscan_code ? batch.idealscan_code + '_' : ''}${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`
     : 'WMS_output.xlsx';
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
@@ -2513,6 +2559,7 @@ app.get('/api/batches', (_req, res) => {
   const db = readDb();
   res.json(db.batches.map(b => ({
     id: b.id, filename: b.filename, uploaded_at: b.uploaded_at,
+    idealscan_code: b.idealscan_code || '',
     client_name: b.client_name || '', uploaded_by: b.uploaded_by || '',
     order_count: b.order_count, row_count: b.row_count, orderStates: b.orderStates,
     waybill_uploads: b.waybill_uploads || [],
@@ -4244,6 +4291,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   const aoa = [
     ['IDEALSCAN Completion Slip'],
     [],
+    ['IdealScan Job', batch.idealscan_code || '—'],
     ['Order Number', orderNumber],
     ['Customer',     ord.customer_name || '—'],
     ['Client',       ord.client_name   || '—'],

@@ -2417,3 +2417,11 @@ body.ls-open { overflow: hidden; }
 
 /* Pressed state on the clicked count button while its request runs */
 .nb-btn.nb-busy, .btn-complete.nb-busy { opacity: .6; pointer-events: none; }
+
+/* ── IdealScan job code (admin-visible upload reference) ── */
+.job-code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .74rem; font-weight: 700;
+  background: var(--primary-light); color: var(--primary);
+  border: 1px solid var(--primary-border); border-radius: 5px; padding: .06rem .4rem;
+}
+.ord-jobcode { margin-top: .15rem; }

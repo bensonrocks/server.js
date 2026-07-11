@@ -1006,14 +1006,14 @@
       activeOrder  = null;
 
       setUploadStatus('success',
-        `Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".`
+        `${data.idealscanCode ? `Job ${data.idealscanCode} — ` : ''}Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".`
       );
 
       // Show download button immediately and lock tabs until downloaded
       const dlBtn  = document.getElementById('uploadDownloadBtn');
       const dlWrap = document.getElementById('uploadDownloadWrap');
       const _dlUrl  = `/api/download-wms/${data.batchId}`;
-      const _dlName = `WMS_${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+      const _dlName = `WMS_${data.idealscanCode ? data.idealscanCode + '_' : ''}${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`;
       dlBtn.onclick = () => { authDownload(_dlUrl, _dlName); unlockTabsAfterDownload(); };
       // Add lock note if not already present
       let noteEl = document.getElementById('downloadLockNote');
@@ -1449,7 +1449,7 @@
       const q = norm(completedSearch);
       if (q) {
         orders = orders.filter(o =>
-          [o.order_number, o.waybill_number, o.issue_no, o.pick_ticket, o.po_number, o.customer_name, o.client_name]
+          [o.order_number, o.waybill_number, o.issue_no, o.pick_ticket, o.po_number, o.customer_name, o.client_name, o.idealscan_code]
             .some(v => norm(v).includes(q))
         );
         // Also search the ARCHIVE (orders older than 60 days) — async fetch,
@@ -1566,6 +1566,7 @@
         <td class="ord-stripe-cell"></td>
         <td class="col-order">
           <span class="ord-no-link">${esc(ord.order_number)}</span>
+          ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
           ${chips ? `<div class="ord-chips">${chips}</div>` : ''}
           ${isDone && elapsed ? `<div class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</div>` : ''}
         </td>
@@ -3770,7 +3771,7 @@
         return `
           <div class="log-card">
             <div class="log-card-left">
-              <span class="log-filename">${esc(b.filename)}</span>
+              <span class="log-filename">${b.idealscan_code ? `<code class="job-code">${esc(b.idealscan_code)}</code> ` : ''}${esc(b.filename)}</span>
               ${b.client_name ? `<span class="log-client">${esc(b.client_name)}</span>` : ''}
               <span class="log-date">${date}${b.uploaded_by ? ` &nbsp;·&nbsp; <strong>${esc(b.uploaded_by)}</strong>` : ''}</span>
               <div class="log-chips">
