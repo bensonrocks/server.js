@@ -1402,9 +1402,14 @@ a:hover{text-decoration:underline}
               <div id="drv-ch-wday"></div>
             </div>
           </div>
+          <div style="display:flex;align-items:baseline;gap:10px;margin:4px 0 6px">
+            <div style="font-size:12px;font-weight:800">Driver Scorecard</div>
+            <div style="font-size:10.5px;color:#64748b">Score is indexed to the fleet average (100) across throughput 40% &middot; success 25% &middot; speed 20% &middot; volume moved 15%</div>
+          </div>
+          <div id="drv-score-callouts" style="margin-bottom:8px"></div>
           <div style="overflow-x:auto;margin-bottom:14px">
             <table class="drv-tbl">
-              <thead><tr><th>Driver</th><th>Delivered</th><th>Failed</th><th>Avg time out&#8594;done</th><th>Jobs / active day</th><th>Share of workload</th></tr></thead>
+              <thead><tr><th>Driver</th><th>Score</th><th>Delivered</th><th>Success</th><th>Jobs / active day</th><th>Avg job time</th><th>Stops / hr</th><th>Load moved</th><th>6-week trend</th></tr></thead>
               <tbody id="drv-util-tbody"></tbody>
             </table>
           </div>
@@ -5551,9 +5556,20 @@ function drvRenderInsights(){
   // per-driver rollup
   const per={};
   del.forEach(d=>{
-    const p=per[d.driver_id]||(per[d.driver_id]={name:d.driverName||d.driver_id,done:0,failed:0,durs:[],days:new Set(),active:0});
-    if(d.status==='delivered'){p.done++;p.days.add((d.delivered_at||'').slice(0,10));
-      if(d.picked_up_at&&d.delivered_at){const m=(DRV_TS(d.delivered_at)-DRV_TS(d.picked_up_at))/60000;if(m>=0&&m<1440)p.durs.push(m);}}
+    const p=per[d.driver_id]||(per[d.driver_id]={name:d.driverName||d.driver_id,done:0,failed:0,durs:[],days:new Set(),active:0,m3:0,kg:0,byDay:{},weeks:Array(6).fill(0)});
+    if(d.status==='delivered'){
+      p.done++;
+      const day=(d.delivered_at||'').slice(0,10);
+      p.days.add(day);
+      p.m3+=d.load_m3||0;p.kg+=d.load_kg||0;
+      const dd=p.byDay[day]||(p.byDay[day]={first:null,last:null,n:0});
+      dd.n++;
+      const pu=DRV_TS(d.picked_up_at),dv=DRV_TS(d.delivered_at);
+      if(pu&&(!dd.first||pu<dd.first))dd.first=pu;
+      if(dv&&(!dd.last||dv>dd.last))dd.last=dv;
+      if(dv){const wk=Math.floor((Date.now()-dv.getTime())/(7*86400000));if(wk>=0&&wk<6)p.weeks[5-wk]++;}
+      if(pu&&dv){const m=(dv-pu)/60000;if(m>=0&&m<1440)p.durs.push(m);}
+    }
     if(d.status==='failed')p.failed++;
     if(['assigned','picked_up','in_transit'].includes(d.status))p.active++;
   });
@@ -5579,14 +5595,76 @@ function drvRenderInsights(){
               :`<span style="color:#94a3b8">completions overlay appears after 5+ delivered jobs</span>`);
   drvSvgBars('drv-ch-wday',['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],byW,null,['Orders placed']);
 
-  // utilization table
-  $('drv-util-tbody').innerHTML=rows.length?rows.map(r=>{
+  // ── driver scorecard ────────────────────────────────────────────────────────
+  // Each metric is a ratio vs the fleet average; the score is a weighted blend
+  // of whichever components exist (weights renormalized when data is missing).
+  const active=rows.filter(r=>r.done>0);
+  const fAvg=arr=>arr.length?arr.reduce((x,y)=>x+y,0)/arr.length:null;
+  const fThr=fAvg(active.map(r=>r.done/Math.max(1,r.days.size)));
+  const fSucc=fAvg(active.map(r=>r.done/(r.done+r.failed)));
+  const fDur=fAvg(active.filter(r=>r.durs.length).map(r=>r.durs.reduce((x,y)=>x+y,0)/r.durs.length));
+  const fVol=fAvg(active.map(r=>r.m3*180+r.kg));  // rough m³↔kg blend so either dimension counts
+
+  function drvScore(r){
+    if(r.done<3)return null;  // not enough jobs to judge fairly
+    const comps=[];
+    if(fThr)comps.push([0.40,(r.done/Math.max(1,r.days.size))/fThr]);
+    if(fSucc)comps.push([0.25,(r.done/(r.done+r.failed))/fSucc]);
+    const myDur=r.durs.length?r.durs.reduce((x,y)=>x+y,0)/r.durs.length:null;
+    if(fDur&&myDur)comps.push([0.20,Math.min(3,fDur/myDur)]);
+    if(fVol>0)comps.push([0.15,(r.m3*180+r.kg)/fVol]);
+    const wSum=comps.reduce((s,[w])=>s+w,0);
+    if(!wSum)return null;
+    return Math.round(100*comps.reduce((s,[w,v])=>s+w*v,0)/wSum);
+  }
+
+  function drvStopsHr(r){
+    let stops=0,hrs=0;
+    Object.values(r.byDay).forEach(d=>{
+      if(d.first&&d.last){const h=(d.last-d.first)/3600000;if(h>0.25){stops+=d.n;hrs+=h;}}
+    });
+    return hrs>0?stops/hrs:null;
+  }
+
+  function drvSpark(weeks){
+    const W=92,H=26,max=Math.max(1,...weeks),n=weeks.length;
+    const x=i=>5+i*(W-10)/(n-1),y=v=>H-4-(H-10)*v/max;
+    return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="display:block">
+      <polyline points="${weeks.map((v,i)=>`${x(i)},${y(v)}`).join(' ')}" fill="none" stroke="#2a78d6" stroke-width="1.5"/>
+      ${weeks.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="1.8" fill="#2a78d6"/>`).join('')}</svg>`;
+  }
+
+  const scoreChip=s=>s==null?'<span style="color:#94a3b8;font-size:11px" title="Needs 3+ delivered jobs">building</span>'
+    :`<span style="font-weight:800;padding:2px 9px;border-radius:11px;background:${s>=115?'#dcfce7':s<=80?'#fee2e2':'#f1f5f9'};color:${s>=115?'#166534':s<=80?'#991b1b':'#334155'}">${s}</span>`;
+
+  const scored=rows.map(r=>({...r,score:drvScore(r)}));
+  $('drv-util-tbody').innerHTML=scored.length?scored.map(r=>{
     const avg=r.durs.length?r.durs.reduce((x,y)=>x+y,0)/r.durs.length:null;
-    const share=totalDone?Math.round(r.done/totalDone*100):0;
-    return `<tr><td><strong>${esc(r.name)}</strong></td><td>${r.done}</td><td>${r.failed||'—'}</td>
-      <td>${drvFmtMin(avg)}</td><td>${r.done?(r.done/Math.max(1,r.days.size)).toFixed(1):'—'}</td>
-      <td><div style="display:flex;align-items:center;gap:8px"><div class="drv-util" style="flex:1"><div style="width:${share}%"></div></div><span style="font-size:11px;color:#64748b;min-width:32px">${share}%</span></div></td></tr>`;
-  }).join(''):'<tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:14px">No delivery history yet.</td></tr>';
+    const sph=drvStopsHr(r);
+    const succ=r.done+r.failed?Math.round(r.done/(r.done+r.failed)*100):null;
+    const vol=drvLoadText({m3:r.m3,kg:r.kg,pallets:0});
+    const recent=r.weeks.slice(3).reduce((x,y)=>x+y,0),earlier=r.weeks.slice(0,3).reduce((x,y)=>x+y,0);
+    const trend=recent>earlier?' <span style="color:#16a34a;font-size:11px">&#9650;</span>':recent<earlier?' <span style="color:#dc2626;font-size:11px">&#9660;</span>':'';
+    return `<tr><td><strong>${esc(r.name)}</strong></td>
+      <td>${scoreChip(r.score)}</td>
+      <td>${r.done}</td>
+      <td style="color:${succ!=null&&succ<90?'#dc2626':'#166534'}">${succ==null?'—':succ+'%'}${r.failed?` <span style="color:#94a3b8;font-size:10.5px">(${r.failed} failed)</span>`:''}</td>
+      <td>${r.done?(r.done/Math.max(1,r.days.size)).toFixed(1):'—'}</td>
+      <td>${drvFmtMin(avg)}</td>
+      <td>${sph==null?'—':sph.toFixed(1)}</td>
+      <td>${vol||'—'}</td>
+      <td><span title="Deliveries per week, oldest→newest: ${r.weeks.join(', ')}">${drvSpark(r.weeks)}</span>${trend}</td></tr>`;
+  }).join(''):'<tr><td colspan="9" style="color:#94a3b8;text-align:center;padding:14px">No delivery history yet.</td></tr>';
+
+  // callouts: who leads, who needs attention
+  const ranked=scored.filter(r=>r.score!=null).sort((x,y)=>y.score-x.score);
+  const callouts=[];
+  if(ranked.length>=2){
+    callouts.push(`<span style="font-size:11.5px;background:#dcfce7;color:#166534;padding:3px 10px;border-radius:11px;font-weight:700">&#127942; Top: ${esc(ranked[0].name)} (${ranked[0].score})</span>`);
+    const last=ranked[ranked.length-1];
+    if(last.score<=80)callouts.push(`<span style="font-size:11.5px;background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:11px;font-weight:700">Needs attention: ${esc(last.name)} (${last.score})</span>`);
+  }
+  $('drv-score-callouts').innerHTML=callouts.join(' ');
 
   // recommendations
   const recs=[];
