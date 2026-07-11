@@ -797,6 +797,29 @@ a:hover{text-decoration:underline}
 .drv-ord-row .oi{font-weight:700;min-width:110px}
 .drv-ord-row .oa{color:#64748b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .drv-msg{font-size:12px;font-weight:600;margin-top:8px;color:#dc2626;display:none}
+/* fleet insights */
+.drv-ins-tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+.drv-ins-tile{background:#f8fafc;border:1px solid #eef2f7;border-radius:9px;padding:10px 12px}
+.drv-ins-tile .v{font-size:19px;font-weight:800}
+.drv-ins-tile .l{font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+.drv-ins-charts{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-bottom:14px}
+.drv-ins-chart{border:1px solid #eef2f7;border-radius:9px;padding:10px 12px}
+.drv-ins-chart .ct{font-size:12px;font-weight:800;margin-bottom:2px}
+.drv-ins-chart .cs{font-size:10.5px;color:#64748b;margin-bottom:6px}
+.drv-ins-legend{display:flex;gap:14px;font-size:10.5px;color:#475569;font-weight:600;margin-top:4px}
+.drv-ins-legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.drv-ins-bar{transition:opacity .1s}
+.drv-ins-bar:hover{opacity:.75}
+#drv-tip{position:fixed;z-index:400;background:#0f172a;color:#fff;font-size:11.5px;padding:6px 10px;border-radius:7px;pointer-events:none;display:none;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.drv-rec{display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border:1px solid #eef2f7;border-radius:9px;margin-bottom:7px;font-size:12.5px}
+.drv-rec .tag{flex-shrink:0;padding:2px 9px;border-radius:11px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
+.drv-rec-act .tag{background:#fee2e2;color:#991b1b}
+.drv-rec-warn .tag{background:#fef3c7;color:#92400e}
+.drv-rec-ok .tag{background:#dcfce7;color:#166534}
+.drv-rec-info .tag{background:#dbeafe;color:#1e40af}
+.drv-util{height:7px;border-radius:4px;background:#eef2f7;min-width:70px;overflow:hidden}
+.drv-util>div{height:100%;border-radius:4px;background:#2a78d6}
+@media(max-width:900px){.drv-ins-tiles{grid-template-columns:repeat(2,1fr)}.drv-ins-charts{grid-template-columns:1fr}}
 @media(max-width:768px){.drv-kpis{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -1358,6 +1381,31 @@ a:hover{text-decoration:underline}
           <h3 style="padding:14px 16px 0;margin-bottom:8px">&#128506;&#65039; Live Fleet Map <span style="font-size:10.5px;color:#94a3b8;font-weight:600;margin-left:4px">updates every 30s</span></h3>
           <div id="drv-map" style="height:380px;width:100%"></div>
           <div id="drv-map-empty" style="display:none;position:absolute;top:44px;right:0;bottom:0;left:0;align-items:center;justify-content:center;background:rgba(248,250,252,.85);z-index:500;font-size:13px;color:#64748b;font-weight:600;text-align:center;padding:0 20px">No GPS positions yet — drivers appear here once they sign in to the driver app and allow location access.</div>
+        </div>
+
+        <div class="drv-card" id="drv-ins-card">
+          <h3>&#128200; Fleet Insights <span id="drv-ins-window" style="font-weight:600;color:#94a3b8;font-size:11px;text-transform:none;letter-spacing:0"></span></h3>
+          <div class="drv-ins-tiles" id="drv-ins-tiles"></div>
+          <div class="drv-ins-charts">
+            <div class="drv-ins-chart">
+              <div class="ct">Demand vs completions by hour of day</div>
+              <div class="cs">When orders come in vs when your fleet actually delivers &mdash; align departure times to the gap.</div>
+              <div id="drv-ch-hour"></div>
+              <div class="drv-ins-legend" id="drv-ch-hour-lg"></div>
+            </div>
+            <div class="drv-ins-chart">
+              <div class="ct">Order demand by weekday</div>
+              <div class="cs">Size shifts to the days that need them.</div>
+              <div id="drv-ch-wday"></div>
+            </div>
+          </div>
+          <div style="overflow-x:auto;margin-bottom:14px">
+            <table class="drv-tbl">
+              <thead><tr><th>Driver</th><th>Delivered</th><th>Failed</th><th>Avg time out&#8594;done</th><th>Jobs / active day</th><th>Share of workload</th></tr></thead>
+              <tbody id="drv-util-tbody"></tbody>
+            </table>
+          </div>
+          <div id="drv-recs"></div>
         </div>
 
         <div class="drv-card">
@@ -5272,7 +5320,7 @@ async function drvLoad(){
     $('drv-kpi-failed').textContent=stats.failedToday;
     const badge=$('drv-badge');
     if(badge){badge.textContent=stats.out;badge.style.display=stats.out>0?'':'none';}
-    drvRenderDrivers();drvRenderDeliveries();
+    drvRenderDrivers();drvRenderDeliveries();drvRenderInsights();
   }catch(e){
     $('drv-tbody').innerHTML=`<tr><td colspan="8" style="color:#dc2626;text-align:center;padding:18px">Could not load drivers — ${esc(e.message)}</td></tr>`;
   }
@@ -5398,6 +5446,148 @@ function drvRenderDeliveries(){
       <td style="text-align:right;white-space:nowrap">${acts}</td>
     </tr>`;
   }).join('');
+}
+
+// — fleet insights (computed in-browser from orders + deliveries; local timezone) —
+const DRV_TS=s=>s?new Date(s.includes('T')?s:s.replace(' ','T')+'Z'):null;
+const drvFmtMin=m=>m==null?'—':m<90?Math.round(m)+' min':(m/60).toFixed(1)+' h';
+
+function drvTip(){let t=$('drv-tip');if(!t){t=document.createElement('div');t.id='drv-tip';document.body.appendChild(t);}return t;}
+
+// Thin-bar SVG chart. a = bar series; b = optional overlay line series (same unit/axis).
+function drvSvgBars(elId,labels,a,b,names,labelEvery){
+  const el=$(elId);if(!el)return;
+  const W=560,H=150,pl=28,pb=17,pt=12,plot=H-pt-pb,y0=H-pb;
+  const max=Math.max(1,...a,...(b||[]));
+  const iw=(W-pl-4)/a.length,bw=Math.max(3,iw-2);
+  const yOf=v=>y0-plot*v/max;
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
+  [0.5,1].forEach(f=>{const y=y0-plot*f;
+    s+=`<line x1="${pl}" x2="${W-2}" y1="${y}" y2="${y}" stroke="#eef2f7"/><text x="${pl-4}" y="${y+3}" font-size="8.5" fill="#94a3b8" text-anchor="end">${Math.round(max*f)}</text>`;});
+  s+=`<line x1="${pl}" x2="${W-2}" y1="${y0}" y2="${y0}" stroke="#e2e8f0"/>`;
+  const maxI=a.indexOf(Math.max(...a));
+  a.forEach((v,i)=>{
+    const x=pl+i*iw+1,h=plot*v/max,y=y0-h,r=Math.min(2.5,bw/2,h);
+    if(v>0)s+=`<path class="drv-ins-bar" d="M${x},${y0} L${x},${y+r} Q${x},${y} ${x+r},${y} L${x+bw-r},${y} Q${x+bw},${y} ${x+bw},${y+r} L${x+bw},${y0} Z" fill="#2a78d6"/>`;
+    if(i===maxI&&v>0)s+=`<text x="${x+bw/2}" y="${y-3}" font-size="8.5" font-weight="700" fill="#475569" text-anchor="middle">${v}</text>`;
+    if(labelEvery?i%labelEvery===0:true)s+=`<text x="${x+bw/2}" y="${H-6}" font-size="8.5" fill="#94a3b8" text-anchor="middle">${labels[i]}</text>`;
+  });
+  if(b){
+    const pts=b.map((v,i)=>`${pl+i*iw+1+bw/2},${yOf(v)}`).join(' ');
+    s+=`<polyline points="${pts}" fill="none" stroke="#1baf7a" stroke-width="2"/>`;
+    b.forEach((v,i)=>{s+=`<circle cx="${pl+i*iw+1+bw/2}" cy="${yOf(v)}" r="3.5" fill="#1baf7a" stroke="#fff" stroke-width="2"/>`;});
+  }
+  // full-height invisible hit targets (bigger than the marks) for the tooltip
+  a.forEach((v,i)=>{
+    s+=`<rect data-i="${i}" x="${pl+i*iw}" y="${pt}" width="${iw}" height="${plot}" fill="transparent"/>`;
+  });
+  s+='</svg>';
+  el.innerHTML=s;
+  const tip=drvTip();
+  el.querySelectorAll('rect[data-i]').forEach(rc=>{
+    rc.addEventListener('mousemove',e=>{
+      const i=+rc.dataset.i;
+      tip.innerHTML=`${esc(String(labels[i]))} &mdash; ${names[0]}: <b>${a[i]}</b>`+(b?`<br>${names[1]}: <b>${b[i]}</b>`:'');
+      tip.style.display='block';tip.style.left=Math.min(e.clientX+12,innerWidth-170)+'px';tip.style.top=(e.clientY-34)+'px';
+    });
+    rc.addEventListener('mouseleave',()=>{tip.style.display='none';});
+  });
+}
+
+function drvRenderInsights(){
+  const DAYS=30,cut=Date.now()-DAYS*86400000;
+  const os=(typeof orders!=='undefined'&&Array.isArray(orders)?orders:[]).filter(o=>!['cancelled','returned'].includes(o.status));
+  let demand=os.filter(o=>{const t=DRV_TS(o.orderDate);return t&&t.getTime()>=cut;});
+  let win=`&mdash; demand from last ${DAYS} days`;
+  if(demand.length<10){demand=os;win='&mdash; demand from all orders (not enough recent data)';}
+  $('drv-ins-window').innerHTML=win;
+
+  const byHour=Array(24).fill(0),byW=Array(7).fill(0);
+  demand.forEach(o=>{const t=DRV_TS(o.orderDate);if(t){byHour[t.getHours()]++;byW[t.getDay()]++;}});
+
+  const del=drvDeliveries||[];
+  const done=del.filter(d=>d.status==='delivered'&&d.delivered_at);
+  const failedN=del.filter(d=>d.status==='failed').length;
+  const compByHour=Array(24).fill(0);
+  done.forEach(d=>{const t=DRV_TS(d.delivered_at);if(t)compByHour[t.getHours()]++;});
+
+  const durs=done.filter(d=>d.picked_up_at).map(d=>(DRV_TS(d.delivered_at)-DRV_TS(d.picked_up_at))/60000).filter(m=>m>=0&&m<1440);
+  const avgDur=durs.length?durs.reduce((x,y)=>x+y,0)/durs.length:null;
+  const lags=del.filter(d=>d.picked_up_at&&d.assigned_at).map(d=>(DRV_TS(d.picked_up_at)-DRV_TS(d.assigned_at))/60000).filter(m=>m>=0&&m<20160);
+  const avgLag=lags.length?lags.reduce((x,y)=>x+y,0)/lags.length:null;
+  const failRate=(done.length+failedN)?failedN/(done.length+failedN)*100:null;
+
+  const busy=new Set(del.filter(d=>['assigned','picked_up','in_transit'].includes(d.status)).map(d=>d.order_id));
+  const backlog=os.filter(o=>['pending','confirmed','processing','packed'].includes(o.status)&&!busy.has(o.id)).length;
+
+  // per-driver rollup
+  const per={};
+  del.forEach(d=>{
+    const p=per[d.driver_id]||(per[d.driver_id]={name:d.driverName||d.driver_id,done:0,failed:0,durs:[],days:new Set(),active:0});
+    if(d.status==='delivered'){p.done++;p.days.add((d.delivered_at||'').slice(0,10));
+      if(d.picked_up_at&&d.delivered_at){const m=(DRV_TS(d.delivered_at)-DRV_TS(d.picked_up_at))/60000;if(m>=0&&m<1440)p.durs.push(m);}}
+    if(d.status==='failed')p.failed++;
+    if(['assigned','picked_up','in_transit'].includes(d.status))p.active++;
+  });
+  const rows=Object.values(per).sort((x,y)=>y.done-x.done);
+  const totalDone=rows.reduce((s,r)=>s+r.done,0);
+  const perDay=rows.filter(r=>r.done).map(r=>r.done/Math.max(1,r.days.size));
+  const fleetPerDay=perDay.length?perDay.reduce((x,y)=>x+y,0)/perDay.length:null;
+
+  // tiles
+  $('drv-ins-tiles').innerHTML=[
+    [drvFmtMin(avgDur),'Avg pickup&#8594;delivered'],
+    [drvFmtMin(avgLag),'Avg assign&#8594;pickup wait'],
+    [failRate==null?'—':failRate.toFixed(0)+'%','Failed attempts'],
+    [fleetPerDay==null?'—':fleetPerDay.toFixed(1),'Jobs / driver / active day'],
+    [backlog,'Orders awaiting assignment'],
+  ].map(([v,l])=>`<div class="drv-ins-tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+
+  // charts
+  const showComp=done.length>=5;
+  drvSvgBars('drv-ch-hour',Array.from({length:24},(_,i)=>i),byHour,showComp?compByHour:null,['Orders placed','Deliveries completed'],3);
+  $('drv-ch-hour-lg').innerHTML=`<span><span class="sw" style="background:#2a78d6"></span>Orders placed</span>`
+    +(showComp?`<span><span class="sw" style="background:#1baf7a;border-radius:50%"></span>Deliveries completed</span>`
+              :`<span style="color:#94a3b8">completions overlay appears after 5+ delivered jobs</span>`);
+  drvSvgBars('drv-ch-wday',['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],byW,null,['Orders placed']);
+
+  // utilization table
+  $('drv-util-tbody').innerHTML=rows.length?rows.map(r=>{
+    const avg=r.durs.length?r.durs.reduce((x,y)=>x+y,0)/r.durs.length:null;
+    const share=totalDone?Math.round(r.done/totalDone*100):0;
+    return `<tr><td><strong>${esc(r.name)}</strong></td><td>${r.done}</td><td>${r.failed||'—'}</td>
+      <td>${drvFmtMin(avg)}</td><td>${r.done?(r.done/Math.max(1,r.days.size)).toFixed(1):'—'}</td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="drv-util" style="flex:1"><div style="width:${share}%"></div></div><span style="font-size:11px;color:#64748b;min-width:32px">${share}%</span></div></td></tr>`;
+  }).join(''):'<tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:14px">No delivery history yet.</td></tr>';
+
+  // recommendations
+  const recs=[];
+  const idle=drvList.filter(d=>d.active&&!(per[d.id]&&per[d.id].active)).length;
+  if(backlog>0&&idle>0)recs.push(['act','Assign now',`${backlog} order(s) are ready but unassigned while ${idle} active driver(s) have no jobs. Use Assign Orders to clear the queue.`]);
+  else if(backlog>5)recs.push(['warn','Backlog building',`${backlog} orders are waiting for a driver. Consider an extra dispatch round today.`]);
+  if(avgLag!=null&&avgLag>720)recs.push(['warn','Slow dispatch',`Orders wait ${drvFmtMin(avgLag)} on average between assignment and pickup. Assign closer to departure time, or add a morning dispatch round.`]);
+  if(rows.length>=2&&rows[0].done>0){
+    const busiest=rows[0],lightest=rows[rows.length-1];
+    if(lightest.done===0||busiest.done/Math.max(1,lightest.done)>=2)
+      recs.push(['warn','Unbalanced workload',`${esc(busiest.name)} handled ${busiest.done} deliveries vs ${lightest.done} for ${esc(lightest.name)}. Rebalance assignments or review route areas.`]);
+  }
+  if(failRate!=null&&failRate>8){
+    const reasons={};del.filter(d=>d.status==='failed'&&d.failed_reason).forEach(d=>{reasons[d.failed_reason]=(reasons[d.failed_reason]||0)+1;});
+    const top=Object.entries(reasons).sort((x,y)=>y[1]-x[1])[0];
+    recs.push(['act','High failure rate',`${failRate.toFixed(0)}% of attempts fail${top?` — most common reason: “${esc(top[0])}”`:''}. Call ahead on delivery day or confirm addresses at packing.`]);
+  }
+  const peakH=byHour.indexOf(Math.max(...byHour));
+  if(showComp){
+    const compPeak=compByHour.indexOf(Math.max(...compByHour));
+    if(Math.max(...byHour)>0&&Math.max(...compByHour)>0&&Math.abs(compPeak-peakH)>=4)
+      recs.push(['info','Schedule vs demand gap',`Order demand peaks around ${peakH}:00 but deliveries complete around ${compPeak}:00. If same-day delivery matters, shift the departure window closer to the demand peak.`]);
+  }
+  const peakD=byW.indexOf(Math.max(...byW)),lowD=byW.indexOf(Math.min(...byW));
+  if(Math.max(...byW)>=2*Math.max(1,Math.min(...byW)))
+    recs.push(['info','Uneven weekdays',`${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][peakD]} carries the most orders and ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][lowD]} the fewest — schedule more riders on the heavy day instead of a flat roster.`]);
+  if(done.length+failedN<10)recs.push(['info','Building baseline',`Only ${done.length+failedN} completed jobs recorded so far — insights sharpen as the fleet logs more deliveries through the driver app.`]);
+  if(!recs.length)recs.push(['ok','Fleet balanced','No bottlenecks detected — workload, dispatch speed, and failure rate all look healthy.']);
+  $('drv-recs').innerHTML=recs.map(([cls,tag,txt])=>`<div class="drv-rec drv-rec-${cls}"><span class="tag">${tag}</span><span>${txt}</span></div>`).join('');
 }
 
 // — proof-of-delivery viewer —
