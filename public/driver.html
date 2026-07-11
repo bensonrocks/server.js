@@ -266,6 +266,14 @@ async function loadDeliveries() {
 
 const STATUS_LABEL = { assigned: 'Assigned', picked_up: 'Picked up', in_transit: 'In transit', delivered: 'Delivered', failed: 'Failed' };
 
+function loadText(d) {
+  const p = [];
+  if (d.load_m3 > 0) p.push(d.load_m3 + ' m³');
+  if (d.load_kg > 0) p.push(d.load_kg + ' kg');
+  if (d.load_pallets > 0) p.push(d.load_pallets + ' plt');
+  return p.join(' · ');
+}
+
 function card(d, done) {
   const o = d.order || {};
   const maps = o.address ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(o.address) : null;
@@ -290,6 +298,7 @@ function card(d, done) {
     <div class="meta">
       <span>Items: <b>${o.itemCount ?? '—'}</b></span>
       <span>Total: <b>${o.currency || ''} ${o.total != null ? Number(o.total).toFixed(2) : '—'}</b></span>
+      ${loadText(d) ? `<span>Load: <b>${loadText(d)}</b></span>` : ''}
       <span>${esc(o.channel || '')}</span>
     </div>
     ${done

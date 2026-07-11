@@ -796,6 +796,9 @@ a:hover{text-decoration:underline}
 .drv-ord-row:hover{background:#f8fafc}
 .drv-ord-row .oi{font-weight:700;min-width:110px}
 .drv-ord-row .oa{color:#64748b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drv-ld{display:flex;gap:4px;flex-shrink:0}
+.drv-ld input{width:52px;padding:4px 6px;font-size:11px;border:1px solid #cbd5e1;border-radius:6px}
+.drv-ld input:focus{outline:none;border-color:#2563eb}
 .drv-msg{font-size:12px;font-weight:600;margin-top:8px;color:#dc2626;display:none}
 /* fleet insights */
 .drv-ins-tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
@@ -2131,21 +2134,39 @@ a:hover{text-decoration:underline}
   </div>
   <div id="conn-modal-ov" class="overlay conn-ov hidden" onclick="closeConnModal()"></div>
 
-  <!-- Add-driver modal -->
+  <!-- Add/Edit-driver modal -->
   <div class="drv-mask" id="drv-add-mask" onclick="if(event.target===this)drvCloseModals()">
     <div class="drv-modal">
-      <div class="drv-modal-h">&#128587; Add Driver</div>
+      <div class="drv-modal-h" id="drv-add-title">&#128587; Add Driver</div>
       <div class="drv-modal-b">
         <div class="drv-fld"><label>Full name</label><input id="drv-add-name" placeholder="Ahmad Faiz"></div>
         <div class="drv-fld"><label>Phone number (used to sign in)</label><input id="drv-add-phone" placeholder="0123456789"></div>
-        <div class="drv-fld"><label>Vehicle</label><input id="drv-add-vehicle" placeholder="Motorbike / Van"></div>
+        <div class="drv-fld"><label>Truck type</label>
+          <select id="drv-add-preset" onchange="drvApplyPreset()">
+            <option value="">Custom / unspecified</option>
+            <option value="bike">Motorbike &mdash; 0.1 m&sup3; &middot; 20 kg</option>
+            <option value="car">Car &mdash; 1 m&sup3; &middot; 200 kg</option>
+            <option value="van">Van &mdash; 6 m&sup3; &middot; 1,000 kg &middot; 2 plt</option>
+            <option value="lorry10">Lorry 10ft (1 ton) &mdash; 8 m&sup3; &middot; 1,000 kg &middot; 4 plt</option>
+            <option value="lorry14">Lorry 14ft (3 ton) &mdash; 14 m&sup3; &middot; 3,000 kg &middot; 6 plt</option>
+            <option value="lorry17">Lorry 17ft (5 ton) &mdash; 22 m&sup3; &middot; 5,000 kg &middot; 8 plt</option>
+          </select>
+        </div>
+        <div class="drv-fld"><label>Vehicle description</label><input id="drv-add-vehicle" placeholder="Van / Lorry 14ft"></div>
+        <div class="drv-fld"><label>Load capacity <span style="font-weight:500;color:#94a3b8">(0 or empty = no limit)</span></label>
+          <div style="display:flex;gap:8px">
+            <input id="drv-add-m3" type="number" min="0" step="0.1" placeholder="m&sup3;" style="flex:1">
+            <input id="drv-add-kg" type="number" min="0" step="1" placeholder="kg" style="flex:1">
+            <input id="drv-add-plt" type="number" min="0" step="1" placeholder="pallets" style="flex:1">
+          </div>
+        </div>
         <div class="drv-fld"><label>Plate number</label><input id="drv-add-plate" placeholder="ABC 1234"></div>
-        <div class="drv-fld"><label>PIN (4-8 digits, for the driver app)</label><input id="drv-add-pin" placeholder="1234" maxlength="8"></div>
+        <div class="drv-fld"><label id="drv-add-pin-lbl">PIN (4-8 digits, for the driver app)</label><input id="drv-add-pin" placeholder="1234" maxlength="8"></div>
         <div class="drv-msg" id="drv-add-msg"></div>
       </div>
       <div class="drv-modal-f">
         <button class="btn btn-g" onclick="drvCloseModals()">Cancel</button>
-        <button class="btn btn-p" onclick="drvCreate()">Add Driver</button>
+        <button class="btn btn-p" id="drv-add-save" onclick="drvCreate()">Add Driver</button>
       </div>
     </div>
   </div>
@@ -2166,8 +2187,9 @@ a:hover{text-decoration:underline}
     <div class="drv-modal" style="max-width:560px">
       <div class="drv-modal-h">&#128230; Assign Orders to Driver</div>
       <div class="drv-modal-b">
-        <div class="drv-fld"><label>Driver</label><select id="drv-assign-driver"></select></div>
-        <div class="drv-fld" style="margin-bottom:6px"><label>Unassigned orders (packed / shipped first)</label></div>
+        <div class="drv-fld"><label>Driver</label><select id="drv-assign-driver" onchange="drvAssignMeter()"></select></div>
+        <div id="drv-assign-meter" style="margin-bottom:10px"></div>
+        <div class="drv-fld" style="margin-bottom:6px"><label>Unassigned orders (packed / shipped first) &mdash; enter job size for the capacity check</label></div>
         <div id="drv-assign-list" style="max-height:290px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
         <div class="drv-msg" id="drv-assign-msg"></div>
       </div>
@@ -5404,12 +5426,13 @@ function drvRenderDrivers(){
     return `<tr>
       <td><strong>${esc(d.name)}</strong><div style="font-size:10.5px;color:#94a3b8">${esc(d.id)}</div></td>
       <td>${esc(d.phone)}</td>
-      <td>${esc([d.vehicle,d.plate].filter(Boolean).join(' · '))||'—'}</td>
+      <td>${esc([d.vehicle,d.plate].filter(Boolean).join(' · '))||'—'}${drvCapText(d)?`<div style="font-size:10.5px;color:#94a3b8">cap: ${drvCapText(d)}</div>`:''}</td>
       <td><span class="${d.active?'drv-on':'drv-off'}">${d.active?'● Active':'○ Inactive'}</span></td>
-      <td style="text-align:center">${d.activeDeliveries||0}</td>
+      <td style="text-align:center">${d.activeDeliveries||0}${drvLoadText(d.currentLoad)?`<div style="font-size:10.5px;color:#94a3b8">${drvLoadText(d.currentLoad)}</div>`:''}</td>
       <td>${drvAgo(d.lastSeenAt)}</td>
       <td>${loc?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; Map</a>`:'—'}</td>
       <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-g btn-xs" onclick="drvOpenEdit('${d.id}')">&#9998; Edit</button>
         <button class="btn btn-g btn-xs" title="Reset PIN" onclick="drvResetPin('${d.id}')">&#128273; PIN</button>
         <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>${staffRole==='master'?`
         <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>`:''}
@@ -5439,8 +5462,9 @@ function drvRenderDeliveries(){
       acts=`<button class="btn btn-s btn-xs" onclick="drvRetry('${d.id}')">&#8635; Retry</button> <button class="btn btn-g btn-xs" onclick="drvUnassign('${d.id}')">Remove</button>`;
     if(d.status==='delivered')
       acts=`<button class="btn btn-s btn-xs" onclick="drvViewPod('${d.id}')">&#128203; POD${d.hasSignature?' &#9997;':''}${d.hasPhoto?' &#128247;':''}</button>`;
+    const ld=drvLoadText({m3:d.load_m3||0,kg:d.load_kg||0,pallets:d.load_pallets||0});
     return `<tr>
-      <td><strong>${esc(d.order_id)}</strong></td>
+      <td><strong>${esc(d.order_id)}</strong>${ld?`<div style="font-size:10.5px;color:#94a3b8">${ld}</div>`:''}</td>
       <td>${esc(o.recipient||'—')}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o.address||'')}">${esc(o.address||'—')}</td>
       <td>${esc(d.driverName||d.driver_id)}</td>
@@ -5623,18 +5647,58 @@ async function drvViewPod(id){
 }
 
 // — driver CRUD —
-function drvOpenAdd(){['name','phone','vehicle','plate','pin'].forEach(f=>$(`drv-add-${f}`).value='');$('drv-add-msg').style.display='none';$('drv-add-mask').classList.add('on');}
+// truck capacity helpers
+const drvCapText=d=>{const p=[];if(d.capacity_m3>0)p.push(d.capacity_m3+' m³');if(d.capacity_kg>0)p.push(d.capacity_kg+' kg');if(d.capacity_pallets>0)p.push(d.capacity_pallets+' plt');return p.join(' · ');};
+const drvLoadText=l=>{if(!l)return'';const p=[];if(l.m3>0)p.push((+l.m3.toFixed(1))+' m³');if(l.kg>0)p.push((+l.kg.toFixed(0))+' kg');if(l.pallets>0)p.push((+l.pallets.toFixed(1))+' plt');return p.join(' · ');};
+const DRV_PRESETS={bike:{v:'Motorbike',m3:0.1,kg:20,plt:0},car:{v:'Car',m3:1,kg:200,plt:0},van:{v:'Van',m3:6,kg:1000,plt:2},lorry10:{v:'Lorry 10ft (1 ton)',m3:8,kg:1000,plt:4},lorry14:{v:'Lorry 14ft (3 ton)',m3:14,kg:3000,plt:6},lorry17:{v:'Lorry 17ft (5 ton)',m3:22,kg:5000,plt:8}};
+function drvApplyPreset(){
+  const p=DRV_PRESETS[$('drv-add-preset').value];if(!p)return;
+  $('drv-add-vehicle').value=p.v;$('drv-add-m3').value=p.m3||'';$('drv-add-kg').value=p.kg||'';$('drv-add-plt').value=p.plt||'';
+}
+
+let drvEditId=null;
+function drvOpenAdd(){
+  drvEditId=null;
+  ['name','phone','vehicle','plate','pin','m3','kg','plt'].forEach(f=>$(`drv-add-${f}`).value='');
+  $('drv-add-preset').value='';
+  $('drv-add-title').innerHTML='&#128587; Add Driver';
+  $('drv-add-save').textContent='Add Driver';
+  $('drv-add-pin-lbl').textContent='PIN (4-8 digits, for the driver app)';
+  $('drv-add-msg').style.display='none';
+  $('drv-add-mask').classList.add('on');
+}
+function drvOpenEdit(id){
+  const d=drvList.find(x=>x.id===id);if(!d)return;
+  drvOpenAdd();
+  drvEditId=id;
+  $('drv-add-title').innerHTML='&#9998; Edit Driver — '+esc(d.name);
+  $('drv-add-save').textContent='Save Changes';
+  $('drv-add-pin-lbl').textContent='New PIN (leave blank to keep current)';
+  $('drv-add-name').value=d.name;$('drv-add-phone').value=d.phone;
+  $('drv-add-vehicle').value=d.vehicle||'';$('drv-add-plate').value=d.plate||'';
+  $('drv-add-m3').value=d.capacity_m3||'';$('drv-add-kg').value=d.capacity_kg||'';$('drv-add-plt').value=d.capacity_pallets||'';
+}
 function drvCloseModals(){$('drv-add-mask').classList.remove('on');$('drv-assign-mask').classList.remove('on');$('drv-pod-mask').classList.remove('on');}
 
 async function drvCreate(){
   $('drv-add-msg').style.display='none';
+  const payload={
+    name:$('drv-add-name').value,phone:$('drv-add-phone').value,
+    vehicle:$('drv-add-vehicle').value,plate:$('drv-add-plate').value,
+    capacityM3:$('drv-add-m3').value||0,capacityKg:$('drv-add-kg').value||0,capacityPallets:$('drv-add-plt').value||0,
+  };
+  const pin=$('drv-add-pin').value.trim();
   try{
-    const r=await fetch(`${SERVER}/api/drivers`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({
-      name:$('drv-add-name').value,phone:$('drv-add-phone').value,
-      vehicle:$('drv-add-vehicle').value,plate:$('drv-add-plate').value,pin:$('drv-add-pin').value,
-    })});
+    let r;
+    if(drvEditId){
+      if(pin)payload.pin=pin;
+      r=await fetch(`${SERVER}/api/drivers/${drvEditId}`,{method:'PATCH',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify(payload)});
+    }else{
+      payload.pin=pin;
+      r=await fetch(`${SERVER}/api/drivers`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify(payload)});
+    }
     const body=await r.json();
-    if(!r.ok)throw new Error(body.error||'Failed to create driver');
+    if(!r.ok)throw new Error(body.error||'Failed to save driver');
     drvCloseModals();drvLoad();
   }catch(e){$('drv-add-msg').textContent=e.message;$('drv-add-msg').style.display='block';}
 }
@@ -5666,7 +5730,8 @@ async function drvOpenAssign(){
   $('drv-assign-msg').style.display='none';
   const activeDrivers=drvList.filter(d=>d.active);
   if(!activeDrivers.length){alert('Add an active driver first.');return;}
-  $('drv-assign-driver').innerHTML=activeDrivers.map(d=>`<option value="${esc(d.id)}">${esc(d.name)} (${d.activeDeliveries||0} active)</option>`).join('');
+  $('drv-assign-driver').innerHTML=activeDrivers.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}${drvCapText(d)?' — '+drvCapText(d):''} (${d.activeDeliveries||0} active)</option>`).join('');
+  drvAssignMeter();
   $('drv-assign-list').innerHTML='<div style="padding:14px;color:#94a3b8;font-size:12px">Loading orders…</div>';
   $('drv-assign-mask').classList.add('on');
   try{
@@ -5678,25 +5743,74 @@ async function drvOpenAssign(){
     if(!eligible.length){$('drv-assign-list').innerHTML='<div style="padding:14px;color:#94a3b8;font-size:12px">No unassigned orders available.</div>';drvUpdateAssignCount();return;}
     $('drv-assign-list').innerHTML=eligible.slice(0,100).map(o=>{
       const s=o.shipping||{};
+      const src=o.source||{};
       const addr=[s.addressLine1,s.city,s.zip].filter(Boolean).join(', ');
-      return `<label class="drv-ord-row"><input type="checkbox" onchange="drvToggleOrder('${esc(o.id)}',this.checked)">
-        <span class="oi">${esc(o.id)}</span>
+      return `<div class="drv-ord-row"><input type="checkbox" data-oid="${esc(o.id)}" onchange="drvToggleOrder('${esc(o.id)}',this.checked)">
+        <span class="oi" style="cursor:pointer" onclick="const c=this.parentNode.querySelector('input[type=checkbox]');c.checked=!c.checked;c.dispatchEvent(new Event('change'))">${esc(o.id)}</span>
         <span class="drv-chip drv-st-${o.status==='packed'||o.status==='shipped'?'in_transit':'assigned'}" style="text-transform:capitalize">${esc(o.status)}</span>
-        <span class="oa">${esc(s.recipient||'')}${addr?' — '+esc(addr):''}</span></label>`;
+        <span class="oa">${esc(s.recipient||'')}${addr?' — '+esc(addr):''}</span>
+        <span class="drv-ld">
+          <input type="number" min="0" step="0.1" placeholder="m&sup3;" title="Volume (m&sup3;)" data-oid="${esc(o.id)}" data-dim="m3" value="${src.loadM3||''}" oninput="drvAssignMeter()">
+          <input type="number" min="0" step="1" placeholder="kg" title="Weight (kg)" data-oid="${esc(o.id)}" data-dim="kg" value="${src.loadKg||''}" oninput="drvAssignMeter()">
+          <input type="number" min="0" step="0.5" placeholder="plt" title="Pallets" data-oid="${esc(o.id)}" data-dim="pallets" value="${src.loadPallets||''}" oninput="drvAssignMeter()">
+        </span></div>`;
     }).join('');
     drvUpdateAssignCount();
   }catch(e){$('drv-assign-list').innerHTML=`<div style="padding:14px;color:#dc2626;font-size:12px">${esc(e.message)}</div>`;}
 }
 
-function drvToggleOrder(id,on){if(on)drvAssignSel.add(id);else drvAssignSel.delete(id);drvUpdateAssignCount();}
+function drvToggleOrder(id,on){if(on)drvAssignSel.add(id);else drvAssignSel.delete(id);drvUpdateAssignCount();drvAssignMeter();}
 function drvUpdateAssignCount(){$('drv-assign-count').textContent=drvAssignSel.size?`${drvAssignSel.size} order(s) selected`:'';}
+
+// job sizes typed into the modal for the currently selected orders
+function drvAssignLoads(){
+  const loads={};
+  drvAssignSel.forEach(oid=>{loads[oid]={};});
+  document.querySelectorAll('#drv-assign-list input[data-dim]').forEach(inp=>{
+    const oid=inp.dataset.oid;
+    if(!drvAssignSel.has(oid))return;
+    const v=parseFloat(inp.value);
+    if(Number.isFinite(v)&&v>0)loads[oid][inp.dataset.dim]=v;
+  });
+  return loads;
+}
+
+// live capacity meter: current truck load + selected jobs vs capacity
+function drvAssignMeter(){
+  const el=$('drv-assign-meter');if(!el)return;
+  const d=drvList.find(x=>x.id===$('drv-assign-driver').value);
+  if(!d){el.innerHTML='';return;}
+  const loads=drvAssignLoads();
+  const add={m3:0,kg:0,pallets:0};
+  Object.values(loads).forEach(l=>{add.m3+=l.m3||0;add.kg+=l.kg||0;add.pallets+=l.pallets||0;});
+  const cur=d.currentLoad||{m3:0,kg:0,pallets:0};
+  const dims=[['m3','m³',d.capacity_m3],['kg','kg',d.capacity_kg],['pallets','plt',d.capacity_pallets]];
+  const rows=dims.filter(([k,u,cap])=>cap>0||cur[k]>0||add[k]>0).map(([k,u,cap])=>{
+    const total=cur[k]+add[k];
+    const over=cap>0&&total>cap+1e-9;
+    const pct=cap>0?Math.min(100,total/cap*100):0;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px">
+      <span style="min-width:26px;color:#64748b;font-weight:700">${u}</span>
+      <div class="drv-util" style="flex:1"><div style="width:${cap>0?pct:0}%;background:${over?'#dc2626':'#2a78d6'}"></div></div>
+      <span style="min-width:120px;text-align:right;font-weight:600;color:${over?'#dc2626':'#475569'}">${(+total.toFixed(1))}${cap>0?' / '+cap:''} ${u}${over?' — OVER':''}</span>
+    </div>`;
+  }).join('');
+  el.innerHTML=rows?`<div style="border:1px solid #eef2f7;border-radius:8px;padding:8px 10px">
+    <div style="font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Truck load after assignment ${drvCapText(d)?'':'(no capacity set for this vehicle)'}</div>${rows}</div>`:'';
+}
 
 async function drvAssign(){
   $('drv-assign-msg').style.display='none';
   if(!drvAssignSel.size){$('drv-assign-msg').textContent='Select at least one order.';$('drv-assign-msg').style.display='block';return;}
+  const payload={orderIds:[...drvAssignSel],loads:drvAssignLoads()};
   try{
-    const r=await fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/assign`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({orderIds:[...drvAssignSel]})});
-    const body=await r.json();
+    let r=await fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/assign`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify(payload)});
+    let body=await r.json();
+    if(r.status===409&&body.capacityExceeded){
+      if(!confirm(body.error+'\n\nAssign anyway (overload / second trip)?'))return;
+      r=await fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/assign`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({...payload,force:true})});
+      body=await r.json();
+    }
     if(!r.ok)throw new Error(body.error||'Assignment failed');
     drvCloseModals();drvLoad();
   }catch(e){$('drv-assign-msg').textContent=e.message;$('drv-assign-msg').style.display='block';}

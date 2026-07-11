@@ -1965,9 +1965,13 @@ app.delete('/api/drivers/:id', withMaster, withTenant, (req, res) => {
 
 app.post('/api/drivers/:id/assign', withAdmin, withTenant, (req, res) => {
   try {
-    const { orderIds, assignedBy } = req.body || {};
-    res.status(201).json(req.ctx.drivers.assign(req.params.id, orderIds, assignedBy || ''));
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+    const { orderIds, assignedBy, loads, force } = req.body || {};
+    res.status(201).json(req.ctx.drivers.assign(req.params.id, orderIds, assignedBy || req.staffUsername || '', {
+      loads: loads || {}, force: !!force,
+    }));
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, capacityExceeded: !!e.capacityExceeded });
+  }
 });
 
 app.get('/api/deliveries', withAdmin, withTenant, (req, res) => {
