@@ -2181,7 +2181,7 @@ a:hover{text-decoration:underline}
     <div class="drv-modal" style="max-width:430px">
       <div class="drv-modal-h">&#128279; Share Tracking — <span id="drv-share-oid" style="margin-left:6px"></span></div>
       <div class="drv-modal-b" style="text-align:center">
-        <img src="/brand/idealone-logo-sm.png" alt="" style="width:46px;height:46px;border-radius:11px">
+        <img src="/brand/idealone-logo-sm.png" alt="" style="width:52px;height:auto">
         <div style="font-size:8.5px;letter-spacing:3px;color:#2563eb;font-weight:800;margin:3px 0 12px">TRANSPORT</div>
         <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Tracking number</div>
         <div id="drv-share-code" style="font-size:22px;font-weight:800;font-family:monospace;letter-spacing:1px;margin:6px 0 14px">—</div>
@@ -5999,10 +5999,13 @@ async function drvPodPdf(){
     let tx=M;
     if(logo){
       try{
-        doc.addImage(logo,'PNG',M,4,18,18);
-        doc.setTextColor(96,165,250);doc.setFont('helvetica','bold');doc.setFontSize(5.5);
-        doc.text('T R A N S P O R T',M+9,24.6,{align:'center'});
-        tx=M+24;
+        // white tile behind the light-theme logo on the dark band
+        doc.setFillColor(255,255,255);
+        doc.roundedRect(M,3,19,19,2,2,'F');
+        doc.addImage(logo,'PNG',M+1.8,4.8,15.4,15.4);
+        doc.setTextColor(96,165,250);doc.setFont('helvetica','bold');doc.setFontSize(5.2);
+        doc.text('T R A N S P O R T',M+9.5,24.8,{align:'center'});
+        tx=M+25;
       }catch(_){}
     }
     doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(15);
