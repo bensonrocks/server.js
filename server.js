@@ -36,6 +36,7 @@ const createInventory   = require('./lib/inventory');
 const createFulfillment = require('./lib/fulfillment');
 const createPicking     = require('./lib/picking');
 const createDrivers     = require('./lib/drivers');
+const createGeocoder    = require('./lib/geocode');
 const shopifyApp        = require('./lib/shopify-app');
 const inventorySync     = require('./lib/inventory-sync');
 
@@ -94,7 +95,8 @@ function getCtx(tenantId) {
     const inventory   = createInventory(db);
     const fulfillment = createFulfillment({ store, creds, inventory });
     const picking     = createPicking({ db, store });
-    const drivers     = createDrivers({ db, store });
+    const geocoder    = createGeocoder(db);
+    const drivers     = createDrivers({ db, store, geocoder });
     tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, drivers });
   }
   return tenantCtx.get(tenantId);
@@ -1972,6 +1974,15 @@ app.post('/api/drivers/:id/assign', withAdmin, withTenant, (req, res) => {
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message, capacityExceeded: !!e.capacityExceeded });
   }
+});
+
+// Optimize the visiting order of a driver's active jobs (geocodes missing
+// destinations first; may take a few seconds on first run per address)
+app.post('/api/drivers/:id/plan-route', withAdmin, withTenant, async (req, res) => {
+  try {
+    const { startLat, startLng } = req.body || {};
+    res.json(await req.ctx.drivers.planRoute(req.params.id, { startLat, startLng }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 app.get('/api/deliveries', withAdmin, withTenant, (req, res) => {

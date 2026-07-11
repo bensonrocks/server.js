@@ -2176,6 +2176,22 @@ a:hover{text-decoration:underline}
     </div>
   </div>
 
+  <!-- Route plan modal -->
+  <div class="drv-mask" id="drv-route-mask" onclick="if(event.target===this)drvCloseModals()">
+    <div class="drv-modal" style="max-width:760px">
+      <div class="drv-modal-h">&#128506; Route Plan — <span id="drv-route-name" style="margin-left:6px"></span></div>
+      <div class="drv-modal-b">
+        <div id="drv-route-summary" style="font-size:12.5px;margin-bottom:10px;color:#475569"></div>
+        <div id="drv-route-map" style="height:300px;border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;margin-bottom:12px"></div>
+        <div id="drv-route-stops"></div>
+      </div>
+      <div class="drv-modal-f">
+        <button class="btn btn-g" onclick="drvCloseModals()">Close</button>
+        <button class="btn btn-s" id="drv-route-replan" onclick="drvPlanRoute(drvRouteDriverId)">&#8635; Re-optimize</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Proof-of-delivery viewer -->
   <div class="drv-mask" id="drv-pod-mask" onclick="if(event.target===this)drvCloseModals()">
     <div class="drv-modal" style="max-width:520px">
@@ -5438,6 +5454,7 @@ function drvRenderDrivers(){
       <td>${drvAgo(d.lastSeenAt)}</td>
       <td>${loc?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; Map</a>`:'—'}</td>
       <td style="text-align:right;white-space:nowrap">
+        ${d.activeDeliveries>0?`<button class="btn btn-s btn-xs" onclick="drvPlanRoute('${d.id}')">&#128506; Route</button>`:''}
         <button class="btn btn-g btn-xs" onclick="drvOpenEdit('${d.id}')">&#9998; Edit</button>
         <button class="btn btn-g btn-xs" title="Reset PIN" onclick="drvResetPin('${d.id}')">&#128273; PIN</button>
         <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>${staffRole==='master'?`
@@ -5730,6 +5747,68 @@ async function drvViewPod(id){
   }catch(e){$('drv-pod-body').innerHTML=`<div style="color:#dc2626;padding:10px">${esc(e.message)}</div>`;}
 }
 
+// — route planning —
+let drvRouteDriverId=null,drvRouteMap=null,drvRouteLayers=[];
+
+async function drvPlanRoute(id){
+  drvRouteDriverId=id;
+  const d=drvList.find(x=>x.id===id);
+  $('drv-route-name').textContent=d?d.name:id;
+  $('drv-route-summary').innerHTML='<span style="color:#94a3b8">Optimizing route… (first run geocodes each address, ~1s per stop)</span>';
+  $('drv-route-stops').innerHTML='';
+  $('drv-route-mask').classList.add('on');
+  try{
+    const r=await fetch(`${SERVER}/api/drivers/${id}/plan-route`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:'{}'});
+    const plan=await r.json();
+    if(!r.ok)throw new Error(plan.error||'Route planning failed');
+    drvRenderRoutePlan(plan);
+    drvLoad();
+  }catch(e){$('drv-route-summary').innerHTML=`<span style="color:#dc2626;font-weight:600">${esc(e.message)}</span>`;}
+}
+
+async function drvRenderRoutePlan(plan){
+  const startLbl={manual:'set manually',driver_gps:"driver's live GPS position",first_stop:'first stop (no GPS fix yet)'}[plan.start?.source]||'';
+  const estTxt=plan.estMin>90?(plan.estMin/60).toFixed(1)+' h':plan.estMin+' min';
+  $('drv-route-summary').innerHTML=
+    `<b>${plan.stops.length}</b> stop(s) &middot; <b>${plan.totalKm} km</b> (straight-line) &middot; est. <b>${estTxt}</b> incl. handover time`
+    +(plan.start?` &middot; start: ${startLbl}`:'')
+    +(plan.unlocated.length?`<div style="color:#d97706;font-weight:600;margin-top:4px">&#9888; ${plan.unlocated.length} stop(s) could not be located on the map (address not found) — they are appended to the end of the sequence.</div>`:'');
+
+  // stop list
+  $('drv-route-stops').innerHTML=[
+    ...plan.stops.map(s=>`<div class="drv-rec" style="align-items:center">
+      <span style="flex-shrink:0;width:24px;height:24px;border-radius:50%;background:#1d4ed8;color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center">${s.seq}</span>
+      <span style="flex:1"><b>${esc(s.orderId)}</b> — ${esc(s.recipient||'')}<div style="font-size:11px;color:#64748b">${esc(s.address)}</div></span>
+      <span style="font-size:11px;color:#64748b;white-space:nowrap">+${s.legKm} km</span>
+    </div>`),
+    ...plan.unlocated.map(s=>`<div class="drv-rec" style="align-items:center;opacity:.75">
+      <span style="flex-shrink:0;width:24px;height:24px;border-radius:50%;background:#94a3b8;color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center">${s.seq}</span>
+      <span style="flex:1"><b>${esc(s.orderId)}</b><div style="font-size:11px;color:#64748b">${esc(s.address||'no address')} — not located</div></span>
+    </div>`)
+  ].join('');
+
+  // map
+  try{
+    await drvLoadLeaflet();
+    if(drvRouteMap){drvRouteMap.remove();drvRouteMap=null;}
+    drvRouteMap=L.map('drv-route-map',{scrollWheelZoom:false});
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(drvRouteMap);
+    const pts=[];
+    if(plan.start){
+      pts.push([plan.start.lat,plan.start.lng]);
+      L.marker([plan.start.lat,plan.start.lng],{icon:L.divIcon({className:'',html:'<div style="width:26px;height:26px;border-radius:50%;background:#0f172a;color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4)">GO</div>',iconSize:[26,26],iconAnchor:[13,13]})}).addTo(drvRouteMap).bindPopup('Start');
+    }
+    plan.stops.forEach(s=>{
+      pts.push([s.lat,s.lng]);
+      L.marker([s.lat,s.lng],{icon:L.divIcon({className:'',html:`<div style="width:26px;height:26px;border-radius:50%;background:#1d4ed8;color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4)">${s.seq}</div>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(drvRouteMap)
+        .bindPopup(`<b>Stop ${s.seq}: ${esc(s.orderId)}</b><br>${esc(s.recipient||'')}<br>${esc(s.address)}`);
+    });
+    if(pts.length>1)L.polyline(pts,{color:'#1d4ed8',weight:3,opacity:.7,dashArray:'6 6'}).addTo(drvRouteMap);
+    if(pts.length)drvRouteMap.fitBounds(pts,{padding:[30,30],maxZoom:15});
+    setTimeout(()=>drvRouteMap&&drvRouteMap.invalidateSize(),150);
+  }catch(_){$('drv-route-map').innerHTML='<div style="padding:20px;color:#94a3b8;font-size:12px">Map unavailable — stop list below is still in optimized order.</div>';}
+}
+
 // — POD PDF export —
 let _jspdfLoading=null;
 function drvLoadJsPdf(){
@@ -5868,7 +5947,11 @@ function drvOpenEdit(id){
   $('drv-add-vehicle').value=d.vehicle||'';$('drv-add-plate').value=d.plate||'';
   $('drv-add-m3').value=d.capacity_m3||'';$('drv-add-kg').value=d.capacity_kg||'';$('drv-add-plt').value=d.capacity_pallets||'';
 }
-function drvCloseModals(){$('drv-add-mask').classList.remove('on');$('drv-assign-mask').classList.remove('on');$('drv-pod-mask').classList.remove('on');}
+function drvCloseModals(){
+  $('drv-add-mask').classList.remove('on');$('drv-assign-mask').classList.remove('on');$('drv-pod-mask').classList.remove('on');
+  $('drv-route-mask').classList.remove('on');
+  if(drvRouteMap){drvRouteMap.remove();drvRouteMap=null;}
+}
 
 async function drvCreate(){
   $('drv-add-msg').style.display='none';

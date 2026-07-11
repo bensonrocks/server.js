@@ -113,6 +113,9 @@ body{background:#f1f5f9;color:#0f172a;min-height:100vh}
     <div class="counter"><div class="v" id="c-failed" style="color:#dc2626">0</div><div class="l">Failed</div></div>
   </div>
   <div class="sec-lbl">Active deliveries</div>
+  <div id="route-bar" style="display:none;margin-bottom:10px">
+    <button class="btn btn-lg btn-blue" onclick="openFullRoute()">&#128506; Navigate route (all stops)</button>
+  </div>
   <div id="list-active"><div class="empty">Nothing assigned yet.</div></div>
   <div class="sec-lbl">Completed today</div>
   <div id="list-done"><div class="empty">No completed deliveries today.</div></div>
@@ -289,6 +292,7 @@ function card(d, done) {
   }
   return `<div class="card">
     <div class="row1">
+      ${!done && d.stop_seq ? `<span style="flex-shrink:0;width:24px;height:24px;border-radius:50%;background:#1d4ed8;color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center">${d.stop_seq}</span>` : ''}
       <div class="oid">${esc(o.orderId || d.order_id)}</div>
       <span class="chip st-${d.status}">${STATUS_LABEL[d.status] || d.status}</span>
     </div>
@@ -310,8 +314,10 @@ function card(d, done) {
 }
 
 function render() {
-  const active = deliveries.filter(d => ['assigned', 'picked_up', 'in_transit'].includes(d.status));
+  const active = deliveries.filter(d => ['assigned', 'picked_up', 'in_transit'].includes(d.status))
+    .sort((a, b) => (a.stop_seq || 999) - (b.stop_seq || 999));
   const done   = deliveries.filter(d => d.status === 'delivered' || d.status === 'failed');
+  $('route-bar').style.display = active.length >= 2 ? '' : 'none';
   $('c-active').textContent = active.length;
   $('c-done').textContent   = done.filter(d => d.status === 'delivered').length;
   $('c-failed').textContent = done.filter(d => d.status === 'failed').length;
@@ -402,6 +408,23 @@ function confirmFailed() {
   if (!reason) { toast('Please enter a reason'); return; }
   const id = currentSheetId; closeSheets();
   advance(id, 'failed', { reason });
+}
+
+// One tap opens the whole run in Google Maps (current position → stops in
+// planned order). Google allows up to 9 waypoints + destination in a link.
+function openFullRoute() {
+  const active = deliveries.filter(d => ['assigned', 'picked_up', 'in_transit'].includes(d.status))
+    .sort((a, b) => (a.stop_seq || 999) - (b.stop_seq || 999));
+  const pts = active.map(d => {
+    if (d.dest_lat != null && d.dest_lng != null) return d.dest_lat + ',' + d.dest_lng;
+    return (d.order && d.order.address) || null;
+  }).filter(Boolean).slice(0, 10);
+  if (!pts.length) { toast('No addresses available for routing'); return; }
+  const dest = pts[pts.length - 1];
+  const waypoints = pts.slice(0, -1).map(encodeURIComponent).join('|');
+  const url = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination='
+    + encodeURIComponent(dest) + (waypoints ? '&waypoints=' + waypoints : '');
+  window.open(url, '_blank', 'noopener');
 }
 
 // ── GPS pings ────────────────────────────────────────────────────────────────
