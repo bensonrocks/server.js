@@ -130,6 +130,22 @@ body{background:#f1f5f9;color:#0f172a;min-height:100vh}
       <label>Note (optional)</label>
       <textarea id="pod-note" rows="2" placeholder="Left at guardhouse, etc."></textarea>
     </div>
+    <div class="fld">
+      <label>Customer signature <span style="font-weight:500;color:#94a3b8">— sign below</span></label>
+      <div style="position:relative">
+        <canvas id="pod-sig" width="600" height="220" style="width:100%;height:110px;border:1.5px dashed #cbd5e1;border-radius:9px;background:#f8fafc;touch-action:none;display:block"></canvas>
+        <button type="button" class="btn btn-sm btn-gray" style="position:absolute;top:6px;right:6px;padding:4px 10px;font-size:11px" onclick="sigClear()">Clear</button>
+      </div>
+    </div>
+    <div class="fld">
+      <label>Handover photo (optional)</label>
+      <input type="file" id="pod-photo-input" accept="image/*" capture="environment" style="display:none" onchange="podPhotoPicked(this)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button type="button" class="btn btn-sm btn-blue" style="padding:9px 14px" onclick="document.getElementById('pod-photo-input').click()">&#128247; Take photo</button>
+        <img id="pod-photo-prev" alt="" style="display:none;height:52px;border-radius:8px;border:1px solid #cbd5e1">
+        <button type="button" id="pod-photo-x" class="btn btn-sm btn-gray" style="display:none;padding:4px 10px;font-size:11px" onclick="podPhotoClear()">Remove</button>
+      </div>
+    </div>
     <div class="btns">
       <button class="btn btn-gray" onclick="closeSheets()">Cancel</button>
       <button class="btn btn-green" onclick="confirmDelivered()">&#10003; Delivered</button>
@@ -305,7 +321,7 @@ async function advance(id, status, extra = {}) {
   } catch (e) { toast(e.message); }
 }
 
-function openPod(id)  { currentSheetId = id; $('pod-oid').textContent = orderIdOf(id); $('pod-name').value = ''; $('pod-note').value = ''; $('pod-mask').classList.add('on'); }
+function openPod(id)  { currentSheetId = id; $('pod-oid').textContent = orderIdOf(id); $('pod-name').value = ''; $('pod-note').value = ''; sigClear(); podPhotoClear(); $('pod-mask').classList.add('on'); }
 function openFail(id) { currentSheetId = id; $('fail-oid').textContent = orderIdOf(id); $('fail-reason').value = ''; $('fail-mask').classList.add('on'); }
 function closeSheets(){ $('pod-mask').classList.remove('on'); $('fail-mask').classList.remove('on'); currentSheetId = null; }
 function orderIdOf(id){ const d = deliveries.find(x => x.id === id); return d ? d.order_id : id; }
@@ -313,8 +329,63 @@ function orderIdOf(id){ const d = deliveries.find(x => x.id === id); return d ? 
 function confirmDelivered() {
   const extra = { podName: $('pod-name').value, podNote: $('pod-note').value };
   if (lastFix) { extra.lat = lastFix.lat; extra.lng = lastFix.lng; }
+  if (sigDrawn) extra.podSignature = $('pod-sig').toDataURL('image/png');
+  if (podPhotoData) extra.podPhoto = podPhotoData;
   const id = currentSheetId; closeSheets();
   advance(id, 'delivered', extra);
+}
+
+// ── signature pad ────────────────────────────────────────────────────────────
+let sigDrawn = false, sigOn = false;
+const sigCanvas = $('pod-sig'), sigCtx = sigCanvas.getContext('2d');
+sigCtx.lineWidth = 3; sigCtx.lineCap = 'round'; sigCtx.strokeStyle = '#0f172a';
+
+function sigPos(e) {
+  const r = sigCanvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (sigCanvas.width / r.width),
+           y: (e.clientY - r.top) * (sigCanvas.height / r.height) };
+}
+sigCanvas.addEventListener('pointerdown', e => {
+  e.preventDefault(); sigOn = true; sigDrawn = true;
+  sigCanvas.setPointerCapture(e.pointerId);
+  const p = sigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); sigCtx.lineTo(p.x + .1, p.y + .1); sigCtx.stroke();
+});
+sigCanvas.addEventListener('pointermove', e => {
+  if (!sigOn) return; e.preventDefault();
+  const p = sigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke();
+});
+['pointerup', 'pointercancel'].forEach(ev => sigCanvas.addEventListener(ev, () => { sigOn = false; }));
+
+function sigClear() { sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height); sigDrawn = false; }
+
+// ── handover photo ───────────────────────────────────────────────────────────
+let podPhotoData = null;
+
+function podPhotoPicked(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    // downscale to keep the upload small (max 1280px on the long edge)
+    const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    podPhotoData = c.toDataURL('image/jpeg', 0.72);
+    URL.revokeObjectURL(img.src);
+    $('pod-photo-prev').src = podPhotoData;
+    $('pod-photo-prev').style.display = '';
+    $('pod-photo-x').style.display = '';
+  };
+  img.onerror = () => { URL.revokeObjectURL(img.src); toast('Could not read photo'); };
+  img.src = URL.createObjectURL(file);
+}
+
+function podPhotoClear() {
+  podPhotoData = null;
+  $('pod-photo-input').value = '';
+  $('pod-photo-prev').style.display = 'none';
+  $('pod-photo-x').style.display = 'none';
 }
 
 function confirmFailed() {

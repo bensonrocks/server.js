@@ -76,7 +76,8 @@ function getBaseUrl(req) {
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // verify callback stores the raw Buffer on req so webhook HMAC verification can use it
-app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+// limit raised for proof-of-delivery photos/signatures posted by the driver app
+app.use(express.json({ limit: '8mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.get('/', (req, res) => res.redirect('/about.html'));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -1943,6 +1944,13 @@ app.get('/api/deliveries', withTenant, (req, res) => {
   }));
 });
 
+// Full delivery record incl. proof-of-delivery signature/photo (list strips them)
+app.get('/api/deliveries/:id', withTenant, (req, res) => {
+  const d = req.ctx.drivers.getDeliveryFull(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Delivery not found' });
+  res.json(d);
+});
+
 app.patch('/api/deliveries/:id/status', withTenant, (req, res) => {
   try {
     const { status, reason, podName, podNote } = req.body || {};
@@ -1987,9 +1995,9 @@ app.get('/api/driver/deliveries', withDriver, (req, res) => {
 
 app.post('/api/driver/deliveries/:id/status', withDriver, (req, res) => {
   try {
-    const { status, reason, podName, podNote, lat, lng } = req.body || {};
+    const { status, reason, podName, podNote, lat, lng, podSignature, podPhoto } = req.body || {};
     res.json(req.ctx.drivers.updateStatus(req.params.id, status, {
-      driverId: req.driver.id, reason, podName, podNote, lat, lng,
+      driverId: req.driver.id, reason, podName, podNote, lat, lng, podSignature, podPhoto,
     }));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });

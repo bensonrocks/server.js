@@ -2101,6 +2101,17 @@ a:hover{text-decoration:underline}
     </div>
   </div>
 
+  <!-- Proof-of-delivery viewer -->
+  <div class="drv-mask" id="drv-pod-mask" onclick="if(event.target===this)drvCloseModals()">
+    <div class="drv-modal" style="max-width:520px">
+      <div class="drv-modal-h">&#128203; Proof of Delivery — <span id="drv-pod-oid" style="margin-left:6px"></span></div>
+      <div class="drv-modal-b" id="drv-pod-body" style="font-size:13px"></div>
+      <div class="drv-modal-f">
+        <button class="btn btn-g" onclick="drvCloseModals()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Assign-orders modal -->
   <div class="drv-mask" id="drv-assign-mask" onclick="if(event.target===this)drvCloseModals()">
     <div class="drv-modal" style="max-width:560px">
@@ -2918,6 +2929,12 @@ function openDetail(id){
       ${src.courier?`<div class="dp-row"><span class="dk">Courier</span><span class="dv">${src.courier}</span></div>`:''}
       ${src.trackingNo?`<div class="dp-row"><span class="dk">Tracking</span><span class="dv" style="font-family:monospace">${src.trackingNo}</span></div>`:''}
     </div>
+    ${src.deliveryId?`<div class="dp-sec"><div class="dp-sec-t">Delivery</div>
+      ${src.driverName?`<div class="dp-row"><span class="dk">Driver</span><span class="dv">${src.driverName}</span></div>`:''}
+      ${src.deliveredAt?`<div class="dp-row"><span class="dk">Delivered</span><span class="dv">${fmtT(src.deliveredAt)}${src.podName?' — received by '+src.podName:''}</span></div>`:''}
+      ${src.deliveryFailedReason?`<div class="dp-row"><span class="dk">Last attempt</span><span class="dv" style="color:#dc2626">${src.deliveryFailedReason}</span></div>`:''}
+      <div style="margin-top:8px"><button class="btn btn-s btn-sm" onclick="drvViewPod('${src.deliveryId}')">&#128203; View Proof of Delivery</button></div>
+    </div>`:''}
     <div class="dp-sec"><div class="dp-sec-t">Items (${o.items.length})</div>
       <table class="it-tbl"><thead><tr><th>Product</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit</th><th style="text-align:right">Line</th></tr></thead><tbody>${itemsHTML}</tbody></table>
     </div>
@@ -5364,6 +5381,8 @@ function drvRenderDeliveries(){
       acts=`<button class="btn btn-g btn-xs" onclick="drvUnassign('${d.id}')">Unassign</button>`;
     if(d.status==='failed')
       acts=`<button class="btn btn-s btn-xs" onclick="drvRetry('${d.id}')">&#8635; Retry</button> <button class="btn btn-g btn-xs" onclick="drvUnassign('${d.id}')">Remove</button>`;
+    if(d.status==='delivered')
+      acts=`<button class="btn btn-s btn-xs" onclick="drvViewPod('${d.id}')">&#128203; POD${d.hasSignature?' &#9997;':''}${d.hasPhoto?' &#128247;':''}</button>`;
     return `<tr>
       <td><strong>${esc(d.order_id)}</strong></td>
       <td>${esc(o.recipient||'—')}</td>
@@ -5377,9 +5396,37 @@ function drvRenderDeliveries(){
   }).join('');
 }
 
+// — proof-of-delivery viewer —
+async function drvViewPod(id){
+  $('drv-pod-oid').textContent='…';
+  $('drv-pod-body').innerHTML='<div style="color:#94a3b8;padding:10px">Loading…</div>';
+  $('drv-pod-mask').classList.add('on');
+  try{
+    const r=await fetch(`${SERVER}/api/deliveries/${id}`);
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Failed to load');
+    $('drv-pod-oid').textContent=d.order_id;
+    const when=d.delivered_at?new Date(d.delivered_at.replace(' ','T')+'Z').toLocaleString():'—';
+    const geo=(d.pod_lat!=null&&d.pod_lng!=null)?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${d.pod_lat},${d.pod_lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; ${d.pod_lat.toFixed(5)}, ${d.pod_lng.toFixed(5)}</a>`:'—';
+    $('drv-pod-body').innerHTML=`
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12.5px">
+        <tr><td style="padding:4px 8px;color:#64748b;width:110px">Delivered</td><td style="padding:4px 8px;font-weight:600">${esc(when)}</td></tr>
+        <tr><td style="padding:4px 8px;color:#64748b">Driver</td><td style="padding:4px 8px;font-weight:600">${esc(d.driverName||'—')}</td></tr>
+        <tr><td style="padding:4px 8px;color:#64748b">Received by</td><td style="padding:4px 8px;font-weight:600">${esc(d.pod_name||'—')}</td></tr>
+        <tr><td style="padding:4px 8px;color:#64748b">Note</td><td style="padding:4px 8px">${esc(d.pod_note||'—')}</td></tr>
+        <tr><td style="padding:4px 8px;color:#64748b">Location</td><td style="padding:4px 8px">${geo}</td></tr>
+      </table>
+      ${d.pod_signature?`<div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Customer signature</div>
+        <img src="${d.pod_signature}" alt="signature" style="width:100%;max-height:150px;object-fit:contain;border:1px solid #e2e8f0;border-radius:9px;background:#f8fafc;margin-bottom:12px">`:''}
+      ${d.pod_photo?`<div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Handover photo</div>
+        <img src="${d.pod_photo}" alt="handover photo" style="width:100%;border-radius:9px;border:1px solid #e2e8f0">`:''}
+      ${!d.pod_signature&&!d.pod_photo?'<div style="color:#94a3b8;font-size:12px">No signature or photo was captured for this delivery.</div>':''}`;
+  }catch(e){$('drv-pod-body').innerHTML=`<div style="color:#dc2626;padding:10px">${esc(e.message)}</div>`;}
+}
+
 // — driver CRUD —
 function drvOpenAdd(){['name','phone','vehicle','plate','pin'].forEach(f=>$(`drv-add-${f}`).value='');$('drv-add-msg').style.display='none';$('drv-add-mask').classList.add('on');}
-function drvCloseModals(){$('drv-add-mask').classList.remove('on');$('drv-assign-mask').classList.remove('on');}
+function drvCloseModals(){$('drv-add-mask').classList.remove('on');$('drv-assign-mask').classList.remove('on');$('drv-pod-mask').classList.remove('on');}
 
 async function drvCreate(){
   $('drv-add-msg').style.display='none';
