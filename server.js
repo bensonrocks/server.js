@@ -151,9 +151,19 @@ function withStaff(req, res, next) {
   next();
 }
 
+// Role hierarchy: master > admin > warehouse
 function withAdmin(req, res, next) {
   withStaff(req, res, () => {
-    if (req.staffRole !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (req.staffRole !== 'admin' && req.staffRole !== 'master') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  });
+}
+
+function withMaster(req, res, next) {
+  withStaff(req, res, () => {
+    if (req.staffRole !== 'master') return res.status(403).json({ error: 'Master access required' });
     next();
   });
 }
@@ -165,11 +175,11 @@ app.get('/api/staff/emergency', (req, res) => {
   const { createHash } = require('crypto');
   const pw = 'Admin1234';
   const hash = createHash('sha256').update(pw).digest('hex');
-  mainDb.prepare("INSERT OR IGNORE INTO staff_users (username, password_hash, role) VALUES ('administrator', ?, 'admin')").run(hash);
-  mainDb.prepare("UPDATE staff_users SET password_hash = ?, role = 'admin', active = 1 WHERE username = 'administrator'").run(hash);
+  mainDb.prepare("INSERT OR IGNORE INTO staff_users (username, password_hash, role) VALUES ('administrator', ?, 'master')").run(hash);
+  mainDb.prepare("UPDATE staff_users SET password_hash = ?, role = 'master', active = 1 WHERE username = 'administrator'").run(hash);
   const token = staffAuth.generateToken('administrator');
   console.log('[emergency] administrator reset, token issued');
-  res.json({ ok: true, username: 'administrator', password: pw, token, role: 'admin' });
+  res.json({ ok: true, username: 'administrator', password: pw, token, role: 'master' });
 });
 
 app.post('/api/staff/login', (req, res) => {
@@ -199,8 +209,11 @@ app.post('/api/staff/users', withAdmin, (req, res) => {
   const { username, password, role } = req.body || {};
   if (!username || username.trim().length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-  const validRoles = ['admin', 'warehouse'];
+  const validRoles = ['master', 'admin', 'warehouse'];
   const assignedRole = validRoles.includes(role) ? role : 'warehouse';
+  if (assignedRole !== 'warehouse' && req.staffRole !== 'master') {
+    return res.status(403).json({ error: 'Only a master account can create admin or master users' });
+  }
   try {
     staffAuth.createUser(username.trim(), password, assignedRole);
     res.json({ ok: true, username: username.trim(), role: assignedRole });
@@ -212,18 +225,34 @@ app.post('/api/staff/users', withAdmin, (req, res) => {
 
 app.patch('/api/staff/users/:username/role', withAdmin, (req, res) => {
   const { role } = req.body || {};
-  if (!['admin', 'warehouse'].includes(role)) return res.status(400).json({ error: 'Role must be admin or warehouse' });
+  if (!['master', 'admin', 'warehouse'].includes(role)) return res.status(400).json({ error: 'Role must be master, admin or warehouse' });
+  if (req.params.username === 'administrator') return res.status(400).json({ error: 'The administrator account role cannot be changed' });
+  const target = mainDb.prepare('SELECT role FROM staff_users WHERE username = ?').get(req.params.username);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if ((role !== 'warehouse' || target.role !== 'warehouse') && req.staffRole !== 'master') {
+    return res.status(403).json({ error: 'Only a master account can manage admin or master users' });
+  }
   staffAuth.setRole(req.params.username, role);
   res.json({ ok: true });
 });
 
 app.patch('/api/staff/users/:username/active', withAdmin, (req, res) => {
+  const target = mainDb.prepare('SELECT role FROM staff_users WHERE username = ?').get(req.params.username);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.role !== 'warehouse' && req.staffRole !== 'master') {
+    return res.status(403).json({ error: 'Only a master account can manage admin or master users' });
+  }
   staffAuth.setActive(req.params.username, req.body?.active !== false);
   res.json({ ok: true });
 });
 
 app.delete('/api/staff/users/:username', withAdmin, (req, res) => {
   if (req.params.username === req.staffUsername) return res.status(400).json({ error: 'Cannot delete yourself' });
+  if (req.params.username === 'administrator') return res.status(400).json({ error: 'The administrator account cannot be deleted' });
+  const target = mainDb.prepare('SELECT role FROM staff_users WHERE username = ?').get(req.params.username);
+  if (target && target.role !== 'warehouse' && req.staffRole !== 'master') {
+    return res.status(403).json({ error: 'Only a master account can remove admin or master users' });
+  }
   mainDb.prepare('DELETE FROM staff_users WHERE username = ?').run(req.params.username);
   mainDb.prepare('DELETE FROM staff_sessions WHERE username = ?').run(req.params.username);
   res.json({ ok: true });
@@ -1927,7 +1956,7 @@ app.patch('/api/drivers/:id', withAdmin, withTenant, (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.delete('/api/drivers/:id', withAdmin, withTenant, (req, res) => {
+app.delete('/api/drivers/:id', withMaster, withTenant, (req, res) => {
   try {
     req.ctx.drivers.deleteDriver(req.params.id);
     res.json({ ok: true });

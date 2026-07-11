@@ -1718,7 +1718,8 @@ a:hover{text-decoration:underline}
                 <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px">Role</div>
                 <select id="new-staff-role" class="slk-input">
                   <option value="warehouse">Warehouse</option>
-                  <option value="admin">Admin</option>
+                  <option value="admin" class="role-opt-elev">Admin</option>
+                  <option value="master" class="role-opt-elev">Master</option>
                 </select>
               </div>
               <button class="slk-btn" onclick="createStaffUser()">+ Add User</button>
@@ -2484,7 +2485,8 @@ async function initAdminPage(){
   renderStaffWidget();
   // Show staff users card only for admins
   const card=$('staff-users-card');
-  if(card){ card.style.display=staffRole==='admin'?'':'none'; if(staffRole==='admin')loadStaffUsers(); }
+  if(card){ card.style.display=isAdminRole()?'':'none'; if(isAdminRole())loadStaffUsers(); }
+  document.querySelectorAll('.role-opt-elev').forEach(o=>{o.style.display=staffRole==='master'?'':'none';o.disabled=staffRole!=='master';});
   await loadAdminStats();
   saleRangeChange();
   loadDashboardStats();
@@ -2705,9 +2707,11 @@ async function adminDeleteOrder(id){
 
 // ── STAFF AUTH & ROLE-BASED ACCESS ───────────────────────────────────────────
 const ADMIN_ONLY_NAV = ['nav-connections','nav-synclog','nav-admin','nav-client-dash','nav-drivers'];
+const isAdminRole=()=>staffRole==='admin'||staffRole==='master';
+const ROLE_LABEL={master:'Master',admin:'Admin',warehouse:'Warehouse'};
 
 function applyRoleNav(){
-  const isAdmin = staffRole === 'admin';
+  const isAdmin = isAdminRole();
   ADMIN_ONLY_NAV.forEach(id => {
     const el=$(id);
     if(el) el.style.display = isAdmin ? '' : 'none';
@@ -2745,13 +2749,13 @@ function renderStaffWidget(){
   const el=$('staff-hdr-widget');
   if(!el)return;
   if(staffToken&&staffUser){
-    const roleLabel=staffRole==='admin'?'Admin':'Warehouse';
+    const roleLabel=ROLE_LABEL[staffRole]||'Warehouse';
     el.innerHTML=`<div class="staff-chip"><span>&#128100;</span><span class="chip-user">${staffUser}</span><span style="color:#475569;font-size:10px">${roleLabel}</span><button class="staff-chip-btn" onclick="staffLogout()">Log Out</button></div>`;
   } else {
     el.innerHTML=`<button class="staff-login-btn" onclick="openStaffModal()">&#128274; Log In</button>`;
   }
   const s=$('adm-acct-status');
-  if(s) s.textContent = staffToken&&staffUser ? `Logged in as: ${staffUser} (${staffRole==='admin'?'Admin':'Warehouse'})` : 'Not logged in — log in to change credentials.';
+  if(s) s.textContent = staffToken&&staffUser ? `Logged in as: ${staffUser} (${ROLE_LABEL[staffRole]||'Warehouse'})` : 'Not logged in — log in to change credentials.';
 }
 
 function openStaffModal(){
@@ -2829,7 +2833,7 @@ async function adminChangePassword(){
 
 // ── STAFF USER MANAGEMENT (admin only) ───────────────────────────────────────
 async function loadStaffUsers(){
-  if(staffRole!=='admin')return;
+  if(!isAdminRole())return;
   const el=$('staff-users-list');if(!el)return;
   try{
     const r=await fetch(`${SERVER}/api/staff/users`,{headers:{'Authorization':`Bearer ${staffToken}`}});
@@ -2838,9 +2842,9 @@ async function loadStaffUsers(){
     el.innerHTML=users.map(u=>`
       <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9">
         <span style="flex:1;font-size:14px;font-weight:600;color:#0f172a">${u.username}</span>
-        <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:${u.role==='admin'?'#dbeafe':'#f0fdf4'};color:${u.role==='admin'?'#1e40af':'#166534'};font-weight:700">${u.role}</span>
+        <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:${u.role==='master'?'#ede9fe':u.role==='admin'?'#dbeafe':'#f0fdf4'};color:${u.role==='master'?'#5b21b6':u.role==='admin'?'#1e40af':'#166534'};font-weight:700">${u.role}</span>
         <span style="font-size:11px;color:${u.active?'#16a34a':'#dc2626'}">${u.active?'Active':'Inactive'}</span>
-        ${u.username!=='administrator'?`<button onclick="deleteStaffUser('${u.username}')" style="padding:3px 8px;border-radius:6px;border:1px solid #fecaca;background:#fff5f5;color:#dc2626;font-size:11px;cursor:pointer;font-family:inherit">Remove</button>`:''}
+        ${u.username!=='administrator'&&(staffRole==='master'||u.role==='warehouse')?`<button onclick="deleteStaffUser('${u.username}')" style="padding:3px 8px;border-radius:6px;border:1px solid #fecaca;background:#fff5f5;color:#dc2626;font-size:11px;cursor:pointer;font-family:inherit">Remove</button>`:''}
       </div>`).join('');
   }catch(e){el.innerHTML='<p style="color:#ef4444;font-size:13px">'+e.message+'</p>';}
 }
@@ -5298,7 +5302,7 @@ const drvAuth=()=>({'Authorization':`Bearer ${staffToken}`});
 
 async function initDrivers(){
   // the entire driver section is admin-only
-  if(staffRole!=='admin'){switchPage('dashboard');return;}
+  if(!isAdminRole()){switchPage('dashboard');return;}
   drvLoad();
   if(drvTimer)clearInterval(drvTimer);
   drvTimer=setInterval(()=>{if(currentPage==='drivers')drvLoad();},30000);
@@ -5407,8 +5411,8 @@ function drvRenderDrivers(){
       <td>${loc?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; Map</a>`:'—'}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-g btn-xs" title="Reset PIN" onclick="drvResetPin('${d.id}')">&#128273; PIN</button>
-        <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>
-        <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>
+        <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>${staffRole==='master'?`
+        <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>`:''}
       </td>
     </tr>`;
   }).join('');
