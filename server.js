@@ -769,6 +769,7 @@ function globalOrdersWithState() {
         endTime:           state.endTime           || null,
         operator:          state.operator          || null,
         keyfields_closed:  state.keyfields_closed  || false,
+        claimed_by:        claimHolder(state),
         alert_email_sent:  state.alert_email_sent  ?? null,
         alert_email_error: state.alert_email_error || null,
         batchId:           batch.id,
@@ -2673,6 +2674,65 @@ app.post('/api/waybill-lookup', (req, res) => {
   res.json(order);
 });
 
+// ── Order claiming — one packer per order ────────────────────────────────────
+// Every station sees the same summary, so two packers could open the SAME
+// order and cross each other's counts. Opening an order claims it; scans
+// refresh the claim; everyone else is blocked (409) until it's released,
+// completed, or the claim goes stale (station died / packer walked away).
+const CLAIM_STALE_MS = 20 * 60 * 1000;
+function claimHolder(state) {
+  if (!state || !state.claimedBy) return null;
+  if (state.status === 'done' || state.status === 'unprocessed') return null;
+  if (Date.now() - new Date(state.claimedAt || 0).getTime() > CLAIM_STALE_MS) return null;
+  return state.claimedBy;
+}
+// Returns null when userId may work the order, else the blocking holder's id
+function claimBlocker(state, userId) {
+  const holder = claimHolder(state);
+  return holder && holder !== userId ? holder : null;
+}
+function refreshClaim(state, userId) {
+  state.claimedBy = userId;
+  state.claimedAt = new Date().toISOString();
+}
+
+app.post('/api/scan/claim', (req, res) => {
+  const { orderNumber, force } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder && !force) {
+    return res.status(409).json({
+      error: `Order is being packed by ${holder} at another station.`,
+      claimedBy: holder, claimedAt: state.claimedAt,
+    });
+  }
+  if (holder && force) logAudit('order_takeover', { order: orderNumber, from: holder, by: req.userId || '' });
+  refreshClaim(state, req.userId);
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/scan/release', (req, res) => {
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const state = (batch.orderStates || {})[orderNumber];
+  if (state && state.claimedBy === req.userId) {
+    delete state.claimedBy;
+    delete state.claimedAt;
+    writeDb(db);
+  }
+  res.json({ ok: true });
+});
+
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
   const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
@@ -2722,6 +2782,9 @@ app.post('/api/scan/increment', (req, res) => {
   }
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
+  refreshClaim(state, req.userId);
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   state.updated_at = new Date().toISOString();
@@ -2786,6 +2849,9 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   // Count the piece the packer is holding
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
+  refreshClaim(state, req.userId);
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   state.updated_at = new Date().toISOString();
@@ -2875,6 +2941,9 @@ app.post('/api/scan/setqty', (req, res) => {
   }
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
+  refreshClaim(state, req.userId);
   state.status = 'processing';
   state.scanned[item.sku] = qn;
   state.updated_at = new Date().toISOString();
@@ -2914,8 +2983,12 @@ app.post('/api/scan/complete', (req, res) => {
     return s !== item.qty ? { sku: item.sku, description: item.description, ordered: item.qty, scanned: s, gap: s - item.qty } : null;
   }).filter(Boolean);
 
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
   if (!mismatches.length) {
     state.status     = 'done';
+    delete state.claimedBy;
+    delete state.claimedAt;
     state.updated_at = new Date().toISOString();
     if (startTime) state.startTime = startTime;
     if (endTime)   state.endTime   = endTime;

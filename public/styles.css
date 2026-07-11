@@ -2425,3 +2425,6 @@ body.ls-open { overflow: hidden; }
   border: 1px solid var(--primary-border); border-radius: 5px; padding: .06rem .4rem;
 }
 .ord-jobcode { margin-top: .15rem; }
+
+/* ── Order claim chip: which station is packing this order right now ── */
+.chip-claimed { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }

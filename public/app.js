@@ -1554,6 +1554,7 @@
 
       // Chips under order number
       const chips = [
+        ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
         ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
         ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill</span>` : '',
@@ -1704,10 +1705,23 @@
   }
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
-  function openScanOverlay(orderNumber) {
+  async function openScanOverlay(orderNumber) {
     if (!currentUser) { requireLogin(() => openScanOverlay(orderNumber)); return; }
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
     if (!ord) return;
+    // One packer per order: claim it before opening. If another station holds
+    // it, the packer must explicitly take over (audit-logged) or back off.
+    try {
+      const r = await fetch('/api/scan/claim', { method: 'POST', headers: hdrs(), body: JSON.stringify({ orderNumber }) });
+      if (r.status === 409) {
+        const d = await r.json();
+        const mins = d.claimedAt ? Math.max(1, Math.round((Date.now() - new Date(d.claimedAt)) / 60000)) : null;
+        const ok = confirm(`⚠ Order ${orderNumber} is being packed by ${d.claimedBy}${mins ? ` (active ${mins} min ago)` : ''} at another station.\n\nTake over this order? Only do this if that station has genuinely stopped.`);
+        if (!ok) return;
+        const f = await fetch('/api/scan/claim', { method: 'POST', headers: hdrs(), body: JSON.stringify({ orderNumber, force: true }) });
+        if (!f.ok) { alert((await f.json()).error || 'Could not take over the order.'); return; }
+      }
+    } catch {} // network hiccup — proceed; every scan re-checks the claim server-side
     activeOrder = ord;
     // Show/hide the waybill/label PDF button in the scan header
     const waybillBtn = document.getElementById('scanWaybillPdfBtn');
@@ -1946,6 +1960,10 @@
         method: 'POST', headers: hdrs(),
         body: JSON.stringify({ orderNumber: activeOrder.order_number }),
       });
+      fetch('/api/scan/release', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      }).catch(() => {});
     } catch {}
     closeScanOverlay();
     await refreshOrders();
