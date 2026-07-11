@@ -2656,7 +2656,7 @@ async function adminDeleteOrder(id){
 }
 
 // ── STAFF AUTH & ROLE-BASED ACCESS ───────────────────────────────────────────
-const ADMIN_ONLY_NAV = ['nav-connections','nav-synclog','nav-admin','nav-client-dash'];
+const ADMIN_ONLY_NAV = ['nav-connections','nav-synclog','nav-admin','nav-client-dash','nav-drivers'];
 
 function applyRoleNav(){
   const isAdmin = staffRole === 'admin';
@@ -5246,10 +5246,11 @@ let _pkWaybillPrinted = new Set(); // track which orders have had waybill opened
 // ── DRIVERS PAGE ──────────────────────────────────────────────────────────────
 let drvList=[],drvDeliveries=[],drvLocs=[],drvFilter='active',drvTimer=null,drvAssignSel=new Set();
 
+const drvAuth=()=>({'Authorization':`Bearer ${staffToken}`});
+
 async function initDrivers(){
-  // driver account setup is admin-only; warehouse staff can still view + assign
-  const addBtn=$('drv-add-btn');
-  if(addBtn)addBtn.style.display=staffRole==='admin'?'':'none';
+  // the entire driver section is admin-only
+  if(staffRole!=='admin'){switchPage('dashboard');return;}
   drvLoad();
   if(drvTimer)clearInterval(drvTimer);
   drvTimer=setInterval(()=>{if(currentPage==='drivers')drvLoad();},30000);
@@ -5258,10 +5259,10 @@ async function initDrivers(){
 async function drvLoad(){
   try{
     const [stats,drivers,deliveries,locs]=await Promise.all([
-      fetch(`${SERVER}/api/drivers/stats`).then(r=>r.json()),
-      fetch(`${SERVER}/api/drivers`).then(r=>r.json()),
-      fetch(`${SERVER}/api/deliveries?limit=300`).then(r=>r.json()),
-      fetch(`${SERVER}/api/drivers/locations`).then(r=>r.json()),
+      fetch(`${SERVER}/api/drivers/stats`,{headers:drvAuth()}).then(r=>r.json()),
+      fetch(`${SERVER}/api/drivers`,{headers:drvAuth()}).then(r=>r.json()),
+      fetch(`${SERVER}/api/deliveries?limit=300`,{headers:drvAuth()}).then(r=>r.json()),
+      fetch(`${SERVER}/api/drivers/locations`,{headers:drvAuth()}).then(r=>r.json()),
     ]);
     drvList=drivers;drvDeliveries=deliveries;drvLocs=locs;
     drvRenderMap();
@@ -5356,10 +5357,10 @@ function drvRenderDrivers(){
       <td style="text-align:center">${d.activeDeliveries||0}</td>
       <td>${drvAgo(d.lastSeenAt)}</td>
       <td>${loc?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; Map</a>`:'—'}</td>
-      <td style="text-align:right;white-space:nowrap">${staffRole==='admin'?`
+      <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-g btn-xs" title="Reset PIN" onclick="drvResetPin('${d.id}')">&#128273; PIN</button>
         <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>
-        <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>`:'<span style="color:#94a3b8;font-size:11px">Admin only</span>'}
+        <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>
       </td>
     </tr>`;
   }).join('');
@@ -5405,7 +5406,7 @@ async function drvViewPod(id){
   $('drv-pod-body').innerHTML='<div style="color:#94a3b8;padding:10px">Loading…</div>';
   $('drv-pod-mask').classList.add('on');
   try{
-    const r=await fetch(`${SERVER}/api/deliveries/${id}`);
+    const r=await fetch(`${SERVER}/api/deliveries/${id}`,{headers:drvAuth()});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Failed to load');
     $('drv-pod-oid').textContent=d.order_id;
@@ -5434,7 +5435,7 @@ function drvCloseModals(){$('drv-add-mask').classList.remove('on');$('drv-assign
 async function drvCreate(){
   $('drv-add-msg').style.display='none';
   try{
-    const r=await fetch(`${SERVER}/api/drivers`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({
+    const r=await fetch(`${SERVER}/api/drivers`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({
       name:$('drv-add-name').value,phone:$('drv-add-phone').value,
       vehicle:$('drv-add-vehicle').value,plate:$('drv-add-plate').value,pin:$('drv-add-pin').value,
     })});
@@ -5447,19 +5448,19 @@ async function drvCreate(){
 async function drvResetPin(id){
   const pin=prompt('New PIN for this driver (4-8 digits):');
   if(!pin)return;
-  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({pin})});
+  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({pin})});
   const body=await r.json();
   if(!r.ok)alert(body.error||'Failed to update PIN');
 }
 
 async function drvToggleActive(id,active){
-  await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({active:!!active})});
+  await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({active:!!active})});
   drvLoad();
 }
 
 async function drvDelete(id){
   if(!confirm('Delete this driver? Their delivery history rows are removed too.'))return;
-  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'DELETE',headers:{'Authorization':`Bearer ${staffToken}`}});
+  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'DELETE',headers:drvAuth()});
   const body=await r.json();
   if(!r.ok)alert(body.error||'Failed to delete driver');
   drvLoad();
@@ -5500,7 +5501,7 @@ async function drvAssign(){
   $('drv-assign-msg').style.display='none';
   if(!drvAssignSel.size){$('drv-assign-msg').textContent='Select at least one order.';$('drv-assign-msg').style.display='block';return;}
   try{
-    const r=await fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/assign`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orderIds:[...drvAssignSel]})});
+    const r=await fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/assign`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({orderIds:[...drvAssignSel]})});
     const body=await r.json();
     if(!r.ok)throw new Error(body.error||'Assignment failed');
     drvCloseModals();drvLoad();
@@ -5508,7 +5509,7 @@ async function drvAssign(){
 }
 
 async function drvRetry(id){
-  const r=await fetch(`${SERVER}/api/deliveries/${id}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'assigned'})});
+  const r=await fetch(`${SERVER}/api/deliveries/${id}/status`,{method:'PATCH',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({status:'assigned'})});
   const body=await r.json();
   if(!r.ok)alert(body.error||'Retry failed');
   drvLoad();
@@ -5516,7 +5517,7 @@ async function drvRetry(id){
 
 async function drvUnassign(id){
   if(!confirm('Remove this delivery assignment?'))return;
-  const r=await fetch(`${SERVER}/api/deliveries/${id}`,{method:'DELETE'});
+  const r=await fetch(`${SERVER}/api/deliveries/${id}`,{method:'DELETE',headers:drvAuth()});
   const body=await r.json();
   if(!r.ok)alert(body.error||'Failed');
   drvLoad();

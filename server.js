@@ -1874,6 +1874,9 @@ app.post('/api/picking/sessions/:id/cancel', withTenant, (req, res) => {
 });
 
 // ── Driver tracking ───────────────────────────────────────────────────────────
+// The whole staff-facing driver section is admin-only; the sole exception is
+// GET /api/deliveries/:id (proof-of-delivery retrieval from an order record),
+// which any logged-in staff member may use.
 
 // Driver-app auth: Bearer token issued by POST /api/driver/login
 function withDriver(req, res, next) {
@@ -1889,7 +1892,7 @@ function withDriver(req, res, next) {
 
 // — staff/admin side —
 
-app.get('/api/drivers', withTenant, (req, res) => {
+app.get('/api/drivers', withAdmin, withTenant, (req, res) => {
   res.json(req.ctx.drivers.listDrivers());
 });
 
@@ -1900,15 +1903,15 @@ app.post('/api/drivers', withAdmin, withTenant, (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.get('/api/drivers/locations', withTenant, (req, res) => {
+app.get('/api/drivers/locations', withAdmin, withTenant, (req, res) => {
   res.json(req.ctx.drivers.latestLocations());
 });
 
-app.get('/api/drivers/stats', withTenant, (req, res) => {
+app.get('/api/drivers/stats', withAdmin, withTenant, (req, res) => {
   res.json(req.ctx.drivers.stats());
 });
 
-app.get('/api/drivers/:id', withTenant, (req, res) => {
+app.get('/api/drivers/:id', withAdmin, withTenant, (req, res) => {
   const driver = req.ctx.drivers.getDriver(req.params.id);
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
   res.json({
@@ -1931,14 +1934,14 @@ app.delete('/api/drivers/:id', withAdmin, withTenant, (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.post('/api/drivers/:id/assign', withTenant, (req, res) => {
+app.post('/api/drivers/:id/assign', withAdmin, withTenant, (req, res) => {
   try {
     const { orderIds, assignedBy } = req.body || {};
     res.status(201).json(req.ctx.drivers.assign(req.params.id, orderIds, assignedBy || ''));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.get('/api/deliveries', withTenant, (req, res) => {
+app.get('/api/deliveries', withAdmin, withTenant, (req, res) => {
   const { driverId, status, active, limit } = req.query;
   res.json(req.ctx.drivers.listDeliveries({
     driverId, status, activeOnly: active === 'true', limit,
@@ -1946,20 +1949,20 @@ app.get('/api/deliveries', withTenant, (req, res) => {
 });
 
 // Full delivery record incl. proof-of-delivery signature/photo (list strips them)
-app.get('/api/deliveries/:id', withTenant, (req, res) => {
+app.get('/api/deliveries/:id', withStaff, withTenant, (req, res) => {
   const d = req.ctx.drivers.getDeliveryFull(req.params.id);
   if (!d) return res.status(404).json({ error: 'Delivery not found' });
   res.json(d);
 });
 
-app.patch('/api/deliveries/:id/status', withTenant, (req, res) => {
+app.patch('/api/deliveries/:id/status', withAdmin, withTenant, (req, res) => {
   try {
     const { status, reason, podName, podNote } = req.body || {};
     res.json(req.ctx.drivers.updateStatus(req.params.id, status, { reason, podName, podNote }));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.delete('/api/deliveries/:id', withTenant, (req, res) => {
+app.delete('/api/deliveries/:id', withAdmin, withTenant, (req, res) => {
   try {
     req.ctx.drivers.unassign(req.params.id);
     res.json({ ok: true });
