@@ -1988,8 +1988,17 @@ app.post('/api/orders/:id/suggest-driver', withAdmin, withTenant, async (req, re
 // destinations first; may take a few seconds on first run per address)
 app.post('/api/drivers/:id/plan-route', withAdmin, withTenant, async (req, res) => {
   try {
-    const { startLat, startLng } = req.body || {};
-    res.json(await req.ctx.drivers.planRoute(req.params.id, { startLat, startLng }));
+    const { startLat, startLng, force } = req.body || {};
+    res.json(await req.ctx.drivers.planRoute(req.params.id, { startLat, startLng, force: !!force }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Save a dispatcher-defined stop order as the driver's fixed schedule —
+// it holds until explicitly amended (re-saved or force re-optimized)
+app.put('/api/drivers/:id/route-order', withAdmin, withTenant, async (req, res) => {
+  try {
+    req.ctx.drivers.setRouteOrder(req.params.id, (req.body || {}).deliveryIds);
+    res.json(await req.ctx.drivers.planRoute(req.params.id, {}));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 

@@ -2186,8 +2186,10 @@ a:hover{text-decoration:underline}
         <div id="drv-route-stops"></div>
       </div>
       <div class="drv-modal-f">
+        <span id="drv-route-dirty" style="margin-right:auto;font-size:11.5px;color:#d97706;font-weight:700;display:none">Order changed — save to make it the fixed schedule</span>
         <button class="btn btn-g" onclick="drvCloseModals()">Close</button>
-        <button class="btn btn-s" id="drv-route-replan" onclick="drvPlanRoute(drvRouteDriverId)">&#8635; Re-optimize</button>
+        <button class="btn btn-s" id="drv-route-replan" onclick="drvReoptimize()">&#8635; Re-optimize</button>
+        <button class="btn btn-p" id="drv-route-savefix" onclick="drvRouteSaveFixed()">&#128274; Save as fixed order</button>
       </div>
     </div>
   </div>
@@ -5460,7 +5462,7 @@ function drvRenderDrivers(){
       <td>${drvAgo(d.lastSeenAt)}</td>
       <td>${loc?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; Map</a>`:'—'}</td>
       <td style="text-align:right;white-space:nowrap">
-        ${d.activeDeliveries>0?`<button class="btn btn-s btn-xs" onclick="drvPlanRoute('${d.id}')">&#128506; Route</button>`:''}
+        ${d.activeDeliveries>0?`<button class="btn btn-s btn-xs" onclick="drvPlanRoute('${d.id}')">&#128506; Route${d.route_fixed?' &#128274;':''}</button>`:''}
         <button class="btn btn-g btn-xs" onclick="drvOpenEdit('${d.id}')">&#9998; Edit</button>
         <button class="btn btn-g btn-xs" title="Reset PIN" onclick="drvResetPin('${d.id}')">&#128273; PIN</button>
         <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>${staffRole==='master'?`
@@ -5755,17 +5757,65 @@ async function drvViewPod(id){
 }
 
 // — route planning —
-let drvRouteDriverId=null,drvRouteMap=null,drvRouteLayers=[];
+let drvRouteDriverId=null,drvRouteMap=null,drvRouteLayers=[],drvRoutePlan=null,drvRouteDirty=false;
 
-async function drvPlanRoute(id){
+const drvHavKm=(a,b)=>{const r=x=>x*Math.PI/180,dl=r(b.lat-a.lat),dg=r(b.lng-a.lng);
+  const s=Math.sin(dl/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dg/2)**2;
+  return 2*6371*Math.asin(Math.sqrt(s));};
+
+// recompute legs/total client-side after a manual reorder
+function drvRouteRecalc(plan){
+  let prev=plan.start,total=0;
+  plan.stops.forEach((s,i)=>{
+    s.seq=i+1;
+    s.legKm=prev?+drvHavKm(prev,s).toFixed(2):0;
+    total+=s.legKm;prev=s;
+  });
+  plan.totalKm=+total.toFixed(1);
+  plan.estMin=Math.round(total/25*60+plan.stops.length*6);
+}
+
+function drvRouteMove(idx,dir){
+  const p=drvRoutePlan;if(!p)return;
+  const j=idx+dir;
+  if(j<0||j>=p.stops.length)return;
+  [p.stops[idx],p.stops[j]]=[p.stops[j],p.stops[idx]];
+  drvRouteRecalc(p);
+  drvRouteDirty=true;
+  drvRenderRoutePlan(p);
+}
+
+async function drvRouteSaveFixed(){
+  const p=drvRoutePlan;if(!p)return;
+  try{
+    const r=await fetch(`${SERVER}/api/drivers/${drvRouteDriverId}/route-order`,{method:'PUT',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({deliveryIds:p.stops.map(s=>s.deliveryId)})});
+    const plan=await r.json();
+    if(!r.ok)throw new Error(plan.error||'Could not save fixed order');
+    drvRouteDirty=false;
+    drvRenderRoutePlan(plan);
+    drvLoad();
+  }catch(e){alert(e.message);}
+}
+
+function drvReoptimize(){
+  if(drvRoutePlan&&drvRoutePlan.fixed){
+    if(!confirm('This driver runs a FIXED schedule. Re-optimizing replaces the fixed order with an auto-optimized one (this is the "amend" action). Continue?'))return;
+    drvPlanRoute(drvRouteDriverId,true);
+  }else{
+    drvPlanRoute(drvRouteDriverId,true);
+  }
+}
+
+async function drvPlanRoute(id,force){
   drvRouteDriverId=id;
+  drvRouteDirty=false;
   const d=drvList.find(x=>x.id===id);
   $('drv-route-name').textContent=d?d.name:id;
-  $('drv-route-summary').innerHTML='<span style="color:#94a3b8">Optimizing route… (first run geocodes each address, ~1s per stop)</span>';
+  $('drv-route-summary').innerHTML='<span style="color:#94a3b8">Planning route… (first run geocodes each address, ~1s per stop)</span>';
   $('drv-route-stops').innerHTML='';
   $('drv-route-mask').classList.add('on');
   try{
-    const r=await fetch(`${SERVER}/api/drivers/${id}/plan-route`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:'{}'});
+    const r=await fetch(`${SERVER}/api/drivers/${id}/plan-route`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify({force:!!force})});
     const plan=await r.json();
     if(!r.ok)throw new Error(plan.error||'Route planning failed');
     drvRenderRoutePlan(plan);
@@ -5774,19 +5824,28 @@ async function drvPlanRoute(id){
 }
 
 async function drvRenderRoutePlan(plan){
+  drvRoutePlan=plan;
   const startLbl={manual:'set manually',driver_gps:"driver's live GPS position",first_stop:'first stop (no GPS fix yet)'}[plan.start?.source]||'';
   const estTxt=plan.estMin>90?(plan.estMin/60).toFixed(1)+' h':plan.estMin+' min';
+  $('drv-route-dirty').style.display=drvRouteDirty?'':'none';
   $('drv-route-summary').innerHTML=
-    `<b>${plan.stops.length}</b> stop(s) &middot; <b>${plan.totalKm} km</b> (straight-line) &middot; est. <b>${estTxt}</b> incl. handover time`
+    (plan.fixed?`<span style="background:#ede9fe;color:#5b21b6;font-size:10.5px;font-weight:800;padding:2px 10px;border-radius:11px;letter-spacing:.4px;margin-right:8px">&#128274; FIXED SCHEDULE</span>`:
+                `<span style="background:#f1f5f9;color:#475569;font-size:10.5px;font-weight:800;padding:2px 10px;border-radius:11px;letter-spacing:.4px;margin-right:8px">AUTO-OPTIMIZED</span>`)
+    +`<b>${plan.stops.length}</b> stop(s) &middot; <b>${plan.totalKm} km</b> (straight-line) &middot; est. <b>${estTxt}</b> incl. handover time`
     +(plan.start?` &middot; start: ${startLbl}`:'')
+    +(plan.fixed?`<div style="color:#5b21b6;font-size:11px;margin-top:4px">Dispatcher-defined order — new jobs splice in without moving your standing stops. Use Re-optimize to amend.</div>`:'')
     +(plan.unlocated.length?`<div style="color:#d97706;font-weight:600;margin-top:4px">&#9888; ${plan.unlocated.length} stop(s) could not be located on the map (address not found) — they are appended to the end of the sequence.</div>`:'');
 
-  // stop list
+  // stop list with manual reorder controls
   $('drv-route-stops').innerHTML=[
-    ...plan.stops.map(s=>`<div class="drv-rec" style="align-items:center">
+    ...plan.stops.map((s,i)=>`<div class="drv-rec" style="align-items:center">
       <span style="flex-shrink:0;width:24px;height:24px;border-radius:50%;background:#1d4ed8;color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center">${s.seq}</span>
       <span style="flex:1"><b>${esc(s.orderId)}</b> — ${esc(s.recipient||'')}<div style="font-size:11px;color:#64748b">${esc(s.address)}</div></span>
       <span style="font-size:11px;color:#64748b;white-space:nowrap">+${s.legKm} km</span>
+      <span style="display:flex;flex-direction:column;gap:2px">
+        <button class="btn btn-g btn-xs" style="padding:1px 7px;line-height:1.2" ${i===0?'disabled':''} onclick="drvRouteMove(${i},-1)" title="Move up">&#9650;</button>
+        <button class="btn btn-g btn-xs" style="padding:1px 7px;line-height:1.2" ${i===plan.stops.length-1?'disabled':''} onclick="drvRouteMove(${i},1)" title="Move down">&#9660;</button>
+      </span>
     </div>`),
     ...plan.unlocated.map(s=>`<div class="drv-rec" style="align-items:center;opacity:.75">
       <span style="flex-shrink:0;width:24px;height:24px;border-radius:50%;background:#94a3b8;color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center">${s.seq}</span>
@@ -5959,6 +6018,7 @@ function drvCloseModals(){
   $('drv-add-mask').classList.remove('on');$('drv-assign-mask').classList.remove('on');$('drv-pod-mask').classList.remove('on');
   $('drv-route-mask').classList.remove('on');
   if(drvRouteMap){drvRouteMap.remove();drvRouteMap=null;}
+  drvRoutePlan=null;drvRouteDirty=false;
 }
 
 async function drvCreate(){
