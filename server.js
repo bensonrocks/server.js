@@ -1893,7 +1893,8 @@ app.get('/api/drivers', withTenant, (req, res) => {
   res.json(req.ctx.drivers.listDrivers());
 });
 
-app.post('/api/drivers', withTenant, (req, res) => {
+// Driver account management is admin-only
+app.post('/api/drivers', withAdmin, withTenant, (req, res) => {
   try {
     res.status(201).json(req.ctx.drivers.createDriver(req.body || {}));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
@@ -1917,13 +1918,13 @@ app.get('/api/drivers/:id', withTenant, (req, res) => {
   });
 });
 
-app.patch('/api/drivers/:id', withTenant, (req, res) => {
+app.patch('/api/drivers/:id', withAdmin, withTenant, (req, res) => {
   try {
     res.json(req.ctx.drivers.updateDriver(req.params.id, req.body || {}));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.delete('/api/drivers/:id', withTenant, (req, res) => {
+app.delete('/api/drivers/:id', withAdmin, withTenant, (req, res) => {
   try {
     req.ctx.drivers.deleteDriver(req.params.id);
     res.json({ ok: true });

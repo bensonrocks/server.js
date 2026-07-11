@@ -1343,7 +1343,7 @@ a:hover{text-decoration:underline}
             <a class="btn btn-g btn-sm" href="/driver.html" target="_blank" style="text-decoration:none">&#128241; Driver App</a>
             <a class="btn btn-g btn-sm" href="/track.html" target="_blank" style="text-decoration:none">&#128205; Tracking Page</a>
             <button class="btn btn-s btn-sm" onclick="drvOpenAssign()">&#128230; Assign Orders</button>
-            <button class="btn btn-p btn-sm" onclick="drvOpenAdd()">&#65291; Add Driver</button>
+            <button class="btn btn-p btn-sm" id="drv-add-btn" onclick="drvOpenAdd()">&#65291; Add Driver</button>
           </div>
         </div>
 
@@ -5247,6 +5247,9 @@ let _pkWaybillPrinted = new Set(); // track which orders have had waybill opened
 let drvList=[],drvDeliveries=[],drvLocs=[],drvFilter='active',drvTimer=null,drvAssignSel=new Set();
 
 async function initDrivers(){
+  // driver account setup is admin-only; warehouse staff can still view + assign
+  const addBtn=$('drv-add-btn');
+  if(addBtn)addBtn.style.display=staffRole==='admin'?'':'none';
   drvLoad();
   if(drvTimer)clearInterval(drvTimer);
   drvTimer=setInterval(()=>{if(currentPage==='drivers')drvLoad();},30000);
@@ -5353,10 +5356,10 @@ function drvRenderDrivers(){
       <td style="text-align:center">${d.activeDeliveries||0}</td>
       <td>${drvAgo(d.lastSeenAt)}</td>
       <td>${loc?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; Map</a>`:'—'}</td>
-      <td style="text-align:right;white-space:nowrap">
+      <td style="text-align:right;white-space:nowrap">${staffRole==='admin'?`
         <button class="btn btn-g btn-xs" title="Reset PIN" onclick="drvResetPin('${d.id}')">&#128273; PIN</button>
         <button class="btn btn-g btn-xs" onclick="drvToggleActive('${d.id}',${d.active?0:1})">${d.active?'Deactivate':'Activate'}</button>
-        <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>
+        <button class="btn btn-g btn-xs" style="color:#dc2626" onclick="drvDelete('${d.id}')">&#128465;</button>`:'<span style="color:#94a3b8;font-size:11px">Admin only</span>'}
       </td>
     </tr>`;
   }).join('');
@@ -5431,7 +5434,7 @@ function drvCloseModals(){$('drv-add-mask').classList.remove('on');$('drv-assign
 async function drvCreate(){
   $('drv-add-msg').style.display='none';
   try{
-    const r=await fetch(`${SERVER}/api/drivers`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    const r=await fetch(`${SERVER}/api/drivers`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({
       name:$('drv-add-name').value,phone:$('drv-add-phone').value,
       vehicle:$('drv-add-vehicle').value,plate:$('drv-add-plate').value,pin:$('drv-add-pin').value,
     })});
@@ -5444,19 +5447,19 @@ async function drvCreate(){
 async function drvResetPin(id){
   const pin=prompt('New PIN for this driver (4-8 digits):');
   if(!pin)return;
-  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({pin})});
   const body=await r.json();
   if(!r.ok)alert(body.error||'Failed to update PIN');
 }
 
 async function drvToggleActive(id,active){
-  await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({active:!!active})});
+  await fetch(`${SERVER}/api/drivers/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${staffToken}`},body:JSON.stringify({active:!!active})});
   drvLoad();
 }
 
 async function drvDelete(id){
   if(!confirm('Delete this driver? Their delivery history rows are removed too.'))return;
-  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'DELETE'});
+  const r=await fetch(`${SERVER}/api/drivers/${id}`,{method:'DELETE',headers:{'Authorization':`Bearer ${staffToken}`}});
   const body=await r.json();
   if(!r.ok)alert(body.error||'Failed to delete driver');
   drvLoad();
