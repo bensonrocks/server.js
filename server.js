@@ -1967,13 +1967,21 @@ app.delete('/api/drivers/:id', withMaster, withTenant, (req, res) => {
 
 app.post('/api/drivers/:id/assign', withAdmin, withTenant, (req, res) => {
   try {
-    const { orderIds, assignedBy, loads, force } = req.body || {};
+    const { orderIds, assignedBy, loads, force, note } = req.body || {};
     res.status(201).json(req.ctx.drivers.assign(req.params.id, orderIds, assignedBy || req.staffUsername || '', {
-      loads: loads || {}, force: !!force,
+      loads: loads || {}, force: !!force, note: note || '',
     }));
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message, capacityExceeded: !!e.capacityExceeded });
   }
+});
+
+// Rank drivers for inserting one new order into their current runs —
+// cheapest-detour insertion with capacity headroom and a written justification
+app.post('/api/orders/:id/suggest-driver', withAdmin, withTenant, async (req, res) => {
+  try {
+    res.json(await req.ctx.drivers.suggestInsertion(req.params.id));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Optimize the visiting order of a driver's active jobs (geocodes missing

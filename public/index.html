@@ -2209,7 +2209,13 @@ a:hover{text-decoration:underline}
     <div class="drv-modal" style="max-width:560px">
       <div class="drv-modal-h">&#128230; Assign Orders to Driver</div>
       <div class="drv-modal-b">
-        <div class="drv-fld"><label>Driver</label><select id="drv-assign-driver" onchange="drvAssignMeter()"></select></div>
+        <div class="drv-fld"><label>Driver</label>
+          <div style="display:flex;gap:8px">
+            <select id="drv-assign-driver" onchange="drvAssignMeter()" style="flex:1"></select>
+            <button class="btn btn-s btn-sm" id="drv-suggest-btn" style="display:none;white-space:nowrap" onclick="drvSuggest()">&#128161; Suggest driver</button>
+          </div>
+        </div>
+        <div id="drv-suggest-panel" style="display:none;margin-bottom:10px"></div>
         <div id="drv-assign-meter" style="margin-bottom:10px"></div>
         <div class="drv-fld" style="margin-bottom:6px"><label>Unassigned orders (packed / shipped first) &mdash; enter job size for the capacity check</label></div>
         <div id="drv-assign-list" style="max-height:290px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
@@ -5487,7 +5493,7 @@ function drvRenderDeliveries(){
       acts=`<button class="btn btn-s btn-xs" onclick="drvViewPod('${d.id}')">&#128203; POD${d.hasSignature?' &#9997;':''}${d.hasPhoto?' &#128247;':''}</button>`;
     const ld=drvLoadText({m3:d.load_m3||0,kg:d.load_kg||0,pallets:d.load_pallets||0});
     return `<tr>
-      <td><strong>${esc(d.order_id)}</strong>${ld?`<div style="font-size:10.5px;color:#94a3b8">${ld}</div>`:''}</td>
+      <td><strong>${esc(d.order_id)}</strong>${ld?`<div style="font-size:10.5px;color:#94a3b8">${ld}</div>`:''}${d.assign_note?`<div style="font-size:10px;color:#2563eb;cursor:help" title="${esc(d.assign_note)}">&#128203; insertion on record</div>`:''}</td>
       <td>${esc(o.recipient||'—')}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o.address||'')}">${esc(o.address||'—')}</td>
       <td>${esc(d.driverName||d.driver_id)}</td>
@@ -5738,6 +5744,7 @@ async function drvViewPod(id){
         <tr><td style="padding:4px 8px;color:#64748b">Received by</td><td style="padding:4px 8px;font-weight:600">${esc(d.pod_name||'—')}</td></tr>
         <tr><td style="padding:4px 8px;color:#64748b">Note</td><td style="padding:4px 8px">${esc(d.pod_note||'—')}</td></tr>
         <tr><td style="padding:4px 8px;color:#64748b">Location</td><td style="padding:4px 8px">${geo}</td></tr>
+        ${d.assign_note?`<tr><td style="padding:4px 8px;color:#64748b">Assignment record</td><td style="padding:4px 8px;font-size:11.5px">${esc(d.assign_note)}</td></tr>`:''}
       </table>
       ${d.pod_signature?`<div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Customer signature</div>
         <img src="${d.pod_signature}" alt="signature" style="width:100%;max-height:150px;object-fit:contain;border:1px solid #e2e8f0;border-radius:9px;background:#f8fafc;margin-bottom:12px">`:''}
@@ -5865,6 +5872,7 @@ async function drvPodPdf(){
       ['Handover location', (d.pod_lat!=null&&d.pod_lng!=null)?`${d.pod_lat.toFixed(5)}, ${d.pod_lng.toFixed(5)}`:'—'],
       ['Client / channel', [o.clientName,o.channel].filter(Boolean).join('  ·  ')||'—'],
       ['Items / total', `${o.itemCount??'—'} item(s)  ·  ${o.currency||''} ${o.total!=null?Number(o.total).toFixed(2):'—'}`],
+      ...(d.assign_note?[['Assignment record', d.assign_note]]:[]),
     ];
     doc.setFontSize(9.5);
     rows.forEach(([k,v])=>{
@@ -6000,6 +6008,9 @@ async function drvDelete(id){
 // — assignment —
 async function drvOpenAssign(){
   drvAssignSel=new Set();
+  drvAssignNote='';drvSuggestData=null;
+  $('drv-suggest-panel').style.display='none';$('drv-suggest-panel').innerHTML='';
+  $('drv-suggest-btn').style.display='none';
   $('drv-assign-msg').style.display='none';
   const activeDrivers=drvList.filter(d=>d.active);
   if(!activeDrivers.length){alert('Add an active driver first.');return;}
@@ -6033,7 +6044,47 @@ async function drvOpenAssign(){
 }
 
 function drvToggleOrder(id,on){if(on)drvAssignSel.add(id);else drvAssignSel.delete(id);drvUpdateAssignCount();drvAssignMeter();}
-function drvUpdateAssignCount(){$('drv-assign-count').textContent=drvAssignSel.size?`${drvAssignSel.size} order(s) selected`:'';}
+function drvUpdateAssignCount(){
+  $('drv-assign-count').textContent=drvAssignSel.size?`${drvAssignSel.size} order(s) selected`:'';
+  // insertion suggestions work on exactly one order at a time
+  $('drv-suggest-btn').style.display=drvAssignSel.size===1?'':'none';
+  if(drvAssignSel.size!==1){$('drv-suggest-panel').style.display='none';drvAssignNote='';}
+}
+
+// — mid-schedule insertion suggestions —
+let drvAssignNote='',drvSuggestData=null;
+
+async function drvSuggest(){
+  const orderId=[...drvAssignSel][0];
+  const panel=$('drv-suggest-panel');
+  panel.style.display='';
+  panel.innerHTML='<div style="border:1px solid #eef2f7;border-radius:8px;padding:10px;font-size:12px;color:#94a3b8">Evaluating each driver’s current run…</div>';
+  try{
+    const r=await fetch(`${SERVER}/api/orders/${encodeURIComponent(orderId)}/suggest-driver`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:'{}'});
+    const data=await r.json();
+    if(!r.ok)throw new Error(data.error||'Suggestion failed');
+    drvSuggestData=data;
+    const top=data.candidates.slice(0,3);
+    panel.innerHTML=`<div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;padding:10px">
+      <div style="font-size:10.5px;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.4px;margin-bottom:7px">Best insertion for ${esc(orderId)}${data.located?'':' — address not locatable, ranked by workload/capacity only'}</div>
+      ${top.map((c,i)=>`<div style="display:flex;align-items:center;gap:9px;padding:6px 0;border-top:${i?'1px solid #dbeafe':'none'};font-size:12px">
+        <span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:${i===0?'#1d4ed8':'#93c5fd'};color:#fff;font-size:10.5px;font-weight:800;display:flex;align-items:center;justify-content:center">${i+1}</span>
+        <span style="flex:1"><b>${esc(c.driverName)}</b>${c.vehicle?` <span style="color:#64748b">(${esc(c.vehicle)})</span>`:''}${c.capacityFits?'':' <span style="color:#dc2626;font-weight:700">over capacity</span>'}
+          <div style="font-size:11px;color:#475569">${esc(c.justification)}</div></span>
+        <button class="btn btn-p btn-xs" onclick="drvUseSuggestion(${i})">Use</button>
+      </div>`).join('')}
+    </div>`;
+  }catch(e){panel.innerHTML=`<div style="border:1px solid #fecaca;background:#fff5f5;border-radius:8px;padding:10px;font-size:12px;color:#991b1b">${esc(e.message)}</div>`;}
+}
+
+function drvUseSuggestion(i){
+  const c=drvSuggestData&&drvSuggestData.candidates[i];
+  if(!c)return;
+  $('drv-assign-driver').value=c.driverId;
+  drvAssignNote=`Inserted into run by dispatch suggestion: ${c.justification}`;
+  drvAssignMeter();
+  $('drv-suggest-panel').innerHTML=`<div style="border:1px solid #dcfce7;background:#f0fdf4;border-radius:8px;padding:9px 11px;font-size:12px;color:#166534"><b>${esc(c.driverName)}</b> selected — the justification below will be recorded on the job:<div style="font-size:11px;margin-top:3px;color:#15803d">${esc(c.justification)}</div></div>`;
+}
 
 // job sizes typed into the modal for the currently selected orders
 function drvAssignLoads(){
@@ -6075,7 +6126,7 @@ function drvAssignMeter(){
 async function drvAssign(){
   $('drv-assign-msg').style.display='none';
   if(!drvAssignSel.size){$('drv-assign-msg').textContent='Select at least one order.';$('drv-assign-msg').style.display='block';return;}
-  const payload={orderIds:[...drvAssignSel],loads:drvAssignLoads()};
+  const payload={orderIds:[...drvAssignSel],loads:drvAssignLoads(),note:drvAssignNote||''};
   try{
     let r=await fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/assign`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:JSON.stringify(payload)});
     let body=await r.json();
@@ -6085,6 +6136,11 @@ async function drvAssign(){
       body=await r.json();
     }
     if(!r.ok)throw new Error(body.error||'Assignment failed');
+    // if this was a suggested insertion, quietly re-sequence the driver's run
+    if(drvAssignNote){
+      fetch(`${SERVER}/api/drivers/${$('drv-assign-driver').value}/plan-route`,{method:'POST',headers:{'Content-Type':'application/json',...drvAuth()},body:'{}'}).catch(()=>{});
+    }
+    drvAssignNote='';
     drvCloseModals();drvLoad();
   }catch(e){$('drv-assign-msg').textContent=e.message;$('drv-assign-msg').style.display='block';}
 }
