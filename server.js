@@ -3153,7 +3153,10 @@ function clientInfo(req) {
 app.post('/api/auth/login', (req, res) => {
   const { id, password } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
-  const user = readUsers().find(u => u.id === String(id).trim());
+  // Case-insensitive ID match — "MASTER", "Master" and "master" are the same
+  // account (passwords remain case-sensitive)
+  const idNorm = String(id).trim().toLowerCase();
+  const user = readUsers().find(u => String(u.id).trim().toLowerCase() === idNorm);
   if (!user || hashPass(password, user.salt) !== user.passwordHash) {
     logAudit('login_failed', { user: String(id).trim().slice(0, 60), ...clientInfo(req) });
     return res.status(401).json({ error: 'Invalid credentials' });
