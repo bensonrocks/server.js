@@ -2183,6 +2183,7 @@ a:hover{text-decoration:underline}
       <div class="drv-modal-b" id="drv-pod-body" style="font-size:13px"></div>
       <div class="drv-modal-f">
         <button class="btn btn-g" onclick="drvCloseModals()">Close</button>
+        <button class="btn btn-p" id="drv-pod-pdf-btn" style="display:none" onclick="drvPodPdf()">&#8681; Download PDF</button>
       </div>
     </div>
   </div>
@@ -5697,7 +5698,10 @@ function drvRenderInsights(){
 }
 
 // — proof-of-delivery viewer —
+let drvPodData=null;
 async function drvViewPod(id){
+  drvPodData=null;
+  $('drv-pod-pdf-btn').style.display='none';
   $('drv-pod-oid').textContent='…';
   $('drv-pod-body').innerHTML='<div style="color:#94a3b8;padding:10px">Loading…</div>';
   $('drv-pod-mask').classList.add('on');
@@ -5705,6 +5709,8 @@ async function drvViewPod(id){
     const r=await fetch(`${SERVER}/api/deliveries/${id}`,{headers:drvAuth()});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Failed to load');
+    drvPodData=d;
+    $('drv-pod-pdf-btn').style.display='';
     $('drv-pod-oid').textContent=d.order_id;
     const when=d.delivered_at?new Date(d.delivered_at.replace(' ','T')+'Z').toLocaleString():'—';
     const geo=(d.pod_lat!=null&&d.pod_lng!=null)?`<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${d.pod_lat},${d.pod_lng}" style="color:#2563eb;font-weight:600;text-decoration:none">&#128205; ${d.pod_lat.toFixed(5)}, ${d.pod_lng.toFixed(5)}</a>`:'—';
@@ -5722,6 +5728,112 @@ async function drvViewPod(id){
         <img src="${d.pod_photo}" alt="handover photo" style="width:100%;border-radius:9px;border:1px solid #e2e8f0">`:''}
       ${!d.pod_signature&&!d.pod_photo?'<div style="color:#94a3b8;font-size:12px">No signature or photo was captured for this delivery.</div>':''}`;
   }catch(e){$('drv-pod-body').innerHTML=`<div style="color:#dc2626;padding:10px">${esc(e.message)}</div>`;}
+}
+
+// — POD PDF export —
+let _jspdfLoading=null;
+function drvLoadJsPdf(){
+  if(window.jspdf)return Promise.resolve();
+  if(_jspdfLoading)return _jspdfLoading;
+  _jspdfLoading=new Promise((ok,bad)=>{
+    const s=document.createElement('script');
+    s.src='/vendor/jspdf.umd.min.js';
+    s.onload=ok;s.onerror=()=>bad(new Error('Could not load PDF library'));
+    document.head.appendChild(s);
+  });
+  return _jspdfLoading;
+}
+
+function _imgSize(dataUrl){
+  return new Promise(ok=>{
+    const im=new Image();
+    im.onload=()=>ok({w:im.naturalWidth,h:im.naturalHeight});
+    im.onerror=()=>ok(null);
+    im.src=dataUrl;
+  });
+}
+
+async function drvPodPdf(){
+  const d=drvPodData;if(!d)return;
+  try{
+    await drvLoadJsPdf();
+    const { jsPDF }=window.jspdf;
+    const doc=new jsPDF({unit:'mm',format:'a4'});
+    const W=210,M=16;let y=0;
+
+    // header band
+    doc.setFillColor(15,23,42);doc.rect(0,0,W,26,'F');
+    doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(15);
+    doc.text('PROOF OF DELIVERY',M,11);
+    doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(148,163,184);
+    doc.text('IdealOne OMS — United Logistics & Distribution',M,18);
+    doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(12);
+    doc.text(String(d.order_id),W-M,11,{align:'right'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');doc.setTextColor(148,163,184);
+    doc.text('Delivery '+d.id,W-M,17,{align:'right'});
+    y=36;
+
+    const o=d.order||{},drv=d.driver||{};
+    const fmtDt=s=>s?new Date(s.includes('T')?s:s.replace(' ','T')+'Z').toLocaleString():'—';
+    const rows=[
+      ['Status', (d.status||'').replace('_',' ').toUpperCase()],
+      ['Delivered at', fmtDt(d.delivered_at)],
+      ['Recipient (order)', o.recipient||'—'],
+      ['Delivery address', o.address||'—'],
+      ['Received by', d.pod_name||'—'],
+      ['Note', d.pod_note||'—'],
+      ['Driver', [drv.name,drv.vehicle,drv.plate].filter(Boolean).join('  ·  ')||d.driverName||'—'],
+      ['Handover location', (d.pod_lat!=null&&d.pod_lng!=null)?`${d.pod_lat.toFixed(5)}, ${d.pod_lng.toFixed(5)}`:'—'],
+      ['Client / channel', [o.clientName,o.channel].filter(Boolean).join('  ·  ')||'—'],
+      ['Items / total', `${o.itemCount??'—'} item(s)  ·  ${o.currency||''} ${o.total!=null?Number(o.total).toFixed(2):'—'}`],
+    ];
+    doc.setFontSize(9.5);
+    rows.forEach(([k,v])=>{
+      doc.setTextColor(100,116,139);doc.setFont('helvetica','normal');
+      doc.text(k,M,y);
+      doc.setTextColor(15,23,42);doc.setFont('helvetica','bold');
+      const lines=doc.splitTextToSize(String(v),W-M-58);
+      doc.text(lines,M+52,y);
+      y+=6.2*lines.length;
+    });
+    y+=4;
+
+    // signature
+    if(d.pod_signature){
+      doc.setTextColor(100,116,139);doc.setFont('helvetica','bold');doc.setFontSize(8.5);
+      doc.text('CUSTOMER SIGNATURE',M,y);y+=3;
+      const boxW=W-2*M,boxH=34;
+      doc.setDrawColor(226,232,240);doc.setFillColor(248,250,252);
+      doc.roundedRect(M,y,boxW,boxH,2,2,'FD');
+      const sz=await _imgSize(d.pod_signature);
+      if(sz){
+        const s=Math.min((boxW-8)/sz.w,(boxH-6)/sz.h);
+        const iw=sz.w*s,ih=sz.h*s;
+        try{doc.addImage(d.pod_signature,'PNG',M+(boxW-iw)/2,y+(boxH-ih)/2,iw,ih);}catch(_){}
+      }
+      y+=boxH+8;
+    }
+
+    // handover photo
+    if(d.pod_photo){
+      doc.setTextColor(100,116,139);doc.setFont('helvetica','bold');doc.setFontSize(8.5);
+      doc.text('HANDOVER PHOTO',M,y);y+=3;
+      const sz=await _imgSize(d.pod_photo);
+      if(sz){
+        const maxW=W-2*M,maxH=Math.max(30,270-y);
+        const s=Math.min(maxW/sz.w,maxH/sz.h,1.5);
+        const iw=sz.w*s,ih=sz.h*s;
+        try{doc.addImage(d.pod_photo,'JPEG',M,y,iw,ih);y+=ih+6;}catch(_){y+=4;}
+      }
+    }
+
+    // footer
+    doc.setDrawColor(226,232,240);doc.line(M,285,W-M,285);
+    doc.setTextColor(148,163,184);doc.setFont('helvetica','normal');doc.setFontSize(7.5);
+    doc.text(`Generated ${new Date().toLocaleString()}  ·  Delivery ${d.id}  ·  This document was produced from the IdealOne OMS delivery record.`,M,290);
+
+    doc.save(`POD-${d.order_id}.pdf`);
+  }catch(e){alert('PDF failed: '+e.message);}
 }
 
 // — driver CRUD —
