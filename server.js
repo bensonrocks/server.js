@@ -419,7 +419,8 @@ app.post('/api/hunter/track', requireHunterStaffAPI, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/hunter/activity', requireHunterStaffAPI, (req, res) => {
+// Master (admin) only — regular staff cannot see the login trail.
+app.get('/api/hunter/activity', requireHunterStaffAPI, requireHunterAdmin, (req, res) => {
   res.json({ ok: true, sessions: hunterStaff.sessions() });
 });
 

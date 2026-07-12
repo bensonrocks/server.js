@@ -161,7 +161,7 @@
   <div class="tabs">
     <button class="tab active" data-pane="pipeline" onclick="showTab(this)">Pipeline</button>
     <button class="tab" data-pane="contacted" onclick="showTab(this)">Contacted <span class="n" id="tabContactedN">0</span></button>
-    <button class="tab" data-pane="team" onclick="showTab(this)">Team activity</button>
+    <button class="tab" data-pane="team" onclick="showTab(this)" id="tabTeam" hidden>Team activity</button>
   </div>
 
   <!-- ── Pipeline ─────────────────────────────────────────────────── -->
@@ -281,7 +281,9 @@ async function load() {
     await Promise.all([api('/api/hunter/auth/me'), api('/api/hunter/leads')]);
   ME = staff;
   if (!ME) { location.href = '/hunter/login'; return; }
-  document.getElementById('who').innerHTML = `Signed in as <b>${esc(ME.name)}</b>`;
+  document.getElementById('who').innerHTML =
+    `Signed in as <b>${esc(ME.name)}</b>${ME.isAdmin ? ' <span class="chip hp">Master</span>' : ''}`;
+  document.getElementById('tabTeam').hidden = !ME.isAdmin;
   document.getElementById('sampleBadge').hidden = !leads.some(l => l.sample);
 
   renderFollowups(followups);
@@ -479,6 +481,7 @@ async function logResponse(id) {
 
 // ── Team activity tab ──────────────────────────────────────────────────
 async function loadTeam() {
+  if (!ME || !ME.isAdmin) return; // Master only
   const { sessions } = await api('/api/hunter/activity');
   document.getElementById('sessionRows').innerHTML = sessions.length ? sessions.map(s => `<tr>
     <td><b>${esc(s.name)}</b></td>
@@ -492,7 +495,7 @@ async function loadTeam() {
     const { staff } = await api('/api/hunter/staff');
     document.getElementById('staffRows').innerHTML = staff.map(s => `<tr>
       <td><b>${esc(s.name)}</b></td><td>${esc(s.email)}</td>
-      <td>${s.isAdmin ? 'Admin' : 'Staff'}</td><td>${fmt(s.createdAt)}</td>
+      <td>${s.isAdmin ? 'Master' : 'Staff'}</td><td>${fmt(s.createdAt)}</td>
     </tr>`).join('');
   }
 }
@@ -528,7 +531,7 @@ window.addEventListener('pagehide', () => {
 load().then(() => {
   const pane = location.hash.slice(1);
   const btn = document.querySelector(`.tab[data-pane="${pane}"]`);
-  if (btn) showTab(btn);
+  if (btn && !btn.hidden) showTab(btn);
 });
 </script>
 </body>
