@@ -1745,6 +1745,7 @@
     document.body.classList.add('scan-open');
     enterItemsPhase(ord);
     attachGlobalScanCapture();
+    loadResolveCache(); // keep the offline barcode cache fresh (non-blocking)
   }
 
   function focusWaybillInput() {
@@ -2087,9 +2088,11 @@
 
   function renderItemsTable(order) {
     const scanned  = order.scanned || {};
+    const pendingC = (typeof pendingCountsFor === 'function') ? pendingCountsFor(order) : {};
     const decorated = mergedScanLines(order).map((item, idx) => {
-      const s = scanned[item.sku] || 0;
-      return { item, s, idx, done: s === item.qty && item.qty > 0 };
+      const p = pendingC[item.sku] || 0;
+      const s = (scanned[item.sku] || 0) + p; // include offline scans awaiting sync
+      return { item, s, p, idx, done: s === item.qty && item.qty > 0 };
     });
     decorated.sort((a, b) => (a.done - b.done) || (a.idx - b.idx));
     const activeSku = decorated.find(d => !d.done)?.item.sku;
@@ -2116,7 +2119,7 @@
     // scanner can never pick up the wrong code from the monitor.
     const inlineBcSku = decorated.find(d => !d.done && isNoBarcodeItem(d.item))?.item.sku;
 
-    document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s, done }) => {
+    document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s, p, done }) => {
       const noBarcode = isNoBarcodeItem(item);
       const over      = s > item.qty;
       const rowClass  = [
@@ -2124,7 +2127,9 @@
         done ? 'row-compact' : '',
         !done && item.sku === activeSku ? 'row-active' : '',
         !done && noBarcode ? 'row-nobarcode' : '',
+        p > 0 ? 'row-pendingsync' : '',
       ].filter(Boolean).join(' ');
+      const pendMark = p > 0 ? ` <span class="pend-mark" title="${p} scan(s) waiting for connection">&#8987;</span>` : '';
       const icon = done ? '&#10003;' : over ? '&#10007;' : s > 0 ? '&#8230;' : '';
       const desc = (item.description && item.description !== item.sku) ? item.description : '—';
 
@@ -2135,7 +2140,7 @@
           <td><code class="sku-code sku-code-sm">${esc(item.sku)}</code></td>
           <td class="desc-cell desc-cell-sm">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
-          <td class="qty-col done-frac">${s}/${item.qty}</td>
+          <td class="qty-col done-frac">${s}/${item.qty}${pendMark}</td>
           <td class="status-icon">${icon}</td>
         </tr>`;
       }
@@ -2156,6 +2161,9 @@
              <button class="nb-btn nb-plus"  data-sku="${esc(item.sku)}">+1</button>
              <button class="nb-btn nb-all"   data-sku="${esc(item.sku)}" data-qty="${item.qty}">&#10003; All ${item.qty}</button>
            </td>`
+        : p > 0
+        ? `<td class="qty-col"><span class="nb-count">${s}/${item.qty}</span>${pendMark}</td>
+           <td class="status-icon">${icon}</td>`
         : `<td class="qty-col">
              <input type="number" class="qty-input" min="0" value="${s}"
                data-sku="${esc(item.sku)}" data-ordered="${item.qty}" />
@@ -2268,20 +2276,22 @@
   }
 
   function updateProgress(order) {
-    const scanned = order.scanned || {};
-    const lines   = mergedScanLines(order); // one pool per SKU — never double-count
+    const scanned  = order.scanned || {};
+    const pendingC = (typeof pendingCountsFor === 'function') ? pendingCountsFor(order) : {};
+    const cnt      = sku => (scanned[sku] || 0) + (pendingC[sku] || 0); // incl. offline queue
+    const lines    = mergedScanLines(order); // one pool per SKU — never double-count
 
     // Line-item progress pill (existing)
-    const doneCount = lines.filter(l => (scanned[l.sku] || 0) === l.qty).length;
+    const doneCount = lines.filter(l => cnt(l.sku) === l.qty).length;
     const el = document.getElementById('scanProgress');
     el.textContent = `${doneCount}/${lines.length} items`;
     el.className = doneCount === lines.length ? 'scan-progress all-done' : 'scan-progress';
 
     // Piece counter — shows remaining pieces, turns red on over-scan
     const totalOrdered = lines.reduce((s, l) => s + (l.qty || 0), 0);
-    const totalScanned = lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
+    const totalScanned = lines.reduce((s, l) => s + cnt(l.sku), 0);
     const remaining    = totalOrdered - totalScanned;
-    const hasOver      = lines.some(l => (scanned[l.sku] || 0) > l.qty);
+    const hasOver      = lines.some(l => cnt(l.sku) > l.qty);
 
     const piecesEl = document.getElementById('scanPiecesLeft');
     const numEl    = document.getElementById('scanPiecesNum');
@@ -2452,6 +2462,162 @@
     if (!_scanBusy) _drainScanQueue();
   }
 
+  // ── Offline scan queue ──────────────────────────────────────────────────────
+  // When Wi-Fi drops mid-scan, the scan is saved to localStorage instantly
+  // (survives reloads and browser restarts), counted on screen as "pending
+  // sync", and replayed to the server the moment the connection returns.
+  // Every event carries an id, so a scan whose response was lost in the drop
+  // can never be counted twice on replay.
+  const OFFQ_KEY = 'is_offline_scans';
+  let _offlineQueue = [];
+  let _offSyncing   = false;
+  try { _offlineQueue = JSON.parse(localStorage.getItem(OFFQ_KEY) || '[]'); } catch {}
+  function _saveOffQ() { try { localStorage.setItem(OFFQ_KEY, JSON.stringify(_offlineQueue)); } catch {} }
+  function pendingScansFor(orderNumber) { return _offlineQueue.filter(e => e.orderNumber === orderNumber); }
+
+  // fetch with a timeout — a dead Wi-Fi link often hangs instead of failing
+  function fetchT(url, opts = {}, ms = 8000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(t));
+  }
+
+  // Local mirror of the server's barcode resolution (CODE2 + learned + NP +
+  // aliases) so offline scans still land on the right line on screen
+  let _resolveCache = null;
+  try { _resolveCache = JSON.parse(localStorage.getItem('is_resolve_cache') || 'null'); } catch {}
+  async function loadResolveCache() {
+    try {
+      const r = await fetchT('/api/scan/resolve-cache', {}, 10000);
+      if (r.ok) {
+        _resolveCache = await r.json();
+        try { localStorage.setItem('is_resolve_cache', JSON.stringify(_resolveCache)); } catch {}
+      }
+    } catch {}
+  }
+  function resolveScanLocally(raw, order) {
+    const strip0 = s => s.replace(/^0+(?=.)/, '');
+    const k = String(raw).trim();
+    const c = _resolveCache || {};
+    let sku = (c.code2 && (c.code2[k] || c.code2[strip0(k)]))
+           || (c.learned && (c.learned[k] || c.learned[strip0(k)]))
+           || k;
+    const lines = mergedScanLines(order);
+    const find = q => {
+      const ql = String(q).trim().toLowerCase(), qn = strip0(ql);
+      return lines.find(l => { const ls = l.sku.trim().toLowerCase(); return ls === ql || strip0(ls) === qn; });
+    };
+    let item = find(sku);
+    if (!item && /np$/i.test(sku))  item = find(String(sku).replace(/np$/i, ''));
+    if (!item && !/np$/i.test(sku)) item = find(sku + 'NP');
+    if (!item && Array.isArray(c.aliases)) {
+      for (const al of c.aliases) {
+        if (al.a === sku) item = find(al.b);
+        else if (al.b === sku) item = find(al.a);
+        if (item) break;
+      }
+    }
+    return item ? item.sku : null;
+  }
+  // pending per-SKU counts for an order (only locally-resolvable scans)
+  function pendingCountsFor(order) {
+    const m = {};
+    for (const e of pendingScansFor(order.order_number)) {
+      const sku = resolveScanLocally(e.raw, order);
+      if (sku) m[sku] = (m[sku] || 0) + 1;
+    }
+    return m;
+  }
+
+  function updateOfflinePill() {
+    const pill = document.getElementById('offlinePill');
+    if (!pill) return;
+    const n = _offlineQueue.length;
+    if (!n) { pill.classList.add('hidden'); return; }
+    pill.textContent = _offSyncing
+      ? `⟳ Syncing ${n} queued scan${n !== 1 ? 's' : ''}…`
+      : `⚡ Offline — ${n} scan${n !== 1 ? 's' : ''} saved, will sync when connection returns`;
+    pill.classList.toggle('syncing', _offSyncing);
+    pill.classList.remove('hidden');
+  }
+
+  function enqueueOfflineScan(raw) {
+    const evt = {
+      id: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+      orderNumber: activeOrder.order_number,
+      raw: String(raw).trim(),
+      at: new Date().toISOString(),
+    };
+    _offlineQueue.push(evt);
+    _saveOffQ();
+    const sku = resolveScanLocally(evt.raw, activeOrder);
+    const feedback = document.getElementById('itemScanFeedback');
+    showFeedback(feedback, 'pending',
+      sku ? `⚡ No connection — ${sku} counted, will sync automatically`
+          : `⚡ No connection — scan saved (${evt.raw}), will sync automatically`);
+    if (sku) { scanFocusSku = sku; scanPageManual = false; }
+    renderItemsTable(activeOrder);
+    updateProgress(activeOrder);
+    updateOfflinePill();
+    scheduleOfflineSync(4000);
+  }
+
+  let _offSyncTimer = null;
+  function scheduleOfflineSync(ms) {
+    clearTimeout(_offSyncTimer);
+    _offSyncTimer = setTimeout(syncOfflineQueue, ms);
+  }
+  async function syncOfflineQueue() {
+    if (_offSyncing || !_offlineQueue.length) { updateOfflinePill(); return; }
+    _offSyncing = true;
+    updateOfflinePill();
+    const issues = [];
+    try {
+      while (_offlineQueue.length) {
+        const evt = _offlineQueue[0];
+        let resp, data;
+        try {
+          resp = await fetchT('/api/scan/increment', {
+            method: 'POST', headers: hdrs(),
+            body: JSON.stringify({ orderNumber: evt.orderNumber, sku: evt.raw, eventId: evt.id }),
+          });
+          data = await resp.json();
+        } catch {
+          scheduleOfflineSync(6000); // still offline — try again shortly
+          return;
+        }
+        _offlineQueue.shift();
+        _saveOffQ();
+        if (resp.ok) {
+          if (activeOrder && activeOrder.order_number === evt.orderNumber) {
+            if (!activeOrder.scanned) activeOrder.scanned = {};
+            activeOrder.scanned[data.sku] = data.scanned_qty;
+          }
+        } else {
+          issues.push(`${evt.raw} on ${evt.orderNumber}: ${data.error || resp.status}`);
+        }
+        updateOfflinePill();
+      }
+      if (activeOrder) {
+        renderItemsTable(activeOrder);
+        updateProgress(activeOrder);
+      }
+      const feedback = document.getElementById('itemScanFeedback');
+      if (feedback && activeOrder) showFeedback(feedback, 'success', '✓ Connection restored — all queued scans synced');
+      if (issues.length) {
+        alert(`Some offline scans could not be applied:\n\n${issues.join('\n')}\n\nPlease verify these items and rescan if needed.`);
+      }
+      if (activeOrder) maybeAutoComplete();
+    } finally {
+      _offSyncing = false;
+      updateOfflinePill();
+    }
+  }
+  window.addEventListener('online', () => scheduleOfflineSync(800));
+  setInterval(() => { if (_offlineQueue.length && !_offSyncing) syncOfflineQueue(); }, 9000);
+  if (_offlineQueue.length) scheduleOfflineSync(2500); // queue survived a reload
+  updateOfflinePill();
+
   async function _drainScanQueue() {
     if (_scanBusy || !_scanQueue.length) return;
     _scanBusy = true;
@@ -2459,7 +2625,7 @@
       const sku      = _scanQueue.shift();
       const feedback = document.getElementById('itemScanFeedback');
       try {
-        const resp = await fetch('/api/scan/increment', {
+        const resp = await fetchT('/api/scan/increment', {
           method: 'POST', headers: hdrs(),
           body: JSON.stringify({ orderNumber: activeOrder.order_number, sku }),
         });
@@ -2495,7 +2661,9 @@
               : `${data.sku}: ${data.scanned_qty}/${data.ordered_qty} scanned`
         );
       } catch (err) {
-        showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
+        // Network failure (dead Wi-Fi hangs or refuses) — save the scan
+        // durably and keep the packer moving; it syncs automatically
+        enqueueOfflineScan(sku);
       }
     }
     _scanBusy = false;
@@ -2685,6 +2853,11 @@
 
   async function attemptCompleteOrder() {
     if (!activeOrder) return;
+    const unsynced = pendingScansFor(activeOrder.order_number).length;
+    if (unsynced) {
+      alert(`${unsynced} scan(s) are still waiting for the connection to return.\nThe order will be completable as soon as they sync — keep it open.`);
+      return;
+    }
 
     // No-barcode sweep: if the ONLY unscanned lines are known no-barcode
     // items (GWPs etc.), offer to count them all with one click
@@ -2718,6 +2891,7 @@
   let _autoCompleteFired = false;
   function maybeAutoComplete() {
     if (_autoCompleteFired || !activeOrder) return;
+    if (pendingScansFor(activeOrder.order_number).length) return; // wait for sync
     const scanned      = activeOrder.scanned || {};
     const lines        = mergedScanLines(activeOrder);
     const totalOrdered = lines.reduce((s, l) => s + (l.qty || 0), 0);

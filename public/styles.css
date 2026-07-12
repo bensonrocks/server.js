@@ -2431,3 +2431,16 @@ body.ls-open { overflow: hidden; }
 
 /* ── Official IdealOne mark (bitmap) — keep aspect inside the old square slots ── */
 img.is-icon-xs, img.is-icon-sm, img.is-icon-hdr, img.is-icon-lg { object-fit: contain; }
+
+/* ── Offline scan queue ── */
+.offline-pill {
+  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
+  z-index: 12000; background: #92400e; color: #fff; font-weight: 700; font-size: .85rem;
+  padding: .5rem 1.1rem; border-radius: 99px; box-shadow: 0 6px 20px rgba(0,0,0,.3);
+  pointer-events: none; white-space: nowrap;
+}
+.offline-pill.syncing { background: #1d4ed8; }
+.offline-pill.hidden { display: none; }
+.scan-feedback.pending { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+tr.row-pendingsync td { background: #fffbeb !important; }
+.pend-mark { color: #b45309; font-size: .9em; }
