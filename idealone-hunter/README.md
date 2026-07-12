@@ -38,6 +38,42 @@ python lead_agent.py run --dry-run   # no API calls; stubbed candidates to prove
 
 Schedule with cron for weekday-morning runs: `0 8 * * 1-5`. One run serves every customer org; results land in each org's approval queue in the web app.
 
+## Getting your API keys
+
+The pipeline needs one key to run live (Anthropic), and one optional key for richer contacts (Apollo). You can build and test everything **without any key** using `--dry-run` first.
+
+### ANTHROPIC_API_KEY (required for live runs)
+
+This powers the Scout → Verifier → Analyst → Contact → Outreach agents. It is a **developer/API key from the Anthropic Console — a separate account from claude.ai / Claude Code**, billed pay-as-you-go.
+
+1. Go to **https://console.anthropic.com** and sign up or log in.
+2. Add billing: **Settings → Billing → Add payment method**, then buy credits (you can start with ~$5). API usage is prepaid, separate from any Claude subscription.
+3. Open **https://console.anthropic.com/settings/keys → Create Key**. Name it e.g. `hunter-pipeline`.
+4. **Copy the key immediately** (`sk-ant-api03-…`) — it is shown only once. If lost, just create a new one.
+5. Set it where the pipeline runs — **never commit it**:
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-api03-xxxxx
+   ```
+   On Railway/hosted: add it as an environment variable on the service running the cron.
+
+**Rough cost:** the pipeline uses `claude-sonnet-4-6` with web search; a daily run for one org is ~15–30 model calls plus a few searches — typically cents to a couple of dollars per org per day. Cheap relative to the value of a verified lead.
+
+### APOLLO_API_KEY (optional — better contacts)
+
+Without it, the Contact Researcher still works from public web pages; with it, it also draws on Apollo's contact database for names, emails and phones.
+
+1. Sign in at **https://app.apollo.io** (free tier available).
+2. **Settings → Integrations → API → Create new key** (API access may require a qualifying plan).
+3. Set it: `export APOLLO_API_KEY=…` — also secret, never commit.
+
+### Test with no keys first
+
+```bash
+python lead_agent.py run --dry-run    # no API calls; stubbed candidates prove the read→write wiring
+```
+
+Switch to a real `ANTHROPIC_API_KEY` only when you want live web-researched leads.
+
 ## Hard rules (enforced in the pipeline, not just the prompts)
 
 1. No email is ever dispatched without a human approving it. The pipeline may only write `Verified` / `High Priority` leads into the approval queue; every status after that is human-set in the UI.

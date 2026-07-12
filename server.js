@@ -161,7 +161,8 @@ app.get('/sitemap.xml', (req, res) => {
 const hunterHome = ['1', 'true', 'yes'].includes(String(process.env.HUNTER_HOME || '').toLowerCase());
 app.get('/', async (req, res, next) => {
   if (!hunterHome) return res.sendFile(path.join(__dirname, 'public', 'landing.html'));
-  if (!req.session.hunterStaffId) return res.redirect('/hunter/login');
+  // Logged-out visitors land on the introduction page, not straight at login.
+  if (!req.session.hunterStaffId) return res.sendFile(path.join(__dirname, 'public', 'hunter-intro.html'));
   try {
     const staff = await hunterStaff.findById(req.session.hunterStaffId);
     const org = staff && await hunterOrgs.findById(staff.org_id);
@@ -193,6 +194,9 @@ async function hunterSetupGate(req, res, next) {
 
 app.get('/hunter', requireHunterStaffPage, hunterSetupGate, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'hunter.html'))
+);
+app.get('/hunter/welcome', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'hunter-intro.html'))
 );
 app.get('/hunter/login', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'hunter-login.html'))
