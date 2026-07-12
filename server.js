@@ -131,7 +131,10 @@ app.get('/sitemap.xml', (req, res) => {
 });
 
 // ── HTML page routes (defined before static so / is not hijacked) ──────
-app.get('/',             (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+// HUNTER_HOME=1 turns a deployment into the IdealOne.Hunter CRM: / serves
+// the CRM instead of the VaultSignals landing page.
+const hunterHome = ['1', 'true', 'yes'].includes(String(process.env.HUNTER_HOME || '').toLowerCase());
+app.get('/',             (req, res) => res.sendFile(path.join(__dirname, 'public', hunterHome ? 'hunter.html' : 'landing.html')));
 app.get('/login',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/signup',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
 app.get('/dashboard',    requireSubscriptionPage, (req, res) =>
