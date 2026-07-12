@@ -3,6 +3,6 @@ node_modules/
 *.log
 data/market-cache/
 data/reports/
-data/hunter-leads.json
+data/hunter-*.json
 idealone-hunter/*.db
 __pycache__/

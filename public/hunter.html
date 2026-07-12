@@ -25,15 +25,39 @@
   }
   .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
 
-  header { display: flex; align-items: center; gap: 18px; margin-bottom: 26px; flex-wrap: wrap; }
+  header { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; flex-wrap: wrap; }
   header img { height: 84px; width: auto; }
   .h-title { font-size: 24px; font-weight: 800; letter-spacing: .4px; }
   .h-title .dot { color: var(--brand); }
   .h-sub { color: var(--ink-2); font-size: 13.5px; margin-top: 2px; }
+  .h-right { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .badge-sample {
-    margin-left: auto; background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A;
+    background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A;
     font-size: 12px; font-weight: 700; letter-spacing: .5px; padding: 5px 12px; border-radius: 999px;
   }
+  .who { font-size: 13.5px; color: var(--ink-2); }
+  .who b { color: var(--ink); }
+
+  .tabs { display: flex; gap: 6px; border-bottom: 2px solid var(--line); margin-bottom: 20px; }
+  .tab {
+    border: none; background: none; font: 700 14.5px inherit; color: var(--ink-2);
+    padding: 10px 16px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px;
+  }
+  .tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+  .tab .n { background: var(--brand-soft); color: #1449A8; border-radius: 999px; padding: 1px 8px; font-size: 12px; margin-left: 4px; }
+  .tab .n.due { background: #FEF3C7; color: #92400E; }
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  .followup-banner {
+    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 12px;
+    padding: 14px 18px; margin-bottom: 20px;
+  }
+  .followup-banner h3 { margin: 0 0 6px; font-size: 15px; color: #92400E; }
+  .followup-banner .fu { display: flex; align-items: center; gap: 10px; padding: 6px 0; flex-wrap: wrap; font-size: 14px; }
+  .followup-banner .fu b { color: var(--ink); }
+  .followup-banner .days { color: #92400E; font-weight: 700; font-size: 13px; }
+  .followup-banner button { padding: 5px 12px; font-size: 13px; }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px; margin-bottom: 22px; }
   .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
@@ -59,6 +83,7 @@
 
   .queue { display: grid; gap: 12px; }
   .qcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .qcard.due { border-color: #FDE68A; box-shadow: 0 0 0 3px #FFFBEB; }
   .qhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .qhead .co { font-size: 16px; font-weight: 800; }
   .score { background: var(--brand-soft); color: #1449A8; font-weight: 800; font-size: 12.5px; padding: 2px 9px; border-radius: 999px; }
@@ -75,13 +100,13 @@
   .prov { font-size: 11.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
   .needs { color: var(--warn); font-weight: 700; font-size: 12.5px; }
 
-  .draft input, .draft textarea {
+  .draft input, .draft textarea, .comment input {
     width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
     font: 13.5px/1.5 inherit; color: var(--ink); background: #FDFDFD;
   }
   .draft input { font-weight: 700; margin-bottom: 8px; }
   .draft textarea { min-height: 118px; resize: vertical; }
-  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
   button {
     font: 600 13.5px inherit; border-radius: 8px; padding: 8px 14px; cursor: pointer;
     border: 1px solid var(--line); background: var(--card); color: var(--ink);
@@ -90,7 +115,15 @@
   button.primary:hover { background: #1557BE; }
   button.ghost:hover { background: #F3F4F6; }
   button.reject { color: var(--ink-2); }
-  .saved { color: var(--good); font-size: 13px; font-weight: 600; align-self: center; }
+  .saved { color: var(--good); font-size: 13px; font-weight: 600; }
+
+  .timeline { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+  .tl { display: flex; gap: 10px; padding: 5px 0; font-size: 13.5px; align-items: baseline; }
+  .tl .ico { width: 22px; text-align: center; flex: none; }
+  .tl .txt b { color: var(--ink); }
+  .tl .meta { color: var(--ink-3); font-size: 12px; margin-left: 6px; white-space: nowrap; }
+  .comment { display: flex; gap: 8px; margin-top: 10px; }
+  .comment input { flex: 1; }
 
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .tablewrap { overflow-x: auto; border-radius: 12px; }
@@ -98,7 +131,12 @@
   td.wide { white-space: normal; min-width: 220px; }
   th { background: #FAFAFB; color: var(--ink-2); font-size: 12px; letter-spacing: .4px; text-transform: uppercase; }
   tr:last-child td { border-bottom: none; }
-  td select { font: 13px inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; background: var(--card); color: var(--ink); }
+  td select, .qcard select { font: 13px inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; background: var(--card); color: var(--ink); }
+
+  .staff-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; margin-top: 12px; }
+  @media (max-width: 720px) { .staff-form { grid-template-columns: 1fr; } }
+  .staff-form input { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font: 13.5px inherit; }
+  .dotlive { color: var(--good); font-weight: 700; }
 
   footer { margin-top: 40px; color: var(--ink-3); font-size: 12.5px; }
 </style>
@@ -111,40 +149,91 @@
       <div class="h-title">IdealOne<span class="dot">.</span>Hunter</div>
       <div class="h-sub">Lead Intelligence · United Logistics &amp; Distribution (Singapore)</div>
     </div>
-    <span class="badge-sample" id="sampleBadge" hidden>SAMPLE DATA — pipeline not yet connected</span>
+    <div class="h-right">
+      <span class="badge-sample" id="sampleBadge" hidden>SAMPLE DATA — pipeline not yet connected</span>
+      <span class="who" id="who"></span>
+      <button class="ghost" onclick="logout()">Log out</button>
+    </div>
   </header>
 
-  <div class="tiles" id="tiles"></div>
+  <div class="followup-banner" id="followups" hidden></div>
 
-  <div class="charts">
-    <div class="card">
-      <h3>Lead score distribution</h3>
-      <div id="scoreChart"></div>
+  <div class="tabs">
+    <button class="tab active" data-pane="pipeline" onclick="showTab(this)">Pipeline</button>
+    <button class="tab" data-pane="contacted" onclick="showTab(this)">Contacted <span class="n" id="tabContactedN">0</span></button>
+    <button class="tab" data-pane="team" onclick="showTab(this)">Team activity</button>
+  </div>
+
+  <!-- ── Pipeline ─────────────────────────────────────────────────── -->
+  <div class="pane active" id="pane-pipeline">
+    <div class="tiles" id="tiles"></div>
+
+    <div class="charts">
+      <div class="card">
+        <h3>Lead score distribution</h3>
+        <div id="scoreChart"></div>
+      </div>
+      <div class="card">
+        <h3>Leads by ULD service</h3>
+        <div id="serviceChart"></div>
+      </div>
     </div>
-    <div class="card">
-      <h3>Leads by ULD service</h3>
-      <div id="serviceChart"></div>
+
+    <h2>Approval queue <span class="count" id="queueCount"></span></h2>
+    <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
+      Drafts below were prepared by the pipeline and are <b>never sent automatically</b> — approving marks the lead
+      <b>Contacted</b> (it moves to the Contacted tab) after you send it from your own mailbox / sequence tool.
+    </p>
+    <div class="queue" id="queue"></div>
+
+    <h2>All leads <span class="count" id="allCount"></span></h2>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th>Company</th><th>Score</th><th>Status</th><th>Service</th><th>Signal</th>
+        <th>Size</th><th>Discovered</th><th class="wide">Next action</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </div>
+
+  <!-- ── Contacted ────────────────────────────────────────────────── -->
+  <div class="pane" id="pane-contacted">
+    <h2 style="margin-top:6px">Contacted leads <span class="count" id="contactedCount"></span></h2>
+    <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
+      Maintenance view — log emails sent, record responses, add comments, and advance the status.
+      Leads still waiting on a reply are promoted for follow-up after 3 calendar days.
+    </p>
+    <div class="queue" id="contactedList"></div>
+  </div>
+
+  <!-- ── Team activity ────────────────────────────────────────────── -->
+  <div class="pane" id="pane-team">
+    <h2 style="margin-top:6px">Staff sessions</h2>
+    <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
+      Login / logout trail with time spent in the CRM (heartbeat-based; a session closes after 5 idle minutes).
+    </p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Staff</th><th>Signed in</th><th>Signed out</th><th>Time on page</th></tr></thead>
+      <tbody id="sessionRows"></tbody>
+    </table></div>
+    <div class="card" id="staffAdmin" hidden style="margin-top:16px">
+      <h3>Staff accounts (admin)</h3>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th></tr></thead>
+        <tbody id="staffRows"></tbody>
+      </table></div>
+      <div class="staff-form">
+        <input id="nsName" placeholder="Name">
+        <input id="nsEmail" placeholder="Email" type="email">
+        <input id="nsPass" placeholder="Password (min 8 chars)" type="password">
+        <button class="primary" onclick="addStaff()">Add staff</button>
+      </div>
+      <div class="saved" id="staffMsg"></div>
     </div>
   </div>
 
-  <h2>Approval queue <span class="count" id="queueCount"></span></h2>
-  <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
-    Drafts below were prepared by the pipeline and are <b>never sent automatically</b> — approving marks the lead
-    <b>Contacted</b> after you send it from your own mailbox / sequence tool.
-  </p>
-  <div class="queue" id="queue"></div>
-
-  <h2>All leads <span class="count" id="allCount"></span></h2>
-  <div class="tablewrap"><table>
-    <thead><tr>
-      <th>Company</th><th>Score</th><th>Status</th><th>Service</th><th>Signal</th>
-      <th>Size</th><th>Discovered</th><th class="wide">Next action</th>
-    </tr></thead>
-    <tbody id="rows"></tbody>
-  </table></div>
-
   <footer>IdealOne.Hunter — a standalone suite in the IdealOne family of apps. Statuses beyond
-  “High Priority” are set only here, by a human.</footer>
+  “High Priority” are set only here, by a human. All access and actions are attributed to the signed-in staff member.</footer>
 </div>
 
 <script>
@@ -152,6 +241,10 @@ const SERVICES = { WH:'Warehousing', BOND:'Bonded storage', CUST:'Customs', RETA
   ECOM:'E-com fulfilment', TRANS:'Transloading', WGD:'White-glove', B2X:'B2B/B2C', PROJ:'Project cargo',
   XB:'Cross-border', LM:'Last-mile' };
 const HUMAN_STATUSES = ['Contact Approved','Contacted','Replied','Qualified','Quotation','Won','Lost','Monitor'];
+const CONTACTED_SET = ['Contacted','Replied','Qualified','Quotation','Won','Lost'];
+const TL_ICON = { comment:'💬', email_sent:'✉️', response:'📩', followup:'🔁', status:'🏷️' };
+
+let ME = null;
 
 function chipClass(s) {
   if (s === 'High Priority') return 'chip hp';
@@ -160,13 +253,65 @@ function chipClass(s) {
   return 'chip mon';
 }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = iso => iso ? new Date(iso).toLocaleString('en-SG', { timeZone: 'Asia/Singapore',
+  day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+
+function showTab(btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === btn));
+  document.querySelectorAll('.pane').forEach(p =>
+    p.classList.toggle('active', p.id === 'pane-' + btn.dataset.pane));
+  location.hash = btn.dataset.pane;
+  if (btn.dataset.pane === 'team') loadTeam();
+}
+function openContactedTab() {
+  showTab(document.querySelector('.tab[data-pane="contacted"]'));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (r.status === 401) { location.href = '/hunter/login'; throw new Error('unauthenticated'); }
+  return r.json();
+}
+const post = (url, data) => api(url, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 
 async function load() {
-  const r = await fetch('/api/hunter/leads');
-  const { leads, stats } = await r.json();
+  const [{ staff }, { leads, stats, followups }] =
+    await Promise.all([api('/api/hunter/auth/me'), api('/api/hunter/leads')]);
+  ME = staff;
+  if (!ME) { location.href = '/hunter/login'; return; }
+  document.getElementById('who').innerHTML = `Signed in as <b>${esc(ME.name)}</b>`;
   document.getElementById('sampleBadge').hidden = !leads.some(l => l.sample);
 
-  // KPI tiles
+  renderFollowups(followups);
+  renderPipeline(leads, stats);
+  renderContacted(leads, followups);
+}
+
+// ── Follow-up actions (shown on login) ─────────────────────────────────
+function renderFollowups(fu) {
+  const el = document.getElementById('followups');
+  el.hidden = !fu.length;
+  const n = document.getElementById('tabContactedN');
+  if (!fu.length) return;
+  n.classList.add('due');
+  el.innerHTML = `<h3>⏰ Follow-up actions — ${fu.length} contacted lead${fu.length === 1 ? '' : 's'} waiting ≥ 3 days with no reply</h3>` +
+    fu.map(f => `<div class="fu">
+      <b>${esc(f.company_name)}</b>${f.dm_name ? ' · ' + esc(f.dm_name) : ''}
+      <span class="days">${f.days_since} days since last touch (${fmt(f.last_touch)})</span>
+      <button class="primary" onclick="logFollowup('${f.id}')">Log follow-up sent</button>
+      <button class="ghost" onclick="openContactedTab()">Open lead</button>
+    </div>`).join('');
+}
+
+async function logFollowup(id) {
+  await post(`/api/hunter/leads/${id}/activity`, { type: 'followup', text: 'Follow-up sent' });
+  load();
+}
+
+// ── Pipeline tab ───────────────────────────────────────────────────────
+function renderPipeline(leads, stats) {
   const t = [
     ['Verified leads (open)', stats.newVerified],
     ['Awaiting approval', stats.awaitingApproval],
@@ -178,21 +323,18 @@ async function load() {
   document.getElementById('tiles').innerHTML = t.map(([k, v]) =>
     `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
-  // charts (single measure, single hue)
   bars('scoreChart', Object.entries(stats.scoreBuckets));
   bars('serviceChart', Object.entries(stats.byService)
     .sort((a, b) => b[1] - a[1]).map(([k, v]) => [SERVICES[k] || k, v]));
 
-  // approval queue
   const q = leads.filter(l => ['Verified', 'High Priority'].includes(l.lead_status) && l.outreach_body);
   document.getElementById('queueCount').textContent = `(${q.length})`;
-  document.getElementById('queue').innerHTML = q.length ? q.map(card).join('')
+  document.getElementById('queue').innerHTML = q.length ? q.map(queueCard).join('')
     : '<div class="card" style="color:var(--ink-2)">Queue is clear — nothing awaiting approval.</div>';
 
-  // all leads
   document.getElementById('allCount').textContent = `(${leads.length})`;
   document.getElementById('rows').innerHTML = leads
-    .sort((a, b) => b.lead_score - a.lead_score)
+    .slice().sort((a, b) => b.lead_score - a.lead_score)
     .map(l => `<tr>
       <td><b>${esc(l.company_name)}</b></td>
       <td><span class="score">${l.lead_score}</span></td>
@@ -201,11 +343,7 @@ async function load() {
       <td>${esc(l.signal_code)}</td>
       <td>${esc(l.opportunity_size)}</td>
       <td>${esc(l.date_discovered)}</td>
-      <td class="wide">${esc(l.next_action)}
-        <select onchange="setStatus('${l.id}', this.value)" title="Set status (human only)">
-          <option value="">status…</option>
-          ${HUMAN_STATUSES.map(s => `<option>${s}</option>`).join('')}
-        </select></td>
+      <td class="wide">${esc(l.next_action)}</td>
     </tr>`).join('');
 }
 
@@ -219,11 +357,11 @@ function bars(el, entries) {
     </div>`).join('');
 }
 
-function card(l) {
+function queueCard(l) {
   const contact = l.dm_name
     ? `<b>${esc(l.dm_name)}</b> — ${esc(l.dm_title)}<span class="prov">${esc(l.dm_source)}</span>`
     : `<span class="needs">⚠ needs a recipient — no contact found</span>`;
-  return `<div class="qcard" id="card-${l.id}">
+  return `<div class="qcard">
     <div class="qhead">
       <span class="co">${esc(l.company_name)}</span>
       <span class="score">${l.lead_score}</span>
@@ -247,37 +385,151 @@ function card(l) {
 }
 
 async function saveDraft(id) {
-  await fetch(`/api/hunter/leads/${id}/draft`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      subject: document.getElementById('subj-' + id).value,
-      body: document.getElementById('body-' + id).value,
-    }),
+  await post(`/api/hunter/leads/${id}/draft`, {
+    subject: document.getElementById('subj-' + id).value,
+    body: document.getElementById('body-' + id).value,
   });
   const el = document.getElementById('saved-' + id);
-  el.textContent = 'Draft saved ✓';
-  setTimeout(() => { el.textContent = ''; }, 2500);
+  if (el) { el.textContent = 'Draft saved ✓'; setTimeout(() => { el.textContent = ''; }, 2500); }
 }
 
 async function approve(id) {
   await saveDraft(id);
-  await fetch(`/api/hunter/leads/${id}/status`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'Contacted' }),
-  });
-  load();
+  await post(`/api/hunter/leads/${id}/status`, { status: 'Contacted' });
+  await load();
+  openContactedTab();
 }
 
 async function setStatus(id, status) {
   if (!status) return;
-  await fetch(`/api/hunter/leads/${id}/status`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
-  });
+  await post(`/api/hunter/leads/${id}/status`, { status });
   load();
 }
 
-load();
+// ── Contacted tab ──────────────────────────────────────────────────────
+function renderContacted(leads, followups) {
+  const dueIds = new Set(followups.map(f => f.id));
+  const list = leads.filter(l => CONTACTED_SET.includes(l.lead_status))
+    .sort((a, b) => (b.contacted_at || '').localeCompare(a.contacted_at || ''));
+  document.getElementById('tabContactedN').textContent = list.length;
+  document.getElementById('contactedCount').textContent = `(${list.length})`;
+  document.getElementById('contactedList').innerHTML = list.length
+    ? list.map(l => contactedCard(l, dueIds.has(l.id))).join('')
+    : '<div class="card" style="color:var(--ink-2)">No contacted leads yet — approve a draft in the Pipeline tab.</div>';
+}
+
+function contactedCard(l, due) {
+  const timeline = (l.activity || []).slice().reverse().map(a => `
+    <div class="tl">
+      <span class="ico">${TL_ICON[a.type] || '•'}</span>
+      <span class="txt">${esc(a.text)}<span class="meta">${esc(a.by)} · ${fmt(a.at)}</span></span>
+    </div>`).join('') || '<div class="tl"><span class="ico">•</span><span class="txt" style="color:var(--ink-3)">No activity yet</span></div>';
+
+  const nexts = HUMAN_STATUSES.filter(s => s !== l.lead_status);
+  return `<div class="qcard ${due ? 'due' : ''}">
+    <div class="qhead">
+      <span class="co">${esc(l.company_name)}</span>
+      <span class="score">${l.lead_score}</span>
+      <span class="${chipClass(l.lead_status)}">${esc(l.lead_status)}</span>
+      <span class="chip">${esc(SERVICES[l.uld_service] || l.uld_service)}</span>
+      ${due ? '<span class="chip hp">⏰ follow-up due</span>' : ''}
+      ${l.dm_name ? `<span style="font-size:13px;color:var(--ink-2)">· ${esc(l.dm_name)}, ${esc(l.dm_title)}</span>` : ''}
+    </div>
+    <div class="qmeta">Contacted ${fmt(l.contacted_at)} · ${esc(l.sg_activity)}</div>
+    <div class="actions">
+      <button class="ghost" onclick="logEmail('${l.id}')">✉️ Email sent</button>
+      <button class="ghost" onclick="logResponse('${l.id}')">📩 Response received</button>
+      <button class="ghost" onclick="logFollowup('${l.id}')">🔁 Log follow-up</button>
+      <select onchange="setStatus('${l.id}', this.value)">
+        <option value="">Move to…</option>
+        ${nexts.map(s => `<option>${s}</option>`).join('')}
+      </select>
+    </div>
+    <div class="comment">
+      <input id="cmt-${l.id}" placeholder="Add a comment (visible to all staff)…"
+             onkeydown="if(event.key==='Enter')addComment('${l.id}')">
+      <button class="primary" onclick="addComment('${l.id}')">Comment</button>
+    </div>
+    <div class="timeline">${timeline}</div>
+  </div>`;
+}
+
+async function addComment(id) {
+  const el = document.getElementById('cmt-' + id);
+  if (!el.value.trim()) return;
+  await post(`/api/hunter/leads/${id}/activity`, { type: 'comment', text: el.value });
+  load();
+}
+
+async function logEmail(id) {
+  const text = prompt('What was sent? (e.g. "Follow-up email to Priya")', 'Email sent');
+  if (text === null) return;
+  await post(`/api/hunter/leads/${id}/activity`, { type: 'email_sent', text: text || 'Email sent' });
+  load();
+}
+
+async function logResponse(id) {
+  const text = prompt('Summarise the response:');
+  if (text === null || !text.trim()) return;
+  await post(`/api/hunter/leads/${id}/activity`, { type: 'response', text });
+  // A response means they replied — advance Contacted → Replied automatically.
+  await post(`/api/hunter/leads/${id}/status`, { status: 'Replied' }).catch(() => {});
+  load();
+}
+
+// ── Team activity tab ──────────────────────────────────────────────────
+async function loadTeam() {
+  const { sessions } = await api('/api/hunter/activity');
+  document.getElementById('sessionRows').innerHTML = sessions.length ? sessions.map(s => `<tr>
+    <td><b>${esc(s.name)}</b></td>
+    <td>${fmt(s.start)}</td>
+    <td>${s.active ? '<span class="dotlive">● online now</span>' : fmt(s.end)}</td>
+    <td>${s.minutes} min</td>
+  </tr>`).join('') : '<tr><td colspan="4" style="color:var(--ink-3)">No sessions yet</td></tr>';
+
+  if (ME && ME.isAdmin) {
+    document.getElementById('staffAdmin').hidden = false;
+    const { staff } = await api('/api/hunter/staff');
+    document.getElementById('staffRows').innerHTML = staff.map(s => `<tr>
+      <td><b>${esc(s.name)}</b></td><td>${esc(s.email)}</td>
+      <td>${s.isAdmin ? 'Admin' : 'Staff'}</td><td>${fmt(s.createdAt)}</td>
+    </tr>`).join('');
+  }
+}
+
+async function addStaff() {
+  const msg = document.getElementById('staffMsg');
+  const r = await post('/api/hunter/staff', {
+    name: document.getElementById('nsName').value,
+    email: document.getElementById('nsEmail').value,
+    password: document.getElementById('nsPass').value,
+  });
+  msg.textContent = r.ok ? 'Staff account created ✓' : (r.error || 'Failed');
+  msg.style.color = r.ok ? 'var(--good)' : '#B91C1C';
+  if (r.ok) { ['nsName', 'nsEmail', 'nsPass'].forEach(i => document.getElementById(i).value = ''); loadTeam(); }
+}
+
+// ── Auth + presence ────────────────────────────────────────────────────
+async function logout() {
+  await post('/api/hunter/auth/logout', {});
+  location.href = '/hunter/login';
+}
+
+// Heartbeat every 60s while the page is open; leave beacon on close.
+setInterval(() => {
+  fetch('/api/hunter/track', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'heartbeat' }) }).catch(() => {});
+}, 60000);
+window.addEventListener('pagehide', () => {
+  navigator.sendBeacon('/api/hunter/track',
+    new Blob([JSON.stringify({ event: 'leave' })], { type: 'application/json' }));
+});
+
+load().then(() => {
+  const pane = location.hash.slice(1);
+  const btn = document.querySelector(`.tab[data-pane="${pane}"]`);
+  if (btn) showTab(btn);
+});
 </script>
 </body>
 </html>

@@ -84,7 +84,12 @@
     "requires_recipient": false,
     "est_pipeline_sgd": 8000,
     "date_discovered": "2026-07-05",
-    "date_last_verified": "2026-07-08"
+    "date_last_verified": "2026-07-08",
+    "contacted_at": "2026-07-08T09:00:00.000Z",
+    "activity": [
+      { "type": "status", "text": "Status → Contacted", "by": "Admin", "at": "2026-07-08T09:00:00.000Z" },
+      { "type": "email_sent", "text": "Intro email sent to Priya Nair (Operations Director)", "by": "Admin", "at": "2026-07-08T09:05:00.000Z" }
+    ]
   },
   {
     "id": "L-1004",
@@ -113,7 +118,15 @@
     "requires_recipient": true,
     "est_pipeline_sgd": 22000,
     "date_discovered": "2026-06-30",
-    "date_last_verified": "2026-07-07"
+    "date_last_verified": "2026-07-07",
+    "contacted_at": "2026-07-01T04:30:00.000Z",
+    "activity": [
+      { "type": "status", "text": "Status → Contacted", "by": "Admin", "at": "2026-07-01T04:30:00.000Z" },
+      { "type": "email_sent", "text": "Outreach sent to operations team via distributor introduction", "by": "Admin", "at": "2026-07-01T04:35:00.000Z" },
+      { "type": "response", "text": "Ops lead replied — monthly container volume confirmed, wants pricing", "by": "Admin", "at": "2026-07-04T08:10:00.000Z" },
+      { "type": "status", "text": "Status → Qualified", "by": "Admin", "at": "2026-07-04T08:12:00.000Z" },
+      { "type": "comment", "text": "Preparing quotation: unstuffing + white-glove, est. 2 containers/month", "by": "Admin", "at": "2026-07-07T02:00:00.000Z" }
+    ]
   },
   {
     "id": "L-1005",
@@ -229,6 +242,13 @@
     "requires_recipient": false,
     "est_pipeline_sgd": 15000,
     "date_discovered": "2026-07-09",
-    "date_last_verified": "2026-07-10"
+    "date_last_verified": "2026-07-10",
+    "contacted_at": "2026-07-10T01:00:00.000Z",
+    "activity": [
+      { "type": "status", "text": "Status → Contacted", "by": "Admin", "at": "2026-07-10T01:00:00.000Z" },
+      { "type": "email_sent", "text": "Project cargo pitch sent to Alan Chen", "by": "Admin", "at": "2026-07-10T01:05:00.000Z" },
+      { "type": "response", "text": "Alan replied — interested, asked for capabilities deck and Q3 slot availability", "by": "Admin", "at": "2026-07-11T06:40:00.000Z" },
+      { "type": "status", "text": "Status → Replied", "by": "Admin", "at": "2026-07-11T06:42:00.000Z" }
+    ]
   }
 ]

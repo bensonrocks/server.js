@@ -11,6 +11,7 @@ const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const hunter                         = require('./lib/hunter/store');
+const hunterStaff                    = require('./lib/hunter/staff');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 
@@ -111,6 +112,22 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireHunterStaffAPI(req, res, next) {
+  if (!req.session.hunterStaffId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
+  next();
+}
+
+function requireHunterStaffPage(req, res, next) {
+  if (!req.session.hunterStaffId) return res.redirect('/hunter/login');
+  next();
+}
+
+function requireHunterAdmin(req, res, next) {
+  const staff = hunterStaff.findById(req.session.hunterStaffId);
+  if (!staff || !staff.isAdmin) return res.status(403).json({ ok: false, error: 'Admin only' });
+  next();
+}
+
 // ── SEO ────────────────────────────────────────────────────────────────
 app.get('/robots.txt', (req, res) => {
   const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
@@ -134,7 +151,11 @@ app.get('/sitemap.xml', (req, res) => {
 // HUNTER_HOME=1 turns a deployment into the IdealOne.Hunter CRM: / serves
 // the CRM instead of the VaultSignals landing page.
 const hunterHome = ['1', 'true', 'yes'].includes(String(process.env.HUNTER_HOME || '').toLowerCase());
-app.get('/',             (req, res) => res.sendFile(path.join(__dirname, 'public', hunterHome ? 'hunter.html' : 'landing.html')));
+app.get('/', (req, res) => {
+  if (!hunterHome) return res.sendFile(path.join(__dirname, 'public', 'landing.html'));
+  if (!req.session.hunterStaffId) return res.redirect('/hunter/login');
+  res.sendFile(path.join(__dirname, 'public', 'hunter.html'));
+});
 app.get('/login',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/signup',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
 app.get('/dashboard',    requireSubscriptionPage, (req, res) =>
@@ -146,8 +167,11 @@ app.get('/settings',     requireSubscriptionPage, (req, res) =>
 app.get('/vaultkeepers', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
 );
-app.get('/hunter', (req, res) =>
+app.get('/hunter', requireHunterStaffPage, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'hunter.html'))
+);
+app.get('/hunter/login', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'hunter-login.html'))
 );
 
 // ── Static assets (tutorial.html, images, etc.) ────────────────────────
@@ -361,18 +385,74 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── IdealOne.Hunter CRM API ────────────────────────────────────────────
-app.get('/api/hunter/leads', (req, res) => {
-  res.json({ ok: true, leads: hunter.all(), stats: hunter.stats() });
+// ── IdealOne.Hunter CRM API (staff only) ───────────────────────────────
+function hunterStaffName(req) {
+  const staff = hunterStaff.findById(req.session.hunterStaffId);
+  return staff ? staff.name : 'staff';
+}
+
+app.post('/api/hunter/auth/login', (req, res) => {
+  const staff = hunterStaff.verify(req.body.email, req.body.password);
+  if (!staff) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
+  req.session.hunterStaffId = staff.id;
+  hunterStaff.logEvent(staff.id, 'login');
+  res.json({ ok: true, staff: hunterStaff.safe(staff) });
 });
 
-app.post('/api/hunter/leads/:id/status', (req, res) => {
-  const result = hunter.setStatus(req.params.id, req.body.status);
+app.post('/api/hunter/auth/logout', (req, res) => {
+  if (req.session.hunterStaffId) hunterStaff.logEvent(req.session.hunterStaffId, 'logout');
+  delete req.session.hunterStaffId;
+  res.json({ ok: true });
+});
+
+app.get('/api/hunter/auth/me', (req, res) => {
+  res.json({ ok: true, staff: hunterStaff.safe(hunterStaff.findById(req.session.hunterStaffId)) });
+});
+
+// Presence trail: the page sends a heartbeat every minute and a leave
+// beacon on close; sessions() folds these into time-on-page.
+app.post('/api/hunter/track', requireHunterStaffAPI, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!['heartbeat', 'leave'].includes(event))
+    return res.status(400).json({ ok: false, error: 'Invalid event' });
+  hunterStaff.logEvent(req.session.hunterStaffId, event);
+  res.json({ ok: true });
+});
+
+app.get('/api/hunter/activity', requireHunterStaffAPI, (req, res) => {
+  res.json({ ok: true, sessions: hunterStaff.sessions() });
+});
+
+app.get('/api/hunter/staff', requireHunterStaffAPI, requireHunterAdmin, (req, res) => {
+  res.json({ ok: true, staff: hunterStaff.listSafe() });
+});
+
+app.post('/api/hunter/staff', requireHunterStaffAPI, requireHunterAdmin, (req, res) => {
+  const { name, email, password, isAdmin } = req.body;
+  const result = hunterStaff.create({ name, email, password, isAdmin });
+  if (result.error) return res.status(400).json({ ok: false, error: result.error });
+  res.json({ ok: true, staff: hunterStaff.safe(result.staff) });
+});
+
+app.get('/api/hunter/leads', requireHunterStaffAPI, (req, res) => {
+  res.json({ ok: true, leads: hunter.all(), stats: hunter.stats(),
+             followups: hunter.followups() });
+});
+
+app.post('/api/hunter/leads/:id/status', requireHunterStaffAPI, (req, res) => {
+  const result = hunter.setStatus(req.params.id, req.body.status, hunterStaffName(req));
   if (result.error) return res.status(400).json({ ok: false, error: result.error });
   res.json({ ok: true, lead: result.lead });
 });
 
-app.post('/api/hunter/leads/:id/draft', (req, res) => {
+app.post('/api/hunter/leads/:id/activity', requireHunterStaffAPI, (req, res) => {
+  const { type, text } = req.body;
+  const result = hunter.addActivity(req.params.id, { type, text, by: hunterStaffName(req) });
+  if (result.error) return res.status(400).json({ ok: false, error: result.error });
+  res.json({ ok: true, lead: result.lead });
+});
+
+app.post('/api/hunter/leads/:id/draft', requireHunterStaffAPI, (req, res) => {
   const { subject, body } = req.body;
   if (typeof subject !== 'string' || typeof body !== 'string')
     return res.status(400).json({ ok: false, error: 'subject and body required' });
@@ -406,6 +486,7 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────────────────────
+hunterStaff.ensureSeed();
 initDb()
   .then(() => {
     app.listen(PORT, () => {
