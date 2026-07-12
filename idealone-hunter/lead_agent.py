@@ -1,126 +1,121 @@
 """
-IdealOne.Hunter — ULD Sales Lead Research Agent (reference implementation)
-===================================================================
-Standalone suite in the IdealOne family of apps; no IdealOne.CRM required.
-Multi-agent pipeline: Scout -> Verifier -> Analyst -> Contact Researcher
--> Outreach Writer -> SQLite -> (human approval queue in IdealOne.Hunter UI).
+IdealOne.Hunter — Multi-tenant Sales Lead Research Agent
+========================================================
+Standalone suite in the IdealOne family of apps. Runs the multi-agent
+pipeline (Scout -> Verifier -> Analyst -> Contact Researcher -> Outreach
+Writer) for EVERY onboarded organisation, driven by each org's own
+wishlist, and writes org-scoped leads into the SAME store the CRM web app
+reads (PostgreSQL via DATABASE_URL, or JSON files under ../data).
 
-Runs standalone:  python lead_agent.py run
-Schedule:         cron  0 8 * * 1-5  (Asia/Singapore)
+Reselling model:
+  - Each org's wishlist (market, industries, buying signals, what they
+    sell, leads/day) is templated into the five system prompts.
+  - The owner org ships pre-configured; tenant orgs fill their wishlist
+    during signup onboarding. Orgs without setup_complete are skipped.
+  - Results are capped at each org's leads_per_day and deduped against
+    that org's existing leads.
 
-Env vars required:
-  ANTHROPIC_API_KEY   Anthropic API key
-  APOLLO_API_KEY      Apollo.io API key (optional; contact step degrades gracefully)
+Usage:
+  python lead_agent.py run              # sweep every ready org
+  python lead_agent.py run --org <id>   # one org only
+  python lead_agent.py run --dry-run    # no API calls; stubbed candidates
+                                        # (proves the read/write wiring)
+Schedule: cron  0 8 * * 1-5  (per-org timezone handled by the host)
 
-Dependencies:  pip install anthropic requests
-Docs: https://docs.claude.com/en/api/overview
-NOTE: emails are NEVER sent by this script. It only writes drafts to the DB.
+Env vars:
+  DATABASE_URL        Postgres (shared with the web app). Omit -> JSON files.
+  ANTHROPIC_API_KEY   Anthropic API key (required unless --dry-run)
+  APOLLO_API_KEY      Apollo.io API key (optional; contact step degrades)
+
+Dependencies:  pip install anthropic requests psycopg2-binary
+NOTE: emails are NEVER sent by this script. It only writes drafts.
 """
 
+import argparse
 import hashlib
 import json
 import os
 import re
-import sqlite3
 import sys
-from datetime import date, datetime
+import uuid
+from datetime import date, datetime, timezone
 
-import requests
-from anthropic import Anthropic
+import store
 
-# ----------------------------------------------------------------------------
-# Config
-# ----------------------------------------------------------------------------
-DB_PATH = os.environ.get("LEAD_DB", "uld_leads.db")
 MODEL = "claude-sonnet-4-6"
-MAX_CANDIDATES = 12
 SCORE_FLOOR = 65
 HIGH_PRIORITY = 80
 
-client = Anthropic()  # reads ANTHROPIC_API_KEY
-WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}]
-
 PROMPTS_FILE = os.path.join(os.path.dirname(__file__), "prompts.json")
-# prompts.json holds the five system prompts from the spec, keys:
-# scout, verifier, analyst, contact_researcher, outreach_writer
 with open(PROMPTS_FILE) as f:
     PROMPTS = json.load(f)
 
-# ----------------------------------------------------------------------------
-# DB
-# ----------------------------------------------------------------------------
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS leads (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_name TEXT NOT NULL,
-    company_name_norm TEXT NOT NULL,
-    website TEXT, domain_norm TEXT,
-    industry TEXT, country_of_origin TEXT,
-    sg_activity TEXT, signal_code TEXT NOT NULL, buying_signal TEXT,
-    signal_date DATE, evidence_url TEXT NOT NULL, evidence_url_2 TEXT,
-    uld_service TEXT, uld_service_2 TEXT,
-    opportunity_size TEXT,
-    dm_name TEXT, dm_title TEXT, dm_email TEXT, dm_profile_url TEXT, dm_source TEXT,
-    lead_score INTEGER, score_breakdown TEXT,
-    lead_status TEXT NOT NULL DEFAULT 'New',
-    next_action TEXT,
-    outreach_subject TEXT, outreach_body TEXT, requires_recipient INTEGER DEFAULT 0,
-    est_pipeline_sgd INTEGER,
-    date_discovered DATE NOT NULL, date_last_verified DATE,
-    signal_hash TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_leads_dedupe ON leads (signal_hash);
-CREATE TABLE IF NOT EXISTS run_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_date DATE, candidates INTEGER, verified INTEGER,
-    retained INTEGER, duplicates INTEGER, errors TEXT,
-    finished_at TIMESTAMP
-);
-"""
+WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}]
 
-def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
-    conn.row_factory = sqlite3.Row
-    return conn
+
+# ----------------------------------------------------------------------------
+# Prompt templating from an org's wishlist
+# ----------------------------------------------------------------------------
+def fill(template, wishlist, max_candidates):
+    """Substitute {ORG_NAME}, {MARKET}, ... into a system prompt."""
+    return (template
+            .replace("{ORG_NAME}", wishlist["org_name"])
+            .replace("{MARKET}", wishlist.get("market") or "their market")
+            .replace("{INDUSTRIES}", wishlist.get("industries") or "any relevant industry")
+            .replace("{SIGNALS}", wishlist.get("signals") or "any credible buying signal")
+            .replace("{SERVICES}", wishlist.get("services") or "their product/service")
+            .replace("{NOTES}", wishlist.get("notes") or "none")
+            .replace("{MAX_CANDIDATES}", str(max_candidates)))
+
 
 # ----------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------
-SUFFIXES = r"\b(pte\.?\s*ltd\.?|ltd\.?|llc|inc\.?|gmbh|co\.?|limited|corporation|corp\.?|llp)\b"
+SUFFIXES = r"\b(pte\.?\s*ltd\.?|ltd\.?|llc|inc\.?|gmbh|co\.?|limited|corporation|corp\.?|llp|sdn\.?\s*bhd\.?)\b"
 
-def norm_name(name: str) -> str:
+
+def norm_name(name):
     n = re.sub(SUFFIXES, "", (name or "").lower())
     return re.sub(r"[^a-z0-9]+", " ", n).strip()
 
-def norm_domain(url: str) -> str:
+
+def norm_domain(url):
     if not url:
         return ""
     d = re.sub(r"^https?://", "", url.lower()).split("/")[0]
     return d[4:] if d.startswith("www.") else d
 
-def signal_hash(domain: str, name_norm: str, signal_code: str) -> str:
-    key = (domain or name_norm) + ":" + (signal_code or "")
+
+def signal_hash(org_id, domain, name_norm, signal_code):
+    key = org_id + ":" + (domain or name_norm) + ":" + (signal_code or "")
     return hashlib.sha256(key.encode()).hexdigest()
 
-def extract_json(text: str):
-    """Claude may wrap JSON in fences or prose; pull the first JSON value."""
+
+def extract_json(text):
     text = re.sub(r"```(?:json)?", "", text).strip("` \n")
     m = re.search(r"[\[{]", text)
     if not m:
         raise ValueError("no JSON found")
     return json.loads(text[m.start():])
 
-def call_agent(system: str, user: str, use_search: bool = False, max_tokens: int = 4000):
-    """One subagent call. Retries once on JSON failure."""
+
+# ----------------------------------------------------------------------------
+# Claude subagent call (skipped in --dry-run)
+# ----------------------------------------------------------------------------
+_client = None
+
+
+def call_agent(system, user, use_search=False, max_tokens=4000):
+    global _client
+    if _client is None:
+        from anthropic import Anthropic
+        _client = Anthropic()
     kwargs = dict(model=MODEL, max_tokens=max_tokens, system=system,
                   messages=[{"role": "user", "content": user}])
     if use_search:
         kwargs["tools"] = WEB_SEARCH_TOOL
     for attempt in (1, 2):
-        resp = client.messages.create(**kwargs)
+        resp = _client.messages.create(**kwargs)
         text = "".join(b.text for b in resp.content if b.type == "text")
         try:
             return extract_json(text)
@@ -131,20 +126,23 @@ def call_agent(system: str, user: str, use_search: bool = False, max_tokens: int
             kwargs["messages"].append(
                 {"role": "user", "content": "Return ONLY valid JSON. No prose, no fences."})
 
+
 # ----------------------------------------------------------------------------
-# Apollo (free people search only; enrichment is triggered manually in the UI)
+# Apollo people search (optional)
 # ----------------------------------------------------------------------------
 PRIORITY_TITLES = ["country manager", "general manager", "operations director",
-                   "operations manager", "supply chain manager", "logistics manager",
-                   "procurement manager", "founder", "managing director",
-                   "retail operations manager", "head of operations"]
+                   "operations manager", "supply chain manager", "procurement manager",
+                   "founder", "managing director", "head of operations"]
 
-def apollo_people_search(company_name: str, domain: str):
+
+def apollo_people_search(company_name, domain, market):
+    import requests
     key = os.environ.get("APOLLO_API_KEY")
     if not key:
         return []
-    payload = {"per_page": 5, "person_titles": PRIORITY_TITLES,
-               "person_locations": ["Singapore"]}
+    payload = {"per_page": 5, "person_titles": PRIORITY_TITLES}
+    if market:
+        payload["person_locations"] = [market]
     if domain:
         payload["q_organization_domains_list"] = [domain]
     else:
@@ -156,146 +154,220 @@ def apollo_people_search(company_name: str, domain: str):
         r.raise_for_status()
         return r.json().get("people", [])
     except requests.RequestException:
-        return []  # degrade gracefully; Contact Researcher falls back to web
+        return []
+
 
 # ----------------------------------------------------------------------------
-# Pipeline
+# Dry-run stubs — prove read/template/write wiring with no API calls
 # ----------------------------------------------------------------------------
-def run():
-    conn = db()
+def stub_candidates(wishlist, n):
+    ind = (wishlist.get("industries") or "target industry").split(",")[0].strip()
+    mkt = wishlist.get("market") or "the market"
+    out = []
+    for i in range(1, n + 1):
+        out.append({
+            "company_name": f"[SAMPLE] {ind.title()} Prospect {i}",
+            "website": f"https://prospect-{i}.example.com",
+            "industry": ind,
+            "country_of_origin": mkt,
+            "sg_activity": f"Showing a buying signal in {mkt} relevant to {ind}.",
+            "signal_code": "SIG-OTHER",
+            "signal_date": date.today().isoformat(),
+            "evidence_urls": [f"https://prospect-{i}.example.com/news"],
+            "sources_confirmed": 2,
+            "notes": "dry-run stub",
+        })
+    return out
+
+
+# ----------------------------------------------------------------------------
+# Per-org pipeline
+# ----------------------------------------------------------------------------
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_lead(org, cand, contact, draft, score, breakdown, service, size, next_action):
+    dom = norm_domain(cand.get("website", ""))
+    status = "High Priority" if score >= HIGH_PRIORITY else "Verified"
+    return {
+        "id": str(uuid.uuid4()),
+        "org_id": org["id"],
+        "company_name": cand.get("company_name", ""),
+        "website": cand.get("website", ""),
+        "industry": cand.get("industry", ""),
+        "country_of_origin": cand.get("country_of_origin", ""),
+        "sg_activity": cand.get("sg_activity", ""),
+        "signal_code": cand.get("signal_code", "SIG-OTHER"),
+        "buying_signal": cand.get("sg_activity", ""),
+        "signal_date": cand.get("signal_date"),
+        "evidence_url": (cand.get("evidence_urls") or [""])[0],
+        "evidence_url_2": (cand.get("evidence_urls") or ["", ""])[1] if len(cand.get("evidence_urls", [])) > 1 else "",
+        "uld_service": service,
+        "uld_service_2": "",
+        "opportunity_size": size,
+        "dm_name": contact.get("name", ""),
+        "dm_title": contact.get("title", ""),
+        "dm_email": contact.get("email", ""),
+        "dm_phone": contact.get("phone", ""),
+        "dm_source": contact.get("source", ""),
+        "sources_count": max(1, int(cand.get("sources_confirmed") or 0) or len(cand.get("evidence_urls", [])) or 1),
+        "lead_score": score,
+        "score_breakdown": breakdown,
+        "lead_status": status,
+        "next_action": next_action,
+        "outreach_subject": draft.get("subject", ""),
+        "outreach_body": draft.get("body", ""),
+        "requires_recipient": bool(draft.get("requires_recipient")),
+        "est_pipeline_sgd": None,
+        "date_discovered": date.today().isoformat(),
+        "date_last_verified": date.today().isoformat(),
+        "signal_hash": signal_hash(org["id"], dom, norm_name(cand.get("company_name", "")), cand.get("signal_code", "")),
+        "activity": [],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+
+
+def run_org(org, dry_run=False):
+    wl = dict(org.get("wishlist") or {})
+    wl["org_name"] = org["name"]
+    cap = max(1, min(50, int(wl.get("leads_per_day") or 10)))
+
+    # Known signal hashes for this org (dedupe across days).
+    known = {l.get("signal_hash") for l in store.leads_for(org["id"]) if l.get("signal_hash")}
+
     today = date.today().isoformat()
-    errors, dup_count = [], 0
 
-    known = [r["domain_norm"] or r["company_name_norm"] for r in conn.execute(
-        "SELECT domain_norm, company_name_norm FROM leads "
-        "WHERE date_discovered >= date('now','-90 day')")]
+    # 1. SCOUT
+    if dry_run:
+        candidates = stub_candidates(wl, cap + 2)
+    else:
+        candidates = call_agent(
+            fill(PROMPTS["scout"], wl, cap),
+            f"Run today's scout. Date: {today}. Exclude previously reported companies.",
+            use_search=True, max_tokens=6000)
+    candidates = candidates[:cap + 4]
 
-    # 1. SCOUT ---------------------------------------------------------------
-    candidates = call_agent(
-        PROMPTS["scout"],
-        f"Run today's scout. Date: {today}. "
-        f"Exclude these previously reported companies/domains: {json.dumps(known)}",
-        use_search=True, max_tokens=6000)
-    candidates = candidates[:MAX_CANDIDATES]
-
-    # 2. DEDUPE before spending verifier tokens --------------------------------
+    # 2. DEDUPE before spending tokens
     fresh = []
     for c in candidates:
-        h = signal_hash(norm_domain(c.get("website", "")),
+        h = signal_hash(org["id"], norm_domain(c.get("website", "")),
                         norm_name(c.get("company_name", "")), c.get("signal_code", ""))
-        if conn.execute("SELECT 1 FROM leads WHERE signal_hash=?", (h,)).fetchone():
-            dup_count += 1
-        else:
+        if h not in known:
             c["_hash"] = h
             fresh.append(c)
 
-    # 3. VERIFY ----------------------------------------------------------------
-    verified = []
-    if fresh:
+    # 3. VERIFY
+    if dry_run:
+        verified = [dict(c, verified=True) for c in fresh]
+    else:
         try:
-            out = call_agent(PROMPTS["verifier"],
+            out = call_agent(fill(PROMPTS["verifier"], wl, cap),
                              f"Verify these candidates as of {today}: {json.dumps(fresh)}",
                              use_search=True, max_tokens=6000)
             verified = [v for v in out if v.get("verified")]
         except Exception as e:  # noqa: BLE001
-            errors.append(f"verifier: {e}")
+            print(f"  ! verifier error: {e}")
+            verified = []
 
-    # 4. SCORE -------------------------------------------------------------
-    retained = []
-    if verified:
+    # 4. SCORE
+    if dry_run:
+        retained = [dict(v, score=78, uld_service="Best fit",
+                         score_breakdown={"market": 18, "signal": 20, "fit": 20, "volume": 10, "access": 6, "urgency": 4},
+                         opportunity_size="Medium",
+                         recommended_next_action="Review and approve outreach")
+                    for v in verified]
+    else:
         try:
-            out = call_agent(PROMPTS["analyst"],
+            out = call_agent(fill(PROMPTS["analyst"], wl, cap),
                              f"Score these verified leads: {json.dumps(verified)}")
-            retained = [l for l in out.get("retained", [])
-                        if l.get("score", 0) >= SCORE_FLOOR]
+            retained = [l for l in out.get("retained", []) if l.get("score", 0) >= SCORE_FLOOR]
         except Exception as e:  # noqa: BLE001
-            errors.append(f"analyst: {e}")
+            print(f"  ! analyst error: {e}")
+            retained = []
 
-    # 5 & 6. CONTACTS + OUTREACH, then persist -------------------------------
+    # Cap at the org's leads/day
+    retained = sorted(retained, key=lambda l: l.get("score", 0), reverse=True)[:cap]
+
+    # 5 & 6. CONTACTS + OUTREACH, then persist
+    written = 0
     for lead in retained:
-        dom = norm_domain(lead.get("website", ""))
-        apollo = apollo_people_search(lead["company_name"], dom)
-        try:
-            contacts = call_agent(
-                PROMPTS["contact_researcher"],
-                f"Find contacts for: {json.dumps(lead)}\n"
-                f"Apollo API results: {json.dumps(apollo)}",
-                use_search=True)
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"contacts {lead['company_name']}: {e}")
-            contacts = {"contacts": [], "contact_status": "not_found"}
+        if dry_run:
+            contact = {"name": "Sample Contact", "title": "Operations Director",
+                       "email": "contact@example.com", "phone": "+00 000 0000", "source": "apollo"}
+            draft = {"subject": f"Re: your recent move — {wl['org_name']}",
+                     "body": f"Saw {lead.get('company_name')}'s recent activity. {wl['org_name']} can help. 15-min call?\n\n{{SENDER_NAME}}, {{SENDER_TITLE}}, {wl['org_name']}",
+                     "requires_recipient": False}
+        else:
+            apollo = apollo_people_search(lead["company_name"], norm_domain(lead.get("website", "")), wl.get("market"))
+            try:
+                contacts = call_agent(fill(PROMPTS["contact_researcher"], wl, cap),
+                                      f"Find contacts for: {json.dumps(lead)}\nApollo API results: {json.dumps(apollo)}",
+                                      use_search=True)
+                contact = (contacts.get("contacts") or [{}])[0]
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! contacts error ({lead['company_name']}): {e}")
+                contact = {}
+            try:
+                draft = call_agent(fill(PROMPTS["outreach_writer"], wl, cap),
+                                   f"Draft outreach for: {json.dumps(dict(lead, _contact=contact))}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! outreach error ({lead['company_name']}): {e}")
+                draft = {"subject": "", "body": "", "requires_recipient": True}
 
-        best = (contacts.get("contacts") or [{}])[0]
-        lead["_contact"] = best
+        row = build_lead(org, lead, contact, draft,
+                         lead.get("score", 0), lead.get("score_breakdown", {}),
+                         lead.get("uld_service", "Best fit"),
+                         lead.get("opportunity_size", "Unknown"),
+                         lead.get("recommended_next_action", ""))
+        if row["signal_hash"] in known:
+            continue
+        store.put("leads", row["id"], row)
+        known.add(row["signal_hash"])
+        written += 1
 
-        try:
-            draft = call_agent(PROMPTS["outreach_writer"],
-                               f"Draft outreach for: {json.dumps(lead)}")
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"outreach {lead['company_name']}: {e}")
-            draft = {"subject": "", "body": "", "requires_recipient": True}
+    # Run log (per org)
+    log_id = str(uuid.uuid4())
+    store.put("runlog", log_id, {
+        "id": log_id, "org_id": org["id"], "run_date": today,
+        "candidates": len(candidates), "verified": len(verified),
+        "retained": len(retained), "written": written, "finished_at": now_iso(),
+    })
+    return {"candidates": len(candidates), "verified": len(verified),
+            "retained": len(retained), "written": written}
 
-        status = "High Priority" if lead["score"] >= HIGH_PRIORITY else "Verified"
-        h = lead.get("_hash") or signal_hash(dom, norm_name(lead["company_name"]),
-                                             lead.get("signal_code", ""))
-        try:
-            conn.execute("""
-                INSERT INTO leads (company_name, company_name_norm, website, domain_norm,
-                    industry, country_of_origin, sg_activity, signal_code, buying_signal,
-                    signal_date, evidence_url, evidence_url_2, uld_service, uld_service_2,
-                    opportunity_size, dm_name, dm_title, dm_email, dm_profile_url, dm_source,
-                    lead_score, score_breakdown, lead_status, next_action,
-                    outreach_subject, outreach_body, requires_recipient,
-                    date_discovered, date_last_verified, signal_hash)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
-                lead["company_name"], norm_name(lead["company_name"]),
-                lead.get("website", ""), dom,
-                lead.get("industry", ""), lead.get("country_of_origin", ""),
-                lead.get("sg_activity", ""), lead.get("signal_code", ""),
-                lead.get("sg_activity", ""), lead.get("signal_date"),
-                (lead.get("evidence_urls") or [""])[0],
-                (lead.get("evidence_urls") or ["", ""])[1] if len(lead.get("evidence_urls", [])) > 1 else "",
-                lead.get("uld_service", ""), lead.get("uld_service_secondary", ""),
-                lead.get("opportunity_size", "Unknown"),
-                best.get("name", ""), best.get("title", ""), best.get("email", ""),
-                best.get("profile_url", ""), best.get("source", ""),
-                lead["score"], json.dumps(lead.get("score_breakdown", {})),
-                status, lead.get("recommended_next_action", ""),
-                draft.get("subject", ""), draft.get("body", ""),
-                1 if draft.get("requires_recipient") else 0,
-                today, today, h))
-        except sqlite3.IntegrityError:
-            dup_count += 1
-
-    conn.execute("INSERT INTO run_log (run_date, candidates, verified, retained, "
-                 "duplicates, errors, finished_at) VALUES (?,?,?,?,?,?,?)",
-                 (today, len(candidates), len(verified), len(retained),
-                  dup_count, "; ".join(errors), datetime.now().isoformat()))
-    conn.commit()
-
-    print(f"[{today}] candidates={len(candidates)} verified={len(verified)} "
-          f"retained={len(retained)} dupes={dup_count} errors={len(errors)}")
-    for r in conn.execute("SELECT company_name, lead_score, lead_status, uld_service "
-                          "FROM leads WHERE date_discovered=? "
-                          "ORDER BY lead_score DESC", (today,)):
-        print(f"  {r['lead_score']:>3}  {r['lead_status']:<13} "
-              f"{r['uld_service']:<6} {r['company_name']}")
 
 # ----------------------------------------------------------------------------
-# Approval actions (called by the IdealOne.Hunter UI — humans only)
+# Sweep
 # ----------------------------------------------------------------------------
-HUMAN_ONLY = {"Contact Approved", "Contacted", "Replied", "Qualified",
-              "Quotation", "Won", "Lost"}
+def run(only_org=None, dry_run=False):
+    all_orgs = store.orgs()
+    ready = [o for o in all_orgs if o.get("setup_complete")]
+    if only_org:
+        ready = [o for o in ready if o["id"] == only_org]
 
-def set_status(lead_id: int, status: str):
-    """UI hook. The pipeline never calls this for HUMAN_ONLY statuses."""
-    conn = db()
-    conn.execute("UPDATE leads SET lead_status=?, updated_at=CURRENT_TIMESTAMP "
-                 "WHERE id=?", (status, lead_id))
-    conn.commit()
+    print(f"[{date.today().isoformat()}] store={store.backend} "
+          f"orgs={len(all_orgs)} ready={len(ready)} dry_run={dry_run}")
+    if not ready:
+        print("  no ready orgs — tenants must complete wishlist onboarding first")
+        return
+
+    grand = 0
+    for org in ready:
+        tag = "OWNER" if org.get("is_owner") else "tenant"
+        print(f"\n-> {org['name']}  ({tag}, {(org.get('wishlist') or {}).get('leads_per_day', '?')} leads/day)")
+        res = run_org(org, dry_run=dry_run)
+        grand += res["written"]
+        print(f"   candidates={res['candidates']} verified={res['verified']} "
+              f"retained={res['retained']} written={res['written']}")
+    print(f"\nDone. {grand} new leads written across {len(ready)} org(s).")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "run":
-        run()
-    else:
-        print("usage: python lead_agent.py run")
+    ap = argparse.ArgumentParser(description="IdealOne.Hunter multi-tenant lead pipeline")
+    ap.add_argument("cmd", nargs="?", default="run", choices=["run"])
+    ap.add_argument("--org", help="run one org by id")
+    ap.add_argument("--dry-run", action="store_true", help="no API calls; stubbed candidates")
+    args = ap.parse_args()
+    run(only_org=args.org, dry_run=args.dry_run)
