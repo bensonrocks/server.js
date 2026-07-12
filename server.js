@@ -260,6 +260,29 @@ function writeDb(data) {
   setImmediate(_persistDb);
 }
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Every redeploy sends the OLD container SIGTERM so the new one can take over.
+// Node's default SIGTERM behavior is to die instantly with no cleanup, which
+// makes npm's wrapper log "npm error signal SIGTERM" / "command failed" —
+// and Railway's crash detector can't tell that apart from a real crash, so it
+// fires a "Deploy Crashed" email on EVERY push. Exiting cleanly (after letting
+// any in-flight db write finish) stops that false alarm and protects the
+// write from being cut off mid-flush.
+let _shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.log(`[IdealScan] ${signal} received — shutting down cleanly`);
+  const done = () => process.exit(0);
+  setTimeout(done, 3000); // hard cap so a stuck flush can never hang the deploy
+  (function waitForFlush() {
+    if (!_dbWriting) return done();
+    setTimeout(waitForFlush, 50);
+  })();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+
 // ── Scan journal — crash-proof record of in-flight scan progress ────────────
 // db.json persistence is deferred; a hard crash could lose the last moments
 // of scanning. Every order-state change is ALSO appended (immediately) to an
