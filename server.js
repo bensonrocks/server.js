@@ -10,6 +10,7 @@ const Stripe  = require('stripe');
 const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
+const hunter                         = require('./lib/hunter/store');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 
@@ -141,6 +142,9 @@ app.get('/settings',     requireSubscriptionPage, (req, res) =>
 );
 app.get('/vaultkeepers', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
+);
+app.get('/hunter', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'hunter.html'))
 );
 
 // ── Static assets (tutorial.html, images, etc.) ────────────────────────
@@ -352,6 +356,26 @@ app.post('/api/admin/users/:id/status', requireAdmin, async (req, res) => {
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   await users.deleteUser(req.params.id);
   res.json({ ok: true });
+});
+
+// ── IdealOne.Hunter CRM API ────────────────────────────────────────────
+app.get('/api/hunter/leads', (req, res) => {
+  res.json({ ok: true, leads: hunter.all(), stats: hunter.stats() });
+});
+
+app.post('/api/hunter/leads/:id/status', (req, res) => {
+  const result = hunter.setStatus(req.params.id, req.body.status);
+  if (result.error) return res.status(400).json({ ok: false, error: result.error });
+  res.json({ ok: true, lead: result.lead });
+});
+
+app.post('/api/hunter/leads/:id/draft', (req, res) => {
+  const { subject, body } = req.body;
+  if (typeof subject !== 'string' || typeof body !== 'string')
+    return res.status(400).json({ ok: false, error: 'subject and body required' });
+  const result = hunter.updateDraft(req.params.id, { subject, body });
+  if (result.error) return res.status(400).json({ ok: false, error: result.error });
+  res.json({ ok: true, lead: result.lead });
 });
 
 // ── Trading API (subscriber-only) ──────────────────────────────────────
