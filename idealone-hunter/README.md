@@ -1,8 +1,8 @@
-# IdealOne.Leads
+# IdealOne.Hunter
 
 **AI lead intelligence, sold as a standalone suite in the IdealOne family of apps.**
 
-IdealOne.Leads discovers companies showing credible, recent buying signals, verifies them against real sources, scores commercial fit, finds publicly listed decision-makers, and drafts personalised outreach — then holds everything in a human approval queue. **Nothing is ever sent automatically.**
+IdealOne.Hunter discovers companies showing credible, recent buying signals, verifies them against real sources, scores commercial fit, finds publicly listed decision-makers, and drafts personalised outreach — then holds everything in a human approval queue. **Nothing is ever sent automatically.**
 
 It runs on its own database and scheduler and requires no other IdealOne app. Integration with IdealOne.CRM (converting qualified leads into CRM accounts) is an optional add-on, not a dependency.
 
@@ -10,7 +10,7 @@ It runs on its own database and scheduler and requires no other IdealOne app. In
 
 | File | Purpose |
 |---|---|
-| `idealone-leads-spec.md` | Implementation Specification v1.0 — pipeline design, signal taxonomy, schema, dedupe rules, dashboard, ops |
+| `idealone-hunter-spec.md` | Implementation Specification v1.0 — pipeline design, signal taxonomy, schema, dedupe rules, dashboard, ops |
 | `lead_agent.py` | Reference implementation of the multi-agent pipeline (Scout → Verifier → Analyst → Contact Researcher → Outreach Writer) |
 | `prompts.json` | The five subagent system prompts loaded by `lead_agent.py` |
 | `requirements.txt` | Python dependencies |
@@ -35,4 +35,4 @@ Schedule with cron for weekday-morning runs: `0 8 * * 1-5` (Asia/Singapore for t
 2. No lead is written without at least one evidence URL and a verifiable date.
 3. Contact fields are only populated from Apollo API responses or fetched public pages — never from model free-text.
 
-See `idealone-leads-spec.md` for the full design.
+See `idealone-hunter-spec.md` for the full design.

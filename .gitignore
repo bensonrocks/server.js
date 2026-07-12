@@ -3,5 +3,5 @@ node_modules/
 *.log
 data/market-cache/
 data/reports/
-idealone-leads/*.db
+idealone-hunter/*.db
 __pycache__/
