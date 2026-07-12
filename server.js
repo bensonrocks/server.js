@@ -74,6 +74,12 @@ if (!process.env.SESSION_SECRET) {
   console.warn('WARNING: SESSION_SECRET not set — sessions will not survive restarts. Set it in Railway env vars.');
 }
 
+// Behind Railway/other TLS-terminating proxies, trust X-Forwarded-Proto so
+// Express sees the request as HTTPS and will actually set the secure session
+// cookie — without this, login "succeeds" but the cookie is dropped and every
+// next request looks logged-out.
+app.set('trust proxy', 1);
+
 app.use(session({
   store: sessionStore,
   secret: process.env.SESSION_SECRET || 'dev-only-secret-set-SESSION_SECRET-in-prod',
