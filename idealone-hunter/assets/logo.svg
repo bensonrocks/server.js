@@ -64,14 +64,14 @@
 
   <!-- wordmark: IDEALONE (A drawn as open lambda + blue triangle) -->
   <g font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="#0E0E10">
-    <text x="90" y="680" font-size="92" letter-spacing="16">IDE</text>
-    <text x="392" y="680" font-size="92" letter-spacing="16">LONE</text>
+    <text x="100" y="680" font-size="92" letter-spacing="8">IDE</text>
+    <text x="352" y="680" font-size="92" letter-spacing="8">LONE</text>
   </g>
   <!-- lambda A: open legs, blue triangle in the gap -->
-  <path d="M 310 680 L 343 588 Q 345 583 350 583 Q 355 583 357 588 L 390 680 L 364 680 L 350 640 L 336 680 Z" fill="#0E0E10"/>
-  <path d="M 350 649 L 361 680 L 339 680 Z" fill="#1B6BE8"/>
+  <path d="M 268 680 L 301 588 Q 303 583 308 583 Q 313 583 315 588 L 348 680 L 322 680 L 308 640 L 294 680 Z" fill="#0E0E10"/>
+  <path d="M 308 649 L 319 680 L 297 680 Z" fill="#1B6BE8"/>
 
   <!-- HUNTER sub-brand -->
-  <text x="92" y="772" font-family="Arial, Helvetica, sans-serif" font-weight="bold"
-        font-size="62" textLength="596" lengthAdjust="spacing" fill="#1B6BE8">HUNTER</text>
+  <text x="102" y="772" font-family="Arial, Helvetica, sans-serif" font-weight="bold"
+        font-size="62" textLength="540" lengthAdjust="spacing" fill="#1B6BE8">HUNTER</text>
 </svg>
