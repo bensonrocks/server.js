@@ -99,6 +99,13 @@
   .contact b { color: var(--ink); }
   .prov { font-size: 11.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
   .needs { color: var(--warn); font-weight: 700; font-size: 12.5px; }
+  .verified {
+    font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+    background: #DCFCE7; border: 1px solid #BBF7D0; color: var(--good); white-space: nowrap;
+  }
+  .cinfo { color: var(--ink-2); }
+  .cinfo a { color: var(--brand); text-decoration: none; }
+  .cinfo a:hover { text-decoration: underline; }
 
   .draft input, .draft textarea, .comment input {
     width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
@@ -133,6 +140,9 @@
   tr:last-child td { border-bottom: none; }
   td select, .qcard select { font: 13px inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; background: var(--card); color: var(--ink); }
 
+  .setlbl { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink-2); margin: 10px 0 4px; }
+  .setin { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font: 13.5px/1.5 inherit; background: #FDFDFD; }
+  textarea.setin { min-height: 58px; resize: vertical; }
   .staff-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; margin-top: 12px; }
   @media (max-width: 720px) { .staff-form { grid-template-columns: 1fr; } }
   .staff-form input { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font: 13.5px inherit; }
@@ -147,7 +157,7 @@
     <img src="/hunter-logo.svg" alt="IdealOne.Hunter logo">
     <div>
       <div class="h-title">IdealOne<span class="dot">.</span>Hunter</div>
-      <div class="h-sub">Lead Intelligence · United Logistics &amp; Distribution (Singapore)</div>
+      <div class="h-sub">Lead Intelligence · <span id="orgName"></span></div>
     </div>
     <div class="h-right">
       <span class="badge-sample" id="sampleBadge" hidden>SAMPLE DATA — pipeline not yet connected</span>
@@ -162,6 +172,7 @@
     <button class="tab active" data-pane="pipeline" onclick="showTab(this)">Pipeline</button>
     <button class="tab" data-pane="contacted" onclick="showTab(this)">Contacted <span class="n" id="tabContactedN">0</span></button>
     <button class="tab" data-pane="team" onclick="showTab(this)" id="tabTeam" hidden>Team activity</button>
+    <button class="tab" data-pane="settings" onclick="showTab(this)" id="tabSettings" hidden>Settings</button>
   </div>
 
   <!-- ── Pipeline ─────────────────────────────────────────────────── -->
@@ -174,7 +185,7 @@
         <div id="scoreChart"></div>
       </div>
       <div class="card">
-        <h3>Leads by ULD service</h3>
+        <h3>Leads by service fit</h3>
         <div id="serviceChart"></div>
       </div>
     </div>
@@ -204,6 +215,38 @@
       Leads still waiting on a reply are promoted for follow-up after 3 calendar days.
     </p>
     <div class="queue" id="contactedList"></div>
+  </div>
+
+  <!-- ── Settings (Master) ────────────────────────────────────────── -->
+  <div class="pane" id="pane-settings">
+    <h2 style="margin-top:6px">Lead wishlist</h2>
+    <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
+      What Hunter looks for on your behalf, and how many verified leads land per day.
+    </p>
+    <div class="card" style="max-width:680px">
+      <label class="setlbl">Target market / region</label>
+      <input class="setin" id="ws-market">
+      <div style="display:grid;grid-template-columns:1fr 160px;gap:12px">
+        <div>
+          <label class="setlbl">Industries</label>
+          <textarea class="setin" id="ws-industries"></textarea>
+        </div>
+        <div>
+          <label class="setlbl">Leads per day (1–50)</label>
+          <input class="setin" id="ws-leads_per_day" type="number" min="1" max="50">
+        </div>
+      </div>
+      <label class="setlbl">Buying signals</label>
+      <textarea class="setin" id="ws-signals"></textarea>
+      <label class="setlbl">What you sell</label>
+      <textarea class="setin" id="ws-services"></textarea>
+      <label class="setlbl">Notes</label>
+      <textarea class="setin" id="ws-notes"></textarea>
+      <div class="actions">
+        <button class="primary" onclick="saveWishlist()">Save wishlist</button>
+        <span class="saved" id="wsMsg"></span>
+      </div>
+    </div>
   </div>
 
   <!-- ── Team activity ────────────────────────────────────────────── -->
@@ -245,6 +288,7 @@ const CONTACTED_SET = ['Contacted','Replied','Qualified','Quotation','Won','Lost
 const TL_ICON = { comment:'💬', email_sent:'✉️', response:'📩', followup:'🔁', status:'🏷️' };
 
 let ME = null;
+let ORG = null;
 
 function chipClass(s) {
   if (s === 'High Priority') return 'chip hp';
@@ -277,18 +321,40 @@ const post = (url, data) => api(url, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 
 async function load() {
-  const [{ staff }, { leads, stats, followups }] =
+  const [{ staff, org }, { leads, stats, followups }] =
     await Promise.all([api('/api/hunter/auth/me'), api('/api/hunter/leads')]);
-  ME = staff;
+  ME = staff; ORG = org;
   if (!ME) { location.href = '/hunter/login'; return; }
+  if (ORG && !ORG.setup_complete) { location.href = '/hunter/setup'; return; }
+  document.getElementById('orgName').textContent = ORG ? ORG.name : '';
   document.getElementById('who').innerHTML =
     `Signed in as <b>${esc(ME.name)}</b>${ME.isAdmin ? ' <span class="chip hp">Master</span>' : ''}`;
   document.getElementById('tabTeam').hidden = !ME.isAdmin;
+  document.getElementById('tabSettings').hidden = !ME.isAdmin;
+  if (ME.isAdmin && ORG) fillWishlist(ORG.wishlist || {});
   document.getElementById('sampleBadge').hidden = !leads.some(l => l.sample);
 
   renderFollowups(followups);
   renderPipeline(leads, stats);
   renderContacted(leads, followups);
+}
+
+// ── Contact + verification display ─────────────────────────────────────
+// Sources are proprietary and never named — tenants see only the green
+// verified count. Email and phone are shown by default when found.
+function verifiedBadge(l) {
+  const n = l.sources_count || 1;
+  return `<span class="verified">✓ Verified · ${n} source${n === 1 ? '' : 's'}</span>`;
+}
+
+function contactLine(l) {
+  if (!l.dm_name) return `<span class="needs">⚠ needs a recipient — no contact found</span> ${verifiedBadge(l)}`;
+  const bits = [`<b>${esc(l.dm_name)}</b> — ${esc(l.dm_title)}`];
+  bits.push(l.dm_email ? `<a href="mailto:${esc(l.dm_email)}">📧 ${esc(l.dm_email)}</a>` : `📧 <span style="color:var(--ink-3)">email pending</span>`);
+  bits.push(l.dm_phone ? `<a href="tel:${esc(l.dm_phone)}">📞 ${esc(l.dm_phone)}</a>` : `📞 <span style="color:var(--ink-3)">phone pending</span>`);
+  let line = `<span class="cinfo">${bits.join(' &nbsp;·&nbsp; ')}</span> &nbsp;${verifiedBadge(l)}`;
+  if (ORG && ORG.is_owner && l.dm_source) line += `<span class="prov">${esc(l.dm_source)}</span>`;
+  return line;
 }
 
 // ── Follow-up actions (shown on login) ─────────────────────────────────
@@ -360,9 +426,8 @@ function bars(el, entries) {
 }
 
 function queueCard(l) {
-  const contact = l.dm_name
-    ? `<b>${esc(l.dm_name)}</b> — ${esc(l.dm_title)}<span class="prov">${esc(l.dm_source)}</span>`
-    : `<span class="needs">⚠ needs a recipient — no contact found</span>`;
+  const evidence = (ORG && ORG.is_owner && l.evidence_url)
+    ? `&nbsp;·&nbsp;<a href="${esc(l.evidence_url)}" target="_blank" rel="noopener">evidence ↗</a>` : '';
   return `<div class="qcard">
     <div class="qhead">
       <span class="co">${esc(l.company_name)}</span>
@@ -370,9 +435,8 @@ function queueCard(l) {
       <span class="${chipClass(l.lead_status)}">${esc(l.lead_status)}</span>
       <span class="chip">${esc(SERVICES[l.uld_service] || l.uld_service)}</span>
     </div>
-    <div class="qmeta">${esc(l.sg_activity)}
-      &nbsp;·&nbsp;<a href="${esc(l.evidence_url)}" target="_blank" rel="noopener">evidence ↗</a></div>
-    <div class="contact">${contact}</div>
+    <div class="qmeta">${esc(l.sg_activity)}${evidence}</div>
+    <div class="contact">${contactLine(l)}</div>
     <div class="draft">
       <input id="subj-${l.id}" value="${esc(l.outreach_subject)}" placeholder="Subject">
       <textarea id="body-${l.id}" placeholder="Email body">${esc(l.outreach_body)}</textarea>
@@ -435,9 +499,9 @@ function contactedCard(l, due) {
       <span class="${chipClass(l.lead_status)}">${esc(l.lead_status)}</span>
       <span class="chip">${esc(SERVICES[l.uld_service] || l.uld_service)}</span>
       ${due ? '<span class="chip hp">⏰ follow-up due</span>' : ''}
-      ${l.dm_name ? `<span style="font-size:13px;color:var(--ink-2)">· ${esc(l.dm_name)}, ${esc(l.dm_title)}</span>` : ''}
     </div>
     <div class="qmeta">Contacted ${fmt(l.contacted_at)} · ${esc(l.sg_activity)}</div>
+    <div class="contact">${contactLine(l)}</div>
     <div class="actions">
       <button class="ghost" onclick="logEmail('${l.id}')">✉️ Email sent</button>
       <button class="ghost" onclick="logResponse('${l.id}')">📩 Response received</button>
@@ -510,6 +574,26 @@ async function addStaff() {
   msg.textContent = r.ok ? 'Staff account created ✓' : (r.error || 'Failed');
   msg.style.color = r.ok ? 'var(--good)' : '#B91C1C';
   if (r.ok) { ['nsName', 'nsEmail', 'nsPass'].forEach(i => document.getElementById(i).value = ''); loadTeam(); }
+}
+
+// ── Settings (Master): the org's lead wishlist ─────────────────────────
+const WS_FIELDS = ['market', 'industries', 'signals', 'services', 'notes', 'leads_per_day'];
+
+function fillWishlist(ws) {
+  WS_FIELDS.forEach(f => {
+    const el = document.getElementById('ws-' + f);
+    if (el) el.value = ws[f] ?? '';
+  });
+}
+
+async function saveWishlist() {
+  const body = {};
+  WS_FIELDS.forEach(f => body[f] = document.getElementById('ws-' + f).value);
+  const r = await post('/api/hunter/org/wishlist', body);
+  const msg = document.getElementById('wsMsg');
+  msg.textContent = r.ok ? 'Wishlist saved ✓' : (r.error || 'Failed');
+  msg.style.color = r.ok ? 'var(--good)' : '#B91C1C';
+  if (r.ok) ORG = r.org;
 }
 
 // ── Auth + presence ────────────────────────────────────────────────────

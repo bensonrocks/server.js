@@ -12,6 +12,7 @@ const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const hunter                         = require('./lib/hunter/store');
 const hunterStaff                    = require('./lib/hunter/staff');
+const hunterOrgs                     = require('./lib/hunter/orgs');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 
@@ -112,9 +113,16 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function requireHunterStaffAPI(req, res, next) {
-  if (!req.session.hunterStaffId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
-  next();
+// Loads the signed-in Hunter staff member and their org onto req.hunter.
+async function requireHunterStaffAPI(req, res, next) {
+  try {
+    const staff = await hunterStaff.findById(req.session.hunterStaffId);
+    if (!staff) return res.status(401).json({ ok: false, error: 'Not authenticated' });
+    const org = await hunterOrgs.findById(staff.org_id);
+    if (!org) return res.status(401).json({ ok: false, error: 'Organisation not found' });
+    req.hunter = { staff, org };
+    next();
+  } catch (err) { next(err); }
 }
 
 function requireHunterStaffPage(req, res, next) {
@@ -123,8 +131,8 @@ function requireHunterStaffPage(req, res, next) {
 }
 
 function requireHunterAdmin(req, res, next) {
-  const staff = hunterStaff.findById(req.session.hunterStaffId);
-  if (!staff || !staff.isAdmin) return res.status(403).json({ ok: false, error: 'Admin only' });
+  if (!req.hunter || !req.hunter.staff.isAdmin)
+    return res.status(403).json({ ok: false, error: 'Admin only' });
   next();
 }
 
@@ -151,10 +159,15 @@ app.get('/sitemap.xml', (req, res) => {
 // HUNTER_HOME=1 turns a deployment into the IdealOne.Hunter CRM: / serves
 // the CRM instead of the VaultSignals landing page.
 const hunterHome = ['1', 'true', 'yes'].includes(String(process.env.HUNTER_HOME || '').toLowerCase());
-app.get('/', (req, res) => {
+app.get('/', async (req, res, next) => {
   if (!hunterHome) return res.sendFile(path.join(__dirname, 'public', 'landing.html'));
   if (!req.session.hunterStaffId) return res.redirect('/hunter/login');
-  res.sendFile(path.join(__dirname, 'public', 'hunter.html'));
+  try {
+    const staff = await hunterStaff.findById(req.session.hunterStaffId);
+    const org = staff && await hunterOrgs.findById(staff.org_id);
+    if (org && !org.setup_complete) return res.redirect('/hunter/setup');
+    res.sendFile(path.join(__dirname, 'public', 'hunter.html'));
+  } catch (err) { next(err); }
 });
 app.get('/login',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/signup',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
@@ -167,11 +180,28 @@ app.get('/settings',     requireSubscriptionPage, (req, res) =>
 app.get('/vaultkeepers', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
 );
-app.get('/hunter', requireHunterStaffPage, (req, res) =>
+// Tenants must finish wishlist onboarding before the CRM runs; the owner
+// org is seeded setup_complete and bypasses this.
+async function hunterSetupGate(req, res, next) {
+  try {
+    const staff = await hunterStaff.findById(req.session.hunterStaffId);
+    const org = staff && await hunterOrgs.findById(staff.org_id);
+    if (org && !org.setup_complete) return res.redirect('/hunter/setup');
+    next();
+  } catch (err) { next(err); }
+}
+
+app.get('/hunter', requireHunterStaffPage, hunterSetupGate, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'hunter.html'))
 );
 app.get('/hunter/login', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'hunter-login.html'))
+);
+app.get('/hunter/signup', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'hunter-signup.html'))
+);
+app.get('/hunter/setup', requireHunterStaffPage, (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'hunter-setup.html'))
 );
 
 // ── Static assets (tutorial.html, images, etc.) ────────────────────────
@@ -385,82 +415,122 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── IdealOne.Hunter CRM API (staff only) ───────────────────────────────
-function hunterStaffName(req) {
-  const staff = hunterStaff.findById(req.session.hunterStaffId);
-  return staff ? staff.name : 'staff';
-}
+// ── IdealOne.Hunter CRM API (staff only, org-scoped) ───────────────────
+// Wraps async handlers so rejections hit the error handler, not the void.
+const hx = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-app.post('/api/hunter/auth/login', (req, res) => {
-  const staff = hunterStaff.verify(req.body.email, req.body.password);
+// New company signup: creates the org (onboarding incomplete) + its
+// Master account. The owner org never goes through this.
+app.post('/api/hunter/auth/signup', hx(async (req, res) => {
+  const { company, name, email, password } = req.body;
+  if (!company || !String(company).trim())
+    return res.status(400).json({ ok: false, error: 'Company name required' });
+  const org = await hunterOrgs.create(company);
+  const result = await hunterStaff.create({ org_id: org.id, name, email, password, isAdmin: true });
+  if (result.error) return res.status(400).json({ ok: false, error: result.error });
+  await hunter.seedSamplesFor(org.id);
+  req.session.hunterStaffId = result.staff.id;
+  await hunterStaff.logEvent(org.id, result.staff.id, 'login');
+  res.json({ ok: true, staff: hunterStaff.safe(result.staff), org: hunterOrgs.safe(org) });
+}));
+
+app.post('/api/hunter/auth/login', hx(async (req, res) => {
+  const staff = await hunterStaff.verify(req.body.email, req.body.password);
   if (!staff) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
   req.session.hunterStaffId = staff.id;
-  hunterStaff.logEvent(staff.id, 'login');
+  await hunterStaff.logEvent(staff.org_id, staff.id, 'login');
   res.json({ ok: true, staff: hunterStaff.safe(staff) });
-});
+}));
 
-app.post('/api/hunter/auth/logout', (req, res) => {
-  if (req.session.hunterStaffId) hunterStaff.logEvent(req.session.hunterStaffId, 'logout');
+app.post('/api/hunter/auth/logout', hx(async (req, res) => {
+  const staff = await hunterStaff.findById(req.session.hunterStaffId);
+  if (staff) await hunterStaff.logEvent(staff.org_id, staff.id, 'logout');
   delete req.session.hunterStaffId;
   res.json({ ok: true });
-});
+}));
 
-app.get('/api/hunter/auth/me', (req, res) => {
-  res.json({ ok: true, staff: hunterStaff.safe(hunterStaff.findById(req.session.hunterStaffId)) });
-});
+app.get('/api/hunter/auth/me', hx(async (req, res) => {
+  const staff = await hunterStaff.findById(req.session.hunterStaffId);
+  const org = staff && await hunterOrgs.findById(staff.org_id);
+  res.json({ ok: true, staff: hunterStaff.safe(staff), org: hunterOrgs.safe(org) });
+}));
+
+// Org wishlist: what leads this company wants and how many per day.
+// Saving a complete wishlist unlocks the CRM for new tenants.
+app.get('/api/hunter/org', requireHunterStaffAPI, hx(async (req, res) => {
+  res.json({ ok: true, org: hunterOrgs.safe(req.hunter.org) });
+}));
+
+app.post('/api/hunter/org/wishlist', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  const org = await hunterOrgs.saveWishlist(req.hunter.org.id, req.body || {});
+  if (!org) return res.status(404).json({ ok: false, error: 'Organisation not found' });
+  if (!org.setup_complete)
+    return res.status(400).json({ ok: false, error: 'Market, industries and what you sell are required' });
+  res.json({ ok: true, org: hunterOrgs.safe(org) });
+}));
 
 // Presence trail: the page sends a heartbeat every minute and a leave
 // beacon on close; sessions() folds these into time-on-page.
-app.post('/api/hunter/track', requireHunterStaffAPI, (req, res) => {
+app.post('/api/hunter/track', requireHunterStaffAPI, hx(async (req, res) => {
   const event = req.body && req.body.event;
   if (!['heartbeat', 'leave'].includes(event))
     return res.status(400).json({ ok: false, error: 'Invalid event' });
-  hunterStaff.logEvent(req.session.hunterStaffId, event);
+  await hunterStaff.logEvent(req.hunter.org.id, req.hunter.staff.id, event);
   res.json({ ok: true });
-});
+}));
 
 // Master (admin) only — regular staff cannot see the login trail.
-app.get('/api/hunter/activity', requireHunterStaffAPI, requireHunterAdmin, (req, res) => {
-  res.json({ ok: true, sessions: hunterStaff.sessions() });
-});
+app.get('/api/hunter/activity', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  res.json({ ok: true, sessions: await hunterStaff.sessions(req.hunter.org.id) });
+}));
 
-app.get('/api/hunter/staff', requireHunterStaffAPI, requireHunterAdmin, (req, res) => {
-  res.json({ ok: true, staff: hunterStaff.listSafe() });
-});
+app.get('/api/hunter/staff', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  res.json({ ok: true, staff: await hunterStaff.listSafe(req.hunter.org.id) });
+}));
 
-app.post('/api/hunter/staff', requireHunterStaffAPI, requireHunterAdmin, (req, res) => {
+app.post('/api/hunter/staff', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
   const { name, email, password, isAdmin } = req.body;
-  const result = hunterStaff.create({ name, email, password, isAdmin });
+  const result = await hunterStaff.create({ org_id: req.hunter.org.id, name, email, password, isAdmin });
   if (result.error) return res.status(400).json({ ok: false, error: result.error });
   res.json({ ok: true, staff: hunterStaff.safe(result.staff) });
-});
+}));
 
-app.get('/api/hunter/leads', requireHunterStaffAPI, (req, res) => {
-  res.json({ ok: true, leads: hunter.all(), stats: hunter.stats(),
-             followups: hunter.followups() });
-});
+// Leads are always org-scoped. Proprietary sourcing (Apollo etc.) is
+// stripped server-side for tenants; only the owner org sees provenance.
+app.get('/api/hunter/leads', requireHunterStaffAPI, hx(async (req, res) => {
+  const { org } = req.hunter;
+  res.json({
+    ok: true,
+    leads: await hunter.all(org.id, { owner: org.is_owner }),
+    stats: await hunter.stats(org.id),
+    followups: await hunter.followups(org.id),
+  });
+}));
 
-app.post('/api/hunter/leads/:id/status', requireHunterStaffAPI, (req, res) => {
-  const result = hunter.setStatus(req.params.id, req.body.status, hunterStaffName(req));
+app.post('/api/hunter/leads/:id/status', requireHunterStaffAPI, hx(async (req, res) => {
+  const { org, staff } = req.hunter;
+  const result = await hunter.setStatus(org.id, req.params.id, req.body.status, staff.name);
   if (result.error) return res.status(400).json({ ok: false, error: result.error });
-  res.json({ ok: true, lead: result.lead });
-});
+  res.json({ ok: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
+}));
 
-app.post('/api/hunter/leads/:id/activity', requireHunterStaffAPI, (req, res) => {
+app.post('/api/hunter/leads/:id/activity', requireHunterStaffAPI, hx(async (req, res) => {
+  const { org, staff } = req.hunter;
   const { type, text } = req.body;
-  const result = hunter.addActivity(req.params.id, { type, text, by: hunterStaffName(req) });
+  const result = await hunter.addActivity(org.id, req.params.id, { type, text, by: staff.name });
   if (result.error) return res.status(400).json({ ok: false, error: result.error });
-  res.json({ ok: true, lead: result.lead });
-});
+  res.json({ ok: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
+}));
 
-app.post('/api/hunter/leads/:id/draft', requireHunterStaffAPI, (req, res) => {
+app.post('/api/hunter/leads/:id/draft', requireHunterStaffAPI, hx(async (req, res) => {
+  const { org } = req.hunter;
   const { subject, body } = req.body;
   if (typeof subject !== 'string' || typeof body !== 'string')
     return res.status(400).json({ ok: false, error: 'subject and body required' });
-  const result = hunter.updateDraft(req.params.id, { subject, body });
+  const result = await hunter.updateDraft(org.id, req.params.id, { subject, body });
   if (result.error) return res.status(400).json({ ok: false, error: result.error });
-  res.json({ ok: true, lead: result.lead });
-});
+  res.json({ ok: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
+}));
 
 // ── Trading API (subscriber-only) ──────────────────────────────────────
 app.get('/api/analysis', requireSubscriptionAPI, async (req, res) => {
@@ -487,8 +557,15 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────────────────────
-hunterStaff.ensureSeed();
+async function hunterBoot() {
+  const owner = await hunterOrgs.ensureOwnerSeed();
+  await hunterStaff.ensureSeed(owner.id);
+  await hunter.seedSamplesFor(owner.id);
+  console.log(`Hunter CRM: ${require('./lib/hunter/db').backend} store, owner org "${owner.name}"`);
+}
+
 initDb()
+  .then(() => hunterBoot())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`VaultSignals running on port ${PORT}`);

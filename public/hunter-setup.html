@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>IdealOne.Hunter — Your lead wishlist</title>
+<style>
+  :root { --brand: #1B6BE8; --ink: #111827; --ink-2: #4B5563; --line: #E5E7EB; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #F5F6F8; color: var(--ink); padding: 30px 0;
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, Helvetica, sans-serif;
+  }
+  .card {
+    background: #fff; border: 1px solid var(--line); border-radius: 16px;
+    padding: 34px 36px 28px; width: 620px; max-width: calc(100vw - 32px);
+    box-shadow: 0 10px 30px rgba(17, 24, 39, .06);
+  }
+  .head { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; }
+  .head img { height: 88px; }
+  h1 { font-size: 19px; margin: 0; }
+  .sub { color: var(--ink-2); font-size: 13.5px; margin: 2px 0 18px; }
+  label { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink-2); margin: 12px 0 4px; }
+  label .req { color: #B91C1C; }
+  input, textarea {
+    width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 10px 13px;
+    font: inherit; background: #FDFDFD;
+  }
+  textarea { min-height: 68px; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid var(--brand); outline-offset: -1px; border-color: var(--brand); }
+  .row { display: grid; grid-template-columns: 1fr 180px; gap: 14px; }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+  .hint { font-size: 12px; color: #9CA3AF; margin-top: 3px; }
+  button {
+    width: 100%; background: var(--brand); color: #fff; border: none; border-radius: 9px;
+    padding: 13px; font: 700 15px inherit; cursor: pointer; margin-top: 20px;
+  }
+  button:hover { background: #1557BE; }
+  .err { color: #B91C1C; font-size: 13px; min-height: 20px; margin-top: 8px; font-weight: 600; text-align: center; }
+</style>
+</head>
+<body>
+  <form class="card" id="form">
+    <div class="head">
+      <img src="/hunter-logo.svg" alt="IdealOne.Hunter">
+      <div>
+        <h1>What leads should Hunter find for <span id="orgName">your company</span>?</h1>
+        <div class="sub">This wishlist drives your daily lead research. You can refine it any time in Settings.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Target market / region <span class="req">*</span></label>
+        <input id="market" placeholder="e.g. Singapore, Malaysia, SEA">
+      </div>
+      <div>
+        <label>Leads per day</label>
+        <input id="leads_per_day" type="number" min="1" max="50" value="10">
+        <div class="hint">1–50 verified leads</div>
+      </div>
+    </div>
+
+    <label>Industries you want leads from <span class="req">*</span></label>
+    <textarea id="industries" placeholder="e.g. F&B brands, furniture retailers, consumer electronics, e-commerce sellers…"></textarea>
+
+    <label>Buying signals you care about</label>
+    <textarea id="signals" placeholder="e.g. entering our market, opening stores, hiring ops staff, raising expansion funding, actively looking for a partner like us…"></textarea>
+
+    <label>What you sell (so outreach drafts pitch the right thing) <span class="req">*</span></label>
+    <textarea id="services" placeholder="e.g. 3PL warehousing and last-mile delivery / packaging supplies / corporate insurance…"></textarea>
+
+    <label>Anything else we should know?</label>
+    <textarea id="notes" placeholder="Exclusions, deal size floor, competitors to avoid…"></textarea>
+
+    <button type="submit">Start finding leads →</button>
+    <div class="err" id="err"></div>
+  </form>
+<script>
+const F = ['market', 'industries', 'signals', 'services', 'notes', 'leads_per_day'];
+
+(async () => {
+  const r = await fetch('/api/hunter/auth/me');
+  const { staff, org } = await r.json();
+  if (!staff) { location.href = '/hunter/login'; return; }
+  if (org) {
+    document.getElementById('orgName').textContent = org.name;
+    F.forEach(f => { if (org.wishlist && org.wishlist[f]) document.getElementById(f).value = org.wishlist[f]; });
+  }
+})();
+
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.textContent = '';
+  const body = {};
+  F.forEach(f => body[f] = document.getElementById(f).value);
+  const r = await fetch('/api/hunter/org/wishlist', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  if (data.ok) location.href = '/hunter';
+  else err.textContent = data.error || 'Could not save';
+});
+</script>
+</body>
+</html>
