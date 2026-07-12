@@ -3,5 +3,5 @@ node_modules/
 *.log
 data/market-cache/
 data/reports/
-idealone-crm/*.db
+idealone-leads/*.db
 __pycache__/

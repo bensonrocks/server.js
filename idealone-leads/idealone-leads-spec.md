@@ -1,7 +1,7 @@
-# IdealOne.CRM — ULD Sales Lead Research Agent
+# IdealOne.Leads — Sales Lead Research Agent
 ## Implementation Specification v1.0
 **Prepared for:** United Logistics & Distribution (Singapore) Pte Ltd
-**Module:** IdealOne.CRM / Lead Intelligence
+**Product:** IdealOne.Leads — a standalone suite in the IdealOne family of apps, sold and deployed independently. Integration with IdealOne.CRM is an optional add-on (Section 9, Stage 2), not a dependency.
 **Date:** 12 July 2026
 
 ---
@@ -30,7 +30,7 @@ SCHEDULER (weekday 08:00 SGT)
                                                                    SEND (manual/CRM)
 ```
 
-**Runtime:** Anthropic Claude API (`claude-sonnet-4-6`) with the built-in web search tool for Scout/Verifier, plus the Apollo.io REST API for Contact Researcher. Each subagent is a separate API call with its own system prompt (Section 4). State lives in the IdealOne.CRM database (schema in Section 5).
+**Runtime:** Anthropic Claude API (`claude-sonnet-4-6`) with the built-in web search tool for Scout/Verifier, plus the Apollo.io REST API for Contact Researcher. Each subagent is a separate API call with its own system prompt (Section 4). State lives in IdealOne.Leads' own database (schema in Section 5) — the suite runs with no other IdealOne app installed. Approved leads can optionally sync outward to IdealOne.CRM or any external CRM (Section 9, Stage 2).
 
 **Hard rules enforced at pipeline level, not just prompt level:**
 1. No email is ever dispatched without a human setting status → `Contact Approved`.
@@ -347,8 +347,8 @@ Approval queue rows show: company, score, trigger + evidence link, draft email (
 
 ## 9. Rollout Sequence
 
-1. **Stage 1** — Run the pipeline into the IdealOne.CRM leads table + dashboard, human works the queue manually. (This spec.)
-2. **Stage 2** — Approved leads sync to Apollo sequences / CRM.
+1. **Stage 1** — Run the pipeline into the IdealOne.Leads table + dashboard, human works the queue manually. Fully standalone. (This spec.)
+2. **Stage 2** — Optional integration add-on: approved leads sync to Apollo sequences and/or an external CRM (IdealOne.CRM connector first; leads convert into CRM accounts on `Qualified`).
 3. **Stage 3** — Reply detection updates status to `Replied` automatically (inbox webhook).
 4. **Stage 4** — Quotation and won/lost tracking feeds the pipeline-value widget with real numbers instead of estimates.
 

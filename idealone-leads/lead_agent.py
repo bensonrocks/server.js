@@ -1,8 +1,9 @@
 """
-IdealOne.CRM — ULD Sales Lead Research Agent (reference implementation)
+IdealOne.Leads — ULD Sales Lead Research Agent (reference implementation)
 ===================================================================
+Standalone suite in the IdealOne family of apps; no IdealOne.CRM required.
 Multi-agent pipeline: Scout -> Verifier -> Analyst -> Contact Researcher
--> Outreach Writer -> SQLite -> (human approval queue in IdealOne.CRM UI).
+-> Outreach Writer -> SQLite -> (human approval queue in IdealOne.Leads UI).
 
 Runs standalone:  python lead_agent.py run
 Schedule:         cron  0 8 * * 1-5  (Asia/Singapore)
@@ -281,7 +282,7 @@ def run():
               f"{r['uld_service']:<6} {r['company_name']}")
 
 # ----------------------------------------------------------------------------
-# Approval actions (called by the IdealOne.CRM UI — humans only)
+# Approval actions (called by the IdealOne.Leads UI — humans only)
 # ----------------------------------------------------------------------------
 HUMAN_ONLY = {"Contact Approved", "Contacted", "Replied", "Qualified",
               "Quotation", "Won", "Lost"}
