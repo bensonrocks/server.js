@@ -247,6 +247,26 @@
         <span class="saved" id="wsMsg"></span>
       </div>
     </div>
+
+    <h2>Connect the lead engine</h2>
+    <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
+      Live lead research runs on an Anthropic API key set on your deployment (env var
+      <code>ANTHROPIC_API_KEY</code>). This is a developer key from the Anthropic Console —
+      separate from any Claude subscription, billed pay-as-you-go.
+    </p>
+    <div class="card" style="max-width:680px">
+      <ol style="margin:4px 0 0; padding-left:20px; color:var(--ink-2); font-size:14px; line-height:1.9">
+        <li>Open the <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console → API Keys</a> and create a key (<code>sk-ant-…</code>).</li>
+        <li>Add a payment method under <b>Billing</b> and top up a small amount of credit.</li>
+        <li>Set <code>ANTHROPIC_API_KEY</code> as an environment variable on your deployment, then redeploy.</li>
+        <li><i>Optional:</i> add <a href="https://app.apollo.io" target="_blank" rel="noopener">Apollo</a> as <code>APOLLO_API_KEY</code> for richer contact details.</li>
+      </ol>
+      <div style="margin-top:12px">
+        <a class="chip ver" style="text-decoration:none; display:inline-block; padding:6px 12px"
+           href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get your API key ↗</a>
+        <span style="font-size:12.5px; color:var(--ink-3); margin-left:8px">Full setup guide: <code>idealone-hunter/README.md</code></span>
+      </div>
+    </div>
   </div>
 
   <!-- ── Team activity ────────────────────────────────────────────── -->
