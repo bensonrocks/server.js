@@ -12,6 +12,9 @@ const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
+const idealStore                     = require('./lib/ideal/store');
+const idealEngine                    = require('./lib/ideal/engine');
+const idealLearning                  = require('./lib/ideal/learning');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -378,8 +381,55 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
   res.json({ ok: true, data: results, live: false });
 });
 
+// ── IDEAL API block (self-healing, self-learning signal models) ────────
+// Full analysis from the IDEAL engine: self-healed data acquisition plus the
+// model's current learned parameters and health record.
+app.get('/api/ideal/analysis', requireSubscriptionAPI, async (req, res) => {
+  try {
+    const results = await idealEngine.runAll({ apiKey: process.env.ALPHA_VANTAGE_API_KEY });
+    const anyOk = Object.values(results).some(r => r.ok);
+    res.status(anyOk ? 200 : 500).json({ ok: anyOk, data: results });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Per-model health (status, data source, failure counters) + learned params.
+app.get('/api/ideal/health', requireAuth, async (req, res) => {
+  try {
+    res.json({ ok: true, models: await idealEngine.getHealth() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Daily learning journal — what was graded, what changed, and why.
+app.get('/api/ideal/journal', requireSubscriptionAPI, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 30, 200);
+    const entries = await idealLearning.getJournal({ model: req.query.model, limit });
+    res.json({ ok: true, entries });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Manually trigger a learning cycle (normally runs automatically once a day).
+app.post('/api/ideal/learn', requireAdmin, async (req, res) => {
+  try {
+    const result = await idealLearning.runDailyLearning({
+      apiKey: process.env.ALPHA_VANTAGE_API_KEY,
+      force: req.body?.force === true,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
+  .then(() => idealStore.init())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`VaultSignals running on port ${PORT}`);
@@ -387,6 +437,15 @@ initDb()
       console.log(`Payment: ${useHitPay ? 'HitPay' : stripe ? 'Stripe' : 'dev mode (no payment)'}`);
       console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
     });
+
+    // IDEAL daily learning: checked hourly, runs at most once per UTC day
+    // (guarded inside runDailyLearning, so extra ticks are no-ops).
+    const learn = () =>
+      idealLearning.runDailyLearning({ apiKey: process.env.ALPHA_VANTAGE_API_KEY })
+        .then(r => { if (r.ran) console.log(`IDEAL learning cycle completed for ${r.date}`); })
+        .catch(err => console.error('IDEAL learning cycle error:', err.message));
+    setTimeout(learn, 30 * 1000).unref();
+    setInterval(learn, 60 * 60 * 1000).unref();
   })
   .catch(err => {
     console.error('Failed to initialise database:', err.message);

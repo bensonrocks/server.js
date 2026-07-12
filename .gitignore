@@ -3,3 +3,5 @@ node_modules/
 *.log
 data/market-cache/
 data/reports/
+data/ideal/
+data/users.json
