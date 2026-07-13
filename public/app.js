@@ -1607,7 +1607,7 @@
           ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991;</button>` : ''}
           ${ord.archived ? '' : emailIndicator}
           ${ord.archived ? '' : kfBtn}
-          ${logUnlocked && !ord.archived ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete">&#128465;</button>` : ''}
+          ${logUnlocked && !ord.archived && !isDone ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete">&#128465;</button>` : ''}
         </td>
       </tr>`;
     }).join('');

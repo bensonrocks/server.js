@@ -3769,6 +3769,10 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     const db    = readDb();
     const batch = db.batches.find(b => b.id === batchId);
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const state = (batch.orderStates || {})[orderNumber];
+    if (state && state.status === 'done') {
+      return res.status(403).json({ error: 'This order is completed and can no longer be deleted.' });
+    }
     const before  = (batch.orders || []).length;
     batch.orders  = (batch.orders || []).filter(o => o.order_number !== orderNumber);
     if (batch.orders.length === before) return res.status(404).json({ error: 'Order not found in batch' });
