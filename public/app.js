@@ -2111,8 +2111,8 @@
 
   // ── Cartons — a big order can take more than one physical box ───────────────
   function updateCartonBadge(order) {
-    const badge = document.getElementById('scanCartonBadge');
-    if (badge) badge.textContent = `\u{1F4E6} Carton ${order.cartonNum || 1}`;
+    const numEl = document.getElementById('scanCartonNum');
+    if (numEl) numEl.textContent = order.cartonNum || 1;
   }
   document.getElementById('newCartonBtn').addEventListener('click', async () => {
     if (!activeOrder) return;

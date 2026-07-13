@@ -739,9 +739,11 @@ body.scan-open { overflow: hidden; }
 .scan-progress { background: var(--bg); border: 1px solid var(--border); padding: .15em .6em; border-radius: 99px; font-size: .73rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
 .scan-progress.all-done { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
 
-/* ── Carton indicator (scan header) ── */
+/* ── Carton indicator (scan header) — sized to match the pieces-left counter ── */
 .scan-carton-wrap { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; }
-.scan-carton-badge { font-size: .78rem; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .3rem .6rem; white-space: nowrap; }
+.scan-carton-badge { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 3.2rem; background: #475569; color: #fff; border-radius: var(--radius-sm); padding: .15rem .65rem .2rem; flex-shrink: 0; }
+.scan-carton-badge #scanCartonNum { font-size: 2rem; font-weight: 800; line-height: 1; }
+.scan-carton-badge .scb-label { font-size: .5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; opacity: .9; }
 .btn-new-carton { font-size: .74rem; font-weight: 600; color: var(--primary); background: var(--primary-light); border: 1px solid var(--primary-border); border-radius: var(--radius-sm); padding: .3rem .55rem; cursor: pointer; white-space: nowrap; transition: background .15s; }
 .btn-new-carton:hover { background: var(--primary); color: #fff; }
 .btn-new-carton:disabled { opacity: .4; cursor: not-allowed; }
@@ -1928,6 +1930,8 @@ body.ls-open { overflow: hidden; }
   .scan-order-no     { font-size: 1.35rem; }
   .scan-pieces-left #scanPiecesNum { font-size: 2.6rem; }
   .scan-pieces-left .spl-label     { font-size: .58rem; }
+  .scan-carton-badge #scanCartonNum { font-size: 2.6rem; }
+  .scan-carton-badge .scb-label     { font-size: .58rem; }
   .scan-progress     { font-size: .95rem; padding: .25em .85em; }
   .back-btn          { font-size: 1rem; padding: .45rem 1rem; }
 
