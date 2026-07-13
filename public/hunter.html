@@ -92,6 +92,7 @@
   .chip.ver  { background: var(--brand-soft); border-color: #C7DBFC; color: #1449A8; }
   .chip.won, .chip.qual { background: #DCFCE7; border-color: #BBF7D0; color: var(--good); }
   .chip.mon  { background: #F3F4F6; color: var(--ink-2); }
+  .chip.sample { background: #FEF3C7; border-color: #FDE68A; color: #92400E; letter-spacing: .5px; }
   .qmeta { color: var(--ink-2); font-size: 13.5px; margin: 8px 0 4px; }
   .qmeta a { color: var(--brand); text-decoration: none; }
   .qmeta a:hover { text-decoration: underline; }
@@ -248,6 +249,19 @@
       </div>
     </div>
 
+    <div class="card" id="sampleCard" hidden style="max-width:680px; margin-top:16px; border-color:#FDE68A; background:#FFFBEB">
+      <h3 style="margin:0 0 6px; color:#92400E">Going live?</h3>
+      <p style="margin:0 0 12px; font-size:13.5px; color:var(--ink-2)">
+        Your CRM is currently populated with <b id="sampleCount">sample</b> demo leads (marked
+        <span class="chip sample">SAMPLE</span>). These are <b>not real</b> and must not be contacted.
+        Once your live pipeline run is connected, clear them so only genuine, verified leads remain.
+      </p>
+      <div class="actions">
+        <button class="reject" onclick="clearSamples()" style="border-color:#D97706; color:#92400E">Clear all sample data</button>
+        <span class="saved" id="clearMsg"></span>
+      </div>
+    </div>
+
     <h2>Connect the lead engine</h2>
     <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
       Live lead research runs on an Anthropic API key set on your deployment (env var
@@ -317,6 +331,7 @@ function chipClass(s) {
   return 'chip mon';
 }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sampleTag = l => l.sample ? '<span class="chip sample">SAMPLE</span>' : '';
 const fmt = iso => iso ? new Date(iso).toLocaleString('en-SG', { timeZone: 'Asia/Singapore',
   day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 
@@ -352,7 +367,13 @@ async function load() {
   document.getElementById('tabTeam').hidden = !ME.isAdmin;
   document.getElementById('tabSettings').hidden = !ME.isAdmin;
   if (ME.isAdmin && ORG) fillWishlist(ORG.wishlist || {});
-  document.getElementById('sampleBadge').hidden = !leads.some(l => l.sample);
+  const sampleCount = leads.filter(l => l.sample).length;
+  document.getElementById('sampleBadge').hidden = !sampleCount;
+  if (ME.isAdmin) {
+    const card = document.getElementById('sampleCard');
+    card.hidden = !sampleCount;
+    if (sampleCount) document.getElementById('sampleCount').textContent = sampleCount;
+  }
 
   renderFollowups(followups);
   renderPipeline(leads, stats);
@@ -424,7 +445,7 @@ function renderPipeline(leads, stats) {
   document.getElementById('rows').innerHTML = leads
     .slice().sort((a, b) => b.lead_score - a.lead_score)
     .map(l => `<tr>
-      <td><b>${esc(l.company_name)}</b></td>
+      <td><b>${esc(l.company_name)}</b> ${sampleTag(l)}</td>
       <td><span class="score">${l.lead_score}</span></td>
       <td><span class="${chipClass(l.lead_status)}">${esc(l.lead_status)}</span></td>
       <td>${esc(SERVICES[l.uld_service] || l.uld_service)}</td>
@@ -454,6 +475,7 @@ function queueCard(l) {
       <span class="score">${l.lead_score}</span>
       <span class="${chipClass(l.lead_status)}">${esc(l.lead_status)}</span>
       <span class="chip">${esc(SERVICES[l.uld_service] || l.uld_service)}</span>
+      ${sampleTag(l)}
     </div>
     <div class="qmeta">${esc(l.sg_activity)}${evidence}</div>
     <div class="contact">${contactLine(l)}</div>
@@ -519,6 +541,7 @@ function contactedCard(l, due) {
       <span class="${chipClass(l.lead_status)}">${esc(l.lead_status)}</span>
       <span class="chip">${esc(SERVICES[l.uld_service] || l.uld_service)}</span>
       ${due ? '<span class="chip hp">⏰ follow-up due</span>' : ''}
+      ${sampleTag(l)}
     </div>
     <div class="qmeta">Contacted ${fmt(l.contacted_at)} · ${esc(l.sg_activity)}</div>
     <div class="contact">${contactLine(l)}</div>
@@ -614,6 +637,15 @@ async function saveWishlist() {
   msg.textContent = r.ok ? 'Wishlist saved ✓' : (r.error || 'Failed');
   msg.style.color = r.ok ? 'var(--good)' : '#B91C1C';
   if (r.ok) ORG = r.org;
+}
+
+async function clearSamples() {
+  if (!confirm('Remove all SAMPLE demo leads? This cannot be undone. Real leads (once your pipeline runs) are never touched.')) return;
+  const r = await post('/api/hunter/leads/clear-samples', {});
+  const msg = document.getElementById('clearMsg');
+  msg.textContent = r.ok ? `Removed ${r.removed} sample lead${r.removed === 1 ? '' : 's'} ✓` : (r.error || 'Failed');
+  msg.style.color = r.ok ? 'var(--good)' : '#B91C1C';
+  if (r.ok) load();
 }
 
 // ── Auth + presence ────────────────────────────────────────────────────

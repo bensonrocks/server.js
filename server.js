@@ -532,6 +532,12 @@ app.post('/api/hunter/leads/:id/activity', requireHunterStaffAPI, hx(async (req,
   res.json({ ok: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
 }));
 
+// Master-only: wipe seeded sample leads when going live.
+app.post('/api/hunter/leads/clear-samples', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  const result = await hunter.clearSamples(req.hunter.org.id);
+  res.json({ ok: true, removed: result.removed });
+}));
+
 app.post('/api/hunter/leads/:id/draft', requireHunterStaffAPI, hx(async (req, res) => {
   const { org } = req.hunter;
   const { subject, body } = req.body;
