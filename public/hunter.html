@@ -290,8 +290,10 @@
     <div class="card" style="max-width:680px">
       <div class="actions">
         <button class="primary" id="runBtn" onclick="runPipeline()">▶ Run lead search now</button>
+        <button class="ghost" id="testBtn" onclick="testConn()">⚡ Test connection</button>
         <span class="saved" id="runMsg"></span>
       </div>
+      <div id="testState" style="margin-top:10px; font-size:13.5px"></div>
       <div id="runState" style="margin-top:10px; font-size:13.5px; color:var(--ink-2)"></div>
     </div>
   </div>
@@ -684,6 +686,28 @@ async function pollRun() {
     if (runPoll) { clearTimeout(runPoll); runPoll = null; }
     if (r.status && r.status.state === 'done') load(); // refresh leads
   }
+}
+
+async function testConn() {
+  const btn = document.getElementById('testBtn');
+  const el = document.getElementById('testState');
+  btn.disabled = true;
+  el.innerHTML = '<span class="dotlive">● Testing connection…</span>';
+  try {
+    const r = await post('/api/hunter/pipeline/test', {});
+    const t = r.result || {};
+    const row = (ok, label) => `<div>${ok ? '<span style="color:var(--good)">✓</span>' : '<span style="color:#B91C1C">✗</span>'} ${label}</div>`;
+    el.innerHTML =
+      row(t.hasKey, 'API key present') +
+      row(t.api, 'Anthropic API reachable') +
+      row(t.webSearch, 'Web search working') +
+      `<div style="color:var(--ink-3); margin-top:4px">Model: <code>${esc(t.model || '')}</code></div>` +
+      (t.error ? `<div style="color:#B91C1C; margin-top:4px">${esc(t.error)}</div>` : '') +
+      (t.hasKey && t.api && t.webSearch ? '<div style="color:var(--good); margin-top:4px; font-weight:600">All good — you can run a lead search.</div>' : '');
+  } catch (e) {
+    el.innerHTML = '<span style="color:#B91C1C">Test failed to run.</span>';
+  }
+  btn.disabled = false;
 }
 
 async function runPipeline() {

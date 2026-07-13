@@ -541,6 +541,10 @@ app.post('/api/hunter/pipeline/run', requireHunterStaffAPI, requireHunterAdmin, 
   res.json({ ok: true, status: st });
 }));
 
+app.post('/api/hunter/pipeline/test', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  res.json({ ok: true, result: await hunterPipeline.testConnection() });
+}));
+
 app.get('/api/hunter/pipeline/status', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
   res.json({ ok: true, status: hunterPipeline.status(req.hunter.org.id), model: hunterPipeline.MODEL,
              hasKey: !!process.env.ANTHROPIC_API_KEY });
