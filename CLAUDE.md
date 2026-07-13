@@ -144,6 +144,17 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 - `/api/scan/resolve-cache` gives the client CODE2/learned/alias maps so
   offline scans resolve to the right line locally.
 
+## Scan buffer — Enter handler (public/app.js `_globalScanKeydown`/`_scanBuf`)
+
+`_scanBuf` is mirrored from `#itemScanInput`'s value on every keystroke while
+that input is focused. The Enter-key branch must SET `_scanBuf = inp.value`,
+never `+=` — the mirror has usually already caught the full typed value by
+the time Enter fires, so appending double-counts it (e.g. a manually-typed
+`5603` becomes `56035603` and fails to match any SKU). Bit us via a slow
+`{delay}`-typed Playwright test; real scanner hardware rarely triggers it
+because Enter usually arrives before the mirror's zero-delay timeout runs,
+but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
+
 ## Multi-carton orders (server.js — `activeCarton`/`addToActiveCarton`, /api/scan/new-carton)
 
 - A big order can take more than one physical box. `state.cartons` is an array
@@ -167,6 +178,13 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 - Scan overlay shows a "📦 Carton N" badge + "+ New Carton" button
   (`public/index.html` `#scanCartonWrap`); every scan-response handler in
   app.js updates `activeOrder.cartonNum` from the response's `cartonNum`.
+- HANDS-FREE TRIGGER: scanning a printed control barcode (text `NEWCARTON`,
+  case-insensitive; `NEW_CARTON_CODES` in app.js also accepts `NEW CARTON` /
+  `NEW-CARTON` / `NEWBOX`) does the same thing as clicking "+ New Carton" —
+  intercepted in `_flushScanBuf()` BEFORE the value is looked up as a SKU.
+  Packers print their own reusable card via the 🖨 button next to "+ New
+  Carton" (`printNewCartonCard()`, same window.open+JsBarcode+window.print
+  pattern as `printWaybillLabel()`).
 
 ## Git
 

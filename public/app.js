@@ -2114,7 +2114,10 @@
     const numEl = document.getElementById('scanCartonNum');
     if (numEl) numEl.textContent = order.cartonNum || 1;
   }
-  document.getElementById('newCartonBtn').addEventListener('click', async () => {
+  // Fixed control code a packer can scan (from a printed card at the station)
+  // instead of reaching for the mouse — same action as clicking "+ New Carton".
+  const NEW_CARTON_CODES = new Set(['NEWCARTON', 'NEW CARTON', 'NEW-CARTON', 'NEWBOX']);
+  async function requestNewCarton() {
     if (!activeOrder) return;
     const btn = document.getElementById('newCartonBtn');
     btn.disabled = true;
@@ -2134,7 +2137,36 @@
     } finally {
       btn.disabled = false;
     }
-  });
+  }
+  document.getElementById('newCartonBtn').addEventListener('click', requestNewCarton);
+
+  // ── Printable "New Carton" control barcode card ──────────────────────────────
+  // Print once, tape/laminate at the packing station — scanning it fires the
+  // same action as the button, so a packer never needs to touch the mouse.
+  function printNewCartonCard() {
+    const w = window.open('', '_blank', 'width=420,height=560');
+    if (!w) { alert('Please allow pop-ups to print the carton card.'); return; }
+    w.document.write(`
+      <html><head><title>New Carton — Scan Card</title>
+      <script src="/vendor/jsbarcode.min.js"></script>
+      <style>
+        body { font-family: -apple-system, Arial, sans-serif; text-align: center; padding: 2rem 1rem; }
+        h1 { font-size: 1.3rem; margin: 0 0 .3rem; }
+        p { color: #555; font-size: .85rem; margin: 0 0 1.5rem; }
+        svg { max-width: 100%; }
+      </style></head>
+      <body>
+        <h1>&#128230; NEW CARTON</h1>
+        <p>Scan this at the packing station to start the next box</p>
+        <svg id="bc"></svg>
+        <script>
+          JsBarcode("#bc", "NEWCARTON", { format: "CODE128", width: 3, height: 90, fontSize: 18 });
+          window.onload = () => setTimeout(() => window.print(), 300);
+        </script>
+      </body></html>`);
+    w.document.close();
+  }
+  document.getElementById('printCartonCardBtn')?.addEventListener('click', printNewCartonCard);
 
   // ── Timer ──────────────────────────────────────────────────────────────────
   function startTimer(startISO) {
@@ -2442,7 +2474,11 @@
     _scanBuf  = '';
     const inp = document.getElementById('itemScanInput');
     inp.value = '';
-    if (val && activeOrder) handleItemScan(val);
+    if (!val || !activeOrder) return;
+    // Control code (printed card at the station) — starts a new carton
+    // instead of being looked up as a product SKU.
+    if (NEW_CARTON_CODES.has(val.toUpperCase())) { requestNewCarton(); return; }
+    handleItemScan(val);
   }
 
   // Scanner-burst detection for qty fields: the cursor now rests in a qty
@@ -2484,10 +2520,13 @@
         // else: manual qty entry — let Enter commit via the change event
         return;
       }
-      // Add whatever is in the visible input field too (manual typing path)
+      // Sync from the visible input field (manual typing path). _scanBuf is
+      // already mirrored from inp.value on every keystroke while this input
+      // is focused — SET, not append, or a value already caught by the
+      // mirror gets doubled onto itself.
       const inp = document.getElementById('itemScanInput');
       if (ae.id === 'itemScanInput' && inp.value) {
-        _scanBuf += inp.value;
+        _scanBuf = inp.value;
       }
       _flushScanBuf();
       e.preventDefault();
