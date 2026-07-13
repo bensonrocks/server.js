@@ -2131,6 +2131,24 @@
     if (prevBtn) prevBtn.disabled = num <= 1;
     if (nextBtn) nextBtn.disabled = num >= count;
   }
+  // Tells the packer exactly what to write on the carton (ORDER-01, ORDER-02, …)
+  // and blocks moving on until they confirm — reuses the global scan-capture's
+  // existing "never intercept while a .modal-overlay is open" rule, so this
+  // genuinely pauses scanning, not just a cosmetic reminder.
+  function showCartonLabelPrompt(labelText) {
+    return new Promise(resolve => {
+      document.getElementById('cartonLabelText').textContent = labelText;
+      document.getElementById('cartonLabelOverlay').classList.remove('hidden');
+      document.getElementById('cartonLabelConfirmBtn').onclick = () => {
+        document.getElementById('cartonLabelOverlay').classList.add('hidden');
+        fetch('/api/scan/carton/label-confirmed', {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ orderNumber: activeOrder?.order_number, label: labelText }),
+        }).catch(() => {}); // audit trail only — never block on it
+        resolve();
+      };
+    });
+  }
   // Fixed control code a packer can scan (from a printed card at the station)
   // instead of reaching for the mouse — same action as clicking "+ New Carton".
   const NEW_CARTON_CODES = new Set(['NEWCARTON', 'NEW CARTON', 'NEW-CARTON', 'NEWBOX']);
@@ -2145,11 +2163,13 @@
       });
       const data = await resp.json();
       if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not start a new carton.'); return; }
+      const closedNum = activeOrder.cartonNum || 1; // the carton being sealed shut, about to be replaced as active
       activeOrder.cartonNum   = data.activeCartonNum;
       activeOrder.cartonCount = data.cartonCount;
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
       focusActiveQty();
+      await showCartonLabelPrompt(`${activeOrder.order_number}-${String(closedNum).padStart(2, '0')}`);
     } catch (err) {
       showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
     } finally {
@@ -3085,6 +3105,11 @@
         mergeOrderState(activeOrder.order_number, 'done');
         stopTimer();
         const completedOrder = activeOrder;
+        // The last carton never went through requestNewCarton()'s "closing"
+        // prompt (nothing ever superseded it) — label it now, before moving on.
+        if ((completedOrder.cartonCount || 1) > 1) {
+          await showCartonLabelPrompt(`${completedOrder.order_number}-${String(completedOrder.cartonCount).padStart(2, '0')}`);
+        }
         closeScanOverlay();
         await refreshOrders();
         renderOrdersDash();

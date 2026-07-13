@@ -892,6 +892,7 @@ body.scan-open { overflow: hidden; }
 .modal-actions { display: flex; flex-direction: column; gap: .55rem; }
 .modal-actions .btn-secondary,
 .modal-actions .btn-danger { text-align: center; padding: .65rem; }
+.carton-label-text { font-size: 2.1rem; font-weight: 800; text-align: center; letter-spacing: .02em; color: var(--text); background: var(--surface-2); border: 2px dashed var(--border); border-radius: var(--radius-sm); padding: .9rem .5rem; margin: .3rem 0; font-family: monospace; }
 
 .mismatch-table-wrap { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 1.1rem; overflow-x: auto; }
 .mismatch-table { width: 100%; border-collapse: collapse; font-size: .875rem; }

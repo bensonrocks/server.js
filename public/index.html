@@ -1155,6 +1155,19 @@
     </div>
   </div>
 
+  <!-- Carton Label Prompt — mandatory, no way to dismiss without confirming -->
+  <div id="cartonLabelOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#128230;</div>
+      <div class="modal-title">Label This Carton</div>
+      <p class="modal-desc">Write this on the carton before moving on:</p>
+      <div class="carton-label-text" id="cartonLabelText">ORDER-01</div>
+      <div class="modal-actions" style="margin-top:1.1rem">
+        <button class="btn-primary" id="cartonLabelConfirmBtn">&#10003; I've Written It</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Request Order Deletion Modal -->
   <div id="deleteOrderOverlay" class="modal-overlay hidden">
     <div class="modal">

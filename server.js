@@ -943,6 +943,70 @@ function runAutoArchive() {
 setTimeout(runAutoArchive, 60 * 1000);           // shortly after boot
 setInterval(runAutoArchive, 24 * 3600 * 1000);   // then daily
 
+// ── Audit log retention ──────────────────────────────────────────────────────
+// db.auditLog backs every Administrator report and grows forever otherwise —
+// same "must stay small forever" problem batches had. Entries older than 6
+// months move to monthly archive files; readAuditLogForRange() transparently
+// reads them back in whenever a report's date range reaches that far, so
+// reports can always toggle/filter across AT LEAST 6 months of history.
+const AUDIT_ARCHIVE_AFTER_DAYS = 180;
+
+function runAuditLogArchive() {
+  try {
+    const db = readDb();
+    if (!db.auditLog || !db.auditLog.length) return;
+    const cutoff = new Date(Date.now() - AUDIT_ARCHIVE_AFTER_DAYS * 86400000).toISOString();
+    const keep = [], move = [];
+    for (const e of db.auditLog) ((e.at || '') < cutoff ? move : keep).push(e);
+    if (!move.length) return;
+    fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+    const byMonth = {};
+    for (const e of move) {
+      const m = (e.at || '').slice(0, 7) || 'unknown';
+      (byMonth[m] = byMonth[m] || []).push(e);
+    }
+    for (const [m, events] of Object.entries(byMonth)) {
+      const file = path.join(ARCHIVE_DIR, `audit-archive-${m}.json`);
+      let existing = [];
+      try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+      existing.push(...events);
+      const tmp = file + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(existing));
+      fs.renameSync(tmp, file);
+    }
+    db.auditLog = keep;
+    writeDb(db);
+    console.log(`[IdealScan] Audit log archive: moved ${move.length} event(s) → ${Object.keys(byMonth).sort().join(', ')}`);
+  } catch (e) {
+    console.error('[IdealScan] audit log archive failed:', e.message);
+  }
+}
+setTimeout(runAuditLogArchive, 90 * 1000);          // shortly after boot (staggered from batch archive)
+setInterval(runAuditLogArchive, 24 * 3600 * 1000);  // then daily
+
+// Merges live db.auditLog with archived months when a report's requested
+// range reaches further back than what's still live — transparent to every
+// report kind, which just keeps reading `log` as before.
+function readAuditLogForRange(db, from, to) {
+  const live = db.auditLog || [];
+  const cutoff = new Date(Date.now() - AUDIT_ARCHIVE_AFTER_DAYS * 86400000).toISOString().slice(0, 10);
+  if (from >= cutoff) return live; // fast path — nothing archived is needed
+  const months = new Set();
+  const endMonth = to < cutoff ? to : cutoff;
+  let d = new Date(from.slice(0, 7) + '-01T00:00:00Z');
+  const endD = new Date(endMonth.slice(0, 7) + '-01T00:00:00Z');
+  while (d <= endD) {
+    months.add(d.toISOString().slice(0, 7));
+    d.setUTCMonth(d.getUTCMonth() + 1);
+  }
+  const archived = [];
+  for (const m of months) {
+    try { archived.push(...JSON.parse(fs.readFileSync(path.join(ARCHIVE_DIR, `audit-archive-${m}.json`), 'utf8'))); }
+    catch {}
+  }
+  return [...archived, ...live];
+}
+
 function listArchiveFiles() {
   try { return fs.readdirSync(ARCHIVE_DIR).filter(f => /^archive-.*\.json$/.test(f)).sort().reverse(); }
   catch { return []; }
@@ -2994,6 +3058,25 @@ app.post('/api/scan/carton/cancel-multi', (req, res) => {
   res.json({ ok: true, cartonCount: 1, activeCartonNum: 1 });
 });
 
+// Audit trail only — records that the packer confirmed they wrote the
+// carton label. Never blocks or mutates carton state; if it's ever missing
+// or fails, the client already moved on (the prompt itself, not this call,
+// is what stops the packer from proceeding without confirming).
+app.post('/api/scan/carton/label-confirmed', (req, res) => {
+  const { orderNumber, label } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const state = (batch.orderStates || {})[orderNumber];
+  if (state) {
+    appendScanLog(state, { kind: 'carton_labeled', raw: String(label || '').trim(), sku: '', qty: '', by: req.userId || '' });
+    batch.orderStates[orderNumber] = state;
+    writeDb(db);
+  }
+  res.json({ ok: true });
+});
+
 // Read-only — a single carton's contents for printing a per-box packing
 // slip on the spot (distinct from the Waybill label and from the full
 // multi-sheet completion slip). Defaults to the currently-open carton;
@@ -3772,11 +3855,14 @@ app.get('/api/master/report/:kind', (req, res) => {
   }
   try {
     const db  = readDb();
-    const log = db.auditLog || [];
 
     const today = new Date().toISOString().slice(0, 10);
     const from  = (req.query.from || '').slice(0, 10) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const to    = (req.query.to   || '').slice(0, 10) || today;
+    // Transparently pulls in archived months when the range reaches past
+    // what's still live in db.auditLog — reports can filter back at least
+    // 6 months regardless of how long ago the data actually happened.
+    const log   = readAuditLogForRange(db, from, to);
     const day   = at => String(at || '').slice(0, 10);
     const inRange = ev => day(ev.at) >= from && day(ev.at) <= to;
     const mins  = ev => (ev.startTime && ev.endTime) ? Math.round((new Date(ev.endTime) - new Date(ev.startTime)) / 6000) / 10 : null;
@@ -4913,7 +4999,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
 
   // Sheet 3 — the full scan history: every gun scan, manual count, and
   // taught barcode, in the order they happened
-  const KIND_LABEL = { scan: 'Gun scan', count: 'Manual count', teach: 'Taught barcode', new_carton: 'New carton started' };
+  const KIND_LABEL = { scan: 'Gun scan', count: 'Manual count', teach: 'Taught barcode', new_carton: 'New carton started', carton_labeled: 'Carton label confirmed', carton_switch: 'Switched carton', carton_cancel_multi: 'Cartons merged into one' };
   const logAoa = [
     ['Time', 'Action', 'Scanned Code', 'SKU', 'Count After', 'By'],
     ...((state.scanLog || []).map(e => [

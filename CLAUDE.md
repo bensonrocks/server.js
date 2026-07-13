@@ -229,6 +229,36 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   traceability requirement a handwritten "Carton 2" alone doesn't satisfy.
   This endpoint and button write NOTHING — they only ever read
   `state.cartons`; do not let this drift into touching scan/complete state.
+- MANDATORY LABEL PROMPT (`showCartonLabelPrompt()`, `#cartonLabelOverlay`):
+  tells the packer exactly what to write on a carton — `{orderNumber}-{NN}`,
+  zero-padded — and blocks further scanning until confirmed. Fires at TWO
+  points: (1) inside `requestNewCarton()`, for the carton just being closed
+  (whose number is `activeOrder.cartonNum` BEFORE it's reassigned to the new
+  one); (2) inside `doCompleteOrder()`, for the LAST carton (`cartonCount`)
+  — that one never goes through "closing" since nothing ever supersedes it,
+  so completion is the only point it gets labelled. Only fires when
+  `cartonCount > 1` — single-carton orders never see this. The "blocking"
+  is real, not cosmetic: it's a `.modal-overlay`, and `_globalScanKeydown`
+  already refuses to intercept scans while any modal overlay is open, so no
+  separate gating logic was needed. Confirming POSTs to
+  `/api/scan/carton/label-confirmed` (fire-and-forget, audit trail only —
+  `scanLog` kind `carton_labeled`); a failed request never blocks the UI,
+  since the modal itself (not this call) is what enforces the pause.
+
+## Report data retention (server.js — `db.auditLog` / `AUDIT_ARCHIVE_AFTER_DAYS`)
+
+- Every report reads from `db.auditLog`, which otherwise grows forever (the
+  same "db.json must stay small" problem batches had). Entries older than
+  **180 days** move to `DATA_DIR/archive/audit-archive-YYYY-MM.json` (daily
+  job, `runAuditLogArchive()` — mirrors `runAutoArchive()` for batches).
+- `readAuditLogForRange(db, from, to)` transparently merges live +
+  archived months whenever a report's requested `from` reaches past what's
+  still live, so every report can filter/toggle across **at least 6 months**
+  of history regardless of how long ago the data happened. Fast path: if
+  `from` is within the live window, archive files are never touched.
+- This is a read-through, not a migration — archived months are never
+  re-merged into `db.auditLog`; they're read fresh from disk per report
+  request that needs them.
 
 ## Git
 
