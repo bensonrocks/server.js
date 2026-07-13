@@ -2168,6 +2168,57 @@
   }
   document.getElementById('printCartonCardBtn')?.addEventListener('click', printNewCartonCard);
 
+  // ── Printable per-carton packing slip ────────────────────────────────────────
+  // Read-only add-on — fetches the current carton's contents and prints a small
+  // slip (order no. + carton no. + a scannable barcode of the order, so a box
+  // separated from its slip is still traceable, plus SKU/qty contents). Does
+  // not touch increment/new-carton/complete or any existing state at all.
+  async function printCartonSlip() {
+    if (!activeOrder) return;
+    const btn = document.getElementById('printCartonSlipBtn');
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(activeOrder.order_number)}`, { headers: hdrs() });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error || 'Could not load the carton slip.'); return; }
+      const w = window.open('', '_blank', 'width=420,height=650');
+      if (!w) { alert('Please allow pop-ups to print the carton slip.'); return; }
+      const rows = data.items.length
+        ? data.items.map(i => `<tr><td>${esc(i.sku)}</td><td>${esc(i.description)}</td><td>${i.qty}</td></tr>`).join('')
+        : `<tr><td colspan="3" style="text-align:center;color:#888">Nothing scanned into this carton yet</td></tr>`;
+      w.document.write(`
+        <html><head><title>Carton ${data.cartonNum} — ${esc(data.orderNumber)}</title>
+        <script src="/vendor/jsbarcode.min.js"></script>
+        <style>
+          body { font-family: -apple-system, Arial, sans-serif; padding: 1.2rem; }
+          h1 { font-size: 1.5rem; margin: 0 0 .1rem; }
+          .ctn { font-size: 1.15rem; font-weight: 800; color: #2563eb; margin-bottom: .5rem; }
+          .meta { font-size: .82rem; color: #555; margin-bottom: .7rem; }
+          table { width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: .5rem; }
+          th, td { border: 1px solid #ccc; padding: .35rem .5rem; text-align: left; }
+          th { background: #f3f4f6; }
+          svg { max-width: 100%; margin: .4rem 0; }
+        </style></head>
+        <body>
+          <h1>${esc(data.orderNumber)}</h1>
+          <div class="ctn">&#128230; CARTON ${data.cartonNum}</div>
+          <div class="meta">${esc(data.customerName)}${data.clientName ? ' &middot; ' + esc(data.clientName) : ''}</div>
+          <svg id="bc"></svg>
+          <table><thead><tr><th>SKU</th><th>Description</th><th>Qty</th></tr></thead><tbody>${rows}</tbody></table>
+          <script>
+            JsBarcode("#bc", ${JSON.stringify(data.orderNumber)}, { format: "CODE128", width: 2, height: 45, fontSize: 12 });
+            window.onload = () => setTimeout(() => window.print(), 300);
+          </script>
+        </body></html>`);
+      w.document.close();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  document.getElementById('printCartonSlipBtn')?.addEventListener('click', printCartonSlip);
+
   // ── Timer ──────────────────────────────────────────────────────────────────
   function startTimer(startISO) {
     stopTimer();

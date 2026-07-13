@@ -185,6 +185,16 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   Packers print their own reusable card via the 🖨 button next to "+ New
   Carton" (`printNewCartonCard()`, same window.open+JsBarcode+window.print
   pattern as `printWaybillLabel()`).
+- PER-CARTON PACKING SLIP (📋 button, `printCartonSlip()` / `GET
+  /api/scan/carton-slip/:orderNumber`): a READ-ONLY add-on, separate from the
+  Waybill label and from the full completion slip. Defaults to the currently
+  open carton; `?cartonNum=N` reprints any earlier one (works even after the
+  order is done — nothing here checks `state.status`). Leads with the order
+  number PLUS a Code128 barcode of it, so a carton is traceable back to its
+  order even if the slip gets separated from the box — this is the
+  traceability requirement a handwritten "Carton 2" alone doesn't satisfy.
+  This endpoint and button write NOTHING — they only ever read
+  `state.cartons`; do not let this drift into touching scan/complete state.
 
 ## Git
 

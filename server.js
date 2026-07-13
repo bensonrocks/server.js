@@ -2890,6 +2890,38 @@ app.post('/api/scan/new-carton', (req, res) => {
   res.json({ ok: true, cartonCount: state.cartons.length, activeCartonNum: next.num });
 });
 
+// Read-only — a single carton's contents for printing a per-box packing
+// slip on the spot (distinct from the Waybill label and from the full
+// multi-sheet completion slip). Defaults to the currently-open carton;
+// pass ?cartonNum=N to reprint an earlier one. Purely additive: no state
+// is written here, so it can't affect the scan/complete flow at all.
+app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
+  const { orderNumber } = req.params;
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord   = batch.orders.find(o => o.order_number === orderNumber);
+  const state = (batch.orderStates || {})[orderNumber] || {};
+  const cartons = (state.cartons && state.cartons.length) ? state.cartons : [{ num: 1, scans: state.scanned || {} }];
+  const requestedNum = parseInt(req.query.cartonNum, 10);
+  const carton = requestedNum ? cartons.find(c => c.num === requestedNum) : cartons[cartons.length - 1];
+  if (!carton) return res.status(404).json({ error: 'Carton not found' });
+  const items = Object.entries(carton.scans || {})
+    .filter(([, qty]) => qty > 0)
+    .map(([sku, qty]) => {
+      const line = uniqueSkuLines(ord).find(l => l.sku === sku);
+      return { sku, description: line?.description || '', qty };
+    });
+  res.json({
+    orderNumber,
+    cartonNum:    carton.num,
+    cartonCount:  cartons.length,
+    customerName: ord.customer_name || '',
+    clientName:   batch.client_name || ord.client_name || '',
+    items,
+  });
+});
+
 // Teach-on-scan: packer confirms an unrecognized product barcode belongs to
 // one of the order's lines. Stores the mapping (audit-logged, master-reviewable)
 // and counts the piece in the same call so packing never stalls.
