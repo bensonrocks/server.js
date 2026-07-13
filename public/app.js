@@ -3058,6 +3058,7 @@
   document.getElementById('closeLogBtn').addEventListener('click', () => {
     document.getElementById('logOverlay').classList.add('hidden');
     document.body.classList.remove('log-open');
+    stopLiveActivityPolling();
   });
 
   async function openLogOverlay() {
@@ -3069,6 +3070,60 @@
     } else {
       await renderLogContent();
     }
+  }
+
+  // ── Live Activity (Master dashboard) ────────────────────────────────────────
+  let _liveActivityTimer = null;
+  function startLiveActivityPolling() {
+    stopLiveActivityPolling();
+    loadLiveActivity();
+    _liveActivityTimer = setInterval(loadLiveActivity, 15000);
+  }
+  function stopLiveActivityPolling() {
+    if (_liveActivityTimer) { clearInterval(_liveActivityTimer); _liveActivityTimer = null; }
+  }
+  function formatIdleMs(ms) {
+    if (ms == null || isNaN(ms)) return '—';
+    const mins = Math.round(ms / 60000);
+    if (mins < 1) return 'just now';
+    return `${mins} min ago`;
+  }
+  async function loadLiveActivity() {
+    try {
+      const r = await fetch('/api/master/live-activity', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      renderLiveActivity(await r.json());
+    } catch { /* silent — next poll retries */ }
+  }
+  function renderLiveActivity(d) {
+    const t = d.throughput || {};
+    document.getElementById('liveStat5m').textContent  = t.last5m   ?? '—';
+    document.getElementById('liveStat15m').textContent = t.last15m  ?? '—';
+    document.getElementById('liveStat1h').textContent  = t.lastHour ?? '—';
+    document.getElementById('liveActivityUpdated').textContent =
+      d.generatedAt ? `Updated ${new Date(d.generatedAt).toLocaleTimeString()}` : '';
+
+    const packers = d.activePackers || [];
+    document.getElementById('livePackersBody').innerHTML = packers.map(p => `
+      <tr>
+        <td class="dcs-name">${esc(p.userName)}</td>
+        <td>${esc(p.orderNumber)}</td>
+        <td>${esc(p.client) || '—'}</td>
+        <td>${p.scannedQty} / ${p.totalQty}</td>
+        <td class="${p.idle ? 'live-idle' : ''}">${formatIdleMs(p.idleMs)}</td>
+      </tr>`).join('');
+    document.getElementById('livePackersEmpty').classList.toggle('hidden', packers.length > 0);
+
+    const stuck = d.stuckOrders || [];
+    document.getElementById('liveStuckBody').innerHTML = stuck.map(s => `
+      <tr class="live-stuck-row">
+        <td class="dcs-name">${esc(s.orderNumber)}</td>
+        <td>${esc(s.client) || '—'}</td>
+        <td>${esc(s.lastPackerName)}</td>
+        <td>${s.scannedQty} / ${s.totalQty}</td>
+        <td>${s.idleMinutes} min</td>
+      </tr>`).join('');
+    document.getElementById('liveStuckEmpty').classList.toggle('hidden', stuck.length > 0);
   }
 
   let _labelTemplates = null;
@@ -3109,6 +3164,7 @@
     loadDocTemplates();
     loadBarcodeMapStats();
     loadLearnedBarcodes();
+    startLiveActivityPolling(); // Live Activity is the default landing tab
   }
 
   // Admin tab switching
@@ -3119,6 +3175,8 @@
       btn.classList.add('active');
       document.getElementById(`adminTab-${btn.dataset.adminTab}`).classList.remove('hidden');
       if (btn.dataset.adminTab === 'batches') renderLogContent();
+      if (btn.dataset.adminTab === 'activity') startLiveActivityPolling();
+      else stopLiveActivityPolling();
     });
   });
 
@@ -3748,6 +3806,7 @@
       sessionStorage.clear();
       document.getElementById('logOverlay').classList.add('hidden');
       document.body.classList.remove('log-open');
+      stopLiveActivityPolling();
       fetchAndRenderStats();
       renderOrdersDash();
       alert('All data cleared.');

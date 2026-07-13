@@ -309,7 +309,8 @@
     <!-- Admin nav tabs (shown after unlock) -->
     <div id="masterActionsSection" class="master-actions hidden">
       <div class="admin-nav">
-        <button class="admin-nav-btn active" data-admin-tab="batches">&#128196; Upload History</button>
+        <button class="admin-nav-btn active" data-admin-tab="activity">&#128225; Live Activity</button>
+        <button class="admin-nav-btn" data-admin-tab="batches">&#128196; Upload History</button>
         <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
         <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
         <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
@@ -318,8 +319,51 @@
         <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
 
+      <!-- Tab: Live Activity -->
+      <div class="admin-tab active" id="adminTab-activity">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Live Activity</div>
+            <div class="admin-section-sub">Who's actively packing right now, orders left mid-pick, and recent scan throughput. Refreshes automatically while this tab is open.</div>
+          </div>
+          <span id="liveActivityUpdated" class="hint"></span>
+        </div>
+
+        <div class="dash-stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.1rem">
+          <div class="dstat"><div class="dstat-val" id="liveStat5m">—</div><div class="dstat-lbl">Scans / 5 min</div></div>
+          <div class="dstat"><div class="dstat-val" id="liveStat15m">—</div><div class="dstat-lbl">Scans / 15 min</div></div>
+          <div class="dstat"><div class="dstat-val" id="liveStat1h">—</div><div class="dstat-lbl">Scans / hour</div></div>
+        </div>
+
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.8rem">&#128694; Active Packers</div>
+        </div>
+        <div id="livePackersWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Packer</th><th>Order</th><th>Client</th><th>Progress</th><th>Last scan</th></tr></thead>
+            <tbody id="livePackersBody"></tbody>
+          </table>
+          <div id="livePackersEmpty" class="empty-state hidden">No one is actively scanning right now.</div>
+        </div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title" style="font-size:.8rem">&#9888; Stuck Orders</div>
+            <div class="admin-section-sub">Claimed by a packer but idle past the 20-minute claim window — abandoned mid-pick, or the station lost connection. Anyone can resume these; no action needed here.</div>
+          </div>
+        </div>
+        <div id="liveStuckWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Order</th><th>Client</th><th>Last packer</th><th>Progress</th><th>Idle for</th></tr></thead>
+            <tbody id="liveStuckBody"></tbody>
+          </table>
+          <div id="liveStuckEmpty" class="empty-state hidden">No abandoned orders.</div>
+        </div>
+      </div>
+
       <!-- Tab: Upload History -->
-      <div class="admin-tab active" id="adminTab-batches">
+      <div class="admin-tab hidden" id="adminTab-batches">
         <div class="admin-section-header">
           <div>
             <div class="admin-section-title">Upload History</div>

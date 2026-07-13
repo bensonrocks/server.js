@@ -521,6 +521,8 @@ main {
 .dcs-today, .dcs-pend, .dcs-bal { text-align: center; font-weight: 700; }
 .dcs-pend.warn, .dcs-bal.warn { color: #f59e0b; }
 .dcs-pend.ok,   .dcs-bal.ok   { color: var(--text-muted); font-weight: 400; }
+.live-idle { color: #f59e0b; font-weight: 700; }
+.live-stuck-row td { color: var(--danger); }
 
 /* ================================================================
    STATS BAR (orders tab)

@@ -3347,6 +3347,89 @@ app.get('/api/master/export-status', (req, res) => {
   res.end(buf);
 });
 
+// ── Live activity — Master dashboard ────────────────────────────────────────
+// Aggregates the same orderStates data every scan endpoint already writes
+// into a monitoring view: who is actively packing right now, which claimed
+// orders went idle without being released (packer walked away / station
+// died — the CLAIM_STALE_MS window already governs when this fires elsewhere),
+// and recent scan throughput. Nothing new is persisted; this is a read-only
+// projection recomputed on each request.
+const LIVE_IDLE_WARN_MS = 5 * 60 * 1000; // flag an active packer as "idle" after 5 min with no scan
+
+app.get('/api/master/live-activity', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db      = readDb();
+  const now     = Date.now();
+  const nameFor = (() => {
+    const byId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+    return id => byId.get(id) || id || '(unknown)';
+  })();
+
+  const activePackers = [];
+  const stuckOrders   = [];
+  let scans5m = 0, scans15m = 0, scans1h = 0;
+
+  for (const batch of db.batches || []) {
+    const states = batch.orderStates || {};
+    for (const ord of (batch.orders || [])) {
+      const state = states[ord.order_number];
+      if (!state) continue;
+      const settled = state.status === 'done' || state.status === 'unprocessed';
+      const scannedQty = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+      const log = state.scanLog || [];
+      const lastEvt = log.length ? log[log.length - 1] : null;
+
+      for (let i = log.length - 1; i >= 0; i--) {
+        const evt = log[i];
+        if (evt.kind !== 'scan' && evt.kind !== 'teach' && evt.kind !== 'count') continue;
+        const age = now - new Date(evt.at).getTime();
+        if (age > 3600000) break; // scanLog is chronological — nothing older matters
+        if (age <= 300000)  scans5m++;
+        if (age <= 900000)  scans15m++;
+        if (age <= 3600000) scans1h++;
+      }
+
+      const holder = claimHolder(state); // non-stale claim, per existing claiming logic
+      if (holder && !settled) {
+        const lastActivityAt = lastEvt ? new Date(lastEvt.at).getTime() : new Date(state.claimedAt || 0).getTime();
+        activePackers.push({
+          userId:        holder,
+          userName:      nameFor(holder),
+          orderNumber:   ord.order_number,
+          client:        batch.client_name || '',
+          scannedQty,
+          totalQty:      ord.total_qty || 0,
+          claimedAt:     state.claimedAt || null,
+          idleMs:        now - lastActivityAt,
+          idle:          (now - lastActivityAt) > LIVE_IDLE_WARN_MS,
+        });
+      } else if (state.claimedBy && !holder && !settled) {
+        // Was claimed, claim is now stale (CLAIM_STALE_MS elapsed) — abandoned mid-pick
+        stuckOrders.push({
+          orderNumber:   ord.order_number,
+          client:        batch.client_name || '',
+          lastPacker:    state.claimedBy,
+          lastPackerName: nameFor(state.claimedBy),
+          scannedQty,
+          totalQty:      ord.total_qty || 0,
+          claimedAt:     state.claimedAt || null,
+          idleMinutes:   Math.round((now - new Date(state.claimedAt || 0).getTime()) / 60000),
+        });
+      }
+    }
+  }
+
+  activePackers.sort((a, b) => b.idleMs - a.idleMs);
+  stuckOrders.sort((a, b) => b.idleMinutes - a.idleMinutes);
+
+  res.json({
+    generatedAt:   new Date().toISOString(),
+    activePackers,
+    stuckOrders,
+    throughput:    { last5m: scans5m, last15m: scans15m, lastHour: scans1h },
+  });
+});
+
 // Full JSON backup — DB (batches, orders, scan states, users, sessions) plus
 // the small config files. WMS XLSX / waybill PDF binaries are excluded: they
 // are regenerable from the batch data and would bloat the download.
