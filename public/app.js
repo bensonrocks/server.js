@@ -1677,16 +1677,9 @@
       })
     );
     document.querySelectorAll('.btn-del-order').forEach(btn => {
-      btn.addEventListener('click', async e => {
+      btn.addEventListener('click', e => {
         e.stopPropagation();
-        const orderNumber = btn.dataset.order, batchId = btn.dataset.batchid;
-        if (!confirm(`Delete order ${orderNumber}?\nThis cannot be undone.`)) return;
-        try {
-          const r = await fetch(`/api/master/order/${encodeURIComponent(batchId)}/${encodeURIComponent(orderNumber)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
-          const d = await r.json();
-          if (!r.ok) throw new Error(d.error || 'Delete failed');
-          await refreshOrders(); renderOrdersList();
-        } catch (err) { alert(err.message); }
+        openDeleteOrderModal(btn.dataset.order, btn.dataset.batchid);
       });
     });
 
@@ -1725,6 +1718,55 @@
       });
     });
   }
+
+  // ── Delete Order (admin, reason required) ───────────────────────────────────
+  let _delOrderTarget = null; // { orderNumber, batchId }
+  function openDeleteOrderModal(orderNumber, batchId) {
+    _delOrderTarget = { orderNumber, batchId };
+    document.getElementById('delOrderNumber').textContent = orderNumber;
+    const reasonEl = document.getElementById('delOrderReason');
+    reasonEl.value = '';
+    document.getElementById('delOrderError').classList.add('hidden');
+    document.getElementById('delOrderConfirmBtn').disabled = true;
+    document.getElementById('deleteOrderOverlay').classList.remove('hidden');
+    setTimeout(() => reasonEl.focus(), 100);
+  }
+  document.getElementById('delOrderReason').addEventListener('input', () => {
+    const has = document.getElementById('delOrderReason').value.trim() !== '';
+    document.getElementById('delOrderConfirmBtn').disabled = !has;
+    if (has) document.getElementById('delOrderError').classList.add('hidden');
+  });
+  document.getElementById('delOrderCancelBtn').addEventListener('click', () => {
+    document.getElementById('deleteOrderOverlay').classList.add('hidden');
+    _delOrderTarget = null;
+  });
+  document.getElementById('delOrderConfirmBtn').addEventListener('click', async () => {
+    const reason = document.getElementById('delOrderReason').value.trim();
+    if (!reason || !_delOrderTarget) {
+      document.getElementById('delOrderError').classList.remove('hidden');
+      return;
+    }
+    const { orderNumber, batchId } = _delOrderTarget;
+    const btn = document.getElementById('delOrderConfirmBtn');
+    btn.disabled = true; btn.textContent = 'Deleting…';
+    try {
+      const r = await fetch(`/api/master/order/${encodeURIComponent(batchId)}/${encodeURIComponent(orderNumber)}`, {
+        method: 'DELETE',
+        headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Delete failed');
+      document.getElementById('deleteOrderOverlay').classList.add('hidden');
+      _delOrderTarget = null;
+      await refreshOrders(); renderOrdersList();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.textContent = '\u{1F5D1} Delete Order';
+      btn.disabled = document.getElementById('delOrderReason').value.trim() === '';
+    }
+  });
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
   async function openScanOverlay(orderNumber) {

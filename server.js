@@ -3648,7 +3648,7 @@ app.get('/api/master/report/:kind', (req, res) => {
       }
       for (const e of deletions) {
         if (e.type === 'batch_deleted') rows.push([e.at, 'BATCH DELETED', '', e.client, e.by, '', '', '', '', `${e.filename} (${e.orders} orders): ${(e.orderNumbers || []).slice(0, 20).join(', ')}${(e.orderNumbers || []).length > 20 ? '…' : ''}`]);
-        else if (e.type === 'order_deleted') rows.push([e.at, 'ORDER DELETED', e.order, e.client, e.by, '', '', '', '', '']);
+        else if (e.type === 'order_deleted') rows.push([e.at, 'ORDER DELETED', e.order, e.client, e.by, '', '', '', '', e.reason || '']);
         else rows.push([e.at, 'MASTER RESET', '', '', e.by, '', '', '', '', `${e.batchesDeleted} batches wiped`]);
       }
       rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
@@ -3763,6 +3763,8 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
 app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
   if (!checkMaster(req, res)) return;
   const { batchId, orderNumber } = req.params;
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to delete an order.' });
   try {
     const db    = readDb();
     const batch = db.batches.find(b => b.id === batchId);
@@ -3775,7 +3777,7 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     if (batch.orderStates) delete batch.orderStates[orderNumber];
     try { fs.unlinkSync(path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`)); } catch {}
     writeDb(db);
-    logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master' });
+    logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master', reason });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
