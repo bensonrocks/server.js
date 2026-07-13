@@ -3116,6 +3116,338 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
   });
 });
 
+// ── IdealInbound — receiving (POs/ASNs and returns) ──────────────────────────
+// The outbound picking flow scans a known order DOWN to zero remaining;
+// receiving runs the same physical idea in reverse — goods arrive across one
+// or more boxes/pallets and need their contents logged. Every inbound job
+// lives in its own flat db.inbound[] record (no batch/order nesting — one
+// upload or one "+ New Return" IS the job), but reuses the exact same carton
+// primitives as outbound (`activeCarton`, `addToActiveCarton`, `appendScanLog`)
+// since a box is a box regardless of which direction it's moving.
+//
+// Two job types:
+//   'po'     — an uploaded PO/ASN file supplies expected SKU+qty per line;
+//              receiving matches scans against it like outbound does, but
+//              never blocks on an unlisted SKU (real shipments often include
+//              something not on the paperwork — it's still logged, just with
+//              no "expected" line to compare against).
+//   'return' — no expected list at all. Created manually, scans are free-form,
+//              and each scan carries a condition code (resalable/damaged/
+//              disposed) rolled up into state.conditionTotals.
+function findInbound(db, id) {
+  return (db.inbound || []).find(r => r.id === id);
+}
+// Auto-detects SKU / Description / Qty columns from an uploaded PO/ASN file.
+// Deliberately independent of parseUploadedFile/detectColumnMap (lib/keyfields.js)
+// — those are tuned for outbound picking lists (order_number, customer, address…)
+// and would drag in columns receiving doesn't have or need.
+function parseInboundFile(buffer, filename) {
+  const ext = path.extname(filename).toLowerCase();
+  let rows;
+  if (ext === '.csv') {
+    rows = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
+  } else if (ext === '.xlsx' || ext === '.xls') {
+    const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  } else {
+    throw new Error('Unsupported file type. Upload XLSX or CSV.');
+  }
+  if (!rows.length) return [];
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const SKU_KEYS  = new Set(['sku', 'productcode', 'itemcode', 'code']);
+  const DESC_KEYS = new Set(['description', 'productdescription', 'itemdescription', 'productname', 'name']);
+  const QTY_KEYS  = new Set(['qty', 'quantity', 'expectedqty', 'orderedqty', 'expectedquantity']);
+  const headerKeys = Object.keys(rows[0]);
+  const skuKey  = headerKeys.find(k => SKU_KEYS.has(norm(k)));
+  const descKey = headerKeys.find(k => DESC_KEYS.has(norm(k)));
+  const qtyKey  = headerKeys.find(k => QTY_KEYS.has(norm(k)));
+  if (!skuKey) throw new Error('Could not find a SKU column. Expected a header like "SKU" or "Product Code".');
+  const out = [];
+  for (const r of rows) {
+    const sku = String(r[skuKey] || '').trim();
+    if (!sku) continue;
+    const qty = qtyKey ? Math.max(0, parseInt(r[qtyKey], 10) || 0) : 0;
+    out.push({ sku, description: descKey ? String(r[descKey] || '').trim() : '', qty });
+  }
+  return out;
+}
+
+app.get('/api/inbound', (req, res) => {
+  const db = readDb();
+  const list = (db.inbound || []).map(rec => {
+    const state = rec.state || {};
+    const expectedTotal = (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0);
+    const scannedTotal  = Object.values(state.scanned || {}).reduce((s, q) => s + q, 0);
+    return {
+      id:                rec.id,
+      type:              rec.type,
+      reference:         rec.reference || '',
+      source_name:       rec.source_name || '',
+      client_name:       rec.client_name || '',
+      uploaded_at:       rec.uploaded_at,
+      uploaded_by:       rec.uploaded_by,
+      filename:          rec.filename || null,
+      lines:             rec.lines || [],
+      line_count:        (rec.lines || []).length,
+      expected_total:    expectedTotal,
+      scanned_total:     scannedTotal,
+      status:            state.status || 'pending',
+      scanned:           state.scanned || {},
+      conditionTotals:   state.conditionTotals || {},
+      cartons:           state.cartons || [],
+      active_carton_num: state.activeCartonNum || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
+      startTime:         state.startTime || null,
+      endTime:           state.endTime || null,
+    };
+  });
+  res.json(list);
+});
+
+app.post('/api/inbound/upload', upload.single('inboundFile'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const rows = parseInboundFile(req.file.buffer, req.file.originalname);
+    if (!rows.length) return res.status(400).json({ error: 'No valid SKU rows found in file' });
+
+    // Same SKU can legitimately appear on multiple rows (split across lots,
+    // etc.) — merge into one expected line so scanning matches cleanly.
+    const merged = new Map();
+    for (const r of rows) {
+      const cur = merged.get(r.sku) || { sku: r.sku, description: r.description, expected_qty: 0 };
+      cur.expected_qty += r.qty;
+      if (!cur.description && r.description) cur.description = r.description;
+      merged.set(r.sku, cur);
+    }
+
+    const db = readDb();
+    db.inbound = db.inbound || [];
+    const rec = {
+      id:          uuidv4(),
+      type:        'po',
+      reference:   (req.body?.reference   || '').trim(),
+      source_name: (req.body?.source_name || '').trim(),
+      client_name: (req.body?.client_name || '').trim(),
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: req.userId || '',
+      filename:    req.file.originalname,
+      lines:       [...merged.values()],
+      state:       { status: 'pending', scanned: {}, scanLog: [] },
+    };
+    db.inbound.unshift(rec);
+    writeDb(db);
+    logAudit('inbound_upload', { id: rec.id, reference: rec.reference, by: req.userId || '', lines: rec.lines.length });
+    res.json({ ok: true, id: rec.id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/inbound/return', (req, res) => {
+  const { reference, source_name, client_name } = req.body || {};
+  const db = readDb();
+  db.inbound = db.inbound || [];
+  const rec = {
+    id:          uuidv4(),
+    type:        'return',
+    reference:   String(reference   || '').trim(),
+    source_name: String(source_name || '').trim(),
+    client_name: String(client_name || '').trim(),
+    uploaded_at: new Date().toISOString(),
+    uploaded_by: req.userId || '',
+    filename:    null,
+    lines:       [],
+    state:       { status: 'pending', scanned: {}, conditionTotals: {}, scanLog: [] },
+  };
+  db.inbound.unshift(rec);
+  writeDb(db);
+  logAudit('inbound_return_created', { id: rec.id, reference: rec.reference, by: req.userId || '' });
+  res.json({ ok: true, id: rec.id });
+});
+
+const INBOUND_CONDITIONS = new Set(['resalable', 'damaged', 'disposed']);
+app.post('/api/inbound/:id/scan', (req, res) => {
+  const { id } = req.params;
+  const { code, qty, condition } = req.body;
+  if (!code) return res.status(400).json({ error: 'code required' });
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
+  if (state.status === 'done') return res.status(409).json({ error: 'This receiving job is already complete.' });
+
+  const inc = Math.max(1, parseInt(qty, 10) || 1);
+  const raw = String(code).trim();
+  let sku = raw, description = '';
+
+  if (rec.type === 'po') {
+    // Unlisted SKUs are still accepted — a shipment containing something not
+    // on the paperwork shouldn't block the receiver; it just has no
+    // "expected" line to compare against on the receiving screen.
+    const line = (rec.lines || []).find(l => l.sku.toUpperCase() === raw.toUpperCase());
+    if (line) { sku = line.sku; description = line.description || ''; }
+  }
+
+  state.scanned = state.scanned || {};
+  state.scanned[sku] = (state.scanned[sku] || 0) + inc;
+  addToActiveCarton(state, sku, inc);
+
+  if (rec.type === 'return') {
+    const cond = INBOUND_CONDITIONS.has(condition) ? condition : 'resalable';
+    state.conditionTotals = state.conditionTotals || {};
+    state.conditionTotals[sku] = state.conditionTotals[sku] || { resalable: 0, damaged: 0, disposed: 0 };
+    state.conditionTotals[sku][cond] += inc;
+    appendScanLog(state, { kind: 'scan', raw, sku, qty: inc, condition: cond, by: req.userId || '' });
+  } else {
+    appendScanLog(state, { kind: 'scan', raw, sku, qty: inc, by: req.userId || '' });
+  }
+
+  if (state.status === 'pending') { state.status = 'processing'; state.startTime = new Date().toISOString(); }
+  state.updated_at = new Date().toISOString();
+  rec.state = state;
+  writeDb(db);
+
+  const carton = activeCarton(state);
+  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], cartonNum: carton.num, cartonCount: state.cartons.length });
+});
+
+app.post('/api/inbound/:id/new-carton', (req, res) => {
+  const { id } = req.params;
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || {};
+  const current = activeCarton(state);
+  if (!Object.keys(current.scans || {}).length) {
+    return res.status(400).json({ error: 'Current carton is empty — scan at least one item before starting a new one.' });
+  }
+  current.closedAt = new Date().toISOString();
+  const nextNum = Math.max(...state.cartons.map(c => c.num)) + 1;
+  const next = { num: nextNum, scans: {}, startedAt: new Date().toISOString(), closedAt: null };
+  state.cartons.push(next);
+  state.activeCartonNum = nextNum;
+  rec.state = state;
+  writeDb(db);
+  res.json({ ok: true, cartonCount: state.cartons.length, activeCartonNum: next.num });
+});
+
+app.post('/api/inbound/:id/carton/switch', (req, res) => {
+  const { id } = req.params;
+  const { cartonNum } = req.body;
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || {};
+  activeCarton(state);
+  const target = state.cartons.find(c => c.num === parseInt(cartonNum, 10));
+  if (!target) return res.status(404).json({ error: 'Carton not found' });
+  state.activeCartonNum = target.num;
+  rec.state = state;
+  writeDb(db);
+  res.json({ ok: true, activeCartonNum: target.num, cartonCount: state.cartons.length });
+});
+
+app.post('/api/inbound/:id/carton/cancel-multi', (req, res) => {
+  const { id } = req.params;
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || {};
+  if (!state.cartons || state.cartons.length <= 1) return res.status(400).json({ error: 'This job was never split into multiple cartons.' });
+  const merged = {};
+  let earliest = state.cartons[0].startedAt;
+  for (const c of state.cartons) {
+    for (const [sku, qty] of Object.entries(c.scans || {})) merged[sku] = (merged[sku] || 0) + qty;
+    if (c.startedAt < earliest) earliest = c.startedAt;
+  }
+  state.cartons = [{ num: 1, scans: merged, startedAt: earliest, closedAt: null }];
+  state.activeCartonNum = 1;
+  rec.state = state;
+  writeDb(db);
+  res.json({ ok: true, cartonCount: 1, activeCartonNum: 1 });
+});
+
+app.post('/api/inbound/:id/carton/label-confirmed', (req, res) => {
+  const { id } = req.params;
+  const { cartonNum, label } = req.body;
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || {};
+  const num = parseInt(cartonNum, 10) || 1;
+  activeCarton(state);
+  let carton = state.cartons.find(c => c.num === num);
+  if (!carton) { carton = { num, scans: {}, startedAt: new Date().toISOString(), closedAt: null }; state.cartons.push(carton); }
+  carton.labelConfirmed = true;
+  appendScanLog(state, { kind: 'carton_labeled', raw: String(label || '').trim(), sku: '', qty: '', by: req.userId || '' });
+  rec.state = state;
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+// PO/ASN completion surfaces mismatches (over/under vs expected, plus any
+// unlisted SKU that was scanned) but never hard-blocks like outbound does —
+// receiving discrepancies are routine and must still be logged, not stuck.
+// Pass {force:true} once the receiver has seen the mismatch list and chosen
+// to complete anyway. Returns are never checked (no expected qty to compare).
+app.post('/api/inbound/:id/complete', (req, res) => {
+  const { id } = req.params;
+  const { force } = req.body || {};
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || {};
+  if (state.status === 'done') return res.status(409).json({ error: 'Already complete.' });
+
+  if (rec.type === 'po' && !force) {
+    const mismatches = (rec.lines || [])
+      .map(l => ({ sku: l.sku, description: l.description, expected_qty: l.expected_qty, scanned_qty: (state.scanned || {})[l.sku] || 0 }))
+      .filter(m => m.scanned_qty !== m.expected_qty);
+    const extras = Object.entries(state.scanned || {})
+      .filter(([sku]) => !(rec.lines || []).some(l => l.sku === sku))
+      .map(([sku, qty]) => ({ sku, scanned_qty: qty }));
+    if (mismatches.length || extras.length) return res.status(409).json({ needsConfirm: true, mismatches, extras });
+  }
+
+  if (state.cartons && state.cartons.length) {
+    const last = state.cartons[state.cartons.length - 1];
+    if (state.cartons.length > 1 && !Object.keys(last.scans || {}).length) state.cartons.pop();
+    const closeTime = new Date().toISOString();
+    for (const c of state.cartons) if (!c.closedAt) c.closedAt = closeTime;
+  }
+
+  state.status  = 'done';
+  state.endTime = new Date().toISOString();
+  rec.state = state;
+  writeDb(db);
+  logAudit('inbound_complete', { id: rec.id, type: rec.type, reference: rec.reference, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
+// Read-only per-carton receiving slip — mirrors the outbound carton-slip.
+app.get('/api/inbound/:id/carton-slip', (req, res) => {
+  const { id } = req.params;
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state || {};
+  const cartons = (state.cartons && state.cartons.length) ? state.cartons : [{ num: 1, scans: state.scanned || {} }];
+  const requestedNum = parseInt(req.query.cartonNum, 10);
+  const carton = requestedNum ? cartons.find(c => c.num === requestedNum) : cartons[cartons.length - 1];
+  if (!carton) return res.status(404).json({ error: 'Carton not found' });
+  const items = Object.entries(carton.scans || {})
+    .filter(([, qty]) => qty > 0)
+    .map(([sku, qty]) => {
+      const line = (rec.lines || []).find(l => l.sku === sku);
+      return { sku, description: line?.description || '', qty };
+    });
+  res.json({
+    id: rec.id, type: rec.type, reference: rec.reference || '',
+    sourceName: rec.source_name || '', clientName: rec.client_name || '',
+    cartonNum: carton.num, cartonCount: cartons.length, items,
+  });
+});
+
 // Teach-on-scan: packer confirms an unrecognized product barcode belongs to
 // one of the order's lines. Stores the mapping (audit-logged, master-reviewable)
 // and counts the piece in the same call so packing never stalls.

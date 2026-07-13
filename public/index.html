@@ -188,6 +188,121 @@
 
   </div><!-- /scanOverlay -->
 
+  <!-- ── Inbound: Upload PO/ASN Modal ── -->
+  <div id="inboundUploadOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Upload PO / ASN</div>
+      <p class="modal-desc">Upload the expected SKU + quantity list for this shipment. Any SKU column header (SKU, Product Code…) and any qty header (Qty, Quantity, Expected Qty…) are auto-detected.</p>
+      <div class="form-group">
+        <label>PO / ASN Reference</label>
+        <input type="text" id="inboundPoReference" placeholder="e.g. PO-10234" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Supplier / Source</label>
+        <input type="text" id="inboundPoSource" placeholder="e.g. Uriage Distribution" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Client Name</label>
+        <input type="text" id="inboundPoClient" placeholder="e.g. Glowverse" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>File</label>
+        <input type="file" id="inboundPoFileInput" accept=".xlsx,.xls,.csv" />
+      </div>
+      <div id="inboundPoStatus" class="status-bar hidden"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="inboundPoCancelBtn">Cancel</button>
+        <button class="btn-primary" id="inboundPoSubmitBtn">Upload &amp; Start Receiving &#8594;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Inbound: New Return Modal ── -->
+  <div id="inboundReturnOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">New Return</div>
+      <p class="modal-desc">No expected list needed — scan whatever's actually in the box and log its condition as you go.</p>
+      <div class="form-group">
+        <label>Reference / RMA <span class="hint-inline">(optional)</span></label>
+        <input type="text" id="inboundReturnReference" placeholder="e.g. RMA-4021" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Customer / Source <span class="hint-inline">(optional)</span></label>
+        <input type="text" id="inboundReturnSource" placeholder="e.g. Jane Doe" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Client Name <span class="hint-inline">(optional)</span></label>
+        <input type="text" id="inboundReturnClient" placeholder="e.g. Glowverse" autocomplete="off" />
+      </div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="inboundReturnCancelBtn">Cancel</button>
+        <button class="btn-primary" id="inboundReturnSubmitBtn">Start Receiving &#8594;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Inbound Receiving Overlay ── -->
+  <div id="inboundScanOverlay" class="scan-overlay hidden">
+    <div class="scan-busy-shield hidden" id="inboundBusyShield">
+      <div class="sbs-msg">&#8987; Processing &mdash; please wait&hellip;</div>
+    </div>
+
+    <div class="scan-order-header">
+      <span class="brand-corner"><img class="is-icon-xs" src="/brand/idealone-mark.png" alt="" />IDEALONE</span>
+      <button class="back-btn" id="backToInboundBtn">&#8592; Inbound</button>
+      <div class="scan-order-title">
+        <span class="scan-order-no" id="inboundJobRef"></span>
+        <span class="scan-progress" id="inboundJobType"></span>
+      </div>
+      <div class="scan-header-right">
+        <div class="scan-carton-wrap">
+          <button class="carton-nav-btn hidden" id="inboundCartonPrevBtn" title="Switch to the previous carton">&#9664;</button>
+          <div class="scan-carton-badge" id="inboundCartonBadge" title="Items scanned so far go into this carton">
+            <span id="inboundCartonNum">1</span>
+            <span class="scb-label">carton</span>
+          </div>
+          <button class="carton-nav-btn hidden" id="inboundCartonNextBtn" title="Switch to the next carton">&#9654;</button>
+          <button class="btn-new-carton" id="inboundNewCartonBtn" title="Box is full — start scanning the next carton">+ New Carton</button>
+          <button class="btn-cancel-multi-carton hidden" id="inboundCancelMultiCartonBtn" title="Actually, it all fits in one box — merge every carton back into one">&#8634; 1 Box</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="scan-order-meta" id="inboundJobMeta"></div>
+
+    <div class="scan-items-scroll">
+      <table class="scan-items-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Description</th>
+            <th class="qty-col" id="inboundExpectedHeader">Expected</th>
+            <th class="qty-col">Received</th>
+          </tr>
+        </thead>
+        <tbody id="inboundItemsTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="item-scan-dock">
+      <div class="item-scan-wrap">
+        <span class="scan-icon-prefix">&#9524;</span>
+        <input type="text" id="inboundScanInput" class="big-scan-input"
+          placeholder="Scan item barcode / SKU&#8230;"
+          autocomplete="off" autocorrect="off" spellcheck="false" />
+        <select id="inboundConditionSelect" class="hidden" style="max-width:160px">
+          <option value="resalable">Resalable</option>
+          <option value="damaged">Damaged</option>
+          <option value="disposed">Disposed</option>
+        </select>
+      </div>
+      <div id="inboundScanFeedback" class="scan-feedback hidden"></div>
+      <div class="dock-actions">
+        <button class="btn-success" id="inboundCompleteBtn">&#10003; Complete</button>
+      </div>
+    </div>
+  </div><!-- /inboundScanOverlay -->
+
   <!-- Print label prompt — floats over the orders list for 3 s after completion -->
   <div id="printLabelToast" class="print-label-toast hidden">
     <span class="plt-text">Print waybill label?</span>
@@ -798,6 +913,7 @@
     <nav class="sb-nav">
       <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
       <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
+      <button class="tab-btn" data-tab="inbound"><span class="tab-icon">&#128230;</span>Inbound</button>
       <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
       <button class="tab-btn" data-tab="reports"><span class="tab-icon">&#128202;</span>Reports</button>
       <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
@@ -922,6 +1038,19 @@
         <div class="filter-row" id="carrierFilterRow"></div>
         <div id="ordersDashList"></div>
       </div>
+    </section>
+
+    <!-- ── TAB: Inbound (IdealInbound — receiving POs/ASNs and returns) ── -->
+    <section id="tab-inbound" class="tab">
+      <div class="section-header">
+        <h2>Inbound</h2>
+        <div style="display:flex;gap:.6rem">
+          <button class="btn-secondary" id="inboundUploadPoBtn">&#8679; Upload PO / ASN</button>
+          <button class="btn-primary" id="inboundNewReturnBtn">+ New Return</button>
+        </div>
+      </div>
+      <div id="inboundEmpty" class="empty-state hidden">No inbound jobs yet.</div>
+      <div id="inboundList"></div>
     </section>
 
     <!-- ── TAB 3: Labels ── -->

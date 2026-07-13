@@ -257,6 +257,66 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   started. A failed request never blocks the UI, since the modal itself
   (not this call) is what enforces the pause.
 
+## IdealInbound — receiving POs/ASNs and returns (server.js `/api/inbound/*`, public/app.js)
+
+- Runs the outbound picking idea in reverse: goods arrive across one or more
+  boxes instead of being packed into them. Reuses the exact same carton
+  primitives as outbound (`activeCarton`, `addToActiveCarton`,
+  `appendScanLog`) since a box is a box regardless of direction — but is
+  otherwise a fully separate module (own `db.inbound[]` array, own
+  `/api/inbound/*` endpoints, own tab + scan overlay in the client) so none
+  of it can regress outbound scanning.
+- Flat data model — `db.inbound[]` is an array of job records, NOT nested
+  under a batch like outbound orders are, because one upload or one
+  "+ New Return" IS the whole job (no need for the batch/order two-layer
+  split outbound has for one file containing many orders). Each record:
+  `{ id, type: 'po'|'return', reference, source_name, client_name,
+  uploaded_at, uploaded_by, filename, lines: [{sku, description,
+  expected_qty}], state: { status, scanned, cartons, activeCartonNum,
+  conditionTotals, scanLog } }`.
+- TWO JOB TYPES:
+  - `'po'` — an uploaded PO/ASN file (`parseInboundFile()`, independent of
+    `parseUploadedFile`/`detectColumnMap` in lib/keyfields.js since those are
+    tuned for outbound picking lists with columns receiving doesn't have).
+    Auto-detects SKU/Description/Qty columns by header name. Scanning
+    matches against `lines` like outbound does, but an unlisted SKU is
+    still ACCEPTED (not blocked) — a shipment containing something not on
+    the paperwork is routine and must still be logged; it just has no
+    "expected" qty to compare against on the receiving screen.
+  - `'return'` — created manually via `POST /api/inbound/return`, no
+    expected list at all. Every scan carries a `condition` (`resalable` |
+    `damaged` | `disposed`, default `resalable`), rolled up into
+    `state.conditionTotals[sku][condition]` — `state.scanned[sku]` itself
+    stays a condition-agnostic total so the shared carton functions never
+    need to know conditions exist.
+- COMPLETION NEVER HARD-BLOCKS. `POST /api/inbound/:id/complete` for a
+  `'po'` job compares scanned vs expected and returns 409
+  `{needsConfirm, mismatches, extras}` (mismatches = wrong qty, extras =
+  unlisted SKUs) instead of outbound's harder stop — receiving discrepancies
+  are routine and must still be recorded, not stuck. Resending with
+  `{force:true}` completes anyway. `'return'` jobs have no expected qty so
+  they always complete on the first call. Same "drop the empty trailing
+  carton, close every still-open one" logic as outbound's `/complete`.
+- Carton mechanics are the same story as outbound, endpoint-for-endpoint:
+  `new-carton`, `carton/switch`, `carton/cancel-multi`,
+  `carton/label-confirmed`, `carton-slip` all mirror their outbound
+  counterparts exactly, scoped by `:id` instead of `:orderNumber`. The
+  MANDATORY LABEL PROMPT behaves identically too — carton 1 is labelled the
+  moment `openInboundReceiving()` opens the job (before the first scan),
+  later cartons are labelled when sealed (another split) or at completion
+  (the last carton, which never goes through "closing"). The client reuses
+  the exact same `#cartonLabelOverlay` DOM (only one overlay is ever open at
+  a time) via a parallel `showInboundLabelPrompt()`/`inboundCartonLabelConfirmed()`
+  pair, rather than parameterizing the outbound `showCartonLabelPrompt()` —
+  kept deliberately separate so a change to one flow's label logic can never
+  silently affect the other.
+- NOT YET BUILT (intentionally out of scope for v1, flagged rather than
+  silently skipped): no claim/lock system (outbound's one-packer-per-order
+  guarantee has no inbound equivalent yet — fine for a single active
+  receiver, would need the same `claimedBy`/`claimedAt`/stale-claim pattern
+  outbound uses if multiple people receive concurrently), no receiving
+  report/audit-log integration, no email alerts on discrepancy.
+
 ## Report data retention (server.js — `db.auditLog` / `AUDIT_ARCHIVE_AFTER_DAYS`)
 
 - Every report reads from `db.auditLog`, which otherwise grows forever (the

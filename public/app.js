@@ -42,6 +42,10 @@
   let logUnlocked         = false;
   let pendingDownload     = false;
 
+  // ── IdealInbound — receiving (POs/ASNs and returns) ─────────────────────────
+  let inboundJobs  = [];
+  let activeInbound = null;
+
   let orderTimings = {};
   try { orderTimings = JSON.parse(sessionStorage.getItem('wms_timings') || '{}'); } catch {}
   function saveTimings() { sessionStorage.setItem('wms_timings', JSON.stringify(orderTimings)); }
@@ -563,7 +567,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', labels: 'Labels', reports: 'Reports', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', labels: 'Labels', reports: 'Reports', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -592,6 +596,7 @@
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
+    if (name === 'inbound') { renderInboundTab(); }
     if (name === 'labels') { renderLabelsTab(); }
   }
 
@@ -1722,6 +1727,324 @@
       });
     });
   }
+
+  // ── IdealInbound — receiving (POs/ASNs and returns) ─────────────────────────
+  // Mirrors the outbound picking flow in reverse: goods arrive across one or
+  // more boxes instead of being packed into them. Reuses the exact same
+  // carton concept (a box is a box either way) but is otherwise a separate,
+  // self-contained tab/overlay so nothing here can regress outbound scanning.
+  async function renderInboundTab() {
+    try {
+      const resp = await fetch('/api/inbound');
+      inboundJobs = await resp.json();
+    } catch { inboundJobs = []; }
+    const empty = document.getElementById('inboundEmpty');
+    const list  = document.getElementById('inboundList');
+    if (!inboundJobs.length) {
+      empty.classList.remove('hidden');
+      list.innerHTML = '';
+      return;
+    }
+    empty.classList.add('hidden');
+    list.innerHTML = `
+      <div class="orders-table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>Type</th><th>Reference</th><th>Source</th><th>Client</th>
+              <th>Items</th><th>Cartons</th><th>Status</th><th>Date</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${inboundJobs.map(job => `
+              <tr>
+                <td><span class="chip ${job.type === 'po' ? 'chip-cartons' : ''}">${job.type === 'po' ? 'PO / ASN' : 'Return'}</span></td>
+                <td>${esc(job.reference || '—')}</td>
+                <td>${esc(job.source_name || '—')}</td>
+                <td>${esc(job.client_name || '—')}</td>
+                <td>${job.scanned_total}${job.type === 'po' ? ` / ${job.expected_total}` : ''}</td>
+                <td>${job.cartons.length > 1 ? `📦 ${job.cartons.length}` : '—'}</td>
+                <td><span class="status-badge ${job.status}">${job.status}</span></td>
+                <td>${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
+                <td><button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    list.querySelectorAll('[data-inbound-id]').forEach(btn =>
+      btn.addEventListener('click', () => openInboundReceiving(btn.dataset.inboundId))
+    );
+  }
+
+  document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {
+    document.getElementById('inboundPoReference').value = '';
+    document.getElementById('inboundPoSource').value = '';
+    document.getElementById('inboundPoClient').value = '';
+    document.getElementById('inboundPoFileInput').value = '';
+    document.getElementById('inboundPoStatus').classList.add('hidden');
+    document.getElementById('inboundUploadOverlay').classList.remove('hidden');
+  });
+  document.getElementById('inboundPoCancelBtn').addEventListener('click', () => {
+    document.getElementById('inboundUploadOverlay').classList.add('hidden');
+  });
+  document.getElementById('inboundPoSubmitBtn').addEventListener('click', async () => {
+    const fileInput = document.getElementById('inboundPoFileInput');
+    const statusEl  = document.getElementById('inboundPoStatus');
+    if (!fileInput.files.length) {
+      statusEl.className = 'status-bar error'; statusEl.textContent = 'Choose a file first.'; statusEl.classList.remove('hidden');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('inboundFile', fileInput.files[0]);
+    fd.append('reference',   document.getElementById('inboundPoReference').value.trim());
+    fd.append('source_name', document.getElementById('inboundPoSource').value.trim());
+    fd.append('client_name', document.getElementById('inboundPoClient').value.trim());
+    try {
+      const resp = await fetch('/api/inbound/upload', { method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: fd });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      document.getElementById('inboundUploadOverlay').classList.add('hidden');
+      await renderInboundTab();
+      openInboundReceiving(data.id);
+    } catch (err) {
+      statusEl.className = 'status-bar error'; statusEl.textContent = err.message; statusEl.classList.remove('hidden');
+    }
+  });
+
+  document.getElementById('inboundNewReturnBtn').addEventListener('click', () => {
+    document.getElementById('inboundReturnReference').value = '';
+    document.getElementById('inboundReturnSource').value = '';
+    document.getElementById('inboundReturnClient').value = '';
+    document.getElementById('inboundReturnOverlay').classList.remove('hidden');
+  });
+  document.getElementById('inboundReturnCancelBtn').addEventListener('click', () => {
+    document.getElementById('inboundReturnOverlay').classList.add('hidden');
+  });
+  document.getElementById('inboundReturnSubmitBtn').addEventListener('click', async () => {
+    try {
+      const resp = await fetch('/api/inbound/return', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({
+          reference:   document.getElementById('inboundReturnReference').value.trim(),
+          source_name: document.getElementById('inboundReturnSource').value.trim(),
+          client_name: document.getElementById('inboundReturnClient').value.trim(),
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Could not create return');
+      document.getElementById('inboundReturnOverlay').classList.add('hidden');
+      await renderInboundTab();
+      openInboundReceiving(data.id);
+    } catch (err) { alert(err.message); }
+  });
+
+  function inboundCartonLabelConfirmed(job, cartonNum) {
+    return !!(job.cartons || []).find(c => c.num === cartonNum)?.labelConfirmed;
+  }
+  // Reuses the same #cartonLabelOverlay modal as outbound (only one overlay
+  // is ever open at a time) but posts to the inbound endpoint instead.
+  function showInboundLabelPrompt(labelText, cartonNum) {
+    return new Promise(resolve => {
+      document.getElementById('cartonLabelText').textContent = labelText;
+      document.getElementById('cartonLabelOverlay').classList.remove('hidden');
+      document.getElementById('cartonLabelConfirmBtn').onclick = () => {
+        document.getElementById('cartonLabelOverlay').classList.add('hidden');
+        if (activeInbound) {
+          if (!activeInbound.cartons) activeInbound.cartons = [];
+          let c = activeInbound.cartons.find(x => x.num === cartonNum);
+          if (!c) { c = { num: cartonNum, scans: {} }; activeInbound.cartons.push(c); }
+          c.labelConfirmed = true;
+        }
+        fetch(`/api/inbound/${activeInbound?.id}/carton/label-confirmed`, {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ cartonNum, label: labelText }),
+        }).catch(() => {});
+        resolve();
+      };
+    });
+  }
+
+  function updateInboundCartonBadge(job) {
+    const num   = job.active_carton_num || 1;
+    const count = job.cartons.length || 1;
+    document.getElementById('inboundCartonNum').textContent = num;
+    document.querySelector('#inboundCartonBadge .scb-label').textContent = count > 1 ? `of ${count}` : 'carton';
+    const prevBtn = document.getElementById('inboundCartonPrevBtn');
+    const nextBtn = document.getElementById('inboundCartonNextBtn');
+    const cancelBtn = document.getElementById('inboundCancelMultiCartonBtn');
+    const multi = count > 1;
+    prevBtn.classList.toggle('hidden', !multi);
+    nextBtn.classList.toggle('hidden', !multi);
+    cancelBtn.classList.toggle('hidden', !multi);
+    prevBtn.disabled = num <= 1;
+    nextBtn.disabled = num >= count;
+  }
+
+  function renderInboundItemsTable(job) {
+    const tbody = document.getElementById('inboundItemsTbody');
+    document.getElementById('inboundExpectedHeader').style.display = job.type === 'po' ? '' : 'none';
+    const rows = [];
+    const seenSkus = new Set();
+    for (const line of job.lines) {
+      seenSkus.add(line.sku);
+      const received = job.scanned[line.sku] || 0;
+      rows.push(`<tr class="${received >= line.expected_qty && line.expected_qty > 0 ? 'status-done' : ''}">
+        <td>${esc(line.sku)}</td><td>${esc(line.description || '')}</td>
+        <td class="qty-col">${line.expected_qty}</td><td class="qty-col">${received}</td>
+      </tr>`);
+    }
+    for (const [sku, qty] of Object.entries(job.scanned)) {
+      if (seenSkus.has(sku)) continue;
+      rows.push(`<tr><td>${esc(sku)}</td><td><em>Not on ${job.type === 'po' ? 'PO' : 'list'}</em></td>
+        <td class="qty-col">${job.type === 'po' ? '—' : ''}</td><td class="qty-col">${qty}</td></tr>`);
+    }
+    tbody.innerHTML = rows.join('') || `<tr><td colspan="4" class="hint">No items scanned yet.</td></tr>`;
+  }
+
+  function openInboundReceiving(id) {
+    const job = inboundJobs.find(j => j.id === id);
+    if (!job) return;
+    activeInbound = job;
+    document.getElementById('inboundJobRef').textContent  = job.reference || job.id.slice(0, 8);
+    document.getElementById('inboundJobType').textContent = job.type === 'po' ? 'PO / ASN Receiving' : 'Return Receiving';
+    document.getElementById('inboundJobMeta').innerHTML = `
+      <div class="scan-meta-primary">
+        ${job.source_name ? `<span class="meta-pill">${esc(job.source_name)}</span>` : ''}
+        ${job.client_name ? `<span class="meta-pill">${esc(job.client_name)}</span>` : ''}
+      </div>`;
+    document.getElementById('inboundConditionSelect').classList.toggle('hidden', job.type !== 'return');
+    updateInboundCartonBadge(job);
+    renderInboundItemsTable(job);
+    document.getElementById('inboundCompleteBtn').disabled = job.status === 'done';
+    document.getElementById('inboundScanOverlay').classList.remove('hidden');
+    const input = document.getElementById('inboundScanInput');
+    input.value = '';
+    document.getElementById('inboundScanFeedback').classList.add('hidden');
+    if (job.status !== 'done') {
+      // Carton 1 is labelled the moment receiving starts — same reasoning as
+      // outbound: know where it's going before the first item lands in it.
+      if (!inboundCartonLabelConfirmed(job, 1)) showInboundLabelPrompt(`${job.reference || job.id.slice(0, 8)}-01`, 1);
+      setTimeout(() => input.focus(), 80);
+    }
+  }
+
+  document.getElementById('backToInboundBtn').addEventListener('click', () => {
+    document.getElementById('inboundScanOverlay').classList.add('hidden');
+    activeInbound = null;
+    renderInboundTab();
+  });
+
+  async function inboundScan(code) {
+    if (!activeInbound || activeInbound.status === 'done') return;
+    const feedback = document.getElementById('inboundScanFeedback');
+    try {
+      const condition = document.getElementById('inboundConditionSelect').value;
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/scan`, {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ code, qty: 1, condition: activeInbound.type === 'return' ? condition : undefined }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Scan failed'); return; }
+      activeInbound.scanned[data.sku] = data.scanned_qty;
+      activeInbound.status = 'processing';
+      activeInbound.active_carton_num = data.cartonNum;
+      if (data.cartonCount > activeInbound.cartons.length) {
+        activeInbound.cartons.push({ num: data.cartonNum, scans: {} });
+      }
+      updateInboundCartonBadge(activeInbound);
+      renderInboundItemsTable(activeInbound);
+      showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    }
+  }
+  document.getElementById('inboundScanInput').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const val = e.target.value.trim();
+    if (!val) return;
+    e.target.value = '';
+    inboundScan(val);
+  });
+
+  document.getElementById('inboundNewCartonBtn').addEventListener('click', async () => {
+    if (!activeInbound) return;
+    const btn = document.getElementById('inboundNewCartonBtn');
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/new-carton`, { method: 'POST', headers: hdrs() });
+      const data = await resp.json();
+      if (!resp.ok) { showFeedback(document.getElementById('inboundScanFeedback'), 'error', data.error || 'Could not start a new carton.'); return; }
+      const closedNum = activeInbound.active_carton_num || 1;
+      activeInbound.active_carton_num = data.activeCartonNum;
+      if (data.cartonCount > activeInbound.cartons.length) activeInbound.cartons.push({ num: data.activeCartonNum, scans: {} });
+      updateInboundCartonBadge(activeInbound);
+      showFeedback(document.getElementById('inboundScanFeedback'), 'success', `📦 Carton ${data.activeCartonNum} started`);
+      document.getElementById('inboundScanInput').focus();
+      if (!inboundCartonLabelConfirmed(activeInbound, closedNum)) {
+        await showInboundLabelPrompt(`${activeInbound.reference || activeInbound.id.slice(0, 8)}-${String(closedNum).padStart(2, '0')}`, closedNum);
+      }
+    } catch (err) {
+      showFeedback(document.getElementById('inboundScanFeedback'), 'error', err.message);
+    } finally { btn.disabled = false; }
+  });
+
+  async function switchInboundCarton(num) {
+    if (!activeInbound || num < 1) return;
+    try {
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/carton/switch`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ cartonNum: num }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) return;
+      activeInbound.active_carton_num = data.activeCartonNum;
+      updateInboundCartonBadge(activeInbound);
+    } catch {}
+  }
+  document.getElementById('inboundCartonPrevBtn').addEventListener('click', () => switchInboundCarton((activeInbound?.active_carton_num || 1) - 1));
+  document.getElementById('inboundCartonNextBtn').addEventListener('click', () => switchInboundCarton((activeInbound?.active_carton_num || 1) + 1));
+
+  document.getElementById('inboundCancelMultiCartonBtn').addEventListener('click', async () => {
+    if (!activeInbound || !confirm('Merge every carton back into one box?')) return;
+    try {
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/carton/cancel-multi`, { method: 'POST', headers: hdrs() });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error); return; }
+      activeInbound.cartons = [{ num: 1, scans: activeInbound.scanned, labelConfirmed: true }];
+      activeInbound.active_carton_num = 1;
+      updateInboundCartonBadge(activeInbound);
+    } catch (err) { alert(err.message); }
+  });
+
+  async function completeInbound(force) {
+    if (!activeInbound) return;
+    const feedback = document.getElementById('inboundScanFeedback');
+    try {
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/complete`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ force: !!force }),
+      });
+      const data = await resp.json();
+      if (resp.status === 409 && data.needsConfirm) {
+        const n = data.mismatches.length + data.extras.length;
+        feedback.className = 'scan-feedback error';
+        feedback.innerHTML = `⚠ ${n} item(s) differ from the PO. <button class="link-btn" id="inboundForceCompleteBtn">Complete Anyway</button>`;
+        feedback.classList.remove('hidden');
+        document.getElementById('inboundForceCompleteBtn').addEventListener('click', () => completeInbound(true));
+        return;
+      }
+      if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Could not complete'); return; }
+      activeInbound.status = 'done';
+      // Last carton never went through the "closing" prompt (nothing ever
+      // supersedes it) — label it now, before moving on, same as outbound.
+      const lastNum = activeInbound.cartons[activeInbound.cartons.length - 1]?.num || 1;
+      if (activeInbound.cartons.length > 1 && !inboundCartonLabelConfirmed(activeInbound, lastNum)) {
+        await showInboundLabelPrompt(`${activeInbound.reference || activeInbound.id.slice(0, 8)}-${String(lastNum).padStart(2, '0')}`, lastNum);
+      }
+      document.getElementById('inboundScanOverlay').classList.add('hidden');
+      activeInbound = null;
+      renderInboundTab();
+    } catch (err) { showFeedback(feedback, 'error', err.message); }
+  }
+  document.getElementById('inboundCompleteBtn').addEventListener('click', () => completeInbound(false));
 
   // ── Request Order Deletion (admin: reason + own password; Master approves) ──
   let _delOrderTarget = null; // { orderNumber, batchId }
