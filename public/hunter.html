@@ -697,14 +697,16 @@ function renderTest(t) {
     if (btn) btn.disabled = true;
     return;
   }
+  const isApollo = t.discovery === 'apollo';
+  const discoveryOk = isApollo ? t.apolloOk : t.webSearch;
   el.innerHTML =
     row(t.hasKey, 'API key present') +
     row(t.api, 'Anthropic API reachable') +
-    row(t.webSearch, 'Web search working') +
-    `<div style="color:var(--ink-2)">${t.apollo ? '<span style="color:var(--good)">✓</span> Apollo key present (richer contacts)' : '<span style="color:var(--ink-3)">•</span> Apollo not set (optional — web-only contacts)'}</div>` +
-    `<div style="color:var(--ink-3); margin-top:4px">Model: <code>${esc(t.model || '')}</code></div>` +
+    row(discoveryOk, isApollo ? 'Apollo discovery working (finds companies)' : 'Web search working (finds companies)') +
+    (isApollo ? '' : `<div style="color:var(--ink-2)">${t.apollo ? '<span style="color:var(--good)">✓</span> Apollo key present (richer contacts)' : '<span style="color:var(--ink-3)">•</span> Apollo not set (optional)'}</div>`) +
+    `<div style="color:var(--ink-3); margin-top:4px">Discovery: <code>${esc(t.discovery || '')}</code> · Model: <code>${esc(t.model || '')}</code></div>` +
     (t.error ? `<div style="color:#B91C1C; margin-top:4px">${esc(t.error)}</div>` : '') +
-    (t.hasKey && t.api && t.webSearch ? '<div style="color:var(--good); margin-top:4px; font-weight:600">All good — you can run a lead search.</div>' : '');
+    (t.hasKey && t.api && discoveryOk ? '<div style="color:var(--good); margin-top:4px; font-weight:600">All good — you can run a lead search.</div>' : '');
   if (btn) btn.disabled = false;
 }
 
