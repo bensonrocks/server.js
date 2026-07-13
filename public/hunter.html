@@ -667,7 +667,8 @@ function renderRunState(s, model, hasKey) {
     el.innerHTML = `<span class="dotlive">● Running</span> — ${esc(s.step || 'working…')}${s.written ? ` · ${s.written} written` : ''}`;
   } else if (s.state === 'done') {
     el.innerHTML = `<span style="color:var(--good)">✓ Done — ${s.written} new lead${s.written === 1 ? '' : 's'} written`
-      + ` (from ${s.candidates || 0} candidates, ${s.verified || 0} verified). Check the Pipeline tab.</span>`;
+      + ` (from ${s.candidates || 0} candidates, ${s.verified || 0} verified). Check the Pipeline tab.</span>`
+      + (s.note ? `<div style="color:var(--ink-2); margin-top:6px">${esc(s.note)}</div>` : '');
   } else if (s.state === 'error') {
     el.innerHTML = `<span style="color:#B91C1C">✗ ${esc(s.error || 'Run failed')}</span>`;
   }
