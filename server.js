@@ -542,7 +542,11 @@ app.post('/api/hunter/pipeline/run', requireHunterStaffAPI, requireHunterAdmin, 
 }));
 
 app.post('/api/hunter/pipeline/test', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
-  res.json({ ok: true, result: await hunterPipeline.testConnection() });
+  res.json({ ok: true, result: hunterPipeline.startTest() });
+}));
+
+app.get('/api/hunter/pipeline/test/status', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  res.json({ ok: true, result: hunterPipeline.testStatus() });
 }));
 
 app.get('/api/hunter/pipeline/status', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
