@@ -1575,10 +1575,13 @@
       const carrierBadge = ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : '';
 
       // Chips under order number
+      const cartonCount = (ord.cartons || []).length;
       const chips = [
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
+        // 1 carton is the default and not worth a chip — only shown once an order actually split into more than one box
+        cartonCount > 1      ? `<span class="chip chip-cartons" title="Packed across ${cartonCount} cartons">&#128230; ${cartonCount} Cartons</span>` : '',
         ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
         ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill</span>` : '',
       ].filter(Boolean).join('');
