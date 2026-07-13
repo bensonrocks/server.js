@@ -2097,6 +2097,8 @@
     scanPage = 0; scanPageManual = false; scanFocusSku = null;
     _autoCompleteFired = false;
     scanPageSize = SCAN_PAGE_MAX; // re-measure fit for this screen
+    order.cartonNum = (order.cartons && order.cartons.length) ? order.cartons[order.cartons.length - 1].num : 1;
+    updateCartonBadge(order);
     renderItemsTable(order);
     updateProgress(order);
     startTimer(orderTimings[order.order_number]);
@@ -2106,6 +2108,33 @@
     document.getElementById('itemScanFeedback').classList.add('hidden');
     setTimeout(focusActiveQty, 80);
   }
+
+  // ── Cartons — a big order can take more than one physical box ───────────────
+  function updateCartonBadge(order) {
+    const badge = document.getElementById('scanCartonBadge');
+    if (badge) badge.textContent = `\u{1F4E6} Carton ${order.cartonNum || 1}`;
+  }
+  document.getElementById('newCartonBtn').addEventListener('click', async () => {
+    if (!activeOrder) return;
+    const btn = document.getElementById('newCartonBtn');
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/api/scan/new-carton', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not start a new carton.'); return; }
+      activeOrder.cartonNum = data.activeCartonNum;
+      updateCartonBadge(activeOrder);
+      showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
+      focusActiveQty();
+    } catch (err) {
+      showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // ── Timer ──────────────────────────────────────────────────────────────────
   function startTimer(startISO) {
@@ -2666,6 +2695,7 @@
           if (activeOrder && activeOrder.order_number === evt.orderNumber) {
             if (!activeOrder.scanned) activeOrder.scanned = {};
             activeOrder.scanned[data.sku] = data.scanned_qty;
+            if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
           }
         } else {
           issues.push(`${evt.raw} on ${evt.orderNumber}: ${data.error || resp.status}`);
@@ -2716,6 +2746,7 @@
         }
         if (!activeOrder.scanned) activeOrder.scanned = {};
         activeOrder.scanned[data.sku] = data.scanned_qty;
+        if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
         activeOrder.scan_status = 'processing';
         scanFocusSku   = data.sku; // show the page of the item just scanned
         scanPageManual = false;
@@ -2782,6 +2813,7 @@
           if (!resp.ok) { alert(data.error); return; }
           if (!activeOrder.scanned) activeOrder.scanned = {};
           activeOrder.scanned[data.sku] = data.scanned_qty;
+          if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
           activeOrder.scan_status = 'processing';
           scanFocusSku = data.sku; scanPageManual = false;
           renderItemsTable(activeOrder);
@@ -2845,6 +2877,7 @@
       if (!resp.ok) { alert(data.error); return; }
       if (!activeOrder.scanned) activeOrder.scanned = {};
       activeOrder.scanned[data.sku] = data.scanned_qty;
+      if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
       activeOrder.scan_status = 'processing';
       scanFocusSku   = data.sku; // keep the counted item's page in view
       scanPageManual = false;

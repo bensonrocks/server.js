@@ -144,6 +144,30 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 - `/api/scan/resolve-cache` gives the client CODE2/learned/alias maps so
   offline scans resolve to the right line locally.
 
+## Multi-carton orders (server.js — `activeCarton`/`addToActiveCarton`, /api/scan/new-carton)
+
+- A big order can take more than one physical box. `state.cartons` is an array
+  `[{ num, scans: {sku:qty}, startedAt, closedAt }]`; the LAST entry is always
+  the currently-open carton. Lazily created on first scan — orders that never
+  split cartons end up with one implicit carton holding everything, so this
+  is zero-friction for the common case and legacy (pre-feature) completed
+  orders fall back to treating `state.scanned` as one carton.
+- Every scan/count path (`increment`, `learn-barcode`, `setqty`) ALSO tallies
+  into the active carton via `addToActiveCarton()`. `setqty` (an absolute
+  correction) applies the delta (`newQty - oldQty`), not the raw value.
+- `/api/scan/new-carton` closes the current carton and opens the next one.
+  Refuses (400) if the current carton is still empty — prevents phantom
+  cartons from a stray double-tap.
+- On `/api/scan/complete`: if the trailing carton is still empty (e.g. an
+  accidental "New Carton" tap right before completing), it's DROPPED rather
+  than closed — never leave a phantom empty carton on the slip. Otherwise the
+  last carton is closed.
+- Completion slip (`/api/completion-slip/...`) has a dedicated **Cartons**
+  sheet: `Carton | SKU | Description | Qty`, one row per (carton, SKU).
+- Scan overlay shows a "📦 Carton N" badge + "+ New Carton" button
+  (`public/index.html` `#scanCartonWrap`); every scan-response handler in
+  app.js updates `activeOrder.cartonNum` from the response's `cartonNum`.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

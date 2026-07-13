@@ -577,6 +577,22 @@ function appendScanLog(state, evt) {
   if (state.scanLog.length > 800) state.scanLog.splice(0, state.scanLog.length - 800);
 }
 
+// Per-carton breakdown — a big order can take more than one physical box.
+// Every scan/count also lands in the CURRENT (last, still-open) carton's
+// tally, so the completion slip can show exactly what went in which box.
+// Orders that never explicitly split cartons end up with one implicit
+// carton holding everything — no extra step for the common case.
+function activeCarton(state) {
+  if (!state.cartons || !state.cartons.length) {
+    state.cartons = [{ num: 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null }];
+  }
+  return state.cartons[state.cartons.length - 1];
+}
+function addToActiveCarton(state, sku, delta) {
+  const carton = activeCarton(state);
+  carton.scans[sku] = Math.max(0, (carton.scans[sku] || 0) + delta);
+}
+
 // A teachable scan must look like a product barcode: 8+ chars, mostly digits,
 // and not a warehouse location code.
 function isTeachableBarcode(s) {
@@ -800,6 +816,7 @@ function globalOrdersWithState() {
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
+        cartons:           state.cartons           || [],
       });
     }
   }
@@ -2834,12 +2851,43 @@ app.post('/api/scan/increment', (req, res) => {
   refreshClaim(state, req.userId);
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  addToActiveCarton(state, item.sku, 1);
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'scan', raw: String(req.body.sku || '').trim(), sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
   writeDb(db);
-  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
+  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num });
+});
+
+// Big orders can take more than one physical box. The packer marks a carton
+// full and starts the next one; every scan from here on tallies against the
+// new carton until the order completes (which auto-closes the last one).
+app.post('/api/scan/new-carton', (req, res) => {
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
+  const current = activeCarton(state);
+  const currentCount = Object.values(current.scans).reduce((s, v) => s + v, 0);
+  if (currentCount === 0) {
+    return res.status(400).json({ error: 'Scan at least one item into this carton before starting a new one.' });
+  }
+  current.closedAt = new Date().toISOString();
+  const next = { num: state.cartons.length + 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null };
+  state.cartons.push(next);
+  refreshClaim(state, req.userId);
+  state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'new_carton', raw: '', sku: '', qty: '', by: req.userId || '' });
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  writeDb(db);
+  res.json({ ok: true, cartonCount: state.cartons.length, activeCartonNum: next.num });
 });
 
 // Teach-on-scan: packer confirms an unrecognized product barcode belongs to
@@ -2901,12 +2949,13 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   refreshClaim(state, req.userId);
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  addToActiveCarton(state, item.sku, 1);
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'teach', raw: bc, sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
   writeDb(db);
-  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind });
+  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind, cartonNum: activeCarton(state).num });
 });
 
 app.get('/api/master/learned-barcodes', (req, res) => {
@@ -2992,13 +3041,15 @@ app.post('/api/scan/setqty', (req, res) => {
   if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
   refreshClaim(state, req.userId);
   state.status = 'processing';
+  const prevQty = state.scanned[item.sku] || 0;
   state.scanned[item.sku] = qn;
+  addToActiveCarton(state, item.sku, qn - prevQty); // manual correction — nudge the open carton by the delta
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'count', raw: '', sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
   writeDb(db);
-  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
+  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num });
 });
 
 app.post('/api/scan/save', (req, res) => {
@@ -3036,6 +3087,17 @@ app.post('/api/scan/complete', (req, res) => {
     state.status     = 'done';
     delete state.claimedBy;
     delete state.claimedAt;
+    if (state.cartons && state.cartons.length) {
+      const last = state.cartons[state.cartons.length - 1];
+      // A stray "New Carton" tap with nothing scanned into it yet (e.g. the
+      // packer's last action before Complete) shouldn't leave a phantom
+      // empty carton on the slip — drop it rather than close it.
+      if (state.cartons.length > 1 && Object.keys(last.scans).length === 0) {
+        state.cartons.pop();
+      } else if (!last.closedAt) {
+        last.closedAt = new Date().toISOString();
+      }
+    }
     state.updated_at = new Date().toISOString();
     if (startTime) state.startTime = startTime;
     if (endTime)   state.endTime   = endTime;
@@ -4634,6 +4696,12 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
     ? `${Math.floor(elapsedSec / 3600)}h ${Math.floor((elapsedSec % 3600) / 60)}m ${elapsedSec % 60}s`
     : '—';
 
+  // Cartons — big orders can take more than one physical box. Orders that
+  // never explicitly split cartons fall back to one implicit carton holding
+  // everything scanned, so this always reflects reality even for pre-feature
+  // completed orders (which have no state.cartons at all).
+  const cartons = (state.cartons && state.cartons.length) ? state.cartons : [{ num: 1, scans: state.scanned || {} }];
+
   const aoa = [
     ['IDEALONE Completion Slip'],
     [],
@@ -4643,6 +4711,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
     ['Client',       ord.client_name   || '—'],
     ['Carrier',      ord.carrier       || '—'],
     ['Waybill No.',  ord.waybill_number || '—'],
+    ['Cartons',      cartons.length],
     [],
     ['Operator',     state.operator || '—'],
     ['Start Time',   startTime || '—'],
@@ -4660,9 +4729,21 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa, { cellDates: true }), 'Completion Slip');
 
-  // Sheet 2 — the full scan history: every gun scan, manual count, and
+  // Sheet 2 — per-carton contents: which SKU/qty went in which physical box
+  const cartonAoa = [['Carton', 'SKU', 'Description', 'Qty']];
+  for (const c of cartons) {
+    const entries = Object.entries(c.scans || {}).filter(([, q]) => q > 0);
+    if (!entries.length) { cartonAoa.push([c.num, '(empty)', '', 0]); continue; }
+    for (const [sku, qty] of entries) {
+      const line = uniqueSkuLines(ord).find(l => l.sku === sku);
+      cartonAoa.push([c.num, sku, line?.description || '', qty]);
+    }
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cartonAoa), 'Cartons');
+
+  // Sheet 3 — the full scan history: every gun scan, manual count, and
   // taught barcode, in the order they happened
-  const KIND_LABEL = { scan: 'Gun scan', count: 'Manual count', teach: 'Taught barcode' };
+  const KIND_LABEL = { scan: 'Gun scan', count: 'Manual count', teach: 'Taught barcode', new_carton: 'New carton started' };
   const logAoa = [
     ['Time', 'Action', 'Scanned Code', 'SKU', 'Count After', 'By'],
     ...((state.scanLog || []).map(e => [
