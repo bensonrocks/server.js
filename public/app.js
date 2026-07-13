@@ -2097,7 +2097,8 @@
     scanPage = 0; scanPageManual = false; scanFocusSku = null;
     _autoCompleteFired = false;
     scanPageSize = SCAN_PAGE_MAX; // re-measure fit for this screen
-    order.cartonNum = (order.cartons && order.cartons.length) ? order.cartons[order.cartons.length - 1].num : 1;
+    order.cartonNum   = order.active_carton_num || 1;
+    order.cartonCount = (order.cartons && order.cartons.length) ? order.cartons.length : 1;
     updateCartonBadge(order);
     renderItemsTable(order);
     updateProgress(order);
@@ -2111,8 +2112,21 @@
 
   // ── Cartons — a big order can take more than one physical box ───────────────
   function updateCartonBadge(order) {
+    const num   = order.cartonNum   || 1;
+    const count = order.cartonCount || 1;
     const numEl = document.getElementById('scanCartonNum');
-    if (numEl) numEl.textContent = order.cartonNum || 1;
+    if (numEl) numEl.textContent = num;
+    const labelEl = document.querySelector('#scanCartonBadge .scb-label');
+    if (labelEl) labelEl.textContent = count > 1 ? `of ${count}` : 'carton';
+    const prevBtn = document.getElementById('cartonPrevBtn');
+    const nextBtn = document.getElementById('cartonNextBtn');
+    const cancelBtn = document.getElementById('cancelMultiCartonBtn');
+    const multi = count > 1;
+    prevBtn?.classList.toggle('hidden', !multi);
+    nextBtn?.classList.toggle('hidden', !multi);
+    cancelBtn?.classList.toggle('hidden', !multi);
+    if (prevBtn) prevBtn.disabled = num <= 1;
+    if (nextBtn) nextBtn.disabled = num >= count;
   }
   // Fixed control code a packer can scan (from a printed card at the station)
   // instead of reaching for the mouse — same action as clicking "+ New Carton".
@@ -2128,7 +2142,8 @@
       });
       const data = await resp.json();
       if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not start a new carton.'); return; }
-      activeOrder.cartonNum = data.activeCartonNum;
+      activeOrder.cartonNum   = data.activeCartonNum;
+      activeOrder.cartonCount = data.cartonCount;
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
       focusActiveQty();
@@ -2139,6 +2154,51 @@
     }
   }
   document.getElementById('newCartonBtn').addEventListener('click', requestNewCarton);
+
+  // Toggle between existing cartons (open or previously closed) to add/remove
+  // items in one that's already sealed, then move on. Scans and the qty-input
+  // correction path both apply to whichever carton is active.
+  async function switchCarton(num) {
+    if (!activeOrder || num < 1) return;
+    try {
+      const resp = await fetch('/api/scan/carton/switch', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number, cartonNum: num }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not switch carton.'); return; }
+      activeOrder.cartonNum   = data.activeCartonNum;
+      activeOrder.cartonCount = data.cartonCount;
+      updateCartonBadge(activeOrder);
+      showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Now packing Carton ${data.activeCartonNum}`);
+      focusActiveQty();
+    } catch (err) {
+      showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
+    }
+  }
+  document.getElementById('cartonPrevBtn').addEventListener('click', () => switchCarton((activeOrder?.cartonNum || 1) - 1));
+  document.getElementById('cartonNextBtn').addEventListener('click', () => switchCarton((activeOrder?.cartonNum || 1) + 1));
+
+  // "Actually it all fits in one box" — merge every carton back into one.
+  // Order-level scanned totals are unaffected; only the box breakdown collapses.
+  document.getElementById('cancelMultiCartonBtn').addEventListener('click', async () => {
+    if (!activeOrder) return;
+    if (!confirm('Merge all cartons back into a single box?\n\nItem totals are unaffected — only the per-carton breakdown is cleared.')) return;
+    try {
+      const resp = await fetch('/api/scan/carton/cancel-multi', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not merge cartons.'); return; }
+      activeOrder.cartonNum   = data.activeCartonNum;
+      activeOrder.cartonCount = data.cartonCount;
+      updateCartonBadge(activeOrder);
+      showFeedback(document.getElementById('itemScanFeedback'), 'success', '✓ Back to a single carton');
+    } catch (err) {
+      showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
+    }
+  });
 
   // ── Printable "New Carton" control barcode card ──────────────────────────────
   // Print once, tape/laminate at the packing station — scanning it fires the
@@ -2785,7 +2845,7 @@
           if (activeOrder && activeOrder.order_number === evt.orderNumber) {
             if (!activeOrder.scanned) activeOrder.scanned = {};
             activeOrder.scanned[data.sku] = data.scanned_qty;
-            if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
+            if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; activeOrder.cartonCount = data.cartonCount || activeOrder.cartonCount; updateCartonBadge(activeOrder); }
           }
         } else {
           issues.push(`${evt.raw} on ${evt.orderNumber}: ${data.error || resp.status}`);
@@ -2823,20 +2883,33 @@
           method: 'POST', headers: hdrs(),
           body: JSON.stringify({ orderNumber: activeOrder.order_number, sku }),
         });
-        const data = await resp.json();
+        let data = await resp.json();
         if (!resp.ok) {
           // Unknown product barcode → teach-on-scan: packer confirms which
           // line it is, mapping is remembered everywhere from then on
           if (data.teachable && data.barcode) {
             openTeachBarcodeModal(data.barcode, data.resolved);
+            continue;
+          }
+          // Same SKU already sitting in a different (closed) carton — easy
+          // to do by accident, so confirm before it's split across boxes.
+          if (data.crossCartonConfirm) {
+            const ok = confirm(`${data.sku} is already packed in Carton ${data.existingCartonNums.join(', ')}.\n\nAdd it to Carton ${data.activeCartonNum} too?`);
+            if (!ok) { continue; }
+            const retry = await fetchT('/api/scan/increment', {
+              method: 'POST', headers: hdrs(),
+              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, confirmCrossCarton: true }),
+            });
+            data = await retry.json();
+            if (!retry.ok) { showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`); continue; }
           } else {
             showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
+            continue;
           }
-          continue;
         }
         if (!activeOrder.scanned) activeOrder.scanned = {};
         activeOrder.scanned[data.sku] = data.scanned_qty;
-        if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
+        if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; activeOrder.cartonCount = data.cartonCount || activeOrder.cartonCount; updateCartonBadge(activeOrder); }
         activeOrder.scan_status = 'processing';
         scanFocusSku   = data.sku; // show the page of the item just scanned
         scanPageManual = false;
@@ -2903,7 +2976,7 @@
           if (!resp.ok) { alert(data.error); return; }
           if (!activeOrder.scanned) activeOrder.scanned = {};
           activeOrder.scanned[data.sku] = data.scanned_qty;
-          if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
+          if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; activeOrder.cartonCount = data.cartonCount || activeOrder.cartonCount; updateCartonBadge(activeOrder); }
           activeOrder.scan_status = 'processing';
           scanFocusSku = data.sku; scanPageManual = false;
           renderItemsTable(activeOrder);
@@ -2967,7 +3040,7 @@
       if (!resp.ok) { alert(data.error); return; }
       if (!activeOrder.scanned) activeOrder.scanned = {};
       activeOrder.scanned[data.sku] = data.scanned_qty;
-      if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; updateCartonBadge(activeOrder); }
+      if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; activeOrder.cartonCount = data.cartonCount || activeOrder.cartonCount; updateCartonBadge(activeOrder); }
       activeOrder.scan_status = 'processing';
       scanFocusSku   = data.sku; // keep the counted item's page in view
       scanPageManual = false;

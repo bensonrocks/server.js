@@ -578,15 +578,27 @@ function appendScanLog(state, evt) {
 }
 
 // Per-carton breakdown — a big order can take more than one physical box.
-// Every scan/count also lands in the CURRENT (last, still-open) carton's
-// tally, so the completion slip can show exactly what went in which box.
-// Orders that never explicitly split cartons end up with one implicit
-// carton holding everything — no extra step for the common case.
+// Every scan/count lands in the ACTIVE carton's tally, so the completion
+// slip can show exactly what went in which box. Orders that never
+// explicitly split cartons end up with one implicit carton holding
+// everything — no extra step for the common case.
+//
+// `state.activeCartonNum` is an explicit pointer (not always "the last
+// array entry") so a packer can reopen an earlier, already-closed carton
+// via /api/scan/carton/switch to add/remove items, then move on — cartons
+// are never reordered, only re-activated. Legacy state with no pointer
+// (or a stale one) falls back to the last carton, matching the original
+// always-append behaviour exactly.
 function activeCarton(state) {
   if (!state.cartons || !state.cartons.length) {
     state.cartons = [{ num: 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null }];
+    state.activeCartonNum = 1;
   }
-  return state.cartons[state.cartons.length - 1];
+  const found = state.cartons.find(c => c.num === state.activeCartonNum);
+  if (found) return found;
+  const last = state.cartons[state.cartons.length - 1];
+  state.activeCartonNum = last.num;
+  return last;
 }
 function addToActiveCarton(state, sku, delta) {
   const carton = activeCarton(state);
@@ -817,6 +829,7 @@ function globalOrdersWithState() {
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
         cartons:           state.cartons           || [],
+        active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
       });
     }
   }
@@ -2848,6 +2861,26 @@ app.post('/api/scan/increment', (req, res) => {
     state.scanEventIds.push(eventId);
     if (state.scanEventIds.length > 100) state.scanEventIds.splice(0, state.scanEventIds.length - 100);
   }
+  // Same SKU already sitting in a DIFFERENT carton? Fine — orders can
+  // legitimately split one SKU across boxes — but it's easy to do by
+  // accident, so confirm before it happens. Skipped for offline replays
+  // (eventId present): the packer already made the physical call with no
+  // network to ask, re-litigating it after the fact isn't meaningful.
+  if (!eventId && !req.body.confirmCrossCarton && state.cartons && state.cartons.length > 1) {
+    const active = activeCarton(state);
+    if (!(active.scans[item.sku] > 0)) {
+      const elsewhere = state.cartons.filter(c => c.num !== active.num && (c.scans[item.sku] || 0) > 0).map(c => c.num);
+      if (elsewhere.length) {
+        return res.status(409).json({
+          crossCartonConfirm: true,
+          sku: item.sku,
+          activeCartonNum: active.num,
+          existingCartonNums: elsewhere,
+          error: `${item.sku} is already packed in carton ${elsewhere.join(', ')}.`,
+        });
+      }
+    }
+  }
   refreshClaim(state, req.userId);
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
@@ -2857,7 +2890,7 @@ app.post('/api/scan/increment', (req, res) => {
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
   writeDb(db);
-  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num });
+  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num, cartonCount: state.cartons.length });
 });
 
 // Big orders can take more than one physical box. The packer marks a carton
@@ -2879,8 +2912,12 @@ app.post('/api/scan/new-carton', (req, res) => {
     return res.status(400).json({ error: 'Scan at least one item into this carton before starting a new one.' });
   }
   current.closedAt = new Date().toISOString();
-  const next = { num: state.cartons.length + 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null };
+  // Always a genuinely new carton, appended after whatever exists — even if
+  // the packer had switched back to an earlier one to edit it. Use it to
+  // reopen a past carton instead (/api/scan/carton/switch).
+  const next = { num: Math.max(...state.cartons.map(c => c.num)) + 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null };
   state.cartons.push(next);
+  state.activeCartonNum = next.num;
   refreshClaim(state, req.userId);
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'new_carton', raw: '', sku: '', qty: '', by: req.userId || '' });
@@ -2888,6 +2925,73 @@ app.post('/api/scan/new-carton', (req, res) => {
   journalOrderState(orderNumber, state);
   writeDb(db);
   res.json({ ok: true, cartonCount: state.cartons.length, activeCartonNum: next.num });
+});
+
+// Reopen any existing carton (open OR previously closed) as the active one —
+// "toggle through" cartons to add/remove items from an earlier box, then
+// move on. Cartons are never reordered or renumbered by this; only which
+// one is currently receiving scans changes. Existing contents/quantities
+// are untouched here — it's purely a pointer change.
+app.post('/api/scan/carton/switch', (req, res) => {
+  const { orderNumber, cartonNum } = req.body;
+  const num = parseInt(cartonNum, 10);
+  if (!orderNumber || !num) return res.status(400).json({ error: 'orderNumber and cartonNum required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
+  activeCarton(state); // ensure cartons/pointer initialized before lookup
+  const target = state.cartons.find(c => c.num === num);
+  if (!target) return res.status(404).json({ error: `Carton ${num} not found.` });
+  const current = state.cartons.find(c => c.num === state.activeCartonNum);
+  if (current && current.num !== target.num && !current.closedAt) current.closedAt = new Date().toISOString();
+  target.closedAt = null; // reopened
+  state.activeCartonNum = target.num;
+  refreshClaim(state, req.userId);
+  state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'carton_switch', raw: '', sku: '', qty: '', by: req.userId || '' });
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  writeDb(db);
+  res.json({ ok: true, activeCartonNum: target.num, cartonCount: state.cartons.length });
+});
+
+// "Actually, it all fits in one box" — merges every carton's contents back
+// into a single carton 1. Order-level scanned totals are untouched (they
+// were already the sum across cartons); only the box-level breakdown
+// collapses. Used when a packer starts splitting cartons, then decides
+// they can squeeze everything into fewer boxes after all.
+app.post('/api/scan/carton/cancel-multi', (req, res) => {
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const holder = claimBlocker(state, req.userId);
+  if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
+  if (!state.cartons || state.cartons.length <= 1) {
+    return res.status(400).json({ error: 'This order is not split into multiple cartons.' });
+  }
+  const merged = {};
+  let earliest = state.cartons[0].startedAt;
+  for (const c of state.cartons) {
+    for (const [sku, qty] of Object.entries(c.scans || {})) merged[sku] = (merged[sku] || 0) + qty;
+    if (c.startedAt && c.startedAt < earliest) earliest = c.startedAt;
+  }
+  state.cartons = [{ num: 1, scans: merged, startedAt: earliest, closedAt: null }];
+  state.activeCartonNum = 1;
+  refreshClaim(state, req.userId);
+  state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'carton_cancel_multi', raw: '', sku: '', qty: '', by: req.userId || '' });
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  writeDb(db);
+  res.json({ ok: true, cartonCount: 1, activeCartonNum: 1 });
 });
 
 // Read-only — a single carton's contents for printing a per-box packing
@@ -2987,7 +3091,7 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
   writeDb(db);
-  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind, cartonNum: activeCarton(state).num });
+  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind, cartonNum: activeCarton(state).num, cartonCount: state.cartons.length });
 });
 
 app.get('/api/master/learned-barcodes', (req, res) => {
@@ -3081,7 +3185,7 @@ app.post('/api/scan/setqty', (req, res) => {
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
   writeDb(db);
-  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num });
+  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num, cartonCount: state.cartons.length });
 });
 
 app.post('/api/scan/save', (req, res) => {
@@ -3126,9 +3230,12 @@ app.post('/api/scan/complete', (req, res) => {
       // empty carton on the slip — drop it rather than close it.
       if (state.cartons.length > 1 && Object.keys(last.scans).length === 0) {
         state.cartons.pop();
-      } else if (!last.closedAt) {
-        last.closedAt = new Date().toISOString();
       }
+      // Close every carton still open — covers the normal case (last one)
+      // AND a packer who switched back to an earlier carton to edit it and
+      // completed the order without switching forward again.
+      const closeTime = new Date().toISOString();
+      for (const c of state.cartons) if (!c.closedAt) c.closedAt = closeTime;
     }
     state.updated_at = new Date().toISOString();
     if (startTime) state.startTime = startTime;

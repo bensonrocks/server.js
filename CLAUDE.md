@@ -158,26 +158,60 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
 ## Multi-carton orders (server.js — `activeCarton`/`addToActiveCarton`, /api/scan/new-carton)
 
 - A big order can take more than one physical box. `state.cartons` is an array
-  `[{ num, scans: {sku:qty}, startedAt, closedAt }]`; the LAST entry is always
-  the currently-open carton. Lazily created on first scan — orders that never
-  split cartons end up with one implicit carton holding everything, so this
-  is zero-friction for the common case and legacy (pre-feature) completed
-  orders fall back to treating `state.scanned` as one carton.
+  `[{ num, scans: {sku:qty}, startedAt, closedAt }]`, never reordered —
+  `state.activeCartonNum` is an explicit pointer to whichever one is
+  currently receiving scans (NOT always the last array entry — a packer can
+  reopen an earlier carton, see below). Lazily created on first scan —
+  orders that never split cartons end up with one implicit carton holding
+  everything, so this is zero-friction for the common case, and legacy
+  (pre-pointer, pre-feature) state falls back to treating the last carton
+  (or `state.scanned` if no cartons at all) as active — never breaks old data.
 - Every scan/count path (`increment`, `learn-barcode`, `setqty`) ALSO tallies
   into the active carton via `addToActiveCarton()`. `setqty` (an absolute
-  correction) applies the delta (`newQty - oldQty`), not the raw value.
-- `/api/scan/new-carton` closes the current carton and opens the next one.
-  Refuses (400) if the current carton is still empty — prevents phantom
-  cartons from a stray double-tap.
-- On `/api/scan/complete`: if the trailing carton is still empty (e.g. an
-  accidental "New Carton" tap right before completing), it's DROPPED rather
-  than closed — never leave a phantom empty carton on the slip. Otherwise the
-  last carton is closed.
+  correction) applies the delta (`newQty - oldQty`), not the raw value —
+  this is also how removing an item from a reopened carton works: correct
+  the qty down, the order-level total (and "pieces left") drops with it, so
+  the shortfall naturally needs to be scanned into some carton again before
+  the order can complete. No separate "remove" endpoint exists or is needed.
+- `/api/scan/new-carton` ALWAYS creates a genuinely new carton (highest
+  `num` + 1) and makes it active, regardless of which carton was previously
+  active — even if the packer had switched back to edit an earlier one.
+  Refuses (400) if the currently active carton is still empty — prevents
+  phantom cartons from a stray double-tap.
+- `POST /api/scan/carton/switch` `{orderNumber, cartonNum}` — reopens ANY
+  existing carton (open or previously closed) as the active one. Toggling
+  through cartons this way to add/remove items and "closing" it again is
+  just: switch to it, use the normal scan/qty-correction inputs, switch to
+  another (or hit "+ New Carton"). Contents are untouched by switching —
+  it's purely a pointer change (plus `closedAt` bookkeeping).
+- `POST /api/scan/carton/cancel-multi` `{orderNumber}` — "actually it all
+  fits in one box": merges every carton's contents back into a single
+  carton 1. Order-level `state.scanned` totals are untouched (already the
+  sum across cartons); only the box-level breakdown collapses. 400 if the
+  order was never split.
+- CROSS-CARTON DUPLICATE CONFIRM: if a SKU already has qty > 0 in some OTHER
+  carton but not yet in the active one, `/api/scan/increment` returns 409
+  `{crossCartonConfirm, sku, activeCartonNum, existingCartonNums}` WITHOUT
+  counting the scan. Client shows a confirm() dialog; resending with
+  `{confirmCrossCarton: true}` forces it through. Only fires when
+  `state.cartons.length > 1` (single-carton orders never see this) and is
+  skipped entirely for offline-queued replays (`eventId` present) — there's
+  no meaningful way to re-litigate a scan after the fact once the packer
+  already made the physical call with no network to ask.
+- On `/api/scan/complete`: if the LAST (highest-numbered) carton is still
+  empty (e.g. an accidental "New Carton" tap right before completing), it's
+  DROPPED rather than closed — never leave a phantom empty carton on the
+  slip. Then EVERY carton still open gets `closedAt` set — covers both the
+  normal case and a packer who reopened an earlier carton and completed the
+  order without switching back to the latest one.
 - Completion slip (`/api/completion-slip/...`) has a dedicated **Cartons**
   sheet: `Carton | SKU | Description | Qty`, one row per (carton, SKU).
 - Scan overlay shows a "📦 Carton N" badge + "+ New Carton" button
   (`public/index.html` `#scanCartonWrap`); every scan-response handler in
-  app.js updates `activeOrder.cartonNum` from the response's `cartonNum`.
+  app.js updates `activeOrder.cartonNum`/`cartonCount` from the response.
+  Prev/Next (◀▶) nav buttons and the "⟲ 1 Box" cancel-multi button are
+  HIDDEN whenever `cartonCount <= 1` — a single-carton order (still the
+  vast majority) looks exactly as it did before any of this existed.
 - HANDS-FREE TRIGGER: scanning a printed control barcode (text `NEWCARTON`,
   case-insensitive; `NEW_CARTON_CODES` in app.js also accepts `NEW CARTON` /
   `NEW-CARTON` / `NEWBOX`) does the same thing as clicking "+ New Carton" —

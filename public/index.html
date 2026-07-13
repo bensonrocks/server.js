@@ -119,13 +119,16 @@
         <a id="scanWaybillPdfBtn" class="btn-scan-waybill hidden" title="Download waybill PDF">&#8681; Waybill</a>
         <span id="scanTimer" class="scan-timer"></span>
         <div class="scan-carton-wrap">
+          <button class="carton-nav-btn hidden" id="cartonPrevBtn" title="Switch to the previous carton">&#9664;</button>
           <div class="scan-carton-badge" id="scanCartonBadge" title="Items scanned so far go into this carton">
             <span id="scanCartonNum">1</span>
             <span class="scb-label">carton</span>
           </div>
+          <button class="carton-nav-btn hidden" id="cartonNextBtn" title="Switch to the next carton">&#9654;</button>
           <button class="btn-new-carton" id="newCartonBtn" title="Box is full — start scanning the next carton">+ New Carton</button>
           <button class="btn-print-carton-card" id="printCartonCardBtn" title="Print a scannable card — scan it to start a new carton without touching the mouse">&#128424;</button>
           <button class="btn-print-carton-card" id="printCartonSlipBtn" title="Print this carton's packing list — order no., carton no. and contents, for taping onto the box">&#128203;</button>
+          <button class="btn-cancel-multi-carton hidden" id="cancelMultiCartonBtn" title="Actually, it all fits in one box — merge every carton back into one">&#8634; 1 Box</button>
         </div>
         <div class="scan-pieces-left" id="scanPiecesLeft">
           <span id="scanPiecesNum">—</span>
