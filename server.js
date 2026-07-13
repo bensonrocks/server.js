@@ -13,6 +13,7 @@ const users                          = require('./lib/users');
 const hunter                         = require('./lib/hunter/store');
 const hunterStaff                    = require('./lib/hunter/staff');
 const hunterOrgs                     = require('./lib/hunter/orgs');
+const hunterPipeline                 = require('./lib/hunter/pipeline');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 
@@ -530,6 +531,19 @@ app.post('/api/hunter/leads/:id/activity', requireHunterStaffAPI, hx(async (req,
   const result = await hunter.addActivity(org.id, req.params.id, { type, text, by: staff.name });
   if (result.error) return res.status(400).json({ ok: false, error: result.error });
   res.json({ ok: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
+}));
+
+// Master-only: run the live lead pipeline for this org (async; poll status).
+app.post('/api/hunter/pipeline/run', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY)
+    return res.status(400).json({ ok: false, error: 'ANTHROPIC_API_KEY is not set on the server. Add it in your deployment and redeploy.' });
+  const st = hunterPipeline.startRun(req.hunter.org);
+  res.json({ ok: true, status: st });
+}));
+
+app.get('/api/hunter/pipeline/status', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
+  res.json({ ok: true, status: hunterPipeline.status(req.hunter.org.id), model: hunterPipeline.MODEL,
+             hasKey: !!process.env.ANTHROPIC_API_KEY });
 }));
 
 // Master-only: wipe seeded sample leads when going live.

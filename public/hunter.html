@@ -281,6 +281,19 @@
         <span style="font-size:12.5px; color:var(--ink-3); margin-left:8px">Full setup guide: <code>idealone-hunter/README.md</code></span>
       </div>
     </div>
+
+    <h2>Run a lead search</h2>
+    <p style="color:var(--ink-2); font-size:13.5px; margin-top:-6px">
+      Searches the market against your wishlist, verifies each lead, and drops drafts into your approval queue.
+      Runs in the background — you can keep working. Costs a few Anthropic API cents to a couple of dollars per run.
+    </p>
+    <div class="card" style="max-width:680px">
+      <div class="actions">
+        <button class="primary" id="runBtn" onclick="runPipeline()">▶ Run lead search now</button>
+        <span class="saved" id="runMsg"></span>
+      </div>
+      <div id="runState" style="margin-top:10px; font-size:13.5px; color:var(--ink-2)"></div>
+    </div>
   </div>
 
   <!-- ── Team activity ────────────────────────────────────────────── -->
@@ -341,6 +354,7 @@ function showTab(btn) {
     p.classList.toggle('active', p.id === 'pane-' + btn.dataset.pane));
   location.hash = btn.dataset.pane;
   if (btn.dataset.pane === 'team') loadTeam();
+  if (btn.dataset.pane === 'settings' && ME && ME.isAdmin) pollRun();
 }
 function openContactedTab() {
   showTab(document.querySelector('.tab[data-pane="contacted"]'));
@@ -637,6 +651,47 @@ async function saveWishlist() {
   msg.textContent = r.ok ? 'Wishlist saved ✓' : (r.error || 'Failed');
   msg.style.color = r.ok ? 'var(--good)' : '#B91C1C';
   if (r.ok) ORG = r.org;
+}
+
+// ── Live pipeline run (Master) ─────────────────────────────────────────
+let runPoll = null;
+function renderRunState(s, model, hasKey) {
+  const el = document.getElementById('runState');
+  const btn = document.getElementById('runBtn');
+  if (!el) return;
+  if (!hasKey) {
+    el.innerHTML = '<span style="color:var(--warn)">⚠ No ANTHROPIC_API_KEY set on the server — add it and redeploy to run live searches.</span>';
+  } else if (!s || s.state === 'idle') {
+    el.innerHTML = `<span style="color:var(--ink-3)">Idle. Model: <code>${esc(model || '')}</code></span>`;
+  } else if (s.state === 'running') {
+    el.innerHTML = `<span class="dotlive">● Running</span> — ${esc(s.step || 'working…')}${s.written ? ` · ${s.written} written` : ''}`;
+  } else if (s.state === 'done') {
+    el.innerHTML = `<span style="color:var(--good)">✓ Done — ${s.written} new lead${s.written === 1 ? '' : 's'} written`
+      + ` (from ${s.candidates || 0} candidates, ${s.verified || 0} verified). Check the Pipeline tab.</span>`;
+  } else if (s.state === 'error') {
+    el.innerHTML = `<span style="color:#B91C1C">✗ ${esc(s.error || 'Run failed')}</span>`;
+  }
+  if (btn) btn.disabled = s && s.state === 'running';
+}
+
+async function pollRun() {
+  const r = await api('/api/hunter/pipeline/status');
+  renderRunState(r.status, r.model, r.hasKey);
+  if (r.status && r.status.state === 'running') {
+    runPoll = setTimeout(pollRun, 3000);
+  } else {
+    if (runPoll) { clearTimeout(runPoll); runPoll = null; }
+    if (r.status && r.status.state === 'done') load(); // refresh leads
+  }
+}
+
+async function runPipeline() {
+  const msg = document.getElementById('runMsg');
+  const r = await post('/api/hunter/pipeline/run', {});
+  if (!r.ok) { msg.textContent = r.error || 'Failed'; msg.style.color = '#B91C1C'; return; }
+  msg.textContent = '';
+  renderRunState(r.status, null, true);
+  pollRun();
 }
 
 async function clearSamples() {
