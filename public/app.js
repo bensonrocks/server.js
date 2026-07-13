@@ -3087,6 +3087,7 @@
       logUnlocked = true;
       document.getElementById('logPasswordOverlay').classList.add('hidden');
       openLogOverlay();
+      renderOrdersList(); // Orders tab may be rendered underneath — pick up delete buttons now
     } else {
       document.getElementById('logPasswordError').classList.remove('hidden');
       document.getElementById('logPasswordInput').select();
@@ -3101,6 +3102,7 @@
     document.getElementById('logOverlay').classList.add('hidden');
     document.body.classList.remove('log-open');
     stopLiveActivityPolling();
+    renderOrdersList(); // reflect logUnlocked state (delete buttons) on the Orders tab behind it
   });
 
   async function openLogOverlay() {
