@@ -239,6 +239,22 @@
       </div>
       <label class="setlbl">Buying signals</label>
       <textarea class="setin" id="ws-signals"></textarea>
+      <label class="setlbl" style="margin-bottom:4px">Apollo live signals — only surface companies that are…</label>
+      <div style="display:flex;flex-direction:column;gap:8px;margin:2px 0 6px">
+        <label style="display:flex;align-items:center;gap:9px;font-size:14px;color:var(--ink-2);cursor:pointer">
+          <input type="checkbox" id="ws-signal_hiring"> <b style="color:var(--ink)">Actively hiring</b> — has open job postings (expansion)
+        </label>
+        <input class="setin" id="ws-signal_hiring_titles" placeholder="Optional: only if hiring for these roles (e.g. operations manager, warehouse manager)" style="margin:0 0 2px 26px;width:calc(100% - 26px)">
+        <label style="display:flex;align-items:center;gap:9px;font-size:14px;color:var(--ink-2);cursor:pointer">
+          <input type="checkbox" id="ws-signal_growing"> <b style="color:var(--ink)">Growing headcount</b> — up 10%+ in the last 6 months
+        </label>
+        <label style="display:flex;align-items:center;gap:9px;font-size:14px;color:var(--ink-2);cursor:pointer">
+          <input type="checkbox" id="ws-signal_funded"> <b style="color:var(--ink)">Recently funded</b> — raised money in the last 12 months
+        </label>
+      </div>
+      <p style="margin:0 0 8px;font-size:12.5px;color:var(--ink-3)">
+        Leave all unticked to surface every profile match. If a chosen signal returns nothing, Hunter falls back to profile matches so a run is never empty.
+      </p>
       <label class="setlbl">What you sell</label>
       <textarea class="setin" id="ws-services"></textarea>
       <label class="setlbl">Notes</label>
@@ -636,18 +652,24 @@ async function addStaff() {
 }
 
 // ── Settings (Master): the org's lead wishlist ─────────────────────────
-const WS_FIELDS = ['market', 'industries', 'signals', 'services', 'notes', 'leads_per_day'];
+const WS_FIELDS = ['market', 'industries', 'signals', 'services', 'notes', 'leads_per_day', 'signal_hiring_titles'];
+const WS_BOOLS  = ['signal_hiring', 'signal_growing', 'signal_funded'];
 
 function fillWishlist(ws) {
   WS_FIELDS.forEach(f => {
     const el = document.getElementById('ws-' + f);
     if (el) el.value = ws[f] ?? '';
   });
+  WS_BOOLS.forEach(f => {
+    const el = document.getElementById('ws-' + f);
+    if (el) el.checked = !!ws[f];
+  });
 }
 
 async function saveWishlist() {
   const body = {};
   WS_FIELDS.forEach(f => body[f] = document.getElementById('ws-' + f).value);
+  WS_BOOLS.forEach(f => body[f] = document.getElementById('ws-' + f).checked);
   const r = await post('/api/hunter/org/wishlist', body);
   const msg = document.getElementById('wsMsg');
   msg.textContent = r.ok ? 'Wishlist saved ✓' : (r.error || 'Failed');
