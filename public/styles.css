@@ -1340,6 +1340,11 @@ body.log-open { overflow: hidden; }
   .orders-table .col-client,
   .orders-table .col-date   { display: none; }
 
+  /* Live Activity tables on mobile: drop Client, tighten padding to fit */
+  .live-col-client { display: none; }
+  #adminTab-activity .dcs-table th,
+  #adminTab-activity .dcs-table td { padding: .3rem .4rem; font-size: .72rem; }
+
   /* ── Login + PIN: slightly bigger for mobile ── */
   .login-box { padding: 1.5rem 1.25rem 1.75rem; }
   .pin-keypad { gap: .45rem; }

@@ -3101,14 +3101,14 @@
     document.getElementById('liveStat15m').textContent = t.last15m  ?? '—';
     document.getElementById('liveStat1h').textContent  = t.lastHour ?? '—';
     document.getElementById('liveActivityUpdated').textContent =
-      d.generatedAt ? `Updated ${new Date(d.generatedAt).toLocaleTimeString()}` : '';
+      d.generatedAt ? new Date(d.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
     const packers = d.activePackers || [];
     document.getElementById('livePackersBody').innerHTML = packers.map(p => `
       <tr>
         <td class="dcs-name">${esc(p.userName)}</td>
         <td>${esc(p.orderNumber)}</td>
-        <td>${esc(p.client) || '—'}</td>
+        <td class="live-col-client">${esc(p.client) || '—'}</td>
         <td>${p.scannedQty} / ${p.totalQty}</td>
         <td class="${p.idle ? 'live-idle' : ''}">${formatIdleMs(p.idleMs)}</td>
       </tr>`).join('');
@@ -3118,7 +3118,7 @@
     document.getElementById('liveStuckBody').innerHTML = stuck.map(s => `
       <tr class="live-stuck-row">
         <td class="dcs-name">${esc(s.orderNumber)}</td>
-        <td>${esc(s.client) || '—'}</td>
+        <td class="live-col-client">${esc(s.client) || '—'}</td>
         <td>${esc(s.lastPackerName)}</td>
         <td>${s.scannedQty} / ${s.totalQty}</td>
         <td>${s.idleMinutes} min</td>
