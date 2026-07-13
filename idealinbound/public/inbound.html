@@ -60,6 +60,11 @@
   .close-x{background:none;border:none;font-size:1.1rem;color:var(--text-3);cursor:pointer}
   .meta-line{font-size:.8rem;color:var(--text-2);margin-bottom:10px}
   .meta-line strong{color:var(--text)}
+  .carton-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .carton-badge{font-weight:700;font-size:.8rem;background:var(--idle-bg);color:var(--idle);border-radius:6px;padding:4px 10px}
+  .label-banner{display:none;background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.82rem}
+  .label-banner-inner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .label-banner strong{font-family:var(--mono);font-size:.95rem}
   .scan-grid{display:grid;grid-template-columns:1.3fr .7fr 1fr auto auto;gap:8px;margin-top:10px;align-items:end}
   .scan-grid label{margin:0 0 4px}
   .var-pos{color:var(--ok)}
@@ -173,6 +178,9 @@ const CONDITIONS = ['unspecified', 'sellable', 'damaged', 'refurbish', 'dispose'
 const CONDITION_LABEL = { unspecified: 'Unspecified', sellable: 'Sellable', damaged: 'Damaged', refurbish: 'Refurbish', dispose: 'Dispose' };
 
 let currentInboundId = null;
+let currentInboundRef = '';
+let currentInboundCartons = [{ num: 1, scans: {}, labelConfirmed: false }];
+let currentActiveCartonNum = 1;
 let activeTypeFilter = '';
 let scanPhotoFile = null;
 
@@ -348,6 +356,9 @@ async function openInbound(id) {
   if (!data.ok) return;
   const s = data.inbound;
   const cfg = TYPE_CONFIG[s.type];
+  currentInboundRef = s.reference;
+  currentInboundCartons = s.cartons && s.cartons.length ? s.cartons : [{ num: 1, scans: {}, labelConfirmed: false }];
+  currentActiveCartonNum = s.activeCartonNum || 1;
 
   document.getElementById('modal-title').textContent = `${s.reference} — ${s.source}`;
   const rows = s.items.map(i => `
@@ -359,12 +370,21 @@ async function openInbound(id) {
     </tr>
   `).join('');
 
+  const multiCarton = currentInboundCartons.length > 1;
   document.getElementById('modal-body').innerHTML = `
     <div style="margin-bottom:6px">
       <span class="type-badge">${cfg.label}</span>
       <span class="status ${s.status}">${statusLabel(s.status)}</span>
     </div>
     <div class="meta-line">${metaLine(s)}</div>
+    <div class="carton-bar no-print">
+      <button class="btn secondary small" id="carton-prev" onclick="switchCartonUI(-1)" style="display:${multiCarton ? '' : 'none'}">&larr;</button>
+      <span class="carton-badge" id="carton-badge">${multiCarton ? `Carton ${currentActiveCartonNum} of ${currentInboundCartons.length}` : 'Carton 1'}</span>
+      <button class="btn secondary small" id="carton-next" onclick="switchCartonUI(1)" style="display:${multiCarton ? '' : 'none'}">&rarr;</button>
+      ${s.status !== 'completed' ? `<button class="btn secondary small" onclick="newCartonUI()">+ New Carton</button>` : ''}
+      <button class="btn secondary small" id="carton-cancel-multi" onclick="cancelMultiCartonUI()" style="display:${multiCarton ? '' : 'none'}">&#8634; 1 Box</button>
+    </div>
+    <div class="label-banner no-print" id="label-banner"></div>
     <div class="scan-grid no-print">
       <div><label>Scan or type SKU</label><input id="scan-sku" placeholder="SKU (new SKUs are OK)"></div>
       <div><label>Qty</label><input id="scan-qty" type="number" min="1" value="1"></div>
@@ -378,7 +398,7 @@ async function openInbound(id) {
         <button type="button" class="photo-btn" id="scan-photo-btn" onclick="document.getElementById('scan-photo-input').click()" title="Take / attach photo">📷</button>
         <input type="file" id="scan-photo-input" accept="image/*" capture="environment" style="display:none" onchange="onScanPhotoChosen(this)">
       </div>
-      <button class="btn small" onclick="receiveScan()">Receive</button>
+      <button class="btn small" id="receive-btn" onclick="receiveScan()">Receive</button>
     </div>
     <div class="err" id="scan-err"></div>
     <div class="table-wrap" style="margin-top:14px">
@@ -396,7 +416,64 @@ async function openInbound(id) {
       ${s.status !== 'completed' ? `<button class="btn danger small" onclick="closeInbound('${s.id}')">Close Inbound</button>` : ''}
     </div>
   `;
+  renderLabelBanner();
   document.getElementById('modal').classList.add('open');
+}
+
+// ── Cartons — a shipment/return often arrives across more than one box ─────
+function activeCartonMeta() {
+  return currentInboundCartons.find(c => c.num === currentActiveCartonNum) || currentInboundCartons[currentInboundCartons.length - 1];
+}
+// The label prompt is a real block, not cosmetic — the Receive button stays
+// disabled until the packer confirms they've written the carton number on
+// the box, same invariant as the outbound picking side of this system.
+function renderLabelBanner() {
+  const c = activeCartonMeta();
+  const banner = document.getElementById('label-banner');
+  const receiveBtn = document.getElementById('receive-btn');
+  if (!banner) return;
+  if (c && !c.labelConfirmed) {
+    const label = `${currentInboundRef}-${String(c.num).padStart(2, '0')}`;
+    banner.innerHTML = `<div class="label-banner-inner">&#128230; Write <strong>${label}</strong> on this box, then confirm.
+      <button class="btn small" onclick="confirmLabelUI()">&#10003; I've Written It</button></div>`;
+    banner.style.display = 'block';
+    if (receiveBtn) receiveBtn.disabled = true;
+  } else {
+    banner.style.display = 'none';
+    if (receiveBtn) receiveBtn.disabled = false;
+  }
+}
+async function newCartonUI() {
+  const res = await fetch(`/api/inbounds/${currentInboundId}/new-carton`, { method: 'POST' });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error); return; }
+  loadInbounds();
+  openInbound(currentInboundId);
+}
+async function switchCartonUI(delta) {
+  const target = currentActiveCartonNum + delta;
+  if (target < 1 || target > currentInboundCartons.length) return;
+  const res = await fetch(`/api/inbounds/${currentInboundId}/carton/switch`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ num: target }),
+  });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error); return; }
+  openInbound(currentInboundId);
+}
+async function cancelMultiCartonUI() {
+  if (!confirm('Merge every carton back into one box?')) return;
+  const res = await fetch(`/api/inbounds/${currentInboundId}/carton/cancel-multi`, { method: 'POST' });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error); return; }
+  loadInbounds();
+  openInbound(currentInboundId);
+}
+async function confirmLabelUI() {
+  const c = activeCartonMeta();
+  await fetch(`/api/inbounds/${currentInboundId}/carton/label-confirmed`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ num: c.num }),
+  });
+  openInbound(currentInboundId);
 }
 
 async function receiveScan() {
@@ -471,6 +548,7 @@ async function printReport(id) {
         <tbody>${rows}</tbody>
       </table>
     </div>
+    ${cartonBreakdownHtml(r)}
     <div class="photo-section">
       <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
       ${renderPhotoGallery(r)}
@@ -480,6 +558,28 @@ async function printReport(id) {
       <button class="btn secondary small" onclick="openInbound('${r.id}')">Back</button>
     </div>
   `;
+}
+
+// Only shown once a job has actually split — a single-carton job (the vast
+// majority) looks exactly like the report always did.
+function cartonBreakdownHtml(r) {
+  if (!r.cartons || r.cartons.length <= 1) return '';
+  const rows = r.cartons.flatMap(c =>
+    Object.entries(c.scans || {}).filter(([, qty]) => qty > 0).map(([sku, qty]) => {
+      const item = r.items.find(i => i.sku === sku);
+      return `<tr><td class="mono">${c.num}</td><td class="mono">${sku}</td><td>${item?.description || ''}</td><td class="mono">${qty}</td></tr>`;
+    })
+  ).join('');
+  return `
+    <div class="photo-section">
+      <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Cartons</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Carton</th><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 function closeModal() {

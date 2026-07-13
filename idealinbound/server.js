@@ -190,6 +190,35 @@ app.post('/api/inbounds/:id/close', requireAuth, async (req, res) => {
   res.json({ ok: true, inbound });
 });
 
+// ── Cartons — a shipment or return often arrives across more than one box ──
+const CARTON_ERROR_STATUS = { not_found: 404, empty_carton: 400, carton_not_found: 404, not_split: 400 };
+const CARTON_ERROR_MESSAGE = {
+  not_found: 'Inbound not found',
+  empty_carton: 'Current carton is empty — receive at least one item before starting a new one.',
+  carton_not_found: 'Carton not found',
+  not_split: 'This inbound was never split into multiple cartons.',
+};
+function cartonResult(res, result) {
+  if (result.error) return res.status(CARTON_ERROR_STATUS[result.error] || 400).json({ ok: false, error: CARTON_ERROR_MESSAGE[result.error] });
+  res.json({ ok: true, inbound: result.inbound });
+}
+
+app.post('/api/inbounds/:id/new-carton', requireAuth, async (req, res) => {
+  cartonResult(res, await inbounds.startNewCarton(req.params.id));
+});
+app.post('/api/inbounds/:id/carton/switch', requireAuth, async (req, res) => {
+  const num = parseInt(req.body.num, 10);
+  if (!num || num < 1) return res.status(400).json({ ok: false, error: 'num required' });
+  cartonResult(res, await inbounds.switchCarton(req.params.id, num));
+});
+app.post('/api/inbounds/:id/carton/cancel-multi', requireAuth, async (req, res) => {
+  cartonResult(res, await inbounds.cancelMultiCarton(req.params.id));
+});
+app.post('/api/inbounds/:id/carton/label-confirmed', requireAuth, async (req, res) => {
+  const num = parseInt(req.body.num, 10) || 1;
+  cartonResult(res, await inbounds.confirmCartonLabel(req.params.id, num));
+});
+
 app.get('/api/inbounds/:id/report', requireAuth, async (req, res) => {
   const inbound = await inbounds.getInbound(req.params.id);
   if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
