@@ -3759,7 +3759,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -3923,6 +3923,37 @@ app.get('/api/master/report/:kind', (req, res) => {
       addSheet('Traceability', [
         ['Date', 'Order No', 'Client', 'SKU', 'Description', 'Lot / Batch', 'Expiry', 'Qty Shipped', 'Packed By', 'Waybill'],
         ...rows,
+      ]);
+
+    } else if (kind === 'order-size') {
+      title = 'Order_Size_Analysis';
+      const SIZE_BUCKETS = [
+        { label: 'Small (1-5 pcs)',   test: p => p <= 5 },
+        { label: 'Medium (6-20 pcs)', test: p => p > 5 && p <= 20 },
+        { label: 'Large (21+ pcs)',   test: p => p > 20 },
+      ];
+      const orderRows = completed.map(e => [
+        e.order, e.client || '', e.customer || '', e.pieces || 0, (e.lines || []).length, day(e.at), e.operator || '',
+      ]);
+
+      const bySize = SIZE_BUCKETS.map(b => {
+        const matched = orderRows.filter(r => b.test(r[3]));
+        return [b.label, matched.length, matched.reduce((s, r) => s + r[3], 0)];
+      });
+      addSheet('Size Summary', [
+        ['Size Bucket', 'Orders', 'Total Pieces'],
+        ...bySize,
+        ['All orders', orderRows.length, orderRows.reduce((s, r) => s + r[3], 0)],
+      ]);
+
+      addSheet('By Pieces', [
+        ['Order No', 'Client', 'Customer', 'Pieces', 'Line Items', 'Completed', 'Operator'],
+        ...[...orderRows].sort((a, b) => b[3] - a[3]),
+      ]);
+
+      addSheet('By Line Items', [
+        ['Order No', 'Client', 'Customer', 'Pieces', 'Line Items', 'Completed', 'Operator'],
+        ...[...orderRows].sort((a, b) => b[4] - a[4]),
       ]);
 
     } else {
