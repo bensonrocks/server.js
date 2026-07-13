@@ -310,6 +310,7 @@
     <div id="masterActionsSection" class="master-actions hidden">
       <div class="admin-nav">
         <button class="admin-nav-btn active" data-admin-tab="activity">&#128225; Live Activity</button>
+        <button class="admin-nav-btn" data-admin-tab="deletions">&#128465; Pending Deletions <span id="pendingDelBadge" class="admin-nav-badge hidden">0</span></button>
         <button class="admin-nav-btn" data-admin-tab="batches">&#128196; Upload History</button>
         <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
         <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
@@ -359,6 +360,23 @@
             <tbody id="liveStuckBody"></tbody>
           </table>
           <div id="liveStuckEmpty" class="empty-state hidden">No abandoned orders.</div>
+        </div>
+      </div>
+
+      <!-- Tab: Pending Deletions -->
+      <div class="admin-tab hidden" id="adminTab-deletions">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Pending Deletions</div>
+            <div class="admin-section-sub">Admin-requested order deletions awaiting your approval. Nothing is removed until you approve it here.</div>
+          </div>
+        </div>
+        <div id="pendingDelWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Order</th><th class="pd-col-client">Client</th><th>Reason</th><th>Requested By</th><th class="pd-col-progress">Progress</th><th>Actions</th></tr></thead>
+            <tbody id="pendingDelBody"></tbody>
+          </table>
+          <div id="pendingDelEmpty" class="empty-state hidden">No pending deletion requests.</div>
         </div>
       </div>
 
@@ -1123,20 +1141,24 @@
     </div>
   </div>
 
-  <!-- Delete Order Modal -->
+  <!-- Request Order Deletion Modal -->
   <div id="deleteOrderOverlay" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-icon">&#9888;</div>
-      <div class="modal-title">Delete Order</div>
-      <p class="modal-desc">Deleting <strong id="delOrderNumber">—</strong> cannot be undone. This is logged to the audit trail.</p>
+      <div class="modal-title">Request Order Deletion</div>
+      <p class="modal-desc">Deleting <strong id="delOrderNumber">—</strong> requires Master's approval. It will show as <strong>Pending Deletion</strong> until then.</p>
       <div class="form-group">
         <label>Reason <span class="cfg-req">*</span></label>
-        <textarea id="delOrderReason" rows="3" placeholder="Why is this order being deleted?" autocomplete="off"></textarea>
+        <textarea id="delOrderReason" rows="3" placeholder="Why should this order be deleted?" autocomplete="off"></textarea>
       </div>
-      <div id="delOrderError" class="login-error hidden">A reason is required.</div>
+      <div class="form-group">
+        <label>Your Password <span class="cfg-req">*</span></label>
+        <input type="password" id="delOrderPassword" placeholder="Confirm it's you" autocomplete="off" />
+      </div>
+      <div id="delOrderError" class="login-error hidden">A reason and your password are required.</div>
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="delOrderCancelBtn">Cancel</button>
-        <button class="btn-danger" id="delOrderConfirmBtn" disabled>&#128465; Delete Order</button>
+        <button class="btn-danger" id="delOrderConfirmBtn" disabled>&#128465; Request Deletion</button>
       </div>
     </div>
   </div>

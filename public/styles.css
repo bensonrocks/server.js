@@ -989,6 +989,7 @@ body.log-open { overflow: hidden; }
 .admin-nav-btn { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: .75rem 1.1rem; font-size: .82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s; }
 .admin-nav-btn:hover { color: var(--primary); }
 .admin-nav-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+.admin-nav-badge { display: inline-block; background: var(--danger); color: #fff; border-radius: 99px; font-size: .68rem; font-weight: 700; padding: .05rem .45rem; margin-left: .3rem; }
 
 /* Tab content */
 .admin-tab { padding: 1.25rem; }
@@ -1357,6 +1358,11 @@ body.log-open { overflow: hidden; }
   .live-col-client { display: none; }
   #adminTab-activity .dcs-table th,
   #adminTab-activity .dcs-table td { padding: .3rem .4rem; font-size: .72rem; }
+
+  /* Pending Deletions table on mobile: drop Client + Progress, tighten padding */
+  .pd-col-client, .pd-col-progress { display: none; }
+  #adminTab-deletions .dcs-table th,
+  #adminTab-deletions .dcs-table td { padding: .3rem .4rem; font-size: .72rem; }
 
   /* ── Login + PIN: slightly bigger for mobile ── */
   .login-box { padding: 1.5rem 1.25rem 1.75rem; }
@@ -2455,6 +2461,7 @@ body.ls-open { overflow: hidden; }
 
 /* ── Order claim chip: which station is packing this order right now ── */
 .chip-claimed { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
+.chip-pending-delete { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); font-weight: 700; }
 
 /* ── Official IdealOne mark (bitmap) — keep aspect inside the old square slots ── */
 img.is-icon-xs, img.is-icon-sm, img.is-icon-hdr, img.is-icon-lg { object-fit: contain; }

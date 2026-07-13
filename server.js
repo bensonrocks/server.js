@@ -799,6 +799,7 @@ function globalOrdersWithState() {
         client_name:       batch.client_name       || '',
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
+        pending_deletion:  state.pending_deletion  || null,
       });
     }
   }
@@ -3584,7 +3585,7 @@ app.get('/api/master/report/:kind', (req, res) => {
     const uploads   = log.filter(e => e.type === 'upload' && inRange(e));
     const completed = log.filter(e => e.type === 'order_completed' && inRange(e));
     const cancelled = log.filter(e => e.type === 'order_cancelled' && inRange(e));
-    const deletions = log.filter(e => ['batch_deleted', 'order_deleted', 'master_reset'].includes(e.type) && inRange(e));
+    const deletions = log.filter(e => ['batch_deleted', 'order_deleted', 'order_deletion_rejected', 'master_reset'].includes(e.type) && inRange(e));
 
     const wb = XLSX.utils.book_new();
     const addSheet = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
@@ -3648,7 +3649,8 @@ app.get('/api/master/report/:kind', (req, res) => {
       }
       for (const e of deletions) {
         if (e.type === 'batch_deleted') rows.push([e.at, 'BATCH DELETED', '', e.client, e.by, '', '', '', '', `${e.filename} (${e.orders} orders): ${(e.orderNumbers || []).slice(0, 20).join(', ')}${(e.orderNumbers || []).length > 20 ? '…' : ''}`]);
-        else if (e.type === 'order_deleted') rows.push([e.at, 'ORDER DELETED', e.order, e.client, e.by, '', '', '', '', e.reason || '']);
+        else if (e.type === 'order_deleted') rows.push([e.at, 'ORDER DELETED', e.order, e.client, e.by, '', '', '', '', e.requestedBy ? `${e.reason || ''} (requested by ${e.requestedBy}, approved by ${e.by})` : (e.reason || '')]);
+        else if (e.type === 'order_deletion_rejected') rows.push([e.at, 'DELETION REJECTED', e.order, e.client, e.by, '', '', '', '', `Requested by ${e.requestedBy}: "${e.reason || ''}"${e.note ? ` — Master note: ${e.note}` : ''}`]);
         else rows.push([e.at, 'MASTER RESET', '', '', e.by, '', '', '', '', `${e.batchesDeleted} batches wiped`]);
       }
       rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
@@ -3760,6 +3762,18 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
   }
 });
 
+// Removes an order from a batch (splice + orderStates cleanup + waybill PDF).
+// Shared by the direct master delete and the deletion-request approval path.
+function removeOrderFromBatch(batch, orderNumber) {
+  const before  = (batch.orders || []).length;
+  batch.orders  = (batch.orders || []).filter(o => o.order_number !== orderNumber);
+  if (batch.orders.length === before) return false;
+  batch.order_count = batch.orders.length;
+  if (batch.orderStates) delete batch.orderStates[orderNumber];
+  try { fs.unlinkSync(path.join(WAYBILL_DIR, batch.id, `${orderNumber}.pdf`)); } catch {}
+  return true;
+}
+
 app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
   if (!checkMaster(req, res)) return;
   const { batchId, orderNumber } = req.params;
@@ -3773,15 +3787,128 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     if (state && state.status === 'done') {
       return res.status(403).json({ error: 'This order is completed and can no longer be deleted.' });
     }
-    const before  = (batch.orders || []).length;
-    batch.orders  = (batch.orders || []).filter(o => o.order_number !== orderNumber);
-    if (batch.orders.length === before) return res.status(404).json({ error: 'Order not found in batch' });
-    batch.order_count = batch.orders.length;
-    // rawRows no longer persisted in DB — nothing to filter here
-    if (batch.orderStates) delete batch.orderStates[orderNumber];
-    try { fs.unlinkSync(path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`)); } catch {}
+    if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
     writeDb(db);
     logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master', reason });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Order deletion requests — Admin requests, Master confirms ───────────────
+// Admin-role users don't hold the master key, so they can no longer delete
+// an order outright. They request deletion (re-entering their OWN account
+// password as a confirmation step); the order is flagged pending_deletion
+// (visible to everyone as a status) until Master reviews it from the
+// Administrator "Pending Deletions" tab and approves or rejects it.
+app.post('/api/scan/order-deletion-request', (req, res) => {
+  const { orderNumber, batchId, reason, password } = req.body || {};
+  const reasonTrim = String(reason || '').trim();
+  if (!orderNumber || !batchId) return res.status(400).json({ error: 'orderNumber and batchId required' });
+  if (!reasonTrim) return res.status(400).json({ error: 'A reason is required to request deletion.' });
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Session user not found.' });
+  if ((user.role || 'admin') !== 'admin') {
+    return res.status(403).json({ error: 'Only Admin users can request order deletion.' });
+  }
+  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
+    // 403, not 401 — the session (x-auth-token) is still valid; only this
+    // re-entered password check failed. A 401 here would trip the client's
+    // global "session expired" handler and force-reload the whole page.
+    return res.status(403).json({ error: 'Incorrect password.' });
+  }
+  const db    = readDb();
+  const batch = db.batches.find(b => b.id === batchId);
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+  if (!(batch.orders || []).some(o => o.order_number === orderNumber)) {
+    return res.status(404).json({ error: 'Order not found in batch' });
+  }
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  if (state.status === 'done') {
+    return res.status(403).json({ error: 'This order is completed and can no longer be deleted.' });
+  }
+  if (state.pending_deletion) {
+    return res.status(409).json({ error: 'A deletion request is already pending for this order.' });
+  }
+  state.pending_deletion = { reason: reasonTrim, requestedBy: req.userId, requestedAt: new Date().toISOString() };
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
+  logAudit('order_deletion_requested', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || '', reason: reasonTrim });
+  res.json({ ok: true });
+});
+
+app.get('/api/master/pending-deletions', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db      = readDb();
+  const nameFor = (() => {
+    const byId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+    return id => byId.get(id) || id || '(unknown)';
+  })();
+  const out = [];
+  for (const batch of db.batches || []) {
+    const states = batch.orderStates || {};
+    for (const ord of (batch.orders || [])) {
+      const state = states[ord.order_number];
+      if (!state || !state.pending_deletion) continue;
+      const scannedQty = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+      out.push({
+        orderNumber:     ord.order_number,
+        batchId:         batch.id,
+        client:          batch.client_name || '',
+        reason:          state.pending_deletion.reason,
+        requestedBy:     state.pending_deletion.requestedBy,
+        requestedByName: nameFor(state.pending_deletion.requestedBy),
+        requestedAt:     state.pending_deletion.requestedAt,
+        scannedQty,
+        totalQty:        ord.total_qty || 0,
+      });
+    }
+  }
+  out.sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt))); // oldest-waiting first
+  res.json(out);
+});
+
+app.post('/api/master/pending-deletions/:batchId/:orderNumber/approve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { batchId, orderNumber } = req.params;
+  try {
+    const db    = readDb();
+    const batch = db.batches.find(b => b.id === batchId);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const state = (batch.orderStates || {})[orderNumber];
+    if (!state || !state.pending_deletion) return res.status(404).json({ error: 'No pending deletion request for this order.' });
+    const pending = state.pending_deletion;
+    if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
+    writeDb(db);
+    logAudit('order_deleted', {
+      order: orderNumber, batchId, client: batch.client_name || '',
+      by: req.userId || 'master', reason: pending.reason, requestedBy: pending.requestedBy,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/master/pending-deletions/:batchId/:orderNumber/reject', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { batchId, orderNumber } = req.params;
+  const note = String(req.body?.note || '').trim();
+  try {
+    const db    = readDb();
+    const batch = db.batches.find(b => b.id === batchId);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const state = (batch.orderStates || {})[orderNumber];
+    if (!state || !state.pending_deletion) return res.status(404).json({ error: 'No pending deletion request for this order.' });
+    const pending = state.pending_deletion;
+    delete state.pending_deletion;
+    writeDb(db);
+    logAudit('order_deletion_rejected', {
+      order: orderNumber, batchId, client: batch.client_name || '',
+      by: req.userId || 'master', requestedBy: pending.requestedBy, reason: pending.reason, note,
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

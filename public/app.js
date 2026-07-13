@@ -1548,7 +1548,7 @@
 
     const rows = orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
-      const canScan  = ord.scan_status !== 'done';
+      const canScan  = ord.scan_status !== 'done' && !ord.pending_deletion;
       const isDone   = ord.scan_status === 'done';
       const elapsed  = fmtElapsed(ord.startTime, ord.endTime);
       const slipUrl  = ord.batchId
@@ -1576,6 +1576,7 @@
 
       // Chips under order number
       const chips = [
+        ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
         ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
@@ -1607,7 +1608,7 @@
           ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991;</button>` : ''}
           ${ord.archived ? '' : emailIndicator}
           ${ord.archived ? '' : kfBtn}
-          ${logUnlocked && !ord.archived && !isDone ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete">&#128465;</button>` : ''}
+          ${currentUser?.role === 'admin' && !ord.archived && !isDone && !ord.pending_deletion ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Request deletion">&#128465;</button>` : ''}
         </td>
       </tr>`;
     }).join('');
@@ -1719,52 +1720,61 @@
     });
   }
 
-  // ── Delete Order (admin, reason required) ───────────────────────────────────
+  // ── Request Order Deletion (admin: reason + own password; Master approves) ──
   let _delOrderTarget = null; // { orderNumber, batchId }
   function openDeleteOrderModal(orderNumber, batchId) {
     _delOrderTarget = { orderNumber, batchId };
     document.getElementById('delOrderNumber').textContent = orderNumber;
     const reasonEl = document.getElementById('delOrderReason');
+    const passEl   = document.getElementById('delOrderPassword');
     reasonEl.value = '';
+    passEl.value   = '';
     document.getElementById('delOrderError').classList.add('hidden');
     document.getElementById('delOrderConfirmBtn').disabled = true;
     document.getElementById('deleteOrderOverlay').classList.remove('hidden');
     setTimeout(() => reasonEl.focus(), 100);
   }
-  document.getElementById('delOrderReason').addEventListener('input', () => {
-    const has = document.getElementById('delOrderReason').value.trim() !== '';
-    document.getElementById('delOrderConfirmBtn').disabled = !has;
-    if (has) document.getElementById('delOrderError').classList.add('hidden');
+  function _delOrderFormReady() {
+    return document.getElementById('delOrderReason').value.trim() !== '' &&
+           document.getElementById('delOrderPassword').value !== '';
+  }
+  ['delOrderReason', 'delOrderPassword'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      const ready = _delOrderFormReady();
+      document.getElementById('delOrderConfirmBtn').disabled = !ready;
+      if (ready) document.getElementById('delOrderError').classList.add('hidden');
+    });
   });
   document.getElementById('delOrderCancelBtn').addEventListener('click', () => {
     document.getElementById('deleteOrderOverlay').classList.add('hidden');
     _delOrderTarget = null;
   });
   document.getElementById('delOrderConfirmBtn').addEventListener('click', async () => {
-    const reason = document.getElementById('delOrderReason').value.trim();
-    if (!reason || !_delOrderTarget) {
+    const reason   = document.getElementById('delOrderReason').value.trim();
+    const password = document.getElementById('delOrderPassword').value;
+    if (!_delOrderFormReady() || !_delOrderTarget) {
       document.getElementById('delOrderError').classList.remove('hidden');
       return;
     }
     const { orderNumber, batchId } = _delOrderTarget;
     const btn = document.getElementById('delOrderConfirmBtn');
-    btn.disabled = true; btn.textContent = 'Deleting…';
+    btn.disabled = true; btn.textContent = 'Requesting…';
     try {
-      const r = await fetch(`/api/master/order/${encodeURIComponent(batchId)}/${encodeURIComponent(orderNumber)}`, {
-        method: 'DELETE',
-        headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
+      const r = await fetch('/api/scan/order-deletion-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderNumber, batchId, reason, password }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Delete failed');
+      if (!r.ok) throw new Error(d.error || 'Request failed');
       document.getElementById('deleteOrderOverlay').classList.add('hidden');
       _delOrderTarget = null;
       await refreshOrders(); renderOrdersList();
     } catch (err) {
       alert(err.message);
     } finally {
-      btn.textContent = '\u{1F5D1} Delete Order';
-      btn.disabled = document.getElementById('delOrderReason').value.trim() === '';
+      btn.textContent = '\u{1F5D1} Request Deletion';
+      btn.disabled = !_delOrderFormReady();
     }
   });
 
@@ -3102,6 +3112,7 @@
     document.getElementById('logOverlay').classList.add('hidden');
     document.body.classList.remove('log-open');
     stopLiveActivityPolling();
+    stopPendingDelPolling();
     renderOrdersList(); // reflect logUnlocked state (delete buttons) on the Orders tab behind it
   });
 
@@ -3170,6 +3181,76 @@
     document.getElementById('liveStuckEmpty').classList.toggle('hidden', stuck.length > 0);
   }
 
+  // ── Pending Deletions (Master review of admin-requested deletions) ──────────
+  let _pendingDelTimer = null;
+  function startPendingDelPolling() {
+    stopPendingDelPolling();
+    loadPendingDeletions();
+    _pendingDelTimer = setInterval(loadPendingDeletions, 15000);
+  }
+  function stopPendingDelPolling() {
+    if (_pendingDelTimer) { clearInterval(_pendingDelTimer); _pendingDelTimer = null; }
+  }
+  async function loadPendingDeletions() {
+    try {
+      const r = await fetch('/api/master/pending-deletions', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      renderPendingDeletions(await r.json());
+    } catch { /* silent — next poll retries */ }
+  }
+  function renderPendingDeletions(list) {
+    const badge = document.getElementById('pendingDelBadge');
+    badge.textContent = list.length;
+    badge.classList.toggle('hidden', list.length === 0);
+
+    document.getElementById('pendingDelBody').innerHTML = list.map(p => `
+      <tr>
+        <td class="dcs-name">${esc(p.orderNumber)}</td>
+        <td class="pd-col-client">${esc(p.client) || '—'}</td>
+        <td>${esc(p.reason)}</td>
+        <td>${esc(p.requestedByName)}</td>
+        <td class="pd-col-progress">${p.scannedQty} / ${p.totalQty}</td>
+        <td>
+          <button class="btn-sm btn-primary pd-approve-btn" data-order="${esc(p.orderNumber)}" data-batchid="${esc(p.batchId)}">&#10003; Approve</button>
+          <button class="btn-sm btn-danger-sm pd-reject-btn" data-order="${esc(p.orderNumber)}" data-batchid="${esc(p.batchId)}">&#215; Reject</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('pendingDelEmpty').classList.toggle('hidden', list.length > 0);
+
+    document.querySelectorAll('.pd-approve-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Approve deletion of order ${btn.dataset.order}? This cannot be undone.`)) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/pending-deletions/${encodeURIComponent(btn.dataset.batchid)}/${encodeURIComponent(btn.dataset.order)}/approve`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Approve failed');
+          loadPendingDeletions();
+          await refreshOrders(); renderOrdersList();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+    document.querySelectorAll('.pd-reject-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const note = prompt(`Reject deletion of order ${btn.dataset.order}? Optional note for the requester:`, '');
+        if (note === null) return; // cancelled
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/pending-deletions/${encodeURIComponent(btn.dataset.batchid)}/${encodeURIComponent(btn.dataset.order)}/reject`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Reject failed');
+          loadPendingDeletions();
+          await refreshOrders(); renderOrdersList();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+  }
+
   let _labelTemplates = null;
   let _docTemplates   = null; // array of carrier names that have .docx templates
 
@@ -3209,6 +3290,7 @@
     loadBarcodeMapStats();
     loadLearnedBarcodes();
     startLiveActivityPolling(); // Live Activity is the default landing tab
+    loadPendingDeletions(); // one-shot — keeps the nav badge accurate even if the tab isn't opened
   }
 
   // Admin tab switching
@@ -3221,6 +3303,8 @@
       if (btn.dataset.adminTab === 'batches') renderLogContent();
       if (btn.dataset.adminTab === 'activity') startLiveActivityPolling();
       else stopLiveActivityPolling();
+      if (btn.dataset.adminTab === 'deletions') startPendingDelPolling();
+      else stopPendingDelPolling();
     });
   });
 
@@ -3851,6 +3935,7 @@
       document.getElementById('logOverlay').classList.add('hidden');
       document.body.classList.remove('log-open');
       stopLiveActivityPolling();
+      stopPendingDelPolling();
       fetchAndRenderStats();
       renderOrdersDash();
       alert('All data cleared.');
