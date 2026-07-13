@@ -96,6 +96,10 @@
   .qmeta { color: var(--ink-2); font-size: 13.5px; margin: 8px 0 4px; }
   .qmeta a { color: var(--brand); text-decoration: none; }
   .qmeta a:hover { text-decoration: underline; }
+  .brief { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+           padding: 10px 12px; margin: 8px 0 10px; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  .brief-lbl { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+               text-transform: uppercase; color: var(--ink-3); margin-right: 7px; }
   .contact { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
   .contact b { color: var(--ink); }
   .prov { font-size: 11.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
@@ -510,6 +514,10 @@ function queueCard(l) {
       ${sampleTag(l)}
     </div>
     <div class="qmeta">${esc(l.sg_activity)}${evidence}</div>
+    ${(l.company_brief || l.why_approach) ? `<div class="brief">
+      ${l.company_brief ? `<div><span class="brief-lbl">About</span>${esc(l.company_brief)}</div>` : ''}
+      ${l.why_approach ? `<div style="margin-top:5px"><span class="brief-lbl">Why approach</span>${esc(l.why_approach)}</div>` : ''}
+    </div>` : ''}
     <div class="contact">${contactLine(l)}</div>
     <div class="draft">
       <input id="subj-${l.id}" value="${esc(l.outreach_subject)}" placeholder="Subject">
