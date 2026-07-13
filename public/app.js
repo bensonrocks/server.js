@@ -815,7 +815,29 @@
     if (fromFile) document.getElementById('clientNameInput').value = fromFile;
     const clientName = fromFile || document.getElementById('clientNameInput').value.trim();
     document.getElementById('confirmFileName').textContent    = filename;
-    document.getElementById('confirmClientName').textContent  = clientName || '(not specified)';
+
+    // Client name: no column in the uploaded file mapped to client/brand
+    // (only "Customer Name" columns did, which is the consignee — a different
+    // field). Rather than silently save the batch with client_name blank,
+    // require the uploader to type it or explicitly say none applies.
+    const clientField = document.getElementById('confirmClientNameField');
+    const clientHint  = document.getElementById('confirmClientHint');
+    const noClientChk = document.getElementById('confirmNoClientChk');
+    clientField.value = clientName;
+    noClientChk.checked = false;
+    const evaluateClientGate = () => {
+      const hasName = clientField.value.trim() !== '';
+      const resolved = hasName || noClientChk.checked;
+      clientField.classList.toggle('needs-input', !resolved);
+      clientHint.classList.toggle('hidden', hasName);
+      clientField.disabled = noClientChk.checked;
+      document.getElementById('clientNameInput').value = hasName ? clientField.value.trim() : '';
+      document.getElementById('confirmApproveBtn').disabled = !resolved;
+    };
+    clientField.oninput = evaluateClientGate;
+    noClientChk.onchange = evaluateClientGate;
+    evaluateClientGate();
+
     document.getElementById('confirmOrderCount').textContent  = preview.orderCount;
     document.getElementById('confirmLineCount').textContent   = preview.rowCount;
     document.getElementById('confirmConverted').innerHTML     = preview.converted
@@ -874,7 +896,6 @@
     // amendments) or abort — the buttons say exactly that.
     const approveBtn = document.getElementById('confirmApproveBtn');
     const cancelBtn  = document.getElementById('confirmCancelBtn');
-    approveBtn.disabled = false;
     if (flagged.length) {
       approveBtn.textContent = `Approve with ${flagged.length} flagged order(s) →`;
       cancelBtn.textContent  = '✕ Abort Upload';
@@ -884,6 +905,7 @@
       cancelBtn.textContent  = 'Cancel';
       cancelBtn.classList.remove('abort-mode');
     }
+    evaluateClientGate(); // (re)apply after the flagged-block reset approveBtn's text/state
     // Reset direction toggle to Outbound
     uploadDirection = 'Outbound';
     document.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'Outbound'));

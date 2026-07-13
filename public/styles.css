@@ -878,6 +878,13 @@ body.scan-open { overflow: hidden; }
 .confirm-big { font-size: 1.1rem; font-weight: 800; color: var(--primary); }
 .confirm-errors { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--warning); margin-top: .75rem; list-style: disc inside; }
 
+.confirm-val-edit { flex: 1; min-width: 0; }
+.confirm-inline-input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: .3rem .5rem; font-size: .875rem; color: var(--text); background: var(--surface); }
+.confirm-inline-input:focus { outline: none; border-color: var(--accent); }
+.confirm-inline-input.needs-input { border-color: var(--danger); background: var(--danger-bg, rgba(220,38,38,.06)); }
+.confirm-client-hint { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: .55rem .85rem; font-size: .78rem; color: var(--warning); margin: 0 0 .1rem; display: flex; flex-direction: column; gap: .35rem; }
+.confirm-noclient-check { display: flex; align-items: center; gap: .4rem; font-size: .78rem; font-weight: 600; cursor: pointer; }
+
 .print-countdown-wrap { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin: .85rem 0 .25rem; }
 .print-countdown-bar  { height: 100%; background: var(--primary); width: 100%; border-radius: 3px; }
 

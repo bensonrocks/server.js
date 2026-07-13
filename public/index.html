@@ -1035,7 +1035,13 @@
         </div>
         <div class="confirm-row">
           <span class="confirm-lbl">Client</span>
-          <span class="confirm-val" id="confirmClientName">—</span>
+          <span class="confirm-val-edit">
+            <input type="text" id="confirmClientNameField" class="confirm-inline-input" placeholder="Type client / brand name…" autocomplete="off" />
+          </span>
+        </div>
+        <div id="confirmClientHint" class="confirm-client-hint hidden">
+          &#9888; No client/brand name found in this file — type it above so this batch can be filtered by client later.
+          <label class="confirm-noclient-check"><input type="checkbox" id="confirmNoClientChk" /> No client applies to this batch</label>
         </div>
         <div class="confirm-row">
           <span class="confirm-lbl">Orders</span>
