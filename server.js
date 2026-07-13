@@ -3058,22 +3058,29 @@ app.post('/api/scan/carton/cancel-multi', (req, res) => {
   res.json({ ok: true, cartonCount: 1, activeCartonNum: 1 });
 });
 
-// Audit trail only — records that the packer confirmed they wrote the
-// carton label. Never blocks or mutates carton state; if it's ever missing
-// or fails, the client already moved on (the prompt itself, not this call,
-// is what stops the packer from proceeding without confirming).
+// Records that the packer confirmed they wrote the carton label — persists
+// carton.labelConfirmed so the prompt never fires twice for the same box,
+// plus an audit-log entry. Never itself blocks the packer; the prompt (not
+// this call) is what enforces the pause, so a failed request here never
+// stalls the UI. Can fire before any scan (carton 1 is labelled the moment
+// packing starts) — lazily creates order state exactly like a real scan
+// would, but WITHOUT flipping status to "processing".
 app.post('/api/scan/carton/label-confirmed', (req, res) => {
-  const { orderNumber, label } = req.body;
+  const { orderNumber, cartonNum, label } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
-  const state = (batch.orderStates || {})[orderNumber];
-  if (state) {
-    appendScanLog(state, { kind: 'carton_labeled', raw: String(label || '').trim(), sku: '', qty: '', by: req.userId || '' });
-    batch.orderStates[orderNumber] = state;
-    writeDb(db);
-  }
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const num = parseInt(cartonNum, 10) || 1;
+  activeCarton(state); // lazily ensures state.cartons exists, same as any scan path
+  let carton = state.cartons.find(c => c.num === num);
+  if (!carton) { carton = { num, scans: {}, startedAt: new Date().toISOString(), closedAt: null }; state.cartons.push(carton); }
+  carton.labelConfirmed = true;
+  appendScanLog(state, { kind: 'carton_labeled', raw: String(label || '').trim(), sku: '', qty: '', by: req.userId || '' });
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
   res.json({ ok: true });
 });
 

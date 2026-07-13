@@ -2103,6 +2103,12 @@
     order.cartonNum   = order.active_carton_num || 1;
     order.cartonCount = (order.cartons && order.cartons.length) ? order.cartons.length : 1;
     updateCartonBadge(order);
+    // Carton 1 gets labelled from the moment packing starts, not only once a
+    // split makes it necessary — a packer writes it the moment they grab the
+    // first box. Fires once per order; skipped entirely once already confirmed.
+    if (!cartonLabelConfirmed(order, 1)) {
+      showCartonLabelPrompt(`${order.order_number}-01`, 1);
+    }
     renderItemsTable(order);
     updateProgress(order);
     startTimer(orderTimings[order.order_number]);
@@ -2135,16 +2141,25 @@
   // and blocks moving on until they confirm — reuses the global scan-capture's
   // existing "never intercept while a .modal-overlay is open" rule, so this
   // genuinely pauses scanning, not just a cosmetic reminder.
-  function showCartonLabelPrompt(labelText) {
+  function cartonLabelConfirmed(order, cartonNum) {
+    return !!(order.cartons || []).find(c => c.num === cartonNum)?.labelConfirmed;
+  }
+  function showCartonLabelPrompt(labelText, cartonNum) {
     return new Promise(resolve => {
       document.getElementById('cartonLabelText').textContent = labelText;
       document.getElementById('cartonLabelOverlay').classList.remove('hidden');
       document.getElementById('cartonLabelConfirmBtn').onclick = () => {
         document.getElementById('cartonLabelOverlay').classList.add('hidden');
+        if (activeOrder) {
+          if (!activeOrder.cartons) activeOrder.cartons = [];
+          let c = activeOrder.cartons.find(x => x.num === cartonNum);
+          if (!c) { c = { num: cartonNum, scans: {} }; activeOrder.cartons.push(c); }
+          c.labelConfirmed = true;
+        }
         fetch('/api/scan/carton/label-confirmed', {
           method: 'POST', headers: hdrs(),
-          body: JSON.stringify({ orderNumber: activeOrder?.order_number, label: labelText }),
-        }).catch(() => {}); // audit trail only — never block on it
+          body: JSON.stringify({ orderNumber: activeOrder?.order_number, cartonNum, label: labelText }),
+        }).catch(() => {}); // persists server-side + audit trail — never block the UI on it
         resolve();
       };
     });
@@ -2169,7 +2184,11 @@
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
       focusActiveQty();
-      await showCartonLabelPrompt(`${activeOrder.order_number}-${String(closedNum).padStart(2, '0')}`);
+      // Carton 1 is usually already labelled at order-start (see enterItemsPhase) —
+      // only prompt here if it genuinely hasn't been confirmed yet.
+      if (!cartonLabelConfirmed(activeOrder, closedNum)) {
+        await showCartonLabelPrompt(`${activeOrder.order_number}-${String(closedNum).padStart(2, '0')}`, closedNum);
+      }
     } catch (err) {
       showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
     } finally {
@@ -3107,8 +3126,8 @@
         const completedOrder = activeOrder;
         // The last carton never went through requestNewCarton()'s "closing"
         // prompt (nothing ever superseded it) — label it now, before moving on.
-        if ((completedOrder.cartonCount || 1) > 1) {
-          await showCartonLabelPrompt(`${completedOrder.order_number}-${String(completedOrder.cartonCount).padStart(2, '0')}`);
+        if ((completedOrder.cartonCount || 1) > 1 && !cartonLabelConfirmed(completedOrder, completedOrder.cartonCount)) {
+          await showCartonLabelPrompt(`${completedOrder.order_number}-${String(completedOrder.cartonCount).padStart(2, '0')}`, completedOrder.cartonCount);
         }
         closeScanOverlay();
         await refreshOrders();
