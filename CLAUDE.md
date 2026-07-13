@@ -248,7 +248,15 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   `cartonCount > 1`. The "blocking" is real, not cosmetic: it's a
   `.modal-overlay`, and `_globalScanKeydown` already refuses to intercept
   scans while any modal overlay is open, so no separate gating logic was
-  needed. Confirming marks `labelConfirmed = true` locally, then POSTs to
+  needed. Dismissible by clicking "I've Written It" OR by pressing ANY key
+  (a capture-phase `keydown` listener on `document`) — a packer who's
+  written the label and starts typing/scanning the next SKU shouldn't need
+  to also reach for the mouse. Still a genuine action tied to something the
+  packer actually does (not a timer), so `labelConfirmed` keeps meaning
+  what it says; the dismissing keystroke isn't swallowed either — if it was
+  the first character of the next scan, `_globalScanKeydown` still sees it
+  once the overlay is hidden and processes it normally. Confirming marks
+  `labelConfirmed = true` locally, then POSTs to
   `/api/scan/carton/label-confirmed`, which PERSISTS `carton.labelConfirmed`
   server-side (lazily creating `state.cartons` via `activeCarton()` if this
   fires before any scan) plus an audit-log entry (`scanLog` kind

@@ -2471,8 +2471,9 @@
     return new Promise(resolve => {
       document.getElementById('cartonLabelText').textContent = labelText;
       document.getElementById('cartonLabelOverlay').classList.remove('hidden');
-      document.getElementById('cartonLabelConfirmBtn').onclick = () => {
+      const confirm = () => {
         document.getElementById('cartonLabelOverlay').classList.add('hidden');
+        document.removeEventListener('keydown', onKeydown, true);
         if (activeOrder) {
           if (!activeOrder.cartons) activeOrder.cartons = [];
           let c = activeOrder.cartons.find(x => x.num === cartonNum);
@@ -2485,6 +2486,13 @@
         }).catch(() => {}); // persists server-side + audit trail — never block the UI on it
         resolve();
       };
+      // Any key dismisses it — a packer who's written the label and starts
+      // scanning/typing the next SKU shouldn't need to also reach for the
+      // mouse. Still a genuine, intentional action (not a timer), so
+      // labelConfirmed keeps meaning what it says.
+      const onKeydown = () => confirm();
+      document.addEventListener('keydown', onKeydown, true);
+      document.getElementById('cartonLabelConfirmBtn').onclick = confirm;
     });
   }
   // Fixed control code a packer can scan (from a printed card at the station)
