@@ -1318,7 +1318,7 @@ async function submitStoreConnect() {
 async function disconnectStore(mappingId, storeName) {
   if (!confirm(`Disconnect "${storeName}"?\n\nOrder syncing will stop for this store.`)) return;
   try {
-    const r = await fetch(`${SERVER}/api/zetpy/mappings/${mappingId}`, {
+    const r = await fetch(`${SERVER}/api/portal/connections/${mappingId}`, {
       method: 'DELETE', headers: { Authorization: 'Bearer ' + token }
     });
     if (r.ok) { showConnToast('ok', storeName + ' disconnected.'); loadConnections(); }

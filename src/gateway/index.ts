@@ -31,7 +31,6 @@ export { auditLogService }                               from './audit/audit-log
 // ── Pre-wired singleton ────────────────────────────────────────────────────────
 import { MarketplaceGatewayService }                     from './gateway.service';
 import { zortAdapter }                                   from './adapters/zort/zort.adapter';
-import { zetpyAdapter }                                  from './adapters/zetpy/zetpy.adapter';
 import { shopeeDirectAdapter }                           from './adapters/shopee-direct/shopee-direct.adapter';
 import { lazadaDirectAdapter }                           from './adapters/lazada-direct/lazada-direct.adapter';
 import { tiktokDirectAdapter }                           from './adapters/tiktok-direct/tiktok-direct.adapter';
@@ -39,7 +38,6 @@ import { shopifyDirectAdapter }                          from './adapters/shopif
 
 export const gateway = new MarketplaceGatewayService()
   .register(zortAdapter)
-  .register(zetpyAdapter)
   .register(shopeeDirectAdapter)
   .register(lazadaDirectAdapter)
   .register(tiktokDirectAdapter)

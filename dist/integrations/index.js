@@ -27,7 +27,6 @@ __exportStar(require("./shopify/shopify.oauth"), exports);
 __exportStar(require("./shopify/shopify.webhooks"), exports);
 __exportStar(require("./api2cart/api2cart.adapter"), exports);
 __exportStar(require("./api2cart/api2cart.mapper"), exports);
-__exportStar(require("./zetpy/zetpy.adapter"), exports);
 __exportStar(require("./lazada/lazada.adapter"), exports);
 __exportStar(require("./shopee/shopee.adapter"), exports);
 __exportStar(require("./tiktok/tiktok.adapter"), exports);
@@ -37,7 +36,6 @@ Object.defineProperty(exports, "gatewayService", { enumerable: true, get: functi
 const shopify_adapter_1 = require("./shopify/shopify.adapter");
 const shopify_oauth_1 = require("./shopify/shopify.oauth");
 const api2cart_adapter_1 = require("./api2cart/api2cart.adapter");
-const zetpy_adapter_1 = require("./zetpy/zetpy.adapter");
 const lazada_adapter_1 = require("./lazada/lazada.adapter");
 const shopee_adapter_1 = require("./shopee/shopee.adapter");
 const tiktok_adapter_1 = require("./tiktok/tiktok.adapter");
@@ -46,6 +44,5 @@ marketplace_gateway_service_1.gatewayService
     .register(lazada_adapter_1.lazadaAdapter, lazada_adapter_1.lazadaOAuthMeta)
     .register(shopee_adapter_1.shopeeAdapter, shopee_adapter_1.shopeeOAuthMeta)
     .register(tiktok_adapter_1.tiktokAdapter, tiktok_adapter_1.tiktokOAuthMeta)
-    .register(api2cart_adapter_1.api2CartAdapter, api2cart_adapter_1.api2CartOAuthMeta)
-    .register(zetpy_adapter_1.zetpyAdapter, zetpy_adapter_1.zetpyOAuthMeta);
+    .register(api2cart_adapter_1.api2CartAdapter, api2cart_adapter_1.api2CartOAuthMeta);
 //# sourceMappingURL=index.js.map
