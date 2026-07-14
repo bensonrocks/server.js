@@ -1912,7 +1912,7 @@
         ${job.source_name ? `<span class="meta-pill">${esc(job.source_name)}</span>` : ''}
         ${job.client_name ? `<span class="meta-pill">${esc(job.client_name)}</span>` : ''}
       </div>`;
-    document.getElementById('inboundConditionSelect').classList.toggle('hidden', job.type !== 'return');
+    document.getElementById('inboundConditionRow').classList.toggle('hidden', job.type !== 'return');
     updateInboundCartonBadge(job);
     renderInboundItemsTable(job);
     document.getElementById('inboundCompleteBtn').disabled = job.status === 'done';

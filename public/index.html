@@ -285,16 +285,19 @@
     </div>
 
     <div class="item-scan-dock">
+      <div id="inboundConditionRow" class="hidden inbound-condition-row">
+        <label for="inboundConditionSelect">Condition</label>
+        <select id="inboundConditionSelect">
+          <option value="straight_to_inventory">Straight to Inventory</option>
+          <option value="damaged">Damaged</option>
+          <option value="kiv">KIV</option>
+        </select>
+      </div>
       <div class="item-scan-wrap">
         <span class="scan-icon-prefix">&#9524;</span>
         <input type="text" id="inboundScanInput" class="big-scan-input"
           placeholder="Scan item barcode / SKU&#8230;"
           autocomplete="off" autocorrect="off" spellcheck="false" />
-        <select id="inboundConditionSelect" class="hidden" style="max-width:160px">
-          <option value="resalable">Resalable</option>
-          <option value="damaged">Damaged</option>
-          <option value="disposed">Disposed</option>
-        </select>
       </div>
       <div id="inboundScanFeedback" class="scan-feedback hidden"></div>
       <div class="dock-actions">

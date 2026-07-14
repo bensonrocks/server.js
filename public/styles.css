@@ -812,6 +812,18 @@ body.scan-open { overflow: hidden; }
 .qty-input:focus { outline: 2px solid var(--primary); }
 
 .item-scan-dock { flex-shrink: 0; background: var(--surface); border-top: 2px solid var(--border); padding: .75rem 1rem .85rem; }
+.inbound-condition-row { margin-bottom: .6rem; }
+.inbound-condition-row label {
+  display: block; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-muted); margin-bottom: .3rem;
+}
+.inbound-condition-row select {
+  width: 100%; padding: .62rem .85rem;
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  font-size: .95rem; color: var(--text); background: var(--surface);
+  outline: none;
+}
+.inbound-condition-row select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
 .item-scan-wrap { display: flex; align-items: stretch; gap: .5rem; margin-bottom: .6rem; background: var(--bg); border: 2px solid var(--primary); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 3px rgba(37,99,235,.07); }
 .scan-icon-prefix { padding: 0 .7rem; font-size: 1.3rem; color: var(--primary); user-select: none; display: flex; align-items: center; }
 .big-scan-input { flex: 1; border: none; outline: none; padding: .9rem .4rem; font-size: 1.05rem; color: var(--text); background: transparent; }

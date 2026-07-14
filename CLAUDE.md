@@ -292,8 +292,9 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
     the paperwork is routine and must still be logged; it just has no
     "expected" qty to compare against on the receiving screen.
   - `'return'` — created manually via `POST /api/inbound/return`, no
-    expected list at all. Every scan carries a `condition` (`resalable` |
-    `damaged` | `disposed`, default `resalable`), rolled up into
+    expected list at all. Every scan carries a `condition`
+    (`straight_to_inventory` | `damaged` | `kiv`, default
+    `straight_to_inventory`), rolled up into
     `state.conditionTotals[sku][condition]` — `state.scanned[sku]` itself
     stays a condition-agnostic total so the shared carton functions never
     need to know conditions exist.

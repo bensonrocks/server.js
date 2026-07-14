@@ -3132,8 +3132,8 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
 //              something not on the paperwork — it's still logged, just with
 //              no "expected" line to compare against).
 //   'return' — no expected list at all. Created manually, scans are free-form,
-//              and each scan carries a condition code (resalable/damaged/
-//              disposed) rolled up into state.conditionTotals.
+//              and each scan carries a condition code (straight_to_inventory/
+//              damaged/kiv) rolled up into state.conditionTotals.
 function findInbound(db, id) {
   return (db.inbound || []).find(r => r.id === id);
 }
@@ -3265,7 +3265,7 @@ app.post('/api/inbound/return', (req, res) => {
   res.json({ ok: true, id: rec.id });
 });
 
-const INBOUND_CONDITIONS = new Set(['resalable', 'damaged', 'disposed']);
+const INBOUND_CONDITIONS = new Set(['straight_to_inventory', 'damaged', 'kiv']);
 app.post('/api/inbound/:id/scan', (req, res) => {
   const { id } = req.params;
   const { code, qty, condition } = req.body;
@@ -3293,9 +3293,9 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   addToActiveCarton(state, sku, inc);
 
   if (rec.type === 'return') {
-    const cond = INBOUND_CONDITIONS.has(condition) ? condition : 'resalable';
+    const cond = INBOUND_CONDITIONS.has(condition) ? condition : 'straight_to_inventory';
     state.conditionTotals = state.conditionTotals || {};
-    state.conditionTotals[sku] = state.conditionTotals[sku] || { resalable: 0, damaged: 0, disposed: 0 };
+    state.conditionTotals[sku] = state.conditionTotals[sku] || { straight_to_inventory: 0, damaged: 0, kiv: 0 };
     state.conditionTotals[sku][cond] += inc;
     appendScanLog(state, { kind: 'scan', raw, sku, qty: inc, condition: cond, by: req.userId || '' });
   } else {
