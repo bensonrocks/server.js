@@ -880,6 +880,44 @@ function nextIdealscanCode(db) {
   } catch (e) { console.error('[IdealScan] job code backfill failed:', e.message); }
 })();
 
+// Mirrors nextIdealscanCode() for IdealInbound — its own per-day sequence
+// (separate counter key, IB- prefix) so an inbound serial never collides
+// with or depends on the outbound order numbering.
+function nextInboundCode(db) {
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+  if (!db.inboundCodeSeq) db.inboundCodeSeq = {};
+  db.inboundCodeSeq[day] = (db.inboundCodeSeq[day] || 0) + 1;
+  for (const k of Object.keys(db.inboundCodeSeq)) if (k !== day) delete db.inboundCodeSeq[k];
+  return `IB-${day}-${String(db.inboundCodeSeq[day]).padStart(2, '0')}`;
+}
+
+// One-time backfill: give pre-existing inbound records a serial based on their upload date
+(function backfillInboundCodes() {
+  try {
+    const db = readDb();
+    if (db.inboundCodesBackfilled) return;
+    const perDay = {};
+    let n = 0;
+    const sorted = [...(db.inbound || [])].sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at));
+    for (const rec of sorted) {
+      if (rec.serial) continue;
+      const day = new Date(rec.uploaded_at || Date.now())
+        .toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+      perDay[day] = (perDay[day] || 0) + 1;
+      rec.serial = `IB-${day}-${String(perDay[day]).padStart(2, '0')}`;
+      n++;
+    }
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+    if (perDay[today]) {
+      if (!db.inboundCodeSeq) db.inboundCodeSeq = {};
+      db.inboundCodeSeq[today] = Math.max(db.inboundCodeSeq[today] || 0, perDay[today]);
+    }
+    db.inboundCodesBackfilled = true;
+    writeDb(db);
+    if (n) console.log(`[IdealScan] Inbound serials backfilled on ${n} existing record(s)`);
+  } catch (e) { console.error('[IdealScan] inbound serial backfill failed:', e.message); }
+})();
+
 // Find which batch holds a given order number (newest batch first).
 function findBatchForOrder(db, orderNumber) {
   for (const batch of db.batches) {
@@ -3248,6 +3286,7 @@ app.get('/api/inbound', (req, res) => {
     const scannedTotal  = Object.values(state.scanned || {}).reduce((s, q) => s + q, 0);
     return {
       id:                rec.id,
+      serial:            rec.serial || '',
       type:              rec.type,
       reference:         rec.reference || '',
       source_name:       rec.source_name || '',
@@ -3326,6 +3365,7 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), async (req, res) =
     db.inbound = db.inbound || [];
     const rec = {
       id:          uuidv4(),
+      serial:      nextInboundCode(db),
       type:        'po',
       reference:   (req.body?.reference   || '').trim(),
       source_name: (req.body?.source_name || '').trim(),
@@ -3351,6 +3391,7 @@ app.post('/api/inbound/return', (req, res) => {
   db.inbound = db.inbound || [];
   const rec = {
     id:          uuidv4(),
+    serial:      nextInboundCode(db),
     type:        'return',
     reference:   String(reference   || '').trim(),
     source_name: String(source_name || '').trim(),
@@ -3376,7 +3417,7 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   const rec = findInbound(db, id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
-  if (state.status === 'done') return res.status(409).json({ error: 'This receiving job is already complete.' });
+  if (state.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended — no further scans can be logged.' });
 
   const inc = Math.max(1, parseInt(qty, 10) || 1);
   const raw = String(code).trim();
@@ -3487,19 +3528,25 @@ app.post('/api/inbound/:id/carton/label-confirmed', (req, res) => {
   res.json({ ok: true });
 });
 
-// PO/ASN completion surfaces mismatches (over/under vs expected, plus any
+// Ends receiving on this job — the ONLY thing that locks it read-only.
+// Until this is called, the job stays open for repeated Receive sessions
+// (status pending/processing both show "Receive" in the list; nothing else
+// ever sets status to 'done'), so a packer can always come back and log more
+// scans across as many visits as needed.
+//
+// PO/ASN end-receipt surfaces mismatches (over/under vs expected, plus any
 // unlisted SKU that was scanned) but never hard-blocks like outbound does —
 // receiving discrepancies are routine and must still be logged, not stuck.
 // Pass {force:true} once the receiver has seen the mismatch list and chosen
-// to complete anyway. Returns are never checked (no expected qty to compare).
-app.post('/api/inbound/:id/complete', (req, res) => {
+// to end receiving anyway. Returns are never checked (no expected qty to compare).
+app.post('/api/inbound/:id/end-receipt', (req, res) => {
   const { id } = req.params;
   const { force } = req.body || {};
   const db  = readDb();
   const rec = findInbound(db, id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const state = rec.state = rec.state || {};
-  if (state.status === 'done') return res.status(409).json({ error: 'Already complete.' });
+  if (state.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended.' });
 
   if (rec.type === 'po' && !force) {
     const mismatches = (rec.lines || [])
@@ -3522,7 +3569,7 @@ app.post('/api/inbound/:id/complete', (req, res) => {
   state.endTime = new Date().toISOString();
   rec.state = state;
   writeDb(db);
-  logAudit('inbound_complete', { id: rec.id, jobType: rec.type, reference: rec.reference, by: req.userId || '' });
+  logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, by: req.userId || '' });
   res.json({ ok: true });
 });
 
@@ -4493,7 +4540,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -4519,6 +4566,8 @@ app.get('/api/master/report/:kind', (req, res) => {
     const mins  = ev => (ev.startTime && ev.endTime) ? Math.round((new Date(ev.endTime) - new Date(ev.startTime)) / 6000) / 10 : null;
     const avg   = a => a.length ? Math.round(a.reduce((s, v) => s + v, 0) / a.length * 10) / 10 : '';
     const hhmm  = at => at ? new Date(at).toLocaleTimeString('en-SG', { hour12: false }) : '';
+    const byUserId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+    const nameFor  = id => byUserId.get(id) || id || '—';
 
     const uploads   = log.filter(e => e.type === 'upload' && inRange(e));
     const completed = log.filter(e => e.type === 'order_completed' && inRange(e));
@@ -4691,6 +4740,52 @@ app.get('/api/master/report/:kind', (req, res) => {
       addSheet('By Line Items', [
         ['Order No', 'Client', 'Customer', 'Pieces', 'Line Items', 'Completed', 'Operator'],
         ...[...orderRows].sort((a, b) => b[4] - a[4]),
+      ]);
+
+    } else if (kind === 'inbound') {
+      title = 'Inbound_Receiving';
+      // Live data straight from db.inbound — same pattern as 'aging' above —
+      // since inbound jobs aren't audit-log-derived the way order completion is.
+      const jobs = (db.inbound || []).filter(rec => {
+        const d = day(rec.uploaded_at);
+        return d >= from && d <= to;
+      });
+
+      addSheet('Inbound Jobs', [
+        ['Serial', 'Type', 'Reference', 'Source', 'Client', 'Uploaded', 'Uploaded By', 'Status', 'Expected Qty', 'Scanned Qty', 'Cartons'],
+        ...jobs.map(rec => {
+          const state = rec.state || {};
+          const expected = (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0);
+          const scanned  = Object.values(state.scanned || {}).reduce((s, q) => s + q, 0);
+          return [
+            rec.serial || '', rec.type === 'po' ? 'PO / ASN' : 'Return', rec.reference || '',
+            rec.source_name || '', rec.client_name || '', day(rec.uploaded_at), nameFor(rec.uploaded_by),
+            state.status || 'pending', rec.type === 'po' ? expected : '', scanned,
+            (state.cartons || []).length || 1,
+          ];
+        }),
+      ]);
+
+      const lineRows = [];
+      for (const rec of jobs) {
+        const state = rec.state || {};
+        const scanned = state.scanned || {};
+        const bySku = new Map((rec.lines || []).map(l => [l.sku, l]));
+        const skus = new Set([...bySku.keys(), ...Object.keys(scanned)]);
+        for (const sku of skus) {
+          const line = bySku.get(sku);
+          const qty  = scanned[sku] || 0;
+          const cond = (state.conditionTotals || {})[sku] || {};
+          lineRows.push([
+            rec.serial || '', rec.reference || '', sku, line?.description || '',
+            rec.type === 'po' ? (line?.expected_qty || 0) : '', qty,
+            cond.straight_to_inventory || '', cond.damaged || '', cond.kiv || '',
+          ]);
+        }
+      }
+      addSheet('Inbound Lines', [
+        ['Serial', 'Reference', 'SKU', 'Description', 'Expected Qty', 'Scanned Qty', 'Straight to Inventory', 'Damaged', 'KIV'],
+        ...lineRows,
       ]);
 
     } else {

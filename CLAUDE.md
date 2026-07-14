@@ -319,10 +319,17 @@ breaking the default.
   under a batch like outbound orders are, because one upload or one
   "+ New Return" IS the whole job (no need for the batch/order two-layer
   split outbound has for one file containing many orders). Each record:
-  `{ id, type: 'po'|'return', reference, source_name, client_name,
+  `{ id, serial, type: 'po'|'return', reference, source_name, client_name,
   uploaded_at, uploaded_by, filename, lines: [{sku, description,
   expected_qty}], state: { status, scanned, cartons, activeCartonNum,
   conditionTotals, scanLog } }`.
+- SERIAL NUMBER — `serial` (`nextInboundCode()`/`backfillInboundCodes()`,
+  mirrors outbound's `idealscan_code`/`nextIdealscanCode()` exactly, own
+  per-day counter key `db.inboundCodeSeq` so it never collides with or
+  depends on outbound's numbering) gives every inbound record a permanent
+  `IB-YYMMDD-NN` cross-reference, assigned once at creation (upload or
+  "+ New Return") and shown in the Inbound list's Serial column and as a
+  pill on the receiving screen.
 - TWO JOB TYPES:
   - `'po'` — an uploaded PO/ASN file (`parseInboundFile()`, independent of
     `parseUploadedFile`/`detectColumnMap` in lib/keyfields.js since those are
@@ -353,14 +360,25 @@ breaking the default.
     `state.conditionTotals[sku][condition]` — `state.scanned[sku]` itself
     stays a condition-agnostic total so the shared carton functions never
     need to know conditions exist.
-- COMPLETION NEVER HARD-BLOCKS. `POST /api/inbound/:id/complete` for a
-  `'po'` job compares scanned vs expected and returns 409
-  `{needsConfirm, mismatches, extras}` (mismatches = wrong qty, extras =
-  unlisted SKUs) instead of outbound's harder stop — receiving discrepancies
-  are routine and must still be recorded, not stuck. Resending with
-  `{force:true}` completes anyway. `'return'` jobs have no expected qty so
-  they always complete on the first call. Same "drop the empty trailing
-  carton, close every still-open one" logic as outbound's `/complete`.
+- REOPEN UNTIL "END RECEIPT" — nothing except `POST /api/inbound/:id/end-receipt`
+  (client button `#inboundCompleteBtn`, labelled "End Receipt") ever sets
+  `state.status = 'done'`. Closing the receiving overlay, switching tabs, or
+  coming back tomorrow all leave the job at `pending`/`processing`, so the
+  Inbound list keeps showing "Receive" (not "View") and `openInboundReceiving()`
+  just resumes from the stored `state` — a packer can walk away and return as
+  many times as needed before ending it. This is also why the list's
+  Receive/View split (question packers sometimes ask) is exactly one field:
+  `job.status === 'done'`, set by exactly one action.
+- END RECEIPT NEVER HARD-BLOCKS. `end-receipt` for a `'po'` job compares
+  scanned vs expected and returns 409 `{needsConfirm, mismatches, extras}`
+  (mismatches = wrong qty, extras = unlisted SKUs) instead of outbound's
+  harder stop — receiving discrepancies are routine and must still be
+  recorded, not stuck. Resending with `{force:true}` ends it anyway. `'return'`
+  jobs have no expected qty so they always end on the first call. Same "drop
+  the empty trailing carton, close every still-open one" logic as outbound's
+  `/complete`. (Renamed from `/api/inbound/:id/complete` and the
+  `inbound_complete` audit event → `inbound_end_receipt` for clarity; the
+  historical `logAudit` field-collision note below still refers to the old name.)
 - Carton mechanics are the same story as outbound, endpoint-for-endpoint:
   `new-carton`, `carton/switch`, `carton/cancel-multi`,
   `carton/label-confirmed`, `carton-slip` all mirror their outbound
@@ -378,8 +396,16 @@ breaking the default.
   silently skipped): no claim/lock system (outbound's one-packer-per-order
   guarantee has no inbound equivalent yet — fine for a single active
   receiver, would need the same `claimedBy`/`claimedAt`/stale-claim pattern
-  outbound uses if multiple people receive concurrently), no receiving
-  report/audit-log integration, no email alerts on discrepancy.
+  outbound uses if multiple people receive concurrently), no email alerts
+  on discrepancy.
+- REPORT: "Inbound Receiving" (`kind === 'inbound'` in `/api/master/report/:kind`,
+  added to `ADMIN_REPORT_KINDS` so admin logins get it too, not just the
+  master key) — pulls straight from live `db.inbound` (like `aging` does for
+  outbound, not audit-log-derived) filtered by `uploaded_at` within the
+  report's from/to range. Two sheets: "Inbound Jobs" (one row per job — serial,
+  type, reference, source, client, status, expected/scanned totals, carton
+  count) and "Inbound Lines" (one row per job×SKU actually scanned or
+  expected, with the return-only condition breakdown as three columns).
 - RECEIVING PHOTOS — two entry points, both hitting `POST
   /api/inbound/:id/photo` (multipart, optional `sku` field): (1) a per-scan
   camera button (`#inboundScanPhotoBtn`) next to the scan input, tagged to

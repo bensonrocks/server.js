@@ -1753,13 +1753,14 @@
         <table class="orders-table">
           <thead>
             <tr>
-              <th>Type</th><th>Reference</th><th>Source</th><th>Client</th>
+              <th>Serial</th><th>Type</th><th>Reference</th><th>Source</th><th>Client</th>
               <th>Items</th><th>Cartons</th><th>Status</th><th>Date</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
             ${inboundJobs.map(job => `
               <tr>
+                <td><code>${esc(job.serial || '—')}</code></td>
                 <td><span class="chip ${job.type === 'po' ? 'chip-cartons' : ''}">${job.type === 'po' ? 'PO / ASN' : 'Return'}</span></td>
                 <td>${esc(job.reference || '—')}</td>
                 <td>${esc(job.source_name || '—')}</td>
@@ -1923,6 +1924,7 @@
     document.getElementById('inboundJobType').textContent = job.type === 'po' ? 'PO / ASN Receiving' : 'Return Receiving';
     document.getElementById('inboundJobMeta').innerHTML = `
       <div class="scan-meta-primary">
+        ${job.serial ? `<span class="meta-pill">${esc(job.serial)}</span>` : ''}
         ${job.source_name ? `<span class="meta-pill">${esc(job.source_name)}</span>` : ''}
         ${job.client_name ? `<span class="meta-pill">${esc(job.client_name)}</span>` : ''}
       </div>`;
@@ -2097,23 +2099,28 @@
     } catch (err) { alert(err.message); }
   });
 
-  async function completeInbound(force) {
+  // Ends receiving on this job — the only action that locks it read-only.
+  // Anything short of this (closing the overlay, switching tabs, coming back
+  // later) leaves it open: status stays pending/processing, so the list
+  // still shows "Receive" and openInboundReceiving() picks up right where
+  // scanning left off, across as many sessions as needed.
+  async function endInboundReceipt(force) {
     if (!activeInbound) return;
     const feedback = document.getElementById('inboundScanFeedback');
     try {
-      const resp = await fetch(`/api/inbound/${activeInbound.id}/complete`, {
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/end-receipt`, {
         method: 'POST', headers: hdrs(), body: JSON.stringify({ force: !!force }),
       });
       const data = await resp.json();
       if (resp.status === 409 && data.needsConfirm) {
         const n = data.mismatches.length + data.extras.length;
         feedback.className = 'scan-feedback error';
-        feedback.innerHTML = `⚠ ${n} item(s) differ from the PO. <button class="link-btn" id="inboundForceCompleteBtn">Complete Anyway</button>`;
+        feedback.innerHTML = `⚠ ${n} item(s) differ from the PO. <button class="link-btn" id="inboundForceEndBtn">End Receipt Anyway</button>`;
         feedback.classList.remove('hidden');
-        document.getElementById('inboundForceCompleteBtn').addEventListener('click', () => completeInbound(true));
+        document.getElementById('inboundForceEndBtn').addEventListener('click', () => endInboundReceipt(true));
         return;
       }
-      if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Could not complete'); return; }
+      if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Could not end receipt'); return; }
       activeInbound.status = 'done';
       // Last carton never went through the "closing" prompt (nothing ever
       // supersedes it) — label it now, before moving on, same as outbound.
@@ -2126,7 +2133,7 @@
       renderInboundTab();
     } catch (err) { showFeedback(feedback, 'error', err.message); }
   }
-  document.getElementById('inboundCompleteBtn').addEventListener('click', () => completeInbound(false));
+  document.getElementById('inboundCompleteBtn').addEventListener('click', () => endInboundReceipt(false));
 
   // ── Request Order Deletion (admin: reason + own password; Master approves) ──
   let _delOrderTarget = null; // { orderNumber, batchId }
