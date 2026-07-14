@@ -1747,13 +1747,14 @@
       return;
     }
     empty.classList.add('hidden');
+    const isAdmin = currentUser?.role === 'admin';
     list.innerHTML = `
       <div class="orders-table-wrap">
         <table class="orders-table">
           <thead>
             <tr>
               <th>Type</th><th>Reference</th><th>Source</th><th>Client</th>
-              <th>Items</th><th>Cartons</th><th>Status</th><th>Date</th><th></th>
+              <th>Items</th><th>Cartons</th><th>Status</th><th>Date</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1765,9 +1766,15 @@
                 <td>${esc(job.client_name || '—')}</td>
                 <td>${job.scanned_total}${job.type === 'po' ? ` / ${job.expected_total}` : ''}</td>
                 <td>${job.cartons.length > 1 ? `📦 ${job.cartons.length}` : '—'}</td>
-                <td><span class="status-badge ${job.status}">${job.status}</span></td>
+                <td>
+                  <span class="status-badge ${job.status}">${job.status}</span>
+                  ${job.pending_deletion ? '<span class="status-badge unprocessed" title="Awaiting Master approval">Pending Deletion</span>' : ''}
+                </td>
                 <td>${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
-                <td><button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button></td>
+                <td>
+                  <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
+                  ${isAdmin && job.status !== 'done' && !job.pending_deletion ? `<button class="btn-del-order" data-inbound-del-id="${esc(job.id)}" data-inbound-del-ref="${esc(job.reference || job.id.slice(0, 8))}" title="Request deletion">&#128465;</button>` : ''}
+                </td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -1775,6 +1782,12 @@
     list.querySelectorAll('[data-inbound-id]').forEach(btn =>
       btn.addEventListener('click', () => openInboundReceiving(btn.dataset.inboundId))
     );
+    list.querySelectorAll('[data-inbound-del-id]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        openDeleteInboundModal(btn.dataset.inboundDelId, btn.dataset.inboundDelRef);
+      });
+    });
   }
 
   document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {
@@ -2170,6 +2183,66 @@
     } finally {
       btn.textContent = '\u{1F5D1} Request Deletion';
       btn.disabled = !_delOrderFormReady();
+    }
+  });
+
+  // ── Request Inbound Record Deletion (same admin-request/Master-approve
+  // flow as Orders — IdealInbound has no separate batch/record split, so
+  // one deletion path covers the whole job) ──────────────────────────────
+  let _delInboundTarget = null; // inbound record id
+  function openDeleteInboundModal(id, ref) {
+    _delInboundTarget = id;
+    document.getElementById('delInboundRef').textContent = ref;
+    const reasonEl = document.getElementById('delInboundReason');
+    const passEl   = document.getElementById('delInboundPassword');
+    reasonEl.value = '';
+    passEl.value   = '';
+    document.getElementById('delInboundError').classList.add('hidden');
+    document.getElementById('delInboundConfirmBtn').disabled = true;
+    document.getElementById('deleteInboundOverlay').classList.remove('hidden');
+    setTimeout(() => reasonEl.focus(), 100);
+  }
+  function _delInboundFormReady() {
+    return document.getElementById('delInboundReason').value.trim() !== '' &&
+           document.getElementById('delInboundPassword').value !== '';
+  }
+  ['delInboundReason', 'delInboundPassword'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      const ready = _delInboundFormReady();
+      document.getElementById('delInboundConfirmBtn').disabled = !ready;
+      if (ready) document.getElementById('delInboundError').classList.add('hidden');
+    });
+  });
+  document.getElementById('delInboundCancelBtn').addEventListener('click', () => {
+    document.getElementById('deleteInboundOverlay').classList.add('hidden');
+    _delInboundTarget = null;
+  });
+  document.getElementById('delInboundConfirmBtn').addEventListener('click', async () => {
+    const reason   = document.getElementById('delInboundReason').value.trim();
+    const password = document.getElementById('delInboundPassword').value;
+    if (!_delInboundFormReady() || !_delInboundTarget) {
+      document.getElementById('delInboundError').classList.remove('hidden');
+      return;
+    }
+    const id  = _delInboundTarget;
+    const btn = document.getElementById('delInboundConfirmBtn');
+    btn.disabled = true; btn.textContent = 'Requesting…';
+    try {
+      const r = await fetch(`/api/inbound/${id}/deletion-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, password }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Request failed');
+      document.getElementById('deleteInboundOverlay').classList.add('hidden');
+      _delInboundTarget = null;
+      await renderInboundTab();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.textContent = '\u{1F5D1} Request Deletion';
+      btn.disabled = !_delInboundFormReady();
     }
   });
 
@@ -3826,10 +3899,19 @@
 
   // ── Pending Deletions (Master review of admin-requested deletions) ──────────
   let _pendingDelTimer = null;
+  let _pendingOrderDelCount = 0;
+  let _pendingInboundDelCount = 0;
+  function updatePendingDelBadge() {
+    const badge = document.getElementById('pendingDelBadge');
+    const total = _pendingOrderDelCount + _pendingInboundDelCount;
+    badge.textContent = total;
+    badge.classList.toggle('hidden', total === 0);
+  }
   function startPendingDelPolling() {
     stopPendingDelPolling();
     loadPendingDeletions();
-    _pendingDelTimer = setInterval(loadPendingDeletions, 15000);
+    loadInboundPendingDeletions();
+    _pendingDelTimer = setInterval(() => { loadPendingDeletions(); loadInboundPendingDeletions(); }, 15000);
   }
   function stopPendingDelPolling() {
     if (_pendingDelTimer) { clearInterval(_pendingDelTimer); _pendingDelTimer = null; }
@@ -3842,9 +3924,8 @@
     } catch { /* silent — next poll retries */ }
   }
   function renderPendingDeletions(list) {
-    const badge = document.getElementById('pendingDelBadge');
-    badge.textContent = list.length;
-    badge.classList.toggle('hidden', list.length === 0);
+    _pendingOrderDelCount = list.length;
+    updatePendingDelBadge();
 
     document.getElementById('pendingDelBody').innerHTML = list.map(p => `
       <tr>
@@ -3894,6 +3975,65 @@
     });
   }
 
+  async function loadInboundPendingDeletions() {
+    try {
+      const r = await fetch('/api/master/inbound-pending-deletions', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      renderInboundPendingDeletions(await r.json());
+    } catch { /* silent — next poll retries */ }
+  }
+  function renderInboundPendingDeletions(list) {
+    _pendingInboundDelCount = list.length;
+    updatePendingDelBadge();
+
+    document.getElementById('pendingInboundDelBody').innerHTML = list.map(p => `
+      <tr>
+        <td class="dcs-name">${esc(p.reference || p.id.slice(0, 8))}</td>
+        <td class="pd-col-client">${esc(p.client) || '—'}</td>
+        <td>${esc(p.reason)}</td>
+        <td>${esc(p.requestedByName)}</td>
+        <td class="pd-col-progress">${p.scannedTotal}${p.type === 'po' ? ` / ${p.expectedTotal}` : ''}</td>
+        <td>
+          <button class="btn-sm btn-primary pid-approve-btn" data-id="${esc(p.id)}" data-ref="${esc(p.reference || p.id.slice(0, 8))}">&#10003; Approve</button>
+          <button class="btn-sm btn-danger-sm pid-reject-btn" data-id="${esc(p.id)}" data-ref="${esc(p.reference || p.id.slice(0, 8))}">&#215; Reject</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('pendingInboundDelEmpty').classList.toggle('hidden', list.length > 0);
+
+    document.querySelectorAll('.pid-approve-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Approve deletion of ${btn.dataset.ref}? This cannot be undone.`)) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/inbound-pending-deletions/${encodeURIComponent(btn.dataset.id)}/approve`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Approve failed');
+          loadInboundPendingDeletions();
+          renderInboundTab();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+    document.querySelectorAll('.pid-reject-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const note = prompt(`Reject deletion of ${btn.dataset.ref}? Optional note for the requester:`, '');
+        if (note === null) return; // cancelled
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/inbound-pending-deletions/${encodeURIComponent(btn.dataset.id)}/reject`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Reject failed');
+          loadInboundPendingDeletions();
+          renderInboundTab();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+  }
+
   let _labelTemplates = null;
   let _docTemplates   = null; // array of carrier names that have .docx templates
 
@@ -3934,6 +4074,7 @@
     loadLearnedBarcodes();
     startLiveActivityPolling(); // Live Activity is the default landing tab
     loadPendingDeletions(); // one-shot — keeps the nav badge accurate even if the tab isn't opened
+    loadInboundPendingDeletions();
   }
 
   // Admin tab switching

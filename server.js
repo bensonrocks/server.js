@@ -3217,6 +3217,7 @@ app.get('/api/inbound', (req, res) => {
       startTime:         state.startTime || null,
       endTime:           state.endTime || null,
       photos:            (rec.photos || []).map(p => ({ id: p.id, sku: p.sku, caption: p.caption, uploadedAt: p.uploadedAt })),
+      pending_deletion:  rec.pending_deletion || null,
     };
   });
   res.json(list);
@@ -3471,7 +3472,7 @@ app.post('/api/inbound/:id/complete', (req, res) => {
   state.endTime = new Date().toISOString();
   rec.state = state;
   writeDb(db);
-  logAudit('inbound_complete', { id: rec.id, type: rec.type, reference: rec.reference, by: req.userId || '' });
+  logAudit('inbound_complete', { id: rec.id, jobType: rec.type, reference: rec.reference, by: req.userId || '' });
   res.json({ ok: true });
 });
 
@@ -3497,6 +3498,130 @@ app.get('/api/inbound/:id/carton-slip', (req, res) => {
     sourceName: rec.source_name || '', clientName: rec.client_name || '',
     cartonNum: carton.num, cartonCount: cartons.length, items,
   });
+});
+
+// ── Inbound deletion — mirrors the outbound Orders workflow exactly ─────────
+// IdealInbound has no batch/order two-layer split (one upload or one
+// "+ New Return" IS the whole job — see the module note above), so there's
+// no separate "delete the whole batch" vs "delete one record" distinction
+// to preserve: each db.inbound[] entry already plays both roles. One
+// deletion path, same two ways in as outbound orders:
+//   (1) Master deletes directly — DELETE /api/master/inbound/:id
+//   (2) Admin requests (own password + reason) — Master approves/rejects
+// Both block once the job is 'done', same rule outbound orders use.
+function removeInboundRecord(db, id) {
+  const idx = (db.inbound || []).findIndex(r => r.id === id);
+  if (idx === -1) return null;
+  const [victim] = db.inbound.splice(idx, 1);
+  try { fs.rmSync(path.join(INBOUND_PHOTO_DIR, id), { recursive: true, force: true }); } catch {}
+  return victim;
+}
+
+app.delete('/api/master/inbound/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to delete this record.' });
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  if ((rec.state || {}).status === 'done') {
+    return res.status(403).json({ error: 'This record is completed and can no longer be deleted.' });
+  }
+  removeInboundRecord(db, id);
+  writeDb(db);
+  logAudit('inbound_deleted', { id, reference: rec.reference || '', jobType: rec.type, client: rec.client_name || '', by: req.userId || 'master', reason });
+  res.json({ ok: true });
+});
+
+app.post('/api/inbound/:id/deletion-request', (req, res) => {
+  const { id } = req.params;
+  const { reason, password } = req.body || {};
+  const reasonTrim = String(reason || '').trim();
+  if (!reasonTrim) return res.status(400).json({ error: 'A reason is required to request deletion.' });
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Session user not found.' });
+  if ((user.role || 'admin') !== 'admin') {
+    return res.status(403).json({ error: 'Only Admin users can request deletion.' });
+  }
+  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
+    // 403, not 401 — the session token is still valid; only this re-entered
+    // password check failed (same reasoning as the outbound order-deletion
+    // request: a 401 here would trip the client's global session-expired
+    // handler and force-reload the page).
+    return res.status(403).json({ error: 'Incorrect password.' });
+  }
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  if ((rec.state || {}).status === 'done') {
+    return res.status(403).json({ error: 'This record is completed and can no longer be deleted.' });
+  }
+  if (rec.pending_deletion) {
+    return res.status(409).json({ error: 'A deletion request is already pending for this record.' });
+  }
+  rec.pending_deletion = { reason: reasonTrim, requestedBy: req.userId, requestedAt: new Date().toISOString() };
+  writeDb(db);
+  logAudit('inbound_deletion_requested', { id, reference: rec.reference || '', jobType: rec.type, client: rec.client_name || '', by: req.userId || '', reason: reasonTrim });
+  res.json({ ok: true });
+});
+
+app.get('/api/master/inbound-pending-deletions', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db      = readDb();
+  const nameFor = (() => {
+    const byId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+    return uid => byId.get(uid) || uid || '(unknown)';
+  })();
+  const out = (db.inbound || [])
+    .filter(rec => rec.pending_deletion)
+    .map(rec => ({
+      id:              rec.id,
+      type:            rec.type,
+      reference:       rec.reference || '',
+      client:          rec.client_name || '',
+      reason:          rec.pending_deletion.reason,
+      requestedBy:     rec.pending_deletion.requestedBy,
+      requestedByName: nameFor(rec.pending_deletion.requestedBy),
+      requestedAt:     rec.pending_deletion.requestedAt,
+      scannedTotal:    Object.values((rec.state || {}).scanned || {}).reduce((s, q) => s + q, 0),
+      expectedTotal:   (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
+    }))
+    .sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt))); // oldest-waiting first
+  res.json(out);
+});
+
+app.post('/api/master/inbound-pending-deletions/:id/approve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec || !rec.pending_deletion) return res.status(404).json({ error: 'No pending deletion request for this record.' });
+  const pending = rec.pending_deletion;
+  removeInboundRecord(db, id);
+  writeDb(db);
+  logAudit('inbound_deleted', {
+    id, reference: rec.reference || '', jobType: rec.type, client: rec.client_name || '',
+    by: req.userId || 'master', reason: pending.reason, requestedBy: pending.requestedBy,
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/master/inbound-pending-deletions/:id/reject', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  const note = String(req.body?.note || '').trim();
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec || !rec.pending_deletion) return res.status(404).json({ error: 'No pending deletion request for this record.' });
+  const pending = rec.pending_deletion;
+  delete rec.pending_deletion;
+  writeDb(db);
+  logAudit('inbound_deletion_rejected', {
+    id, reference: rec.reference || '', jobType: rec.type, client: rec.client_name || '',
+    by: req.userId || 'master', requestedBy: pending.requestedBy, reason: pending.reason, note,
+  });
+  res.json({ ok: true });
 });
 
 // Teach-on-scan: packer confirms an unrecognized product barcode belongs to

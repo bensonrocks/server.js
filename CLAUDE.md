@@ -342,6 +342,49 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   can). Thumbnails open a small lightbox (`#inboundPhotoLightbox`) on
   click; no delete — this is additive/read-mostly like the carton slip,
   not a place state gets removed.
+- DELETION — mirrors the outbound Orders admin-request/Master-approve
+  workflow exactly, adapted for the fact that IdealInbound has no
+  batch/record split (one upload or one "+ New Return" already IS the
+  whole job — see the module note above), so there's only ONE deletion
+  path per record rather than outbound's separate "delete whole batch" vs
+  "delete one order":
+  - `DELETE /api/master/inbound/:id` — Master direct delete (checkMaster),
+    requires a `reason`, blocked once `state.status === 'done'` (same rule
+    outbound orders use — completed work is never deletable, by either
+    path).
+  - `POST /api/inbound/:id/deletion-request` — Admin-role + the admin's
+    OWN password re-entered as a confirmation step (not the master key),
+    sets `rec.pending_deletion = {reason, requestedBy, requestedAt}`.
+    Wrong password → 403 (never 401 — a 401 here would trip the client's
+    global "session expired" handler and force-reload, since the session
+    token itself is still valid; only this secondary password check
+    failed). Blocked if already `done` or already has a pending request.
+  - `GET /api/master/inbound-pending-deletions` /
+    `POST .../:id/approve` / `POST .../:id/reject` — Master reviews.
+    Approve calls `removeInboundRecord()` (splices from `db.inbound[]` +
+    `fs.rmSync`s the job's whole photo directory). Reject just clears
+    `pending_deletion`, record stays.
+  - UI: the 🗑 button on each Inbound list row (admin-only, hidden once
+    `status === 'done'` or already pending) opens `#deleteInboundOverlay`
+    (reason + own password — literally the same modal shape as
+    `#deleteOrderOverlay`, just a separate instance). A row with a pending
+    request shows a red "Pending Deletion" badge next to its status, same
+    as orders. The Administrator → Pending Deletions tab gained a SECOND
+    table ("Inbound Deletion Requests") below the existing orders one
+    rather than merging them into one table — the two record shapes don't
+    line up well enough (order progress is scanned/total qty; inbound is
+    scanned/expected and only meaningful for `'po'` jobs) to share columns
+    cleanly. The nav badge count is the SUM of both tables' pending counts.
+  - Caught during testing: `logAudit(type, data)` builds
+    `{ type, at, ...data }` — spreading `data` AFTER the `type` argument
+    means any `data.type` key silently overwrites the real event type.
+    Every inbound `logAudit(...)` call that wanted to record po-vs-return
+    (including one pre-existing in `inbound_complete`, predating this
+    deletion work) was accidentally doing exactly that, corrupting
+    `auditLog` entries' `type` field to `"po"`/`"return"` instead of e.g.
+    `"inbound_complete"`. Fixed by renaming that data field to `jobType`
+    everywhere. Any FUTURE `logAudit()` call anywhere in this file must
+    avoid a bare `type` key in its data object for the same reason.
 
 ## Report data retention (server.js — `db.auditLog` / `AUDIT_ARCHIVE_AFTER_DAYS`)
 

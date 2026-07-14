@@ -534,6 +534,18 @@
           </table>
           <div id="pendingDelEmpty" class="empty-state hidden">No pending deletion requests.</div>
         </div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.8rem">Inbound Deletion Requests</div>
+        </div>
+        <div id="pendingInboundDelWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Reference</th><th class="pd-col-client">Client</th><th>Reason</th><th>Requested By</th><th class="pd-col-progress">Progress</th><th>Actions</th></tr></thead>
+            <tbody id="pendingInboundDelBody"></tbody>
+          </table>
+          <div id="pendingInboundDelEmpty" class="empty-state hidden">No pending inbound deletion requests.</div>
+        </div>
       </div>
 
       <!-- Tab: Upload History -->
@@ -1385,6 +1397,28 @@
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="delOrderCancelBtn">Cancel</button>
         <button class="btn-danger" id="delOrderConfirmBtn" disabled>&#128465; Request Deletion</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Inbound Record Deletion Modal — same admin-request/Master-approve flow as Orders -->
+  <div id="deleteInboundOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#9888;</div>
+      <div class="modal-title">Request Record Deletion</div>
+      <p class="modal-desc">Deleting <strong id="delInboundRef">—</strong> requires Master's approval. It will show as <strong>Pending Deletion</strong> until then.</p>
+      <div class="form-group">
+        <label>Reason <span class="cfg-req">*</span></label>
+        <textarea id="delInboundReason" rows="3" placeholder="Why should this record be deleted?" autocomplete="off"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Your Password <span class="cfg-req">*</span></label>
+        <input type="password" id="delInboundPassword" placeholder="Confirm it's you" autocomplete="off" />
+      </div>
+      <div id="delInboundError" class="login-error hidden">A reason and your password are required.</div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="delInboundCancelBtn">Cancel</button>
+        <button class="btn-danger" id="delInboundConfirmBtn" disabled>&#128465; Request Deletion</button>
       </div>
     </div>
   </div>
