@@ -5145,11 +5145,20 @@
   let cameraAnimFrame = null;
   let barcodeDetector = null;
   let cameraScanMode  = 'single'; // 'single' | 'batch' | 'label'
+  let cameraScanTarget = 'outbound'; // 'outbound' | 'inbound' — where a detected value gets applied
   const batchMap      = new Map(); // rawValue → { checked: bool }
   const lastSingleHit = {};        // rawValue → timestamp (cooldown)
   const SINGLE_COOLDOWN_MS = 1800;
 
-  document.getElementById('openCameraBtn').addEventListener('click', openCameraScanner);
+  // Routes a scanned/OCR'd value to whichever screen opened the camera —
+  // outbound's offline-aware queue, or inbound's direct scan call.
+  function dispatchCameraScan(val) {
+    if (cameraScanTarget === 'inbound') inboundScan(val);
+    else handleItemScan(val);
+  }
+
+  document.getElementById('openCameraBtn').addEventListener('click', () => openCameraScanner('outbound'));
+  document.getElementById('inboundCameraScanBtn').addEventListener('click', () => openCameraScanner('inbound'));
   document.getElementById('closeCameraBtn').addEventListener('click', closeCameraScanner);
   document.getElementById('cmodeSingle').addEventListener('click', () => setCameraMode('single'));
   document.getElementById('cmodeBatch').addEventListener('click',  () => setCameraMode('batch'));
@@ -5162,7 +5171,7 @@
   });
   document.getElementById('clfUseBtn').addEventListener('click', () => {
     const sku = document.getElementById('clfSku').textContent.trim();
-    if (sku && sku !== '—') { handleItemScan(sku); closeCameraScanner(); }
+    if (sku && sku !== '—') { dispatchCameraScan(sku); closeCameraScanner(); }
   });
 
   document.getElementById('cameraClearBtn').addEventListener('click', () => { batchMap.clear(); renderBatchChips(); });
@@ -5172,7 +5181,7 @@
   document.getElementById('cameraScanSelectedBtn').addEventListener('click', () => {
     const selected = [...batchMap.entries()].filter(([, v]) => v.checked).map(([k]) => k);
     if (!selected.length) return;
-    selected.forEach(val => handleItemScan(val));
+    selected.forEach(val => dispatchCameraScan(val));
     closeCameraScanner();
   });
 
@@ -5264,7 +5273,8 @@
     }, 'image/jpeg', 0.92);
   }
 
-  async function openCameraScanner() {
+  async function openCameraScanner(target = 'outbound') {
+    cameraScanTarget = target;
     document.getElementById('cameraScanOverlay').classList.remove('hidden');
     document.getElementById('cameraNoSupport').classList.add('hidden');
     document.getElementById('cameraViewfinderWrap').classList.remove('hidden');
@@ -5312,7 +5322,7 @@
     if (cameraStream)    { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
     document.getElementById('cameraScanOverlay').classList.add('hidden');
     batchMap.clear();
-    document.getElementById('itemScanInput').focus();
+    document.getElementById(cameraScanTarget === 'inbound' ? 'inboundScanInput' : 'itemScanInput').focus();
   }
 
   function startCameraLoop() {
@@ -5341,7 +5351,7 @@
         const last = lastSingleHit[val] || 0;
         if (now - last > SINGLE_COOLDOWN_MS) {
           lastSingleHit[val] = now;
-          handleItemScan(val);
+          dispatchCameraScan(val);
           showCameraFlash(val);
         }
       } else {

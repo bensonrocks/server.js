@@ -171,6 +171,31 @@ screenshot showing IdealInbound's per-scan camera button clipped to an
 invisible sliver; since the class is shared, the same latent bug applied
 to outbound's `#openCameraBtn` too, and the one CSS fix resolves both.
 
+## Camera barcode scanning — shared between outbound and IdealInbound (public/app.js)
+
+The live-viewfinder `BarcodeDetector`-based scanner (`openCameraScanner()`,
+`#cameraScanOverlay`, single/batch/label modes) originally belonged only to
+outbound's scan overlay (`#openCameraBtn`). IdealInbound's receiving screen
+had a camera button too, but it only attached a documentation photo
+(`#inboundScanPhotoBtn`) — no way to scan a barcode with the phone's camera
+there, forcing manual typing on phones with no physical scanner.
+
+Rather than duplicate the scanner, `openCameraScanner(target)` now takes an
+optional `target` (`'outbound'` default, or `'inbound'`), stored in
+`cameraScanTarget`, and a `dispatchCameraScan(val)` helper routes each
+detected/OCR'd value to `handleItemScan()` (outbound's offline-aware queue)
+or `inboundScan()` (inbound's direct scan call) accordingly. `closeCameraScanner()`
+returns focus to whichever input opened it (`itemScanInput` vs
+`inboundScanInput`). `#inboundCameraScanBtn` (next to the existing photo
+button in IdealInbound's scan row) opens the same overlay with
+`target: 'inbound'`.
+
+**Gotcha avoided**: both trigger buttons must wrap the call in an arrow
+function (`() => openCameraScanner('outbound')`), never pass the function
+directly as the event handler — `addEventListener('click', openCameraScanner)`
+would hand the click's `MouseEvent` as the `target` argument, silently
+breaking the default.
+
 ## Multi-carton orders (server.js — `activeCarton`/`addToActiveCarton`, /api/scan/new-carton)
 
 - A big order can take more than one physical box. `state.cartons` is an array
