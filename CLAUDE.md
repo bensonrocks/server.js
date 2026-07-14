@@ -95,6 +95,25 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 - Take: next alphanumeric token (2+ chars) → batch number (can be pure-digit like `533601` or letters like `RT`)
 - Take: date-like token matching `\d{1,2}[/-]\w+[/-]\d{2,4}` → expiry date
 
+## Scan-to-find-order (public/app.js `waybillLookupGo`, server.js `/api/waybill-lookup`)
+
+The "Scan waybill number or order number to find order…" bar on the Orders
+tab must accept every number actually printed/barcoded on a picking list —
+not just `order_number`. Where the GI number ends up depends on the upload
+path:
+- Keyfields picking-list **PDF** upload (`parsePdfPicklistDetailed`): the
+  `GI-\d{4,}` barcode becomes `order_number` directly, so it already matches.
+- XLSX/CSV upload with an "Issue No" / "iWMS GINo" column
+  (`detectColumnMap` in lib/keyfields.js): the same GI number instead lands
+  in `issue_no`, a DIFFERENT field from `order_number`.
+Both the client-side instant match (`directMatch` in `waybillLookupGo`) and
+the server-side fallback (`/api/waybill-lookup`) must check `issue_no`
+alongside `order_number`/`pick_ticket`/`waybill_number`/`po_number` — missing
+this field meant any order uploaded via the XLSX/CSV path could never be
+found by scanning its GI-number barcode, even though the number was
+captured and stored correctly. Both call sites use the same `strip0`
+leading-zero-tolerant comparison as the other identifier fields.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the
@@ -219,6 +238,14 @@ breaking the default.
   active — even if the packer had switched back to edit an earlier one.
   Refuses (400) if the currently active carton is still empty — prevents
   phantom cartons from a stray double-tap.
+- ORDER-LEVEL SPLIT CONFIRM (client-only, `requestNewCarton()` in app.js):
+  before even calling `/new-carton`, if the order's total scanned pieces are
+  less than total ordered, a `confirm()` warns that starting a new carton
+  now means a SKU could end up split across boxes, and lets the packer
+  cancel. This is a heads-up at the point of DECIDING to split — the
+  existing CROSS-CARTON DUPLICATE CONFIRM below is the reactive check that
+  catches the actual split once a specific SKU gets scanned twice across
+  cartons; the two are independent and both still fire.
 - `POST /api/scan/carton/switch` `{orderNumber, cartonNum}` — reopens ANY
   existing carton (open or previously closed) as the active one. Toggling
   through cartons this way to add/remove items and "closing" it again is

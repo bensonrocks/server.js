@@ -1370,15 +1370,20 @@
 
   async function waybillLookupGo(val) {
     // Priority 1: direct order number match (client-side, instant).
-    // Also matches the pick-ticket number — PDF picking lists carry two
-    // barcodes (GI number + pick ticket) and either should open the order.
+    // Also matches the pick-ticket and GI (issue_no) numbers — PDF picking
+    // lists carry a GI-number barcode that becomes order_number directly,
+    // but an XLSX/CSV upload with an "Issue No"/"iWMS GINo" column instead
+    // stores the same GI number as issue_no, so that must be checked too or
+    // its barcode never resolves here.
     const valLower = val.toLowerCase();
     const strip0 = s => s.replace(/^0+(?=.)/, '');
     const directMatch = loadedOrders.find(o => {
       const on = o.order_number.trim().toLowerCase();
       const pt = (o.pick_ticket || '').trim().toLowerCase();
+      const gi = (o.issue_no    || '').trim().toLowerCase();
       return on === valLower || strip0(on) === strip0(valLower) ||
-             (pt && (pt === valLower || strip0(pt) === strip0(valLower)));
+             (pt && (pt === valLower || strip0(pt) === strip0(valLower))) ||
+             (gi && (gi === valLower || strip0(gi) === strip0(valLower)));
     });
     if (directMatch) {
       if (directMatch.scan_status === 'done') {
@@ -2649,6 +2654,24 @@
   const NEW_CARTON_CODES = new Set(['NEWCARTON', 'NEW CARTON', 'NEW-CARTON', 'NEWBOX']);
   async function requestNewCarton() {
     if (!activeOrder) return;
+    // The order isn't fully picked yet — whatever's scanned into the NEW
+    // carton could include a SKU that's already partly scanned into an
+    // earlier one, splitting it across boxes. Confirm that's intentional
+    // before starting the carton (the reactive per-SKU cross-carton-confirm
+    // still catches the actual split when it happens; this is an earlier,
+    // order-level heads-up at the point of deciding to split at all).
+    {
+      const scanned  = activeOrder.scanned || {};
+      const pendingC = (typeof pendingCountsFor === 'function') ? pendingCountsFor(activeOrder) : {};
+      const cnt      = sku => (scanned[sku] || 0) + (pendingC[sku] || 0);
+      const lines    = mergedScanLines(activeOrder);
+      const totalOrdered = lines.reduce((s, l) => s + (l.qty || 0), 0);
+      const totalScanned = lines.reduce((s, l) => s + cnt(l.sku), 0);
+      if (totalOrdered > 0 && totalScanned < totalOrdered) {
+        const ok = confirm(`This order isn't fully scanned yet (${totalScanned}/${totalOrdered} pcs). Starting a new carton means the same SKU could end up split across boxes. Continue?`);
+        if (!ok) return;
+      }
+    }
     const btn = document.getElementById('newCartonBtn');
     btn.disabled = true;
     try {

@@ -2835,11 +2835,20 @@ app.post('/api/waybill-lookup', (req, res) => {
   // order/GI number, pick ticket, waybill/reference, PO/shipment (SHPM…).
   // Matching here (not just client-side) means any order opens from the scan
   // bar even when it's outside the dashboard's loaded date window.
+  //
+  // GI number lands in different fields depending on upload path: the
+  // Keyfields picking-list PDF parser makes it the order_number directly
+  // (parsePdfPicklistDetailed), but an XLSX/CSV upload with an "Issue No" /
+  // "iWMS GINo" column maps it into issue_no instead (detectColumnMap) — so
+  // issue_no must be checked here too, or that upload path's GI barcode
+  // never resolves to an order.
   const order = globalOrdersWithState().find(o => {
     const on = (o.order_number || '').trim().toLowerCase();
     const pt = (o.pick_ticket  || '').trim().toLowerCase();
+    const gi = (o.issue_no     || '').trim().toLowerCase();
     return on === q || strip0(on) === strip0(q) ||
       (pt && (pt === q || strip0(pt) === strip0(q))) ||
+      (gi && (gi === q || strip0(gi) === strip0(q))) ||
       (o.waybill_number && o.waybill_number.trim().toLowerCase() === q) ||
       (o.po_number      && String(o.po_number).trim().toLowerCase() === q);
   });
