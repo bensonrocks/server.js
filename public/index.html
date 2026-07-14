@@ -264,6 +264,8 @@
           <button class="carton-nav-btn hidden" id="inboundCartonNextBtn" title="Switch to the next carton">&#9654;</button>
           <button class="btn-new-carton" id="inboundNewCartonBtn" title="Box is full — start scanning the next carton">+ New Carton</button>
           <button class="btn-cancel-multi-carton hidden" id="inboundCancelMultiCartonBtn" title="Actually, it all fits in one box — merge every carton back into one">&#8634; 1 Box</button>
+          <button class="btn-secondary btn-sm" id="inboundGeneralPhotoBtn" title="Add a general photo of the shipment/box (not tied to one SKU)">&#128247; Add Photo</button>
+          <input type="file" id="inboundGeneralPhotoInput" accept="image/*" capture="environment" hidden />
         </div>
       </div>
     </div>
@@ -282,6 +284,10 @@
         </thead>
         <tbody id="inboundItemsTbody"></tbody>
       </table>
+      <div class="admin-section-header" style="margin:.75rem 1rem 0">
+        <div class="admin-section-title" style="font-size:.8rem">Photos</div>
+      </div>
+      <div id="inboundPhotoGrid" class="inbound-photo-grid"></div>
     </div>
 
     <div class="item-scan-dock">
@@ -298,6 +304,8 @@
         <input type="text" id="inboundScanInput" class="big-scan-input"
           placeholder="Scan item barcode / SKU&#8230;"
           autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button class="btn-camera-open" id="inboundScanPhotoBtn" title="Attach a photo to the last scanned item">&#128247;</button>
+        <input type="file" id="inboundScanPhotoInput" accept="image/*" capture="environment" hidden />
       </div>
       <div id="inboundScanFeedback" class="scan-feedback hidden"></div>
       <div class="dock-actions">
@@ -1320,6 +1328,15 @@
         <button class="btn-primary" id="cartonLabelConfirmBtn">&#10003; I've Written It</button>
       </div>
     </div>
+  </div>
+
+  <!-- Inbound photo lightbox — full-size view of a receiving photo -->
+  <div id="inboundPhotoLightbox" class="inbound-photo-lightbox hidden">
+    <div class="inbound-photo-lightbox-bar">
+      <span id="inboundPhotoLightboxCaption"></span>
+      <button id="inboundPhotoLightboxClose" class="btn-secondary btn-sm">&#10005; Close</button>
+    </div>
+    <img id="inboundPhotoLightboxImg" src="" alt="Receiving photo" />
   </div>
 
   <!-- Station Throughput — visible to Warehouse, Admin and Master -->

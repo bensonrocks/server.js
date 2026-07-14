@@ -136,11 +136,13 @@ const BETIME_CODE2_FILE       = path.join(__dirname, 'lib', 'betime-code2.json')
 // DATA_DIR (persistent volume) so descriptions survive redeploys
 const SKU_DESC_FILE           = path.join(DATA_DIR, 'sku-descriptions.json');
 
-const LABEL_IMPORT_DIR = path.join(DATA_DIR, 'label_imports');
+const LABEL_IMPORT_DIR   = path.join(DATA_DIR, 'label_imports');
+const INBOUND_PHOTO_DIR  = path.join(DATA_DIR, 'inbound_photos');
 fs.mkdirSync(WMS_DIR,            { recursive: true });
 fs.mkdirSync(WAYBILL_DIR,        { recursive: true });
 fs.mkdirSync(LABEL_IMPORT_DIR,   { recursive: true });
 fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
+fs.mkdirSync(INBOUND_PHOTO_DIR,  { recursive: true });
 
 // ── User credentials ─────────────────────────────────────────────────────────
 // Users are stored inside db.json under the "users" key so all app data lives
@@ -1780,6 +1782,21 @@ app.get('/api/no-barcode-sheet', requireAuthOrToken, (req, res) => {
 </body></html>`);
 });
 
+// Read-only — serves an inbound receiving photo's bytes. Registered before
+// the blanket requireAuth middleware (below) so ?token= works for plain
+// <img> tags, which can't send the x-auth-token header — same pattern as
+// the PDF viewers above.
+app.get('/api/inbound/:id/photo/:photoId', requireAuthOrToken, (req, res) => {
+  const { id, photoId } = req.params;
+  const db    = readDb();
+  const rec   = findInbound(db, id);
+  const photo = rec?.photos?.find(p => p.id === photoId);
+  if (!photo) return res.status(404).send('Not found');
+  res.sendFile(path.join(INBOUND_PHOTO_DIR, id, photo.filename), err => {
+    if (err && !res.headersSent) res.status(404).send('Not found');
+  });
+});
+
 // Keyfields XLSX generation → see lib/keyfields.js
 
 // ── Header-row detection ─────────────────────────────────────────────────────
@@ -3199,9 +3216,43 @@ app.get('/api/inbound', (req, res) => {
       active_carton_num: state.activeCartonNum || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
       startTime:         state.startTime || null,
       endTime:           state.endTime || null,
+      photos:            (rec.photos || []).map(p => ({ id: p.id, sku: p.sku, caption: p.caption, uploadedAt: p.uploadedAt })),
     };
   });
   res.json(list);
+});
+
+// Attach a photo to a receiving job — optionally tagged to a SKU (e.g.
+// photographing a damaged item right when it's scanned) or left untagged
+// for a general shot of the box/shipment. Bytes are written to disk
+// (INBOUND_PHOTO_DIR/<jobId>/<photoId>.<ext>) rather than into db.json,
+// same reasoning as WMS/waybill files — keeps the JSON blob small.
+app.post('/api/inbound/:id/photo', upload.single('photo'), (req, res) => {
+  const { id } = req.params;
+  if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+
+  const photoId = uuidv4();
+  const ext = (path.extname(req.file.originalname || '') || '.jpg').toLowerCase();
+  const dir = path.join(INBOUND_PHOTO_DIR, id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${photoId}${ext}`), req.file.buffer);
+
+  const photo = {
+    id: photoId,
+    filename: `${photoId}${ext}`,
+    mimeType: req.file.mimetype,
+    sku: (req.body.sku || '').trim() || null,
+    caption: (req.body.caption || '').trim(),
+    uploadedBy: req.userId || '',
+    uploadedAt: new Date().toISOString(),
+  };
+  rec.photos = rec.photos || [];
+  rec.photos.push(photo);
+  writeDb(db);
+  res.json({ ok: true, photo: { id: photo.id, sku: photo.sku, caption: photo.caption, uploadedAt: photo.uploadedAt } });
 });
 
 app.post('/api/inbound/upload', upload.single('inboundFile'), (req, res) => {

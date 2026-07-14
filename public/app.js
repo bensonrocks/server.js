@@ -45,6 +45,7 @@
   // ── IdealInbound — receiving (POs/ASNs and returns) ─────────────────────────
   let inboundJobs  = [];
   let activeInbound = null;
+  let lastScannedInboundSku = null;
 
   let orderTimings = {};
   try { orderTimings = JSON.parse(sessionStorage.getItem('wms_timings') || '{}'); } catch {}
@@ -1915,6 +1916,8 @@
     document.getElementById('inboundConditionRow').classList.toggle('hidden', job.type !== 'return');
     updateInboundCartonBadge(job);
     renderInboundItemsTable(job);
+    lastScannedInboundSku = null;
+    renderInboundPhotoGrid(job);
     document.getElementById('inboundCompleteBtn').disabled = job.status === 'done';
     document.getElementById('inboundScanOverlay').classList.remove('hidden');
     const input = document.getElementById('inboundScanInput');
@@ -1951,6 +1954,7 @@
       if (data.cartonCount > activeInbound.cartons.length) {
         activeInbound.cartons.push({ num: data.cartonNum, scans: {} });
       }
+      lastScannedInboundSku = data.sku;
       updateInboundCartonBadge(activeInbound);
       renderInboundItemsTable(activeInbound);
       showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
@@ -1964,6 +1968,71 @@
     if (!val) return;
     e.target.value = '';
     inboundScan(val);
+  });
+
+  // ── Inbound receiving photos — per-scan (tagged to the last SKU scanned)
+  // and general (untagged, e.g. a shot of the box/shipment) ──────────────
+  async function uploadInboundPhoto(file, sku) {
+    if (!activeInbound) return;
+    const fd = new FormData();
+    fd.append('photo', file);
+    if (sku) fd.append('sku', sku);
+    try {
+      const resp = await fetch(`/api/inbound/${activeInbound.id}/photo`, { method: 'POST', body: fd });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error || 'Photo upload failed'); return; }
+      activeInbound.photos = activeInbound.photos || [];
+      activeInbound.photos.push(data.photo);
+      renderInboundPhotoGrid(activeInbound);
+    } catch (err) { alert(err.message); }
+  }
+
+  document.getElementById('inboundGeneralPhotoBtn').addEventListener('click', () => {
+    document.getElementById('inboundGeneralPhotoInput').click();
+  });
+  document.getElementById('inboundGeneralPhotoInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) uploadInboundPhoto(file, null);
+  });
+
+  document.getElementById('inboundScanPhotoBtn').addEventListener('click', () => {
+    if (!lastScannedInboundSku) { alert('Scan an item first, then attach a photo to it.'); return; }
+    document.getElementById('inboundScanPhotoInput').click();
+  });
+  document.getElementById('inboundScanPhotoInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) uploadInboundPhoto(file, lastScannedInboundSku);
+  });
+
+  function renderInboundPhotoGrid(job) {
+    const grid = document.getElementById('inboundPhotoGrid');
+    const token = localStorage.getItem('wms_token') || '';
+    grid.innerHTML = (job.photos || []).map(p => `
+      <div class="inbound-photo-card" data-photo-id="${esc(p.id)}" data-photo-tag="${esc(p.sku || 'General')}">
+        <img src="/api/inbound/${job.id}/photo/${p.id}?token=${encodeURIComponent(token)}" loading="lazy" />
+        <div class="ipc-tag">${esc(p.sku || 'General')}</div>
+      </div>`).join('');
+    grid.querySelectorAll('.inbound-photo-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const img = card.querySelector('img');
+        document.getElementById('inboundPhotoLightboxImg').src = img.src;
+        document.getElementById('inboundPhotoLightboxCaption').textContent = card.dataset.photoTag;
+        document.getElementById('inboundPhotoLightbox').classList.remove('hidden');
+      });
+    });
+  }
+  function closeInboundPhotoLightbox() {
+    document.getElementById('inboundPhotoLightbox').classList.add('hidden');
+    document.getElementById('inboundPhotoLightboxImg').src = '';
+  }
+  document.getElementById('inboundPhotoLightboxClose').addEventListener('click', closeInboundPhotoLightbox);
+  document.getElementById('inboundPhotoLightbox').addEventListener('click', e => {
+    if (e.target.id === 'inboundPhotoLightbox') closeInboundPhotoLightbox();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !document.getElementById('inboundPhotoLightbox').classList.contains('hidden')) closeInboundPhotoLightbox();
   });
 
   document.getElementById('inboundNewCartonBtn').addEventListener('click', async () => {

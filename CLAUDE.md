@@ -325,6 +325,23 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   receiver, would need the same `claimedBy`/`claimedAt`/stale-claim pattern
   outbound uses if multiple people receive concurrently), no receiving
   report/audit-log integration, no email alerts on discrepancy.
+- RECEIVING PHOTOS — two entry points, both hitting `POST
+  /api/inbound/:id/photo` (multipart, optional `sku` field): (1) a per-scan
+  camera button (`#inboundScanPhotoBtn`) next to the scan input, tagged to
+  `lastScannedInboundSku` (the client tracks this — refuses with an alert if
+  nothing's been scanned yet, since an untagged "per-scan" photo would be
+  meaningless); (2) a general "Add Photo" button in the header, untagged
+  (`sku: null`), for a shot of the box/shipment as a whole. Bytes are
+  written to `DATA_DIR/inbound_photos/<jobId>/<photoId>.<ext>` — same
+  reasoning as WMS/waybill files: keep them OFF the JSON blob, db.json only
+  stores `{id, sku, caption, uploadedBy, uploadedAt}` per photo. Serving
+  (`GET /api/inbound/:id/photo/:photoId`) is registered BEFORE the blanket
+  `requireAuth` middleware, using `requireAuthOrToken` instead — same
+  pattern as the existing PDF viewers — so plain `<img src="...?token=">`
+  tags work (they can't send the `x-auth-token` header the way `fetch()`
+  can). Thumbnails open a small lightbox (`#inboundPhotoLightbox`) on
+  click; no delete — this is additive/read-mostly like the carton slip,
+  not a place state gets removed.
 
 ## Report data retention (server.js — `db.auditLog` / `AUDIT_ARCHIVE_AFTER_DAYS`)
 
