@@ -737,6 +737,40 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
 
 // Column mapping and format generation live in lib/keyfields.js
 
+// Flags a SKU that appears more than once within the SAME order, matching
+// batch number + expiry date too — NOT blocking, since a genuine split pick
+// across two bins is valid and should simply sum, but it looks identical to
+// a data-entry duplicate, so the uploader gets a chance to check the source
+// file before committing rather than silently trusting whichever total the
+// file happens to add up to. Read-only warning surfaced at /api/preview time
+// — see the call site for why this is kept separate from the existing
+// editable "flagged" review table.
+function findDuplicateLineWarnings(orders) {
+  const warnings = [];
+  for (const order of orders) {
+    const groups = new Map(); // "sku|batch|expiry" → matching lines
+    for (const line of order.lines || []) {
+      const key = `${line.sku}|${line.batch_number || ''}|${line.expiry_date || ''}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(line);
+    }
+    for (const [key, lines] of groups) {
+      if (lines.length < 2) continue;
+      const [sku, batch, expiry] = key.split('|');
+      const totalQty = lines.reduce((s, l) => s + (l.qty || 0), 0);
+      warnings.push({
+        gi: order.order_number,
+        problem: `SKU ${sku} appears ${lines.length} times in this order` +
+          `${batch ? ` (batch ${batch})` : ''}${expiry ? `, expiry ${expiry}` : ''}` +
+          ` — combined qty is ${totalQty}. Confirm this isn't a duplicate line before uploading.`,
+        critical: false,
+        lines: lines.map(l => ({ sku: l.sku, description: String(l.description || '').slice(0, 70), qty: l.qty })),
+      });
+    }
+  }
+  return warnings;
+}
+
 function summarizeOrders(lines) {
   const map = {};
   for (const line of lines) {
@@ -2404,6 +2438,13 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     const orders     = summarizeOrders(allRows);
     const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     errors.push(...pdfWarnings);
+    // Read-only heads-up, deliberately NOT fed into `flagged` — that array
+    // drives the editable quantity-adjustment table, which matches rows by
+    // order+SKU only. Two duplicate rows share that same key, so editing one
+    // row's qty there would silently overwrite the OTHER row too. Surface
+    // these as plain informational warnings instead; the uploader fixes the
+    // source file and re-uploads if the duplicate is a mistake.
+    const duplicateWarnings = findDuplicateLineWarnings(orders).map(w => w.problem);
     // Duplicate check so the Confirm dialog warns BEFORE approving
     {
       const existing = new Set();
@@ -2413,7 +2454,7 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     }
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
-    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames, flagged });
+    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames, flagged, duplicateWarnings });
   } catch (err) {
     res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
   }

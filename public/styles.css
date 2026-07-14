@@ -926,6 +926,7 @@ body.scan-open { overflow: hidden; }
 .confirm-val { color: var(--text); word-break: break-all; }
 .confirm-big { font-size: 1.1rem; font-weight: 800; color: var(--primary); }
 .confirm-errors { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--warning); margin-top: .75rem; list-style: disc inside; }
+.confirm-dup-warnings { background: var(--primary-light); border: 1px solid var(--primary); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--primary); margin-top: .75rem; list-style: disc inside; }
 
 .confirm-val-edit { flex: 1; min-width: 0; }
 .confirm-inline-input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: .3rem .5rem; font-size: .875rem; color: var(--text); background: var(--surface); }
@@ -2235,6 +2236,7 @@ body.ls-open { overflow: hidden; }
 }
 .meta-pill-carrier { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
 .meta-pill-waybill { background: #eff6ff; color: #1d4ed8; font-family: Consolas, monospace; }
+.meta-pill-gi       { background: #fff7ed; color: #c2410c; font-family: Consolas, monospace; border: 1px solid #fed7aa; }
 .meta-details-btn {
   border: 1px solid var(--border, #cbd5e1); background: var(--surface, #fff);
   border-radius: 20px; padding: .26rem .8rem; color: var(--primary, #2563eb);

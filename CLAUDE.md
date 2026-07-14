@@ -114,6 +114,44 @@ found by scanning its GI-number barcode, even though the number was
 captured and stored correctly. Both call sites use the same `strip0`
 leading-zero-tolerant comparison as the other identifier fields.
 
+DISPLAY — `issue_no`, whenever present, also needs to be visible, not just
+scannable: shown as a `GI: <value>` pill on the Orders-list row (next to the
+`idealscan_code` job-code, `public/app.js` `renderOrdersList`) and as a
+`meta-pill-gi` pill in the scan overlay header (`enterItemsPhase`). Already
+included in the Completed-tab free-text search (`ordersView === 'completed'`
+filter) alongside order_number/waybill_number/pick_ticket/po_number.
+
+## Duplicate-line upload safeguard (server.js `findDuplicateLineWarnings`)
+
+Two lines in the SAME order sharing SKU + batch_number + expiry_date is
+ambiguous on sight — it could be a genuine split pick across two bins (sum
+the quantities) or a data-entry duplicate (one of them shouldn't be there).
+`findDuplicateLineWarnings(orders)` detects this at `/api/preview` time (the
+step that populates the Confirm-Upload modal, for every file type — PDF,
+XLSX, CSV all pass through the same `summarizeOrders()` call site) and
+returns a plain-English message per duplicate group, e.g. "SKU 7010 appears
+2 times in this order (batch W0492A_1), expiry 07/Jan/2029 — combined qty
+is 12."
+
+NOT blocking, and deliberately NOT wired into the existing `flagged` /
+"Review flagged order(s) — amend quantities" table that the PDF
+picking-list parser already uses for its own issues (missing SNo, total
+mismatch). That table matches rows by `order_number + sku` only — if two
+duplicate rows share that exact key, editing ONE row's quantity input would
+silently apply to the OTHER (untouched) row too, since the server-side
+adjustment-apply loop (`/api/upload`'s `adjustments` handling) matches every
+row with that key, not a specific row instance. Instead, `duplicateWarnings`
+is a separate read-only field in the `/api/preview` response, rendered as
+its own info-blue banner (`#confirmDuplicateWarnings` /
+`.confirm-dup-warnings`) below the (amber) `#confirmErrors` block — visible,
+but never editable. Confirmed via the actual bug report this was built for:
+the uploaded order's WMS export (traced field-by-field) showed exactly one
+row per SKU with the correct combined total, proving IdealScan's parsing
+was not at fault — the discrepancy was between the source order file and a
+printed picking list that visually repeated a line. This safeguard exists
+so that discrepancy is caught at upload time instead of requiring this kind
+of after-the-fact investigation.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the
