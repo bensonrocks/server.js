@@ -286,7 +286,21 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
   - `'po'` — an uploaded PO/ASN file (`parseInboundFile()`, independent of
     `parseUploadedFile`/`detectColumnMap` in lib/keyfields.js since those are
     tuned for outbound picking lists with columns receiving doesn't have).
-    Auto-detects SKU/Description/Qty columns by header name. Scanning
+    XLSX/CSV: auto-detects SKU/Description/Qty columns by header name. PDF
+    (`parseAsnPdfFile()`, reuses `extractPdfPageTexts()`): a best-effort
+    heuristic, NOT the same tuned parser as the outbound Keyfields
+    picking-list PDF (`parsePdfPicklistDetailed()`) — real ASN/PO PDFs vary
+    supplier to supplier with no fixed layout, so this just looks for lines
+    shaped like `SKU  description text  qty` (SKU first token, integer qty
+    last token) and fails loudly (blocks the upload, no partial/silent PO)
+    if it can't find any such lines, rather than guess. Deliberately does
+    NOT reuse the outbound `LOCATION_CODE_PAT` filter — that shape (1-4
+    letters + digit groups) is exactly what an ordinary SKU looks like here
+    (`URI-8001`, `NUX-5450`), so applying it would reject legitimate SKUs;
+    the ambiguity that filter guards against only exists inside a picking
+    list, which prints location and SKU as separate columns. Scanned/
+    image-only PDFs (no selectable text layer) aren't supported — told to
+    use XLSX/CSV instead, same as when zero lines are recognized. Scanning
     matches against `lines` like outbound does, but an unlisted SKU is
     still ACCEPTED (not blocked) — a shipment containing something not on
     the paperwork is routine and must still be logged; it just has no

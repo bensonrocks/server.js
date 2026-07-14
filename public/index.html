@@ -192,7 +192,7 @@
   <div id="inboundUploadOverlay" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-title">Upload PO / ASN</div>
-      <p class="modal-desc">Upload the expected SKU + quantity list for this shipment. Any SKU column header (SKU, Product Code…) and any qty header (Qty, Quantity, Expected Qty…) are auto-detected.</p>
+      <p class="modal-desc">Upload the expected SKU + quantity list for this shipment. XLSX/CSV: any SKU column header (SKU, Product Code…) and any qty header (Qty, Quantity, Expected Qty…) are auto-detected. PDF: best-effort — works for simple text-based tables (SKU, then description, then quantity, left to right); scanned/image-only PDFs and complex layouts aren't supported, use XLSX/CSV instead.</p>
       <div class="form-group">
         <label>PO / ASN Reference</label>
         <input type="text" id="inboundPoReference" placeholder="e.g. PO-10234" autocomplete="off" />
@@ -207,7 +207,7 @@
       </div>
       <div class="form-group">
         <label>File</label>
-        <input type="file" id="inboundPoFileInput" accept=".xlsx,.xls,.csv" />
+        <input type="file" id="inboundPoFileInput" accept=".xlsx,.xls,.csv,.pdf" />
       </div>
       <div id="inboundPoStatus" class="status-bar hidden"></div>
       <div class="modal-actions" style="margin-top:1rem">

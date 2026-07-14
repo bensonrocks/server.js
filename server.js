@@ -3158,8 +3158,58 @@ function findInbound(db, id) {
 // Deliberately independent of parseUploadedFile/detectColumnMap (lib/keyfields.js)
 // — those are tuned for outbound picking lists (order_number, customer, address…)
 // and would drag in columns receiving doesn't have or need.
-function parseInboundFile(buffer, filename) {
+// Best-effort generic ASN/PO PDF line parser. Unlike parsePdfPicklistDetailed
+// (tuned to ONE known Keyfields layout with GI numbers / SNo sequence /
+// "Grand Total Loose"), real-world ASN/PO PDFs vary supplier to supplier —
+// this can only be a heuristic: look for lines shaped like
+// "SKU  description text  qty" (SKU first token, integer qty last token).
+// If it can't find any such lines it fails loudly rather than silently
+// create a PO with wrong/missing lines — same "upload aborted, don't guess"
+// safety philosophy the picking-list PDF parser already uses.
+// NOTE: deliberately does NOT reuse the outbound picking-list's
+// LOCATION_CODE_PAT filter — that pattern (1-4 letters + 1-6 digit groups)
+// is exactly the shape of a completely ordinary SKU here (e.g. "URI-8001",
+// "NUX-5450"), so applying it would reject legitimate SKUs. Location vs.
+// SKU ambiguity is a real concern INSIDE a picking list (which prints both
+// as separate columns); an ASN/PO PDF has no such second column to confuse
+// it with.
+const PDF_ITEM_LINE_PAT   = /^([A-Z0-9][A-Z0-9_\-\/]{1,29})\s+(.+?)\s+(\d{1,6})\s*$/i;
+const PDF_SKU_SKIP_WORDS = new Set([
+  'SKU', 'ITEM', 'CODE', 'DESCRIPTION', 'DESC', 'QTY', 'QUANTITY', 'PRODUCT',
+  'PART', 'NO', 'PAGE', 'TOTAL', 'GRAND', 'DATE', 'PO', 'ASN', 'INVOICE',
+  'REFERENCE', 'REF', 'SUPPLIER', 'SHIP', 'BILL', 'ORDER',
+]);
+async function parseAsnPdfFile(buffer) {
+  if (!pdfParse) throw new Error('PDF parsing not installed. Run: npm install pdf-parse');
+  const pageTexts = await extractPdfPageTexts(buffer);
+  if (!pageTexts.length) {
+    throw new Error('No readable pages in PDF — if this is a scanned image (no selectable text), use the XLSX/CSV upload instead.');
+  }
+  const out = [];
+  for (const pageText of pageTexts) {
+    for (const rawLine of pageText.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const m = line.match(PDF_ITEM_LINE_PAT);
+      if (!m) continue;
+      const sku = m[1].trim();
+      const description = m[2].trim();
+      const qty = parseInt(m[3], 10);
+      if (PDF_SKU_SKIP_WORDS.has(sku.toUpperCase())) continue;
+      if (!qty || qty <= 0 || qty > 99999) continue;
+      if (!description) continue;
+      out.push({ sku, description, qty });
+    }
+  }
+  if (!out.length) {
+    throw new Error('Could not recognize any SKU/description/qty lines in this PDF. This parser only handles simple text-based tables (SKU, then description, then quantity, left to right) — if the layout is different, or this is a scanned image, use the XLSX/CSV upload instead.');
+  }
+  return out;
+}
+
+async function parseInboundFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
+  if (ext === '.pdf') return parseAsnPdfFile(buffer);
   let rows;
   if (ext === '.csv') {
     rows = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
@@ -3168,7 +3218,7 @@ function parseInboundFile(buffer, filename) {
     const ws = wb.Sheets[wb.SheetNames[0]];
     rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
   } else {
-    throw new Error('Unsupported file type. Upload XLSX or CSV.');
+    throw new Error('Unsupported file type. Upload XLSX, CSV, or PDF.');
   }
   if (!rows.length) return [];
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3256,10 +3306,10 @@ app.post('/api/inbound/:id/photo', upload.single('photo'), (req, res) => {
   res.json({ ok: true, photo: { id: photo.id, sku: photo.sku, caption: photo.caption, uploadedAt: photo.uploadedAt } });
 });
 
-app.post('/api/inbound/upload', upload.single('inboundFile'), (req, res) => {
+app.post('/api/inbound/upload', upload.single('inboundFile'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const rows = parseInboundFile(req.file.buffer, req.file.originalname);
+    const rows = await parseInboundFile(req.file.buffer, req.file.originalname);
     if (!rows.length) return res.status(400).json({ error: 'No valid SKU rows found in file' });
 
     // Same SKU can legitimately appear on multiple rows (split across lots,
