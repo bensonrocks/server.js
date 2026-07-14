@@ -101,6 +101,11 @@
   .brief-lbl { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
                text-transform: uppercase; color: var(--ink-3); margin-right: 7px; }
   .contact { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
+  .enrich { margin-left: 8px; padding: 4px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+            color: var(--brand); background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 999px; }
+  .enrich:hover { background: #E0E7FF; }
+  .enrich:disabled { opacity: .6; cursor: default; }
+  .enrich .credit { font-weight: 500; color: var(--ink-3); font-size: 11px; }
   .contact b { color: var(--ink); }
   .prov { font-size: 11.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
   .needs { color: var(--warn); font-weight: 700; font-size: 12.5px; }
@@ -425,8 +430,12 @@ function verifiedBadge(l) {
 }
 
 function contactLine(l) {
-  if (!l.dm_name) return `<span class="needs">⚠ needs a recipient — no contact found</span> ${verifiedBadge(l)}`;
-  const bits = [`<b>${esc(l.dm_name)}</b> — ${esc(l.dm_title)}`];
+  if (!l.dm_name && !l.dm_email) {
+    return `<span class="cinfo" style="color:var(--ink-3)">No contact yet</span> ${verifiedBadge(l)}
+      <button class="enrich" id="enrich-${l.id}" onclick="enrichLead('${l.id}')">✨ Enrich contact <span class="credit">1 credit</span></button>
+      <span class="saved" id="enrichMsg-${l.id}"></span>`;
+  }
+  const bits = [`<b>${esc(l.dm_name || 'Contact')}</b>${l.dm_title ? ' — ' + esc(l.dm_title) : ''}`];
   bits.push(l.dm_email ? `<a href="mailto:${esc(l.dm_email)}">📧 ${esc(l.dm_email)}</a>` : `📧 <span style="color:var(--ink-3)">email pending</span>`);
   bits.push(l.dm_phone ? `<a href="tel:${esc(l.dm_phone)}">📞 ${esc(l.dm_phone)}</a>` : `📞 <span style="color:var(--ink-3)">phone pending</span>`);
   let line = `<span class="cinfo">${bits.join(' &nbsp;·&nbsp; ')}</span> &nbsp;${verifiedBadge(l)}`;
@@ -530,6 +539,27 @@ function queueCard(l) {
       <span class="saved" id="saved-${l.id}"></span>
     </div>
   </div>`;
+}
+
+async function enrichLead(id) {
+  const btn = document.getElementById('enrich-' + id);
+  const msg = document.getElementById('enrichMsg-' + id);
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Finding contact…'; }
+  if (msg) msg.textContent = '';
+  let r;
+  try { r = await post(`/api/hunter/leads/${id}/enrich`, {}); }
+  catch { r = { ok: false, error: 'Network error' }; }
+  if (!r.ok) {
+    if (msg) { msg.textContent = r.error || 'Failed'; msg.style.color = '#B91C1C'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '✨ Enrich contact <span class="credit">1 credit</span>'; }
+    return;
+  }
+  if (!r.found) {
+    if (msg) { msg.textContent = 'No contact found in Apollo for this company.'; msg.style.color = 'var(--ink-3)'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '↻ Try again'; }
+    return;
+  }
+  load();   // contact revealed — refresh so the card shows name / email / phone
 }
 
 async function saveDraft(id) {

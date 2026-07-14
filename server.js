@@ -533,6 +533,24 @@ app.post('/api/hunter/leads/:id/activity', requireHunterStaffAPI, hx(async (req,
   res.json({ ok: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
 }));
 
+// Enrich ONE lead's decision-maker contact on demand (name / email / phone).
+// Spends Apollo credits, so it runs only when a user clicks "Enrich contact".
+app.post('/api/hunter/leads/:id/enrich', requireHunterStaffAPI, hx(async (req, res) => {
+  const { org } = req.hunter;
+  if (!process.env.APOLLO_API_KEY)
+    return res.status(400).json({ ok: false, error: 'APOLLO_API_KEY is not set on the server.' });
+  const lead = await hunter.getOwned(org.id, req.params.id);
+  if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
+  let contact = {};
+  try { contact = await hunterPipeline.enrichContact(org, lead); }
+  catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
+  if (!contact || (!contact.name && !contact.email && !contact.phone))
+    return res.json({ ok: true, found: false, lead: hunter.view(lead, { owner: org.is_owner }) });
+  const result = await hunter.setContact(org.id, lead.id, contact);
+  if (result.error) return res.status(400).json({ ok: false, error: result.error });
+  res.json({ ok: true, found: true, lead: hunter.view(result.lead, { owner: org.is_owner }) });
+}));
+
 // Master-only: run the live lead pipeline for this org (async; poll status).
 app.post('/api/hunter/pipeline/run', requireHunterStaffAPI, requireHunterAdmin, hx(async (req, res) => {
   if (!process.env.ANTHROPIC_API_KEY)
