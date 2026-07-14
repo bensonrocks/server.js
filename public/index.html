@@ -437,6 +437,7 @@
     <div id="masterActionsSection" class="master-actions hidden">
       <div class="admin-nav">
         <button class="admin-nav-btn active" data-admin-tab="activity">&#128225; Live Activity</button>
+        <button class="admin-nav-btn" data-admin-tab="overview">&#128200; Activity Overview</button>
         <button class="admin-nav-btn" data-admin-tab="deletions">&#128465; Pending Deletions <span id="pendingDelBadge" class="admin-nav-badge hidden">0</span></button>
         <button class="admin-nav-btn" data-admin-tab="batches">&#128196; Upload History</button>
         <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
@@ -488,6 +489,23 @@
           </table>
           <div id="liveStuckEmpty" class="empty-state hidden">No abandoned orders.</div>
         </div>
+      </div>
+
+      <!-- Tab: Activity Overview -->
+      <div class="admin-tab hidden" id="adminTab-overview">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Activity Overview</div>
+            <div class="admin-section-sub">Orders and lines processed on each of the last 3 full calendar days (SGT), plus the largest order of each day. Admin/Master only.</div>
+          </div>
+        </div>
+        <div class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Date</th><th>Orders</th><th>Lines</th><th>Largest Order (by size)</th><th>Largest Order (by lines)</th></tr></thead>
+            <tbody id="overviewBody"></tbody>
+          </table>
+        </div>
+        <div id="overviewEmpty" class="empty-state hidden">No completed orders in the last 3 days.</div>
       </div>
 
       <!-- Tab: Pending Deletions -->
@@ -1024,6 +1042,10 @@
         <div class="stats-bar" id="statsBar"></div>
         <div id="kfClosureBanner" class="kf-closure-banner hidden"></div>
 
+        <div style="display:flex;justify-content:flex-end;margin-bottom:.5rem">
+          <button class="btn-secondary btn-sm" id="stationThroughputBtn">&#128202; Station Throughput</button>
+        </div>
+
         <!-- Waybill scan bar -->
         <div class="waybill-scan-bar">
           <div class="waybill-scan-inner">
@@ -1293,6 +1315,34 @@
       <div class="carton-label-text" id="cartonLabelText">ORDER-01</div>
       <div class="modal-actions" style="margin-top:1.1rem">
         <button class="btn-primary" id="cartonLabelConfirmBtn">&#10003; I've Written It</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Station Throughput — visible to Warehouse, Admin and Master -->
+  <div id="stationThroughputOverlay" class="modal-overlay hidden">
+    <div class="modal" style="max-width:760px">
+      <div class="modal-title">Station Throughput</div>
+      <p class="modal-desc">Orders and lines processed per packing station, for each of the last 3 full calendar days (SGT). "Station" = the packer who completed the order.</p>
+      <div class="dash-stats-grid" id="stpTotalsGrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.1rem"></div>
+      <div class="admin-section-title" style="font-size:.8rem">Orders per Station</div>
+      <div class="dcs-wrap">
+        <table class="dcs-table">
+          <thead id="stpOrdersHead"></thead>
+          <tbody id="stpOrdersBody"></tbody>
+        </table>
+      </div>
+      <div class="admin-section-divider"></div>
+      <div class="admin-section-title" style="font-size:.8rem">Lines per Station</div>
+      <div class="dcs-wrap">
+        <table class="dcs-table">
+          <thead id="stpLinesHead"></thead>
+          <tbody id="stpLinesBody"></tbody>
+        </table>
+      </div>
+      <div id="stpEmpty" class="empty-state hidden">No completed orders in the last 3 days.</div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="stpCloseBtn">Close</button>
       </div>
     </div>
   </div>

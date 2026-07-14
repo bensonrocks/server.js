@@ -339,6 +339,68 @@ but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
 - This is a read-through, not a migration — archived months are never
   re-merged into `db.auditLog`; they're read fresh from disk per report
   request that needs them.
+- **Retention already exceeds the 12-month minimum, audited but unchanged.**
+  Neither batches (archived after 60 days) nor the audit log (archived after
+  180 days) are ever DELETED — `runAutoArchive()`/`runAuditLogArchive()` only
+  ever move data from the live `db.json` into permanent monthly archive
+  files on disk; nothing purges those files afterward. The only things that
+  actually delete data are: (1) explicit admin-requested + Master-approved
+  order/batch deletion, (2) the manual Master "Reset" button — both
+  deliberate, on-demand actions, never a scheduled sweep. Nightly backup
+  rotation (`runNightlyBackup`, keep 14) only prunes redundant point-in-time
+  gzip snapshots, not the underlying data. No archive TABLE is needed beyond
+  what already exists — the monthly JSON archive files already hold
+  everything indefinitely, and since the two dashboards below only ever
+  query the last 3 days, they read `db.auditLog` directly and never need to
+  touch archives at all (3 days is always inside both the 60- and 180-day
+  live windows).
+
+## Admin/Warehouse dashboards — Activity Overview & Station Throughput (server.js `/api/master/dashboard/*`, public/app.js)
+
+- Both read from the same `order_completed` audit-log events every other
+  Administrator report already uses (`completionAuditData()` at completion
+  time — `order`, `client`, `operator`, `pieces`, `lines[]`, `endTime`) — no
+  new data source, no new retention concern (see above).
+- `previousSgDays(3)` returns the 3 full SGT calendar days immediately
+  BEFORE today, oldest first — today is excluded since it's still in
+  progress, not a completed day. `completedOrderEventsForDays()` filters
+  `order_completed` events to that window and tags each with its SGT day
+  (`sgDateStr`, the same Asia/Singapore helper the nightly backup uses) —
+  get this right deliberately, since naive UTC date-slicing (what the
+  `daily-summary`/`productivity` reports already do) would misbucket events
+  near the UTC/SGT day boundary.
+- **"Station" = the packer/user who completed the order** (`operator` on
+  the completion event). This system has no separate physical packing-
+  station ID — one logged-in user is the closest available proxy, same
+  convention Live Activity already uses for "active packers". If a real
+  multi-station-per-user (or multi-user-per-station) setup is ever needed,
+  this mapping would need revisiting.
+- ACCESS CONTROL — server-enforced, not just UI hiding, mirroring the exact
+  pattern `/api/master/report/:kind` already uses (NOT the pure
+  `checkMaster()` pattern Live Activity/Pending Deletions use, which only
+  checks the master-key header and would let anyone who extracted the
+  client-side `LOG_PASSWORD` through regardless of role):
+  - `activity-overview`: `x-master-key` header OR `role === 'admin'`, else
+    403. Warehouse-role users get a real 403 even if they call the endpoint
+    directly — verified in testing, not just hidden client-side.
+  - `station-throughput`: `x-master-key` header OR `role === 'admin'` OR
+    `role === 'warehouse'`, else 403 — today that's every valid role, but
+    written explicitly so a future restricted role doesn't silently gain
+    access.
+- UI placement follows existing precedent: Activity Overview is a new
+  `data-admin-tab="overview"` section inside the Administrator panel
+  (`#logOverlay`), next to Live Activity — consistent with it being
+  Admin/Master-only and the Administrator button already being hidden from
+  warehouse client-side. Station Throughput can't live there (warehouse
+  can't open Administrator at all), so it's a button + modal
+  (`#stationThroughputOverlay`) on the Orders tab instead, which warehouse
+  users can already access. Both reuse `.dcs-wrap`/`.dcs-table` for
+  horizontal-scroll-on-mobile — the exact fix applied earlier this session
+  after Live Activity's tables overflowed on phone screens.
+- Station Throughput renders as TWO separate tables (Orders per Station,
+  Lines per Station) rather than one table with day+metric sub-columns —
+  fewer columns keeps it readable on a phone screen, which the task
+  explicitly allowed as an alternative to sub-columns.
 
 ## Git
 

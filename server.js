@@ -4054,6 +4054,92 @@ app.get('/api/master/live-activity', (req, res) => {
   });
 });
 
+// ── Activity Overview / Station Throughput dashboards ───────────────────────
+// Both read from db.auditLog's 'order_completed' events (via
+// completionAuditData() at order-completion time) — the same deletion-proof,
+// ≥12-month-retained source every other Administrator report already uses.
+// Calendar days are bucketed in SGT (Asia/Singapore), matching sgDateStr()
+// used everywhere else timezone-sensitive in this file (nightly backup, etc).
+// Returns the 3 full calendar days immediately BEFORE today, oldest first —
+// "today" is still in progress, so it's excluded rather than shown partial.
+function previousSgDays(n) {
+  const days = [];
+  for (let i = n; i >= 1; i--) days.push(sgDateStr(new Date(Date.now() - i * 86400000)));
+  return days;
+}
+function completedOrderEventsForDays(db, days) {
+  const from = days[0], to = days[days.length - 1];
+  const log  = readAuditLogForRange(db, from, to);
+  const set  = new Set(days);
+  return log
+    .filter(e => e.type === 'order_completed')
+    .map(e => ({ ...e, sgDay: sgDateStr(new Date(e.endTime || e.at)) }))
+    .filter(e => set.has(e.sgDay));
+}
+
+app.get('/api/master/dashboard/activity-overview', (req, res) => {
+  const isMaster = req.headers['x-master-key'] === MASTER_PASS;
+  if (!isMaster) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin') return res.status(403).json({ error: 'This dashboard requires Administrator access' });
+  }
+  const db     = readDb();
+  const days   = previousSgDays(3);
+  const events = completedOrderEventsForDays(db, days);
+
+  const byDay = new Map(days.map(d => [d, []]));
+  for (const e of events) byDay.get(e.sgDay).push(e);
+
+  const result = days.map(d => {
+    const dayEvents  = byDay.get(d);
+    const totalOrders = dayEvents.length;
+    const totalLines  = dayEvents.reduce((s, e) => s + (e.lines || []).length, 0);
+    let largestBySize = null, largestByLines = null;
+    for (const e of dayEvents) {
+      const size = e.pieces || 0;
+      const lineCount = (e.lines || []).length;
+      if (!largestBySize || size > largestBySize.value) largestBySize = { order: e.order, client: e.client || '', value: size, date: d };
+      if (!largestByLines || lineCount > largestByLines.value) largestByLines = { order: e.order, client: e.client || '', value: lineCount, date: d };
+    }
+    return { date: d, totalOrders, totalLines, largestBySize, largestByLines };
+  });
+  res.json({ days: result });
+});
+
+app.get('/api/master/dashboard/station-throughput', (req, res) => {
+  const isMaster = req.headers['x-master-key'] === MASTER_PASS;
+  if (!isMaster) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin' && role !== 'warehouse') return res.status(403).json({ error: 'Forbidden' });
+  }
+  const db     = readDb();
+  const days   = previousSgDays(3);
+  const events = completedOrderEventsForDays(db, days);
+  const byId   = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+  const nameFor = id => byId.get(id) || id || '(unassigned)';
+
+  // "Station" = the packer/user who completed the order (operator on the
+  // completion event) — this system has no separate physical-station ID;
+  // one logged-in packer is the closest available proxy for one station.
+  const totalsByDay = Object.fromEntries(days.map(d => [d, 0]));
+  const stationsMap = new Map();
+  for (const e of events) {
+    totalsByDay[e.sgDay]++;
+    const stationId = e.operator || '(unassigned)';
+    if (!stationsMap.has(stationId)) {
+      stationsMap.set(stationId, {
+        station: stationId, stationName: nameFor(stationId),
+        byDay: Object.fromEntries(days.map(d => [d, { orders: 0, lines: 0 }])),
+      });
+    }
+    const s = stationsMap.get(stationId).byDay[e.sgDay];
+    s.orders++;
+    s.lines += (e.lines || []).length;
+  }
+  const stations = [...stationsMap.values()].sort((a, b) => a.stationName.localeCompare(b.stationName));
+  res.json({ days, totalsByDay, stations });
+});
+
 // Full JSON backup — DB (batches, orders, scan states, users, sessions) plus
 // the small config files. WMS XLSX / waybill PDF binaries are excluded: they
 // are regenerable from the batch data and would bloat the download.

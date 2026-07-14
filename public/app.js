@@ -3877,10 +3877,77 @@
       if (btn.dataset.adminTab === 'batches') renderLogContent();
       if (btn.dataset.adminTab === 'activity') startLiveActivityPolling();
       else stopLiveActivityPolling();
+      if (btn.dataset.adminTab === 'overview') loadActivityOverview();
       if (btn.dataset.adminTab === 'deletions') startPendingDelPolling();
       else stopPendingDelPolling();
     });
   });
+
+  // ── Activity Overview (Admin & Master only — server-enforced) ──────────────
+  function fmtDashDate(d) {
+    // The date string is already an SGT calendar day — format it as SGT
+    // explicitly, or a viewer in a different browser timezone would see it
+    // shifted by a day (this bit us once already: worth the extra option).
+    return new Date(d + 'T00:00:00+08:00').toLocaleDateString('en-SG', { day: '2-digit', month: 'short', weekday: 'short', timeZone: 'Asia/Singapore' });
+  }
+  function largestOrderCell(l, unit) {
+    if (!l) return '<span class="hint">—</span>';
+    return `<div><strong>${esc(l.order)}</strong> <span class="hint">(${l.value} ${unit})</span></div><div class="hint">${esc(l.client) || '—'}</div>`;
+  }
+  async function loadActivityOverview() {
+    try {
+      const r = await fetch('/api/master/dashboard/activity-overview', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      renderActivityOverview(await r.json());
+    } catch { /* silent — admin can reopen the tab to retry */ }
+  }
+  function renderActivityOverview(d) {
+    const days = d.days || [];
+    document.getElementById('overviewBody').innerHTML = days.map(day => `
+      <tr>
+        <td>${fmtDashDate(day.date)}</td>
+        <td>${day.totalOrders}</td>
+        <td>${day.totalLines}</td>
+        <td>${largestOrderCell(day.largestBySize, 'pcs')}</td>
+        <td>${largestOrderCell(day.largestByLines, 'lines')}</td>
+      </tr>`).join('');
+    document.getElementById('overviewEmpty').classList.toggle('hidden', days.some(day => day.totalOrders > 0));
+  }
+
+  // ── Station Throughput (Warehouse, Admin & Master) ──────────────────────────
+  document.getElementById('stationThroughputBtn').addEventListener('click', async () => {
+    document.getElementById('stationThroughputOverlay').classList.remove('hidden');
+    try {
+      const r = await fetch('/api/master/dashboard/station-throughput');
+      if (!r.ok) { alert('Could not load station throughput.'); return; }
+      renderStationThroughput(await r.json());
+    } catch (err) { alert(err.message); }
+  });
+  document.getElementById('stpCloseBtn').addEventListener('click', () => {
+    document.getElementById('stationThroughputOverlay').classList.add('hidden');
+  });
+  function renderStationThroughput(d) {
+    const days = d.days || [];
+    document.getElementById('stpTotalsGrid').innerHTML = days.map(day => `
+      <div class="dstat"><div class="dstat-val">${d.totalsByDay?.[day] ?? 0}</div><div class="dstat-lbl">${fmtDashDate(day)}</div></div>
+    `).join('');
+
+    const headRow = `<tr><th>Station</th>${days.map(day => `<th>${fmtDashDate(day)}</th>`).join('')}<th>Total</th></tr>`;
+    document.getElementById('stpOrdersHead').innerHTML = headRow;
+    document.getElementById('stpLinesHead').innerHTML = headRow;
+
+    const stations = d.stations || [];
+    document.getElementById('stpOrdersBody').innerHTML = stations.map(s => {
+      const total = days.reduce((sum, day) => sum + (s.byDay[day]?.orders || 0), 0);
+      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => `<td>${s.byDay[day]?.orders || 0}</td>`).join('')}<td><strong>${total}</strong></td></tr>`;
+    }).join('');
+    document.getElementById('stpLinesBody').innerHTML = stations.map(s => {
+      const total = days.reduce((sum, day) => sum + (s.byDay[day]?.lines || 0), 0);
+      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => `<td>${s.byDay[day]?.lines || 0}</td>`).join('')}<td><strong>${total}</strong></td></tr>`;
+    }).join('');
+
+    document.getElementById('stpEmpty').classList.toggle('hidden', stations.length > 0);
+  }
 
   // ── User Management ─────────────────────────────────────────────────────────
   async function loadUserList() {
