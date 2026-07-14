@@ -155,6 +155,22 @@ the time Enter fires, so appending double-counts it (e.g. a manually-typed
 because Enter usually arrives before the mirror's zero-delay timeout runs,
 but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
 
+## Scan row layout — `.big-scan-input` must keep `min-width: 0` (public/styles.css)
+
+`.item-scan-wrap` (both outbound's scan overlay and IdealInbound's receiving
+screen use this same class) lays out `.scan-icon-prefix` + `.big-scan-input`
++ a fixed-width button (`.btn-camera-open`, etc.) as a flex row, and has
+`overflow: hidden` — so an overflowing child is silently CLIPPED, not
+visibly broken. Flex items default to `min-width: auto`, which refuses to
+shrink an `<input>` below its browser-default intrinsic width; combined
+with the fixed-width sibling button, the row's total content width can
+exceed a real narrow phone's viewport even though it looks fine at desktop
+widths or in a 412px emulator. `.big-scan-input` sets `min-width: 0` to
+override this and let the input actually shrink. Found via a real-device
+screenshot showing IdealInbound's per-scan camera button clipped to an
+invisible sliver; since the class is shared, the same latent bug applied
+to outbound's `#openCameraBtn` too, and the one CSS fix resolves both.
+
 ## Multi-carton orders (server.js — `activeCarton`/`addToActiveCarton`, /api/scan/new-carton)
 
 - A big order can take more than one physical box. `state.cartons` is an array

@@ -826,7 +826,12 @@ body.scan-open { overflow: hidden; }
 .inbound-condition-row select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
 .item-scan-wrap { display: flex; align-items: stretch; gap: .5rem; margin-bottom: .6rem; background: var(--bg); border: 2px solid var(--primary); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 3px rgba(37,99,235,.07); }
 .scan-icon-prefix { padding: 0 .7rem; font-size: 1.3rem; color: var(--primary); user-select: none; display: flex; align-items: center; }
-.big-scan-input { flex: 1; border: none; outline: none; padding: .9rem .4rem; font-size: 1.05rem; color: var(--text); background: transparent; }
+/* min-width:0 overrides the flex-item default of min-width:auto, which
+   otherwise refuses to shrink an <input> below its browser-default
+   intrinsic width — without this, a fixed-width sibling button (camera,
+   etc.) gets pushed off-screen entirely on narrow phones instead of the
+   input just getting narrower. */
+.big-scan-input { flex: 1; min-width: 0; border: none; outline: none; padding: .9rem .4rem; font-size: 1.05rem; color: var(--text); background: transparent; }
 .big-scan-input::placeholder { color: var(--text-muted); }
 .big-scan-wrap { display: flex; align-items: center; max-width: 520px; margin: .85rem auto; background: var(--surface); border: 2px solid var(--primary); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 4px rgba(37,99,235,.08); }
 .btn-camera-open { flex-shrink: 0; height: auto; background: var(--primary); color: #fff; border: none; border-radius: 0; font-size: .9rem; font-weight: 700; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; gap: .35rem; padding: 0 1.1rem; min-width: 80px; transition: background .15s; letter-spacing: .02em; }
