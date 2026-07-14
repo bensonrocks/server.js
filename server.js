@@ -114,8 +114,27 @@ setImmediate(() => {
 // ── Auth middleware ───────────────────────────────────────────────────────────
 
 function withTenant(req, res, next) {
-  const ctx      = getCtx('default');
-  req.tenantId   = 'default';
+  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = auth.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+  const ctx     = getCtx(session.tenantId);
+  req.tenantId  = session.tenantId;
+  req.ctx       = ctx;
+  req.db        = ctx.db;
+  req.store     = ctx.store;
+  req.creds     = ctx.creds;
+  req.syncLog   = ctx.syncLog;
+  next();
+}
+
+// For staff routes that also need a tenant context (staff use a different token type)
+function withStaffTenant(req, res, next) {
+  const tenantId = req.query.tenantId || req.headers['x-tenant-id'] || 'default';
+  const tenant   = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(tenantId);
+  if (!tenant)        return res.status(404).json({ error: 'Tenant not found' });
+  if (!tenant.active) return res.status(403).json({ error: 'Tenant suspended' });
+  const ctx      = getCtx(tenantId);
+  req.tenantId   = tenantId;
   req.ctx        = ctx;
   req.db         = ctx.db;
   req.store      = ctx.store;
@@ -157,8 +176,8 @@ function withAdmin(req, res, next) {
 
 // ── Staff portal routes ───────────────────────────────────────────────────────
 
-// Emergency admin reset — GET /api/staff/emergency — resets administrator password and returns a ready token
-app.get('/api/staff/emergency', (req, res) => {
+// Emergency admin reset — requires super-admin password (x-super-password header)
+app.get('/api/staff/emergency', withSuperAdmin, (req, res) => {
   const { createHash } = require('crypto');
   const pw = 'Admin1234';
   const hash = createHash('sha256').update(pw).digest('hex');
@@ -226,24 +245,18 @@ app.delete('/api/staff/users/:username', withAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// List client portal users (all tenants — for now defaults to 'default')
-app.get('/api/staff/client-users', withStaff, (req, res) => {
-  const tenantId = req.query.tenantId || 'default';
-  const { db } = getCtx(tenantId);
-  const ca = createClientAuth(db);
-  res.json(ca.listUsers());
+// List client portal users
+app.get('/api/staff/client-users', withStaff, withStaffTenant, (req, res) => {
+  res.json(createClientAuth(req.db).listUsers());
 });
 
 // Reset a client portal user's password
-app.patch('/api/staff/client-users/:clientId', withStaff, (req, res) => {
+app.patch('/api/staff/client-users/:clientId', withStaff, withStaffTenant, (req, res) => {
   const { clientId } = req.params;
   const { password } = req.body || {};
   if (!password || password.length < 1) return res.status(400).json({ error: 'New password required' });
-  const tenantId = req.query.tenantId || 'default';
-  const { db } = getCtx(tenantId);
-  const ca = createClientAuth(db);
   try {
-    ca.setPassword(clientId, password);
+    createClientAuth(req.db).setPassword(clientId, password);
     res.json({ ok: true });
   } catch (e) {
     res.status(404).json({ error: e.message });
@@ -251,13 +264,10 @@ app.patch('/api/staff/client-users/:clientId', withStaff, (req, res) => {
 });
 
 // Toggle client portal user active/inactive
-app.patch('/api/staff/client-users/:clientId/active', withStaff, (req, res) => {
+app.patch('/api/staff/client-users/:clientId/active', withStaff, withStaffTenant, (req, res) => {
   const { clientId } = req.params;
   const { active } = req.body || {};
-  const tenantId = req.query.tenantId || 'default';
-  const { db } = getCtx(tenantId);
-  const ca = createClientAuth(db);
-  ca.setActive(clientId, !!active);
+  createClientAuth(req.db).setActive(clientId, !!active);
   res.json({ ok: true });
 });
 
@@ -294,33 +304,25 @@ app.patch('/api/staff/my-username', withStaff, (req, res) => {
 });
 
 // API key management (staff only)
-app.get('/api/staff/api-keys', withStaff, (req, res) => {
-  const tenantId = req.headers['x-tenant-id'] || 'default';
-  const { db } = getCtx(tenantId);
-  res.json(createClientAuth(db).listApiKeys());
+app.get('/api/staff/api-keys', withStaff, withStaffTenant, (req, res) => {
+  res.json(createClientAuth(req.db).listApiKeys());
 });
 
-app.post('/api/staff/api-keys', withStaff, (req, res) => {
+app.post('/api/staff/api-keys', withStaff, withStaffTenant, (req, res) => {
   const { clientId, clientName, label } = req.body || {};
   if (!clientId || !clientName) return res.status(400).json({ error: 'clientId and clientName required' });
-  const tenantId = req.headers['x-tenant-id'] || 'default';
-  const { db } = getCtx(tenantId);
-  const key = createClientAuth(db).generateApiKey(clientId, clientName, label || '');
+  const key = createClientAuth(req.db).generateApiKey(clientId, clientName, label || '');
   res.json({ key });
 });
 
-app.delete('/api/staff/api-keys/:key', withStaff, (req, res) => {
-  const tenantId = req.headers['x-tenant-id'] || 'default';
-  const { db } = getCtx(tenantId);
-  createClientAuth(db).revokeApiKey(req.params.key);
+app.delete('/api/staff/api-keys/:key', withStaff, withStaffTenant, (req, res) => {
+  createClientAuth(req.db).revokeApiKey(req.params.key);
   res.json({ ok: true });
 });
 
-app.patch('/api/staff/api-keys/:key/active', withStaff, (req, res) => {
+app.patch('/api/staff/api-keys/:key/active', withStaff, withStaffTenant, (req, res) => {
   const { active } = req.body || {};
-  const tenantId = req.headers['x-tenant-id'] || 'default';
-  const { db } = getCtx(tenantId);
-  createClientAuth(db).setApiKeyActive(req.params.key, !!active);
+  createClientAuth(req.db).setApiKeyActive(req.params.key, !!active);
   res.json({ ok: true });
 });
 
@@ -329,6 +331,8 @@ app.patch('/api/staff/api-keys/:key/active', withStaff, (req, res) => {
 function withApiKey(req, res, next) {
   const key      = (req.headers.authorization || '').replace('Bearer ', '').trim();
   const tenantId = req.headers['x-tenant-id'] || 'default';
+  const tenant   = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(tenantId);
+  if (!tenant || !tenant.active) return res.status(404).json({ error: 'Tenant not found' });
   const ctx      = getCtx(tenantId);
   const ca       = createClientAuth(ctx.db);
   const session  = ca.validateApiKey(key);
@@ -345,6 +349,8 @@ function withApiKey(req, res, next) {
 function withClientAuth(req, res, next) {
   const token    = (req.headers.authorization || '').replace('Bearer ', '').trim();
   const tenantId = req.headers['x-tenant-id'] || 'default';
+  const tenant   = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(tenantId);
+  if (!tenant || !tenant.active) return res.status(404).json({ error: 'Tenant not found' });
   const ctx      = getCtx(tenantId);
   const ca       = createClientAuth(ctx.db);
   const session  = ca.validateToken(token);
@@ -408,33 +414,21 @@ app.get('/api/admin/stats', withTenant, (req, res) => {
 
 // ── Orders ────────────────────────────────────────────────────────────────────
 
-app.get('/api/orders', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const { store } = getCtx(tenantId);
+app.get('/api/orders', withTenant, (req, res) => {
   const { clientId, channel, status, search } = req.query;
-  res.json(store.getOrders({ clientId, channel, status, search }));
+  res.json(req.store.getOrders({ clientId, channel, status, search }));
 });
 
-app.get('/api/orders/:id', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const { store } = getCtx(tenantId);
-  const order = store.getOrder(req.params.id);
+app.get('/api/orders/:id', withTenant, (req, res) => {
+  const order = req.store.getOrder(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
 });
 
-app.patch('/api/orders/:id', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const { store } = getCtx(tenantId);
+app.patch('/api/orders/:id', withTenant, (req, res) => {
   const { status, notes, source, shipping } = req.body || {};
   try {
-    const updated = store.updateOrder(req.params.id, { status, notes, source, shipping });
+    const updated = req.store.updateOrder(req.params.id, { status, notes, source, shipping });
     res.json(updated);
   } catch (e) {
     res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
@@ -462,19 +456,14 @@ app.delete('/api/sync-log', withTenant, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/orders/ingest-email', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const { store } = getCtx(tenantId);
-
+app.post('/api/orders/ingest-email', withTenant, (req, res) => {
   const { body, subject, from } = req.body || {};
   if (!body) return res.status(400).json({ error: 'Email body is required' });
   try {
     const order = emailP.parseEmailBody(body);
     if (subject) order.source.emailSubject = subject;
     if (from)    order.source.emailFrom    = from;
-    store.addOrder(order);
+    req.store.addOrder(order);
     res.status(201).json(order);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -522,7 +511,7 @@ function extractedToOrder(data, index) {
   };
 }
 
-app.post('/api/orders/extract', upload.single('file'), async (req, res) => {
+app.post('/api/orders/extract', withTenant, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const { mimetype, path: filePath, originalname } = req.file;
   const ext = (originalname.split('.').pop() || '').toLowerCase();
@@ -552,12 +541,7 @@ app.post('/api/orders/extract', upload.single('file'), async (req, res) => {
   }
 });
 
-app.post('/api/orders/bulk-import', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const { store } = getCtx(tenantId);
-
+app.post('/api/orders/bulk-import', withTenant, (req, res) => {
   const { orders: raw } = req.body || {};
   if (!Array.isArray(raw) || !raw.length) return res.status(400).json({ error: 'No orders provided' });
 
@@ -566,7 +550,7 @@ app.post('/api/orders/bulk-import', (req, res) => {
 
   raw.forEach((data, i) => {
     try {
-      store.addOrder(extractedToOrder(data, i));
+      req.store.addOrder(extractedToOrder(data, i));
       imported++;
     } catch (err) {
       if (err.message.includes('already exists')) skipped++;
@@ -615,37 +599,24 @@ app.get('/api/dashboard/stats', withTenant, (req, res) => {
   res.json({ toProcess, toProcessPrev, unprocessed, unprocessedPrev, outOfStock, failedSync, orderMonth, orderLastMonth, salesMonth, salesLastMonth, salesByDay });
 });
 
-app.get('/api/stats', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const { store } = getCtx(session?.tenantId || 'default');
-  res.json(store.getStats());
+app.get('/api/stats', withTenant, (req, res) => {
+  res.json(req.store.getStats());
 });
 
-app.get('/api/clients', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const { store } = getCtx(session?.tenantId || 'default');
-  res.json(store.getClients());
+app.get('/api/clients', withTenant, (req, res) => {
+  res.json(req.store.getClients());
 });
 
-app.get('/api/channels', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const { store } = getCtx(session?.tenantId || 'default');
-  res.json(store.getChannels());
+app.get('/api/channels', withTenant, (req, res) => {
+  res.json(req.store.getChannels());
 });
 
 // ── Connector registry ────────────────────────────────────────────────────────
 
 const PLATFORMS = Object.keys(registry);
 
-app.get('/api/connect/status', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const { creds } = getCtx(session?.tenantId || 'default');
-
-  const all    = creds.getAll();
+app.get('/api/connect/status', withTenant, (req, res) => {
+  const all    = req.creds.getAll();
   const result = {};
   for (const id of PLATFORMS) {
     const conn = registry[id];
@@ -681,7 +652,7 @@ app.delete('/api/connect/:platform', withTenant, (req, res) => {
 // ── Inventory sync routes ─────────────────────────────────────────────────────
 
 // Auto-discover SKU→marketplace mappings from existing order history
-app.post('/api/connect/:platform/inventory/discover', withStaff, withTenant, (req, res) => {
+app.post('/api/connect/:platform/inventory/discover', withStaff, withStaffTenant, (req, res) => {
   const { platform } = req.params;
   if (!inventorySync.SUPPORTED.has(platform)) return res.status(400).json({ error: `Inventory sync not supported for ${platform}` });
   try {
@@ -692,13 +663,13 @@ app.post('/api/connect/:platform/inventory/discover', withStaff, withTenant, (re
 });
 
 // List current SKU mappings for a platform
-app.get('/api/connect/:platform/inventory/map', withStaff, withTenant, (req, res) => {
+app.get('/api/connect/:platform/inventory/map', withStaff, withStaffTenant, (req, res) => {
   const { platform } = req.params;
   res.json(req.ctx.db.prepare('SELECT * FROM channel_sku_map WHERE platform = ? ORDER BY oms_sku').all(platform));
 });
 
 // Add or update a SKU mapping manually
-app.post('/api/connect/:platform/inventory/map', withStaff, withTenant, (req, res) => {
+app.post('/api/connect/:platform/inventory/map', withStaff, withStaffTenant, (req, res) => {
   const { platform } = req.params;
   const { oms_sku, external_id, external_sku_id, external_name } = req.body || {};
   if (!oms_sku) return res.status(400).json({ error: 'oms_sku required' });
@@ -713,13 +684,13 @@ app.post('/api/connect/:platform/inventory/map', withStaff, withTenant, (req, re
 });
 
 // Delete a SKU mapping
-app.delete('/api/connect/:platform/inventory/map/:sku', withStaff, withTenant, (req, res) => {
+app.delete('/api/connect/:platform/inventory/map/:sku', withStaff, withStaffTenant, (req, res) => {
   req.ctx.db.prepare('DELETE FROM channel_sku_map WHERE platform = ? AND oms_sku = ?').run(req.params.platform, req.params.sku);
   res.json({ ok: true });
 });
 
 // Pull inventory FROM marketplace → update OMS stock
-app.post('/api/connect/:platform/inventory/pull', withStaff, withTenant, async (req, res) => {
+app.post('/api/connect/:platform/inventory/pull', withStaff, withStaffTenant, async (req, res) => {
   const { platform } = req.params;
   if (!inventorySync.SUPPORTED.has(platform)) return res.status(400).json({ error: `Not supported for ${platform}` });
   const creds = req.ctx.creds.get(platform);
@@ -732,7 +703,7 @@ app.post('/api/connect/:platform/inventory/pull', withStaff, withTenant, async (
 });
 
 // Push OMS stock → marketplace
-app.post('/api/connect/:platform/inventory/push', withStaff, withTenant, async (req, res) => {
+app.post('/api/connect/:platform/inventory/push', withStaff, withStaffTenant, async (req, res) => {
   const { platform } = req.params;
   if (!inventorySync.SUPPORTED.has(platform)) return res.status(400).json({ error: `Not supported for ${platform}` });
   const creds = req.ctx.creds.get(platform);
@@ -763,8 +734,10 @@ app.get('/api/connect/:platform/callback', async (req, res) => {
   const conn = registry[platform];
   if (!conn) return res.status(400).send(errPage('Unknown', 'Unknown platform'));
 
-  // Resolve tenant from state param or token header (OAuth state carries tenantId)
+  // Resolve tenant from state param (OAuth state carries tenantId)
   const tenantId = req.query.tenantId || 'default';
+  const _t = mainDb.prepare('SELECT id, active FROM tenants WHERE id = ?').get(tenantId);
+  if (!_t || !_t.active) return res.status(400).send(errPage('Error', 'Invalid or suspended tenant'));
   const { creds } = getCtx(tenantId);
 
   try {
@@ -1332,11 +1305,8 @@ async function apolloRequest(path, body) {
   return res.json();
 }
 
-app.post('/api/leads/search', async (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const tenantId = session?.tenantId || 'default';
-  const db = getCtx(tenantId).db;
+app.post('/api/leads/search', withTenant, async (req, res) => {
+  const db = req.db;
 
   const { vertical = 'logistics', location = '', seniority = '', size = '', page = 1 } = req.body || {};
   const vp = VERTICAL_PARAMS[vertical];
@@ -1397,10 +1367,8 @@ app.post('/api/leads/search', async (req, res) => {
   }
 });
 
-app.post('/api/leads/enrich', async (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const db = getCtx(session?.tenantId || 'default').db;
+app.post('/api/leads/enrich', withTenant, async (req, res) => {
+  const db = req.db;
 
   const { id, first_name, last_name, organization_name } = req.body || {};
   if (!id && !first_name) return res.status(400).json({ error: 'Provide Apollo id or first_name' });
@@ -1416,10 +1384,8 @@ app.post('/api/leads/enrich', async (req, res) => {
   }
 });
 
-app.patch('/api/leads/:id/contact', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const db = getCtx(session?.tenantId || 'default').db;
+app.patch('/api/leads/:id/contact', withTenant, (req, res) => {
+  const db = req.db;
 
   const { contacted, contact_note = '', note = '' } = req.body || {};
   const resolvedNote = contact_note || note;
@@ -1431,20 +1397,16 @@ app.patch('/api/leads/:id/contact', (req, res) => {
   res.json({ ok: true, contacted: !!lead.contacted, contacted_at: lead.contacted_at });
 });
 
-app.patch('/api/leads/:id/note', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const db = getCtx(session?.tenantId || 'default').db;
+app.patch('/api/leads/:id/note', withTenant, (req, res) => {
+  const db = req.db;
 
   const { note = '' } = req.body || {};
   db.prepare('UPDATE leads SET contact_note=? WHERE apollo_id=?').run(note, req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/leads', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const db = getCtx(session?.tenantId || 'default').db;
+app.get('/api/leads', withTenant, (req, res) => {
+  const db = req.db;
 
   const { vertical, contacted, session_id } = req.query;
   let sql    = 'SELECT l.*, s.dug_at as session_dug_at FROM leads l JOIN lead_sessions s ON l.session_id=s.id WHERE 1=1';
@@ -1456,11 +1418,8 @@ app.get('/api/leads', (req, res) => {
   res.json(db.prepare(sql).all(...args));
 });
 
-app.get('/api/leads/sessions', (req, res) => {
-  const token   = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  const session = auth.validateToken(token);
-  const db = getCtx(session?.tenantId || 'default').db;
-  res.json(db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
+app.get('/api/leads/sessions', withTenant, (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM lead_sessions ORDER BY dug_at DESC').all());
 });
 
 app.delete('/api/leads', withTenant, (req, res) => {
