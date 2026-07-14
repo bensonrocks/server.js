@@ -2,10 +2,11 @@
 // Maps raw ZORT API objects → IDEALone Standard Models.
 // Field names verified against ZORT Api v4.0 Postman collection (2026-01-01).
 
-import type { ZortOrder, ZortOrderItem } from './zort.types';
+import type { ZortOrder, ZortOrderItem, ZortProduct, ZortContact } from './zort.types';
 import type { StandardOrder, StandardOrderItem,
               StandardShippingAddress, OrderStatus } from '../../models/standard-order';
 import type { StandardCustomer }                     from '../../models/standard-customer';
+import type { StandardInventory }                    from '../../models/standard-inventory';
 
 // Status strings returned in GET /Order/GetOrders list response
 const ZORT_STATUS: Record<string, OrderStatus> = {
@@ -46,6 +47,34 @@ function toAddress(raw: string | undefined, name: string, phone: string): Standa
     state:        '',
     zip:          '',
     country:      '',
+  };
+}
+
+export function mapZortProductToInventory(p: ZortProduct, channel: string): StandardInventory {
+  const qty       = Number(p.qty       ?? 0);
+  const reserved  = Number(p.reserved  ?? 0);
+  const available = Number(p.available ?? Math.max(0, qty - reserved));
+  return {
+    sku:        String(p.sku  || p.code || ''),
+    name:       String(p.name || ''),
+    qty,
+    reserved,
+    available,
+    location:   p.location   || '',
+    warehouse:  p.warehousecode || '',
+    externalId: String(p.sku || p.code || ''),
+    channel,
+  };
+}
+
+export function mapZortContactToCustomer(c: ZortContact): StandardCustomer & { id: string; address: string; taxId: string } {
+  return {
+    id:      String(c.id   ?? c.code ?? ''),
+    name:    String(c.name ?? ''),
+    email:   String(c.email ?? ''),
+    phone:   String(c.phone ?? ''),
+    address: String(c.address ?? ''),
+    taxId:   String(c.taxid ?? ''),
   };
 }
 

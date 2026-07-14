@@ -749,6 +749,107 @@ app.get('/api/connect/:platform/callback', async (req, res) => {
   }
 });
 
+// ── ZORT extended sync routes ─────────────────────────────────────────────────
+
+const { gateway } = require('./dist/gateway');
+
+// Pull products + pricing from ZORT → OMS inventory
+app.post('/api/connect/zort/products/sync', withTenant, async (req, res) => {
+  const creds = req.creds.get('zort');
+  if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected — save storename, apikey, apisecret first' });
+  try {
+    const { zortAdapter } = require('./dist/gateway/adapters/zort/zort.adapter');
+    const products = await zortAdapter.fetchProducts(creds);
+    const inv = req.ctx.inventory;
+    let upserted = 0;
+    for (const p of products) {
+      try {
+        inv.upsert({
+          sku:        p.sku || p.code || '',
+          name:       p.name || '',
+          category:   p.categoryname || '',
+          unit:       p.unit || 'pcs',
+          sell_price: p.price || 0,
+          cost_price: p.cost  || 0,
+          stock_qty:  p.qty   || 0,
+        });
+        upserted++;
+      } catch (_) {}
+    }
+    res.json({ ok: true, fetched: products.length, upserted });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Pull ZORT inventory stock levels → OMS
+app.post('/api/connect/zort/inventory/pull', withTenant, async (req, res) => {
+  const creds = req.creds.get('zort');
+  if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected' });
+  try {
+    const items = await gateway.fetchInventory('zort', creds);
+    const inv = req.ctx.inventory;
+    let updated = 0;
+    for (const item of items) {
+      if (!item.sku) continue;
+      const existing = inv.get(item.sku);
+      if (existing) {
+        inv.upsert({ ...existing, stock_qty: item.qty, sku: item.sku });
+        updated++;
+      }
+    }
+    res.json({ ok: true, fetched: items.length, updated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Push OMS stock levels → ZORT
+app.post('/api/connect/zort/inventory/push', withTenant, async (req, res) => {
+  const creds = req.creds.get('zort');
+  if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected' });
+  try {
+    const omsItems = req.ctx.inventory.getAll();
+    const standardItems = omsItems.map(i => ({
+      sku:      i.sku,
+      name:     i.name,
+      qty:      i.stock_qty || 0,
+      channel:  'zort',
+    }));
+    await gateway.syncInventory('zort', creds, standardItems);
+    res.json({ ok: true, pushed: standardItems.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Pull customers/contacts from ZORT
+app.get('/api/connect/zort/customers', withTenant, async (req, res) => {
+  const creds = req.creds.get('zort');
+  if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected' });
+  try {
+    const { zortAdapter } = require('./dist/gateway/adapters/zort/zort.adapter');
+    res.json(await zortAdapter.fetchCustomers(creds));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Register OMS webhook URL with ZORT so status/stock changes stream in
+app.post('/api/connect/zort/webhook/register', withTenant, async (req, res) => {
+  const creds = req.creds.get('zort');
+  if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected' });
+  const webhookUrl = req.body?.url || `${process.env.BASE_URL || ''}/webhook/zort`;
+  try {
+    const { zortAdapter } = require('./dist/gateway/adapters/zort/zort.adapter');
+    const result = await zortAdapter.registerWebhook(creds, webhookUrl);
+    req.creds.set('zort', { webhookUrl, webhookRegisteredAt: new Date().toISOString() });
+    res.json({ ok: true, webhookUrl, ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Generic Order Sync ────────────────────────────────────────────────────────
 
 app.get('/api/sync/log', withTenant, (req, res) => res.json(req.syncLog.recent(100)));

@@ -65,3 +65,66 @@ export interface ZortActionResponse {
   result?:  string;
   error?:   string;
 }
+
+// ── Product / Inventory ───────────────────────────────────────────────────────
+
+export interface ZortProduct {
+  sku:           string;
+  name:          string;
+  code?:         string;   // alias for sku in some responses
+  barcode?:      string;
+  type?:         string;
+  categoryname?: string;
+  unit?:         string;
+  price?:        number;   // sell price
+  cost?:         number;
+  qty?:          number;   // total stock
+  available?:    number;   // sellable stock (qty - reserved)
+  reserved?:     number;   // held for orders
+  location?:     string;
+  warehousecode?:string;
+  active?:       boolean | number;
+}
+
+export interface ZortProductListResponse {
+  total?: number;
+  page?:  number;
+  limit?: number;
+  list?:  ZortProduct[];
+}
+
+// ── Contacts / Customers ──────────────────────────────────────────────────────
+
+export interface ZortContact {
+  id?:          string | number;
+  code?:        string;
+  name?:        string;
+  phone?:       string;
+  email?:       string;
+  address?:     string;
+  taxid?:       string;
+  branchname?:  string;
+  contacttype?: string;   // "customer" | "supplier" | "both"
+  facebook?:    string;
+  line?:        string;
+}
+
+export interface ZortContactListResponse {
+  total?: number;
+  page?:  number;
+  limit?: number;
+  list?:  ZortContact[];
+}
+
+// ── Webhook ───────────────────────────────────────────────────────────────────
+
+export interface ZortWebhookBody {
+  url:     string;
+  events:  string[];   // e.g. ["order.created","order.status_changed","product.quantity_changed"]
+}
+
+export interface ZortWebhookResponse {
+  status?:  boolean;
+  code?:    number;
+  message?: string;
+}

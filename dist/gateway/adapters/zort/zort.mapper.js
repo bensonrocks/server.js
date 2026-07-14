@@ -3,6 +3,8 @@
 // Maps raw ZORT API objects → IDEALone Standard Models.
 // Field names verified against ZORT Api v4.0 Postman collection (2026-01-01).
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.mapZortProductToInventory = mapZortProductToInventory;
+exports.mapZortContactToCustomer = mapZortContactToCustomer;
 exports.mapZortOrder = mapZortOrder;
 // Status strings returned in GET /Order/GetOrders list response
 const ZORT_STATUS = {
@@ -40,6 +42,32 @@ function toAddress(raw, name, phone) {
         state: '',
         zip: '',
         country: '',
+    };
+}
+function mapZortProductToInventory(p, channel) {
+    const qty = Number(p.qty ?? 0);
+    const reserved = Number(p.reserved ?? 0);
+    const available = Number(p.available ?? Math.max(0, qty - reserved));
+    return {
+        sku: String(p.sku || p.code || ''),
+        name: String(p.name || ''),
+        qty,
+        reserved,
+        available,
+        location: p.location || '',
+        warehouse: p.warehousecode || '',
+        externalId: String(p.sku || p.code || ''),
+        channel,
+    };
+}
+function mapZortContactToCustomer(c) {
+    return {
+        id: String(c.id ?? c.code ?? ''),
+        name: String(c.name ?? ''),
+        email: String(c.email ?? ''),
+        phone: String(c.phone ?? ''),
+        address: String(c.address ?? ''),
+        taxId: String(c.taxid ?? ''),
     };
 }
 function mapZortOrder(raw, channel, clientId, clientName, auditRef) {

@@ -52,4 +52,55 @@ export interface ZortActionResponse {
     result?: string;
     error?: string;
 }
+export interface ZortProduct {
+    sku: string;
+    name: string;
+    code?: string;
+    barcode?: string;
+    type?: string;
+    categoryname?: string;
+    unit?: string;
+    price?: number;
+    cost?: number;
+    qty?: number;
+    available?: number;
+    reserved?: number;
+    location?: string;
+    warehousecode?: string;
+    active?: boolean | number;
+}
+export interface ZortProductListResponse {
+    total?: number;
+    page?: number;
+    limit?: number;
+    list?: ZortProduct[];
+}
+export interface ZortContact {
+    id?: string | number;
+    code?: string;
+    name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    taxid?: string;
+    branchname?: string;
+    contacttype?: string;
+    facebook?: string;
+    line?: string;
+}
+export interface ZortContactListResponse {
+    total?: number;
+    page?: number;
+    limit?: number;
+    list?: ZortContact[];
+}
+export interface ZortWebhookBody {
+    url: string;
+    events: string[];
+}
+export interface ZortWebhookResponse {
+    status?: boolean;
+    code?: number;
+    message?: string;
+}
 //# sourceMappingURL=zort.types.d.ts.map

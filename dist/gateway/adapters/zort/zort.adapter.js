@@ -101,6 +101,99 @@ class ZortAdapter {
         const ok = result.status === true || (!result.error && result.code !== 0);
         return { ok, message: result.message ?? result.result ?? result.error ?? '' };
     }
+    // ── Inventory: pull stock levels from ZORT ──────────────────────────────────
+    async fetchInventory(creds) {
+        const zortCreds = assertCreds(creds);
+        const all = [];
+        let page = 1;
+        while (true) {
+            const raw = await zort_client_1.zortClient.get(zortCreds, '/Product/GetProducts', { page: String(page), limit: '100' });
+            const list = raw.list ?? [];
+            for (const p of list) {
+                all.push((0, zort_mapper_1.mapZortProductToInventory)(p, this.channel));
+            }
+            if (list.length < 100)
+                break;
+            page++;
+        }
+        audit_log_service_1.auditLogService.save({
+            channel: 'zort',
+            operation: 'fetchInventory',
+            externalId: null,
+            rawPayload: { count: all.length },
+            tenantId: String(creds.storeName ?? creds.storename ?? 'zort'),
+        });
+        return all;
+    }
+    // ── Inventory: push OMS stock levels → ZORT ─────────────────────────────────
+    async syncInventory(creds, items) {
+        const zortCreds = assertCreds(creds);
+        for (const item of items) {
+            if (!item.sku)
+                continue;
+            try {
+                await zort_client_1.zortClient.postParams(zortCreds, '/Product/AdjustInventory', { sku: item.sku, qty: String(item.qty) });
+            }
+            catch (err) {
+                // Log and continue — a single SKU failure should not abort the whole sync
+                audit_log_service_1.auditLogService.save({
+                    channel: 'zort',
+                    operation: 'syncInventory:error',
+                    externalId: item.sku,
+                    rawPayload: { error: err.message },
+                    tenantId: String(creds.storeName ?? creds.storename ?? 'zort'),
+                });
+            }
+        }
+    }
+    // ── Products: full product list with pricing ─────────────────────────────────
+    async fetchProducts(creds) {
+        const zortCreds = assertCreds(creds);
+        const all = [];
+        let page = 1;
+        while (true) {
+            const raw = await zort_client_1.zortClient.get(zortCreds, '/Product/GetProducts', { page: String(page), limit: '100' });
+            const list = raw.list ?? [];
+            all.push(...list);
+            if (list.length < 100)
+                break;
+            page++;
+        }
+        return all;
+    }
+    // ── Customers: pull contacts from ZORT ──────────────────────────────────────
+    async fetchCustomers(creds) {
+        const zortCreds = assertCreds(creds);
+        const all = [];
+        let page = 1;
+        while (true) {
+            const raw = await zort_client_1.zortClient.get(zortCreds, '/Contact/GetContacts', { page: String(page), limit: '100' });
+            const list = raw.list ?? [];
+            for (const c of list)
+                all.push((0, zort_mapper_1.mapZortContactToCustomer)(c));
+            if (list.length < 100)
+                break;
+            page++;
+        }
+        return all;
+    }
+    // ── Webhooks: register OMS callback URL with ZORT ───────────────────────────
+    async registerWebhook(creds, url) {
+        const zortCreds = assertCreds(creds);
+        const body = {
+            url,
+            events: [
+                'order.created',
+                'order.modified',
+                'order.status_changed',
+                'order.tracking_changed',
+                'product.quantity_changed',
+                'contact.created',
+                'contact.modified',
+            ],
+        };
+        return zort_client_1.zortClient.post(zortCreds, '/Webhook/UpdateWebhook', body);
+    }
 }
 exports.ZortAdapter = ZortAdapter;
 exports.zortAdapter = new ZortAdapter();
