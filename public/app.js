@@ -1866,27 +1866,65 @@
       <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>`;
 
     // Initialize and update the main Singapore map
-    if (window.mapsError) {
-      console.error('Google Maps API failed to load');
-      return;
-    }
+    const checkMapsReady = () => {
+      if (window.mapsLoaded) {
+        initTransportMainMap();
+      } else if (window.mapsError) {
+        console.error('✗ Maps API failed to load, using fallback table view');
+        renderTransportTableFallback();
+      } else {
+        setTimeout(checkMapsReady, 100);
+      }
+    };
 
-    // Wait for Maps API to load
+    // Start checking or use timeout fallback
+    const mapTimeoutId = setTimeout(() => {
+      if (!window.mapsLoaded) {
+        console.warn('✗ Maps API loading timeout, using fallback table view');
+        renderTransportTableFallback();
+      }
+    }, 5000);
+
     if (window.mapsLoaded) {
+      clearTimeout(mapTimeoutId);
       initTransportMainMap();
     } else {
-      const checkMapsReady = setInterval(() => {
-        if (window.mapsLoaded) {
-          clearInterval(checkMapsReady);
-          initTransportMainMap();
-        } else if (window.mapsError) {
-          clearInterval(checkMapsReady);
-          console.error('Google Maps API failed to load');
-        }
-      }, 100);
-      // Timeout after 5 seconds
-      setTimeout(() => clearInterval(checkMapsReady), 5000);
+      checkMapsReady();
     }
+  }
+
+  function renderTransportTableFallback() {
+    const mapContainer = document.getElementById('transportMainMap');
+    if (!mapContainer) return;
+
+    mapContainer.innerHTML = `
+      <div style="padding:1rem;height:100%;overflow-y:auto">
+        <h3 style="margin:0 0 1rem 0">Transport Jobs</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="background:#f0f0f0;border-bottom:1px solid #ddd">
+              <th style="padding:0.5rem;text-align:left">Job ID</th>
+              <th style="padding:0.5rem;text-align:left">Client</th>
+              <th style="padding:0.5rem;text-align:left">Status</th>
+              <th style="padding:0.5rem;text-align:right">Items</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${transportRequests.map(req => `
+              <tr style="border-bottom:1px solid #eee;hover:background:#f9f9f9">
+                <td style="padding:0.5rem">${esc(req.id || 'N/A')}</td>
+                <td style="padding:0.5rem">${esc(req.clientName || 'N/A')}</td>
+                <td style="padding:0.5rem"><span class="status-badge" style="font-size:11px">${req.status || 'pending'}</span></td>
+                <td style="padding:0.5rem;text-align:right">${(req.items || []).length}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top:1rem;padding:0.5rem;background:#e8f4f8;border-radius:4px;font-size:12px;color:#666">
+          📍 Map view unavailable - using table view
+        </div>
+      </div>
+    `;
   }
 
   function initTransportMainMap() {
@@ -1895,8 +1933,13 @@
 
     // Check if Google Maps API is available
     if (!window.google || !window.google.maps) {
-      console.error('Google Maps API not available');
-      mapContainer.innerHTML = '<div style="padding:1rem;color:red">Map unavailable - Google Maps API failed to load</div>';
+      const errorMsg = window.mapsError === 'API_AUTH_FAILED'
+        ? 'API key invalid or expired - contact administrator'
+        : window.mapsError === 'SCRIPT_ERROR'
+        ? 'Failed to load Maps script - check network connection'
+        : 'Google Maps API not available';
+      console.error('✗ Google Maps API not available:', errorMsg);
+      mapContainer.innerHTML = '<div style="padding:1rem;text-align:center;color:#666"><div style="margin-bottom:0.5rem">📍 Map not available</div><div style="font-size:12px;color:#999">' + errorMsg + '</div><div style="font-size:11px;color:#ccc;margin-top:0.5rem">Check browser console for details</div></div>';
       return;
     }
 

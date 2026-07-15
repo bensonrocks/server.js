@@ -20,9 +20,17 @@
     window.mapsError = null;
     window.initMap = function() {
       window.mapsLoaded = true;
+      console.log('✓ Google Maps API loaded successfully');
+    };
+    window.gm_authFailure = function() {
+      window.mapsError = 'API_AUTH_FAILED';
+      console.error('✗ Google Maps API authentication failed - check API key');
     };
   </script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&callback=initMap" async defer onerror="window.mapsError=true"></script>
+  <script>
+    console.log('Loading Google Maps API...');
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&callback=initMap" async defer onerror="window.mapsError='SCRIPT_ERROR';console.error('✗ Maps API script failed to load');"></script>
 </head>
 <body>
 
