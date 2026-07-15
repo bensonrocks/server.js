@@ -5,18 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IdealInbound — Inbound Processing</title>
 <style>
-  :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED;--bad:#C0304A;--bad-bg:#F7DBE1;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
-  @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B;--bad:#E0607C;--bad-bg:#33111A}}
-  :root[data-theme="light"]{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED;--bad:#C0304A;--bad-bg:#F7DBE1}
-  :root[data-theme="dark"]{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B;--bad:#E0607C;--bad-bg:#33111A}
+  :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
+  @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B}}
+  :root[data-theme="light"]{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--accent-dim:#D6E4FF;--ok:#127A45;--ok-bg:#DBF3E5;--warn:#9A6A00;--warn-bg:#FBEBC7;--idle:#5B6472;--idle-bg:#E7E9ED}
+  :root[data-theme="dark"]{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--accent-dim:#132A52;--ok:#3FCB84;--ok-bg:#0E2A1C;--warn:#E0B23C;--warn-bg:#332708;--idle:#9AA3AF;--idle-bg:#20242B}
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.5;min-height:100vh}
   .topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:10}
   .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.02em;text-decoration:none;color:var(--text)}
   .brand-dot{width:9px;height:9px;border-radius:2px;background:var(--accent)}
-  .top-right{display:flex;align-items:center;gap:14px}
-  .top-link{font-size:.8rem;color:var(--text-2);text-decoration:none}
-  .top-link:hover{color:var(--accent)}
   .sign-out{font-size:.8rem;color:var(--text-2);text-decoration:none;background:none;border:none;cursor:pointer;font-family:inherit}
   .sign-out:hover{color:var(--accent)}
   .page{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
@@ -29,22 +26,18 @@
   label{display:block;font-size:.72rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
   input,select{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:.85rem;font-family:var(--sans)}
   input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
-  .hint{font-size:.72rem;color:var(--text-3);margin-top:6px;font-weight:400;text-transform:none;letter-spacing:0}
+  .hint{font-size:.72rem;color:var(--text-3);margin-top:6px}
   .item-row{display:grid;grid-template-columns:1fr 1fr 70px 28px;gap:6px;align-items:end;margin-top:8px}
   .item-row label{margin-top:0}
   .rm-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-3);height:34px;cursor:pointer}
-  .rm-btn:hover{color:var(--bad);border-color:var(--bad)}
+  .rm-btn:hover{color:#C0304A;border-color:#C0304A}
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:.82rem;font-weight:600;cursor:pointer}
   .btn:hover{opacity:.9}
   .btn.secondary{background:none;color:var(--accent)}
-  .btn.danger{background:none;color:var(--bad);border-color:var(--bad)}
+  .btn.danger{background:none;color:#C0304A;border-color:#C0304A}
   .btn.small{padding:5px 10px;font-size:.72rem}
-  .btn:disabled{opacity:.4;cursor:not-allowed}
   .btn-row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
-  .err{color:var(--bad);font-size:.78rem;margin-top:8px;display:none}
-  .banner{font-size:.78rem;padding:10px 12px;border-radius:6px;margin-top:10px}
-  .banner.warn{background:var(--warn-bg);color:var(--warn)}
-  .banner.bad{background:var(--bad-bg);color:var(--bad)}
+  .err{color:#C0304A;font-size:.78rem;margin-top:8px;display:none}
   .tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
   .tab{padding:6px 12px;border-radius:99px;border:1px solid var(--border);background:var(--bg);color:var(--text-2);font-size:.74rem;cursor:pointer;font-weight:600}
   .tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -57,10 +50,23 @@
   .status.expected{background:var(--idle-bg);color:var(--idle)}
   .status.receiving{background:var(--warn-bg);color:var(--warn)}
   .status.completed{background:var(--ok-bg);color:var(--ok)}
-  .status.pending{background:var(--bad-bg);color:var(--bad)}
+  .status.pending{background:#F7DBE1;color:#C0304A}
   .type-badge{display:inline-block;padding:2px 8px;border-radius:5px;font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:var(--accent-dim);color:var(--accent)}
   .serial-pill{font-family:var(--mono);font-size:.7rem;color:var(--text-3)}
   .empty{color:var(--text-3);font-size:.85rem;padding:20px 0;text-align:center}
+  .banner{font-size:.78rem;padding:10px 12px;border-radius:6px;margin-top:10px}
+  .banner.warn{background:var(--warn-bg);color:var(--warn)}
+  .top-right{display:flex;align-items:center;gap:14px}
+  .top-link{font-size:.8rem;color:var(--text-2);text-decoration:none}
+  .top-link:hover{color:var(--accent)}
+  .radio-row{display:flex;gap:16px;margin-top:8px;font-size:.8rem}
+  .radio-row label{display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:.8rem;color:var(--text);margin:0}
+  .radio-row input{width:auto}
+  .icon-btn{width:38px;height:38px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;font-size:1rem;overflow:hidden;padding:0}
+  .cam-overlay{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;z-index:70;flex-direction:column}
+  .cam-overlay.open{display:flex}
+  .cam-overlay video{max-width:100%;max-height:70vh}
+  .cam-overlay .cam-controls{padding:16px;display:flex;gap:10px}
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
   .modal-bg.open{display:flex}
   .modal{background:var(--surface);border-radius:10px;padding:20px;max-width:680px;width:100%;max-height:88vh;overflow-y:auto}
@@ -69,16 +75,21 @@
   .close-x{background:none;border:none;font-size:1.1rem;color:var(--text-3);cursor:pointer}
   .meta-line{font-size:.8rem;color:var(--text-2);margin-bottom:10px}
   .meta-line strong{color:var(--text)}
-  .scan-grid{display:grid;grid-template-columns:1.2fr .6fr .9fr .9fr auto auto;gap:8px;margin-top:10px;align-items:end}
+  .carton-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .carton-badge{font-weight:700;font-size:.8rem;background:var(--idle-bg);color:var(--idle);border-radius:6px;padding:4px 10px}
+  .label-banner{display:none;background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.82rem}
+  .label-banner-inner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .label-banner strong{font-family:var(--mono);font-size:.95rem}
+  .scan-grid{display:grid;grid-template-columns:1.2fr .6fr .9fr auto auto auto;gap:8px;margin-top:10px;align-items:end}
   .scan-grid label{margin:0 0 4px}
   .var-pos{color:var(--ok)}
-  .var-neg{color:var(--bad)}
+  .var-neg{color:#C0304A}
   .mono{font-family:var(--mono)}
-  .icon-btn{width:38px;height:38px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;font-size:1rem;overflow:hidden;padding:0}
-  .icon-btn.has-preview{border-color:var(--accent)}
-  .icon-btn img{width:100%;height:100%;object-fit:cover;display:block}
-  .photo-section,.carton-section{margin-top:16px}
-  .section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
+  .photo-btn{width:38px;height:38px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;font-size:1rem;overflow:hidden;padding:0}
+  .photo-btn.has-preview{border-color:var(--accent)}
+  .photo-btn img{width:100%;height:100%;object-fit:cover;display:block}
+  .photo-section{margin-top:16px}
+  .photo-section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
   .photo-grid{display:flex;flex-wrap:wrap;gap:10px}
   .photo-card{display:flex;flex-direction:column;align-items:center;gap:4px;width:76px;text-align:center}
   .photo-card img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer}
@@ -87,25 +98,6 @@
   .lightbox-bg{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;padding:24px;z-index:60}
   .lightbox-bg.open{display:flex}
   .lightbox-bg img{max-width:100%;max-height:100%;border-radius:6px}
-  .carton-card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  .carton-card.active{border-color:var(--accent);background:var(--accent-dim)}
-  .carton-meta{font-size:.78rem}
-  .carton-meta .num{font-weight:700}
-  .carton-badges{display:flex;gap:6px;margin-top:4px}
-  .badge{font-size:.62rem;padding:1px 7px;border-radius:99px;font-weight:700;text-transform:uppercase}
-  .badge.open{background:var(--warn-bg);color:var(--warn)}
-  .badge.closed{background:var(--idle-bg);color:var(--idle)}
-  .badge.unlabeled{background:var(--bad-bg);color:var(--bad)}
-  .badge.labeled{background:var(--ok-bg);color:var(--ok)}
-  .carton-actions{display:flex;gap:6px;flex-wrap:wrap}
-  .cam-overlay{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;z-index:70;flex-direction:column}
-  .cam-overlay.open{display:flex}
-  .cam-overlay video{max-width:100%;max-height:70vh}
-  .cam-overlay .cam-controls{padding:16px;display:flex;gap:10px}
-  .file-drop{border:1px dashed var(--border);border-radius:8px;padding:12px;font-size:.78rem;color:var(--text-2);margin-top:8px}
-  .radio-row{display:flex;gap:16px;margin-top:8px;font-size:.8rem}
-  .radio-row label{display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:.8rem;color:var(--text);margin:0}
-  .radio-row input{width:auto}
   @media print{.topbar,.no-print{display:none!important}.page{padding:0;max-width:100%}.card{border:none}}
 </style>
 </head>
@@ -159,9 +151,8 @@
       </div>
 
       <div id="file-manifest" style="display:none">
-        <div class="hint">Upload an XLSX, CSV, or PDF ASN/PO. Columns are auto-detected by header name (SKU, Description, Qty).</div>
+        <div class="hint">Upload an XLSX, CSV, or PDF ASN/PO. Columns are auto-detected by header name (SKU, Description, Qty). If the file can't be confidently parsed, creation is blocked with a clear error rather than importing a partial manifest.</div>
         <input type="file" id="f-file" accept=".xlsx,.xls,.csv,.pdf">
-        <div class="file-drop">If the file can't be confidently parsed, creation is blocked with a clear error rather than importing a partial or wrong manifest.</div>
       </div>
 
       <div class="btn-row">
@@ -248,11 +239,13 @@ const TYPE_CONFIG = {
   loose:  { label: 'Loose / Ad-hoc',         sourceLabel: 'Source / Notes',            itemsHint: 'Usually left empty — just log whatever shows up during receiving.',
             fields: [ ['notes','Notes'] ] },
 };
-const CONDITIONS = ['unspecified', 'sellable', 'damaged', 'refurbish', 'dispose', 'kiv'];
-const CONDITION_LABEL = { unspecified: 'Unspecified', sellable: 'Sellable', damaged: 'Damaged', refurbish: 'Refurbish', dispose: 'Dispose', kiv: 'KIV (hold)' };
+const CONDITIONS = ['unspecified', 'sellable', 'damaged', 'refurbish', 'dispose'];
+const CONDITION_LABEL = { unspecified: 'Unspecified', sellable: 'Sellable', damaged: 'Damaged', refurbish: 'Refurbish', dispose: 'Dispose' };
 
 let currentInboundId = null;
-let currentInbound = null;
+let currentInboundRef = '';
+let currentInboundCartons = [{ num: 1, scans: {}, labelConfirmed: false }];
+let currentActiveCartonNum = 1;
 let activeTypeFilter = '';
 let scanPhotoFile = null;
 let currentUser = null;
@@ -459,78 +452,204 @@ function onScanPhotoChosen(input) {
   btn.innerHTML = `<img src="${URL.createObjectURL(file)}">`;
 }
 
-// ── Cartons ──────────────────────────────────────────────────────────
-function renderCartonSection(inbound) {
-  const cartons = inbound.cartons || [];
-  const rows = cartons.map(c => {
-    const isActive = inbound.activeCartonId === c.id;
-    const actions = [];
-    if (!c.labelConfirmed) actions.push(`<button class="btn small" onclick="confirmCartonLabel('${c.id}')">Confirm Label</button>`);
-    if (c.labelConfirmed && !isActive) actions.push(`<button class="btn secondary small" onclick="switchCarton('${c.id}')">Set Active</button>`);
-    if (c.status === 'open') actions.push(`<button class="btn secondary small" onclick="closeCarton('${c.id}')">Close</button>`);
-    if (c.itemCount === 0) actions.push(`<button class="btn danger small" onclick="cancelCarton('${c.id}')">Cancel</button>`);
-    actions.push(`<button class="btn secondary small" onclick="printCartonSlip('${c.id}')">Print Slip</button>`);
-    return `
-      <div class="carton-card ${isActive ? 'active' : ''}">
-        <div class="carton-meta">
-          <span class="num">Carton ${c.cartonNum}</span> &nbsp; ${c.totalQty} units, ${c.itemCount} SKU(s)
-          <div class="carton-badges">
-            <span class="badge ${c.status}">${c.status}</span>
-            <span class="badge ${c.labelConfirmed ? 'labeled' : 'unlabeled'}">${c.labelConfirmed ? 'Label Confirmed' : 'Label Not Confirmed'}</span>
-            ${isActive ? '<span class="badge labeled">Active</span>' : ''}
-          </div>
-        </div>
-        <div class="carton-actions no-print">${actions.join('')}</div>
-      </div>
-    `;
-  }).join('');
-  return `
-    <div class="carton-section">
-      <div class="section-head">
-        <h2 style="margin:0;font-size:.95rem">Cartons <span class="hint" style="display:inline">(optional — for multi-box shipments)</span></h2>
-        <button class="btn secondary small no-print" onclick="createCarton()">+ New Carton</button>
-      </div>
-      ${rows || '<div class="empty">No cartons — scans are unassigned unless you create one.</div>'}
-    </div>
-  `;
-}
-
-async function createCarton() {
-  await fetch(`/api/inbounds/${currentInboundId}/cartons`, { method: 'POST' });
-  openInbound(currentInboundId);
-}
-async function confirmCartonLabel(cartonId) {
-  await fetch(`/api/inbounds/${currentInboundId}/cartons/${cartonId}/confirm-label`, { method: 'POST' });
-  openInbound(currentInboundId);
-}
-async function switchCarton(cartonId) {
-  await fetch(`/api/inbounds/${currentInboundId}/cartons/${cartonId}/switch`, { method: 'POST' });
-  openInbound(currentInboundId);
-}
-async function closeCarton(cartonId) {
-  await fetch(`/api/inbounds/${currentInboundId}/cartons/${cartonId}/close`, { method: 'POST' });
-  openInbound(currentInboundId);
-}
-async function cancelCarton(cartonId) {
-  if (!confirm('Cancel this empty carton?')) return;
-  await fetch(`/api/inbounds/${currentInboundId}/cartons/${cartonId}`, { method: 'DELETE' });
-  openInbound(currentInboundId);
-}
-async function printCartonSlip(cartonId) {
-  const res = await fetch(`/api/inbounds/${currentInboundId}/cartons/${cartonId}/slip`);
+async function openInbound(id) {
+  currentInboundId = id;
+  scanPhotoFile = null;
+  const res = await fetch(`/api/inbounds/${id}`);
   const data = await res.json();
   if (!data.ok) return;
-  const s = data.slip;
-  const rows = s.lines.map(l => `<tr><td class="mono">${l.sku}</td><td class="mono">${l.qty}</td></tr>`).join('');
-  document.getElementById('modal-title').textContent = `Carton ${s.carton.cartonNum} Slip — ${s.inbound.reference}`;
+  const s = data.inbound;
+  const cfg = TYPE_CONFIG[s.type];
+  currentInboundRef = s.reference;
+  currentInboundCartons = s.cartons && s.cartons.length ? s.cartons : [{ num: 1, scans: {}, labelConfirmed: false }];
+  currentActiveCartonNum = s.activeCartonNum || 1;
+
+  document.getElementById('modal-title').innerHTML = `${s.reference} — ${s.source} <span class="serial-pill">${s.serial || ''}</span>`;
+  const rows = s.items.map(i => `
+    <tr>
+      <td class="mono">${i.sku}</td>
+      <td>${i.description || ''}</td>
+      <td class="mono">${i.expectedQty || '—'}</td>
+      <td class="mono">${i.receivedQty}</td>
+    </tr>
+  `).join('');
+
+  const multiCarton = currentInboundCartons.length > 1;
   document.getElementById('modal-body').innerHTML = `
-    <div class="meta-line">Inbound: <strong>${s.inbound.serial}</strong> &nbsp;·&nbsp; ${s.inbound.source}</div>
-    <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Qty</th></tr></thead><tbody>${rows || '<tr><td colspan="2" class="empty">Empty carton</td></tr>'}</tbody></table></div>
+    <div style="margin-bottom:6px">
+      <span class="type-badge">${cfg.label}</span>
+      <span class="status ${s.status}">${statusLabel(s.status)}</span>
+    </div>
+    <div class="meta-line">${metaLine(s)}</div>
+    <div class="carton-bar no-print">
+      <button class="btn secondary small" id="carton-prev" onclick="switchCartonUI(-1)" style="display:${multiCarton ? '' : 'none'}">&larr;</button>
+      <span class="carton-badge" id="carton-badge">${multiCarton ? `Carton ${currentActiveCartonNum} of ${currentInboundCartons.length}` : 'Carton 1'}</span>
+      <button class="btn secondary small" id="carton-next" onclick="switchCartonUI(1)" style="display:${multiCarton ? '' : 'none'}">&rarr;</button>
+      ${s.status !== 'completed' ? `<button class="btn secondary small" onclick="newCartonUI()">+ New Carton</button>` : ''}
+      <button class="btn secondary small" id="carton-cancel-multi" onclick="cancelMultiCartonUI()" style="display:${multiCarton ? '' : 'none'}">&#8634; 1 Box</button>
+    </div>
+    <div class="label-banner no-print" id="label-banner"></div>
+    <div class="scan-grid no-print">
+      <div><label>Scan or type SKU</label><input id="scan-sku" placeholder="SKU (new SKUs are OK)"></div>
+      <div><label>Qty</label><input id="scan-qty" type="number" min="1" value="1"></div>
+      <div><label>Condition</label>
+        <select id="scan-condition">
+          ${CONDITIONS.map(c => `<option value="${c}">${CONDITION_LABEL[c]}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label>Camera</label>
+        <button type="button" class="icon-btn" onclick="openBarcodeScanner()" title="Scan barcode with camera">📷🔍</button>
+      </div>
+      <div>
+        <label>Photo</label>
+        <button type="button" class="photo-btn" id="scan-photo-btn" onclick="document.getElementById('scan-photo-input').click()" title="Take / attach photo">📷</button>
+        <input type="file" id="scan-photo-input" accept="image/*" capture="environment" style="display:none" onchange="onScanPhotoChosen(this)">
+      </div>
+      <button class="btn small" id="receive-btn" onclick="receiveScan()">Receive</button>
+    </div>
+    <div class="err" id="scan-err"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table>
+        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4" class="empty">No items received yet</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div class="photo-section">
+      <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
+      ${renderPhotoGallery(s)}
+    </div>
     <div class="btn-row no-print">
-      <button class="btn small" onclick="window.print()">Print</button>
-      <button class="btn secondary small" onclick="openInbound('${currentInboundId}')">Back</button>
+      <button class="btn secondary small" onclick="printReport('${s.id}')">View / Print Receiving Report</button>
+      ${s.status !== 'completed' ? `<button class="btn danger small" onclick="attemptCloseInbound('${s.id}')">Close Inbound</button>` : ''}
     </div>
   `;
+  renderLabelBanner();
+  document.getElementById('modal').classList.add('open');
+}
+
+// ── Cartons — a shipment/return often arrives across more than one box ─────
+function activeCartonMeta() {
+  return currentInboundCartons.find(c => c.num === currentActiveCartonNum) || currentInboundCartons[currentInboundCartons.length - 1];
+}
+// The label prompt is a real block, not cosmetic — the Receive button stays
+// disabled until the packer confirms they've written the carton number on
+// the box, same invariant as the outbound picking side of this system.
+function renderLabelBanner() {
+  const c = activeCartonMeta();
+  const banner = document.getElementById('label-banner');
+  const receiveBtn = document.getElementById('receive-btn');
+  if (!banner) return;
+  if (c && !c.labelConfirmed) {
+    const label = `${currentInboundRef}-${String(c.num).padStart(2, '0')}`;
+    banner.innerHTML = `<div class="label-banner-inner">&#128230; Write <strong>${label}</strong> on this box, then confirm.
+      <button class="btn small" onclick="confirmLabelUI()">&#10003; I've Written It</button></div>`;
+    banner.style.display = 'block';
+    if (receiveBtn) receiveBtn.disabled = true;
+  } else {
+    banner.style.display = 'none';
+    if (receiveBtn) receiveBtn.disabled = false;
+  }
+}
+async function newCartonUI() {
+  const res = await fetch(`/api/inbounds/${currentInboundId}/new-carton`, { method: 'POST' });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error); return; }
+  loadInbounds();
+  openInbound(currentInboundId);
+}
+async function switchCartonUI(delta) {
+  const target = currentActiveCartonNum + delta;
+  if (target < 1 || target > currentInboundCartons.length) return;
+  const res = await fetch(`/api/inbounds/${currentInboundId}/carton/switch`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ num: target }),
+  });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error); return; }
+  openInbound(currentInboundId);
+}
+async function cancelMultiCartonUI() {
+  if (!confirm('Merge every carton back into one box?')) return;
+  const res = await fetch(`/api/inbounds/${currentInboundId}/carton/cancel-multi`, { method: 'POST' });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error); return; }
+  loadInbounds();
+  openInbound(currentInboundId);
+}
+async function confirmLabelUI() {
+  const c = activeCartonMeta();
+  await fetch(`/api/inbounds/${currentInboundId}/carton/label-confirmed`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ num: c.num }),
+  });
+  openInbound(currentInboundId);
+}
+
+async function receiveScan() {
+  const sku = document.getElementById('scan-sku').value.trim();
+  const qty = Number(document.getElementById('scan-qty').value);
+  const condition = document.getElementById('scan-condition').value;
+  const errEl = document.getElementById('scan-err');
+  errEl.style.display = 'none';
+  if (!sku || !qty) return;
+
+  const formData = new FormData();
+  formData.append('sku', sku);
+  formData.append('qty', qty);
+  formData.append('condition', condition);
+  if (scanPhotoFile) formData.append('photo', scanPhotoFile);
+
+  const res = await fetch(`/api/inbounds/${currentInboundId}/receive`, {
+    method: 'POST',
+    body: formData,
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    errEl.textContent = data.error;
+    errEl.style.display = 'block';
+    return;
+  }
+  scanPhotoFile = null;
+  loadInbounds();
+  openInbound(currentInboundId);
+}
+
+// ── Close with mismatch confirmation ────────────────────────────────
+async function attemptCloseInbound(id, force) {
+  const res = await fetch(`/api/inbounds/${id}/close`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }),
+  });
+  const data = await res.json();
+  if (res.status === 409 && data.needsConfirm) {
+    showCloseConfirm(id, data.mismatches, data.extras);
+    return;
+  }
+  if (!data.ok) { alert(data.error || 'Failed to close inbound'); return; }
+  document.getElementById('confirm-modal').classList.remove('open');
+  loadInbounds();
+  openInbound(id);
+}
+
+function showCloseConfirm(id, mismatches, extras) {
+  const mRows = mismatches.map(m => `
+    <tr><td class="mono">${m.sku}</td><td class="mono">${m.expectedQty}</td><td class="mono">${m.receivedQty}</td>
+    <td class="mono ${m.diff < 0 ? 'var-neg' : 'var-pos'}">${m.diff > 0 ? '+' : ''}${m.diff}</td></tr>
+  `).join('');
+  const eRows = extras.map(e => `<tr><td class="mono">${e.sku}</td><td class="mono">${e.receivedQty}</td></tr>`).join('');
+  document.getElementById('confirm-body').innerHTML = `
+    ${mismatches.length ? `
+      <div class="banner warn">Quantities don't match the manifest:</div>
+      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Expected</th><th>Received</th><th>Diff</th></tr></thead><tbody>${mRows}</tbody></table></div>
+    ` : ''}
+    ${extras.length ? `
+      <div class="banner warn" style="margin-top:10px">Received SKUs not on the manifest:</div>
+      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Received</th></tr></thead><tbody>${eRows}</tbody></table></div>
+    ` : ''}
+    <div class="btn-row">
+      <button class="btn danger" onclick="attemptCloseInbound('${id}', true)">Close Anyway</button>
+      <button class="btn secondary" onclick="document.getElementById('confirm-modal').classList.remove('open')">Keep Receiving</button>
+    </div>
+  `;
+  document.getElementById('confirm-modal').classList.add('open');
 }
 
 // ── Live camera barcode scanning ────────────────────────────────────
@@ -590,148 +709,26 @@ function _beep() {
   } catch { /* audio not available */ }
 }
 
-// ── Inbound detail ───────────────────────────────────────────────────
-async function openInbound(id) {
-  currentInboundId = id;
-  scanPhotoFile = null;
-  const res = await fetch(`/api/inbounds/${id}`);
-  const data = await res.json();
-  if (!data.ok) return;
-  const s = data.inbound;
-  currentInbound = s;
-  const cfg = TYPE_CONFIG[s.type];
-
-  document.getElementById('modal-title').innerHTML = `${s.reference} — ${s.source} <span class="serial-pill">${s.serial || ''}</span>`;
-  const rows = s.items.map(i => `
-    <tr>
-      <td class="mono">${i.sku}</td>
-      <td>${i.description || ''}</td>
-      <td class="mono">${i.expectedQty || '—'}</td>
-      <td class="mono">${i.receivedQty}</td>
-    </tr>
-  `).join('');
-
-  const confirmedCartons = (s.cartons || []).filter(c => c.labelConfirmed);
-  const cartonOptions = confirmedCartons.map(c =>
-    `<option value="${c.id}" ${s.activeCartonId === c.id ? 'selected' : ''}>Carton ${c.cartonNum}${c.status === 'closed' ? ' (closed — will reopen)' : ''}</option>`
-  ).join('');
-
-  document.getElementById('modal-body').innerHTML = `
-    <div style="margin-bottom:6px">
-      <span class="type-badge">${cfg.label}</span>
-      <span class="status ${s.status}">${statusLabel(s.status)}</span>
-    </div>
-    <div class="meta-line">${metaLine(s)}</div>
-    <div class="scan-grid no-print">
-      <div><label>Scan or type SKU</label><input id="scan-sku" placeholder="SKU (new SKUs are OK)"></div>
-      <div><label>Qty</label><input id="scan-qty" type="number" min="1" value="1"></div>
-      <div><label>Condition</label>
-        <select id="scan-condition">
-          ${CONDITIONS.map(c => `<option value="${c}">${CONDITION_LABEL[c]}</option>`).join('')}
-        </select>
-      </div>
-      <div><label>Carton</label>
-        <select id="scan-carton">
-          <option value="">No carton</option>
-          ${cartonOptions}
-        </select>
-      </div>
-      <div>
-        <label>Camera</label>
-        <button type="button" class="icon-btn" onclick="openBarcodeScanner()" title="Scan barcode with camera">📷🔍</button>
-      </div>
-      <div>
-        <label>Photo</label>
-        <button type="button" class="icon-btn" id="scan-photo-btn" onclick="document.getElementById('scan-photo-input').click()" title="Take / attach photo">📷</button>
-        <input type="file" id="scan-photo-input" accept="image/*" capture="environment" style="display:none" onchange="onScanPhotoChosen(this)">
-      </div>
-    </div>
-    <div class="btn-row no-print"><button class="btn small" onclick="receiveScan()">Receive</button></div>
-    <div class="err" id="scan-err"></div>
-    <div class="table-wrap" style="margin-top:14px">
-      <table>
-        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Received</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="4" class="empty">No items received yet</td></tr>'}</tbody>
-      </table>
-    </div>
-    ${renderCartonSection(s)}
-    <div class="photo-section">
-      <div class="section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
-      ${renderPhotoGallery(s)}
-    </div>
-    <div class="btn-row no-print">
-      <button class="btn secondary small" onclick="printReport('${s.id}')">View / Print Receiving Report</button>
-      ${s.status !== 'completed' ? `<button class="btn danger small" onclick="attemptCloseInbound('${s.id}')">Close Inbound</button>` : ''}
-    </div>
-  `;
-  document.getElementById('modal').classList.add('open');
+// ── Deletion request ─────────────────────────────────────────────────
+function openDeleteModal(id) {
+  deleteTargetId = id;
+  document.getElementById('del-reason').value = '';
+  document.getElementById('del-password').value = '';
+  document.getElementById('del-err').style.display = 'none';
+  document.getElementById('delete-modal').classList.add('open');
 }
-
-async function receiveScan() {
-  const sku = document.getElementById('scan-sku').value.trim();
-  const qty = Number(document.getElementById('scan-qty').value);
-  const condition = document.getElementById('scan-condition').value;
-  const cartonId = document.getElementById('scan-carton').value;
-  const errEl = document.getElementById('scan-err');
-  errEl.style.display = 'none';
-  if (!sku || !qty) return;
-
-  const formData = new FormData();
-  formData.append('sku', sku);
-  formData.append('qty', qty);
-  formData.append('condition', condition);
-  if (cartonId) formData.append('cartonId', cartonId);
-  if (scanPhotoFile) formData.append('photo', scanPhotoFile);
-
-  const res = await fetch(`/api/inbounds/${currentInboundId}/receive`, { method: 'POST', body: formData });
-  const data = await res.json();
-  if (!data.ok) {
-    errEl.textContent = data.error;
-    errEl.style.display = 'block';
-    return;
-  }
-  scanPhotoFile = null;
-  loadInbounds();
-  openInbound(currentInboundId);
-}
-
-// ── Close with mismatch confirmation ────────────────────────────────
-async function attemptCloseInbound(id, force) {
-  const res = await fetch(`/api/inbounds/${id}/close`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }),
+async function submitDeletionRequest() {
+  const reason = document.getElementById('del-reason').value.trim();
+  const password = document.getElementById('del-password').value;
+  const errEl = document.getElementById('del-err');
+  if (!reason || !password) { errEl.textContent = 'Reason and password are required'; errEl.style.display = 'block'; return; }
+  const res = await fetch(`/api/inbounds/${deleteTargetId}/deletion-request`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, password }),
   });
   const data = await res.json();
-  if (res.status === 409 && data.needsConfirm) {
-    showCloseConfirm(id, data.mismatches, data.extras);
-    return;
-  }
-  if (!data.ok) { alert(data.error || 'Failed to close inbound'); return; }
-  document.getElementById('confirm-modal').classList.remove('open');
+  if (!data.ok) { errEl.textContent = data.error; errEl.style.display = 'block'; return; }
+  document.getElementById('delete-modal').classList.remove('open');
   loadInbounds();
-  openInbound(id);
-}
-
-function showCloseConfirm(id, mismatches, extras) {
-  const mRows = mismatches.map(m => `
-    <tr><td class="mono">${m.sku}</td><td class="mono">${m.expectedQty}</td><td class="mono">${m.receivedQty}</td>
-    <td class="mono ${m.diff < 0 ? 'var-neg' : 'var-pos'}">${m.diff > 0 ? '+' : ''}${m.diff}</td></tr>
-  `).join('');
-  const eRows = extras.map(e => `<tr><td class="mono">${e.sku}</td><td class="mono">${e.receivedQty}</td></tr>`).join('');
-  document.getElementById('confirm-body').innerHTML = `
-    ${mismatches.length ? `
-      <div class="banner warn">Quantities don't match the manifest:</div>
-      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Expected</th><th>Received</th><th>Diff</th></tr></thead><tbody>${mRows}</tbody></table></div>
-    ` : ''}
-    ${extras.length ? `
-      <div class="banner warn" style="margin-top:10px">Received SKUs not on the manifest:</div>
-      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Received</th></tr></thead><tbody>${eRows}</tbody></table></div>
-    ` : ''}
-    <div class="btn-row">
-      <button class="btn danger" onclick="attemptCloseInbound('${id}', true)">Close Anyway</button>
-      <button class="btn secondary" onclick="document.getElementById('confirm-modal').classList.remove('open')">Keep Receiving</button>
-    </div>
-  `;
-  document.getElementById('confirm-modal').classList.add('open');
 }
 
 async function printReport(id) {
@@ -770,8 +767,9 @@ async function printReport(id) {
         <tbody>${rows}</tbody>
       </table>
     </div>
+    ${cartonBreakdownHtml(r)}
     <div class="photo-section">
-      <div class="section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
+      <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Photos</h2></div>
       ${renderPhotoGallery(r)}
     </div>
     <div class="btn-row no-print">
@@ -781,33 +779,32 @@ async function printReport(id) {
   `;
 }
 
+// Only shown once a job has actually split — a single-carton job (the vast
+// majority) looks exactly like the report always did.
+function cartonBreakdownHtml(r) {
+  if (!r.cartons || r.cartons.length <= 1) return '';
+  const rows = r.cartons.flatMap(c =>
+    Object.entries(c.scans || {}).filter(([, qty]) => qty > 0).map(([sku, qty]) => {
+      const item = r.items.find(i => i.sku === sku);
+      return `<tr><td class="mono">${c.num}</td><td class="mono">${sku}</td><td>${item?.description || ''}</td><td class="mono">${qty}</td></tr>`;
+    })
+  ).join('');
+  return `
+    <div class="photo-section">
+      <div class="photo-section-head"><h2 style="margin:0;font-size:.95rem">Cartons</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Carton</th><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function closeModal() {
   document.getElementById('modal').classList.remove('open');
   currentInboundId = null;
-  currentInbound = null;
   scanPhotoFile = null;
-}
-
-// ── Deletion request ─────────────────────────────────────────────────
-function openDeleteModal(id) {
-  deleteTargetId = id;
-  document.getElementById('del-reason').value = '';
-  document.getElementById('del-password').value = '';
-  document.getElementById('del-err').style.display = 'none';
-  document.getElementById('delete-modal').classList.add('open');
-}
-async function submitDeletionRequest() {
-  const reason = document.getElementById('del-reason').value.trim();
-  const password = document.getElementById('del-password').value;
-  const errEl = document.getElementById('del-err');
-  if (!reason || !password) { errEl.textContent = 'Reason and password are required'; errEl.style.display = 'block'; return; }
-  const res = await fetch(`/api/inbounds/${deleteTargetId}/deletion-request`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, password }),
-  });
-  const data = await res.json();
-  if (!data.ok) { errEl.textContent = data.error; errEl.style.display = 'block'; return; }
-  document.getElementById('delete-modal').classList.remove('open');
-  loadInbounds();
 }
 
 async function signOut() {

@@ -20,7 +20,7 @@ const PORT = process.env.IDEALINBOUND_PORT || 4000;
 const { InboundError } = inbounds;
 
 // ── Uploads (in-memory) ─────────────────────────────────────────────────
-const uploadPhotoMw = multer({
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
@@ -30,7 +30,7 @@ const uploadPhotoMw = multer({
 });
 function uploadPhoto(fieldName) {
   return (req, res, next) => {
-    uploadPhotoMw.single(fieldName)(req, res, err => {
+    upload.single(fieldName)(req, res, err => {
       if (err) return res.status(400).json({ ok: false, error: err.message });
       next();
     });
@@ -123,7 +123,7 @@ function safeUser(u) {
 
 function handleInboundError(res, err, fallbackMsg) {
   if (err instanceof InboundError) {
-    const statusByCode = { CARTON_NOT_FOUND: 404, CARTON_NOT_LABELED: 409, CARTON_NOT_EMPTY: 409, ALREADY_COMPLETED: 409, ALREADY_PENDING: 409 };
+    const statusByCode = { ALREADY_COMPLETED: 409, ALREADY_PENDING: 409 };
     return res.status(statusByCode[err.code] || 400).json({ ok: false, error: err.message, code: err.code });
   }
   console.error(fallbackMsg, err);
@@ -274,27 +274,26 @@ app.get('/api/inbounds/:id', requireAuth, async (req, res) => {
 });
 
 app.post('/api/inbounds/:id/receive', requireAuth, uploadPhoto('photo'), async (req, res) => {
-  const { sku, qty, condition, description, caption, cartonId } = req.body;
+  const { sku, qty, condition, description, caption } = req.body;
   if (!sku || !Number(qty) || Number(qty) <= 0)
     return res.status(400).json({ ok: false, error: 'SKU and quantity > 0 are required' });
-  let result;
-  try {
-    result = await inbounds.receiveItem(req.params.id, {
-      sku, qty, condition, description, cartonId: cartonId || null, receivedBy: req.session.userId,
-    });
-  } catch (err) {
-    return handleInboundError(res, err, 'Failed to receive item');
-  }
+  const result = await inbounds.receiveItem(req.params.id, {
+    sku, qty, condition, description, receivedBy: req.session.userId,
+  });
   if (!result) return res.status(404).json({ ok: false, error: 'Inbound not found' });
   if (req.file) {
     await inbounds.addPhoto(req.params.id, {
-      itemId: result.lastItemId, eventId: result.lastEventId, caption,
-      buffer: req.file.buffer, mimeType: req.file.mimetype, uploadedBy: req.session.userId,
+      itemId: result.lastItemId,
+      eventId: result.lastEventId,
+      caption,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      uploadedBy: req.session.userId,
     });
   }
   await auditLog.logAudit('inbound_scan', {
     inboundId: req.params.id, actor: req.session.userId,
-    sku, qty: Number(qty), condition: condition || 'unspecified', cartonId: cartonId || null,
+    sku, qty: Number(qty), condition: condition || 'unspecified',
   });
   const inbound = await inbounds.getInbound(req.params.id);
   res.json({ ok: true, inbound });
@@ -314,57 +313,48 @@ app.post('/api/inbounds/:id/close', requireAuth, async (req, res) => {
   res.json({ ok: true, inbound: result });
 });
 
+// ── Cartons — a shipment or return often arrives across more than one box ──
+const CARTON_ERROR_STATUS = { not_found: 404, empty_carton: 400, carton_not_found: 404, not_split: 400 };
+const CARTON_ERROR_MESSAGE = {
+  not_found: 'Inbound not found',
+  empty_carton: 'Current carton is empty — receive at least one item before starting a new one.',
+  carton_not_found: 'Carton not found',
+  not_split: 'This inbound was never split into multiple cartons.',
+};
+function cartonResult(res, result) {
+  if (result.error) return res.status(CARTON_ERROR_STATUS[result.error] || 400).json({ ok: false, error: CARTON_ERROR_MESSAGE[result.error] });
+  res.json({ ok: true, inbound: result.inbound });
+}
+
+app.post('/api/inbounds/:id/new-carton', requireAuth, async (req, res) => {
+  const result = await inbounds.startNewCarton(req.params.id);
+  if (!result.error) await auditLog.logAudit('inbound_carton_started', { inboundId: req.params.id, actor: req.session.userId });
+  cartonResult(res, result);
+});
+app.post('/api/inbounds/:id/carton/switch', requireAuth, async (req, res) => {
+  const num = parseInt(req.body.num, 10);
+  if (!num || num < 1) return res.status(400).json({ ok: false, error: 'num required' });
+  const result = await inbounds.switchCarton(req.params.id, num);
+  if (!result.error) await auditLog.logAudit('inbound_carton_switched', { inboundId: req.params.id, actor: req.session.userId, cartonNum: num });
+  cartonResult(res, result);
+});
+app.post('/api/inbounds/:id/carton/cancel-multi', requireAuth, async (req, res) => {
+  const result = await inbounds.cancelMultiCarton(req.params.id);
+  if (!result.error) await auditLog.logAudit('inbound_carton_cancel_multi', { inboundId: req.params.id, actor: req.session.userId });
+  cartonResult(res, result);
+});
+app.post('/api/inbounds/:id/carton/label-confirmed', requireAuth, async (req, res) => {
+  const num = parseInt(req.body.num, 10) || 1;
+  const result = await inbounds.confirmCartonLabel(req.params.id, num);
+  if (!result.error) await auditLog.logAudit('inbound_carton_label_confirmed', { inboundId: req.params.id, actor: req.session.userId, cartonNum: num });
+  cartonResult(res, result);
+});
+
 app.get('/api/inbounds/:id/report', requireAuth, async (req, res) => {
   const inbound = await inbounds.getInbound(req.params.id);
   if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
   const items = inbound.items.map(i => ({ ...i, variance: i.receivedQty - i.expectedQty }));
   res.json({ ok: true, report: { ...inbound, items } });
-});
-
-// ── Cartons ────────────────────────────────────────────────────────────
-app.post('/api/inbounds/:id/cartons', requireAuth, async (req, res) => {
-  const carton = await inbounds.createCarton(req.params.id);
-  if (!carton) return res.status(404).json({ ok: false, error: 'Inbound not found' });
-  await auditLog.logAudit('inbound_carton_created', { inboundId: req.params.id, actor: req.session.userId, cartonId: carton.id, cartonNum: carton.cartonNum });
-  res.json({ ok: true, carton });
-});
-
-app.post('/api/inbounds/:id/cartons/:cartonId/confirm-label', requireAuth, async (req, res) => {
-  const carton = await inbounds.confirmCartonLabel(req.params.id, req.params.cartonId);
-  if (!carton) return res.status(404).json({ ok: false, error: 'Carton not found' });
-  await auditLog.logAudit('inbound_carton_label_confirmed', { inboundId: req.params.id, actor: req.session.userId, cartonId: carton.id });
-  res.json({ ok: true, carton });
-});
-
-app.post('/api/inbounds/:id/cartons/:cartonId/switch', requireAuth, async (req, res) => {
-  const inbound = await inbounds.switchCarton(req.params.id, req.params.cartonId);
-  if (!inbound) return res.status(404).json({ ok: false, error: 'Carton not found' });
-  await auditLog.logAudit('inbound_carton_switched', { inboundId: req.params.id, actor: req.session.userId, cartonId: req.params.cartonId });
-  res.json({ ok: true, inbound });
-});
-
-app.post('/api/inbounds/:id/cartons/:cartonId/close', requireAuth, async (req, res) => {
-  const carton = await inbounds.closeCarton(req.params.id, req.params.cartonId);
-  if (!carton) return res.status(404).json({ ok: false, error: 'Carton not found' });
-  await auditLog.logAudit('inbound_carton_closed', { inboundId: req.params.id, actor: req.session.userId, cartonId: carton.id });
-  res.json({ ok: true, carton });
-});
-
-app.delete('/api/inbounds/:id/cartons/:cartonId', requireAuth, async (req, res) => {
-  try {
-    const result = await inbounds.cancelCarton(req.params.id, req.params.cartonId);
-    if (!result) return res.status(404).json({ ok: false, error: 'Carton not found' });
-    await auditLog.logAudit('inbound_carton_cancelled', { inboundId: req.params.id, actor: req.session.userId, cartonId: req.params.cartonId });
-    res.json({ ok: true });
-  } catch (err) {
-    handleInboundError(res, err, 'Failed to cancel carton');
-  }
-});
-
-app.get('/api/inbounds/:id/cartons/:cartonId/slip', requireAuth, async (req, res) => {
-  const slip = await inbounds.getCartonSlip(req.params.id, req.params.cartonId);
-  if (!slip) return res.status(404).json({ ok: false, error: 'Carton not found' });
-  res.json({ ok: true, slip });
 });
 
 // ── Photos ─────────────────────────────────────────────────────────────
@@ -480,7 +470,6 @@ app.get('/api/inbounds/report/export', requireAuth, requireAdmin, async (req, re
     { header: 'Damaged', key: 'damaged', width: 10 },
     { header: 'Refurbish', key: 'refurbish', width: 10 },
     { header: 'Dispose', key: 'dispose', width: 10 },
-    { header: 'KIV', key: 'kiv', width: 10 },
   ];
 
   for (const inb of list) {
@@ -496,7 +485,7 @@ app.get('/api/inbounds/report/export', requireAuth, requireAdmin, async (req, re
         serial: inb.serial, reference: inb.reference, sku: item.sku, description: item.description,
         expected: item.expectedQty, received: item.receivedQty,
         sellable: item.conditionTotals.sellable, damaged: item.conditionTotals.damaged,
-        refurbish: item.conditionTotals.refurbish, dispose: item.conditionTotals.dispose, kiv: item.conditionTotals.kiv,
+        refurbish: item.conditionTotals.refurbish, dispose: item.conditionTotals.dispose,
       });
     }
   }
