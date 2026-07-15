@@ -629,48 +629,164 @@ breaking the default.
   fewer columns keeps it readable on a phone screen, which the task
   explicitly allowed as an alternative to sub-columns.
 
-## Transport Management (server.js — `/api/transport/*`)
+## Transport Management — TMS Importer (server.js — `/api/transport/*`)
 
-Transport feature skeleton for managing shipping/logistics requests. Currently
-consists of placeholder endpoints awaiting core functions from an external
-session (https://claude.ai/code/session_01SzvUdzDeSinGpd94Bt3Td7). Data flow
-integration will be connected separately.
+Complete TMS (Transportation Management System) integration for importing delivery
+schedules from BETIME and order trackers from Outright. Creates transport
+requests from Excel imports.
 
-### Existing Endpoints (placeholders)
-- `GET /api/transport` — list all transport requests
-- `POST /api/transport` — create new transport request (stub)
-- `GET /api/transport/:id` — fetch request details (stub)
-- `POST /api/transport/:id/update` — update request (stub)
+### Core Functions (lib/tms-importer.js)
+
+**`parseExcelFile(buffer)`** — Parse XLSX workbook
+- Input: File buffer from multipart upload
+- Output: `{ sheetName: [rows], sheetName2: [rows], ... }`
+- Uses XLSX library for robust multi-sheet parsing
+
+**`detectFormat(row)`** — Auto-detect Excel format
+- Examines header row for known column names
+- Returns: `'betime' | 'outright' | 'standard' | 'unknown'`
+
+**`importBetimeDeliveries(rows)`** — Convert BETIME schedule to orders
+- Input: Array of BETIME rows (PO NO, CUSTOMER, ADD 1, DELIVERY DATE, etc.)
+- Output: Array of customer objects ready for order creation
+- Deduplicates by `poNo + deliveryDate`
+- Extracts: customer name, address, zip, SKU count
+
+**`importOutrightOrders(rows)`** — Convert Outright tracker to orders
+- Input: Array of Outright rows (Customer Name, PO Number, Invoice, etc.)
+- Output: Array of customer objects ready for order creation
+- Supports multi-sheet workbooks (Clinics, Spa, Hospital tabs)
+
+**`createOrdersFromImport(importData, db)`** — Persist to database
+- Input: `{ customers: [], adjustments: [] }` + db instance
+- Output: `{ created: [ids], updated: [ids], skipped: [errors] }`
+- Creates new transport request records in `db.transport`
+- Updates existing requests if customerId already exists
+- Never overwrites, only appends or merges metadata
+
+### API Endpoints
+
+**`GET /api/transport`** — List all transport requests
+- Returns array of request summaries (id, clientName, status, createdAt)
+
+**`POST /api/transport`** — Create new request manually
+- Body: `{ clientName, items?, shipping? }`
+- Returns: full request object with auto-generated ID
+
+**`GET /api/transport/:id`** — Fetch request details
+- Returns: complete request object including shipping address, items, source
+
+**`POST /api/transport/:id/update`** — Update request status/metadata
+- Body: `{ status?, clientName?, shipping?, notes? }`
+- Logs audit event with new status
+- Returns: updated request object
+
+**`POST /api/transport/import/betime`** — Import BETIME delivery schedule
+- Multipart: `file` (XLSX)
+- Parses file → detects format → extracts deliveries → creates orders
+- Returns: `{ success: true, imported: { format, ordersCreated, ordersUpdated, skipped, summary } }`
+- Logs audit event with counts
+
+**`POST /api/transport/import/outright`** — Import Outright order tracker
+- Multipart: `file` (XLSX)
+- Optional body: `{ sheet: "Clinics|Spa|Hospital" }` (defaults to Clinics)
+- Same flow as BETIME
+- Returns same response structure
 
 ### Client-Side (public/app.js)
-- `renderTransportTab()` — fetches transport list from `/api/transport` and
-  renders a standard table view, matching the pattern used by Orders and
-  Inbound tabs
-- `handleTransportRequest(id)` — placeholder for request detail view/interaction
-- Event listener on `#transportNewRequestBtn` — placeholder for new request
-  creation flow
+
+**`renderTransportTab()`** — Fetch and display transport requests
+- GET /api/transport
+- Render HTML table with ID, Client, Status, Date columns
+- Wire up View buttons for each request
+
+**`importTransportFile(file, format)`** — Handle file upload
+- Accepts: File object + format ('betime' | 'outright')
+- POST to `/api/transport/import/{format}`
+- Display status bar with success/error feedback
+- Auto-refresh list on success
+
+**Event Handlers**
+- `#transportBetimeFileInput` — File picker for BETIME
+- `#transportOutrightFileInput` — File picker for Outright
+- Browse buttons open file dialogs
 
 ### UI (public/index.html)
-- Transport tab button in main sidebar navigation (between Inbound and Labels)
-- `#tab-transport` section with empty state, list table, and "+ New Transport
-  Request" button
-- Uses standard `.orders-table` styling to match other tabs
 
-### To Complete This Feature
-1. Provide the core transport management functions from the external session
-2. Implement the `/api/transport/*` endpoints with actual business logic
-3. Add database structure: `db.transport` array (if needed)
-4. Wire up `handleTransportRequest()` for detail view/editing
-5. Connect data flow to Orders/Inbound if needed (e.g., linking shipments to
-   completed orders)
-6. Update this section of CLAUDE.md with final implementation details
+**Tab Structure**
+- Transport tab button in sidebar (between Inbound and Labels)
+- `#tab-transport` section with two main areas:
+  1. **Import Cards** — Two-column grid (BETIME | Outright)
+     - Each card has drag-drop zone and "Browse Files" button
+     - Icons and labels for each format
+  2. **Transport Requests List** — Standard table view
+     - Shows all imported/created requests
+     - Empty state when no requests
+
+**Status Bar**
+- `#transportImportStatus` — Shows import progress/results
+- CSS classes: `progress` (blue), `success` (green), `error` (red)
+
+### Database Schema
+
+**`db.transport[]`** — Array of transport request objects
+```javascript
+{
+  id: "ORD-1014171733",              // From PO NO or auto-generated
+  clientId: "1014171733",            // Source customer ID
+  clientName: "Customer Name",       // Display name
+  channel: "tms-import",             // Source: tms-import or manual
+  createdAt: "2026-07-15T09:00:00Z", // ISO timestamp
+  status: "pending",                 // pending|assigned|in-transit|delivered|cancelled
+  currency: "SGD",
+  notes: "Imported from BETIME",
+  items: [{ sku, name, qty, unitPrice }],
+  shipping: {
+    recipient: "...",
+    addressLine1, addressLine2,
+    city, state, zip, country,
+    phone, email
+  },
+  subtotal: 0, shippingCost: 0, tax: 0, total: 0,
+  source: {
+    importedAt: "2026-07-15T09:05:00Z",
+    customerId: "1014171733",
+    format: "betime",  // betime | outright | standard
+    deliveryDate: "2026-07-15T14:00:00Z",
+    skuCount: 50,
+    invoiceNumber: ""
+  },
+  updatedAt?: "...",  // Set on update
+  geocoded?: { lat, lng }  // Optional: for route planning
+}
+```
+
+### Audit Logging
+
+Logged events:
+- `tms_import_betime` — `{ ordersCreated, ordersUpdated, skipped }`
+- `tms_import_outright` — `{ ordersCreated, ordersUpdated, skipped }`
+- `transport_created` — `{ id, client }`
+- `transport_updated` — `{ id, status }`
+
+### Testing
+
+Verified with real files:
+- ✅ BETIME_DELIVERY_SCHEDULE__PLANNER.xlsx (90+ deliveries)
+- ✅ Outright_Order_Tracker_Spa_Hospitals_Clinics.xlsx (200+ orders)
+- ✅ Duplicate deduplication (seen set by poNo + deliveryDate)
+- ✅ Error handling for missing addresses/fields
+- ✅ Partial import (skip invalid rows, log skipped)
 
 ### Sync Strategy
-When Transport functions are implemented:
-1. Commit to `claude/order-processing-wms-fulfillment-6mf8o4`
-2. Port identical functions to IdealScan codebase (same pattern as barcode fix)
-3. Update both CLAUDE.md files with final implementation notes
-4. Link both commits in PR/commit messages for sync tracking
+
+When porting to IdealScan or other codebases:
+1. Copy `lib/tms-importer.js` verbatim (no platform dependencies)
+2. Copy TMS endpoints from server.js to target codebase's order handler
+3. Copy import handlers from public/app.js (update IDs if target uses different HTML)
+4. Copy Transport tab HTML from public/index.html
+5. Update CLAUDE.md in target with same Transport section
+6. Link both commits in PR/commit messages for sync tracking
 
 ## Git
 
