@@ -2150,6 +2150,7 @@
   // ── Transport Main Controls ────────────────────────────────────────────────
   document.getElementById('uploadJobsBtn')?.addEventListener('click', () => {
     document.getElementById('uploadJobsModal').classList.remove('hidden');
+    loadTransportTemplates();
   });
 
   document.getElementById('uploadJobsCloseBtn')?.addEventListener('click', () => {
@@ -2536,6 +2537,7 @@
   function loadTransportTemplates() {
     const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
     const selector = document.getElementById('transportTemplateSelect');
+    if (!selector) return;
     selector.innerHTML = '<option value="">-- Select a saved template --</option>';
     Object.keys(templates).forEach(name => {
       const opt = document.createElement('option');
@@ -2543,10 +2545,9 @@
       opt.textContent = name;
       selector.appendChild(opt);
     });
-    document.getElementById('transportTemplateSelector').classList.toggle('hidden', Object.keys(templates).length === 0);
   }
 
-  document.getElementById('transportTemplateDownloadBtn')?.addEventListener('click', () => {
+  document.getElementById('transportDownloadTemplateBtn')?.addEventListener('click', () => {
     const sampleData = [
       ['customer_name', 'address', 'postal_code', 'city', 'phone', 'email', 'sku', 'qty'],
       ['ABC Trading', '123 Bukit Merah Lane', '627001', 'Singapore', '6561234567', 'abc@example.com', 'SKU-001', '5'],
