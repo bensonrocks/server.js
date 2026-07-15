@@ -15,7 +15,14 @@
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
   </script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&libraries=marker,routes" defer></script>
+  <script>
+    window.mapsLoaded = false;
+    window.mapsError = null;
+    window.initMap = function() {
+      window.mapsLoaded = true;
+    };
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&callback=initMap" async defer onerror="window.mapsError=true"></script>
 </head>
 <body>
 

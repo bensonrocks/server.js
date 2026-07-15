@@ -1866,8 +1866,26 @@
       <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>`;
 
     // Initialize and update the main Singapore map
-    if (google && google.maps) {
-      setTimeout(() => initTransportMainMap(), 100);
+    if (window.mapsError) {
+      console.error('Google Maps API failed to load');
+      return;
+    }
+
+    // Wait for Maps API to load
+    if (window.mapsLoaded) {
+      initTransportMainMap();
+    } else {
+      const checkMapsReady = setInterval(() => {
+        if (window.mapsLoaded) {
+          clearInterval(checkMapsReady);
+          initTransportMainMap();
+        } else if (window.mapsError) {
+          clearInterval(checkMapsReady);
+          console.error('Google Maps API failed to load');
+        }
+      }, 100);
+      // Timeout after 5 seconds
+      setTimeout(() => clearInterval(checkMapsReady), 5000);
     }
   }
 
@@ -1875,16 +1893,29 @@
     const mapContainer = document.getElementById('transportMainMap');
     if (!mapContainer) return;
 
+    // Check if Google Maps API is available
+    if (!window.google || !window.google.maps) {
+      console.error('Google Maps API not available');
+      mapContainer.innerHTML = '<div style="padding:1rem;color:red">Map unavailable - Google Maps API failed to load</div>';
+      return;
+    }
+
     // Singapore center coordinates
     const singaporeCenter = { lat: 1.3521, lng: 103.8198 };
 
-    transportMainMap = new google.maps.Map(mapContainer, {
-      zoom: 11,
-      center: singaporeCenter,
-      mapTypeControl: true,
-      fullscreenControl: true,
-      streetViewControl: false
-    });
+    try {
+      transportMainMap = new google.maps.Map(mapContainer, {
+        zoom: 11,
+        center: singaporeCenter,
+        mapTypeControl: true,
+        fullscreenControl: true,
+        streetViewControl: false
+      });
+    } catch (e) {
+      console.error('Failed to initialize map:', e);
+      mapContainer.innerHTML = '<div style="padding:1rem;color:red">Map initialization failed: ' + e.message + '</div>';
+      return;
+    }
 
     // Clear existing markers
     transportMarkers.forEach(m => m.setMap(null));
