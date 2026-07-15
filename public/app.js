@@ -2120,6 +2120,168 @@
     tmsEditingDriverId = null;
   });
 
+  // Route Planning
+  let tmsCurrentRoutes = [];
+
+  async function planTmsRoutes() {
+    const planDate = document.getElementById('tmsRoutePlanDate')?.value;
+    if (!planDate) { alert('Please select a date'); return; }
+
+    // Get current jobs from loadedOrders
+    if (!loadedOrders || loadedOrders.length === 0) {
+      alert('No orders loaded. Upload orders first.');
+      return;
+    }
+
+    // Convert orders to job format
+    const jobs = [];
+    for (const order of loadedOrders) {
+      if (order.lines) {
+        for (const line of order.lines) {
+          jobs.push({
+            order_number: order.order_number,
+            customer_name: order.customer_name || order.client || '—',
+            postal_code: order.zip || order.postal_code || 'UNKNOWN',
+            address: order.address || '',
+            qty: line.qty
+          });
+        }
+      }
+    }
+
+    if (jobs.length === 0) {
+      alert('No delivery lines in orders');
+      return;
+    }
+
+    try {
+      document.getElementById('tmsStatus').classList.remove('hidden');
+      document.getElementById('tmsStatus').className = 'status-bar progress';
+      document.getElementById('tmsStatus').textContent = 'Planning routes...';
+
+      const resp = await fetch('/api/tms/routes/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs, date: planDate })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Route planning failed');
+      }
+
+      const result = await resp.json();
+      document.getElementById('tmsStatus').className = 'status-bar success';
+      document.getElementById('tmsStatus').textContent = `✓ ${result.message}`;
+
+      await renderTmsRoutes();
+    } catch (err) {
+      document.getElementById('tmsStatus').className = 'status-bar error';
+      document.getElementById('tmsStatus').textContent = '❌ ' + err.message;
+    }
+  }
+
+  async function renderTmsRoutes() {
+    try {
+      const resp = await fetch('/api/tms/routes');
+      if (resp.ok) {
+        tmsCurrentRoutes = await resp.json();
+      } else {
+        tmsCurrentRoutes = [];
+      }
+    } catch {
+      tmsCurrentRoutes = [];
+    }
+
+    const tbody = document.getElementById('tmsRoutesBody');
+    const empty = document.getElementById('tmsRoutesEmpty');
+
+    if (!tmsCurrentRoutes.length) {
+      empty.classList.remove('hidden');
+      tbody.innerHTML = '';
+      return;
+    }
+
+    empty.classList.add('hidden');
+    tbody.innerHTML = tmsCurrentRoutes.map(r => `
+      <tr>
+        <td><code style="font-size:0.85rem">${esc(r.id || '—')}</code></td>
+        <td>${esc(r.driver_name || '—')}</td>
+        <td><strong>${esc(r.zone || '—')}</strong></td>
+        <td>${r.total_stops || 0}</td>
+        <td>${r.total_distance_km || 0} km</td>
+        <td>${r.estimated_duration_minutes || 0} min</td>
+        <td><span class="status-badge ${r.status || 'planned'}">${r.status || 'Planned'}</span></td>
+        <td>
+          <button class="btn-scan-now btn-sm" data-tms-view-route="${esc(r.id)}">View</button>
+          <button class="btn-primary btn-sm" data-tms-pdf-route="${esc(r.id)}">PDF</button>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('[data-tms-view-route]').forEach(btn => {
+      btn.addEventListener('click', () => showTmsRouteDetail(btn.dataset.tmsViewRoute));
+    });
+
+    tbody.querySelectorAll('[data-tms-pdf-route]').forEach(btn => {
+      btn.addEventListener('click', () => exportTmsRoutePdf(btn.dataset.tmsPdfRoute));
+    });
+  }
+
+  async function showTmsRouteDetail(routeId) {
+    try {
+      const resp = await fetch(`/api/tms/routes/${routeId}`);
+      if (!resp.ok) throw new Error('Failed to fetch route');
+      const route = await resp.json();
+
+      const details = document.getElementById('tmsRouteDetails');
+      const stops = (route.stops || []).sort((a, b) => a.sequence - b.sequence);
+
+      details.innerHTML = `
+        <div style="margin-bottom:1rem">
+          <strong>Route:</strong> ${esc(route.id)}<br>
+          <strong>Driver:</strong> ${esc(route.driver_name || '—')}<br>
+          <strong>Date:</strong> ${route.planned_date}<br>
+          <strong>Zone:</strong> ${esc(route.zone)}<br>
+          <strong>Distance:</strong> ${route.total_distance_km} km | <strong>Duration:</strong> ${route.estimated_duration_minutes} min
+        </div>
+        <div style="margin-bottom:1rem">
+          <strong>Stops (${stops.length}):</strong>
+          <div style="max-height:400px;overflow-y:auto;margin-top:0.5rem">
+            <table class="dcs-table" style="font-size:0.9rem">
+              <thead><tr><th>#</th><th>Order</th><th>Customer</th><th>Postal Code</th></tr></thead>
+              <tbody>
+                ${stops.map((s, i) => `
+                  <tr>
+                    <td>${i + 1}</td>
+                    <td><code>${esc(s.job_id)}</code></td>
+                    <td>${esc(s.customer_name)}</td>
+                    <td><strong>${esc(s.postal_code)}</strong></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('tmsRouteModal').classList.remove('hidden');
+      document.getElementById('tmsRoutePdfBtn').dataset.routeId = routeId;
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function exportTmsRoutePdf(routeId) {
+    alert('PDF export coming soon — routes are ready in the database');
+  }
+
+  // Route Planner button handlers
+  document.getElementById('tmsRoutePlanBtn')?.addEventListener('click', planTmsRoutes);
+  document.getElementById('tmsRoutePdfBtn')?.addEventListener('click', function() {
+    exportTmsRoutePdf(this.dataset.routeId);
+  });
+
   document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {
     document.getElementById('inboundPoReference').value = '';
     document.getElementById('inboundPoSource').value = '';

@@ -148,6 +148,188 @@ async function queryMysql(sql, params = []) {
   }
 }
 
+// ── Geocoding: Convert postal codes/addresses → lat/lng ───────────────────
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+
+async function geocodePostalCode(postalCode) {
+  if (!postalCode) return null;
+
+  const normalizedCode = postalCode.toString().trim().toUpperCase();
+
+  // Check cache first
+  const cached = await queryMysql(
+    'SELECT latitude, longitude, address FROM geocoding_cache WHERE postal_code = ?',
+    [normalizedCode]
+  );
+
+  if (cached && cached.length > 0) {
+    const c = cached[0];
+    return { lat: parseFloat(c.latitude), lng: parseFloat(c.longitude), address: c.address };
+  }
+
+  // If no API key, return null (will be filled in later)
+  if (!GOOGLE_MAPS_API_KEY) {
+    console.warn(`[Geocoding] No API key; cache miss for ${normalizedCode}`);
+    return null;
+  }
+
+  // Query Google Maps API
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(normalizedCode)}+Singapore&key=${GOOGLE_MAPS_API_KEY}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.results && data.results.length > 0) {
+      const result = data.results[0];
+      const { lat, lng } = result.geometry.location;
+      const address = result.formatted_address;
+
+      // Cache the result
+      await queryMysql(
+        'INSERT INTO geocoding_cache (postal_code, latitude, longitude, address) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE accessed_at = NOW()',
+        [normalizedCode, lat, lng, address]
+      );
+
+      return { lat, lng, address };
+    }
+  } catch (err) {
+    console.error('[Geocoding] Error:', err.message);
+  }
+
+  return null;
+}
+
+// Batch geocode multiple postal codes
+async function geocodeMultiple(postalCodes) {
+  const results = {};
+  for (const code of postalCodes) {
+    results[code] = await geocodePostalCode(code);
+  }
+  return results;
+}
+
+// ── Route Optimization: Cluster jobs by location & optimize sequence ───────
+
+// Haversine distance (km) between two lat/lng points
+function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Nearest neighbor TSP solver (quick heuristic for small route optimization)
+function optimizeRouteSequence(stops) {
+  if (!stops || stops.length <= 1) return stops;
+
+  const result = [];
+  const remaining = [...stops];
+  let current = remaining.shift();
+  result.push(current);
+
+  while (remaining.length > 0) {
+    let nearest = remaining[0];
+    let minDist = haversineDistance(current.lat, current.lng, nearest.lat, nearest.lng);
+
+    for (let i = 1; i < remaining.length; i++) {
+      const dist = haversineDistance(current.lat, current.lng, remaining[i].lat, remaining[i].lng);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = remaining[i];
+      }
+    }
+
+    result.push(nearest);
+    current = nearest;
+    remaining.splice(remaining.indexOf(nearest), 1);
+  }
+
+  return result;
+}
+
+// Plan routes: cluster jobs by zone, optimize sequence within each
+async function planRoutes(jobs, drivers, date) {
+  if (!jobs || !drivers || jobs.length === 0) {
+    return { routes: [], unassigned: jobs || [] };
+  }
+
+  // Geocode all jobs
+  const postalCodes = [...new Set(jobs.map(j => j.postal_code || j.zip).filter(Boolean))];
+  const geocoded = await geocodeMultiple(postalCodes);
+
+  // Enrich jobs with geocoded data
+  const enrichedJobs = jobs.map(j => ({
+    ...j,
+    postal_code: j.postal_code || j.zip,
+    geo: geocoded[j.postal_code || j.zip] || { lat: 0, lng: 0 }
+  })).filter(j => j.geo.lat && j.geo.lng);
+
+  // Cluster jobs by postal code / proximity
+  const clusters = {};
+  for (const job of enrichedJobs) {
+    const key = job.postal_code;
+    if (!clusters[key]) clusters[key] = [];
+    clusters[key].push(job);
+  }
+
+  // Assign clusters to drivers & optimize sequences
+  const routes = [];
+  const availableDrivers = [...drivers].filter(d => d.status === 'active');
+  let driverIndex = 0;
+
+  for (const [postalCode, clusterJobs] of Object.entries(clusters)) {
+    if (availableDrivers.length === 0) break;
+
+    const driver = availableDrivers[driverIndex % availableDrivers.length];
+    driverIndex++;
+
+    // Optimize job sequence within cluster
+    const optimized = optimizeRouteSequence(clusterJobs);
+
+    // Calculate metrics
+    let totalDistance = 0;
+    for (let i = 1; i < optimized.length; i++) {
+      totalDistance += haversineDistance(
+        optimized[i - 1].geo.lat, optimized[i - 1].geo.lng,
+        optimized[i].geo.lat, optimized[i].geo.lng
+      );
+    }
+
+    const estimatedDuration = Math.ceil(totalDistance / 30 * 60 + optimized.length * 10); // 30 km/h + 10 min per stop
+
+    const route = {
+      id: 'ROUTE-' + uuidv4().slice(0, 8).toUpperCase(),
+      driver_id: driver.id,
+      planned_date: date,
+      zone: postalCode,
+      stops: optimized.map((job, idx) => ({
+        sequence: idx + 1,
+        job_id: job.order_number,
+        postal_code: job.postal_code,
+        customer_name: job.customer_name,
+        address: job.address,
+        latitude: job.geo.lat,
+        longitude: job.geo.lng,
+        status: 'pending'
+      })),
+      total_distance_km: Math.round(totalDistance * 100) / 100,
+      estimated_duration_minutes: estimatedDuration,
+      status: 'planned'
+    };
+
+    routes.push(route);
+  }
+
+  const assignedJobs = enrichedJobs.filter(j => routes.some(r => r.stops.some(s => s.job_id === j.order_number)));
+  const unassigned = enrichedJobs.filter(j => !assignedJobs.includes(j));
+
+  return { routes, unassigned };
+}
+
 // Initialize TMS tables (called once on startup)
 async function initTmsTables() {
   if (!mysqlPool) return;
@@ -6333,6 +6515,117 @@ app.post('/api/tms/zones', requireAuth, express.json(), async (req, res) => {
 
     logAudit('tms_zone_created', { zoneId, name, by: req.userId || 'unknown' });
     res.json({ id: zoneId, name, message: 'Zone created successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Route Planning & Optimization ────────────────────────────────────────
+// POST /api/tms/routes/plan — Plan optimal routes from delivery jobs
+app.post('/api/tms/routes/plan', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { jobs, date } = req.body;
+    if (!jobs || !Array.isArray(jobs)) return res.status(400).json({ error: 'Jobs array required' });
+    if (!date) return res.status(400).json({ error: 'Date required' });
+
+    // Get active drivers
+    const drivers = await queryMysql('SELECT * FROM drivers WHERE status = "active"');
+    if (!drivers || drivers.length === 0) {
+      return res.status(400).json({ error: 'No active drivers available' });
+    }
+
+    // Plan routes
+    const { routes, unassigned } = await planRoutes(jobs, drivers, date);
+
+    // Persist routes to database
+    for (const route of routes) {
+      const routeId = route.id;
+      await queryMysql(
+        `INSERT INTO routes (id, driver_id, planned_date, zone_id, total_stops, total_distance_km, estimated_duration_minutes, status, optimized_sequence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?)`,
+        [routeId, route.driver_id, route.planned_date, route.zone, route.stops.length, route.total_distance_km, route.estimated_duration_minutes, JSON.stringify(route.stops)]
+      );
+
+      // Insert route stops
+      for (const stop of route.stops) {
+        await queryMysql(
+          `INSERT INTO route_stops (id, route_id, job_id, sequence, postal_code, customer_name, address, latitude, longitude, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          ['STOP-' + uuidv4().slice(0, 8), routeId, stop.job_id, stop.sequence, stop.postal_code, stop.customer_name, stop.address, stop.latitude, stop.longitude]
+        );
+      }
+    }
+
+    logAudit('tms_routes_planned', { routesCreated: routes.length, jobsAssigned: jobs.length - unassigned.length, by: req.userId || 'unknown' });
+    res.json({
+      routes: routes.map(r => ({
+        id: r.id,
+        driver_id: r.driver_id,
+        zone: r.zone,
+        totalStops: r.stops.length,
+        totalDistance: r.total_distance_km,
+        estimatedDuration: r.estimated_duration_minutes,
+        status: r.status,
+        stops: r.stops
+      })),
+      unassigned: unassigned.length,
+      message: `Planned ${routes.length} routes for ${jobs.length - unassigned.length} jobs`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tms/routes — List all planned routes
+app.get('/api/tms/routes', requireAuth, async (req, res) => {
+  try {
+    const { date, driver_id, status } = req.query;
+    let sql = 'SELECT r.*, d.name as driver_name FROM routes r LEFT JOIN drivers d ON r.driver_id = d.id WHERE 1=1';
+    const params = [];
+
+    if (date) { sql += ' AND r.planned_date = ?'; params.push(date); }
+    if (driver_id) { sql += ' AND r.driver_id = ?'; params.push(driver_id); }
+    if (status) { sql += ' AND r.status = ?'; params.push(status); }
+
+    sql += ' ORDER BY r.planned_date DESC, r.zone';
+    const routes = await queryMysql(sql, params);
+    res.json(routes || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tms/routes/:id — Get route details with stops
+app.get('/api/tms/routes/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const route = await queryMysql('SELECT r.*, d.name as driver_name FROM routes r LEFT JOIN drivers d ON r.driver_id = d.id WHERE r.id = ?', [id]);
+    if (!route || route.length === 0) return res.status(404).json({ error: 'Route not found' });
+
+    const stops = await queryMysql('SELECT * FROM route_stops WHERE route_id = ? ORDER BY sequence', [id]);
+    res.json({ ...route[0], stops: stops || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tms/routes/:id/reorder — Reorder stops in a route (planner modification)
+app.post('/api/tms/routes/:id/reorder', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stops } = req.body;
+    if (!stops || !Array.isArray(stops)) return res.status(400).json({ error: 'Stops array required' });
+
+    // Update stop sequences
+    for (let i = 0; i < stops.length; i++) {
+      await queryMysql(
+        'UPDATE route_stops SET sequence = ? WHERE id = ?',
+        [i + 1, stops[i].id]
+      );
+    }
+
+    logAudit('tms_route_reordered', { routeId: id, stopsCount: stops.length, by: req.userId || 'unknown' });
+    res.json({ success: true, message: 'Route reordered' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

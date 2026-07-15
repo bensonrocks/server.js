@@ -976,6 +976,45 @@
           <div id="tmsZonesEmpty" class="empty-state hidden">No zones defined yet. Add one to get started.</div>
         </div>
 
+        <!-- Route Planner Section -->
+        <div class="admin-section-header" style="margin-top:2rem">
+          <div>
+            <div class="admin-section-title">🗺 Route Planner</div>
+            <div class="admin-section-sub">Plan and optimize delivery routes. Drag to reorder stops within a route.</div>
+          </div>
+          <div style="display:flex;gap:0.5rem">
+            <label style="display:flex;align-items:center;gap:0.5rem">
+              Plan for date:
+              <input type="date" id="tmsRoutePlanDate" style="width:120px" />
+            </label>
+            <button class="btn-primary btn-sm" id="tmsRoutePlanBtn">🎯 Plan Routes</button>
+          </div>
+        </div>
+
+        <div id="tmsRoutesList" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead>
+              <tr>
+                <th>Route ID</th><th>Driver</th><th>Zone</th><th>Stops</th><th>Distance</th><th>Duration</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tmsRoutesBody"></tbody>
+          </table>
+          <div id="tmsRoutesEmpty" class="empty-state hidden">No routes planned yet. Plan routes to optimize deliveries.</div>
+        </div>
+
+        <!-- Route Details Modal -->
+        <div id="tmsRouteModal" class="modal-overlay hidden">
+          <div class="modal" style="max-width:800px;max-height:90vh;overflow-y:auto">
+            <div class="modal-title">Route Details</div>
+            <div id="tmsRouteDetails" style="padding:1rem"></div>
+            <div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:flex-end">
+              <button class="btn-secondary btn-sm" onclick="document.getElementById('tmsRouteModal').classList.add('hidden')">Close</button>
+              <button class="btn-primary btn-sm" id="tmsRoutePdfBtn">📄 Export PDF</button>
+            </div>
+          </div>
+        </div>
+
         <div id="tmsStatus" class="status-bar hidden" style="margin-top:1rem"></div>
       </div>
 
