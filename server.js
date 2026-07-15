@@ -11,6 +11,7 @@ const crypto     = require('crypto');
 const zlib       = require('zlib');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
+const mysql      = require('mysql2/promise');
 const { PDFDocument, PDFName, PDFRawStream, PDFArray, decodePDFRawStream } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
@@ -99,6 +100,174 @@ async function runOcr(buffer, extraParams = {}, worker = null) {
 const app    = express();
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
 const UPLOAD_MAX_ROWS  = 5000;
+
+// ── MySQL TMS Database (IDEALTMS: Route Planning, Drivers, Vehicles) ────────
+let mysqlPool = null;
+async function initMysqlPool() {
+  try {
+    const mysqlHost = process.env.MYSQLHOST || 'reseau.proxy.rlwy.net';
+    const mysqlPort = process.env.MYSQLPORT || 54260;
+    const mysqlUser = process.env.MYSQLUSER || 'root';
+    const mysqlPassword = process.env.MYSQLPASSWORD || '';
+    const mysqlDb = process.env.MYSQL_DATABASE || 'railway';
+
+    mysqlPool = mysql.createPool({
+      host: mysqlHost,
+      port: mysqlPort,
+      user: mysqlUser,
+      password: mysqlPassword,
+      database: mysqlDb,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+    });
+
+    // Test connection
+    const conn = await mysqlPool.getConnection();
+    console.log('[MySQL] TMS database connected');
+    conn.release();
+
+    // Initialize tables
+    await initTmsTables();
+    return true;
+  } catch (err) {
+    console.error('[MySQL] Connection failed:', err.message);
+    return false;
+  }
+}
+
+// Helper to safely query MySQL
+async function queryMysql(sql, params = []) {
+  if (!mysqlPool) return null;
+  try {
+    const [rows] = await mysqlPool.execute(sql, params);
+    return rows;
+  } catch (err) {
+    console.error('[MySQL] Query error:', err.message);
+    return null;
+  }
+}
+
+// Initialize TMS tables (called once on startup)
+async function initTmsTables() {
+  if (!mysqlPool) return;
+  try {
+    const conn = await mysqlPool.getConnection();
+
+    // Drivers table
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS drivers (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(20),
+        email VARCHAR(255),
+        vehicle_type VARCHAR(100),
+        capacity_kg DECIMAL(10, 2),
+        capacity_volume DECIMAL(10, 2),
+        shift_start TIME,
+        shift_end TIME,
+        home_depot_location VARCHAR(255),
+        zone_id VARCHAR(36),
+        status ENUM('active', 'inactive', 'on_leave') DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX (status), INDEX (zone_id)
+      )
+    `);
+
+    // Zones table
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS zones (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        postal_codes JSON,
+        assigned_days JSON,
+        delivery_window_start TIME,
+        delivery_window_end TIME,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE (name)
+      )
+    `);
+
+    // Zone assignments (driver → zone → day mapping)
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS zone_assignments (
+        id VARCHAR(36) PRIMARY KEY,
+        driver_id VARCHAR(36) NOT NULL,
+        zone_id VARCHAR(36) NOT NULL,
+        day_of_week INT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (driver_id) REFERENCES drivers(id),
+        FOREIGN KEY (zone_id) REFERENCES zones(id),
+        INDEX (driver_id), INDEX (zone_id), INDEX (day_of_week)
+      )
+    `);
+
+    // Routes table
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS routes (
+        id VARCHAR(36) PRIMARY KEY,
+        driver_id VARCHAR(36) NOT NULL,
+        planned_date DATE,
+        zone_id VARCHAR(36),
+        total_stops INT DEFAULT 0,
+        total_distance_km DECIMAL(10, 2),
+        estimated_duration_minutes INT,
+        status ENUM('planned', 'in_transit', 'completed', 'cancelled') DEFAULT 'planned',
+        optimized_sequence JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (driver_id) REFERENCES drivers(id),
+        FOREIGN KEY (zone_id) REFERENCES zones(id),
+        INDEX (driver_id), INDEX (planned_date), INDEX (status)
+      )
+    `);
+
+    // Route stops (individual deliveries in a route)
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS route_stops (
+        id VARCHAR(36) PRIMARY KEY,
+        route_id VARCHAR(36) NOT NULL,
+        job_id VARCHAR(36),
+        sequence INT,
+        postal_code VARCHAR(20),
+        customer_name VARCHAR(255),
+        address VARCHAR(500),
+        latitude DECIMAL(10, 8),
+        longitude DECIMAL(11, 8),
+        delivery_window_start TIME,
+        delivery_window_end TIME,
+        estimated_arrival_time DATETIME,
+        actual_arrival_time DATETIME,
+        completed_at DATETIME,
+        status ENUM('pending', 'arrived', 'completed', 'failed') DEFAULT 'pending',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (route_id) REFERENCES routes(id),
+        INDEX (route_id), INDEX (job_id), INDEX (postal_code)
+      )
+    `);
+
+    // Geocoding cache (postal_code → lat/lng)
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS geocoding_cache (
+        postal_code VARCHAR(20) PRIMARY KEY,
+        latitude DECIMAL(10, 8),
+        longitude DECIMAL(11, 8),
+        address VARCHAR(500),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
+    conn.release();
+    console.log('[MySQL] TMS tables initialized');
+  } catch (err) {
+    console.error('[MySQL] Schema initialization error:', err.message);
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -6054,5 +6223,123 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   res.end(buf);
 });
 
+// ── IDEALTMS — Transport Management System (Routes, Drivers, Zones) ─────────
+
+// GET /api/tms/drivers — List all drivers
+app.get('/api/tms/drivers', requireAuth, async (req, res) => {
+  try {
+    const drivers = await queryMysql('SELECT * FROM drivers ORDER BY created_at DESC');
+    res.json(drivers || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tms/drivers — Create new driver (Admin request)
+app.post('/api/tms/drivers', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { name, phone, email, vehicle_type, capacity_kg, capacity_volume, shift_start, shift_end, home_depot } = req.body;
+    if (!name) return res.status(400).json({ error: 'Driver name required' });
+
+    const driverId = 'DRV-' + uuidv4().slice(0, 8).toUpperCase();
+    const userId = req.userId || 'unknown';
+
+    // Create driver pending approval
+    await queryMysql(
+      `INSERT INTO drivers (id, name, phone, email, vehicle_type, capacity_kg, capacity_volume, shift_start, shift_end, home_depot_location, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [driverId, name, phone || null, email || null, vehicle_type || null, capacity_kg || null, capacity_volume || null, shift_start || null, shift_end || null, home_depot || null]
+    );
+
+    logAudit('tms_driver_created', { driverId, name, by: userId });
+    res.json({ id: driverId, name, status: 'active', message: 'Driver added successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/tms/drivers/:id — Update driver details
+app.put('/api/tms/drivers/:id', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, email, vehicle_type, capacity_kg, capacity_volume, shift_start, shift_end, status } = req.body;
+
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+    if (phone !== undefined) { updates.push('phone = ?'); params.push(phone); }
+    if (email !== undefined) { updates.push('email = ?'); params.push(email); }
+    if (vehicle_type !== undefined) { updates.push('vehicle_type = ?'); params.push(vehicle_type); }
+    if (capacity_kg !== undefined) { updates.push('capacity_kg = ?'); params.push(capacity_kg); }
+    if (capacity_volume !== undefined) { updates.push('capacity_volume = ?'); params.push(capacity_volume); }
+    if (shift_start !== undefined) { updates.push('shift_start = ?'); params.push(shift_start); }
+    if (shift_end !== undefined) { updates.push('shift_end = ?'); params.push(shift_end); }
+    if (status !== undefined) { updates.push('status = ?'); params.push(status); }
+
+    if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+    params.push(id);
+    const sql = `UPDATE drivers SET ${updates.join(', ')} WHERE id = ?`;
+    await queryMysql(sql, params);
+
+    logAudit('tms_driver_updated', { driverId: id, by: req.userId || 'unknown' });
+    res.json({ success: true, id, message: 'Driver updated' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/tms/drivers/:id — Delete driver (Master only)
+app.delete('/api/tms/drivers/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  (async () => {
+    try {
+      const { id } = req.params;
+      await queryMysql('DELETE FROM drivers WHERE id = ?', [id]);
+      logAudit('tms_driver_deleted', { driverId: id });
+      res.json({ success: true, message: 'Driver deleted' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  })();
+});
+
+// GET /api/tms/zones — List all zones
+app.get('/api/tms/zones', requireAuth, async (req, res) => {
+  try {
+    const zones = await queryMysql('SELECT * FROM zones ORDER BY name');
+    res.json(zones || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tms/zones — Create new zone
+app.post('/api/tms/zones', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { name, postal_codes, assigned_days, delivery_window_start, delivery_window_end } = req.body;
+    if (!name) return res.status(400).json({ error: 'Zone name required' });
+
+    const zoneId = 'ZONE-' + uuidv4().slice(0, 8).toUpperCase();
+    const postalCodesJson = JSON.stringify(postal_codes || []);
+    const assignedDaysJson = JSON.stringify(assigned_days || []);
+
+    await queryMysql(
+      `INSERT INTO zones (id, name, postal_codes, assigned_days, delivery_window_start, delivery_window_end)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [zoneId, name, postalCodesJson, assignedDaysJson, delivery_window_start || null, delivery_window_end || null]
+    );
+
+    logAudit('tms_zone_created', { zoneId, name, by: req.userId || 'unknown' });
+    res.json({ id: zoneId, name, message: 'Zone created successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`));
+(async () => {
+  await initMysqlPool();
+  app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`));
+})();

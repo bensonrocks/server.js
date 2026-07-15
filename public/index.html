@@ -457,6 +457,7 @@
         <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
         <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
         <button class="admin-nav-btn" data-admin-tab="reports">&#128202; Reports</button>
+        <button class="admin-nav-btn" data-admin-tab="tms">🚚 TMS Management</button>
         <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
 
@@ -879,6 +880,103 @@
           <button class="report-btn report-btn-inline" data-report="carrier-manifest"><b>&#128666; Carrier Handover Manifest</b><span>Completed orders for the day, grouped by carrier, with a signature column</span></button>
         </div>
         <div class="status-bar report-status hidden"></div>
+      </div>
+
+      <!-- Tab: TMS Management (Drivers, Vehicles, Zones) -->
+      <div class="admin-tab hidden" id="adminTab-tms">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Transport Management System (TMS)</div>
+            <div class="admin-section-sub">Manage drivers, vehicles, and delivery zones for route optimization and planning.</div>
+          </div>
+        </div>
+
+        <!-- Drivers Section -->
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">👤 Drivers</div>
+            <div class="admin-section-sub">Register and manage delivery drivers.</div>
+          </div>
+          <button class="btn-primary btn-sm" id="tmsAddDriverBtn">+ Add Driver</button>
+        </div>
+
+        <div id="tmsDriversList" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Phone</th><th>Vehicle</th><th>Capacity</th><th>Shift</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tmsDriversBody"></tbody>
+          </table>
+          <div id="tmsDriversEmpty" class="empty-state hidden">No drivers registered yet. Add one to get started.</div>
+        </div>
+
+        <!-- Add/Edit Driver Form -->
+        <div id="tmsDriverForm" class="form-section hidden" style="margin-top:1.5rem;padding:1rem;background:#f8f9fa;border-radius:8px;border:1px solid #e5e7eb">
+          <h4 style="margin:0 0 1rem 0">Add New Driver</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+            <div>
+              <label>Name *</label>
+              <input type="text" id="tmsDriverName" placeholder="Driver name" />
+            </div>
+            <div>
+              <label>Phone</label>
+              <input type="tel" id="tmsDriverPhone" placeholder="Phone number" />
+            </div>
+            <div>
+              <label>Email</label>
+              <input type="email" id="tmsDriverEmail" placeholder="Email address" />
+            </div>
+            <div>
+              <label>Vehicle Type</label>
+              <input type="text" id="tmsDriverVehicle" placeholder="e.g., Van, Truck" />
+            </div>
+            <div>
+              <label>Capacity (kg)</label>
+              <input type="number" id="tmsDriverCapacityKg" placeholder="Max weight" />
+            </div>
+            <div>
+              <label>Capacity (volume)</label>
+              <input type="number" id="tmsDriverCapacityVolume" placeholder="Max volume" />
+            </div>
+            <div>
+              <label>Shift Start</label>
+              <input type="time" id="tmsDriverShiftStart" />
+            </div>
+            <div>
+              <label>Shift End</label>
+              <input type="time" id="tmsDriverShiftEnd" />
+            </div>
+          </div>
+          <div style="margin-top:1rem;display:flex;gap:0.5rem">
+            <button class="btn-primary btn-sm" id="tmsDriverSaveBtn">Save Driver</button>
+            <button class="btn-secondary btn-sm" id="tmsDriverCancelBtn">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Zones Section -->
+        <div class="admin-section-header" style="margin-top:2rem">
+          <div>
+            <div class="admin-section-title">📍 Delivery Zones</div>
+            <div class="admin-section-sub">Define postal code ranges and delivery time windows by zone.</div>
+          </div>
+          <button class="btn-primary btn-sm" id="tmsAddZoneBtn">+ Add Zone</button>
+        </div>
+
+        <div id="tmsZonesList" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead>
+              <tr>
+                <th>Zone Name</th><th>Postal Codes</th><th>Days</th><th>Window</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tmsZonesBody"></tbody>
+          </table>
+          <div id="tmsZonesEmpty" class="empty-state hidden">No zones defined yet. Add one to get started.</div>
+        </div>
+
+        <div id="tmsStatus" class="status-bar hidden" style="margin-top:1rem"></div>
       </div>
 
       <!-- Tab: System / Danger zone -->

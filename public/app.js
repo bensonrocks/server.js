@@ -1927,6 +1927,199 @@
     document.getElementById('transportOutrightFileInput')?.click();
   });
 
+  // ── TMS Management (Drivers, Zones, Route Optimization) ───────────────────
+  let tmsDrivers = [];
+  let tmsZones = [];
+  let tmsEditingDriverId = null;
+
+  async function renderTmsTab() {
+    await renderTmsDrivers();
+    await renderTmsZones();
+  }
+
+  async function renderTmsDrivers() {
+    try {
+      const resp = await fetch('/api/tms/drivers');
+      if (resp.ok) {
+        tmsDrivers = await resp.json();
+      } else {
+        tmsDrivers = [];
+      }
+    } catch {
+      tmsDrivers = [];
+    }
+
+    const tbody = document.getElementById('tmsDriversBody');
+    const empty = document.getElementById('tmsDriversEmpty');
+
+    if (!tmsDrivers.length) {
+      empty.classList.remove('hidden');
+      tbody.innerHTML = '';
+      return;
+    }
+
+    empty.classList.add('hidden');
+    tbody.innerHTML = tmsDrivers.map(d => `
+      <tr>
+        <td>${esc(d.name || '—')}</td>
+        <td>${esc(d.phone || '—')}</td>
+        <td>${esc(d.vehicle_type || '—')}</td>
+        <td>${d.capacity_kg ? d.capacity_kg + ' kg' : '—'}</td>
+        <td>${d.shift_start && d.shift_end ? d.shift_start.slice(0, 5) + '–' + d.shift_end.slice(0, 5) : '—'}</td>
+        <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span></td>
+        <td>
+          <button class="btn-scan-now btn-sm" data-tms-edit-driver="${esc(d.id)}">Edit</button>
+          <button class="btn-danger btn-sm" data-tms-del-driver="${esc(d.id)}">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('[data-tms-edit-driver]').forEach(btn => {
+      btn.addEventListener('click', () => editTmsDriver(btn.dataset.tmsEditDriver));
+    });
+
+    tbody.querySelectorAll('[data-tms-del-driver]').forEach(btn => {
+      btn.addEventListener('click', () => deleteTmsDriver(btn.dataset.tmsDelDriver));
+    });
+  }
+
+  async function renderTmsZones() {
+    try {
+      const resp = await fetch('/api/tms/zones');
+      if (resp.ok) {
+        tmsZones = await resp.json();
+      } else {
+        tmsZones = [];
+      }
+    } catch {
+      tmsZones = [];
+    }
+
+    const tbody = document.getElementById('tmsZonesBody');
+    const empty = document.getElementById('tmsZonesEmpty');
+
+    if (!tmsZones.length) {
+      empty.classList.remove('hidden');
+      tbody.innerHTML = '';
+      return;
+    }
+
+    empty.classList.add('hidden');
+    tbody.innerHTML = tmsZones.map(z => {
+      const postalCodes = (z.postal_codes || []).length > 0 ? z.postal_codes.join(', ').slice(0, 40) : '—';
+      const days = (z.assigned_days || []).join(', ') || '—';
+      const window = (z.delivery_window_start && z.delivery_window_end)
+        ? z.delivery_window_start.slice(0, 5) + '–' + z.delivery_window_end.slice(0, 5)
+        : '—';
+      return `
+        <tr>
+          <td><strong>${esc(z.name)}</strong></td>
+          <td><code style="font-size:0.85rem">${esc(postalCodes)}</code></td>
+          <td>${esc(days)}</td>
+          <td>${window}</td>
+          <td><button class="btn-scan-now btn-sm" data-tms-edit-zone="${esc(z.id)}">Edit</button></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function editTmsDriver(driverId) {
+    tmsEditingDriverId = driverId;
+    const driver = tmsDrivers.find(d => d.id === driverId);
+    if (driver) {
+      document.getElementById('tmsDriverName').value = driver.name || '';
+      document.getElementById('tmsDriverPhone').value = driver.phone || '';
+      document.getElementById('tmsDriverEmail').value = driver.email || '';
+      document.getElementById('tmsDriverVehicle').value = driver.vehicle_type || '';
+      document.getElementById('tmsDriverCapacityKg').value = driver.capacity_kg || '';
+      document.getElementById('tmsDriverCapacityVolume').value = driver.capacity_volume || '';
+      document.getElementById('tmsDriverShiftStart').value = driver.shift_start || '';
+      document.getElementById('tmsDriverShiftEnd').value = driver.shift_end || '';
+    }
+    document.getElementById('tmsDriverForm').classList.remove('hidden');
+  }
+
+  async function saveTmsDriver() {
+    const name = document.getElementById('tmsDriverName').value.trim();
+    if (!name) { alert('Driver name required'); return; }
+
+    const data = {
+      name,
+      phone: document.getElementById('tmsDriverPhone').value.trim() || null,
+      email: document.getElementById('tmsDriverEmail').value.trim() || null,
+      vehicle_type: document.getElementById('tmsDriverVehicle').value.trim() || null,
+      capacity_kg: parseFloat(document.getElementById('tmsDriverCapacityKg').value) || null,
+      capacity_volume: parseFloat(document.getElementById('tmsDriverCapacityVolume').value) || null,
+      shift_start: document.getElementById('tmsDriverShiftStart').value || null,
+      shift_end: document.getElementById('tmsDriverShiftEnd').value || null,
+    };
+
+    try {
+      const url = tmsEditingDriverId ? `/api/tms/drivers/${tmsEditingDriverId}` : '/api/tms/drivers';
+      const method = tmsEditingDriverId ? 'PUT' : 'POST';
+      const resp = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('Error: ' + (err.error || 'Failed to save driver'));
+        return;
+      }
+
+      document.getElementById('tmsDriverForm').classList.add('hidden');
+      document.getElementById('tmsStatus').classList.remove('hidden');
+      document.getElementById('tmsStatus').className = 'status-bar success';
+      document.getElementById('tmsStatus').textContent = '✓ Driver saved successfully';
+      tmsEditingDriverId = null;
+      await renderTmsDrivers();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function deleteTmsDriver(driverId) {
+    if (!confirm('Delete this driver? This cannot be undone.')) return;
+
+    try {
+      const resp = await fetch(`/api/tms/drivers/${driverId}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('Error: ' + (err.error || 'Failed to delete driver'));
+        return;
+      }
+
+      document.getElementById('tmsStatus').classList.remove('hidden');
+      document.getElementById('tmsStatus').className = 'status-bar success';
+      document.getElementById('tmsStatus').textContent = '✓ Driver deleted';
+      await renderTmsDrivers();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  // TMS button handlers
+  document.getElementById('tmsAddDriverBtn')?.addEventListener('click', () => {
+    tmsEditingDriverId = null;
+    document.getElementById('tmsDriverName').value = '';
+    document.getElementById('tmsDriverPhone').value = '';
+    document.getElementById('tmsDriverEmail').value = '';
+    document.getElementById('tmsDriverVehicle').value = '';
+    document.getElementById('tmsDriverCapacityKg').value = '';
+    document.getElementById('tmsDriverCapacityVolume').value = '';
+    document.getElementById('tmsDriverShiftStart').value = '';
+    document.getElementById('tmsDriverShiftEnd').value = '';
+    document.getElementById('tmsDriverForm').classList.remove('hidden');
+  });
+
+  document.getElementById('tmsDriverSaveBtn')?.addEventListener('click', saveTmsDriver);
+  document.getElementById('tmsDriverCancelBtn')?.addEventListener('click', () => {
+    document.getElementById('tmsDriverForm').classList.add('hidden');
+    tmsEditingDriverId = null;
+  });
+
   document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {
     document.getElementById('inboundPoReference').value = '';
     document.getElementById('inboundPoSource').value = '';
@@ -4269,6 +4462,7 @@
       if (btn.dataset.adminTab === 'overview') loadActivityOverview();
       if (btn.dataset.adminTab === 'deletions') startPendingDelPolling();
       else stopPendingDelPolling();
+      if (btn.dataset.adminTab === 'tms') renderTmsTab();
     });
   });
 
