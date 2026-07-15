@@ -2862,8 +2862,8 @@ const AUTH_PUBLIC = new Set([
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
-  // Allow master key access to /api/master/* endpoints
-  if (req.path.startsWith('/api/master/') && req.headers['x-master-key'] === MASTER_PASS) return next();
+  // Allow master key access to /api/master/* and /api/transport/import/* endpoints
+  if ((req.path.startsWith('/api/master/') || req.path.startsWith('/api/transport/import/')) && req.headers['x-master-key'] === MASTER_PASS) return next();
   requireAuth(req, res, next);
 });
 
