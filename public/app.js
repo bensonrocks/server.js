@@ -1809,9 +1809,8 @@
     });
   }
 
-  // ── Transport Tab ──────────────────────────────────────────────────────────
-  // Placeholder for transport functions to be incorporated from external session.
-  // Data flow integration will be connected separately.
+  // ── Transport Tab (TMS Importer) ──────────────────────────────────────────────
+  // Import delivery schedules from BETIME and Outright, manage transport requests.
   let transportRequests = [];
 
   async function renderTransportTab() {
@@ -1838,13 +1837,14 @@
         <table class="orders-table">
           <thead>
             <tr>
-              <th>ID</th><th>Status</th><th>Date</th><th>Actions</th>
+              <th>ID</th><th>Client</th><th>Status</th><th>Date</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
             ${transportRequests.map(req => `
               <tr>
                 <td><code>${esc(req.id || '—')}</code></td>
+                <td>${esc(req.clientName || '—')}</td>
                 <td><span class="status-badge ${req.status || 'pending'}">${req.status || 'Pending'}</span></td>
                 <td>${req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—'}</td>
                 <td>
@@ -1860,13 +1860,66 @@
   }
 
   function handleTransportRequest(id) {
-    // Placeholder: to be implemented with transport functions from external session
-    console.log('Transport request:', id);
+    console.log('Viewing transport request:', id);
+    // Future: Open detail modal or redirect to request view
+  }
+
+  // TMS Import handlers
+  async function importTransportFile(file, format) {
+    const status = document.getElementById('transportImportStatus');
+    if (!status) return;
+
+    status.className = 'status-bar progress';
+    status.textContent = 'Importing...';
+    status.classList.remove('hidden');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+
+      let endpoint = '/api/transport/import/betime';
+      if (format === 'outright') endpoint = '/api/transport/import/outright';
+
+      const resp = await fetch(endpoint, { method: 'POST', body: fd, headers: hdrs() });
+      const data = await resp.json();
+
+      if (!resp.ok) throw new Error(data.error || 'Import failed');
+
+      status.className = 'status-bar success';
+      status.textContent = `✓ ${data.imported.summary}`;
+      await renderTransportTab();
+    } catch (err) {
+      status.className = 'status-bar error';
+      status.textContent = `❌ ${err.message}`;
+    }
   }
 
   document.getElementById('transportNewRequestBtn')?.addEventListener('click', () => {
-    // Placeholder: to be implemented with transport functions from external session
+    // Placeholder for new request creation
     console.log('Create new transport request');
+  });
+
+  // Wire up import file inputs
+  document.getElementById('transportBetimeFileInput')?.addEventListener('change', (e) => {
+    if (e.target.files[0]) {
+      importTransportFile(e.target.files[0], 'betime');
+      e.target.value = '';
+    }
+  });
+
+  document.getElementById('transportOutrightFileInput')?.addEventListener('change', (e) => {
+    if (e.target.files[0]) {
+      importTransportFile(e.target.files[0], 'outright');
+      e.target.value = '';
+    }
+  });
+
+  document.getElementById('transportBetimeBrowseBtn')?.addEventListener('click', () => {
+    document.getElementById('transportBetimeFileInput')?.click();
+  });
+
+  document.getElementById('transportOutrightBrowseBtn')?.addEventListener('click', () => {
+    document.getElementById('transportOutrightFileInput')?.click();
   });
 
   document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {

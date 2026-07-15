@@ -228,7 +228,11 @@ function invalidateCustomHeadersCache() { _customHeadersCache = undefined; }
 function readDb() {
   if (_dbCache) return _dbCache;
   try { _dbCache = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { _dbCache = { batches: [] }; }
+  catch { _dbCache = { batches: [], inbound: [], transport: [] }; }
+  // Ensure all required fields exist
+  if (!_dbCache.batches) _dbCache.batches = [];
+  if (!_dbCache.inbound) _dbCache.inbound = [];
+  if (!_dbCache.transport) _dbCache.transport = [];
   return _dbCache;
 }
 // Persist is ATOMIC (tmp file + rename) so a crash mid-write can never leave
@@ -3777,34 +3781,144 @@ app.post('/api/master/inbound-pending-deletions/:id/reject', (req, res) => {
 // Teach-on-scan: packer confirms an unrecognized product barcode belongs to
 // one of the order's lines. Stores the mapping (audit-logged, master-reviewable)
 // and counts the piece in the same call so packing never stalls.
-// ── Transport Management ──────────────────────────────────────────────────────
-// Placeholder for transport endpoints to be incorporated from external session.
-// Data flow integration will be connected separately.
+// ── Transport Management (TMS Importer) ────────────────────────────────────────
+// Import delivery schedules (BETIME, Outright) and manage transport requests.
+const tmsImporter = require('./lib/tms-importer.js');
 
 app.get('/api/transport', (req, res) => {
-  // Placeholder: fetch transport requests
-  // To be implemented with functions from external session
   const db = readDb();
-  const transportRequests = db.transport || [];
+  const transportRequests = (db.transport || []).map(req => ({
+    id: req.id,
+    clientName: req.clientName,
+    status: req.status || 'pending',
+    createdAt: req.createdAt,
+    items: req.items || [],
+    shipping: req.shipping || {}
+  }));
   res.json(transportRequests);
 });
 
 app.post('/api/transport', (req, res) => {
-  // Placeholder: create new transport request
-  // To be implemented with functions from external session
-  res.status(400).json({ error: 'Transport feature not yet implemented' });
+  const db = readDb();
+  if (!db.transport) db.transport = [];
+
+  const newRequest = {
+    id: `TRN-${Date.now()}`,
+    clientName: req.body?.clientName || 'New Request',
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    items: req.body?.items || [],
+    shipping: req.body?.shipping || {},
+    source: { manual: true }
+  };
+
+  db.transport.push(newRequest);
+  _persistDb(db);
+  logAudit('transport_created', { id: newRequest.id, client: newRequest.clientName });
+  res.json(newRequest);
 });
 
 app.get('/api/transport/:id', (req, res) => {
-  // Placeholder: get transport request details
-  // To be implemented with functions from external session
-  res.status(404).json({ error: 'Transport request not found' });
+  const db = readDb();
+  const req_data = (db.transport || []).find(r => r.id === req.params.id);
+  if (!req_data) return res.status(404).json({ error: 'Transport request not found' });
+  res.json(req_data);
 });
 
 app.post('/api/transport/:id/update', (req, res) => {
-  // Placeholder: update transport request
-  // To be implemented with functions from external session
-  res.status(400).json({ error: 'Transport feature not yet implemented' });
+  const db = readDb();
+  const request = (db.transport || []).find(r => r.id === req.params.id);
+  if (!request) return res.status(404).json({ error: 'Transport request not found' });
+
+  const updates = req.body || {};
+  if (updates.status) request.status = updates.status;
+  if (updates.clientName) request.clientName = updates.clientName;
+  if (updates.shipping) request.shipping = { ...request.shipping, ...updates.shipping };
+  if (updates.notes) request.notes = updates.notes;
+
+  request.updatedAt = new Date().toISOString();
+  _persistDb(db);
+  logAudit('transport_updated', { id: request.id, status: request.status });
+  res.json(request);
+});
+
+// TMS Import — BETIME delivery schedule
+app.post('/api/transport/import/betime', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const db = readDb();
+    const sheets = tmsImporter.parseExcelFile(req.file.buffer);
+    const deliverySheet = sheets['TESTING'] || sheets['MASTER'] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(deliverySheet) || deliverySheet.length === 0) {
+      return res.status(400).json({ error: 'No valid delivery data found' });
+    }
+
+    const deliveries = tmsImporter.importBetimeDeliveries(deliverySheet);
+    const result = tmsImporter.createOrdersFromImport({ customers: deliveries }, db);
+
+    _persistDb(db);
+    logAudit('tms_import_betime', {
+      ordersCreated: result.created.length,
+      ordersUpdated: result.updated.length,
+      skipped: result.skipped?.length || 0
+    });
+
+    res.json({
+      success: true,
+      imported: {
+        format: 'betime',
+        ordersCreated: result.created.length,
+        ordersUpdated: result.updated.length,
+        skipped: result.skipped?.length || 0,
+        createdOrders: result.created.slice(0, 10),
+        summary: `Imported ${result.created.length} deliveries from BETIME`
+      }
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// TMS Import — Outright order tracker
+app.post('/api/transport/import/outright', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const db = readDb();
+    const sheets = tmsImporter.parseExcelFile(req.file.buffer);
+    const sheetName = req.body?.sheet || 'Clinics';
+    const orderSheet = sheets[sheetName] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(orderSheet) || orderSheet.length === 0) {
+      return res.status(400).json({ error: `No data found in sheet "${sheetName}"` });
+    }
+
+    const orders = tmsImporter.importOutrightOrders(orderSheet);
+    const result = tmsImporter.createOrdersFromImport({ customers: orders }, db);
+
+    _persistDb(db);
+    logAudit('tms_import_outright', {
+      ordersCreated: result.created.length,
+      ordersUpdated: result.updated.length,
+      skipped: result.skipped?.length || 0
+    });
+
+    res.json({
+      success: true,
+      imported: {
+        format: 'outright',
+        ordersCreated: result.created.length,
+        ordersUpdated: result.updated.length,
+        skipped: result.skipped?.length || 0,
+        createdOrders: result.created.slice(0, 10),
+        summary: `Imported ${result.created.length} orders from Outright (${sheetName})`
+      }
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.post('/api/scan/learn-barcode', (req, res) => {

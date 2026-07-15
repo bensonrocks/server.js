@@ -1101,15 +1101,51 @@
       <div id="inboundList"></div>
     </section>
 
-    <!-- ── TAB: Transport ── -->
+    <!-- ── TAB: Transport (TMS Importer) ── -->
     <section id="tab-transport" class="tab">
       <div class="section-header">
         <h2>Transport</h2>
         <div style="display:flex;gap:.6rem">
-          <button class="btn-primary" id="transportNewRequestBtn">+ New Transport Request</button>
+          <button class="btn-primary" id="transportNewRequestBtn">+ New Request</button>
         </div>
       </div>
-      <div id="transportEmpty" class="empty-state hidden">No transport requests yet.</div>
+
+      <!-- TMS Import Section -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:2rem">
+        <!-- BETIME Delivery Schedule -->
+        <div class="card">
+          <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">&#128241; BETIME Delivery Schedule</h3>
+          <p class="hint" style="font-size:12px;margin-bottom:.8rem">Upload delivery schedule to create transport requests</p>
+          <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
+               onclick="document.getElementById('transportBetimeFileInput').click()">
+            <div style="font-size:24px;margin-bottom:.4rem">📁</div>
+            <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
+            <input type="file" id="transportBetimeFileInput" accept=".xlsx,.xls" hidden />
+          </div>
+          <button class="btn-secondary" id="transportBetimeBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+        </div>
+
+        <!-- Outright Order Tracker -->
+        <div class="card">
+          <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">📊 Outright Order Tracker</h3>
+          <p class="hint" style="font-size:12px;margin-bottom:.8rem">Upload order tracker to create transport requests</p>
+          <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
+               onclick="document.getElementById('transportOutrightFileInput').click()">
+            <div style="font-size:24px;margin-bottom:.4rem">📊</div>
+            <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
+            <input type="file" id="transportOutrightFileInput" accept=".xlsx,.xls" hidden />
+          </div>
+          <button class="btn-secondary" id="transportOutrightBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+        </div>
+      </div>
+
+      <div id="transportImportStatus" class="status-bar hidden" style="margin-bottom:1.5rem"></div>
+
+      <!-- Transport Requests List -->
+      <div class="section-header">
+        <h2>Transport Requests</h2>
+      </div>
+      <div id="transportEmpty" class="empty-state hidden">No transport requests yet. Import a delivery schedule to get started.</div>
       <div id="transportList"></div>
     </section>
 
