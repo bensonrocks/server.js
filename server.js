@@ -37,6 +37,7 @@ const createFulfillment = require('./lib/fulfillment');
 const createPicking     = require('./lib/picking');
 const createDrivers     = require('./lib/drivers');
 const createGeocoder    = require('./lib/geocode');
+const createImporter    = require('./lib/excel-importer');
 const shopifyApp        = require('./lib/shopify-app');
 const inventorySync     = require('./lib/inventory-sync');
 
@@ -97,7 +98,8 @@ function getCtx(tenantId) {
     const picking     = createPicking({ db, store });
     const geocoder    = createGeocoder(db);
     const drivers     = createDrivers({ db, store, geocoder });
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, drivers });
+    const importer    = createImporter({ store });
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, drivers, importer });
   }
   return tenantCtx.get(tenantId);
 }
@@ -2087,6 +2089,115 @@ app.get('/api/track/:orderId', withTenant, (req, res) => {
   const info = req.ctx.drivers.track(req.params.orderId);
   if (!info) return res.status(404).json({ error: 'Order not found' });
   res.json(info);
+});
+
+// ── TMS Excel Imports ──────────────────────────────────────────────────────────
+
+// POST /api/tms/import-excel: upload and parse Excel file
+app.post('/api/tms/import-excel', withAdmin, withTenant, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const sheets = req.ctx.importer.parseExcel(req.file.buffer);
+    const fileSize = req.file.size;
+    const fileName = req.file.originalname;
+
+    res.json({
+      success: true,
+      fileName,
+      fileSize,
+      sheets: Object.keys(sheets),
+      preview: Object.fromEntries(
+        Object.entries(sheets).map(([name, rows]) => [name, rows.slice(0, 3)])
+      ),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/tms/import-customers: import customer data and create orders
+app.post('/api/tms/import-customers', withAdmin, withTenant, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const sheets = req.ctx.importer.parseExcel(req.file.buffer);
+    const customerSheet = sheets['Customers'] || sheets['customers'] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(customerSheet) || customerSheet.length === 0) {
+      return res.status(400).json({ error: 'No valid customer data found in Excel file' });
+    }
+
+    const customers = req.ctx.importer.importCustomers(customerSheet);
+    const result = req.ctx.importer.createOrdersFromImport({ customers });
+
+    res.json({
+      success: true,
+      imported: {
+        customersCount: customers.length,
+        ordersCreated: result.created.length,
+        ordersUpdated: result.updated.length,
+        createdOrders: result.created,
+        updatedOrders: result.updated,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/tms/import-store-codes: import store location data
+app.post('/api/tms/import-store-codes', withAdmin, withTenant, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const sheets = req.ctx.importer.parseExcel(req.file.buffer);
+    const storeSheet = sheets['Store Codes'] || sheets['store codes'] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(storeSheet) || storeSheet.length === 0) {
+      return res.status(400).json({ error: 'No valid store code data found' });
+    }
+
+    const stores = req.ctx.importer.importStoreCodes(storeSheet);
+
+    // For now, return the parsed data. In a full implementation, store these in a separate table
+    res.json({
+      success: true,
+      imported: {
+        storesCount: stores.length,
+        stores: stores.slice(0, 5), // Preview first 5
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/tms/import-adjustments: import quantity/delivery adjustments
+app.post('/api/tms/import-adjustments', withAdmin, withTenant, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const sheets = req.ctx.importer.parseExcel(req.file.buffer);
+    const adjustmentSheet = sheets['Adjustments'] || sheets['adjustments'] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(adjustmentSheet) || adjustmentSheet.length === 0) {
+      return res.status(400).json({ error: 'No valid adjustment data found' });
+    }
+
+    const adjustments = req.ctx.importer.importAdjustments(adjustmentSheet);
+
+    // For now, return the parsed data. In a full implementation, apply these to orders
+    res.json({
+      success: true,
+      imported: {
+        adjustmentsCount: adjustments.length,
+        adjustments: adjustments.slice(0, 5), // Preview first 5
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ── Inventory ─────────────────────────────────────────────────────────────────

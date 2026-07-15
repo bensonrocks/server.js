@@ -467,6 +467,7 @@ a:hover{text-decoration:underline}
       <button class="mtab on" id="tab-email" onclick="switchTab('email')">&#9993; Email</button>
       <button class="mtab" id="tab-waybill" onclick="switchTab('waybill')">&#128230; Waybill</button>
       <button class="mtab" id="tab-import" onclick="switchTab('import')">&#128196; Import File</button>
+      <button class="mtab" id="tab-tms" onclick="switchTab('tms')">&#128177; TMS Import</button>
     </div>
     <div class="modal-b">
       <!-- EMAIL TAB -->
@@ -554,6 +555,45 @@ a:hover{text-decoration:underline}
           <button id="btn-extract" class="btn btn-s" onclick="extractOrders()">&#128269; Extract Orders</button>
           <button id="btn-import-sel" class="btn btn-p" style="display:none" onclick="importSelected()">&#10003; Import Selected</button>
           <span id="import-spinner" style="display:none;font-size:12px;color:#64748b">&#9203; Extracting&hellip;</span>
+        </div>
+      </div>
+
+      <!-- TMS IMPORT TAB -->
+      <div id="sec-tms" class="tab-section">
+        <p class="hint">Upload Excel files to import customer data, store locations, or order adjustments. The system will extract and process the data automatically.</p>
+
+        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:12px;font-weight:600;color:#64748b;display:block;margin-bottom:6px">Customers (.xlsx)</label>
+            <div class="drop-zone" id="tms-customers-dz">
+              <input type="file" id="tms-customers-file" accept=".xlsx,.xls">
+              <div class="dz-txt">&#128241; Upload Customers</div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:12px;font-weight:600;color:#64748b;display:block;margin-bottom:6px">Store Codes (.xlsx)</label>
+            <div class="drop-zone" id="tms-stores-dz">
+              <input type="file" id="tms-stores-file" accept=".xlsx,.xls">
+              <div class="dz-txt">&#128504; Upload Stores</div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:12px;font-weight:600;color:#64748b;display:block;margin-bottom:6px">Adjustments (.xlsx)</label>
+            <div class="drop-zone" id="tms-adj-dz">
+              <input type="file" id="tms-adj-file" accept=".xlsx,.xls">
+              <div class="dz-txt">&#128213; Upload Adjustments</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tms-err" class="err hidden"></div>
+        <div id="tms-info" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-size:12px;color:#1e40af;white-space:pre-wrap"></div>
+
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-s" id="tms-btn-customers" onclick="tmsImportCustomers()">Import Customers</button>
+          <button class="btn btn-s" id="tms-btn-stores" onclick="tmsImportStores()" style="opacity:.5">Import Stores</button>
+          <button class="btn btn-s" id="tms-btn-adj" onclick="tmsImportAdjustments()" style="opacity:.5">Import Adjustments</button>
+          <span id="tms-spinner" style="display:none;font-size:12px;color:#64748b">&#9203; Processing&hellip;</span>
         </div>
       </div>
 
@@ -1161,15 +1201,72 @@ function populateClientDropdown(){
 }
 function handleClientChange(){$('wb-newclient-row').style.display=$('wb-client').value==='__new__'?'':'none';}
 
+// ── TMS EXCEL IMPORTS ──────────────────────────────────────────────────────────
+async function tmsImportCustomers(){
+  const f=$('tms-customers-file');if(!f.files[0]){alert('Select a file first');return;}
+  await tmsImportFile(f.files[0],'customers');
+}
+async function tmsImportStores(){
+  const f=$('tms-stores-file');if(!f.files[0]){alert('Select a file first');return;}
+  await tmsImportFile(f.files[0],'stores');
+}
+async function tmsImportAdjustments(){
+  const f=$('tms-adj-file');if(!f.files[0]){alert('Select a file first');return;}
+  await tmsImportFile(f.files[0],'adjustments');
+}
+
+async function tmsImportFile(file,type){
+  const spinner=$('tms-spinner');const info=$('tms-info');const err=$('tms-err');
+  spinner.style.display='inline';err.classList.add('hidden');info.style.display='none';
+  try{
+    const fd=new FormData();fd.append('file',file);
+    const endpoint=type==='customers'?'/api/tms/import-customers':type==='stores'?'/api/tms/import-store-codes':'/api/tms/import-adjustments';
+    const r=await fetch(endpoint,{method:'POST',body:fd});
+    const j=await r.json();
+    if(!r.ok){throw new Error(j.error||'Import failed');}
+
+    // Show results
+    let msg='✓ Import successful\n\n';
+    if(type==='customers'){
+      msg+=`Created ${j.imported.ordersCreated} new orders\nUpdated ${j.imported.ordersUpdated} existing orders`;
+    }else if(type==='stores'){
+      msg+=`Imported ${j.imported.storesCount} store locations`;
+    }else{
+      msg+=`Imported ${j.imported.adjustmentsCount} adjustments`;
+    }
+    info.textContent=msg;info.style.display='block';
+
+    if(type==='customers'){
+      // Reload orders after customer import
+      setTimeout(()=>{if(serverAvailable)loadOrdersFromServer().then(()=>{render();});},500);
+    }
+  }catch(e){
+    err.textContent='❌ '+e.message;err.classList.remove('hidden');
+  }finally{spinner.style.display='none';}
+}
+
+// Setup drag-drop for TMS files
+function setupTmsDropZones(){
+  ['customers','stores','adj'].forEach(type=>{
+    const dz=$(  `tms-${type}-dz`);const inp=$(`tms-${type}-file`);
+    if(dz&&inp){
+      dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag');});
+      dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+      dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');if(e.dataTransfer.files[0])inp.files=e.dataTransfer.files;});
+      inp.addEventListener('change',e=>{if(e.target.files[0]){dz.querySelector('.dz-txt').textContent='✓ '+e.target.files[0].name;}});
+    }
+  });
+}
+
 // ── ADD ORDER MODAL ───────────────────────────────────────────────────────────
 function switchTab(tab){
   activeTab=tab;
-  ['email','waybill','import'].forEach(t=>{
+  ['email','waybill','import','tms'].forEach(t=>{
     $('tab-'+t).classList.toggle('on',t===tab);
     $('sec-'+t).classList.toggle('on',t===tab);
   });
-  $('btn-submit').style.display=tab==='import'?'none':'';
-  if(tab!=='import')$('btn-submit').textContent=tab==='email'?'Parse & Add Order':'Add Waybill Order';
+  $('btn-submit').style.display=tab==='import'||tab==='tms'?'none':'';
+  if(tab!=='import'&&tab!=='tms')$('btn-submit').textContent=tab==='email'?'Parse & Add Order':'Add Waybill Order';
   $('em-err').classList.add('hidden');
 }
 const SAMPLE=`---ORDER-START---
@@ -1215,6 +1312,10 @@ function openModal(){
   $('import-info').style.display='none';
   $('import-preview-wrap').style.display='none';
   $('btn-import-sel').style.display='none';
+  // setup TMS zones
+  setupTmsDropZones();
+  $('tms-info').style.display='none';
+  $('tms-err').classList.add('hidden');
 }
 function closeModal(){$('modal').classList.add('hidden');$('modal-ov').classList.add('hidden');}
 
