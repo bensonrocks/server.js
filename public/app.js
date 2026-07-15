@@ -2134,7 +2134,159 @@
   }
 
   // TMS Import handlers
-  async function importTransportFile(file, format) {
+  async function analyzeAndPreviewFile(file, format) {
+    try {
+      // Parse file to preview data
+      const text = await file.text();
+      const lines = text.split('\n').filter(l => l.trim());
+
+      if (lines.length < 2) {
+        throw new Error('File appears to be empty or invalid');
+      }
+
+      // Parse CSV headers and first few rows
+      const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
+      const rows = [];
+
+      for (let i = 1; i < Math.min(4, lines.length); i++) {
+        const cells = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+        const row = {};
+        headers.forEach((h, idx) => {
+          row[h] = cells[idx] || '';
+        });
+        rows.push(row);
+      }
+
+      // Show preview modal
+      showColumnMappingPreview(headers, rows, file, format);
+    } catch (err) {
+      alert('Failed to analyze file: ' + err.message);
+    }
+  }
+
+  function showColumnMappingPreview(headers, sampleRows, file, format) {
+    // Create preview modal
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'columnMappingModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:95%;max-width:1200px;max-height:90vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
+          <h2 style="margin:0">📋 Preview & Map Columns</h2>
+          <button class="btn-close" id="mappingCloseBtn">✕</button>
+        </div>
+
+        <div style="padding:1rem;background:#e8f5e9;border-left:4px solid #22c55e;border-radius:4px;margin-bottom:1.5rem">
+          <strong>✓ File detected:</strong> ${sampleRows.length} preview rows found<br/>
+          <strong>Format:</strong> ${format} | <strong>Columns:</strong> ${headers.join(', ')}
+        </div>
+
+        <h3 style="margin-top:0;margin-bottom:0.8rem;font-size:14px">Detected Data Types</h3>
+        <div id="columnTypePreview" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem;margin-bottom:1.5rem"></div>
+
+        <h3 style="margin-top:0;margin-bottom:0.8rem;font-size:14px">Sample Data (First 3 Rows)</h3>
+        <div style="overflow-x:auto;border:1px solid #e0e0e0;border-radius:4px;margin-bottom:1.5rem">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead style="background:#f5f5f5;border-bottom:1px solid #e0e0e0">
+              <tr>
+                ${headers.map(h => `<th style="padding:0.5rem;text-align:left;border-right:1px solid #e0e0e0">${esc(h)}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${sampleRows.map(row => `
+                <tr style="border-bottom:1px solid #e0e0e0">
+                  ${headers.map(h => `<td style="padding:0.5rem;border-right:1px solid #e0e0e0;font-family:monospace;font-size:11px">${esc(row[h] || '—')}</td>`).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;gap:0.6rem">
+          <button class="btn-primary" id="proceedWithImportBtn" style="flex:1">✓ Import with These Columns</button>
+          <button class="btn-secondary" id="mappingCloseBtn2" style="flex:1">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Analyze columns
+    const columnTypes = {};
+    headers.forEach(header => {
+      const values = sampleRows.map(r => r[header] || '');
+      const type = detectColumnPurpose(header, values);
+      columnTypes[header] = type;
+    });
+
+    // Display column analysis
+    const preview = document.getElementById('columnTypePreview');
+    preview.innerHTML = Object.entries(columnTypes).map(([col, type]) => `
+      <div style="padding:0.8rem;background:#f5f5f5;border-radius:4px;border-left:3px solid ${getTypeColor(type)}">
+        <div style="font-weight:600;font-size:12px">${esc(col)}</div>
+        <div style="font-size:11px;color:#666;margin-top:0.3rem">
+          <span style="display:inline-block;padding:0.2rem 0.5rem;background:white;border-radius:2px;margin-top:0.3rem">
+            ${getTypeEmoji(type)} ${type}
+          </span>
+        </div>
+      </div>
+    `).join('');
+
+    // Handlers
+    document.getElementById('mappingCloseBtn').addEventListener('click', () => modal.remove());
+    document.getElementById('mappingCloseBtn2').addEventListener('click', () => modal.remove());
+    document.getElementById('proceedWithImportBtn').addEventListener('click', async () => {
+      modal.remove();
+      await performImport(file, format);
+    });
+  }
+
+  function detectColumnPurpose(header, values) {
+    const lowerHeader = header.toLowerCase();
+    const nonEmpty = values.filter(v => v?.trim());
+
+    // Check header names first
+    if (lowerHeader.includes('name') || lowerHeader.includes('customer') || lowerHeader.includes('client')) return 'Customer Name';
+    if (lowerHeader.includes('address') || lowerHeader.includes('street') || lowerHeader.includes('location')) return 'Address';
+    if (lowerHeader.includes('postal') || lowerHeader.includes('zip') || lowerHeader.includes('code')) return 'Postal Code';
+    if (lowerHeader.includes('phone') || lowerHeader.includes('tel') || lowerHeader.includes('mobile')) return 'Phone';
+    if (lowerHeader.includes('email') || lowerHeader.includes('mail')) return 'Email';
+    if (lowerHeader.includes('po') || lowerHeader.includes('order') || lowerHeader.includes('invoice')) return 'Order/PO';
+    if (lowerHeader.includes('qty') || lowerHeader.includes('quantity')) return 'Quantity';
+    if (lowerHeader.includes('date') || lowerHeader.includes('delivery')) return 'Date';
+
+    // Check data patterns
+    if (nonEmpty.every(v => /^\d{6}$/.test(v))) return 'Postal Code (SG)';
+    if (nonEmpty.every(v => /^\d{4,}$/.test(v))) return 'Number/ID';
+    if (nonEmpty.some(v => v.includes('@'))) return 'Email';
+    if (nonEmpty.every(v => /^[+]?[\d\s\-()]{7,}$/.test(v))) return 'Phone';
+    if (nonEmpty.every(v => /^\d{1,2}[\/-]\w+[\/-]\d{2,4}/.test(v))) return 'Date';
+
+    return 'Text/Other';
+  }
+
+  function getTypeColor(type) {
+    if (type.includes('Postal')) return '#22c55e';
+    if (type.includes('Phone')) return '#0ea5e9';
+    if (type.includes('Address')) return '#f59e0b';
+    if (type.includes('Name')) return '#8b5cf6';
+    if (type.includes('Date')) return '#ef4444';
+    return '#64748b';
+  }
+
+  function getTypeEmoji(type) {
+    if (type.includes('Postal')) return '📍';
+    if (type.includes('Phone')) return '📱';
+    if (type.includes('Address')) return '🏢';
+    if (type.includes('Name')) return '👤';
+    if (type.includes('Date')) return '📅';
+    if (type.includes('Email')) return '✉️';
+    if (type.includes('Order')) return '📦';
+    if (type.includes('Quantity')) return '📊';
+    return '📄';
+  }
+
+  async function performImport(file, format) {
     const status = document.getElementById('transportImportStatus');
     if (!status) return;
 
@@ -2183,14 +2335,14 @@
   // Wire up import file inputs
   document.getElementById('transportBetimeFileInput')?.addEventListener('change', (e) => {
     if (e.target.files[0]) {
-      importTransportFile(e.target.files[0], 'betime');
+      analyzeAndPreviewFile(e.target.files[0], 'betime');
       e.target.value = '';
     }
   });
 
   document.getElementById('transportOutrightFileInput')?.addEventListener('change', (e) => {
     if (e.target.files[0]) {
-      importTransportFile(e.target.files[0], 'outright');
+      analyzeAndPreviewFile(e.target.files[0], 'outright');
       e.target.value = '';
     }
   });
@@ -2206,7 +2358,7 @@
   // Generic delivery import
   document.getElementById('transportGenericFileInput')?.addEventListener('change', (e) => {
     if (e.target.files[0]) {
-      importTransportFile(e.target.files[0], 'generic');
+      analyzeAndPreviewFile(e.target.files[0], 'generic');
       e.target.value = '';
     }
   });
