@@ -437,8 +437,13 @@ select.form-input{cursor:pointer}
     <div class="card">
       <div class="card-head">
         <span class="card-title">Inventory</span>
-        <div class="flex gap-6">
+        <div class="flex gap-6 items-center">
+          <span id="lowStockBadge" class="badge badge-short" style="display:none"></span>
+          <span id="valuationTotal" class="chip" style="font-weight:700"></span>
           <input class="form-input btn-sm" id="invSearch" placeholder="Filter SKU / name…" oninput="filterInventory()" style="width:180px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="invLowStockOnly" onchange="filterInventory()"> Low stock only
+          </label>
           <button class="btn btn-ghost btn-sm" onclick="openAddSkuModal()">+ Add SKU</button>
         </div>
       </div>
@@ -447,6 +452,7 @@ select.form-input{cursor:pointer}
           <thead><tr>
             <th>SKU</th><th>Name</th><th>Location(s)</th>
             <th>On Hand</th><th>Reserved</th><th>Available</th>
+            <th>Reorder At</th><th>Unit Cost</th><th>Value</th>
             <th></th>
           </tr></thead>
           <tbody id="invBody"></tbody>
@@ -471,7 +477,12 @@ select.form-input{cursor:pointer}
       <div class="form-grid">
         <div class="form-group form-full"><label class="form-label">SKU</label><input class="form-input" id="rcvSku" readonly></div>
         <div class="form-group form-full"><label class="form-label">Name</label><input class="form-input" id="rcvName" readonly></div>
-        <div class="form-group form-full"><label class="form-label">Qty to Receive</label><input class="form-input" id="rcvQty" type="number" min="1" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Qty to Receive</label><input class="form-input" id="rcvQty" type="number" min="1" placeholder="0"></div>
+        <div class="form-group">
+          <label class="form-label">Unit Cost (optional)</label>
+          <input class="form-input" id="rcvUnitCost" type="number" min="0" step="0.01" placeholder="Leave blank to keep current cost">
+          <span class="form-help">Blends into a weighted-average cost — not a FIFO/LIFO cost layer.</span>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -489,7 +500,10 @@ select.form-input{cursor:pointer}
       <div class="form-grid">
         <div class="form-group"><label class="form-label">SKU *</label><input class="form-input" id="newSku" placeholder="WIDGET-001"></div>
         <div class="form-group"><label class="form-label">Name *</label><input class="form-input" id="newSkuName" placeholder="Blue Widget"></div>
-        <div class="form-group form-full"><label class="form-label">Initial Qty on Hand</label><input class="form-input" id="newQty" type="number" min="0" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Initial Qty on Hand</label><input class="form-input" id="newQty" type="number" min="0" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">Unit Cost</label><input class="form-input" id="newUnitCost" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="form-group"><label class="form-label">Reorder Point</label><input class="form-input" id="newReorderPoint" type="number" min="0" placeholder="0 = not tracked"></div>
+        <div class="form-group"><label class="form-label">Reorder Qty</label><input class="form-input" id="newReorderQty" type="number" min="0" placeholder="Suggested restock qty"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1216,15 +1230,18 @@ function renderAvailabilityResult(data) {
 }
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
+let lowStockIds = new Set();
 async function loadInventory() {
-  const [items, stock, locations] = await Promise.all([
+  const [items, stock, locations, lowStock, valuation] = await Promise.all([
     api('GET', wh('items')),
     api('GET', wh('stock')),
     api('GET', wh('locations')),
+    api('GET', wh('items/low-stock')),
+    api('GET', wh('valuation')),
   ]);
   const codeByLoc = {}; locations.forEach(l => codeByLoc[l.id] = l.code);
   const byItem = {};
-  for (const it of items) byItem[it.id] = { id: it.id, sku: it.sku, name: it.name, on_hand: 0, reserved: 0, locations: [] };
+  for (const it of items) byItem[it.id] = { id: it.id, sku: it.sku, name: it.name, reorder_point: it.reorder_point, reorder_qty: it.reorder_qty, unit_cost: it.unit_cost, on_hand: 0, reserved: 0, locations: [] };
   for (const s of stock) {
     const it = byItem[s.item_id];
     if (!it) continue;
@@ -1233,21 +1250,37 @@ async function loadInventory() {
     if (s.quantity > 0 || s.reserved_quantity > 0) it.locations.push(codeByLoc[s.location_id] || '—');
   }
   allInventory = Object.values(byItem);
+  lowStockIds = new Set(lowStock.map(i => i.id));
+
+  const badge = document.getElementById('lowStockBadge');
+  if (lowStock.length) { badge.style.display = ''; badge.textContent = `⚠ ${lowStock.length} low stock`; }
+  else badge.style.display = 'none';
+  document.getElementById('valuationTotal').textContent = `Value: $${valuation.totalValue.toFixed(2)}`;
+
   filterInventory();
 }
 function filterInventory() {
   const q = (document.getElementById('invSearch')?.value || '').toLowerCase();
-  const visible = allInventory.filter(i => !q || i.sku.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
-  document.getElementById('invBody').innerHTML = visible.length ? visible.map(i => `
-    <tr>
-      <td class="font-mono" style="font-weight:600">${i.sku}</td>
+  const lowOnly = document.getElementById('invLowStockOnly')?.checked;
+  const visible = allInventory
+    .filter(i => !q || i.sku.toLowerCase().includes(q) || i.name.toLowerCase().includes(q))
+    .filter(i => !lowOnly || lowStockIds.has(i.id));
+  document.getElementById('invBody').innerHTML = visible.length ? visible.map(i => {
+    const isLow = lowStockIds.has(i.id);
+    const value = i.on_hand * i.unit_cost;
+    return `<tr${isLow ? ' style="background:#fef2f2"' : ''}>
+      <td class="font-mono" style="font-weight:600">${i.sku}${isLow ? ' <span class="badge badge-short" style="margin-left:4px">LOW</span>' : ''}</td>
       <td>${i.name}</td>
       <td class="font-mono" style="color:#64748b">${i.locations.join(', ')||'—'}</td>
       <td style="text-align:right;font-weight:700">${i.on_hand}</td>
       <td style="text-align:right;color:#f59e0b">${i.reserved}</td>
       <td style="text-align:right;font-weight:700;color:${(i.on_hand-i.reserved)>0?'#166534':'#991b1b'}">${i.on_hand-i.reserved}</td>
+      <td style="text-align:right;color:#64748b">${i.reorder_point > 0 ? i.reorder_point : '—'}</td>
+      <td style="text-align:right">$${i.unit_cost.toFixed(2)}</td>
+      <td style="text-align:right;font-weight:600">$${value.toFixed(2)}</td>
       <td><button class="btn btn-ghost btn-sm" onclick="openReceiveModal('${i.id}','${i.sku}','${i.name.replace(/'/g,"\\'")}')">Receive</button></td>
-    </tr>`).join('') : `<tr><td colspan="7" class="tbl-empty">No inventory matches filter</td></tr>`;
+    </tr>`;
+  }).join('') : `<tr><td colspan="10" class="tbl-empty">No inventory matches filter</td></tr>`;
 }
 
 // ── Modal helpers ─────────────────────────────────────────────────────────────
@@ -1259,14 +1292,19 @@ function openReceiveModal(itemId, sku, name) {
   document.getElementById('rcvSku').value = sku;
   document.getElementById('rcvName').value = name;
   document.getElementById('rcvQty').value = '';
+  document.getElementById('rcvUnitCost').value = '';
   openModal('receiveModal');
 }
 async function submitReceive() {
   const itemId = document.getElementById('rcvItemId').value;
   const qty = +document.getElementById('rcvQty').value;
+  const unitCostRaw = document.getElementById('rcvUnitCost').value;
   if (!qty || qty <= 0) { toast('Enter a positive qty', true); return; }
   try {
-    await api('POST', wh('stock/receive'), { itemId, locationId: state.defaultLocationId, quantity: qty, reference: 'Manual receive (UI)' });
+    await api('POST', wh('stock/receive'), {
+      itemId, locationId: state.defaultLocationId, quantity: qty, reference: 'Manual receive (UI)',
+      unitCost: unitCostRaw !== '' ? +unitCostRaw : null,
+    });
     toast(`Received ${qty}× ${document.getElementById('rcvSku').value}`);
     closeModal('receiveModal');
     await Promise.all([loadStats(), loadInventory()]);
@@ -1274,17 +1312,20 @@ async function submitReceive() {
 }
 
 function openAddSkuModal() {
-  ['newSku','newSkuName','newQty'].forEach(id => document.getElementById(id).value = '');
+  ['newSku','newSkuName','newQty','newUnitCost','newReorderPoint','newReorderQty'].forEach(id => document.getElementById(id).value = '');
   openModal('addSkuModal');
 }
 async function submitAddSku() {
   const sku  = document.getElementById('newSku').value.trim().toUpperCase();
   const name = document.getElementById('newSkuName').value.trim();
   const qty  = +document.getElementById('newQty').value || 0;
+  const unitCost = +document.getElementById('newUnitCost').value || 0;
+  const reorderPoint = +document.getElementById('newReorderPoint').value || 0;
+  const reorderQty = +document.getElementById('newReorderQty').value || 0;
   if (!sku || !name) { toast('SKU and Name required', true); return; }
   try {
-    const item = await api('POST', wh('items'), { sku, name });
-    if (qty > 0) await api('POST', wh('stock/receive'), { itemId: item.id, locationId: state.defaultLocationId, quantity: qty, reference: 'Initial stock (UI)' });
+    const item = await api('POST', wh('items'), { sku, name, unitCost, reorderPoint, reorderQty });
+    if (qty > 0) await api('POST', wh('stock/receive'), { itemId: item.id, locationId: state.defaultLocationId, quantity: qty, reference: 'Initial stock (UI)', unitCost: unitCost || null });
     toast(`SKU ${sku} saved`);
     closeModal('addSkuModal');
     await Promise.all([loadStats(), loadInventory()]);

@@ -81,6 +81,7 @@ a{color:#2563eb;text-decoration:none}
 .scan-feedback{font-size:12px;margin-top:7px;min-height:18px;font-weight:600}
 .scan-feedback.ok {color:#16a34a}
 .scan-feedback.err{color:#dc2626}
+.scan-feedback.warn{color:#d97706}
 
 /* ── Carton header banner ── */
 .ctn-banner{background:linear-gradient(135deg,#1d4ed8 0%,#1e40af 100%);color:#fff;border-radius:10px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 4px 16px rgba(29,78,216,.25)}
@@ -578,13 +579,31 @@ document.getElementById('itemInput').addEventListener('keydown', async e => {
   const qty          = parseFloat(document.getElementById('qtyInput').value) || 1;
   const lot_number   = document.getElementById('lotInput').value.trim();
   const expiry_date  = document.getElementById('expiryInput').value.trim();
-  setZone('item', 'active');
-  const data = await api('POST', wh(`ppp/sessions/${session.id}/scan-item`), { sku, qty, lot_number, expiry_date });
-  if (data.error) { setZone('item', 'error'); setFeedback('item', data.error, 'err'); return; }
-  setZone('item', 'success'); setFeedback('item', `+${qty} × ${data.item.item_name || sku}`, 'ok');
-  openCarton = data.carton; renderCartonHeader(); renderItemList();
-  setTimeout(() => { setZone('item', ''); setFeedback('item', '', ''); }, 1400);
+  await scanProductItem(sku, qty, lot_number, expiry_date, false);
 });
+
+async function scanProductItem(sku, qty, lot_number, expiry_date, allowUnlisted) {
+  setZone('item', 'active');
+  const data = await api('POST', wh(`ppp/sessions/${session.id}/scan-item`), { sku, qty, lot_number, expiry_date, allowUnlisted });
+  if (data.error) {
+    setZone('item', 'error');
+    // Mis-pick protection: offer to override rather than just failing silently on a typo.
+    if (data.error.startsWith('SKU not on this order') && confirm(data.error.replace('Confirm and scan again to add it anyway.', 'Add it to this carton anyway?'))) {
+      return scanProductItem(sku, qty, lot_number, expiry_date, true);
+    }
+    setFeedback('item', data.error, 'err');
+    return;
+  }
+  if (data.warning) {
+    setZone('item', 'success');
+    setFeedback('item', `+${qty} × ${data.item.item_name || sku} — ${data.warning}`, 'warn');
+  } else {
+    setZone('item', 'success');
+    setFeedback('item', `+${qty} × ${data.item.item_name || sku}`, 'ok');
+  }
+  openCarton = data.carton; renderCartonHeader(); renderItemList();
+  setTimeout(() => { setZone('item', ''); setFeedback('item', '', ''); }, 1800);
+}
 
 async function removeItem(id) {
   const data = await api('DELETE', wh(`ppp/items/${id}`));
@@ -651,6 +670,35 @@ function openPrintModal(ctx) {
 }
 function closePrintModal() { closeModal('printOverlay'); }
 
+// ── Code128-B barcode — self-contained, no CDN dependency, so print pages ────
+// work the same whether or not the printing device has internet access.
+const CODE128_WIDTHS = '212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232'.split(' ');
+const CODE128_STOP = '2331112';
+
+function code128Widths(text) {
+  const values = [104]; // START B — Code128B maps ASCII 32-126 to values 0-94
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    values.push(code >= 32 && code <= 126 ? code - 32 : 0); // unsupported chars fall back to space
+  }
+  let checksum = values[0];
+  for (let i = 1; i < values.length; i++) checksum += values[i] * i;
+  values.push(checksum % 103);
+  return values.map(v => CODE128_WIDTHS[v]).join('') + CODE128_STOP;
+}
+function code128Svg(text, height = 36, barUnit = 1.6) {
+  const widths = code128Widths(text);
+  let x = 0, bar = true;
+  const rects = [];
+  for (const wChar of widths) {
+    const w = (+wChar) * barUnit;
+    if (bar) rects.push(`<rect x="${x.toFixed(2)}" y="0" width="${w.toFixed(2)}" height="${height}" fill="#000"/>`);
+    x += w;
+    bar = !bar;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x.toFixed(0)}" height="${height + 14}" viewBox="0 0 ${x.toFixed(2)} ${height + 14}">${rects.join('')}<text x="${(x/2).toFixed(2)}" y="${height + 11}" font-size="10" font-family="monospace" text-anchor="middle">${text}</text></svg>`;
+}
+
 // ── Packing-list HTML builder (shared by office print + queue re-print) ──────
 async function fetchPackingListData(type, refId) {
   return type === 'carton'
@@ -662,21 +710,24 @@ function packingListHtml(type, data) {
   const order = data.order || {};
   const style = `<style>body{font-family:monospace;padding:24px;color:#0f172a}h1{font-size:18px;margin-bottom:2px}
     .meta{font-size:12px;color:#475569;margin-bottom:14px}table{width:100%;border-collapse:collapse;margin-top:10px}
-    th,td{border-bottom:1px solid #e2e8f0;padding:6px 8px;text-align:left;font-size:13px}th{background:#f1f5f9}
-    .ctn{margin-top:18px;padding-top:10px;border-top:2px solid #0f172a}</style>`;
+    th,td{border-bottom:1px solid #e2e8f0;padding:6px 8px;text-align:left;font-size:13px;vertical-align:middle}th{background:#f1f5f9}
+    .ctn{margin-top:18px;padding-top:10px;border-top:2px solid #0f172a}
+    .hu-barcode{margin:10px 0 16px}svg{display:block}</style>`;
   if (type === 'carton') {
     const c = data.carton;
-    const rows = (c.items || []).map(i => `<tr><td>${esc(i.sku)}</td><td>${esc(i.item_name)}</td><td>${i.qty}</td><td>${esc(i.lot_number)}</td></tr>`).join('');
+    const rows = (c.items || []).map(i => `<tr><td>${code128Svg(i.sku, 28, 1.2)}</td><td>${esc(i.sku)}</td><td>${esc(i.item_name)}</td><td>${i.qty}</td><td>${esc(i.lot_number)}</td></tr>`).join('');
     return `<html><head><title>Packing List — CTN ${c.carton_seq}</title>${style}</head><body>
       <h1>Packing List — CTN ${c.carton_seq} of ${data.totalCartons}</h1>
       <div class="meta">HU: ${esc(c.hu_code)} &middot; Order: ${esc(order.id)} &middot; ${esc(order.clientName)}</div>
-      <table><thead><tr><th>SKU</th><th>Item</th><th>Qty</th><th>Lot</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="hu-barcode">${code128Svg(c.hu_code, 40, 2)}</div>
+      <table><thead><tr><th>Barcode</th><th>SKU</th><th>Item</th><th>Qty</th><th>Lot</th></tr></thead><tbody>${rows}</tbody></table>
       </body></html>`;
   }
   const ctnBlocks = (data.cartons || []).map(c => {
-    const rows = (c.items || []).map(i => `<tr><td>${esc(i.sku)}</td><td>${esc(i.item_name)}</td><td>${i.qty}</td></tr>`).join('');
+    const rows = (c.items || []).map(i => `<tr><td>${code128Svg(i.sku, 24, 1)}</td><td>${esc(i.sku)}</td><td>${esc(i.item_name)}</td><td>${i.qty}</td></tr>`).join('');
     return `<div class="ctn"><strong>CTN ${c.carton_seq} of ${data.totalCartons}</strong> — HU: ${esc(c.hu_code)} — ${c.item_count} items
-      <table><thead><tr><th>SKU</th><th>Item</th><th>Qty</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <div class="hu-barcode">${code128Svg(c.hu_code, 32, 1.4)}</div>
+      <table><thead><tr><th>Barcode</th><th>SKU</th><th>Item</th><th>Qty</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join('');
   return `<html><head><title>Master Packing List</title>${style}</head><body>
     <h1>Master Packing List</h1>
@@ -962,8 +1013,10 @@ function renderCartonHeader() {
 function printHULabel() {
   if (!openCarton) return;
   const html = `<html><head><title>HU Label</title><style>body{font-family:monospace;text-align:center;padding:40px}
-    .hu{font-size:32px;font-weight:800;letter-spacing:2px;margin:16px 0}.ctn{font-size:14px;color:#475569}</style></head>
+    .hu{font-size:32px;font-weight:800;letter-spacing:2px;margin:16px 0}.ctn{font-size:14px;color:#475569}
+    svg{display:block;margin:0 auto}</style></head>
     <body><div class="ctn">CTN ${openCarton.carton_seq}</div><div class="hu">${openCarton.hu_code}</div>
+    ${code128Svg(openCarton.hu_code, 60, 3)}
     <div class="ctn">Order: ${session?.order_id||''}</div></body></html>`;
   openPrintableWindow(html);
 }

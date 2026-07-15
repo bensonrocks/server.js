@@ -1206,6 +1206,22 @@ app.post('/api/admin/client-users/:clientId/warehouse/items', withTenant, withCl
   }
 });
 
+app.patch('/api/admin/client-users/:clientId/warehouse/items/:itemId', withTenant, withClientWarehouse, (req, res) => {
+  try {
+    res.json(req.warehouse.updateItem(req.params.itemId, req.body || {}));
+  } catch (e) {
+    res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/items/low-stock', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.getLowStock());
+});
+
+app.get('/api/admin/client-users/:clientId/warehouse/valuation', withTenant, withClientWarehouse, (req, res) => {
+  res.json(req.warehouse.getValuation());
+});
+
 app.get('/api/admin/client-users/:clientId/warehouse/stock', withTenant, withClientWarehouse, (req, res) => {
   res.json(req.warehouse.getStockLevels({ itemId: req.query.itemId, locationId: req.query.locationId }));
 });
