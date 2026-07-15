@@ -629,6 +629,49 @@ breaking the default.
   fewer columns keeps it readable on a phone screen, which the task
   explicitly allowed as an alternative to sub-columns.
 
+## Transport Management (server.js — `/api/transport/*`)
+
+Transport feature skeleton for managing shipping/logistics requests. Currently
+consists of placeholder endpoints awaiting core functions from an external
+session (https://claude.ai/code/session_01SzvUdzDeSinGpd94Bt3Td7). Data flow
+integration will be connected separately.
+
+### Existing Endpoints (placeholders)
+- `GET /api/transport` — list all transport requests
+- `POST /api/transport` — create new transport request (stub)
+- `GET /api/transport/:id` — fetch request details (stub)
+- `POST /api/transport/:id/update` — update request (stub)
+
+### Client-Side (public/app.js)
+- `renderTransportTab()` — fetches transport list from `/api/transport` and
+  renders a standard table view, matching the pattern used by Orders and
+  Inbound tabs
+- `handleTransportRequest(id)` — placeholder for request detail view/interaction
+- Event listener on `#transportNewRequestBtn` — placeholder for new request
+  creation flow
+
+### UI (public/index.html)
+- Transport tab button in main sidebar navigation (between Inbound and Labels)
+- `#tab-transport` section with empty state, list table, and "+ New Transport
+  Request" button
+- Uses standard `.orders-table` styling to match other tabs
+
+### To Complete This Feature
+1. Provide the core transport management functions from the external session
+2. Implement the `/api/transport/*` endpoints with actual business logic
+3. Add database structure: `db.transport` array (if needed)
+4. Wire up `handleTransportRequest()` for detail view/editing
+5. Connect data flow to Orders/Inbound if needed (e.g., linking shipments to
+   completed orders)
+6. Update this section of CLAUDE.md with final implementation details
+
+### Sync Strategy
+When Transport functions are implemented:
+1. Commit to `claude/order-processing-wms-fulfillment-6mf8o4`
+2. Port identical functions to IdealScan codebase (same pattern as barcode fix)
+3. Update both CLAUDE.md files with final implementation notes
+4. Link both commits in PR/commit messages for sync tracking
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
