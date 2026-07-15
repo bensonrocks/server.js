@@ -689,11 +689,12 @@ function invalidateCustomHeadersCache() { _customHeadersCache = undefined; }
 function readDb() {
   if (_dbCache) return _dbCache;
   try { _dbCache = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { _dbCache = { batches: [], inbound: [], transport: [], drivers: [] }; }
+  catch { _dbCache = { batches: [], inbound: [], transport: [], drivers: [], fixSchedules: {} }; }
   // Ensure all required fields exist
   if (!_dbCache.batches) _dbCache.batches = [];
   if (!_dbCache.inbound) _dbCache.inbound = [];
   if (!_dbCache.transport) _dbCache.transport = [];
+  if (!_dbCache.fixSchedules) _dbCache.fixSchedules = {};
   if (!_dbCache.drivers) {
     // Initialize with sample drivers
     _dbCache.drivers = [
@@ -813,6 +814,53 @@ function updateTransportOnOrderCompletion(db, order, state) {
     scannedPieces: scannedPieces
   });
 }
+
+// Apply fix schedule constraints to route planning
+function applyFixScheduleToRoutes(db, routes, transportRecords, options = {}) {
+  const dayOfWeek = options.dayOfWeek || new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const fixSchedules = db.fixSchedules || {};
+  const daySchedule = fixSchedules[dayOfWeek];
+
+  // If no schedule or order opts out, return routes unchanged
+  if (!daySchedule?.enabled || (options.bypassFixSchedule === true)) {
+    return routes;
+  }
+
+  const priorityAreas = daySchedule.priorityAreas || [];
+  if (priorityAreas.length === 0) return routes;
+
+  // Reorder routes to prioritize scheduled areas
+  return routes.map(route => {
+    if (!Array.isArray(route.stops) || route.stops.length <= 1) return route;
+
+    // Find which stops match priority areas
+    const stopsWithPriority = route.stops.map((stop, idx) => {
+      const record = transportRecords.find(t => t.id === stop.transportId);
+      if (!record) return { stop, priority: 0, index: idx };
+
+      // Check if postal code prefix matches any priority area
+      const postalPrefix = (record.shipping?.zip || '').substring(0, 2);
+      const priority = priorityAreas.find(a => a.postalPrefix === postalPrefix);
+
+      return {
+        stop,
+        priority: priority ? priority.order : 0,
+        index: idx
+      };
+    });
+
+    // Reorder: high priority stops first, maintain relative order within priority levels
+    const reordered = stopsWithPriority
+      .sort((a, b) => {
+        if (a.priority !== b.priority) return b.priority - a.priority; // Higher priority first
+        return a.index - b.index; // Maintain original order within same priority
+      })
+      .map(item => item.stop);
+
+    return { ...route, stops: reordered };
+  });
+}
+
 function replayScanJournal() {
   let raw = '';
   try { raw = fs.readFileSync(SCAN_JOURNAL_FILE, 'utf8'); } catch { return; }
@@ -4511,6 +4559,44 @@ app.post('/api/transport/import', upload.single('file'), (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+// Fix Schedule Management — Define routing constraints per day
+app.get('/api/transport/fix-schedule', (req, res) => {
+  const db = readDb();
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const schedules = {};
+
+  for (const day of days) {
+    schedules[day] = db.fixSchedules?.[day] || { enabled: false, day, priorityAreas: [] };
+  }
+
+  res.json(schedules);
+});
+
+app.post('/api/transport/fix-schedule/:day', (req, res) => {
+  const { day } = req.params;
+  const { enabled, priorityAreas } = req.body || {};
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  if (!days.includes(day)) {
+    return res.status(400).json({ error: `Invalid day: ${day}` });
+  }
+
+  const db = readDb();
+  if (!db.fixSchedules) db.fixSchedules = {};
+
+  db.fixSchedules[day] = {
+    day,
+    enabled: enabled === true,
+    priorityAreas: Array.isArray(priorityAreas) ? priorityAreas : [],
+    updatedAt: new Date().toISOString()
+  };
+
+  _persistDb(db);
+  logAudit('fix_schedule_updated', { day, enabled, areasCount: priorityAreas?.length || 0 });
+
+  res.json(db.fixSchedules[day]);
 });
 
 app.post('/api/scan/learn-barcode', (req, res) => {

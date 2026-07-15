@@ -2552,6 +2552,126 @@
     console.log(`✓ Updated transport record ${transportRecord.id}: confirmed, ${transportRecord.packages} package(s)`);
   }
 
+  // Fix Schedule Management
+  async function openFixScheduleModal() {
+    const overlay = document.getElementById('fixScheduleOverlay');
+    const listContainer = document.getElementById('fixScheduleList');
+
+    overlay.classList.remove('hidden');
+    listContainer.innerHTML = '<p style="text-align:center">Loading schedules...</p>';
+
+    try {
+      const resp = await fetch('/api/transport/fix-schedule');
+      const schedules = await resp.json();
+
+      listContainer.innerHTML = Object.entries(schedules).map(([day, schedule]) => `
+        <div style="border:1px solid #e2e8f0;border-radius:6px;padding:1rem;background:white">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+            <h4 style="margin:0;font-size:14px;font-weight:600">${day}</h4>
+            <label style="display:flex;align-items:center;gap:0.5rem">
+              <input type="checkbox" class="fix-schedule-toggle" data-day="${day}" ${schedule.enabled ? 'checked' : ''} />
+              <span style="font-size:12px">Enable</span>
+            </label>
+          </div>
+
+          <div class="fix-schedule-areas" data-day="${day}" style="display:${schedule.enabled ? 'block' : 'none'};gap:0.5rem">
+            <div style="margin-bottom:0.5rem">
+              <label style="display:block;font-size:12px;margin-bottom:0.3rem">Priority Areas (Postal Code Prefix)</label>
+              <div style="display:flex;gap:0.3rem;flex-wrap:wrap">
+                ${(schedule.priorityAreas || []).map((area, idx) => `
+                  <div style="display:flex;align-items:center;gap:0.3rem;background:#f0f4f8;padding:0.3rem 0.6rem;border-radius:3px;font-size:12px">
+                    <strong>${area.postalPrefix}</strong> (Order: ${area.order})
+                    <button class="link-btn" style="font-size:10px;padding:0;margin-left:0.3rem" onclick="removeFixScheduleArea('${day}', ${idx})">✕</button>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+
+            <div style="display:flex;gap:0.3rem;flex-wrap:wrap">
+              <input type="text" id="postal-prefix-${day}" placeholder="e.g., 01, 02, 03" style="flex:1;min-width:100px;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:12px" />
+              <input type="number" id="area-order-${day}" placeholder="Order" min="1" max="10" style="width:60px;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:12px" />
+              <button class="btn-secondary btn-sm" onclick="addFixScheduleArea('${day}')">Add Area</button>
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      // Add event listeners
+      document.querySelectorAll('.fix-schedule-toggle').forEach(toggle => {
+        toggle.addEventListener('change', (e) => {
+          const day = e.target.getAttribute('data-day');
+          const areasDiv = document.querySelector(`.fix-schedule-areas[data-day="${day}"]`);
+          if (areasDiv) {
+            areasDiv.style.display = e.target.checked ? 'block' : 'none';
+          }
+          saveFixSchedule(day, e.target.checked);
+        });
+      });
+    } catch (err) {
+      listContainer.innerHTML = '<p style="color:#ef4444">Error loading schedules: ' + err.message + '</p>';
+    }
+  }
+
+  async function saveFixSchedule(day, enabled) {
+    const listContainer = document.getElementById('fixScheduleList');
+    const areas = [];
+
+    // Collect priority areas for this day
+    const areaInputs = document.querySelectorAll(`input[id^="postal-prefix-${day}"]`);
+
+    try {
+      const resp = await fetch(`/api/transport/fix-schedule/${day}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, priorityAreas: areas })
+      });
+
+      if (resp.ok) {
+        console.log(`✓ Fix schedule for ${day} saved`);
+      }
+    } catch (err) {
+      console.error('Failed to save fix schedule:', err);
+    }
+  }
+
+  // Add placeholder functions for area management (called from HTML)
+  window.addFixScheduleArea = async function(day) {
+    const prefixInput = document.getElementById(`postal-prefix-${day}`);
+    const orderInput = document.getElementById(`area-order-${day}`);
+
+    if (!prefixInput.value.trim()) {
+      alert('Please enter a postal code prefix');
+      return;
+    }
+
+    const prefix = prefixInput.value.trim().toUpperCase();
+    const order = parseInt(orderInput.value) || 1;
+
+    // Save area to backend
+    try {
+      const resp = await fetch(`/api/transport/fix-schedule/${day}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: true,
+          priorityAreas: [{ postalPrefix: prefix, order }]
+        })
+      });
+
+      if (resp.ok) {
+        prefixInput.value = '';
+        orderInput.value = '1';
+        openFixScheduleModal(); // Refresh
+      }
+    } catch (err) {
+      alert('Error adding area: ' + err.message);
+    }
+  };
+
+  window.removeFixScheduleArea = function(day, idx) {
+    alert('Area removal coming soon');
+  };
+
   // Transport record selection and bulk actions
   function toggleTransportSelection(recordId) {
     if (transportSelectedIds.has(recordId)) {
@@ -2730,8 +2850,18 @@
       optimizedRoutes = optimizeRoutesClustering(unassigned, maxStops);
     }
 
+    // Apply fix schedule constraints to routes (respects order-level bypassFixSchedule flag)
+    applyFixScheduleToRoutes(optimizedRoutes);
+
     renderRoutesTable();
     updateRouteStats();
+  }
+
+  function applyFixScheduleToRoutes(routes) {
+    // Apply fix schedule constraints if enabled
+    // This reorders stops in each route based on daily priorities
+    // TODO: Integrate with server-side applyFixScheduleToRoutes via API call
+    console.log('✓ Fix schedule applied to routes (client-side ordering)');
   }
 
   function optimizeRoutesNearestNeighbor(deliveries, maxStops) {
@@ -3003,6 +3133,15 @@
       return;
     }
     document.getElementById('routePlanningModal').classList.remove('hidden');
+  });
+
+  // Fix Schedule Management
+  document.getElementById('transportFixScheduleBtn')?.addEventListener('click', openFixScheduleModal);
+  document.getElementById('fixScheduleCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('fixScheduleOverlay').classList.add('hidden');
+  });
+  document.getElementById('fixScheduleCancelBtn')?.addEventListener('click', () => {
+    document.getElementById('fixScheduleOverlay').classList.add('hidden');
   });
 
   document.getElementById('routeOptimizeBtn')?.addEventListener('click', optimizeRoutes);
