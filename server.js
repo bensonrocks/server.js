@@ -1430,13 +1430,13 @@ function findBatchForOrder(db, orderNumber) {
 
 // ── Auto-archive ─────────────────────────────────────────────────────────────
 // db.json is rewritten on every scan, so it must stay small forever. Batches
-// whose orders are ALL settled (done/unprocessed) and untouched for 60 days
+// whose orders are ALL settled (done/unprocessed) and untouched for 12 months
 // move to monthly archive files on the volume. Archived orders stay
 // reachable: slips/waybills fall back to the archive, and the Completed tab
 // searches archives explicitly. The audit ledger is unaffected — reports
 // keep covering archived activity.
 const ARCHIVE_DIR = path.join(DATA_DIR, 'archive');
-const ARCHIVE_AFTER_DAYS = 60;
+const ARCHIVE_AFTER_DAYS = 365; // 12 months retention
 
 function batchArchivable(batch, cutoffIso) {
   const orders = batch.orders || [];
@@ -1487,11 +1487,11 @@ setInterval(runAutoArchive, 24 * 3600 * 1000);   // then daily
 
 // ── Audit log retention ──────────────────────────────────────────────────────
 // db.auditLog backs every Administrator report and grows forever otherwise —
-// same "must stay small forever" problem batches had. Entries older than 6
+// same "must stay small forever" problem batches had. Entries older than 12
 // months move to monthly archive files; readAuditLogForRange() transparently
 // reads them back in whenever a report's date range reaches that far, so
-// reports can always toggle/filter across AT LEAST 6 months of history.
-const AUDIT_ARCHIVE_AFTER_DAYS = 180;
+// reports can always toggle/filter across the full 12-month retention period.
+const AUDIT_ARCHIVE_AFTER_DAYS = 365; // 12 months retention
 
 function runAuditLogArchive() {
   try {

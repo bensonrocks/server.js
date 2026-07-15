@@ -31,8 +31,8 @@
 - Comprehensive audit logging
 
 ### ✅ Data Integrity
-- Auto-archive for aged orders (60+ days)
-- Nightly backups with 14-day retention
+- Auto-archive for aged orders (12 months retention)
+- Nightly backups with 14-day rolling snapshots
 - Crash-proof scan journal
 - Atomic database writes
 

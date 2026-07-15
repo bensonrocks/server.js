@@ -182,7 +182,7 @@ of after-the-fact investigation.
 - SCAN JOURNAL: every order-state change appends to `DATA_DIR/scan-journal.ndjson`
   immediately; replayed at startup (last-wins per order, only if newer than stored
   state), then truncated. Protects the deferred-write window.
-- AUTO-ARCHIVE: settled batches (all orders done/unprocessed) older than 60 days
+- AUTO-ARCHIVE: settled batches (all orders done/unprocessed) older than 12 months
   move to `DATA_DIR/archive/archive-YYYY-MM.json` daily. Completed-tab search hits
   archives via `/api/orders/archived?q=`; completion-slip falls back to
   `readArchivedBatch`. Audit ledger unaffected.
@@ -556,20 +556,19 @@ breaking the default.
 
 - Every report reads from `db.auditLog`, which otherwise grows forever (the
   same "db.json must stay small" problem batches had). Entries older than
-  **180 days** move to `DATA_DIR/archive/audit-archive-YYYY-MM.json` (daily
+  **12 months (365 days)** move to `DATA_DIR/archive/audit-archive-YYYY-MM.json` (daily
   job, `runAuditLogArchive()` — mirrors `runAutoArchive()` for batches).
 - `readAuditLogForRange(db, from, to)` transparently merges live +
   archived months whenever a report's requested `from` reaches past what's
-  still live, so every report can filter/toggle across **at least 6 months**
-  of history regardless of how long ago the data happened. Fast path: if
+  still live, so every report can filter/toggle across **the full 12-month**
+  retention period regardless of how long ago the data happened. Fast path: if
   `from` is within the live window, archive files are never touched.
 - This is a read-through, not a migration — archived months are never
   re-merged into `db.auditLog`; they're read fresh from disk per report
   request that needs them.
-- **Retention already exceeds the 12-month minimum, audited but unchanged.**
-  Neither batches (archived after 60 days) nor the audit log (archived after
-  180 days) are ever DELETED — `runAutoArchive()`/`runAuditLogArchive()` only
-  ever move data from the live `db.json` into permanent monthly archive
+- **Full 12-month retention enforced.** Neither batches (archived after 12 months) nor
+  the audit log (archived after 12 months) are ever DELETED — `runAutoArchive()`/`runAuditLogArchive()`
+  only ever move data from the live `db.json` into permanent monthly archive
   files on disk; nothing purges those files afterward. The only things that
   actually delete data are: (1) explicit admin-requested + Master-approved
   order/batch deletion, (2) the manual Master "Reset" button — both
@@ -579,8 +578,8 @@ breaking the default.
   what already exists — the monthly JSON archive files already hold
   everything indefinitely, and since the two dashboards below only ever
   query the last 3 days, they read `db.auditLog` directly and never need to
-  touch archives at all (3 days is always inside both the 60- and 180-day
-  live windows).
+  touch archives at all (3 days is always inside the 12-month
+  live window).
 
 ## Admin/Warehouse dashboards — Activity Overview & Station Throughput (server.js `/api/master/dashboard/*`, public/app.js)
 
