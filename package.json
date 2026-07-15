@@ -13,6 +13,7 @@
     "csv-stringify": "^6.4.4",
     "docxtemplater": "^3.69.0",
     "docxtemplater-image-module-free": "^1.1.1",
+    "dotenv": "^17.4.2",
     "express": "^4.18.2",
     "jsbarcode": "^3.12.3",
     "multer": "^2.2.0",

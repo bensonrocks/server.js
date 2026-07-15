@@ -1,3 +1,6 @@
+// Load environment variables from .env file
+require('dotenv').config();
+
 process.on('uncaughtException',  (err) => console.error('[CRASH] uncaughtException:', err.stack || err.message));
 process.on('unhandledRejection', (err) => console.error('[CRASH] unhandledRejection:', err?.stack || err));
 
@@ -120,10 +123,17 @@ async function initMysqlPool() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
+      connectionTimeout: 5000,
+      enableKeepAlive: true,
     });
 
-    // Test connection
-    const conn = await mysqlPool.getConnection();
+    // Test connection with timeout
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Connection timeout after 5s')), 5000)
+    );
+
+    const connPromise = mysqlPool.getConnection();
+    const conn = await Promise.race([connPromise, timeoutPromise]);
     console.log('[MySQL] TMS database connected');
     conn.release();
 
@@ -131,7 +141,8 @@ async function initMysqlPool() {
     await initTmsTables();
     return true;
   } catch (err) {
-    console.error('[MySQL] Connection failed:', err.message);
+    console.warn('[MySQL] Connection unavailable (TMS features disabled):', err.message);
+    mysqlPool = null;
     return false;
   }
 }
@@ -6506,8 +6517,16 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
 
 // ── IDEALTMS — Transport Management System (Routes, Drivers, Zones) ─────────
 
+// Middleware: Check MySQL availability for TMS endpoints
+function requireMysql(req, res, next) {
+  if (!mysqlPool) {
+    return res.status(503).json({ error: 'TMS database unavailable. Please contact your system administrator.' });
+  }
+  next();
+}
+
 // GET /api/tms/drivers — List all drivers
-app.get('/api/tms/drivers', requireAuth, async (req, res) => {
+app.get('/api/tms/drivers', requireAuth, requireMysql, async (req, res) => {
   try {
     const drivers = await queryMysql('SELECT * FROM drivers ORDER BY created_at DESC');
     res.json(drivers || []);
@@ -6517,7 +6536,7 @@ app.get('/api/tms/drivers', requireAuth, async (req, res) => {
 });
 
 // POST /api/tms/drivers — Create new driver (Admin request)
-app.post('/api/tms/drivers', requireAuth, express.json(), async (req, res) => {
+app.post('/api/tms/drivers', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { name, phone, email, vehicle_type, capacity_kg, capacity_volume, shift_start, shift_end, home_depot } = req.body;
     if (!name) return res.status(400).json({ error: 'Driver name required' });
@@ -6540,7 +6559,7 @@ app.post('/api/tms/drivers', requireAuth, express.json(), async (req, res) => {
 });
 
 // PUT /api/tms/drivers/:id — Update driver details
-app.put('/api/tms/drivers/:id', requireAuth, express.json(), async (req, res) => {
+app.put('/api/tms/drivers/:id', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, phone, email, vehicle_type, capacity_kg, capacity_volume, shift_start, shift_end, status } = req.body;
@@ -6574,6 +6593,7 @@ app.put('/api/tms/drivers/:id', requireAuth, express.json(), async (req, res) =>
 // DELETE /api/tms/drivers/:id — Delete driver (Master only)
 app.delete('/api/tms/drivers/:id', (req, res) => {
   if (!checkMaster(req, res)) return;
+  if (!mysqlPool) return res.status(503).json({ error: 'TMS database unavailable' });
   (async () => {
     try {
       const { id } = req.params;
@@ -6587,7 +6607,7 @@ app.delete('/api/tms/drivers/:id', (req, res) => {
 });
 
 // GET /api/tms/zones — List all zones
-app.get('/api/tms/zones', requireAuth, async (req, res) => {
+app.get('/api/tms/zones', requireAuth, requireMysql, async (req, res) => {
   try {
     const zones = await queryMysql('SELECT * FROM zones ORDER BY name');
     res.json(zones || []);
@@ -6597,7 +6617,7 @@ app.get('/api/tms/zones', requireAuth, async (req, res) => {
 });
 
 // POST /api/tms/zones — Create new zone
-app.post('/api/tms/zones', requireAuth, express.json(), async (req, res) => {
+app.post('/api/tms/zones', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { name, postal_codes, assigned_days, delivery_window_start, delivery_window_end } = req.body;
     if (!name) return res.status(400).json({ error: 'Zone name required' });
@@ -6621,7 +6641,7 @@ app.post('/api/tms/zones', requireAuth, express.json(), async (req, res) => {
 
 // ── Route Planning & Optimization ────────────────────────────────────────
 // POST /api/tms/routes/plan — Plan optimal routes from delivery jobs
-app.post('/api/tms/routes/plan', requireAuth, express.json(), async (req, res) => {
+app.post('/api/tms/routes/plan', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { jobs, date } = req.body;
     if (!jobs || !Array.isArray(jobs)) return res.status(400).json({ error: 'Jobs array required' });
@@ -6676,7 +6696,7 @@ app.post('/api/tms/routes/plan', requireAuth, express.json(), async (req, res) =
 });
 
 // GET /api/tms/routes — List all planned routes
-app.get('/api/tms/routes', requireAuth, async (req, res) => {
+app.get('/api/tms/routes', requireAuth, requireMysql, async (req, res) => {
   try {
     const { date, driver_id, status } = req.query;
     let sql = 'SELECT r.*, d.name as driver_name FROM routes r LEFT JOIN drivers d ON r.driver_id = d.id WHERE 1=1';
@@ -6695,7 +6715,7 @@ app.get('/api/tms/routes', requireAuth, async (req, res) => {
 });
 
 // GET /api/tms/routes/:id — Get route details with stops
-app.get('/api/tms/routes/:id', requireAuth, async (req, res) => {
+app.get('/api/tms/routes/:id', requireAuth, requireMysql, async (req, res) => {
   try {
     const { id } = req.params;
     const route = await queryMysql('SELECT r.*, d.name as driver_name FROM routes r LEFT JOIN drivers d ON r.driver_id = d.id WHERE r.id = ?', [id]);
@@ -6709,7 +6729,7 @@ app.get('/api/tms/routes/:id', requireAuth, async (req, res) => {
 });
 
 // POST /api/tms/routes/:id/reorder — Reorder stops in a route (planner modification)
-app.post('/api/tms/routes/:id/reorder', requireAuth, express.json(), async (req, res) => {
+app.post('/api/tms/routes/:id/reorder', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { id } = req.params;
     const { stops } = req.body;
@@ -6732,7 +6752,7 @@ app.post('/api/tms/routes/:id/reorder', requireAuth, express.json(), async (req,
 
 // ── Route Reports & Analytics ────────────────────────────────────────────
 // GET /api/tms/routes/:id/export — Export route as XLSX
-app.get('/api/tms/routes/:id/export', requireAuth, async (req, res) => {
+app.get('/api/tms/routes/:id/export', requireAuth, requireMysql, async (req, res) => {
   try {
     const { id } = req.params;
     const buf = await generateRouteReportXlsx(id);
@@ -6747,7 +6767,7 @@ app.get('/api/tms/routes/:id/export', requireAuth, async (req, res) => {
 });
 
 // GET /api/tms/metrics — Get route metrics for date range
-app.get('/api/tms/metrics', requireAuth, async (req, res) => {
+app.get('/api/tms/metrics', requireAuth, requireMysql, async (req, res) => {
   try {
     const { from, to } = req.query;
     if (!from || !to) return res.status(400).json({ error: 'from and to dates required' });
@@ -6766,7 +6786,7 @@ app.get('/api/tms/metrics', requireAuth, async (req, res) => {
 });
 
 // POST /api/tms/stops/:id/complete — Mark route stop as completed
-app.post('/api/tms/stops/:id/complete', requireAuth, express.json(), async (req, res) => {
+app.post('/api/tms/stops/:id/complete', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { id } = req.params;
     const { notes, photo_url } = req.body;
@@ -6800,7 +6820,7 @@ app.post('/api/tms/stops/:id/complete', requireAuth, express.json(), async (req,
 });
 
 // POST /api/tms/stops/:id/fail — Mark route stop as failed
-app.post('/api/tms/stops/:id/fail', requireAuth, express.json(), async (req, res) => {
+app.post('/api/tms/stops/:id/fail', requireAuth, requireMysql, express.json(), async (req, res) => {
   try {
     const { id } = req.params;
     const { reason, notes } = req.body;
@@ -6818,7 +6838,7 @@ app.post('/api/tms/stops/:id/fail', requireAuth, express.json(), async (req, res
 });
 
 const PORT = process.env.PORT || 3000;
-(async () => {
-  await initMysqlPool();
-  app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`));
-})();
+app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`));
+
+// Initialize MySQL in the background (non-blocking)
+initMysqlPool().catch(err => console.error('[Startup] MySQL init failed:', err.message));
