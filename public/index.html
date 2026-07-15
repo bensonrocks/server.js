@@ -1303,57 +1303,83 @@
         </div>
       </div>
 
-      <!-- TMS Import Section -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.2rem;margin-bottom:2rem">
-        <!-- Generic Delivery Import -->
-        <div class="card" style="border-left:4px solid #22c55e">
-          <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">🚚 Import Deliveries</h3>
-          <p class="hint" style="font-size:12px;margin-bottom:.8rem">CSV or XLSX with customer, address, postal code</p>
-          <div class="upload-area" style="border:2px dashed #22c55e;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
-               onclick="document.getElementById('transportGenericFileInput').click()">
-            <div style="font-size:24px;margin-bottom:.4rem">📦</div>
-            <div style="font-size:12px;color:#64748b">Drop or click to select file</div>
-            <input type="file" id="transportGenericFileInput" accept=".csv,.xlsx,.xls" hidden />
-          </div>
-          <button class="btn-secondary" id="transportGenericBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
-          <p style="margin:0.6rem 0 0 0;font-size:10px;color:#64748b;line-height:1.4">Columns: customer_name, address (or postal_code), items (qty), etc.</p>
+      <!-- Transport Dashboard -->
+      <div id="transportDashboard" class="hidden">
+        <!-- Stats Bar -->
+        <div class="stats-bar" id="transportStatsBar"></div>
+
+        <!-- Action Buttons -->
+        <div style="display:flex;gap:0.6rem;justify-content:flex-end;margin-bottom:1rem;flex-wrap:wrap">
+          <button class="btn-secondary btn-sm" id="transportTemplateDownloadBtn">📥 Download Sample Template</button>
+          <button class="btn-secondary btn-sm" id="transportSaveTemplateBtn">💾 Save as Template</button>
+          <button class="btn-primary btn-sm" id="transportOptimizeRoutesBtn">🗺️ Optimize Routes</button>
         </div>
 
-        <!-- BETIME Delivery Schedule -->
-        <div class="card">
-          <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">&#128241; BETIME Schedule</h3>
-          <p class="hint" style="font-size:12px;margin-bottom:.8rem">BETIME delivery schedule (XLSX)</p>
-          <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
-               onclick="document.getElementById('transportBetimeFileInput').click()">
-            <div style="font-size:24px;margin-bottom:.4rem">📁</div>
-            <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
-            <input type="file" id="transportBetimeFileInput" accept=".xlsx,.xls" hidden />
+        <!-- Route Template Selector -->
+        <div id="transportTemplateSelector" class="hidden" style="margin-bottom:1rem;padding:1rem;background:#f0f9ff;border-radius:6px;border-left:4px solid #0ea5e9">
+          <label style="font-size:12px;font-weight:600">Load Template:</label>
+          <select id="transportTemplateSelect" style="margin:0.5rem 0;padding:0.4rem;border-radius:4px;border:1px solid #cbd5e1;font-size:12px;width:100%">
+            <option value="">-- Select a saved template --</option>
+          </select>
+          <div style="display:flex;gap:0.6rem;margin-top:0.6rem">
+            <button class="btn-secondary btn-sm" id="transportApplyTemplateBtn" style="flex:1">Apply Template</button>
+            <button class="btn-secondary btn-sm" id="transportDeleteTemplateBtn" style="flex:1">Delete Template</button>
           </div>
-          <button class="btn-secondary" id="transportBetimeBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
         </div>
 
-        <!-- Outright Order Tracker -->
-        <div class="card">
-          <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">📊 Outright Tracker</h3>
-          <p class="hint" style="font-size:12px;margin-bottom:.8rem">Outright order tracker (XLSX)</p>
-          <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
-               onclick="document.getElementById('transportOutrightFileInput').click()">
-            <div style="font-size:24px;margin-bottom:.4rem">📊</div>
-            <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
-            <input type="file" id="transportOutrightFileInput" accept=".xlsx,.xls" hidden />
+        <!-- TMS Import Section -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.2rem;margin-bottom:2rem">
+          <!-- Generic Delivery Import -->
+          <div class="card" style="border-left:4px solid #22c55e">
+            <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">🚚 Import Deliveries</h3>
+            <p class="hint" style="font-size:12px;margin-bottom:.8rem">CSV or XLSX with customer, address, postal code</p>
+            <div class="upload-area" style="border:2px dashed #22c55e;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
+                 onclick="document.getElementById('transportGenericFileInput').click()">
+              <div style="font-size:24px;margin-bottom:.4rem">📦</div>
+              <div style="font-size:12px;color:#64748b">Drop or click to select file</div>
+              <input type="file" id="transportGenericFileInput" accept=".csv,.xlsx,.xls" hidden />
+            </div>
+            <button class="btn-secondary" id="transportGenericBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+            <p style="margin:0.6rem 0 0 0;font-size:10px;color:#64748b;line-height:1.4">Columns: customer_name, address (or postal_code), items (qty), etc.</p>
           </div>
-          <button class="btn-secondary" id="transportOutrightBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+
+          <!-- BETIME Delivery Schedule -->
+          <div class="card">
+            <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">&#128241; BETIME Schedule</h3>
+            <p class="hint" style="font-size:12px;margin-bottom:.8rem">BETIME delivery schedule (XLSX)</p>
+            <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
+                 onclick="document.getElementById('transportBetimeFileInput').click()">
+              <div style="font-size:24px;margin-bottom:.4rem">📁</div>
+              <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
+              <input type="file" id="transportBetimeFileInput" accept=".xlsx,.xls" hidden />
+            </div>
+            <button class="btn-secondary" id="transportBetimeBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+          </div>
+
+          <!-- Outright Order Tracker -->
+          <div class="card">
+            <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">📊 Outright Tracker</h3>
+            <p class="hint" style="font-size:12px;margin-bottom:.8rem">Outright order tracker (XLSX)</p>
+            <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
+                 onclick="document.getElementById('transportOutrightFileInput').click()">
+              <div style="font-size:24px;margin-bottom:.4rem">📊</div>
+              <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
+              <input type="file" id="transportOutrightFileInput" accept=".xlsx,.xls" hidden />
+            </div>
+            <button class="btn-secondary" id="transportOutrightBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+          </div>
         </div>
+
+        <div id="transportImportStatus" class="status-bar hidden" style="margin-bottom:1.5rem"></div>
+
+        <!-- Transport Requests List -->
+        <div class="section-header">
+          <h2>Transport Requests</h2>
+        </div>
+        <div id="transportEmpty" class="empty-state hidden">No transport requests yet. Import a delivery schedule to get started.</div>
+        <div id="transportList"></div>
       </div>
-
-      <div id="transportImportStatus" class="status-bar hidden" style="margin-bottom:1.5rem"></div>
-
-      <!-- Transport Requests List -->
-      <div class="section-header">
-        <h2>Transport Requests</h2>
-      </div>
-      <div id="transportEmpty" class="empty-state hidden">No transport requests yet. Import a delivery schedule to get started.</div>
-      <div id="transportList"></div>
+      <div id="transportEmpty" class="empty-state">No transport requests yet. Import a delivery schedule to get started.</div>
 
       <!-- Transport Detail View Modal -->
       <div id="transportDetailModal" class="modal-overlay hidden">

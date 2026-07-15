@@ -1829,14 +1829,41 @@
     } catch {
       transportRequests = [];
     }
+
+    const dashboard = document.getElementById('transportDashboard');
     const empty = document.getElementById('transportEmpty');
     const list  = document.getElementById('transportList');
+
     if (!transportRequests.length) {
+      dashboard.classList.add('hidden');
       empty.classList.remove('hidden');
       list.innerHTML = '';
       return;
     }
+
+    dashboard.classList.remove('hidden');
     empty.classList.add('hidden');
+
+    // Render stats bar
+    const statusCounts = {
+      pending: transportRequests.filter(r => (r.status || 'pending') === 'pending').length,
+      scheduled: transportRequests.filter(r => r.status === 'scheduled').length,
+      'in-transit': transportRequests.filter(r => r.status === 'in-transit').length,
+      delivered: transportRequests.filter(r => r.status === 'delivered').length,
+      cancelled: transportRequests.filter(r => r.status === 'cancelled').length
+    };
+
+    document.getElementById('transportStatsBar').innerHTML = `
+      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Total</div></div>
+      <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
+      <div class="stat-box processing"><div class="val">${statusCounts.scheduled}</div><div class="lbl">Scheduled</div></div>
+      <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>
+      <div class="stat-box unprocessed"><div class="val">${statusCounts.cancelled}</div><div class="lbl">Cancelled</div></div>`;
+
+    // Load and display saved templates
+    loadTransportTemplates();
+
+    // Render transport requests table
     list.innerHTML = `
       <div class="orders-table-wrap">
         <table class="orders-table">
@@ -2073,6 +2100,90 @@
   document.getElementById('transportDetailCloseBtn2')?.addEventListener('click', closeTransportDetailModal);
   document.getElementById('transportDetailModal')?.addEventListener('click', (e) => {
     if (e.target.id === 'transportDetailModal') closeTransportDetailModal();
+  });
+
+  // ── Transport Route Templates ──────────────────────────────────────────────
+  function loadTransportTemplates() {
+    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
+    const selector = document.getElementById('transportTemplateSelect');
+    selector.innerHTML = '<option value="">-- Select a saved template --</option>';
+    Object.keys(templates).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      selector.appendChild(opt);
+    });
+    document.getElementById('transportTemplateSelector').classList.toggle('hidden', Object.keys(templates).length === 0);
+  }
+
+  document.getElementById('transportTemplateDownloadBtn')?.addEventListener('click', () => {
+    const sampleData = [
+      ['customer_name', 'address', 'postal_code', 'city', 'phone', 'email', 'sku', 'qty'],
+      ['ABC Trading', '123 Bukit Merah Lane', '627001', 'Singapore', '6561234567', 'abc@example.com', 'SKU-001', '5'],
+      ['XYZ Logistics', '456 Clementi Ave', '536001', 'Singapore', '6587654321', 'xyz@example.com', 'SKU-002', '3'],
+      ['LMN Supplies', '789 Jurong West', '642001', 'Singapore', '6591112222', 'lmn@example.com', 'SKU-003', '10']
+    ];
+    const csv = sampleData.map(row => row.map(v => `"${v}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tms-sample-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('transportSaveTemplateBtn')?.addEventListener('click', () => {
+    if (!transportRequests.length) {
+      alert('No transport requests to save as template');
+      return;
+    }
+    const name = prompt('Template name:', `Route-${new Date().toLocaleDateString()}`);
+    if (!name) return;
+    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
+    templates[name] = {
+      requests: transportRequests.map(r => ({ clientName: r.clientName, postalCode: r.postalCode, items: r.items, city: r.city, phone: r.phone, email: r.email })),
+      savedAt: new Date().toISOString()
+    };
+    localStorage.setItem('transportTemplates', JSON.stringify(templates));
+    alert(`Template "${name}" saved!`);
+    loadTransportTemplates();
+  });
+
+  document.getElementById('transportApplyTemplateBtn')?.addEventListener('click', () => {
+    const name = document.getElementById('transportTemplateSelect').value;
+    if (!name) {
+      alert('Please select a template');
+      return;
+    }
+    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
+    const template = templates[name];
+    if (!template) return;
+    transportRequests = template.requests;
+    renderTransportTab();
+    alert(`Applied template "${name}". You can now adjust and save again.`);
+  });
+
+  document.getElementById('transportDeleteTemplateBtn')?.addEventListener('click', () => {
+    const name = document.getElementById('transportTemplateSelect').value;
+    if (!name) {
+      alert('Please select a template');
+      return;
+    }
+    if (!confirm(`Delete template "${name}"?`)) return;
+    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
+    delete templates[name];
+    localStorage.setItem('transportTemplates', JSON.stringify(templates));
+    loadTransportTemplates();
+    alert(`Template "${name}" deleted`);
+  });
+
+  document.getElementById('transportOptimizeRoutesBtn')?.addEventListener('click', () => {
+    if (!transportRequests.length) {
+      alert('No deliveries to optimize');
+      return;
+    }
+    alert(`Route optimization for ${transportRequests.length} deliveries (coming soon with driver assignment)`);
   });
 
   // ── TMS Management (Drivers, Zones, Route Optimization) ───────────────────
