@@ -5445,6 +5445,8 @@
       if (btn.dataset.adminTab === 'deletions') startPendingDelPolling();
       else stopPendingDelPolling();
       if (btn.dataset.adminTab === 'tms') renderTmsTab();
+      if (btn.dataset.adminTab === 'drivers') loadDriverList();
+      if (btn.dataset.adminTab === 'users') loadUserList();
     });
   });
 
@@ -5604,6 +5606,113 @@
 
   function showUserStatus(msg, type) {
     const el = document.getElementById('userMgmtStatus');
+    el.textContent  = msg;
+    el.className    = `status-bar ${type}`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 4000);
+  }
+
+  // ── Driver Management ────────────────────────────────────────────────────────
+  async function loadDriverList() {
+    const listEl = document.getElementById('driversList');
+    try {
+      const resp = await fetch('/api/master/drivers', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const drivers = await resp.json();
+      if (!drivers.length) {
+        listEl.innerHTML = '<div class="empty-state">No drivers created yet.</div>';
+        return;
+      }
+      listEl.innerHTML = drivers.map(d => `
+        <div class="driver-row" data-id="${esc(d.id)}">
+          <div class="driver-info">
+            <span class="driver-name">${esc(d.name || d.id)}</span>
+            <span class="driver-phone">${d.phone ? esc(d.phone) : '—'}</span>
+            <span class="driver-vehicle">${d.vehicle || '—'}</span>
+            <span class="driver-capacity">${d.capacity} kg</span>
+            <span class="driver-created">${new Date(d.createdAt).toLocaleDateString()}</span>
+          </div>
+          <div class="driver-row-actions">
+            <button class="btn-edit-driver" data-id="${esc(d.id)}" title="Edit driver">&#9999;</button>
+            <button class="btn-del-driver" data-id="${esc(d.id)}" title="Delete driver">&#128465;</button>
+          </div>
+        </div>`).join('');
+
+      listEl.querySelectorAll('.btn-edit-driver').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const driver = drivers.find(d => d.id === btn.dataset.id);
+          editDriver(driver);
+        });
+      });
+
+      listEl.querySelectorAll('.btn-del-driver').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm(`Delete driver "${btn.dataset.id}"? They will no longer be able to log in.`)) return;
+          const r = await fetch(`/api/master/drivers/${encodeURIComponent(btn.dataset.id)}`, {
+            method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) { alert(d.error); return; }
+          showDriverStatus(`Driver "${btn.dataset.id}" deleted.`, 'success');
+          loadDriverList();
+        });
+      });
+    } catch (err) {
+      listEl.innerHTML = `<p class="scan-error" style="font-size:.8rem">${esc(err.message)}</p>`;
+    }
+  }
+
+  function editDriver(driver) {
+    const newPin = prompt(`Enter new PIN for "${driver.id}" (leave blank to keep current):`);
+    if (newPin === null) return;
+    const payload = {};
+    if (newPin.trim()) payload.pin = newPin.trim();
+    if (Object.keys(payload).length === 0) {
+      alert('No changes made.');
+      return;
+    }
+    fetch(`/api/master/drivers/${encodeURIComponent(driver.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+      body: JSON.stringify(payload),
+    }).then(r => r.json()).then(d => {
+      if (!d.id) { alert(d.error); return; }
+      showDriverStatus(`Driver "${driver.id}" updated.`, 'success');
+      loadDriverList();
+    }).catch(err => showDriverStatus(err.message, 'error'));
+  }
+
+  document.getElementById('addDriverBtn').addEventListener('click', async () => {
+    const id       = document.getElementById('newDriverId').value.trim();
+    const name     = document.getElementById('newDriverName').value.trim();
+    const pin      = document.getElementById('newDriverPin').value.trim();
+    const phone    = document.getElementById('newDriverPhone').value.trim();
+    const vehicle  = document.getElementById('newDriverVehicle').value.trim();
+    const capacity = parseInt(document.getElementById('newDriverCapacity').value) || 1000;
+
+    if (!id || !pin) { showDriverStatus('Driver ID and PIN are required.', 'error'); return; }
+    if (pin.length < 4) { showDriverStatus('PIN must be at least 4 characters.', 'error'); return; }
+
+    try {
+      const r = await fetch('/api/master/drivers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ id, name, pin, phone, vehicle, capacity }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showDriverStatus(d.error || 'Failed', 'error'); return; }
+      document.getElementById('newDriverId').value       = '';
+      document.getElementById('newDriverName').value     = '';
+      document.getElementById('newDriverPin').value      = '';
+      document.getElementById('newDriverPhone').value    = '';
+      document.getElementById('newDriverVehicle').value  = '';
+      document.getElementById('newDriverCapacity').value = '1000';
+      showDriverStatus(`Driver "${id}" added successfully.`, 'success');
+      loadDriverList();
+    } catch (err) { showDriverStatus(err.message, 'error'); }
+  });
+
+  function showDriverStatus(msg, type) {
+    const el = document.getElementById('driverMgmtStatus');
     el.textContent  = msg;
     el.className    = `status-bar ${type}`;
     el.classList.remove('hidden');

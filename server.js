@@ -2862,6 +2862,8 @@ const AUTH_PUBLIC = new Set([
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
+  // Allow master key access to /api/master/* endpoints
+  if (req.path.startsWith('/api/master/') && req.headers['x-master-key'] === MASTER_PASS) return next();
   requireAuth(req, res, next);
 });
 
@@ -6952,26 +6954,45 @@ app.post('/api/tms/stops/:id/fail', requireAuth, requireMysql, express.json(), a
 
 // ── DRIVER PORTAL API ENDPOINTS ────────────────────────────────────────────
 
-// POST /api/driver/login — PIN-based driver login
+// POST /api/driver/login — PIN-based driver login (unified with main auth system)
 app.post('/api/driver/login', express.json(), (req, res) => {
-  const { pin } = req.body;
-  if (!pin || pin.length !== 4) {
-    return res.status(400).json({ error: 'Invalid PIN format' });
+  const { id, pin } = req.body;
+
+  // Accept either id+pin or just pin
+  let userId = id;
+  let driverId = id;
+
+  if (!userId && !pin) {
+    return res.status(400).json({ error: 'Driver ID and PIN required' });
   }
 
-  // Get database and drivers
-  const db = readDb();
-  const drivers = db.drivers || [];
-  const driver = drivers.find(d => d.pin === pin);
+  // Case-insensitive ID match
+  const idNorm = String(userId || '').trim().toLowerCase();
+  const users = readUsers();
+  const user = users.find(u => (String(u.id).trim().toLowerCase() === idNorm || u.role === 'driver') && u.role === 'driver');
 
-  if (!driver) {
+  if (!user) {
+    logAudit('driver_login_failed', { user: String(userId || '').trim().slice(0, 60) });
+    return res.status(401).json({ error: 'Driver not found' });
+  }
+
+  // Check PIN (stored as password hash)
+  if (hashPass(pin || '', user.salt) !== user.passwordHash) {
+    logAudit('driver_login_failed', { user: user.id });
     return res.status(401).json({ error: 'Invalid PIN' });
   }
 
+  // Create session
+  const token = uuidv4();
+  activeSessions.set(user.id, token);
+  persistSessions();
+
+  logAudit('driver_login', { user: user.id });
   res.json({
-    id: driver.id,
-    name: driver.name,
-    vehicle: driver.vehicle,
+    id: user.id,
+    name: user.name || user.id,
+    role: 'driver',
+    token,
     message: 'Login successful'
   });
 });
@@ -7067,7 +7088,113 @@ app.post('/api/driver/jobs/:id/complete', express.json(), (req, res) => {
   res.json({ success: true, message: `Job marked as ${status}`, job });
 });
 
-// GET /api/driver/serve — Serve the driver portal
+// GET /api/master/drivers — List all drivers (admin only)
+app.get('/api/master/drivers', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const users = readUsers();
+  const drivers = users.filter(u => u.role === 'driver').map(d => ({
+    id: d.id,
+    name: d.name || d.id,
+    phone: d.phone || '',
+    vehicle: d.vehicle || '',
+    capacity: d.capacity || 0,
+    createdAt: d.createdAt
+  }));
+  res.json(drivers);
+});
+
+// POST /api/master/drivers — Create new driver (admin only)
+app.post('/api/master/drivers', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id, name, pin, phone, vehicle, capacity } = req.body;
+
+  if (!id || !pin) {
+    return res.status(400).json({ error: 'Driver ID and PIN required' });
+  }
+
+  if (pin.length < 4) {
+    return res.status(400).json({ error: 'PIN must be at least 4 characters' });
+  }
+
+  const users = readUsers();
+  if (users.find(u => u.id.toLowerCase() === id.toLowerCase())) {
+    return res.status(409).json({ error: 'Driver ID already exists' });
+  }
+
+  // Create driver user
+  const salt = crypto.randomBytes(16).toString('hex');
+  const newDriver = {
+    id,
+    name: name || id,
+    role: 'driver',
+    phone: phone || '',
+    vehicle: vehicle || 'Van',
+    capacity: capacity || 1000,
+    salt,
+    passwordHash: hashPass(pin, salt),
+    createdAt: new Date().toISOString()
+  };
+
+  users.push(newDriver);
+  writeUsers(users);
+
+  logAudit('driver_created', { driver: id, name: name || id });
+  res.json({ ...newDriver, pin: 'hidden' });
+});
+
+// DELETE /api/master/drivers/:id — Delete driver (admin only)
+app.delete('/api/master/drivers/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  const users = readUsers();
+  const driver = users.find(u => u.id === id && u.role === 'driver');
+
+  if (!driver) {
+    return res.status(404).json({ error: 'Driver not found' });
+  }
+
+  const filtered = users.filter(u => u.id !== id);
+  writeUsers(filtered);
+
+  logAudit('driver_deleted', { driver: id });
+  res.json({ success: true, message: `Driver ${id} deleted` });
+});
+
+// PUT /api/master/drivers/:id — Update driver (admin only)
+app.put('/api/master/drivers/:id', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  const { name, phone, vehicle, capacity, pin } = req.body;
+
+  const users = readUsers();
+  const driverIdx = users.findIndex(u => u.id === id && u.role === 'driver');
+
+  if (driverIdx === -1) {
+    return res.status(404).json({ error: 'Driver not found' });
+  }
+
+  const driver = users[driverIdx];
+  if (name) driver.name = name;
+  if (phone) driver.phone = phone;
+  if (vehicle) driver.vehicle = vehicle;
+  if (capacity !== undefined) driver.capacity = capacity;
+
+  // Update PIN if provided
+  if (pin) {
+    if (pin.length < 4) {
+      return res.status(400).json({ error: 'PIN must be at least 4 characters' });
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    driver.salt = salt;
+    driver.passwordHash = hashPass(pin, salt);
+  }
+
+  writeUsers(users);
+  logAudit('driver_updated', { driver: id });
+  res.json(driver);
+});
+
+// GET /driver — Serve the driver portal
 app.get('/driver', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'driver.html'));
 });

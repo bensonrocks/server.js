@@ -1071,6 +1071,23 @@ body.log-open { overflow: hidden; }
 .user-add-row input:focus { outline: none; border-color: var(--primary); }
 .user-role-select { border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: .38rem .5rem; font-size: .82rem; background: #fff; color: var(--text); cursor: pointer; }
 
+/* Driver Management */
+.driver-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .65rem .85rem; font-size: .82rem; box-shadow: var(--shadow-sm); margin-bottom: .5rem; }
+.driver-info { display: flex; align-items: center; gap: 1rem; flex: 1; }
+.driver-name { font-weight: 700; min-width: 120px; }
+.driver-phone { color: var(--text-light); min-width: 110px; font-size: .75rem; }
+.driver-vehicle { background: var(--primary-light); color: var(--primary-dark); padding: .2rem .5rem; border-radius: 3px; font-size: .72rem; }
+.driver-capacity { color: var(--text-light); font-size: .75rem; }
+.driver-created { color: var(--text-lighter); font-size: .72rem; }
+.driver-row-actions { display: flex; gap: .35rem; }
+.btn-edit-driver { background: none; border: 1px solid var(--border); border-radius: 4px; padding: .22rem .55rem; font-size: .72rem; cursor: pointer; color: var(--primary); transition: background .12s; }
+.btn-edit-driver:hover { background: var(--primary-light); }
+.btn-del-driver { background: none; border: 1px solid var(--danger-border); border-radius: 4px; padding: .22rem .5rem; font-size: .72rem; cursor: pointer; color: var(--danger); transition: background .12s; }
+.btn-del-driver:hover { background: var(--danger-bg); }
+.driver-add-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.driver-add-row input, .driver-add-row select { flex: 1; min-width: 100px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: .38rem .6rem; font-size: .82rem; background: #fff; color: var(--text); }
+.driver-add-row input:focus, .driver-add-row select:focus { outline: none; border-color: var(--primary); }
+
 /* Word Doc Templates */
 .doc-tpl-field-ref { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: .6rem .9rem; margin-bottom: .75rem; font-size: .8rem; }
 .doc-tpl-field-ref-title { font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: .4rem; }

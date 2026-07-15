@@ -454,6 +454,7 @@
         <button class="admin-nav-btn" data-admin-tab="deletions">&#128465; Pending Deletions <span id="pendingDelBadge" class="admin-nav-badge hidden">0</span></button>
         <button class="admin-nav-btn" data-admin-tab="batches">&#128196; Upload History</button>
         <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
+        <button class="admin-nav-btn" data-admin-tab="drivers">🚗 Drivers</button>
         <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
         <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
         <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
@@ -587,6 +588,30 @@
           </div>
         </div>
         <div id="userMgmtStatus" class="status-bar hidden"></div>
+      </div>
+
+      <!-- Tab: Drivers -->
+      <div class="admin-tab hidden" id="adminTab-drivers">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Driver Management</div>
+            <div class="admin-section-sub">Create, edit, and manage driver accounts. Each driver logs in with their ID and PIN.</div>
+          </div>
+        </div>
+        <div id="driversList" class="driver-list-wrap"></div>
+        <div class="admin-add-card">
+          <div class="admin-add-title">Add New Driver</div>
+          <div class="driver-add-row">
+            <input type="text"     id="newDriverId"       placeholder="Driver ID"            autocomplete="off" />
+            <input type="text"     id="newDriverName"     placeholder="Full Name"            autocomplete="off" />
+            <input type="password" id="newDriverPin"      placeholder="PIN (4+ digits)"     autocomplete="new-password" />
+            <input type="tel"      id="newDriverPhone"    placeholder="Phone Number"        autocomplete="tel" />
+            <input type="text"     id="newDriverVehicle"  placeholder="Vehicle (e.g. Van)"  autocomplete="off" />
+            <input type="number"   id="newDriverCapacity" placeholder="Capacity (kg)"       autocomplete="off" value="1000" />
+            <button class="btn-primary" id="addDriverBtn">+ Add Driver</button>
+          </div>
+        </div>
+        <div id="driverMgmtStatus" class="status-bar hidden"></div>
       </div>
 
       <!-- Tab: WMS Template -->
