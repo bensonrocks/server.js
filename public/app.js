@@ -568,7 +568,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', labels: 'Labels', reports: 'Reports', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', transport: 'Transport', labels: 'Labels', reports: 'Reports', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -598,6 +598,7 @@
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'inbound') { renderInboundTab(); }
+    if (name === 'transport') { renderTransportTab(); }
     if (name === 'labels') { renderLabelsTab(); }
   }
 
@@ -1807,6 +1808,66 @@
       });
     });
   }
+
+  // ── Transport Tab ──────────────────────────────────────────────────────────
+  // Placeholder for transport functions to be incorporated from external session.
+  // Data flow integration will be connected separately.
+  let transportRequests = [];
+
+  async function renderTransportTab() {
+    try {
+      const resp = await fetch('/api/transport');
+      if (resp.ok) {
+        transportRequests = await resp.json();
+      } else {
+        transportRequests = [];
+      }
+    } catch {
+      transportRequests = [];
+    }
+    const empty = document.getElementById('transportEmpty');
+    const list  = document.getElementById('transportList');
+    if (!transportRequests.length) {
+      empty.classList.remove('hidden');
+      list.innerHTML = '';
+      return;
+    }
+    empty.classList.add('hidden');
+    list.innerHTML = `
+      <div class="orders-table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>Status</th><th>Date</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${transportRequests.map(req => `
+              <tr>
+                <td><code>${esc(req.id || '—')}</code></td>
+                <td><span class="status-badge ${req.status || 'pending'}">${req.status || 'Pending'}</span></td>
+                <td>${req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—'}</td>
+                <td>
+                  <button class="btn-scan-now" data-transport-id="${esc(req.id)}">View &#8594;</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    list.querySelectorAll('[data-transport-id]').forEach(btn =>
+      btn.addEventListener('click', () => handleTransportRequest(btn.dataset.transportId))
+    );
+  }
+
+  function handleTransportRequest(id) {
+    // Placeholder: to be implemented with transport functions from external session
+    console.log('Transport request:', id);
+  }
+
+  document.getElementById('transportNewRequestBtn')?.addEventListener('click', () => {
+    // Placeholder: to be implemented with transport functions from external session
+    console.log('Create new transport request');
+  });
 
   document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {
     document.getElementById('inboundPoReference').value = '';

@@ -3777,6 +3777,36 @@ app.post('/api/master/inbound-pending-deletions/:id/reject', (req, res) => {
 // Teach-on-scan: packer confirms an unrecognized product barcode belongs to
 // one of the order's lines. Stores the mapping (audit-logged, master-reviewable)
 // and counts the piece in the same call so packing never stalls.
+// ── Transport Management ──────────────────────────────────────────────────────
+// Placeholder for transport endpoints to be incorporated from external session.
+// Data flow integration will be connected separately.
+
+app.get('/api/transport', (req, res) => {
+  // Placeholder: fetch transport requests
+  // To be implemented with functions from external session
+  const db = readDb();
+  const transportRequests = db.transport || [];
+  res.json(transportRequests);
+});
+
+app.post('/api/transport', (req, res) => {
+  // Placeholder: create new transport request
+  // To be implemented with functions from external session
+  res.status(400).json({ error: 'Transport feature not yet implemented' });
+});
+
+app.get('/api/transport/:id', (req, res) => {
+  // Placeholder: get transport request details
+  // To be implemented with functions from external session
+  res.status(404).json({ error: 'Transport request not found' });
+});
+
+app.post('/api/transport/:id/update', (req, res) => {
+  // Placeholder: update transport request
+  // To be implemented with functions from external session
+  res.status(400).json({ error: 'Transport feature not yet implemented' });
+});
+
 app.post('/api/scan/learn-barcode', (req, res) => {
   const { orderNumber, barcode, sku } = req.body;
   if (!orderNumber || !barcode || !sku) return res.status(400).json({ error: 'orderNumber, barcode and sku required' });
