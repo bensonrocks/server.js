@@ -4478,7 +4478,7 @@ app.post('/api/transport/import/outright', upload.single('file'), (req, res) => 
   }
 });
 
-app.post('/api/transport/import/generic', upload.single('file'), (req, res) => {
+app.post('/api/transport/import/generic', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
@@ -4539,10 +4539,18 @@ app.post('/api/transport/import/generic', upload.single('file'), (req, res) => {
     const createdIds = [];
     let skipped = 0;
 
-    customers.forEach(cust => {
+    for (const cust of customers) {
       if (cust.clientName && cust.address) {
         const existing = db.transport.find(t => t.clientName === cust.clientName);
         if (!existing) {
+          // Geocode the postal code
+          if (cust.postalCode) {
+            const geo = await geocodePostalCode(cust.postalCode);
+            if (geo) {
+              cust.lat = geo.lat;
+              cust.lng = geo.lng;
+            }
+          }
           db.transport.push(cust);
           createdIds.push(cust.id);
         } else {
@@ -4551,7 +4559,7 @@ app.post('/api/transport/import/generic', upload.single('file'), (req, res) => {
       } else {
         skipped++;
       }
-    });
+    }
 
     _persistDb(db);
     logAudit('tms_import_generic', {
