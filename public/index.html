@@ -1539,42 +1539,57 @@
           </div>
 
           <!-- Route Optimization Options -->
-          <div style="padding:1rem;background:#f8fafc;border-radius:6px;margin-bottom:1.5rem;display:flex;gap:1rem;flex-wrap:wrap">
-            <div style="flex:1;min-width:200px">
-              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">Optimization Method</label>
-              <select id="routeOptimizationMethod" style="width:100%;padding:0.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
-                <option value="nearest-neighbor">Nearest Neighbor (Fast)</option>
-                <option value="cluster">Geographic Clustering</option>
-              </select>
+          <div style="padding:1rem;background:#f8fafc;border-radius:6px;margin-bottom:1.5rem">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+              <span style="display:inline-block;padding:0.2rem 0.6rem;background:#0ea5e9;color:white;border-radius:3px;font-size:11px;font-weight:600">🤖 AI SUGGESTION</span>
+              <span style="font-size:12px;color:#64748b">Uses postal code geocoding to calculate real distances between stops</span>
             </div>
-            <div style="flex:1;min-width:200px">
-              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">Max Stops per Route</label>
-              <input type="number" id="routeMaxStops" value="10" min="3" max="50" style="width:100%;padding:0.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;margin-bottom:1rem">
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">Optimization Method</label>
+                <select id="routeOptimizationMethod" style="width:100%;padding:0.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+                  <option value="nearest-neighbor">Nearest Neighbor (Fast)</option>
+                  <option value="cluster">Geographic Clustering</option>
+                </select>
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">Max Stops per Route</label>
+                <input type="number" id="routeMaxStops" value="10" min="3" max="50" style="width:100%;padding:0.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+              </div>
+              <div style="display:flex;align-items:flex-end">
+                <button id="routeOptimizeBtn" class="btn-primary" style="width:100%">⚡ Generate AI Routes</button>
+              </div>
             </div>
-            <div style="flex:1;min-width:200px;display:flex;align-items:flex-end">
-              <button id="routeOptimizeBtn" class="btn-primary" style="width:100%">⚡ Optimize Routes</button>
+            <div style="padding:0.75rem;background:#e8f4f8;border-left:3px solid #0ea5e9;border-radius:3px;font-size:11px;color:#0c5a8f">
+              💡 <strong>How to use:</strong> Click "Generate AI Routes" to see optimized routes based on postal codes. You can manually reorder stops, assign drivers, and adjust as needed.
             </div>
           </div>
 
           <!-- Routes Table -->
-          <div style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:6px">
+          <div style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:1.5rem">
             <table style="width:100%;border-collapse:collapse;font-size:13px">
               <thead style="background:#f8fafc;border-bottom:1px solid #e2e8f0">
                 <tr>
+                  <th style="padding:0.8rem;text-align:center;width:40px">Move</th>
                   <th style="padding:0.8rem;text-align:left">Route</th>
                   <th style="padding:0.8rem;text-align:left">Stop #</th>
                   <th style="padding:0.8rem;text-align:left">Client / Address</th>
                   <th style="padding:0.8rem;text-align:right">Distance</th>
                   <th style="padding:0.8rem;text-align:right">Cum. Distance</th>
                   <th style="padding:0.8rem;text-align:right">Est. Time</th>
-                  <th style="padding:0.8rem;text-align:left">Assigned Driver</th>
-                  <th style="padding:0.8rem;text-align:left">Status</th>
+                  <th style="padding:0.8rem;text-align:left">Postal Code</th>
+                  <th style="padding:0.8rem;text-align:left">Driver</th>
                 </tr>
               </thead>
               <tbody id="routeTableBody">
-                <tr><td colspan="8" style="padding:2rem;text-align:center;color:#999">Click "Optimize Routes" to generate routes</td></tr>
+                <tr><td colspan="9" style="padding:2rem;text-align:center;color:#999">Click "Generate AI Routes" to create optimized routes</td></tr>
               </tbody>
             </table>
+          </div>
+
+          <!-- Route Adjustment Note -->
+          <div style="padding:1rem;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;margin-bottom:1.5rem;font-size:12px">
+            ✏️ <strong>Edit routes:</strong> Click arrow buttons to reorder stops within a route. Change driver assignments using dropdowns. Distance is calculated based on postal codes.
           </div>
 
           <!-- Actions -->

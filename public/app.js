@@ -2334,18 +2334,19 @@
     const routes = [];
     const used = new Set();
     let routeNum = 1;
+    const startPoint = { shipping: { zip: '018945' } }; // Marina Bay - Singapore center
 
     while (used.size < deliveries.length) {
       const route = { num: routeNum, stops: [] };
+      let current = startPoint;
 
-      let current = null;
       for (let i = 0; i < maxStops && used.size < deliveries.length; i++) {
         let nearest = null;
         let minDist = Infinity;
 
         deliveries.forEach((d, idx) => {
           if (!used.has(idx)) {
-            const dist = current ? calculateDistance(current, d) : 0;
+            const dist = calculateDistance(current, d);
             if (dist < minDist) {
               minDist = dist;
               nearest = { idx, delivery: d, distance: dist };
@@ -2355,11 +2356,15 @@
 
         if (nearest) {
           used.add(nearest.idx);
+          const distFromPrev = nearest.distance;
+          const cumulDist = (route.stops[route.stops.length - 1]?.cumulDistance || 0) + distFromPrev;
+          const estTime = cumulDist / 50 * 60; // Assume avg speed 50 km/hr
+
           route.stops.push({
             delivery: nearest.delivery,
-            distFromPrev: nearest.distance,
-            cumulDistance: (route.stops[route.stops.length - 1]?.cumulDistance || 0) + nearest.distance,
-            estTime: ((route.stops[route.stops.length - 1]?.cumulDistance || 0) + nearest.distance) / 50 * 60 // ~50 km/hr
+            distFromPrev: distFromPrev,
+            cumulDistance: cumulDist,
+            estTime: estTime
           });
           current = nearest.delivery;
         }
@@ -2376,72 +2381,201 @@
   }
 
   function optimizeRoutesClustering(deliveries, maxStops) {
-    // Simple geographic clustering - just sort by postal code
-    const sorted = [...deliveries].sort((a, b) => (a.shipping?.zip || '').localeCompare(b.shipping?.zip || ''));
+    // Group by postal code prefix (geographic clusters)
+    const clusters = {};
+
+    deliveries.forEach(d => {
+      const prefix = (d.shipping?.zip || '0000').substring(0, 2); // First 2 digits
+      if (!clusters[prefix]) clusters[prefix] = [];
+      clusters[prefix].push(d);
+    });
+
+    // Sort clusters by size (larger first) and convert to routes
+    const sortedClusters = Object.values(clusters).sort((a, b) => b.length - a.length);
     const routes = [];
+    const startPoint = { shipping: { zip: '018945' } };
 
-    for (let i = 0; i < sorted.length; i += maxStops) {
-      const routeDeliveries = sorted.slice(i, i + maxStops);
-      const route = { num: routes.length + 1, stops: [] };
-      let cumDist = 0;
+    sortedClusters.forEach(cluster => {
+      // Split large clusters into multiple routes
+      for (let i = 0; i < cluster.length; i += maxStops) {
+        const routeDeliveries = cluster.slice(i, i + maxStops);
+        const route = { num: routes.length + 1, stops: [] };
+        let current = startPoint;
+        let cumDist = 0;
 
-      routeDeliveries.forEach((d, idx) => {
-        const distFromPrev = idx === 0 ? 0 : Math.random() * 5 + 2; // 2-7 km between stops
-        cumDist += distFromPrev;
-        route.stops.push({
-          delivery: d,
-          distFromPrev: distFromPrev,
-          cumulDistance: cumDist,
-          estTime: cumDist / 50 * 60
+        routeDeliveries.forEach((d, idx) => {
+          const distFromPrev = idx === 0 ? calculateDistance(startPoint, d) : calculateDistance(current, d);
+          cumDist += distFromPrev;
+          route.stops.push({
+            delivery: d,
+            distFromPrev: distFromPrev,
+            cumulDistance: cumDist,
+            estTime: cumDist / 50 * 60
+          });
+          current = d;
         });
-      });
 
-      route.totalDistance = cumDist;
-      routes.push(route);
-    }
+        route.totalDistance = cumDist;
+        routes.push(route);
+      }
+    });
 
     return routes;
   }
 
+  // Singapore postal code to coordinates mapping (simplified - common areas)
+  const POSTAL_CODE_COORDS = {
+    '018945': { lat: 1.2789, lng: 103.8549 }, // Marina Bay
+    '028761': { lat: 1.2856, lng: 103.8711 }, // Raffles
+    '048696': { lat: 1.3316, lng: 103.8477 }, // Bugis
+    '069037': { lat: 1.3382, lng: 103.8670 }, // Geylang
+    '079906': { lat: 1.4425, lng: 103.7618 }, // Yishun
+    '128381': { lat: 1.3452, lng: 103.7496 }, // Toa Payoh
+    '138808': { lat: 1.3321, lng: 103.8445 }, // Kallang
+    '160001': { lat: 1.4233, lng: 103.8344 }, // Serangoon
+    '180154': { lat: 1.3747, lng: 103.8955 }, // Pasir Ris
+    '210010': { lat: 1.4407, lng: 103.7517 }, // Ang Mo Kio
+    '228202': { lat: 1.3849, lng: 103.8625 }, // Tampines
+    '238041': { lat: 1.3569, lng: 103.8421 }, // Bedok
+    '248543': { lat: 1.3342, lng: 103.9650 }, // Changi
+    '258798': { lat: 1.3529, lng: 103.8849 }, // Katong
+    '268833': { lat: 1.3149, lng: 103.8961 }, // East Coast
+    '278057': { lat: 1.3421, lng: 103.7664 }, // Bishan
+    '288321': { lat: 1.3892, lng: 103.8734 }, // Simei
+    '298098': { lat: 1.3214, lng: 103.8456 }, // Clementi
+    '308088': { lat: 1.3456, lng: 103.7812 }, // Bukit Timah
+    '318145': { lat: 1.3456, lng: 103.8234 }, // Bukit Merah
+    '328123': { lat: 1.2945, lng: 103.8321 }, // Tiong Bahru
+    '338065': { lat: 1.2834, lng: 103.8451 }, // Outram
+    '348042': { lat: 1.2756, lng: 103.8567 }, // Tanjong Pagar
+    '358082': { lat: 1.2945, lng: 103.8234 }, // Chinatown
+    '368098': { lat: 1.3045, lng: 103.8345 }, // CBD
+    '378145': { lat: 1.2856, lng: 103.8456 }, // Marina South
+    '388042': { lat: 1.2945, lng: 103.8123 }, // HarbourFront
+    '398089': { lat: 1.3456, lng: 103.7234 }, // Jurong
+    '408056': { lat: 1.3234, lng: 103.7123 }, // Boon Lay
+    '418042': { lat: 1.3812, lng: 103.7456 }, // Clementi
+    '428123': { lat: 1.3456, lng: 103.6789 }, // Jurong West
+    '438065': { lat: 1.3145, lng: 103.6234 }, // Tuas
+    '448089': { lat: 1.3456, lng: 103.8456 }, // Orchard
+    '458123': { lat: 1.3234, lng: 103.8234 }, // Dhoby Ghaut
+    '468056': { lat: 1.3045, lng: 103.8567 }, // Newton
+    '478042': { lat: 1.3156, lng: 103.8234 }, // Tanglin
+    '488065': { lat: 1.2945, lng: 103.8345 }, // Somerset
+    '498089': { lat: 1.3045, lng: 103.8456 }, // Bras Basah
+  };
+
+  function getPostalCodeCoords(zip) {
+    // Try exact match first
+    if (POSTAL_CODE_COORDS[zip]) return POSTAL_CODE_COORDS[zip];
+
+    // Try first 2 digits for broader grouping
+    const prefix = zip?.substring(0, 2);
+    for (const [code, coords] of Object.entries(POSTAL_CODE_COORDS)) {
+      if (code.startsWith(prefix)) return coords;
+    }
+
+    // Default to Singapore center
+    return { lat: 1.3521, lng: 103.8198 };
+  }
+
   function calculateDistance(from, to) {
-    // Simplified distance (rough estimate)
-    const fromZip = from.shipping?.zip || '';
-    const toZip = to.shipping?.zip || '';
-    if (fromZip === toZip) return 2;
-    return Math.random() * 8 + 3; // 3-11 km
+    const fromCoords = getPostalCodeCoords(from.shipping?.zip || '');
+    const toCoords = getPostalCodeCoords(to.shipping?.zip || '');
+
+    // Haversine formula for distance between two coordinates
+    const R = 6371; // Earth's radius in km
+    const dLat = (toCoords.lat - fromCoords.lat) * Math.PI / 180;
+    const dLng = (toCoords.lng - fromCoords.lng) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(fromCoords.lat * Math.PI / 180) * Math.cos(toCoords.lat * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
   }
 
   function renderRoutesTable() {
     const tbody = document.getElementById('routeTableBody');
     tbody.innerHTML = '';
 
-    optimizedRoutes.forEach(route => {
-      route.stops.forEach((stop, idx) => {
+    optimizedRoutes.forEach((route, routeIdx) => {
+      route.stops.forEach((stop, stopIdx) => {
         const row = tbody.insertRow();
+        const isFirst = stopIdx === 0;
+        const isLast = stopIdx === route.stops.length - 1;
+
         row.innerHTML = `
-          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">Route ${route.num}</td>
-          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">${idx + 1}</td>
+          <td style="padding:0.5rem;border-bottom:1px solid #f0f0f0;text-align:center">
+            ${!isFirst ? `<button class="route-move-up" data-route="${routeIdx}" data-stop="${stopIdx}" title="Move up" style="background:none;border:none;cursor:pointer;font-size:14px">▲</button>` : ''}
+            ${!isLast ? `<button class="route-move-down" data-route="${routeIdx}" data-stop="${stopIdx}" title="Move down" style="background:none;border:none;cursor:pointer;font-size:14px">▼</button>` : ''}
+          </td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0"><strong>Route ${route.num}</strong></td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">${stopIdx + 1}</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
             <strong>${esc(stop.delivery.clientName || 'N/A')}</strong><br/>
-            <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 50))}</span>
+            <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
           </td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${stop.distFromPrev.toFixed(1)} km</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right"><strong>${stop.cumulDistance.toFixed(1)} km</strong></td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${Math.round(stop.estTime)} min</td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;font-weight:600">${stop.delivery.shipping?.zip || 'N/A'}</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
-            <select class="route-driver-select" data-route="${route.num}" data-stop="${idx}" style="padding:0.3rem;font-size:11px;border:1px solid #ddd;border-radius:3px">
+            <select class="route-driver-select" data-route="${route.num}" data-stop="${stopIdx}" style="padding:0.4rem;font-size:11px;border:1px solid #ddd;border-radius:3px;width:120px">
               <option value="">— Unassigned —</option>
               ${(window.drivers || []).map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
             </select>
           </td>
-          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0"><span class="status-badge pending">Pending</span></td>
         `;
       });
     });
 
     if (optimizedRoutes.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" style="padding:2rem;text-align:center;color:#999">No routes optimized yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="padding:2rem;text-align:center;color:#999">No routes generated yet. Click "Generate AI Routes"</td></tr>';
     }
+
+    // Add event listeners for move buttons
+    document.querySelectorAll('.route-move-up').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const routeIdx = parseInt(btn.dataset.route);
+        const stopIdx = parseInt(btn.dataset.stop);
+        moveRouteStop(routeIdx, stopIdx, -1);
+      });
+    });
+
+    document.querySelectorAll('.route-move-down').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const routeIdx = parseInt(btn.dataset.route);
+        const stopIdx = parseInt(btn.dataset.stop);
+        moveRouteStop(routeIdx, stopIdx, 1);
+      });
+    });
+  }
+
+  function moveRouteStop(routeIdx, stopIdx, direction) {
+    const route = optimizedRoutes[routeIdx];
+    const newIdx = stopIdx + direction;
+
+    if (newIdx < 0 || newIdx >= route.stops.length) return;
+
+    // Swap stops
+    [route.stops[stopIdx], route.stops[newIdx]] = [route.stops[newIdx], route.stops[stopIdx]];
+
+    // Recalculate distances
+    let cumDist = 0;
+    route.stops.forEach((stop, idx) => {
+      if (idx === 0) {
+        stop.distFromPrev = 0;
+      } else {
+        stop.distFromPrev = calculateDistance(route.stops[idx - 1].delivery, stop.delivery);
+      }
+      cumDist += stop.distFromPrev;
+      stop.cumulDistance = cumDist;
+      stop.estTime = cumDist / 50 * 60; // ~50 km/hr average
+    });
+
+    route.totalDistance = cumDist;
+    renderRoutesTable();
+    updateRouteStats();
   }
 
   function updateRouteStats() {
