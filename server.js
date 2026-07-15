@@ -2461,11 +2461,76 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     }
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
-    res.json({ rowCount: allRows.length, orderCount: orders.length, errors, converted: allRows.length > 0, clientName, customerNames, flagged, duplicateWarnings });
+
+    // Check if delivery planning is available (orders have postal codes)
+    const hasPostalCodes = orders.some(o => o.postal_code || o.zip || o.zip_code);
+    const deliveryPlanningAvailable = hasPostalCodes;
+
+    res.json({
+      rowCount: allRows.length,
+      orderCount: orders.length,
+      errors,
+      converted: allRows.length > 0,
+      clientName,
+      customerNames,
+      flagged,
+      duplicateWarnings,
+      deliveryPlanningAvailable,
+      deliveryPlanningHint: deliveryPlanningAvailable ? 'This shipment can be grouped into delivery jobs for route planning.' : null
+    });
   } catch (err) {
     res.json({ rowCount: 0, orderCount: 0, errors: [err.message], converted: false });
   }
 });
+
+// ── Delivery Job Planning — Group orders by postal code/zone ─────────────────
+function planDeliveryJobs(orders) {
+  // Group orders by postal code (primary) and customer (secondary)
+  const jobsByZone = new Map();
+
+  for (const order of orders) {
+    const postalCode = order.postal_code || order.zip || order.zip_code || 'UNKNOWN';
+    const key = postalCode.toString().trim().toUpperCase();
+
+    if (!jobsByZone.has(key)) {
+      jobsByZone.set(key, {
+        zone: key,
+        orders: [],
+        customerCount: new Set(),
+        totalItems: 0,
+        totalQty: 0
+      });
+    }
+
+    const job = jobsByZone.get(key);
+    job.orders.push(order.order_number);
+    if (order.customer_name) job.customerCount.add(order.customer_name);
+    job.totalItems += order.lines?.length || 0;
+    job.totalQty += order.lines?.reduce((sum, l) => sum + (l.qty || 0), 0) || 0;
+  }
+
+  // Convert to delivery jobs array, sorted by zone
+  const deliveryJobs = [];
+  for (const [zone, data] of Array.from(jobsByZone.entries()).sort()) {
+    const jobId = `JOB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+    deliveryJobs.push({
+      id: jobId,
+      status: 'pending',
+      zone: zone,
+      postalCode: zone,
+      orders: data.orders,
+      orderCount: data.orders.length,
+      customerCount: data.customerCount.size,
+      totalItems: data.totalItems,
+      totalQty: data.totalQty,
+      createdAt: new Date().toISOString(),
+      source: 'auto-planned'
+    });
+  }
+
+  return deliveryJobs;
+}
 
 // ── OCR preview — photo → text → order parse (no save) ──────────────────────
 app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
@@ -2744,10 +2809,41 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       has_order_label:   false,
     }));
 
+    // ── Delivery Job Planning (optional) ────────────────────────────────────────
+    let deliveryJobsCreated = [];
+    if (req.body?.planDeliveryJobs === 'true' || req.body?.planDeliveryJobs === true) {
+      const deliveryJobs = planDeliveryJobs(orders);
+      if (deliveryJobs.length > 0) {
+        // Persist delivery jobs to database
+        if (!db.transport) db.transport = [];
+        for (const job of deliveryJobs) {
+          job.batchId = batchId;
+          job.source = 'order-upload';
+          db.transport.push(job);
+        }
+        deliveryJobsCreated = deliveryJobs;
+        writeDb(db);
+        logAudit('delivery_jobs_planned', {
+          batchId,
+          jobsCreated: deliveryJobs.length,
+          zones: [...new Set(deliveryJobs.map(j => j.zone))].sort()
+        });
+      }
+    }
+
     logAudit('upload', { batchId, jobCode: batch.idealscan_code, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
 
-    console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}`);
-    res.json({ sessionId, batchId, idealscanCode: batch.idealscan_code, rowCount: mapped.length, orderCount: orders.length, orders: ordersWithState });
+    console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}${deliveryJobsCreated.length ? `, ${deliveryJobsCreated.length} delivery job(s)` : ''}`);
+    res.json({
+      sessionId,
+      batchId,
+      idealscanCode: batch.idealscan_code,
+      rowCount: mapped.length,
+      orderCount: orders.length,
+      orders: ordersWithState,
+      deliveryJobs: deliveryJobsCreated,
+      deliveryJobsCreated: deliveryJobsCreated.length
+    });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
     res.status(500).json({ error: err.message });

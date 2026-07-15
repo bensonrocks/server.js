@@ -1014,6 +1014,9 @@
       .map(inp => ({ order: inp.dataset.order, sku: inp.dataset.sku, qty: parseInt(inp.value, 10) }))
       .filter(a => Number.isFinite(a.qty) && a.qty >= 0);
     if (adjustments.length) form.append('adjustments', JSON.stringify(adjustments));
+    // Delivery job planning flag
+    const planDelivery = document.getElementById('confirmPlanDeliveryCheckbox')?.checked || false;
+    if (planDelivery) form.append('planDeliveryJobs', 'true');
 
     try {
       const _uploadAbort = new AbortController();
@@ -1045,9 +1048,11 @@
       loadedOrders = data.orders;
       activeOrder  = null;
 
-      setUploadStatus('success',
-        `${data.idealscanCode ? `Job ${data.idealscanCode} — ` : ''}Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".`
-      );
+      let successMsg = `${data.idealscanCode ? `Job ${data.idealscanCode} — ` : ''}Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".`;
+      if (data.deliveryJobsCreated && data.deliveryJobsCreated > 0) {
+        successMsg += ` ✓ Created ${data.deliveryJobsCreated} delivery job(s) grouped by postal code.`;
+      }
+      setUploadStatus('success', successMsg);
 
       // Show download button immediately and lock tabs until downloaded
       const dlBtn  = document.getElementById('uploadDownloadBtn');
