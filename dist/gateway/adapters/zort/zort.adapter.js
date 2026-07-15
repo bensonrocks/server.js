@@ -132,7 +132,9 @@ class ZortAdapter {
             if (!item.sku)
                 continue;
             try {
-                await zort_client_1.zortClient.postParams(zortCreds, '/Product/AdjustInventory', { sku: item.sku, qty: String(item.qty) });
+                // Push available qty (total - reserved), not total qty
+                const availableQty = Math.max(0, (item.qty ?? 0) - (item.reserved ?? 0));
+                await zort_client_1.zortClient.postParams(zortCreds, '/Product/AdjustInventory', { sku: item.sku, qty: String(availableQty) });
             }
             catch (err) {
                 // Log and continue — a single SKU failure should not abort the whole sync
@@ -147,6 +149,7 @@ class ZortAdapter {
         }
     }
     // ── Products: full product list with pricing ─────────────────────────────────
+    // Returns StandardInventory[] (mapped) not raw ZORT type. Used by product sync UI.
     async fetchProducts(creds) {
         const zortCreds = assertCreds(creds);
         const all = [];
@@ -154,7 +157,9 @@ class ZortAdapter {
         while (true) {
             const raw = await zort_client_1.zortClient.get(zortCreds, '/Product/GetProducts', { page: String(page), limit: '100' });
             const list = raw.list ?? [];
-            all.push(...list);
+            for (const p of list) {
+                all.push((0, zort_mapper_1.mapZortProductToInventory)(p, this.channel));
+            }
             if (list.length < 100)
                 break;
             page++;
@@ -193,6 +198,49 @@ class ZortAdapter {
             ],
         };
         return zort_client_1.zortClient.post(zortCreds, '/Webhook/UpdateWebhook', body);
+    }
+    // ── Webhook event handler: process incoming ZORT events ──────────────────────
+    async handleWebhook(body, _headers, creds) {
+        const payload = body;
+        const event = String(payload.event ?? payload.type ?? '');
+        const clientId = String(creds.storeName ?? creds.storename ?? 'zort');
+        try {
+            audit_log_service_1.auditLogService.save({
+                channel: 'zort',
+                operation: `webhook:${event}`,
+                externalId: String(payload.id ?? payload.number ?? ''),
+                rawPayload: payload,
+                tenantId: clientId,
+            });
+            // Event routing: implement per-event handling as needed
+            // Currently logs all events; extend with domain handlers (order status → OMS, stock → inventory, etc.)
+            switch (event) {
+                case 'order.created':
+                case 'order.modified':
+                case 'order.status_changed':
+                case 'order.tracking_changed':
+                    // TODO: Sync order status back to OMS order record
+                    break;
+                case 'product.quantity_changed':
+                    // TODO: Update OMS stock_qty from ZORT's new quantity
+                    break;
+                case 'contact.created':
+                case 'contact.modified':
+                    // TODO: Upsert ZORT contact into OMS customer table
+                    break;
+                default:
+                // Unknown event type — still logged
+            }
+        }
+        catch (err) {
+            audit_log_service_1.auditLogService.save({
+                channel: 'zort',
+                operation: `webhook:error:${event}`,
+                externalId: String(payload.id ?? payload.number ?? ''),
+                rawPayload: { error: err.message },
+                tenantId: clientId,
+            });
+        }
     }
 }
 exports.ZortAdapter = ZortAdapter;

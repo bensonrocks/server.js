@@ -759,24 +759,24 @@ app.post('/api/connect/zort/products/sync', withTenant, async (req, res) => {
   if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected — save storename, apikey, apisecret first' });
   try {
     const { zortAdapter } = require('./dist/gateway/adapters/zort/zort.adapter');
-    const products = await zortAdapter.fetchProducts(creds);
+    const items = await zortAdapter.fetchProducts(creds);
     const inv = req.ctx.inventory;
     let upserted = 0;
-    for (const p of products) {
+    for (const item of items) {
       try {
         inv.upsert({
-          sku:        p.sku || p.code || '',
-          name:       p.name || '',
-          category:   p.categoryname || '',
-          unit:       p.unit || 'pcs',
-          sell_price: p.price || 0,
-          cost_price: p.cost  || 0,
-          stock_qty:  p.qty   || 0,
+          sku:        item.sku || '',
+          name:       item.name || '',
+          category:   item.warehouse || '',
+          unit:       'pcs',
+          sell_price: 0,
+          cost_price: 0,
+          stock_qty:  item.qty || 0,
         });
         upserted++;
       } catch (_) {}
     }
-    res.json({ ok: true, fetched: products.length, upserted });
+    res.json({ ok: true, count: upserted, fetched: items.length, upserted });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -804,7 +804,7 @@ app.post('/api/connect/zort/inventory/pull', withTenant, async (req, res) => {
   }
 });
 
-// Push OMS stock levels → ZORT
+// Push OMS stock levels → ZORT (available qty after reservation deductions)
 app.post('/api/connect/zort/inventory/push', withTenant, async (req, res) => {
   const creds = req.creds.get('zort');
   if (!creds?.apikey) return res.status(400).json({ error: 'ZORT not connected' });
@@ -814,6 +814,7 @@ app.post('/api/connect/zort/inventory/push', withTenant, async (req, res) => {
       sku:      i.sku,
       name:     i.name,
       qty:      i.stock_qty || 0,
+      reserved: i.reserved_qty || 0,
       channel:  'zort',
     }));
     await gateway.syncInventory('zort', creds, standardItems);
