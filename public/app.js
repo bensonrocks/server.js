@@ -1955,6 +1955,7 @@
     const input = document.getElementById('inboundScanInput');
     input.value = '';
     document.getElementById('inboundScanFeedback').classList.add('hidden');
+    attachGlobalScanCapture('inbound'); // scans populate the input the same way outbound's do, wherever focus is
     if (job.status !== 'done') {
       // Carton 1 is labelled the moment receiving starts — same reasoning as
       // outbound: know where it's going before the first item lands in it.
@@ -1965,6 +1966,7 @@
 
   document.getElementById('backToInboundBtn').addEventListener('click', () => {
     document.getElementById('inboundScanOverlay').classList.add('hidden');
+    detachGlobalScanCapture();
     activeInbound = null;
     renderInboundTab();
   });
@@ -1994,12 +1996,12 @@
       showFeedback(feedback, 'error', err.message);
     }
   }
+  // Actual submission is handled by the global scan capture (attached with
+  // target 'inbound' in openInboundReceiving) — same reasoning as outbound's
+  // itemScanInput listener below: this just prevents Enter's default action
+  // and stops it double-firing through both listeners.
   document.getElementById('inboundScanInput').addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
-    const val = e.target.value.trim();
-    if (!val) return;
-    e.target.value = '';
-    inboundScan(val);
+    if (e.key === 'Enter') e.preventDefault();
   });
 
   // ── Inbound receiving photos — per-scan (tagged to the last SKU scanned)
@@ -2146,6 +2148,7 @@
         await showInboundLabelPrompt(`${activeInbound.reference || activeInbound.id.slice(0, 8)}-${String(lastNum).padStart(2, '0')}`, lastNum);
       }
       document.getElementById('inboundScanOverlay').classList.add('hidden');
+      detachGlobalScanCapture();
       activeInbound = null;
       renderInboundTab();
     } catch (err) { showFeedback(feedback, 'error', err.message); }
@@ -3131,6 +3134,11 @@
   // A 120 ms idle timeout also fires (handles scanners that omit Enter).
   let _scanBuf = '';
   let _scanFlushTimer = null;
+  // Which screen currently owns the global capture — outbound's scan
+  // overlay or IdealInbound's receiving screen. Only one is ever open at a
+  // time, so a single shared target (set on attach) is enough.
+  let _scanTarget = 'outbound'; // 'outbound' | 'inbound'
+  function _scanInputId() { return _scanTarget === 'inbound' ? 'inboundScanInput' : 'itemScanInput'; }
   // 250ms: long enough that a gun pausing mid-code (laggy browser, long
   // barcode) never gets split into two fragments — a split's front half can
   // look like an unknown barcode and wrongly trigger the teach dialog
@@ -3141,9 +3149,15 @@
     _scanFlushTimer = null;
     const val = _scanBuf.trim();
     _scanBuf  = '';
-    const inp = document.getElementById('itemScanInput');
-    inp.value = '';
-    if (!val || !activeOrder) return;
+    const inp = document.getElementById(_scanInputId());
+    if (inp) inp.value = '';
+    if (!val) return;
+    if (_scanTarget === 'inbound') {
+      if (!activeInbound) return;
+      inboundScan(val);
+      return;
+    }
+    if (!activeOrder) return;
     // Control code (printed card at the station) — starts a new carton
     // instead of being looked up as a product SKU.
     if (NEW_CARTON_CODES.has(val.toUpperCase())) { requestNewCarton(); return; }
@@ -3174,13 +3188,14 @@
     // Never intercept while any modal dialog is visible
     if (document.querySelector('.modal-overlay:not(.hidden)')) return;
 
+    const scanInputId = _scanInputId();
     const ae    = document.activeElement;
     const tag   = ae?.tagName;
     const isQty = !!ae?.classList?.contains('qty-input');
     if (tag === 'INPUT' || tag === 'TEXTAREA') {
       // Intercept the dedicated scan input and (for burst detection) qty
       // fields; pass every other input through untouched
-      if (ae.id !== 'itemScanInput' && !isQty) return;
+      if (ae.id !== scanInputId && !isQty) return;
     }
 
     if (e.key === 'Enter') {
@@ -3193,8 +3208,8 @@
       // already mirrored from inp.value on every keystroke while this input
       // is focused — SET, not append, or a value already caught by the
       // mirror gets doubled onto itself.
-      const inp = document.getElementById('itemScanInput');
-      if (ae.id === 'itemScanInput' && inp.value) {
+      const inp = document.getElementById(scanInputId);
+      if (ae.id === scanInputId && inp.value) {
         _scanBuf = inp.value;
       }
       _flushScanBuf();
@@ -3228,17 +3243,17 @@
     // Printable characters only — ignore modifier-only, arrow, Escape, Tab, etc.
     if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // If focus is NOT on the scan input, redirect the character there
-      if (document.activeElement?.id !== 'itemScanInput') {
-        document.getElementById('itemScanInput').focus();
+      if (document.activeElement?.id !== scanInputId) {
+        document.getElementById(scanInputId)?.focus();
         _scanBuf += e.key;
         // Keep the visible input in sync so user can see what the scanner typed
-        const inp = document.getElementById('itemScanInput');
-        inp.value = _scanBuf;
+        const inp = document.getElementById(scanInputId);
+        if (inp) inp.value = _scanBuf;
         e.preventDefault();
       } else {
-        // Focus IS on itemScanInput — let the browser handle insertion naturally,
+        // Focus IS on the scan input — let the browser handle insertion naturally,
         // mirror into buffer on next tick so value is updated
-        setTimeout(() => { _scanBuf = document.getElementById('itemScanInput').value; }, 0);
+        setTimeout(() => { _scanBuf = document.getElementById(scanInputId).value; }, 0);
       }
       // Reset the idle timer
       clearTimeout(_scanFlushTimer);
@@ -3246,14 +3261,16 @@
     }
   }
 
-  function attachGlobalScanCapture() {
+  function attachGlobalScanCapture(target = 'outbound') {
+    _scanTarget = target;
     _scanBuf = ''; clearTimeout(_scanFlushTimer); _scanFlushTimer = null;
     document.addEventListener('keydown', _globalScanKeydown);
   }
   function detachGlobalScanCapture() {
     document.removeEventListener('keydown', _globalScanKeydown);
     _scanBuf = ''; clearTimeout(_scanFlushTimer); _scanFlushTimer = null;
-    document.getElementById('itemScanInput').value = '';
+    const inp = document.getElementById(_scanInputId());
+    if (inp) inp.value = '';
   }
 
   // Keep the visible input as a fallback / status display; Enter still works there

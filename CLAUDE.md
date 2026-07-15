@@ -212,6 +212,26 @@ the time Enter fires, so appending double-counts it (e.g. a manually-typed
 because Enter usually arrives before the mirror's zero-delay timeout runs,
 but manual keyboard entry (a packer typing a SKU by hand) hits it every time.
 
+SHARED WITH IDEALINBOUND — `_scanTarget` ('outbound' | 'inbound', set by
+`attachGlobalScanCapture(target)`) is what lets ONE global keydown listener
+serve both `#itemScanInput` (outbound) and `#inboundScanInput` (IdealInbound
+receiving) — `_scanInputId()` resolves to whichever is current, and
+`_flushScanBuf()` routes the finished code to `handleItemScan()` or
+`inboundScan()` accordingly. Only one of the two screens is ever open at
+once, so a single shared target is safe. `openInboundReceiving()` calls
+`attachGlobalScanCapture('inbound')`; both ways of leaving it (the "back"
+button and a successful End Receipt) call `detachGlobalScanCapture()` —
+miss either one and the listener leaks into whatever's opened next.
+IdealInbound's receiving screen originally only had its OWN plain
+`keydown`-on-Enter listener directly on `#inboundScanInput` (no global
+capture, no redirect-if-unfocused) — meaning a scanner firing while focus
+had drifted elsewhere (a very normal thing to happen on a real device)
+silently went nowhere, which is the bug this was built to fix. That
+listener is now a no-op guard (`e.preventDefault()` only, mirroring
+outbound's own `itemScanInput` listener) so Enter doesn't fire through both
+listeners and double-count the scan — the global capture does the actual
+submission for both screens now.
+
 ## Scan row layout — `.big-scan-input` must keep `min-width: 0` (public/styles.css)
 
 `.item-scan-wrap` (both outbound's scan overlay and IdealInbound's receiving
