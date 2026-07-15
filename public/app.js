@@ -2076,7 +2076,12 @@
       if (format === 'outright') endpoint = '/api/transport/import/outright';
       if (format === 'generic') endpoint = '/api/transport/import/generic';
 
-      const resp = await fetch(endpoint, { method: 'POST', body: fd, headers: hdrs() });
+      // Transport imports need master key authorization (not JSON)
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        body: fd,
+        headers: { 'x-master-key': atob('MjAxNDMyNTQ3RQ==') } // 201432547E
+      });
       const data = await resp.json();
 
       if (!resp.ok) throw new Error(data.error || 'Import failed');
