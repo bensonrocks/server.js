@@ -1153,6 +1153,7 @@
       <button class="tab-btn" data-tab="transport"><span class="tab-icon">&#128666;</span>Transport</button>
       <div style="padding-left:2rem;display:none" id="transportSubMenu">
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="uploadJobsBtn">📦 Upload Jobs</button>
+        <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="driverDetailsBtn">👤 Driver Details</button>
       </div>
       <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
       <button class="tab-btn" data-tab="reports"><span class="tab-icon">&#128202;</span>Reports</button>
@@ -1443,6 +1444,165 @@
                 <button class="btn-secondary" id="transportDetailCloseBtn2" style="flex:1">Close</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Driver Details Modal -->
+      <div id="driverDetailsModal" class="modal-overlay hidden">
+        <div class="modal" style="width:95%;max-width:1200px;max-height:90vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
+            <h2 style="margin:0">👤 Driver Management</h2>
+            <button class="btn-close" id="driverDetailsCloseBtn">✕</button>
+          </div>
+
+          <!-- Tab Navigation -->
+          <div style="display:flex;gap:0.5rem;border-bottom:1px solid #e2e8f0;margin-bottom:1.5rem">
+            <button class="link-btn" id="driverTabManage" style="padding:0.8rem 1rem;border-bottom:3px solid #0ea5e9;color:#0ea5e9">Manage Drivers</button>
+            <button class="link-btn" id="driverTabPortal" style="padding:0.8rem 1rem;color:#64748b">Driver Portal</button>
+            <button class="link-btn" id="driverTabStats" style="padding:0.8rem 1rem;color:#64748b">Performance Stats</button>
+          </div>
+
+          <!-- TAB 1: Manage Drivers -->
+          <div id="driverManageTab">
+            <div style="display:flex;gap:0.8rem;margin-bottom:1.5rem">
+              <button class="btn-primary btn-sm" id="addDriverBtn">+ Add Driver</button>
+              <input type="text" id="driverSearchInput" placeholder="Search drivers..." style="flex:1;padding:0.5rem;border:1px solid #cbd5e1;border-radius:4px;font-size:12px" />
+            </div>
+
+            <div class="orders-table-wrap">
+              <table class="orders-table">
+                <thead>
+                  <tr>
+                    <th>Name</th><th>Phone</th><th>Vehicle</th><th>Capacity</th><th>Status</th><th>Orders</th><th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="driverListBody">
+                  <tr><td colspan="7" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- TAB 2: Driver Portal (Job Completion) -->
+          <div id="driverPortalTab" style="display:none">
+            <div style="display:flex;gap:0.8rem;margin-bottom:1.5rem">
+              <select id="driverSelectPortal" style="padding:0.5rem;border:1px solid #cbd5e1;border-radius:4px;font-size:12px">
+                <option value="">-- Select driver --</option>
+              </select>
+              <button class="btn-secondary btn-sm" id="refreshPortalBtn">🔄 Refresh</button>
+            </div>
+
+            <div id="driverPortalContent">
+              <div style="text-align:center;padding:2rem;color:#64748b">Select a driver to view their assigned jobs</div>
+            </div>
+          </div>
+
+          <!-- TAB 3: Performance Stats -->
+          <div id="driverStatsTab" style="display:none">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem">
+              <div style="padding:1rem;background:#f0f9ff;border-radius:6px;border-left:4px solid #0ea5e9">
+                <div style="font-size:24px;font-weight:600;color:#0ea5e9" id="statTotalDistance">—</div>
+                <div style="font-size:12px;color:#64748b">Total Distance (km)</div>
+              </div>
+              <div style="padding:1rem;background:#f0fdf4;border-radius:6px;border-left:4px solid #22c55e">
+                <div style="font-size:24px;font-weight:600;color:#22c55e" id="statTotalTime">—</div>
+                <div style="font-size:12px;color:#64748b">Total Time (hrs)</div>
+              </div>
+              <div style="padding:1rem;background:#fef3c7;border-radius:6px;border-left:4px solid #f59e0b">
+                <div style="font-size:24px;font-weight:600;color:#f59e0b" id="statJobsCompleted">—</div>
+                <div style="font-size:12px;color:#64748b">Jobs Completed</div>
+              </div>
+              <div style="padding:1rem;background:#f3e8ff;border-radius:6px;border-left:4px solid #a855f7">
+                <div style="font-size:24px;font-weight:600;color:#a855f7" id="statAvgSpeed">—</div>
+                <div style="font-size:12px;color:#64748b">Avg Speed (km/h)</div>
+              </div>
+            </div>
+
+            <div class="orders-table-wrap">
+              <table class="orders-table">
+                <thead>
+                  <tr>
+                    <th>Driver</th><th>Jobs Completed</th><th>Distance (km)</th><th>Time (hrs)</th><th>Avg Speed</th><th>POD Rate</th>
+                  </tr>
+                </thead>
+                <tbody id="driverStatsBody">
+                  <tr><td colspan="6" style="text-align:center;padding:2rem;color:#64748b">No driver stats available yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:0.6rem;margin-top:2rem;justify-content:flex-end">
+            <button class="btn-secondary" id="driverDetailsCloseBtn2">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add/Edit Driver Modal -->
+      <div id="addEditDriverModal" class="modal-overlay hidden">
+        <div class="modal" style="max-width:500px">
+          <h2 id="addEditDriverTitle" style="margin:0 0 1rem 0">Add Driver</h2>
+          <div class="form-group">
+            <label>Driver Name</label>
+            <input type="text" id="driverNameInput" placeholder="e.g. Ahmad Bin Mohamed" />
+          </div>
+          <div class="form-group">
+            <label>Phone Number</label>
+            <input type="tel" id="driverPhoneInput" placeholder="e.g. +6581234567" />
+          </div>
+          <div class="form-group">
+            <label>Vehicle Type</label>
+            <select id="driverVehicleInput">
+              <option value="Van">Van</option>
+              <option value="Bike">Bike</option>
+              <option value="Truck">Truck</option>
+              <option value="Car">Car</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Capacity (kg)</label>
+            <input type="number" id="driverCapacityInput" placeholder="e.g. 1000" />
+          </div>
+          <div style="display:flex;gap:0.6rem">
+            <button class="btn-secondary" id="addEditDriverCancelBtn">Cancel</button>
+            <button class="btn-primary" id="addEditDriverSaveBtn" style="flex:1">Save Driver</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Job Completion Modal -->
+      <div id="jobCompletionModal" class="modal-overlay hidden">
+        <div class="modal" style="max-width:600px">
+          <h2 id="jobCompletionTitle" style="margin:0 0 1rem 0">Complete Delivery</h2>
+          <div style="padding:1rem;background:#f0f9ff;border-radius:6px;border-left:4px solid #0ea5e9;margin-bottom:1rem">
+            <p style="margin:0;font-size:12px"><strong>Customer:</strong> <span id="jobCustomer">—</span></p>
+            <p style="margin:0.3rem 0 0 0;font-size:12px"><strong>Address:</strong> <span id="jobAddress">—</span></p>
+          </div>
+
+          <div class="form-group">
+            <label>Completion Status</label>
+            <select id="jobStatusSelect">
+              <option value="delivered">✓ Delivered</option>
+              <option value="failed">✗ Failed/Unable</option>
+              <option value="partial">~ Partial Delivery</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea id="jobNotesInput" placeholder="e.g. Customer not home, left with guard..." style="min-height:80px;padding:0.5rem;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;font-family:inherit"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>POD - Proof of Delivery</label>
+            <input type="file" id="jobPODInput" accept="image/*" />
+            <p style="margin:0.5rem 0 0 0;font-size:11px;color:#64748b">Upload customer signature, photo, or delivery evidence</p>
+          </div>
+
+          <div style="display:flex;gap:0.6rem">
+            <button class="btn-secondary" id="jobCompletionCancelBtn">Cancel</button>
+            <button class="btn-primary" id="jobCompletionSaveBtn" style="flex:1">Complete & Save</button>
           </div>
         </div>
       </div>

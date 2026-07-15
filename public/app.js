@@ -2239,6 +2239,299 @@
     alert('Route planning optimizing ' + transportRequests.length + ' deliveries...\n(Coming soon: TSP solver with driver assignment)');
   });
 
+  // ── Driver Details Management ──────────────────────────────────────────────
+  let drivers = JSON.parse(localStorage.getItem('drivers') || '[]');
+  let driverJobs = JSON.parse(localStorage.getItem('driverJobs') || '{}');
+  let editingDriverId = null;
+
+  document.getElementById('driverDetailsBtn')?.addEventListener('click', () => {
+    document.getElementById('driverDetailsModal').classList.remove('hidden');
+    renderDriverList();
+    populateDriverPortal();
+  });
+
+  document.getElementById('driverDetailsCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('driverDetailsModal').classList.add('hidden');
+  });
+
+  document.getElementById('driverDetailsCloseBtn2')?.addEventListener('click', () => {
+    document.getElementById('driverDetailsModal').classList.add('hidden');
+  });
+
+  // Tab switching
+  document.getElementById('driverTabManage')?.addEventListener('click', function() {
+    document.getElementById('driverManageTab').style.display = 'block';
+    document.getElementById('driverPortalTab').style.display = 'none';
+    document.getElementById('driverStatsTab').style.display = 'none';
+    this.style.borderBottomColor = '#0ea5e9';
+    this.style.color = '#0ea5e9';
+    document.getElementById('driverTabPortal').style.color = '#64748b';
+    document.getElementById('driverTabStats').style.color = '#64748b';
+    document.getElementById('driverTabPortal').style.borderBottomColor = 'transparent';
+    document.getElementById('driverTabStats').style.borderBottomColor = 'transparent';
+  });
+
+  document.getElementById('driverTabPortal')?.addEventListener('click', function() {
+    document.getElementById('driverManageTab').style.display = 'none';
+    document.getElementById('driverPortalTab').style.display = 'block';
+    document.getElementById('driverStatsTab').style.display = 'none';
+    this.style.borderBottomColor = '#0ea5e9';
+    this.style.color = '#0ea5e9';
+    document.getElementById('driverTabManage').style.color = '#64748b';
+    document.getElementById('driverTabStats').style.color = '#64748b';
+    document.getElementById('driverTabManage').style.borderBottomColor = 'transparent';
+    document.getElementById('driverTabStats').style.borderBottomColor = 'transparent';
+    populateDriverPortal();
+  });
+
+  document.getElementById('driverTabStats')?.addEventListener('click', function() {
+    document.getElementById('driverManageTab').style.display = 'none';
+    document.getElementById('driverPortalTab').style.display = 'none';
+    document.getElementById('driverStatsTab').style.display = 'block';
+    this.style.borderBottomColor = '#0ea5e9';
+    this.style.color = '#0ea5e9';
+    document.getElementById('driverTabManage').style.color = '#64748b';
+    document.getElementById('driverTabPortal').style.color = '#64748b';
+    document.getElementById('driverTabManage').style.borderBottomColor = 'transparent';
+    document.getElementById('driverTabPortal').style.borderBottomColor = 'transparent';
+    renderDriverStats();
+  });
+
+  function renderDriverList() {
+    const tbody = document.getElementById('driverListBody');
+    if (!drivers.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = drivers.map(d => `
+      <tr>
+        <td>${esc(d.name)}</td>
+        <td>${esc(d.phone)}</td>
+        <td>${esc(d.vehicle)}</td>
+        <td>${d.capacity ? d.capacity + ' kg' : '—'}</td>
+        <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span></td>
+        <td style="text-align:center"><strong>${(driverJobs[d.id] || []).length}</strong></td>
+        <td>
+          <button class="btn-scan-now btn-sm" data-driver-edit="${esc(d.id)}" style="margin-right:0.3rem">Edit</button>
+          <button class="btn-scan-now btn-sm" data-driver-delete="${esc(d.id)}" style="background:#ef4444">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('[data-driver-edit]').forEach(btn => {
+      btn.addEventListener('click', () => openEditDriver(btn.dataset.driverEdit));
+    });
+    tbody.querySelectorAll('[data-driver-delete]').forEach(btn => {
+      btn.addEventListener('click', () => deleteDriver(btn.dataset.driverDelete));
+    });
+  }
+
+  document.getElementById('addDriverBtn')?.addEventListener('click', () => {
+    editingDriverId = null;
+    document.getElementById('addEditDriverTitle').textContent = 'Add Driver';
+    document.getElementById('driverNameInput').value = '';
+    document.getElementById('driverPhoneInput').value = '';
+    document.getElementById('driverVehicleInput').value = 'Van';
+    document.getElementById('driverCapacityInput').value = '';
+    document.getElementById('addEditDriverModal').classList.remove('hidden');
+  });
+
+  function openEditDriver(id) {
+    const driver = drivers.find(d => d.id === id);
+    if (!driver) return;
+    editingDriverId = id;
+    document.getElementById('addEditDriverTitle').textContent = 'Edit Driver';
+    document.getElementById('driverNameInput').value = driver.name;
+    document.getElementById('driverPhoneInput').value = driver.phone;
+    document.getElementById('driverVehicleInput').value = driver.vehicle;
+    document.getElementById('driverCapacityInput').value = driver.capacity || '';
+    document.getElementById('addEditDriverModal').classList.remove('hidden');
+  }
+
+  function deleteDriver(id) {
+    if (!confirm('Delete this driver?')) return;
+    drivers = drivers.filter(d => d.id !== id);
+    delete driverJobs[id];
+    localStorage.setItem('drivers', JSON.stringify(drivers));
+    localStorage.setItem('driverJobs', JSON.stringify(driverJobs));
+    renderDriverList();
+  }
+
+  document.getElementById('addEditDriverSaveBtn')?.addEventListener('click', () => {
+    const name = document.getElementById('driverNameInput').value.trim();
+    const phone = document.getElementById('driverPhoneInput').value.trim();
+    const vehicle = document.getElementById('driverVehicleInput').value;
+    const capacity = parseInt(document.getElementById('driverCapacityInput').value) || 0;
+
+    if (!name) {
+      alert('Please enter driver name');
+      return;
+    }
+
+    if (editingDriverId) {
+      const driver = drivers.find(d => d.id === editingDriverId);
+      if (driver) {
+        driver.name = name;
+        driver.phone = phone;
+        driver.vehicle = vehicle;
+        driver.capacity = capacity;
+      }
+    } else {
+      drivers.push({
+        id: 'DRV-' + Date.now(),
+        name, phone, vehicle, capacity,
+        status: 'active',
+        stats: { distance: 0, time: 0, jobs: 0 }
+      });
+    }
+
+    localStorage.setItem('drivers', JSON.stringify(drivers));
+    document.getElementById('addEditDriverModal').classList.add('hidden');
+    renderDriverList();
+    populateDriverPortal();
+  });
+
+  document.getElementById('addEditDriverCancelBtn')?.addEventListener('click', () => {
+    document.getElementById('addEditDriverModal').classList.add('hidden');
+  });
+
+  function populateDriverPortal() {
+    const select = document.getElementById('driverSelectPortal');
+    select.innerHTML = '<option value="">-- Select driver --</option>';
+    drivers.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.name + ` (${(driverJobs[d.id] || []).length} jobs)`;
+      select.appendChild(opt);
+    });
+
+    select.addEventListener('change', () => {
+      if (!select.value) {
+        document.getElementById('driverPortalContent').innerHTML = '<div style="text-align:center;padding:2rem;color:#64748b">Select a driver to view their assigned jobs</div>';
+        return;
+      }
+      showDriverPortal(select.value);
+    });
+  }
+
+  function showDriverPortal(driverId) {
+    const driver = drivers.find(d => d.id === driverId);
+    if (!driver) return;
+
+    const jobs = driverJobs[driverId] || [];
+    const content = document.getElementById('driverPortalContent');
+
+    if (!jobs.length) {
+      content.innerHTML = `<div style="text-align:center;padding:2rem;color:#64748b">No jobs assigned to ${esc(driver.name)}</div>`;
+      return;
+    }
+
+    content.innerHTML = `
+      <div style="display:grid;gap:1rem">
+        ${jobs.map((job, idx) => `
+          <div style="padding:1rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:0.5rem">
+              <div>
+                <h4 style="margin:0;font-size:13px">${idx + 1}. ${esc(job.customer)}</h4>
+                <p style="margin:0.3rem 0 0 0;font-size:12px;color:#64748b">${esc(job.address)}</p>
+              </div>
+              <span class="status-badge ${job.status || 'pending'}" style="font-size:11px">${job.status || 'Pending'}</span>
+            </div>
+            ${job.status && job.status !== 'pending' ? `
+              <div style="padding:0.6rem;background:white;border-radius:4px;font-size:12px;margin-bottom:0.5rem">
+                <p style="margin:0;color:#22c55e"><strong>✓ ${job.status === 'delivered' ? 'Delivered' : job.status === 'failed' ? 'Failed' : 'Partial'}</strong></p>
+                ${job.notes ? `<p style="margin:0.3rem 0 0 0;color:#64748b">${esc(job.notes)}</p>` : ''}
+              </div>
+            ` : `
+              <button class="btn-primary btn-sm" data-complete-job="${idx}" style="width:100%;margin-top:0.5rem">Complete Delivery</button>
+            `}
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    content.querySelectorAll('[data-complete-job]').forEach(btn => {
+      btn.addEventListener('click', () => openJobCompletion(driverId, parseInt(btn.dataset.completeJob)));
+    });
+  }
+
+  function openJobCompletion(driverId, jobIdx) {
+    const jobs = driverJobs[driverId] || [];
+    const job = jobs[jobIdx];
+    if (!job) return;
+
+    document.getElementById('jobCompletionTitle').textContent = `Complete: ${job.customer}`;
+    document.getElementById('jobCustomer').textContent = job.customer;
+    document.getElementById('jobAddress').textContent = job.address;
+    document.getElementById('jobStatusSelect').value = 'delivered';
+    document.getElementById('jobNotesInput').value = '';
+    document.getElementById('jobPODInput').value = '';
+
+    document.getElementById('jobCompletionSaveBtn').onclick = () => {
+      const status = document.getElementById('jobStatusSelect').value;
+      const notes = document.getElementById('jobNotesInput').value;
+
+      jobs[jobIdx].status = status;
+      jobs[jobIdx].notes = notes;
+      jobs[jobIdx].completedAt = new Date().toISOString();
+
+      driverJobs[driverId] = jobs;
+      localStorage.setItem('driverJobs', JSON.stringify(driverJobs));
+
+      document.getElementById('jobCompletionModal').classList.add('hidden');
+      showDriverPortal(driverId);
+      alert(`Job marked as ${status}!`);
+    };
+
+    document.getElementById('jobCompletionModal').classList.remove('hidden');
+  }
+
+  document.getElementById('jobCompletionCancelBtn')?.addEventListener('click', () => {
+    document.getElementById('jobCompletionModal').classList.add('hidden');
+  });
+
+  function renderDriverStats() {
+    let totalDistance = 0, totalTime = 0, totalJobs = 0;
+    const statsData = [];
+
+    drivers.forEach(driver => {
+      const jobs = driverJobs[driver.id] || [];
+      const completed = jobs.filter(j => j.status === 'delivered').length;
+      const dist = (driver.stats?.distance || 0);
+      const time = (driver.stats?.time || 0);
+      const speed = time > 0 ? (dist / time).toFixed(1) : 0;
+
+      totalDistance += dist;
+      totalTime += time;
+      totalJobs += completed;
+
+      statsData.push({ name: driver.name, completed, dist, time, speed });
+    });
+
+    document.getElementById('statTotalDistance').textContent = totalDistance.toFixed(1);
+    document.getElementById('statTotalTime').textContent = totalTime.toFixed(1);
+    document.getElementById('statJobsCompleted').textContent = totalJobs;
+    document.getElementById('statAvgSpeed').textContent = totalTime > 0 ? (totalDistance / totalTime).toFixed(1) : '—';
+
+    const tbody = document.getElementById('driverStatsBody');
+    if (!statsData.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#64748b">No driver stats available yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = statsData.map(s => `
+      <tr>
+        <td>${esc(s.name)}</td>
+        <td style="text-align:center"><strong>${s.completed}</strong></td>
+        <td style="text-align:center">${s.dist.toFixed(1)}</td>
+        <td style="text-align:center">${s.time.toFixed(1)}</td>
+        <td style="text-align:center">${s.speed} km/h</td>
+        <td style="text-align:center">—</td>
+      </tr>
+    `).join('');
+  }
+
   // ── Transport Route Templates ──────────────────────────────────────────────
   function loadTransportTemplates() {
     const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
