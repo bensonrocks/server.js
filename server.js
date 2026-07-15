@@ -2200,6 +2200,71 @@ app.post('/api/tms/import-adjustments', withAdmin, withTenant, upload.single('fi
   }
 });
 
+// POST /api/tms/import-betime: import BETIME delivery schedule format
+app.post('/api/tms/import-betime', withAdmin, withTenant, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const sheets = req.ctx.importer.parseExcel(req.file.buffer);
+    // Try TESTING sheet first, fall back to MASTER or first sheet
+    const deliverySheet = sheets['TESTING'] || sheets['MASTER'] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(deliverySheet) || deliverySheet.length === 0) {
+      return res.status(400).json({ error: 'No valid delivery data found in BETIME file' });
+    }
+
+    const deliveries = req.ctx.importer.importBetimeDeliveries(deliverySheet);
+    const result = req.ctx.importer.createOrdersFromImport({ customers: deliveries });
+
+    res.json({
+      success: true,
+      imported: {
+        deliveriesCount: deliveries.length,
+        ordersCreated: result.created.length,
+        ordersUpdated: result.updated.length,
+        skipped: result.skipped?.length || 0,
+        createdOrders: result.created.slice(0, 10), // Return first 10 IDs
+        summary: `Imported ${result.created.length} deliveries from BETIME schedule`,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/tms/import-outright: import Outright order tracker format
+app.post('/api/tms/import-outright', withAdmin, withTenant, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const sheets = req.ctx.importer.parseExcel(req.file.buffer);
+    const sheetName = req.body?.sheet || 'Clinics'; // Allow selecting which sheet
+
+    const orderSheet = sheets[sheetName] || sheets[Object.keys(sheets)[0]] || [];
+
+    if (!Array.isArray(orderSheet) || orderSheet.length === 0) {
+      return res.status(400).json({ error: `No valid order data found in sheet "${sheetName}"` });
+    }
+
+    const orders = req.ctx.importer.importOutrightOrders(orderSheet);
+    const result = req.ctx.importer.createOrdersFromImport({ customers: orders });
+
+    res.json({
+      success: true,
+      imported: {
+        ordersCount: orders.length,
+        createdOrders: result.created.length,
+        updatedOrders: result.updated.length,
+        skipped: result.skipped?.length || 0,
+        createdOrderIds: result.created.slice(0, 10),
+        summary: `Imported ${result.created.length} orders from Outright tracker (${sheetName} sheet)`,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ── Inventory ─────────────────────────────────────────────────────────────────
 
 app.get('/api/inventory', withTenant, (req, res) => {
