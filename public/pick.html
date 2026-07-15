@@ -452,7 +452,7 @@ select.form-input{cursor:pointer}
           <thead><tr>
             <th>SKU</th><th>Name</th><th>Location(s)</th>
             <th>On Hand</th><th>Reserved</th><th>Available</th>
-            <th>Reorder At</th><th>Unit Cost</th><th>Value</th>
+            <th>Reorder At</th><th>Unit Cost</th><th>Value</th><th>Dims / Wt</th>
             <th></th>
           </tr></thead>
           <tbody id="invBody"></tbody>
@@ -504,11 +504,41 @@ select.form-input{cursor:pointer}
         <div class="form-group"><label class="form-label">Unit Cost</label><input class="form-input" id="newUnitCost" type="number" min="0" step="0.01" placeholder="0.00"></div>
         <div class="form-group"><label class="form-label">Reorder Point</label><input class="form-input" id="newReorderPoint" type="number" min="0" placeholder="0 = not tracked"></div>
         <div class="form-group"><label class="form-label">Reorder Qty</label><input class="form-input" id="newReorderQty" type="number" min="0" placeholder="Suggested restock qty"></div>
+        <div class="form-group form-full"><div class="form-label">Dimensions &amp; Weight (per unit, optional)</div></div>
+        <div class="form-group"><label class="form-label">Length (cm)</label><input class="form-input" id="newLength" type="number" min="0" step="0.1" placeholder="0.0"></div>
+        <div class="form-group"><label class="form-label">Width (cm)</label><input class="form-input" id="newWidth" type="number" min="0" step="0.1" placeholder="0.0"></div>
+        <div class="form-group"><label class="form-label">Height (cm)</label><input class="form-input" id="newHeight" type="number" min="0" step="0.1" placeholder="0.0"></div>
+        <div class="form-group"><label class="form-label">Weight (kg)</label><input class="form-input" id="newWeight" type="number" min="0" step="0.01" placeholder="0.00"></div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('addSkuModal')">Cancel</button>
       <button class="btn btn-primary" onclick="submitAddSku()">Save SKU</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Item -->
+<div class="modal-bg" id="editItemModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">Edit Item</span><button class="modal-close" onclick="closeModal('editItemModal')">&#10005;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="editItemId">
+      <div class="form-grid">
+        <div class="form-group form-full"><label class="form-label">SKU</label><input class="form-input" id="editSku" readonly></div>
+        <div class="form-group form-full"><label class="form-label">Name</label><input class="form-input" id="editName"></div>
+        <div class="form-group"><label class="form-label">Reorder Point</label><input class="form-input" id="editReorderPoint" type="number" min="0" placeholder="0 = not tracked"></div>
+        <div class="form-group"><label class="form-label">Reorder Qty</label><input class="form-input" id="editReorderQty" type="number" min="0"></div>
+        <div class="form-group form-full"><div class="form-label">Dimensions &amp; Weight (per unit)</div></div>
+        <div class="form-group"><label class="form-label">Length (cm)</label><input class="form-input" id="editLength" type="number" min="0" step="0.1"></div>
+        <div class="form-group"><label class="form-label">Width (cm)</label><input class="form-input" id="editWidth" type="number" min="0" step="0.1"></div>
+        <div class="form-group"><label class="form-label">Height (cm)</label><input class="form-input" id="editHeight" type="number" min="0" step="0.1"></div>
+        <div class="form-group"><label class="form-label">Weight (kg)</label><input class="form-input" id="editWeight" type="number" min="0" step="0.01"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('editItemModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitEditItem()">Save Changes</button>
     </div>
   </div>
 </div>
@@ -1241,7 +1271,11 @@ async function loadInventory() {
   ]);
   const codeByLoc = {}; locations.forEach(l => codeByLoc[l.id] = l.code);
   const byItem = {};
-  for (const it of items) byItem[it.id] = { id: it.id, sku: it.sku, name: it.name, reorder_point: it.reorder_point, reorder_qty: it.reorder_qty, unit_cost: it.unit_cost, on_hand: 0, reserved: 0, locations: [] };
+  for (const it of items) byItem[it.id] = {
+    id: it.id, sku: it.sku, name: it.name, reorder_point: it.reorder_point, reorder_qty: it.reorder_qty, unit_cost: it.unit_cost,
+    length_cm: it.length_cm, width_cm: it.width_cm, height_cm: it.height_cm, weight_kg: it.weight_kg,
+    on_hand: 0, reserved: 0, locations: [],
+  };
   for (const s of stock) {
     const it = byItem[s.item_id];
     if (!it) continue;
@@ -1278,9 +1312,19 @@ function filterInventory() {
       <td style="text-align:right;color:#64748b">${i.reorder_point > 0 ? i.reorder_point : '—'}</td>
       <td style="text-align:right">$${i.unit_cost.toFixed(2)}</td>
       <td style="text-align:right;font-weight:600">$${value.toFixed(2)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="openReceiveModal('${i.id}','${i.sku}','${i.name.replace(/'/g,"\\'")}')">Receive</button></td>
+      <td style="color:#64748b;font-size:12px;white-space:nowrap">${dimsLabel(i)}</td>
+      <td class="flex gap-6">
+        <button class="btn btn-ghost btn-sm" onclick="openReceiveModal('${i.id}','${i.sku}','${i.name.replace(/'/g,"\\'")}')">Receive</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditItemModal('${i.id}')">Edit</button>
+      </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="10" class="tbl-empty">No inventory matches filter</td></tr>`;
+  }).join('') : `<tr><td colspan="11" class="tbl-empty">No inventory matches filter</td></tr>`;
+}
+function dimsLabel(i) {
+  const hasDims = i.length_cm > 0 || i.width_cm > 0 || i.height_cm > 0;
+  const dims = hasDims ? `${i.length_cm}×${i.width_cm}×${i.height_cm}cm` : '';
+  const wt = i.weight_kg > 0 ? `${i.weight_kg}kg` : '';
+  return [dims, wt].filter(Boolean).join(' · ') || '—';
 }
 
 // ── Modal helpers ─────────────────────────────────────────────────────────────
@@ -1312,7 +1356,7 @@ async function submitReceive() {
 }
 
 function openAddSkuModal() {
-  ['newSku','newSkuName','newQty','newUnitCost','newReorderPoint','newReorderQty'].forEach(id => document.getElementById(id).value = '');
+  ['newSku','newSkuName','newQty','newUnitCost','newReorderPoint','newReorderQty','newLength','newWidth','newHeight','newWeight'].forEach(id => document.getElementById(id).value = '');
   openModal('addSkuModal');
 }
 async function submitAddSku() {
@@ -1322,12 +1366,48 @@ async function submitAddSku() {
   const unitCost = +document.getElementById('newUnitCost').value || 0;
   const reorderPoint = +document.getElementById('newReorderPoint').value || 0;
   const reorderQty = +document.getElementById('newReorderQty').value || 0;
+  const lengthCm = +document.getElementById('newLength').value || 0;
+  const widthCm  = +document.getElementById('newWidth').value || 0;
+  const heightCm = +document.getElementById('newHeight').value || 0;
+  const weightKg = +document.getElementById('newWeight').value || 0;
   if (!sku || !name) { toast('SKU and Name required', true); return; }
   try {
-    const item = await api('POST', wh('items'), { sku, name, unitCost, reorderPoint, reorderQty });
+    const item = await api('POST', wh('items'), { sku, name, unitCost, reorderPoint, reorderQty, lengthCm, widthCm, heightCm, weightKg });
     if (qty > 0) await api('POST', wh('stock/receive'), { itemId: item.id, locationId: state.defaultLocationId, quantity: qty, reference: 'Initial stock (UI)', unitCost: unitCost || null });
     toast(`SKU ${sku} saved`);
     closeModal('addSkuModal');
+    await Promise.all([loadStats(), loadInventory()]);
+  } catch (e) { toast(e.message, true); }
+}
+
+function openEditItemModal(itemId) {
+  const i = allInventory.find(x => x.id === itemId);
+  if (!i) return;
+  document.getElementById('editItemId').value = i.id;
+  document.getElementById('editSku').value = i.sku;
+  document.getElementById('editName').value = i.name;
+  document.getElementById('editReorderPoint').value = i.reorder_point || 0;
+  document.getElementById('editReorderQty').value = i.reorder_qty || 0;
+  document.getElementById('editLength').value = i.length_cm || 0;
+  document.getElementById('editWidth').value = i.width_cm || 0;
+  document.getElementById('editHeight').value = i.height_cm || 0;
+  document.getElementById('editWeight').value = i.weight_kg || 0;
+  openModal('editItemModal');
+}
+async function submitEditItem() {
+  const itemId = document.getElementById('editItemId').value;
+  try {
+    await api('PATCH', wh(`items/${itemId}`), {
+      name: document.getElementById('editName').value.trim(),
+      reorderPoint: +document.getElementById('editReorderPoint').value || 0,
+      reorderQty: +document.getElementById('editReorderQty').value || 0,
+      lengthCm: +document.getElementById('editLength').value || 0,
+      widthCm: +document.getElementById('editWidth').value || 0,
+      heightCm: +document.getElementById('editHeight').value || 0,
+      weightKg: +document.getElementById('editWeight').value || 0,
+    });
+    toast('Item updated');
+    closeModal('editItemModal');
     await Promise.all([loadStats(), loadInventory()]);
   } catch (e) { toast(e.message, true); }
 }
