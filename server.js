@@ -2898,7 +2898,7 @@ app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
   // Allow master key access to /api/master/* and /api/transport/import/* endpoints
-  if ((req.path.startsWith('/api/master/') || req.path.startsWith('/api/transport/import/')) && req.headers['x-master-key'] === MASTER_PASS) return next();
+  if ((req.path.startsWith('/api/master/') || req.path === '/api/transport/import') && req.headers['x-master-key'] === MASTER_PASS) return next();
   requireAuth(req, res, next);
 });
 
@@ -4446,181 +4446,66 @@ app.post('/api/transport/:id/update', (req, res) => {
 });
 
 // TMS Import — BETIME delivery schedule
-app.post('/api/transport/import/betime', upload.single('file'), (req, res) => {
+// TMS Import — Unified transport import (handles any file format via attribute-based detection)
+app.post('/api/transport/import', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
     const db = readDb();
     const sheets = tmsImporter.parseExcelFile(req.file.buffer);
-    const deliverySheet = sheets['TESTING'] || sheets['MASTER'] || sheets[Object.keys(sheets)[0]] || [];
+    const firstSheet = sheets[Object.keys(sheets)[0]] || [];
 
-    if (!Array.isArray(deliverySheet) || deliverySheet.length === 0) {
-      return res.status(400).json({ error: 'No valid delivery data found' });
-    }
-
-    const deliveries = tmsImporter.importBetimeDeliveries(deliverySheet);
-    const result = tmsImporter.createOrdersFromImport({ customers: deliveries }, db);
-
-    _persistDb(db);
-    logAudit('tms_import_betime', {
-      ordersCreated: result.created.length,
-      ordersUpdated: result.updated.length,
-      skipped: result.skipped?.length || 0
-    });
-
-    res.json({
-      success: true,
-      imported: {
-        format: 'betime',
-        ordersCreated: result.created.length,
-        ordersUpdated: result.updated.length,
-        skipped: result.skipped?.length || 0,
-        createdOrders: result.created.slice(0, 10),
-        summary: `Imported ${result.created.length} deliveries from BETIME`
-      }
-    });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-// TMS Import — Outright order tracker
-app.post('/api/transport/import/outright', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  try {
-    const db = readDb();
-    const sheets = tmsImporter.parseExcelFile(req.file.buffer);
-    const sheetName = req.body?.sheet || 'Clinics';
-    const orderSheet = sheets[sheetName] || sheets[Object.keys(sheets)[0]] || [];
-
-    if (!Array.isArray(orderSheet) || orderSheet.length === 0) {
-      return res.status(400).json({ error: `No data found in sheet "${sheetName}"` });
-    }
-
-    const orders = tmsImporter.importOutrightOrders(orderSheet);
-    const result = tmsImporter.createOrdersFromImport({ customers: orders }, db);
-
-    _persistDb(db);
-    logAudit('tms_import_outright', {
-      ordersCreated: result.created.length,
-      ordersUpdated: result.updated.length,
-      skipped: result.skipped?.length || 0
-    });
-
-    res.json({
-      success: true,
-      imported: {
-        format: 'outright',
-        ordersCreated: result.created.length,
-        ordersUpdated: result.updated.length,
-        skipped: result.skipped?.length || 0,
-        createdOrders: result.created.slice(0, 10),
-        summary: `Imported ${result.created.length} orders from Outright (${sheetName})`
-      }
-    });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-app.post('/api/transport/import/generic', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  try {
-    const db = readDb();
-    const ext = req.file.originalname?.toLowerCase().endsWith('.csv') ? 'csv' : 'xlsx';
-
-    let rows = [];
-    if (ext === 'csv') {
-      const csv = req.file.buffer.toString('utf-8');
-      const lines = csv.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-      rows = lines.slice(1).map(line => {
-        const values = line.split(',').map(v => v.trim());
-        const row = {};
-        headers.forEach((h, i) => row[h] = values[i] || '');
-        return row;
-      });
-    } else {
-      const sheets = tmsImporter.parseExcelFile(req.file.buffer);
-      rows = sheets[Object.keys(sheets)[0]] || [];
-    }
-
-    if (!Array.isArray(rows) || rows.length === 0) {
+    if (!Array.isArray(firstSheet) || firstSheet.length === 0) {
       return res.status(400).json({ error: 'No data found in file' });
     }
 
-    // Parse generic delivery format
-    // Expected columns: customer_name, address (or postal_code), items (qty), city, phone, email, etc.
-    const customers = rows.map((row, idx) => {
-      const customerName = row.customer_name || row.customer || row.name || row.client || `Customer ${idx + 1}`;
-      const address = row.address || row.addr || row.location || '';
-      const postalCode = row.postal_code || row.postcode || row.zip || '';
-      const items = [];
+    // Use attribute-based detection to handle any format
+    const customers = tmsImporter.importBetimeDeliveries(firstSheet);
 
-      // Try to extract items from row (could be sku, item_sku, product, etc.)
-      const itemQty = row.items || row.qty || row.quantity || row.pieces || '1';
-      const sku = row.sku || row.product_id || row.product || '';
-
-      if (sku) {
-        items.push({ sku, qty: parseInt(itemQty) || 1, name: row.description || '' });
+    if (customers.length === 0) {
+      // Fallback to outright format if betime didn't work
+      const orders = tmsImporter.importOutrightOrders(firstSheet);
+      if (orders.length === 0) {
+        return res.status(400).json({ error: 'Could not parse file — no valid delivery or order records found' });
       }
-
-      return {
-        id: `GEN-${Date.now()}-${idx}`,
-        clientName: customerName,
-        address: address || postalCode,
-        postalCode: postalCode,
-        city: row.city || '',
-        phone: row.phone || row.mobile || '',
-        email: row.email || '',
-        items: items,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      };
-    });
-
-    db.transport = db.transport || [];
-    const createdIds = [];
-    let skipped = 0;
-
-    for (const cust of customers) {
-      if (cust.clientName && cust.address) {
-        const existing = db.transport.find(t => t.clientName === cust.clientName);
-        if (!existing) {
-          // Geocode the postal code
-          if (cust.postalCode) {
-            const geo = await geocodePostalCode(cust.postalCode);
-            if (geo) {
-              cust.lat = geo.lat;
-              cust.lng = geo.lng;
-            }
-          }
-          db.transport.push(cust);
-          createdIds.push(cust.id);
-        } else {
-          skipped++;
+      const result = tmsImporter.createOrdersFromImport({ customers: orders }, db);
+      _persistDb(db);
+      logAudit('tms_import', {
+        ordersCreated: result.created.length,
+        ordersUpdated: result.updated.length,
+        skipped: result.skipped?.length || 0,
+        detectedFormat: 'outright'
+      });
+      return res.json({
+        success: true,
+        imported: {
+          ordersCreated: result.created.length,
+          ordersUpdated: result.updated.length,
+          skipped: result.skipped?.length || 0,
+          createdOrders: result.created.slice(0, 10),
+          summary: `Imported ${result.created.length} orders from file`
         }
-      } else {
-        skipped++;
-      }
+      });
     }
 
+    // Process deliveries with attribute-based parsing
+    const result = tmsImporter.createOrdersFromImport({ customers }, db);
     _persistDb(db);
-    logAudit('tms_import_generic', {
-      ordersCreated: createdIds.length,
-      skipped: skipped,
-      format: ext
+    logAudit('tms_import', {
+      ordersCreated: result.created.length,
+      ordersUpdated: result.updated.length,
+      skipped: result.skipped?.length || 0,
+      detectedFormat: 'delivery'
     });
 
     res.json({
       success: true,
       imported: {
-        format: 'generic',
-        ordersCreated: createdIds.length,
-        skipped: skipped,
-        summary: `Imported ${createdIds.length} deliveries from file`
+        ordersCreated: result.created.length,
+        ordersUpdated: result.updated.length,
+        skipped: result.skipped?.length || 0,
+        createdOrders: result.created.slice(0, 10),
+        summary: `Imported ${result.created.length} deliveries from file`
       }
     });
   } catch (e) {
