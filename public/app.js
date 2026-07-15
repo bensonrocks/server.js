@@ -2238,18 +2238,17 @@
       const stops = (route.stops || []).sort((a, b) => a.sequence - b.sequence);
 
       details.innerHTML = `
-        <div style="margin-bottom:1rem">
+        <div style="margin-bottom:1rem;padding:0.75rem;background:#f0f9ff;border-radius:6px">
           <strong>Route:</strong> ${esc(route.id)}<br>
           <strong>Driver:</strong> ${esc(route.driver_name || '—')}<br>
-          <strong>Date:</strong> ${route.planned_date}<br>
-          <strong>Zone:</strong> ${esc(route.zone)}<br>
-          <strong>Distance:</strong> ${route.total_distance_km} km | <strong>Duration:</strong> ${route.estimated_duration_minutes} min
+          <strong>Date:</strong> ${route.planned_date} | <strong>Zone:</strong> ${esc(route.zone)}<br>
+          <strong>Distance:</strong> ${route.total_distance_km} km | <strong>Duration:</strong> ${route.estimated_duration_minutes} min | <strong>Status:</strong> <span class="status-badge ${route.status}">${route.status}</span>
         </div>
         <div style="margin-bottom:1rem">
-          <strong>Stops (${stops.length}):</strong>
+          <strong>Delivery Stops (${stops.length}):</strong>
           <div style="max-height:400px;overflow-y:auto;margin-top:0.5rem">
-            <table class="dcs-table" style="font-size:0.9rem">
-              <thead><tr><th>#</th><th>Order</th><th>Customer</th><th>Postal Code</th></tr></thead>
+            <table class="dcs-table" style="font-size:0.85rem">
+              <thead><tr><th>#</th><th>Order</th><th>Customer</th><th>Postal Code</th><th>Status</th><th>Action</th></tr></thead>
               <tbody>
                 ${stops.map((s, i) => `
                   <tr>
@@ -2257,6 +2256,13 @@
                     <td><code>${esc(s.job_id)}</code></td>
                     <td>${esc(s.customer_name)}</td>
                     <td><strong>${esc(s.postal_code)}</strong></td>
+                    <td><span class="status-badge ${s.status || 'pending'}">${s.status || 'Pending'}</span></td>
+                    <td>
+                      ${s.status === 'pending' ? `
+                        <button class="btn-scan-now btn-xs" data-stop-complete="${esc(s.id)}">✓ Complete</button>
+                        <button class="btn-danger btn-xs" data-stop-fail="${esc(s.id)}">✗ Fail</button>
+                      ` : s.status === 'completed' ? '<span style="color:green">✓ Completed</span>' : '<span style="color:red">✗ Failed</span>'}
+                    </td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -2265,21 +2271,145 @@
         </div>
       `;
 
+      // Wire up stop completion handlers
+      details.querySelectorAll('[data-stop-complete]').forEach(btn => {
+        btn.addEventListener('click', () => completeStop(btn.dataset.stopComplete, routeId));
+      });
+      details.querySelectorAll('[data-stop-fail]').forEach(btn => {
+        btn.addEventListener('click', () => failStop(btn.dataset.stopFail));
+      });
+
       document.getElementById('tmsRouteModal').classList.remove('hidden');
-      document.getElementById('tmsRoutePdfBtn').dataset.routeId = routeId;
+      document.getElementById('tmsRouteExportBtn').dataset.routeId = routeId;
     } catch (err) {
       alert('Error: ' + err.message);
     }
   }
 
-  async function exportTmsRoutePdf(routeId) {
-    alert('PDF export coming soon — routes are ready in the database');
+  async function completeStop(stopId, routeId) {
+    try {
+      const resp = await fetch(`/api/tms/stops/${stopId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: 'Delivered' })
+      });
+      if (!resp.ok) throw new Error('Failed to mark stop complete');
+
+      document.getElementById('tmsStatus').classList.remove('hidden');
+      document.getElementById('tmsStatus').className = 'status-bar success';
+      document.getElementById('tmsStatus').textContent = '✓ Stop completed';
+
+      await showTmsRouteDetail(routeId);
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function failStop(stopId) {
+    const reason = prompt('Why did this stop fail?');
+    if (!reason) return;
+
+    try {
+      const resp = await fetch(`/api/tms/stops/${stopId}/fail`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, notes: reason })
+      });
+      if (!resp.ok) throw new Error('Failed to mark stop failed');
+
+      document.getElementById('tmsStatus').classList.remove('hidden');
+      document.getElementById('tmsStatus').className = 'status-bar success';
+      document.getElementById('tmsStatus').textContent = '✓ Stop marked as failed';
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function exportTmsRoute(routeId) {
+    try {
+      const resp = await fetch(`/api/tms/routes/${routeId}/export`);
+      if (!resp.ok) throw new Error('Export failed');
+
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Route_${routeId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function loadTmsMetrics() {
+    const from = document.getElementById('tmsMetricsFrom')?.value;
+    const to = document.getElementById('tmsMetricsTo')?.value;
+
+    if (!from || !to) {
+      alert('Select both start and end dates');
+      return;
+    }
+
+    try {
+      const resp = await fetch(`/api/tms/metrics?from=${from}&to=${to}`);
+      if (!resp.ok) throw new Error('Failed to load metrics');
+
+      const data = await resp.json();
+      const m = data.summary || {};
+
+      document.getElementById('metricTotalRoutes').textContent = m.total_routes || '0';
+      document.getElementById('metricTotalDistance').textContent = Math.round((m.total_distance_km || 0) * 100) / 100;
+      document.getElementById('metricAvgDistance').textContent = Math.round((m.avg_distance_km || 0) * 100) / 100;
+      document.getElementById('metricTotalStops').textContent = m.total_stops || '0';
+      document.getElementById('metricCompletedRoutes').textContent = m.completed_routes || '0';
+
+      // Driver performance
+      const tbody = document.getElementById('tmsDriverPerfBody');
+      const empty = document.getElementById('tmsDriverPerfEmpty');
+      const perf = data.driverPerformance || [];
+
+      if (!perf.length) {
+        empty.classList.remove('hidden');
+        tbody.innerHTML = '';
+        return;
+      }
+
+      empty.classList.add('hidden');
+      tbody.innerHTML = perf.map(d => {
+        const completion = d.routes_assigned > 0 ? Math.round((d.completed_routes / d.routes_assigned) * 100) : 0;
+        return `
+          <tr>
+            <td>${esc(d.name)}</td>
+            <td>${d.routes_assigned || 0}</td>
+            <td>${Math.round((d.total_distance_km || 0) * 100) / 100}</td>
+            <td>${d.total_stops || 0}</td>
+            <td>${d.completed_stops || 0}</td>
+            <td><strong>${completion}%</strong></td>
+          </tr>
+        `;
+      }).join('');
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
   }
 
   // Route Planner button handlers
   document.getElementById('tmsRoutePlanBtn')?.addEventListener('click', planTmsRoutes);
-  document.getElementById('tmsRoutePdfBtn')?.addEventListener('click', function() {
-    exportTmsRoutePdf(this.dataset.routeId);
+  document.getElementById('tmsRouteExportBtn')?.addEventListener('click', function() {
+    if (this.dataset.routeId) exportTmsRoute(this.dataset.routeId);
+  });
+  document.getElementById('tmsLoadMetricsBtn')?.addEventListener('click', loadTmsMetrics);
+
+  // Set default date range to today's date
+  document.addEventListener('DOMContentLoaded', () => {
+    const today = new Date().toISOString().split('T')[0];
+    const dateFrom = document.getElementById('tmsMetricsFrom');
+    const dateTo = document.getElementById('tmsMetricsTo');
+    if (dateFrom) dateFrom.value = today;
+    if (dateTo) dateTo.value = today;
   });
 
   document.getElementById('inboundUploadPoBtn').addEventListener('click', () => {

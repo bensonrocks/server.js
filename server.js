@@ -330,6 +330,105 @@ async function planRoutes(jobs, drivers, date) {
   return { routes, unassigned };
 }
 
+// ── Route Report Generation (PDF & Dashboard) ────────────────────────────
+
+// Generate route report as XLSX workbook
+async function generateRouteReportXlsx(routeId) {
+  const route = await queryMysql('SELECT r.*, d.name as driver_name, d.phone as driver_phone FROM routes r LEFT JOIN drivers d ON r.driver_id = d.id WHERE r.id = ?', [routeId]);
+  if (!route || route.length === 0) return null;
+
+  const r = route[0];
+  const stops = await queryMysql('SELECT * FROM route_stops WHERE route_id = ? ORDER BY sequence', [routeId]);
+
+  const wb = XLSX.utils.book_new();
+
+  // Route summary sheet
+  const summaryData = [
+    ['Route', r.id],
+    ['Driver', r.driver_name || '—'],
+    ['Phone', r.driver_phone || '—'],
+    ['Date', r.planned_date],
+    ['Zone', r.zone || '—'],
+    ['Status', r.status || 'planned'],
+    ['Total Distance', (r.total_distance_km || 0) + ' km'],
+    ['Estimated Duration', (r.estimated_duration_minutes || 0) + ' min'],
+    ['Total Stops', (stops && stops.length) || 0],
+  ];
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+  XLSX.utils.book_append_sheet(wb, summarySheet, 'Route Summary');
+
+  // Stops sheet
+  if (stops && stops.length > 0) {
+    const stopsData = [
+      ['Stop #', 'Order', 'Customer', 'Postal Code', 'Address', 'Status', 'Completed At'],
+      ...stops.map(s => [
+        s.sequence,
+        s.job_id || '—',
+        s.customer_name || '—',
+        s.postal_code || '—',
+        s.address || '—',
+        s.status || 'pending',
+        s.completed_at ? new Date(s.completed_at).toLocaleString() : '—'
+      ])
+    ];
+    const stopsSheet = XLSX.utils.aoa_to_sheet(stopsData);
+    // Auto-fit columns
+    stopsSheet['!cols'] = [
+      { wch: 8 },   // Stop #
+      { wch: 12 },  // Order
+      { wch: 20 },  // Customer
+      { wch: 12 },  // Postal Code
+      { wch: 25 },  // Address
+      { wch: 10 },  // Status
+      { wch: 20 }   // Completed At
+    ];
+    XLSX.utils.book_append_sheet(wb, stopsSheet, 'Stops');
+  }
+
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+// Get route analytics/metrics
+async function getRouteMetrics(dateFrom, dateTo) {
+  const sql = `
+    SELECT
+      COUNT(DISTINCT r.id) as total_routes,
+      COUNT(DISTINCT r.driver_id) as total_drivers,
+      SUM(r.total_distance_km) as total_distance_km,
+      AVG(r.total_distance_km) as avg_distance_km,
+      SUM(r.total_stops) as total_stops,
+      AVG(r.total_stops) as avg_stops_per_route,
+      SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) as completed_routes
+    FROM routes r
+    WHERE r.planned_date BETWEEN ? AND ?
+  `;
+
+  const metrics = await queryMysql(sql, [dateFrom, dateTo]);
+  return metrics && metrics.length > 0 ? metrics[0] : null;
+}
+
+// Get driver performance stats
+async function getDriverPerformance(dateFrom, dateTo) {
+  const sql = `
+    SELECT
+      d.id,
+      d.name,
+      COUNT(DISTINCT r.id) as routes_assigned,
+      SUM(r.total_distance_km) as total_distance_km,
+      SUM(r.total_stops) as total_stops,
+      SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) as completed_routes,
+      COUNT(CASE WHEN rs.status = 'completed' THEN 1 END) as completed_stops
+    FROM drivers d
+    LEFT JOIN routes r ON d.id = r.driver_id AND r.planned_date BETWEEN ? AND ?
+    LEFT JOIN route_stops rs ON r.id = rs.route_id AND rs.status = 'completed'
+    WHERE d.status = 'active'
+    GROUP BY d.id
+    ORDER BY completed_routes DESC
+  `;
+
+  return await queryMysql(sql, [dateFrom, dateTo]);
+}
+
 // Initialize TMS tables (called once on startup)
 async function initTmsTables() {
   if (!mysqlPool) return;
@@ -6626,6 +6725,93 @@ app.post('/api/tms/routes/:id/reorder', requireAuth, express.json(), async (req,
 
     logAudit('tms_route_reordered', { routeId: id, stopsCount: stops.length, by: req.userId || 'unknown' });
     res.json({ success: true, message: 'Route reordered' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Route Reports & Analytics ────────────────────────────────────────────
+// GET /api/tms/routes/:id/export — Export route as XLSX
+app.get('/api/tms/routes/:id/export', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const buf = await generateRouteReportXlsx(id);
+    if (!buf) return res.status(404).json({ error: 'Route not found' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Route_${id}.xlsx"`);
+    res.end(buf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tms/metrics — Get route metrics for date range
+app.get('/api/tms/metrics', requireAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: 'from and to dates required' });
+
+    const metrics = await getRouteMetrics(from, to);
+    const driverPerf = await getDriverPerformance(from, to);
+
+    res.json({
+      summary: metrics || {},
+      driverPerformance: driverPerf || [],
+      dateRange: { from, to }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tms/stops/:id/complete — Mark route stop as completed
+app.post('/api/tms/stops/:id/complete', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes, photo_url } = req.body;
+
+    await queryMysql(
+      'UPDATE route_stops SET status = "completed", completed_at = NOW(), notes = ? WHERE id = ?',
+      [notes || null, id]
+    );
+
+    // Check if all stops in the route are completed
+    const stop = await queryMysql('SELECT route_id FROM route_stops WHERE id = ?', [id]);
+    if (stop && stop.length > 0) {
+      const routeId = stop[0].route_id;
+      const remaining = await queryMysql(
+        'SELECT COUNT(*) as count FROM route_stops WHERE route_id = ? AND status != "completed"',
+        [routeId]
+      );
+
+      if (remaining && remaining.length > 0 && remaining[0].count === 0) {
+        // All stops completed, mark route as completed
+        await queryMysql('UPDATE routes SET status = "completed" WHERE id = ?', [routeId]);
+        logAudit('tms_route_completed', { routeId });
+      }
+    }
+
+    logAudit('tms_stop_completed', { stopId: id, by: req.userId || 'unknown' });
+    res.json({ success: true, message: 'Stop marked as completed' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tms/stops/:id/fail — Mark route stop as failed
+app.post('/api/tms/stops/:id/fail', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, notes } = req.body;
+
+    await queryMysql(
+      'UPDATE route_stops SET status = "failed", notes = ? WHERE id = ?',
+      [notes || reason || null, id]
+    );
+
+    logAudit('tms_stop_failed', { stopId: id, reason: reason || 'unknown', by: req.userId || 'unknown' });
+    res.json({ success: true, message: 'Stop marked as failed' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

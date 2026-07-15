@@ -1005,14 +1005,69 @@
 
         <!-- Route Details Modal -->
         <div id="tmsRouteModal" class="modal-overlay hidden">
-          <div class="modal" style="max-width:800px;max-height:90vh;overflow-y:auto">
-            <div class="modal-title">Route Details</div>
+          <div class="modal" style="max-width:900px;max-height:90vh;overflow-y:auto">
+            <div class="modal-title">Route Details & Confirmation</div>
             <div id="tmsRouteDetails" style="padding:1rem"></div>
-            <div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:flex-end">
-              <button class="btn-secondary btn-sm" onclick="document.getElementById('tmsRouteModal').classList.add('hidden')">Close</button>
-              <button class="btn-primary btn-sm" id="tmsRoutePdfBtn">📄 Export PDF</button>
+            <div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:space-between;flex-wrap:wrap">
+              <div>
+                <button class="btn-secondary btn-sm" onclick="document.getElementById('tmsRouteModal').classList.add('hidden')">Close</button>
+              </div>
+              <div style="display:flex;gap:0.5rem">
+                <button class="btn-primary btn-sm" id="tmsRouteExportBtn">📊 Export XLSX</button>
+              </div>
             </div>
           </div>
+        </div>
+
+        <!-- Route Metrics Section -->
+        <div class="admin-section-header" style="margin-top:2rem">
+          <div>
+            <div class="admin-section-title">📈 Route Analytics</div>
+            <div class="admin-section-sub">Performance metrics and driver statistics for route planning.</div>
+          </div>
+          <div style="display:flex;gap:0.5rem">
+            From: <input type="date" id="tmsMetricsFrom" style="width:120px" />
+            To: <input type="date" id="tmsMetricsTo" style="width:120px" />
+            <button class="btn-primary btn-sm" id="tmsLoadMetricsBtn">Load Metrics</button>
+          </div>
+        </div>
+
+        <div id="tmsMetricsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem">
+          <div class="dstat">
+            <div class="dstat-val" id="metricTotalRoutes">—</div>
+            <div class="dstat-lbl">Routes Planned</div>
+          </div>
+          <div class="dstat">
+            <div class="dstat-val" id="metricTotalDistance">—</div>
+            <div class="dstat-lbl">Total Distance (km)</div>
+          </div>
+          <div class="dstat">
+            <div class="dstat-val" id="metricAvgDistance">—</div>
+            <div class="dstat-lbl">Avg per Route</div>
+          </div>
+          <div class="dstat">
+            <div class="dstat-val" id="metricTotalStops">—</div>
+            <div class="dstat-lbl">Total Stops</div>
+          </div>
+          <div class="dstat">
+            <div class="dstat-val" id="metricCompletedRoutes">—</div>
+            <div class="dstat-lbl">Completed Routes</div>
+          </div>
+        </div>
+
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.9rem">👥 Driver Performance</div>
+        </div>
+        <div id="tmsDriverPerfWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead>
+              <tr>
+                <th>Driver</th><th>Routes</th><th>Distance (km)</th><th>Stops</th><th>Completed</th><th>Completion %</th>
+              </tr>
+            </thead>
+            <tbody id="tmsDriverPerfBody"></tbody>
+          </table>
+          <div id="tmsDriverPerfEmpty" class="empty-state hidden">No driver data for this period.</div>
         </div>
 
         <div id="tmsStatus" class="status-bar hidden" style="margin-top:1rem"></div>
