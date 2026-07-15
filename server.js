@@ -778,6 +778,41 @@ function journalOrderState(orderNumber, state) {
     if (err) console.error('[scan-journal]', err.message);
   });
 }
+
+// Update transport record when order completes (mark as confirmed + package count)
+function updateTransportOnOrderCompletion(db, order, state) {
+  if (!db.transport || !order) return;
+
+  // Find matching transport record by order identifiers
+  const transportRecord = db.transport.find(t =>
+    t.id === order.order_number ||
+    t.id === order.waybill_number ||
+    t.id === order.pick_ticket ||
+    t.id === order.po_number ||
+    t.clientId === (order.customer_name || '').substring(0, 20) ||
+    t.clientName === order.customer_name
+  );
+
+  if (!transportRecord) return;
+
+  // Update status to confirmed and set package count
+  transportRecord.status = 'confirmed';
+  transportRecord.packages = state.cartons?.length || 1;
+  transportRecord.completedAt = new Date().toISOString();
+
+  // Calculate total scanned pieces
+  const scannedPieces = Object.values(state.scanned || {}).reduce((sum, qty) => sum + (qty || 0), 0);
+  if (scannedPieces > 0) {
+    transportRecord.scannedPieces = scannedPieces;
+  }
+
+  logAudit('transport_order_completed', {
+    transportId: transportRecord.id,
+    orderId: order.order_number,
+    packages: transportRecord.packages,
+    scannedPieces: scannedPieces
+  });
+}
 function replayScanJournal() {
   let raw = '';
   try { raw = fs.readFileSync(SCAN_JOURNAL_FILE, 'utf8'); } catch { return; }
@@ -4807,6 +4842,7 @@ app.post('/api/scan/complete', (req, res) => {
     if (operator)  state.operator  = operator;
     batch.orderStates[orderNumber] = state;
     journalOrderState(orderNumber, state);
+    updateTransportOnOrderCompletion(db, ord, state);
     writeDb(db);
     logAudit('order_completed', completionAuditData(batch, ord, state));
     sendCompletionAlert(orderNumber, ord, operator).then(result => {
