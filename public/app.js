@@ -598,7 +598,12 @@
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'inbound') { renderInboundTab(); }
-    if (name === 'transport') { renderTransportTab(); }
+    if (name === 'transport') {
+      document.getElementById('transportSubMenu').style.display = 'block';
+      renderTransportTab();
+    } else {
+      document.getElementById('transportSubMenu').style.display = 'none';
+    }
     if (name === 'labels') { renderLabelsTab(); }
   }
 
@@ -1818,6 +1823,11 @@
   // Import delivery schedules from BETIME and Outright, manage transport requests.
   let transportRequests = [];
 
+  let transportMainMap = null;
+  let transportMarkers = [];
+  let driverMarkers = [];
+  let showingDrivers = false;
+
   async function renderTransportTab() {
     try {
       const resp = await fetch('/api/transport');
@@ -1830,19 +1840,15 @@
       transportRequests = [];
     }
 
-    const dashboard = document.getElementById('transportDashboard');
-    const empty = document.getElementById('transportEmpty');
-    const list  = document.getElementById('transportList');
+    const mapContainer = document.getElementById('transportMapContainer');
+    const empty = document.getElementById('transportMapEmpty');
 
     if (!transportRequests.length) {
-      dashboard.classList.add('hidden');
-      empty.classList.remove('hidden');
-      list.innerHTML = '';
+      empty.style.display = 'block';
       return;
     }
 
-    dashboard.classList.remove('hidden');
-    empty.classList.add('hidden');
+    empty.style.display = 'none';
 
     // Render stats bar
     const statusCounts = {
@@ -1854,41 +1860,74 @@
     };
 
     document.getElementById('transportStatsBar').innerHTML = `
-      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Total</div></div>
+      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs</div></div>
       <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
       <div class="stat-box processing"><div class="val">${statusCounts.scheduled}</div><div class="lbl">Scheduled</div></div>
-      <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>
-      <div class="stat-box unprocessed"><div class="val">${statusCounts.cancelled}</div><div class="lbl">Cancelled</div></div>`;
+      <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>`;
 
-    // Load and display saved templates
-    loadTransportTemplates();
+    // Initialize and update the main Singapore map
+    if (google && google.maps) {
+      setTimeout(() => initTransportMainMap(), 100);
+    }
+  }
 
-    // Render transport requests table
-    list.innerHTML = `
-      <div class="orders-table-wrap">
-        <table class="orders-table">
-          <thead>
-            <tr>
-              <th>ID</th><th>Client</th><th>Status</th><th>Date</th><th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${transportRequests.map(req => `
-              <tr>
-                <td><code>${esc(req.id || '—')}</code></td>
-                <td>${esc(req.clientName || '—')}</td>
-                <td><span class="status-badge ${req.status || 'pending'}">${req.status || 'Pending'}</span></td>
-                <td>${req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—'}</td>
-                <td>
-                  <button class="btn-scan-now" data-transport-id="${esc(req.id)}">View &#8594;</button>
-                </td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-    list.querySelectorAll('[data-transport-id]').forEach(btn =>
-      btn.addEventListener('click', () => handleTransportRequest(btn.dataset.transportId))
-    );
+  function initTransportMainMap() {
+    const mapContainer = document.getElementById('transportMainMap');
+    if (!mapContainer) return;
+
+    // Singapore center coordinates
+    const singaporeCenter = { lat: 1.3521, lng: 103.8198 };
+
+    transportMainMap = new google.maps.Map(mapContainer, {
+      zoom: 11,
+      center: singaporeCenter,
+      mapTypeControl: true,
+      fullscreenControl: true,
+      streetViewControl: false
+    });
+
+    // Clear existing markers
+    transportMarkers.forEach(m => m.setMap(null));
+    transportMarkers = [];
+
+    // Add delivery markers
+    let bounds = new google.maps.LatLngBounds();
+    transportRequests.forEach((req, idx) => {
+      if (req.lat && req.lng) {
+        const marker = new google.maps.Marker({
+          position: { lat: req.lat, lng: req.lng },
+          map: transportMainMap,
+          title: req.clientName,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 8,
+            fillColor: req.status === 'delivered' ? '#22c55e' : '#ef4444',
+            fillOpacity: 1,
+            strokeColor: '#fff',
+            strokeWeight: 2
+          },
+          label: String(idx + 1)
+        });
+
+        const infoWindow = new google.maps.InfoWindow({
+          content: `<div style="padding:0.5rem;font-size:12px">
+            <strong>${esc(req.clientName)}</strong><br/>
+            <span class="status-badge" style="display:inline-block;margin-top:0.3rem">${req.status || 'Pending'}</span>
+          </div>`
+        });
+
+        marker.addListener('click', () => {
+          infoWindow.open(transportMainMap, marker);
+        });
+
+        transportMarkers.push(marker);
+        bounds.extend({ lat: req.lat, lng: req.lng });
+      }
+    });
+
+    if (transportMarkers.length > 0) {
+      transportMainMap.fitBounds(bounds);
+    }
   }
 
   function handleTransportRequest(id) {
@@ -2044,7 +2083,13 @@
 
       status.className = 'status-bar success';
       status.textContent = `✓ ${data.imported.summary}`;
+
       await renderTransportTab();
+
+      // Close the upload modal after 2 seconds
+      setTimeout(() => {
+        document.getElementById('uploadJobsModal').classList.add('hidden');
+      }, 2000);
     } catch (err) {
       status.className = 'status-bar error';
       status.textContent = `❌ ${err.message}`;
@@ -2100,6 +2145,98 @@
   document.getElementById('transportDetailCloseBtn2')?.addEventListener('click', closeTransportDetailModal);
   document.getElementById('transportDetailModal')?.addEventListener('click', (e) => {
     if (e.target.id === 'transportDetailModal') closeTransportDetailModal();
+  });
+
+  // ── Transport Main Controls ────────────────────────────────────────────────
+  document.getElementById('uploadJobsBtn')?.addEventListener('click', () => {
+    document.getElementById('uploadJobsModal').classList.remove('hidden');
+  });
+
+  document.getElementById('uploadJobsCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('uploadJobsModal').classList.add('hidden');
+  });
+
+  document.getElementById('uploadJobsCloseBtn2')?.addEventListener('click', () => {
+    document.getElementById('uploadJobsModal').classList.add('hidden');
+  });
+
+  document.getElementById('uploadJobsModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'uploadJobsModal') {
+      document.getElementById('uploadJobsModal').classList.add('hidden');
+    }
+  });
+
+  document.getElementById('transportToggleDriversBtn')?.addEventListener('click', function() {
+    showingDrivers = !showingDrivers;
+    this.textContent = showingDrivers ? '👤 Hide Drivers' : '👤 Show Drivers';
+    document.getElementById('driverLegendItem').style.display = showingDrivers ? 'flex' : 'none';
+    document.getElementById('driverInfoBox').style.display = showingDrivers ? 'block' : 'none';
+
+    if (showingDrivers) {
+      displayDriverLocations();
+    } else {
+      driverMarkers.forEach(m => m.setMap(null));
+      driverMarkers = [];
+    }
+  });
+
+  function displayDriverLocations() {
+    driverMarkers.forEach(m => m.setMap(null));
+    driverMarkers = [];
+
+    // Mock driver locations (in production, fetch from /api/tms/drivers)
+    const mockDrivers = [
+      { name: 'Ahmad Bin Mohamed', lat: 1.3521, lng: 103.8198, orders: 3 },
+      { name: 'Sarah Ng Wei Ling', lat: 1.3624, lng: 103.7958, orders: 5 },
+      { name: 'Rajesh Kumar', lat: 1.3521, lng: 103.8400, orders: 2 }
+    ];
+
+    mockDrivers.forEach((driver, idx) => {
+      const marker = new google.maps.Marker({
+        position: { lat: driver.lat, lng: driver.lng },
+        map: transportMainMap,
+        title: driver.name,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 10,
+          fillColor: '#0ea5e9',
+          fillOpacity: 0.8,
+          strokeColor: '#fff',
+          strokeWeight: 2
+        },
+        label: String.fromCharCode(65 + idx)
+      });
+
+      const infoWindow = new google.maps.InfoWindow({
+        content: `<div style="padding:0.5rem;font-size:12px">
+          <strong>${esc(driver.name)}</strong><br/>
+          <span style="color:#0ea5e9">📦 ${driver.orders} orders</span>
+        </div>`
+      });
+
+      marker.addListener('click', () => {
+        infoWindow.open(transportMainMap, marker);
+      });
+
+      driverMarkers.push(marker);
+    });
+
+    // Update driver info box
+    const infoList = document.getElementById('driverInfoList');
+    infoList.innerHTML = mockDrivers.map(d => `
+      <div style="padding:0.5rem;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between">
+        <span>${esc(d.name)}</span>
+        <span style="color:#0ea5e9;font-weight:600">📦 ${d.orders}</span>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('transportPlanRoutesBtn')?.addEventListener('click', () => {
+    if (!transportRequests.length) {
+      alert('No deliveries to plan. Click Upload Jobs first.');
+      return;
+    }
+    alert('Route planning optimizing ' + transportRequests.length + ' deliveries...\n(Coming soon: TSP solver with driver assignment)');
   });
 
   // ── Transport Route Templates ──────────────────────────────────────────────
