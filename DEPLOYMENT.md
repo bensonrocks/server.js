@@ -1,8 +1,11 @@
-# IDEALSCAN + IDEALTMS Deployment Guide
+# IDEALSCAN (with Integrated Transport/TMS) Deployment Guide
 
 ## System Overview
 
-Complete order processing and WMS fulfillment system with integrated transport management.
+**Single integrated application** combining order processing, WMS fulfillment, and transport management.
+- **One login system** - IdealScan credentials work for all modules
+- **One deployment** - Transport/TMS is built into IdealScan, not separate
+- **One URL** - All features accessible from same application
 
 ## Features Completed
 
@@ -88,12 +91,26 @@ MySQL initialization happens asynchronously in background.
 - `GET /api/master/dashboard/station-throughput`
 - `GET /api/master/report/:kind` — Export reports
 
+## Architecture: Single Integrated System
+
+### Important: IdealTMS is NOT Separate
+- ✅ One login system - IdealScan credentials access Transport/TMS
+- ✅ One deployment - No separate IdealTMS application
+- ✅ One URL - All modules in same application
+- ✅ Shared session - Token works for Orders, Inbound, Transport, Admin
+
+### Authentication
+- Single `POST /api/auth/login` endpoint
+- All modules use same `requireAuth` middleware
+- Users log in once, access all features
+- Role-based access control (Admin/Warehouse)
+
 ## Known Limitations
 
 ### Cloud Sandbox Environment
-- Railway MySQL proxy unreachable from remote cloud sandbox
-- Non-TMS features work without any database
-- TMS features gracefully degrade (503 error)
+- MySQL proxy unreachable from remote cloud sandbox (network restriction)
+- Orders/Inbound features work without any database
+- Transport features gracefully degrade (503 error)
 - **Solution**: Deploy to your own Railway project or self-hosted environment
 
 ### Browser Support
