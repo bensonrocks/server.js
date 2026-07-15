@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IdealInbound — Admin</title>
+<style>
+  :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
+  @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF}}
+  :root[data-theme="light"]{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF}
+  :root[data-theme="dark"]{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.5;min-height:100vh}
+  .topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:10}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;text-decoration:none;color:var(--text)}
+  .brand-dot{width:9px;height:9px;border-radius:2px;background:var(--accent)}
+  .top-link{font-size:.8rem;color:var(--text-2);text-decoration:none}
+  .page{max-width:900px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:1.4rem;margin-bottom:20px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px}
+  .card h2{font-size:1rem;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th{text-align:left;color:var(--text-3);font-size:.68rem;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:9px 10px;border-bottom:1px solid var(--border)}
+  select,input{padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:.82rem}
+  .btn{padding:9px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:.82rem;font-weight:600;cursor:pointer}
+  .row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+  label{display:block;font-size:.7rem;color:var(--text-2);text-transform:uppercase;margin-bottom:4px}
+  .mono{font-family:var(--mono)}
+  .denied{padding:60px 20px;text-align:center;color:var(--text-3)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a class="brand" href="/inbound"><span class="brand-dot"></span>IdealInbound</a>
+  <a class="top-link" href="/inbound">&larr; Back to Inbound</a>
+</div>
+<div class="page" id="page-body">
+  <h1>Admin</h1>
+
+  <div class="card">
+    <h2>Staff & Roles</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th></tr></thead>
+      <tbody id="staff-rows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Inbound Receiving Report</h2>
+    <div class="row">
+      <div><label>From</label><input type="date" id="rep-from"></div>
+      <div><label>To</label><input type="date" id="rep-to"></div>
+      <button class="btn" onclick="exportReport()">Export XLSX</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Audit Log</h2>
+    <table>
+      <thead><tr><th>When</th><th>Type</th><th>Actor</th><th>Detail</th></tr></thead>
+      <tbody id="audit-rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+async function guard() {
+  const res = await fetch('/api/auth/me');
+  const data = await res.json();
+  if (!data.user || data.user.role !== 'admin') {
+    document.getElementById('page-body').innerHTML = '<div class="denied">Admin access required.</div>';
+    return false;
+  }
+  return true;
+}
+
+async function loadStaff() {
+  const res = await fetch('/api/admin/staff');
+  const data = await res.json();
+  if (!data.ok) return;
+  document.getElementById('staff-rows').innerHTML = data.staff.map(u => `
+    <tr>
+      <td>${u.name}</td>
+      <td class="mono">${u.email}</td>
+      <td>
+        <select onchange="updateRole('${u.id}', this.value)">
+          <option value="warehouse" ${u.role === 'warehouse' ? 'selected' : ''}>Warehouse</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function updateRole(id, role) {
+  await fetch(`/api/admin/staff/${id}/role`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }),
+  });
+  loadStaff();
+}
+
+async function loadAuditLog() {
+  const res = await fetch('/api/audit-log?limit=100');
+  const data = await res.json();
+  if (!data.ok) return;
+  document.getElementById('audit-rows').innerHTML = data.entries.map(e => `
+    <tr>
+      <td class="mono">${new Date(e.at).toLocaleString()}</td>
+      <td>${e.type}</td>
+      <td class="mono">${e.actor || '—'}</td>
+      <td class="mono">${e.sku || e.serial || e.reference || ''}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">No entries yet</td></tr>';
+}
+
+function exportReport() {
+  const from = document.getElementById('rep-from').value;
+  const to = document.getElementById('rep-to').value;
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  window.location.href = `/api/inbounds/report/export?${params.toString()}`;
+}
+
+(async () => {
+  if (await guard()) { loadStaff(); loadAuditLog(); }
+})();
+</script>
+</body>
+</html>

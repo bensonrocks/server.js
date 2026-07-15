@@ -22,6 +22,7 @@ async function init() {
       name           TEXT NOT NULL,
       email          TEXT UNIQUE NOT NULL,
       password_hash  TEXT NOT NULL,
+      role           TEXT NOT NULL DEFAULT 'warehouse',
       created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);

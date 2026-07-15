@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IdealInbound — Master</title>
+<style>
+  :root{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--bad:#C0304A;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
+  @media(prefers-color-scheme:dark){:root{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--bad:#E0607C}}
+  :root[data-theme="light"]{--bg:#F0F2F5;--surface:#FFFFFF;--border:#D7DCE3;--text:#1B2430;--text-2:#5B6472;--text-3:#8B93A0;--accent:#0B5FFF;--bad:#C0304A}
+  :root[data-theme="dark"]{--bg:#0E1116;--surface:#161B22;--border:#2B313C;--text:#E6E9EF;--text-2:#9AA3AF;--text-3:#6A7280;--accent:#4C8DFF;--bad:#E0607C}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:28px;width:100%;max-width:420px}
+  .wide{max-width:800px}
+  h1{font-size:1.1rem;margin-bottom:16px}
+  label{display:block;font-size:.72rem;color:var(--text-2);text-transform:uppercase;margin:10px 0 4px}
+  input{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:.9rem}
+  .btn{width:100%;margin-top:18px;padding:10px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:.88rem;font-weight:600;cursor:pointer}
+  .btn.danger{border-color:var(--bad);background:var(--bad)}
+  .btn.secondary{background:none;color:var(--text-2);border-color:var(--border)}
+  .err{color:var(--bad);font-size:.8rem;margin-top:10px;display:none}
+  table{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:10px}
+  th{text-align:left;color:var(--text-3);font-size:.68rem;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  .mono{font-family:var(--mono)}
+  .actions{display:flex;gap:6px}
+  .actions .btn{width:auto;margin-top:0;padding:5px 10px;font-size:.72rem}
+  .empty{color:var(--text-3);padding:20px;text-align:center}
+</style>
+</head>
+<body>
+  <div id="login-card" class="card">
+    <h1>Master Login</h1>
+    <label>Master Secret</label>
+    <input id="secret" type="password">
+    <button class="btn" onclick="login()">Sign In</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div id="review-card" class="card wide" style="display:none">
+    <h1>Pending Inbound Deletions</h1>
+    <table>
+      <thead><tr><th>Serial</th><th>Reference</th><th>Type</th><th>Reason</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <script>
+    async function login() {
+      const errEl = document.getElementById('err');
+      errEl.style.display = 'none';
+      const secret = document.getElementById('secret').value;
+      const res = await fetch('/api/master/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret }),
+      });
+      const data = await res.json();
+      if (!data.ok) { errEl.textContent = data.error; errEl.style.display = 'block'; return; }
+      document.getElementById('login-card').style.display = 'none';
+      document.getElementById('review-card').style.display = '';
+      loadRequests();
+    }
+
+    async function loadRequests() {
+      const res = await fetch('/api/master/deletion-requests');
+      const data = await res.json();
+      const tbody = document.getElementById('rows');
+      if (!data.ok || !data.requests.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No pending deletion requests</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.requests.map(r => `
+        <tr>
+          <td class="mono">${r.serial || '—'}</td>
+          <td class="mono">${r.reference}</td>
+          <td>${r.type}</td>
+          <td>${r.pendingDeletion.reason}</td>
+          <td class="actions">
+            <button class="btn danger" onclick="approve('${r.id}')">Approve</button>
+            <button class="btn secondary" onclick="reject('${r.id}')">Reject</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function approve(id) {
+      if (!confirm('Permanently delete this inbound? This cannot be undone.')) return;
+      await fetch(`/api/master/inbounds/${id}/approve-deletion`, { method: 'POST' });
+      loadRequests();
+    }
+    async function reject(id) {
+      await fetch(`/api/master/inbounds/${id}/reject-deletion`, { method: 'POST' });
+      loadRequests();
+    }
+
+    document.getElementById('secret').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+  </script>
+</body>
+</html>

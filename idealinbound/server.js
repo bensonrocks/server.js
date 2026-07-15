@@ -5,16 +5,22 @@ const path    = require('path');
 const bcrypt  = require('bcryptjs');
 const session = require('express-session');
 const multer  = require('multer');
+const ExcelJS = require('exceljs');
 
 const staff                         = require('./lib/users');
 const { init: initDb, hasDb, pool } = require('./lib/db');
 const inbounds                      = require('./lib/inbounds');
+const { initSerials }               = require('./lib/serials');
+const auditLog                      = require('./lib/auditLog');
+const photoToken                    = require('./lib/photoToken');
+const { parseInboundFile, findDuplicateLineWarnings } = require('./lib/fileParser');
 
 const app  = express();
 const PORT = process.env.IDEALINBOUND_PORT || 4000;
+const { InboundError } = inbounds;
 
-// ── Photo upload (in-memory, persisted to Postgres/JSON as bytes) ──────
-const upload = multer({
+// ── Uploads (in-memory) ─────────────────────────────────────────────────
+const uploadPhotoMw = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
@@ -24,11 +30,35 @@ const upload = multer({
 });
 function uploadPhoto(fieldName) {
   return (req, res, next) => {
-    upload.single(fieldName)(req, res, err => {
+    uploadPhotoMw.single(fieldName)(req, res, err => {
       if (err) return res.status(400).json({ ok: false, error: err.message });
       next();
     });
   };
+}
+
+const uploadFileMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    if (!['csv', 'xlsx', 'xls', 'pdf'].includes(ext)) return cb(new Error('Upload an XLSX, CSV, or PDF file'));
+    cb(null, true);
+  },
+});
+function uploadInboundFile(fieldName) {
+  return (req, res, next) => {
+    uploadFileMw.single(fieldName)(req, res, err => {
+      if (err) return res.status(400).json({ ok: false, error: err.message });
+      next();
+    });
+  };
+}
+
+function parseJsonField(val, fallback) {
+  if (val === undefined || val === null || val === '') return fallback;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return fallback; }
 }
 
 // ── Middleware ─────────────────────────────────────────────────────────
@@ -45,6 +75,9 @@ const sessionStore = hasDb
 
 if (!process.env.IDEALINBOUND_SESSION_SECRET) {
   console.warn('WARNING: IDEALINBOUND_SESSION_SECRET not set — sessions will not survive restarts.');
+}
+if (!process.env.IDEALINBOUND_MASTER_SECRET) {
+  console.warn('WARNING: IDEALINBOUND_MASTER_SECRET not set — master-level deletion approval is disabled.');
 }
 
 app.use(session({
@@ -72,8 +105,29 @@ function requireAuthPage(req, res, next) {
   next();
 }
 
+async function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
+  const user = await staff.findById(req.session.userId);
+  if (!user || user.role !== 'admin') return res.status(403).json({ ok: false, error: 'Admin role required' });
+  next();
+}
+
+function requireMaster(req, res, next) {
+  if (!req.session.isMaster) return res.status(401).json({ ok: false, error: 'Master login required' });
+  next();
+}
+
 function safeUser(u) {
-  return { id: u.id, name: u.name, email: u.email };
+  return { id: u.id, name: u.name, email: u.email, role: u.role };
+}
+
+function handleInboundError(res, err, fallbackMsg) {
+  if (err instanceof InboundError) {
+    const statusByCode = { CARTON_NOT_FOUND: 404, CARTON_NOT_LABELED: 409, CARTON_NOT_EMPTY: 409, ALREADY_COMPLETED: 409, ALREADY_PENDING: 409 };
+    return res.status(statusByCode[err.code] || 400).json({ ok: false, error: err.message, code: err.code });
+  }
+  console.error(fallbackMsg, err);
+  return res.status(500).json({ ok: false, error: fallbackMsg });
 }
 
 // ── Pages ──────────────────────────────────────────────────────────────
@@ -82,6 +136,12 @@ app.get('/login',   (req, res) => res.sendFile(path.join(__dirname, 'public', 'l
 app.get('/signup',  (req, res) => res.sendFile(path.join(__dirname, 'public', 'signup.html')));
 app.get('/inbound', requireAuthPage, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'inbound.html'))
+);
+app.get('/admin', requireAuthPage, (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'))
+);
+app.get('/master', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'master.html'))
 );
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -124,6 +184,37 @@ app.get('/api/auth/me', async (req, res) => {
   res.json({ ok: true, user: user ? safeUser(user) : null });
 });
 
+app.get('/api/photo-token', requireAuth, (req, res) => {
+  res.json({ ok: true, token: photoToken.sign(req.session.userId) });
+});
+
+// ── Admin: staff / roles ─────────────────────────────────────────────
+app.get('/api/admin/staff', requireAuth, requireAdmin, async (req, res) => {
+  res.json({ ok: true, staff: await staff.listAll() });
+});
+
+app.post('/api/admin/staff/:id/role', requireAuth, requireAdmin, async (req, res) => {
+  const { role } = req.body;
+  if (!['admin', 'warehouse'].includes(role))
+    return res.status(400).json({ ok: false, error: "Role must be 'admin' or 'warehouse'" });
+  const updated = await staff.updateRole(req.params.id, role);
+  if (!updated) return res.status(404).json({ ok: false, error: 'Staff member not found' });
+  res.json({ ok: true, staff: updated });
+});
+
+// ── Master login (approves inbound deletion requests) ──────────────────
+app.post('/api/master/login', (req, res) => {
+  const secret = process.env.IDEALINBOUND_MASTER_SECRET;
+  if (!secret) return res.status(503).json({ ok: false, error: 'Master login not configured' });
+  if (req.body.secret !== secret) return res.status(401).json({ ok: false, error: 'Wrong master secret' });
+  req.session.isMaster = true;
+  res.json({ ok: true });
+});
+app.post('/api/master/logout', (req, res) => {
+  req.session.isMaster = false;
+  res.json({ ok: true });
+});
+
 // ── Inbound processing API ───────────────────────────────────────────
 app.get('/api/inbound-types', requireAuth, (req, res) => {
   res.json({ ok: true, types: inbounds.TYPES, conditions: inbounds.CONDITIONS });
@@ -137,23 +228,43 @@ app.get('/api/inbounds', requireAuth, async (req, res) => {
   res.json({ ok: true, inbounds: list });
 });
 
-app.post('/api/inbounds', requireAuth, async (req, res) => {
-  const { type, reference, source, expectedDate, metadata, items } = req.body;
+app.post('/api/inbounds', requireAuth, uploadInboundFile('file'), async (req, res) => {
+  const { type, reference, source, expectedDate } = req.body;
+  const metadata = parseJsonField(req.body.metadata, {});
   if (!inbounds.TYPES.includes(type))
     return res.status(400).json({ ok: false, error: `Type must be one of: ${inbounds.TYPES.join(', ')}` });
   if (!reference || !source)
     return res.status(400).json({ ok: false, error: 'Reference and source are required' });
-  const lines = Array.isArray(items) ? items : [];
-  for (const it of lines) {
-    if (!it.sku || !Number(it.expectedQty) || Number(it.expectedQty) <= 0)
-      return res.status(400).json({ ok: false, error: 'Each pre-declared line needs a SKU and expected quantity > 0' });
+
+  let lines = [];
+  let warnings = [];
+  if (req.file) {
+    try {
+      lines = await parseInboundFile(req.file.buffer, req.file.originalname);
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+    warnings = findDuplicateLineWarnings(lines);
+  } else {
+    lines = parseJsonField(req.body.items, []);
+    if (!Array.isArray(lines)) lines = [];
+    for (const it of lines) {
+      if (!it.sku || !Number(it.expectedQty) || Number(it.expectedQty) <= 0)
+        return res.status(400).json({ ok: false, error: 'Each pre-declared line needs a SKU and expected quantity > 0' });
+    }
+    warnings = findDuplicateLineWarnings(lines);
   }
+
   const inbound = await inbounds.createInbound({
     type, reference, source, expectedDate,
     metadata: metadata && typeof metadata === 'object' ? metadata : {},
     items: lines, createdBy: req.session.userId,
   });
-  res.json({ ok: true, inbound });
+  await auditLog.logAudit('inbound_created', {
+    inboundId: inbound.id, actor: req.session.userId,
+    serial: inbound.serial, type, reference, source, lineCount: lines.length, viaFile: !!req.file,
+  });
+  res.json({ ok: true, inbound, warnings });
 });
 
 app.get('/api/inbounds/:id', requireAuth, async (req, res) => {
@@ -163,31 +274,44 @@ app.get('/api/inbounds/:id', requireAuth, async (req, res) => {
 });
 
 app.post('/api/inbounds/:id/receive', requireAuth, uploadPhoto('photo'), async (req, res) => {
-  const { sku, qty, condition, description, caption } = req.body;
+  const { sku, qty, condition, description, caption, cartonId } = req.body;
   if (!sku || !Number(qty) || Number(qty) <= 0)
     return res.status(400).json({ ok: false, error: 'SKU and quantity > 0 are required' });
-  const result = await inbounds.receiveItem(req.params.id, {
-    sku, qty, condition, description, receivedBy: req.session.userId,
-  });
+  let result;
+  try {
+    result = await inbounds.receiveItem(req.params.id, {
+      sku, qty, condition, description, cartonId: cartonId || null, receivedBy: req.session.userId,
+    });
+  } catch (err) {
+    return handleInboundError(res, err, 'Failed to receive item');
+  }
   if (!result) return res.status(404).json({ ok: false, error: 'Inbound not found' });
   if (req.file) {
     await inbounds.addPhoto(req.params.id, {
-      itemId: result.lastItemId,
-      eventId: result.lastEventId,
-      caption,
-      buffer: req.file.buffer,
-      mimeType: req.file.mimetype,
-      uploadedBy: req.session.userId,
+      itemId: result.lastItemId, eventId: result.lastEventId, caption,
+      buffer: req.file.buffer, mimeType: req.file.mimetype, uploadedBy: req.session.userId,
     });
   }
+  await auditLog.logAudit('inbound_scan', {
+    inboundId: req.params.id, actor: req.session.userId,
+    sku, qty: Number(qty), condition: condition || 'unspecified', cartonId: cartonId || null,
+  });
   const inbound = await inbounds.getInbound(req.params.id);
   res.json({ ok: true, inbound });
 });
 
 app.post('/api/inbounds/:id/close', requireAuth, async (req, res) => {
-  const inbound = await inbounds.closeInbound(req.params.id);
-  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
-  res.json({ ok: true, inbound });
+  const force = req.body.force === true || req.body.force === 'true';
+  const result = await inbounds.closeInbound(req.params.id, { force });
+  if (!result) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  if (result.needsConfirm) {
+    return res.status(409).json({ ok: false, needsConfirm: true, mismatches: result.mismatches, extras: result.extras });
+  }
+  await auditLog.logAudit('inbound_end_receipt', {
+    inboundId: req.params.id, actor: req.session.userId,
+    forced: force, mismatches: result.mismatches, extras: result.extras,
+  });
+  res.json({ ok: true, inbound: result });
 });
 
 app.get('/api/inbounds/:id/report', requireAuth, async (req, res) => {
@@ -195,6 +319,52 @@ app.get('/api/inbounds/:id/report', requireAuth, async (req, res) => {
   if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
   const items = inbound.items.map(i => ({ ...i, variance: i.receivedQty - i.expectedQty }));
   res.json({ ok: true, report: { ...inbound, items } });
+});
+
+// ── Cartons ────────────────────────────────────────────────────────────
+app.post('/api/inbounds/:id/cartons', requireAuth, async (req, res) => {
+  const carton = await inbounds.createCarton(req.params.id);
+  if (!carton) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  await auditLog.logAudit('inbound_carton_created', { inboundId: req.params.id, actor: req.session.userId, cartonId: carton.id, cartonNum: carton.cartonNum });
+  res.json({ ok: true, carton });
+});
+
+app.post('/api/inbounds/:id/cartons/:cartonId/confirm-label', requireAuth, async (req, res) => {
+  const carton = await inbounds.confirmCartonLabel(req.params.id, req.params.cartonId);
+  if (!carton) return res.status(404).json({ ok: false, error: 'Carton not found' });
+  await auditLog.logAudit('inbound_carton_label_confirmed', { inboundId: req.params.id, actor: req.session.userId, cartonId: carton.id });
+  res.json({ ok: true, carton });
+});
+
+app.post('/api/inbounds/:id/cartons/:cartonId/switch', requireAuth, async (req, res) => {
+  const inbound = await inbounds.switchCarton(req.params.id, req.params.cartonId);
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Carton not found' });
+  await auditLog.logAudit('inbound_carton_switched', { inboundId: req.params.id, actor: req.session.userId, cartonId: req.params.cartonId });
+  res.json({ ok: true, inbound });
+});
+
+app.post('/api/inbounds/:id/cartons/:cartonId/close', requireAuth, async (req, res) => {
+  const carton = await inbounds.closeCarton(req.params.id, req.params.cartonId);
+  if (!carton) return res.status(404).json({ ok: false, error: 'Carton not found' });
+  await auditLog.logAudit('inbound_carton_closed', { inboundId: req.params.id, actor: req.session.userId, cartonId: carton.id });
+  res.json({ ok: true, carton });
+});
+
+app.delete('/api/inbounds/:id/cartons/:cartonId', requireAuth, async (req, res) => {
+  try {
+    const result = await inbounds.cancelCarton(req.params.id, req.params.cartonId);
+    if (!result) return res.status(404).json({ ok: false, error: 'Carton not found' });
+    await auditLog.logAudit('inbound_carton_cancelled', { inboundId: req.params.id, actor: req.session.userId, cartonId: req.params.cartonId });
+    res.json({ ok: true });
+  } catch (err) {
+    handleInboundError(res, err, 'Failed to cancel carton');
+  }
+});
+
+app.get('/api/inbounds/:id/cartons/:cartonId/slip', requireAuth, async (req, res) => {
+  const slip = await inbounds.getCartonSlip(req.params.id, req.params.cartonId);
+  if (!slip) return res.status(404).json({ ok: false, error: 'Carton not found' });
+  res.json({ ok: true, slip });
 });
 
 // ── Photos ─────────────────────────────────────────────────────────────
@@ -209,10 +379,15 @@ app.post('/api/inbounds/:id/photos', requireAuth, uploadPhoto('photo'), async (r
     mimeType: req.file.mimetype,
     uploadedBy: req.session.userId,
   });
+  await auditLog.logAudit('inbound_photo_added', { inboundId: req.params.id, actor: req.session.userId, photoId: photo.id });
   res.json({ ok: true, photo });
 });
 
-app.get('/api/inbounds/:id/photos/:photoId', requireAuth, async (req, res) => {
+// Registered with token-OR-cookie auth so plain <img src="...?token="> works.
+app.get('/api/inbounds/:id/photos/:photoId', async (req, res) => {
+  let authed = !!req.session.userId;
+  if (!authed && req.query.token) authed = !!photoToken.verify(req.query.token);
+  if (!authed) return res.status(401).send('Not authenticated');
   const photo = await inbounds.getPhotoData(req.params.id, req.params.photoId);
   if (!photo) return res.status(404).send('Not found');
   res.set('Content-Type', photo.mimeType);
@@ -220,13 +395,129 @@ app.get('/api/inbounds/:id/photos/:photoId', requireAuth, async (req, res) => {
   res.send(photo.buffer);
 });
 
+// ── Deletion workflow ────────────────────────────────────────────────
+app.post('/api/inbounds/:id/deletion-request', requireAuth, requireAdmin, async (req, res) => {
+  const { reason, password } = req.body;
+  if (!reason || !password) return res.status(400).json({ ok: false, error: 'Reason and your password are required' });
+  const user = await staff.findById(req.session.userId);
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) return res.status(403).json({ ok: false, error: 'Wrong password' });
+  try {
+    const inbound = await inbounds.requestDeletion(req.params.id, { reason, requestedBy: req.session.userId });
+    if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+    await auditLog.logAudit('inbound_deletion_requested', { inboundId: req.params.id, actor: req.session.userId, reason });
+    res.json({ ok: true, inbound });
+  } catch (err) {
+    handleInboundError(res, err, 'Failed to request deletion');
+  }
+});
+
+app.get('/api/master/deletion-requests', requireMaster, async (req, res) => {
+  res.json({ ok: true, requests: await inbounds.listPendingDeletions() });
+});
+
+app.post('/api/master/inbounds/:id/approve-deletion', requireMaster, async (req, res) => {
+  const inbound = await inbounds.approveDeletion(req.params.id);
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  await auditLog.logAudit('inbound_deletion_approved', {
+    inboundId: req.params.id, actor: 'master', serial: inbound.serial, reference: inbound.reference,
+  });
+  res.json({ ok: true, deleted: true });
+});
+
+app.post('/api/master/inbounds/:id/reject-deletion', requireMaster, async (req, res) => {
+  const inbound = await inbounds.rejectDeletion(req.params.id);
+  if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+  await auditLog.logAudit('inbound_deletion_rejected', { inboundId: req.params.id, actor: 'master' });
+  res.json({ ok: true, inbound });
+});
+
+app.delete('/api/master/inbounds/:id', requireMaster, async (req, res) => {
+  const { reason } = req.body;
+  if (!reason) return res.status(400).json({ ok: false, error: 'Reason is required' });
+  try {
+    const inbound = await inbounds.directDelete(req.params.id);
+    if (!inbound) return res.status(404).json({ ok: false, error: 'Inbound not found' });
+    await auditLog.logAudit('inbound_direct_delete', { inboundId: req.params.id, actor: 'master', reason });
+    res.json({ ok: true, deleted: true });
+  } catch (err) {
+    handleInboundError(res, err, 'Failed to delete inbound');
+  }
+});
+
+// ── Reporting / export ───────────────────────────────────────────────
+app.get('/api/audit-log', requireAuth, requireAdmin, async (req, res) => {
+  const { from, to, inboundId, limit } = req.query;
+  res.json({ ok: true, entries: await auditLog.listAuditLog({ from, to, inboundId, limit: Number(limit) || undefined }) });
+});
+
+app.get('/api/inbounds/report/export', requireAuth, requireAdmin, async (req, res) => {
+  const { from, to } = req.query;
+  const list = await inbounds.listInboundsInRange({ from, to });
+
+  const wb = new ExcelJS.Workbook();
+  const jobsSheet = wb.addWorksheet('Inbound Jobs');
+  jobsSheet.columns = [
+    { header: 'Serial', key: 'serial', width: 16 },
+    { header: 'Type', key: 'type', width: 10 },
+    { header: 'Reference', key: 'reference', width: 18 },
+    { header: 'Source', key: 'source', width: 22 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Expected Qty', key: 'expected', width: 14 },
+    { header: 'Received Qty', key: 'received', width: 14 },
+    { header: 'Carton Count', key: 'cartons', width: 14 },
+    { header: 'Created At', key: 'createdAt', width: 22 },
+  ];
+  const linesSheet = wb.addWorksheet('Inbound Lines');
+  linesSheet.columns = [
+    { header: 'Serial', key: 'serial', width: 16 },
+    { header: 'Reference', key: 'reference', width: 18 },
+    { header: 'SKU', key: 'sku', width: 20 },
+    { header: 'Description', key: 'description', width: 26 },
+    { header: 'Expected Qty', key: 'expected', width: 14 },
+    { header: 'Received Qty', key: 'received', width: 14 },
+    { header: 'Sellable', key: 'sellable', width: 10 },
+    { header: 'Damaged', key: 'damaged', width: 10 },
+    { header: 'Refurbish', key: 'refurbish', width: 10 },
+    { header: 'Dispose', key: 'dispose', width: 10 },
+    { header: 'KIV', key: 'kiv', width: 10 },
+  ];
+
+  for (const inb of list) {
+    jobsSheet.addRow({
+      serial: inb.serial, type: inb.type, reference: inb.reference, source: inb.source, status: inb.status,
+      expected: inb.items.reduce((a, i) => a + i.expectedQty, 0),
+      received: inb.items.reduce((a, i) => a + i.receivedQty, 0),
+      cartons: (inb.cartons || []).length,
+      createdAt: inb.createdAt,
+    });
+    for (const item of inb.items) {
+      linesSheet.addRow({
+        serial: inb.serial, reference: inb.reference, sku: item.sku, description: item.description,
+        expected: item.expectedQty, received: item.receivedQty,
+        sellable: item.conditionTotals.sellable, damaged: item.conditionTotals.damaged,
+        refurbish: item.conditionTotals.refurbish, dispose: item.conditionTotals.dispose, kiv: item.conditionTotals.kiv,
+      });
+    }
+  }
+
+  res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.set('Content-Disposition', `attachment; filename="inbound-receiving-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
+});
+
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
   .then(() => inbounds.init())
+  .then(() => initSerials())
+  .then(() => auditLog.initAuditLog())
+  .then(() => auditLog.runAuditArchive())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`IdealInbound running on port ${PORT}`);
       console.log(`DB: ${hasDb ? 'PostgreSQL' : 'JSON file'}`);
+      console.log(`Master deletion approval: ${process.env.IDEALINBOUND_MASTER_SECRET ? 'enabled' : 'disabled'}`);
     });
   })
   .catch(err => {
