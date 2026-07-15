@@ -2545,3 +2545,42 @@ img.is-icon-xs, img.is-icon-sm, img.is-icon-hdr, img.is-icon-lg { object-fit: co
 .scan-feedback.pending { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
 tr.row-pendingsync td { background: #fffbeb !important; }
 .pend-mark { color: #b45309; font-size: .9em; }
+
+/* ── Transport Map Modal ── */
+.btn-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.btn-close:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+#transportDetailModal .modal {
+  max-width: 1000px;
+  display: flex;
+  flex-direction: column;
+}
+
+#transportMap {
+  border-radius: 6px;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.05);
+}
+
+.gm-style-iw-d {
+  overflow: visible !important;
+  padding: 0.75rem !important;
+  border-radius: 4px !important;
+}

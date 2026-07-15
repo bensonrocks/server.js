@@ -1865,8 +1865,132 @@
   }
 
   function handleTransportRequest(id) {
-    console.log('Viewing transport request:', id);
-    // Future: Open detail modal or redirect to request view
+    const req = transportRequests.find(r => r.id === id);
+    if (!req) return;
+
+    const modal = document.getElementById('transportDetailModal');
+    document.getElementById('transportDetailId').textContent = esc(req.id || '—');
+    document.getElementById('transportDetailClient').textContent = esc(req.clientName || '—');
+    document.getElementById('transportDetailStatus').textContent = req.status || 'Pending';
+    document.getElementById('transportDetailStatus').className = `status-badge ${req.status || 'pending'}`;
+    document.getElementById('transportDetailTitle').textContent = `📦 ${esc(req.clientName || req.id)}`;
+    document.getElementById('transportDetailDate').textContent = req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—';
+
+    // Display stops
+    const stopsHtml = (req.items || []).map((item, idx) => `
+      <div style="padding:0.6rem;background:white;border-radius:4px;border-left:3px solid #0ea5e9;margin-bottom:0.4rem;font-size:12px">
+        <p style="margin:0 0 0.2rem 0"><strong>#${idx + 1}</strong> ${esc(item.name || item.sku || '—')}</p>
+        <p style="margin:0;color:#64748b">📍 ${esc(item.address || req.shipping?.addressLine1 || '—')}</p>
+        ${item.qty ? `<p style="margin:0.2rem 0 0 0;color:#7c3aed">qty: ${item.qty}</p>` : ''}
+      </div>
+    `).join('');
+    document.getElementById('transportDetailStops').innerHTML = stopsHtml || '<p style="margin:0;color:#64748b;font-size:12px">No items</p>';
+
+    modal.classList.remove('hidden');
+
+    // Initialize and display map
+    if (google && google.maps) {
+      setTimeout(() => initTransportMap(req), 100);
+    } else {
+      console.warn('Google Maps not loaded yet');
+    }
+  }
+
+  let transportMap = null;
+  let transportMapMarkers = [];
+
+  function initTransportMap(req) {
+    const mapEl = document.getElementById('transportMap');
+    if (!mapEl) return;
+
+    // Clear previous markers
+    transportMapMarkers.forEach(m => m.setMap(null));
+    transportMapMarkers = [];
+
+    // Get stops with coordinates
+    const stops = [];
+    if (req.items && Array.isArray(req.items)) {
+      req.items.forEach((item, idx) => {
+        if (item.geocoded) {
+          stops.push({
+            lat: parseFloat(item.geocoded.lat),
+            lng: parseFloat(item.geocoded.lng),
+            name: item.name || item.sku || `Stop ${idx + 1}`,
+            address: item.address || ''
+          });
+        }
+      });
+    }
+
+    // Fallback: use shipping address if no items with geocoding
+    if (stops.length === 0 && req.shipping?.geocoded) {
+      stops.push({
+        lat: parseFloat(req.shipping.geocoded.lat),
+        lng: parseFloat(req.shipping.geocoded.lng),
+        name: req.clientName || 'Destination',
+        address: `${req.shipping.addressLine1 || ''}, ${req.shipping.city || ''}`
+      });
+    }
+
+    if (stops.length === 0) {
+      mapEl.innerHTML = '<p style="padding:2rem;text-align:center;color:#64748b">No location data available</p>';
+      return;
+    }
+
+    // Calculate bounds
+    const bounds = new google.maps.LatLngBounds();
+    stops.forEach(stop => {
+      bounds.extend(new google.maps.LatLng(stop.lat, stop.lng));
+    });
+
+    // Initialize map
+    if (!transportMap) {
+      transportMap = new google.maps.Map(mapEl, {
+        zoom: 13,
+        center: bounds.getCenter(),
+        mapTypeControl: true,
+        fullscreenControl: false,
+        streetViewControl: false
+      });
+    } else {
+      transportMap.fitBounds(bounds);
+    }
+
+    // Add markers for each stop
+    stops.forEach((stop, idx) => {
+      const marker = new google.maps.Marker({
+        position: { lat: stop.lat, lng: stop.lng },
+        map: transportMap,
+        title: stop.name,
+        label: String(idx + 1),
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 8,
+          fillColor: idx === 0 ? '#ef4444' : idx === stops.length - 1 ? '#22c55e' : '#0ea5e9',
+          fillOpacity: 1,
+          strokeColor: '#fff',
+          strokeWeight: 2
+        }
+      });
+
+      const infoWindow = new google.maps.InfoWindow({
+        content: `<div style="padding:0.5rem"><strong>${esc(stop.name)}</strong><p style="margin:0.3rem 0 0 0;font-size:12px">${esc(stop.address)}</p></div>`
+      });
+
+      marker.addListener('click', () => {
+        // Close all other info windows
+        document.querySelectorAll('.gm-style-iw-d').forEach(el => {
+          const parent = el.parentElement?.parentElement;
+          if (parent) parent.style.display = 'none';
+        });
+        infoWindow.open(transportMap, marker);
+      });
+
+      transportMapMarkers.push(marker);
+    });
+
+    // Fit map to bounds
+    transportMap.fitBounds(bounds);
   }
 
   // TMS Import handlers
@@ -1925,6 +2049,17 @@
 
   document.getElementById('transportOutrightBrowseBtn')?.addEventListener('click', () => {
     document.getElementById('transportOutrightFileInput')?.click();
+  });
+
+  // Transport detail modal handlers
+  function closeTransportDetailModal() {
+    document.getElementById('transportDetailModal').classList.add('hidden');
+  }
+
+  document.getElementById('transportDetailCloseBtn')?.addEventListener('click', closeTransportDetailModal);
+  document.getElementById('transportDetailCloseBtn2')?.addEventListener('click', closeTransportDetailModal);
+  document.getElementById('transportDetailModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'transportDetailModal') closeTransportDetailModal();
   });
 
   // ── TMS Management (Drivers, Zones, Route Optimization) ───────────────────
