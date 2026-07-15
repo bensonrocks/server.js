@@ -4478,6 +4478,102 @@ app.post('/api/transport/import/outright', upload.single('file'), (req, res) => 
   }
 });
 
+app.post('/api/transport/import/generic', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const db = readDb();
+    const ext = req.file.originalname?.toLowerCase().endsWith('.csv') ? 'csv' : 'xlsx';
+
+    let rows = [];
+    if (ext === 'csv') {
+      const csv = req.file.buffer.toString('utf-8');
+      const lines = csv.trim().split('\n');
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      rows = lines.slice(1).map(line => {
+        const values = line.split(',').map(v => v.trim());
+        const row = {};
+        headers.forEach((h, i) => row[h] = values[i] || '');
+        return row;
+      });
+    } else {
+      const sheets = tmsImporter.parseExcelFile(req.file.buffer);
+      rows = sheets[Object.keys(sheets)[0]] || [];
+    }
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'No data found in file' });
+    }
+
+    // Parse generic delivery format
+    // Expected columns: customer_name, address (or postal_code), items (qty), city, phone, email, etc.
+    const customers = rows.map((row, idx) => {
+      const customerName = row.customer_name || row.customer || row.name || row.client || `Customer ${idx + 1}`;
+      const address = row.address || row.addr || row.location || '';
+      const postalCode = row.postal_code || row.postcode || row.zip || '';
+      const items = [];
+
+      // Try to extract items from row (could be sku, item_sku, product, etc.)
+      const itemQty = row.items || row.qty || row.quantity || row.pieces || '1';
+      const sku = row.sku || row.product_id || row.product || '';
+
+      if (sku) {
+        items.push({ sku, qty: parseInt(itemQty) || 1, name: row.description || '' });
+      }
+
+      return {
+        id: `GEN-${Date.now()}-${idx}`,
+        clientName: customerName,
+        address: address || postalCode,
+        postalCode: postalCode,
+        city: row.city || '',
+        phone: row.phone || row.mobile || '',
+        email: row.email || '',
+        items: items,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+    });
+
+    db.transport = db.transport || [];
+    const createdIds = [];
+    let skipped = 0;
+
+    customers.forEach(cust => {
+      if (cust.clientName && cust.address) {
+        const existing = db.transport.find(t => t.clientName === cust.clientName);
+        if (!existing) {
+          db.transport.push(cust);
+          createdIds.push(cust.id);
+        } else {
+          skipped++;
+        }
+      } else {
+        skipped++;
+      }
+    });
+
+    _persistDb(db);
+    logAudit('tms_import_generic', {
+      ordersCreated: createdIds.length,
+      skipped: skipped,
+      format: ext
+    });
+
+    res.json({
+      success: true,
+      imported: {
+        format: 'generic',
+        ordersCreated: createdIds.length,
+        skipped: skipped,
+        summary: `Imported ${createdIds.length} deliveries from file`
+      }
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 app.post('/api/scan/learn-barcode', (req, res) => {
   const { orderNumber, barcode, sku } = req.body;
   if (!orderNumber || !barcode || !sku) return res.status(400).json({ error: 'orderNumber, barcode and sku required' });

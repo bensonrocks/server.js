@@ -2008,6 +2008,7 @@
 
       let endpoint = '/api/transport/import/betime';
       if (format === 'outright') endpoint = '/api/transport/import/outright';
+      if (format === 'generic') endpoint = '/api/transport/import/generic';
 
       const resp = await fetch(endpoint, { method: 'POST', body: fd, headers: hdrs() });
       const data = await resp.json();
@@ -2049,6 +2050,18 @@
 
   document.getElementById('transportOutrightBrowseBtn')?.addEventListener('click', () => {
     document.getElementById('transportOutrightFileInput')?.click();
+  });
+
+  // Generic delivery import
+  document.getElementById('transportGenericFileInput')?.addEventListener('change', (e) => {
+    if (e.target.files[0]) {
+      importTransportFile(e.target.files[0], 'generic');
+      e.target.value = '';
+    }
+  });
+
+  document.getElementById('transportGenericBrowseBtn')?.addEventListener('click', () => {
+    document.getElementById('transportGenericFileInput')?.click();
   });
 
   // Transport detail modal handlers
