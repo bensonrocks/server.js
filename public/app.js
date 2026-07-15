@@ -426,40 +426,22 @@
     const id     = document.getElementById('loginName').value.trim();
     const pass   = document.getElementById('loginIC').value.trim();
     const errEl  = document.getElementById('loginError');
-    const btn    = document.getElementById('loginBtn');
-
-    console.log('[Login] Button clicked, id:', id, 'pass length:', pass.length);
-
     if (!id || !pass) {
       errEl.textContent = 'Enter your User ID and password.';
-      errEl.classList.remove('hidden');
-      console.log('[Login] Validation failed: empty credentials');
-      return;
+      errEl.classList.remove('hidden'); return;
     }
-
     errEl.classList.add('hidden');
-    btn.disabled = true;
-    btn.textContent = 'Signing in...';
-
     try {
-      console.log('[Login] Sending request to /api/auth/login');
       const resp = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, password: pass }),
       });
       const data = await resp.json();
-      console.log('[Login] Response status:', resp.status, 'data:', data);
-
       if (!resp.ok) {
         errEl.textContent = data.error || 'Login failed';
-        errEl.classList.remove('hidden');
-        btn.disabled = false;
-        btn.textContent = 'Sign In →';
-        return;
+        errEl.classList.remove('hidden'); return;
       }
-
-      console.log('[Login] Login successful, user:', data.id);
       currentUser = { id: data.id, name: data.name, role: data.role || 'admin' };
       localStorage.setItem('wms_user', JSON.stringify(currentUser));
       if (data.token) localStorage.setItem('wms_token', data.token);
@@ -471,11 +453,8 @@
       });
       if (_loginCallback) { const fn = _loginCallback; _loginCallback = null; fn(); }
     } catch (err) {
-      console.error('[Login] Error:', err);
-      errEl.textContent = 'Error: ' + err.message;
+      errEl.textContent = err.message;
       errEl.classList.remove('hidden');
-      btn.disabled = false;
-      btn.textContent = 'Sign In →';
     }
   }
 
