@@ -1899,30 +1899,88 @@
 
     mapContainer.innerHTML = `
       <div style="padding:1rem;height:100%;overflow-y:auto">
-        <h3 style="margin:0 0 1rem 0">Transport Jobs</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+          <h3 style="margin:0">Transport Jobs (${transportRequests.length})</h3>
+          <button id="selectAllTransportBtn" class="btn-secondary btn-sm">Select All</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
             <tr style="background:#f0f0f0;border-bottom:1px solid #ddd">
+              <th style="padding:0.5rem;width:30px;text-align:center">✓</th>
               <th style="padding:0.5rem;text-align:left">Job ID</th>
               <th style="padding:0.5rem;text-align:left">Client</th>
               <th style="padding:0.5rem;text-align:left">Status</th>
-              <th style="padding:0.5rem;text-align:right">Items</th>
+              <th style="padding:0.5rem;text-align:center">Packages</th>
+              <th style="padding:0.5rem;text-align:left">Driver</th>
+              <th style="padding:0.5rem;text-align:center">Actions</th>
             </tr>
           </thead>
           <tbody>
             ${transportRequests.map(req => `
-              <tr style="border-bottom:1px solid #eee;hover:background:#f9f9f9">
-                <td style="padding:0.5rem">${esc(req.id || 'N/A')}</td>
+              <tr style="border-bottom:1px solid #eee;background:${req.pendingDeletion ? '#ffebee' : 'white'};hover:background:#f9f9f9">
+                <td style="padding:0.5rem;text-align:center">
+                  <input type="checkbox" class="transport-checkbox" data-id="${esc(req.id)}" style="cursor:pointer">
+                </td>
+                <td style="padding:0.5rem"><strong>${esc(req.id || 'N/A')}</strong></td>
                 <td style="padding:0.5rem">${esc(req.clientName || 'N/A')}</td>
-                <td style="padding:0.5rem"><span class="status-badge" style="font-size:11px">${req.status || 'pending'}</span></td>
-                <td style="padding:0.5rem;text-align:right">${(req.items || []).length}</td>
+                <td style="padding:0.5rem">
+                  <span class="status-badge" style="font-size:11px">${req.status || 'pending'}</span>
+                  ${req.pendingDeletion ? '<span style="display:inline-block;margin-left:0.3rem;padding:0.2rem 0.4rem;background:#ffcdd2;border-radius:2px;font-size:10px">⏳ Delete Pending</span>' : ''}
+                </td>
+                <td style="padding:0.5rem;text-align:center"><strong>${req.packages || 1}</strong></td>
+                <td style="padding:0.5rem">${req.assignedDriver ? (window.drivers || []).find(d => d.id === req.assignedDriver)?.name || req.assignedDriver : '—'}</td>
+                <td style="padding:0.5rem;text-align:center">
+                  <button class="btn-scan-now btn-sm transport-edit-btn" data-id="${esc(req.id)}" style="padding:0.3rem 0.5rem;margin-right:0.2rem">✏️</button>
+                  <button class="btn-scan-now btn-sm transport-view-btn" data-id="${esc(req.id)}" style="padding:0.3rem 0.5rem">👁️</button>
+                </td>
               </tr>
             `).join('')}
           </tbody>
         </table>
         <div style="margin-top:1rem;padding:0.5rem;background:#e8f4f8;border-radius:4px;font-size:12px;color:#666">
-          📍 Map view unavailable - using table view
+          📍 Map view unavailable - using table view | <strong>Packages:</strong> Default 1, update when order completes
         </div>
+      </div>
+    `;
+
+    // Add event listeners
+    document.querySelectorAll('.transport-checkbox').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        toggleTransportSelection(e.target.dataset.id);
+      });
+    });
+
+    document.getElementById('selectAllTransportBtn')?.addEventListener('click', () => {
+      const allCheckboxes = document.querySelectorAll('.transport-checkbox');
+      const allSelected = transportSelectedIds.size === transportRequests.length;
+
+      if (allSelected) {
+        transportSelectedIds.clear();
+        allCheckboxes.forEach(cb => cb.checked = false);
+      } else {
+        allCheckboxes.forEach(cb => {
+          transportSelectedIds.add(cb.dataset.id);
+          cb.checked = true;
+        });
+      }
+      updateBulkActionsBar();
+    });
+
+    document.querySelectorAll('.transport-edit-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        openEditTransport(e.target.closest('button').dataset.id);
+      });
+    });
+
+    document.querySelectorAll('.transport-view-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const recordId = e.target.closest('button').dataset.id;
+        const record = transportRequests.find(r => r.id === recordId);
+        if (record) {
+          alert(`${record.clientName}\n${record.shipping?.addressLine1}\n📦 Packages: ${record.packages || 1}\n📍 Postal: ${record.shipping?.zip || 'N/A'}`);
+        }
+      });
+    });
       </div>
     `;
   }
@@ -2464,6 +2522,200 @@
   }
 
   let optimizedRoutes = [];
+  let transportSelectedIds = new Set();
+  let editingTransportId = null;
+
+  // Update transport record when order completes
+  function updateTransportRecordOnOrderCompletion(completedOrder) {
+    if (!transportRequests) return;
+
+    // Try to find matching transport record by order number or waybill
+    let transportRecord = transportRequests.find(r =>
+      r.id === completedOrder.order_number ||
+      r.id === completedOrder.waybill_number ||
+      r.id === completedOrder.pick_ticket ||
+      r.id === completedOrder.po_number ||
+      r.clientName === completedOrder.customer_name
+    );
+
+    if (!transportRecord) return; // No matching transport record
+
+    // Update transport record
+    transportRecord.status = 'confirmed';
+    transportRecord.packages = completedOrder.cartonCount || 1; // Number of cartons/packages
+    transportRecord.completedAt = new Date().toISOString();
+    transportRecord.scannedPieces = Object.values(completedOrder.scanned || {}).reduce((sum, qty) => sum + qty, 0);
+
+    // Persist to localStorage
+    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+
+    console.log(`✓ Updated transport record ${transportRecord.id}: confirmed, ${transportRecord.packages} package(s)`);
+  }
+
+  // Transport record selection and bulk actions
+  function toggleTransportSelection(recordId) {
+    if (transportSelectedIds.has(recordId)) {
+      transportSelectedIds.delete(recordId);
+    } else {
+      transportSelectedIds.add(recordId);
+    }
+    updateBulkActionsBar();
+  }
+
+  function updateBulkActionsBar() {
+    const bar = document.getElementById('transportBulkActionsBar');
+    const count = document.getElementById('bulkSelectCount');
+
+    if (transportSelectedIds.size > 0) {
+      bar.classList.remove('hidden');
+      count.textContent = `${transportSelectedIds.size} selected`;
+    } else {
+      bar.classList.add('hidden');
+    }
+  }
+
+  function openEditTransport(recordId) {
+    const record = transportRequests.find(r => r.id === recordId);
+    if (!record) return;
+
+    editingTransportId = recordId;
+
+    // Populate form
+    document.getElementById('editClientName').value = record.clientName || '';
+    document.getElementById('editStatus').value = record.status || 'pending';
+    document.getElementById('editDriver').value = record.assignedDriver || '';
+    document.getElementById('editPackages').value = record.packages || 1;
+    document.getElementById('editAddress1').value = record.shipping?.addressLine1 || '';
+    document.getElementById('editAddress2').value = record.shipping?.addressLine2 || '';
+    document.getElementById('editPostalCode').value = record.shipping?.zip || '';
+    document.getElementById('editCity').value = record.shipping?.city || 'Singapore';
+    document.getElementById('editPhone').value = record.shipping?.phone || '';
+    document.getElementById('editEmail').value = record.shipping?.email || '';
+    document.getElementById('editNotes').value = record.notes || '';
+
+    // Populate driver dropdown
+    const driverSelect = document.getElementById('editDriver');
+    driverSelect.innerHTML = '<option value="">— Unassigned —</option>';
+    (window.drivers || []).forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.name;
+      driverSelect.appendChild(opt);
+    });
+
+    document.getElementById('editTransportModal').classList.remove('hidden');
+  }
+
+  function saveTransportChanges() {
+    const record = transportRequests.find(r => r.id === editingTransportId);
+    if (!record) return;
+
+    record.clientName = document.getElementById('editClientName').value;
+    record.status = document.getElementById('editStatus').value;
+    record.assignedDriver = document.getElementById('editDriver').value;
+    record.packages = parseInt(document.getElementById('editPackages').value) || 1;
+    record.notes = document.getElementById('editNotes').value;
+
+    if (!record.shipping) record.shipping = {};
+    record.shipping.addressLine1 = document.getElementById('editAddress1').value;
+    record.shipping.addressLine2 = document.getElementById('editAddress2').value;
+    record.shipping.zip = document.getElementById('editPostalCode').value;
+    record.shipping.city = document.getElementById('editCity').value;
+    record.shipping.phone = document.getElementById('editPhone').value;
+    record.shipping.email = document.getElementById('editEmail').value;
+
+    record.updatedAt = new Date().toISOString();
+
+    // Save to localStorage
+    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+
+    document.getElementById('editTransportModal').classList.add('hidden');
+    renderTransportTab();
+  }
+
+  function requestTransportDeletion() {
+    if (!editingTransportId || !confirm('Request deletion for this record? Master approval required.')) return;
+
+    const record = transportRequests.find(r => r.id === editingTransportId);
+    if (!record) return;
+
+    record.pendingDeletion = {
+      requestedAt: new Date().toISOString(),
+      requestedBy: currentUser?.name || 'Admin'
+    };
+
+    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    document.getElementById('editTransportModal').classList.add('hidden');
+
+    alert('Deletion request submitted. Master approval pending.');
+    renderTransportTab();
+  }
+
+  // Bulk operations
+  document.getElementById('bulkAssignDriverBtn')?.addEventListener('click', () => {
+    const driverId = prompt('Enter Driver ID to assign to ' + transportSelectedIds.size + ' records:');
+    if (!driverId) return;
+
+    const driver = (window.drivers || []).find(d => d.id === driverId);
+    if (!driver) {
+      alert('Driver not found');
+      return;
+    }
+
+    transportSelectedIds.forEach(id => {
+      const record = transportRequests.find(r => r.id === id);
+      if (record) {
+        record.assignedDriver = driverId;
+        record.status = 'assigned';
+      }
+    });
+
+    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    transportSelectedIds.clear();
+    updateBulkActionsBar();
+    renderTransportTab();
+    alert(`✓ Assigned ${transportSelectedIds.size} records to ${driver.name}`);
+  });
+
+  document.getElementById('bulkEditBtn')?.addEventListener('click', () => {
+    alert('Opening bulk edit for ' + transportSelectedIds.size + ' records...');
+    // TODO: Show bulk edit modal for common fields
+  });
+
+  document.getElementById('bulkDeleteBtn')?.addEventListener('click', () => {
+    if (!confirm('Request deletion for ' + transportSelectedIds.size + ' records? Master approval required.')) return;
+
+    transportSelectedIds.forEach(id => {
+      const record = transportRequests.find(r => r.id === id);
+      if (record) {
+        record.pendingDeletion = {
+          requestedAt: new Date().toISOString(),
+          requestedBy: currentUser?.name || 'Admin'
+        };
+      }
+    });
+
+    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    transportSelectedIds.clear();
+    updateBulkActionsBar();
+    renderTransportTab();
+    alert(`✓ Deletion requests submitted for ${transportSelectedIds.size} records. Master approval pending.`);
+  });
+
+  document.getElementById('bulkClearBtn')?.addEventListener('click', () => {
+    transportSelectedIds.clear();
+    updateBulkActionsBar();
+  });
+
+  // Edit modal handlers
+  document.getElementById('editTransportSaveBtn')?.addEventListener('click', saveTransportChanges);
+  document.getElementById('editTransportDeleteBtn')?.addEventListener('click', requestTransportDeletion);
+  document.getElementById('editTransportCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('editTransportModal').classList.add('hidden');
+  });
+  document.getElementById('editTransportCloseBtn2')?.addEventListener('click', () => {
+    document.getElementById('editTransportModal').classList.add('hidden');
+  });
 
   function optimizeRoutes() {
     const method = document.getElementById('routeOptimizationMethod')?.value || 'nearest-neighbor';
@@ -5503,6 +5755,9 @@
         mergeOrderState(activeOrder.order_number, 'done');
         stopTimer();
         const completedOrder = activeOrder;
+
+        // Update matching transport record
+        updateTransportRecordOnOrderCompletion(completedOrder);
         // The last carton never went through requestNewCarton()'s "closing"
         // prompt (nothing ever superseded it) — label it now, before moving on.
         if ((completedOrder.cartonCount || 1) > 1 && !cartonLabelConfirmed(completedOrder, completedOrder.cartonCount)) {
