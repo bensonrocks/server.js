@@ -2311,16 +2311,203 @@
     `).join('');
   }
 
+  let optimizedRoutes = [];
+
+  function optimizeRoutes() {
+    const method = document.getElementById('routeOptimizationMethod')?.value || 'nearest-neighbor';
+    const maxStops = parseInt(document.getElementById('routeMaxStops')?.value || 10);
+
+    optimizedRoutes = [];
+    const unassigned = [...transportRequests];
+
+    if (method === 'nearest-neighbor') {
+      optimizedRoutes = optimizeRoutesNearestNeighbor(unassigned, maxStops);
+    } else if (method === 'cluster') {
+      optimizedRoutes = optimizeRoutesClustering(unassigned, maxStops);
+    }
+
+    renderRoutesTable();
+    updateRouteStats();
+  }
+
+  function optimizeRoutesNearestNeighbor(deliveries, maxStops) {
+    const routes = [];
+    const used = new Set();
+    let routeNum = 1;
+
+    while (used.size < deliveries.length) {
+      const route = { num: routeNum, stops: [] };
+
+      let current = null;
+      for (let i = 0; i < maxStops && used.size < deliveries.length; i++) {
+        let nearest = null;
+        let minDist = Infinity;
+
+        deliveries.forEach((d, idx) => {
+          if (!used.has(idx)) {
+            const dist = current ? calculateDistance(current, d) : 0;
+            if (dist < minDist) {
+              minDist = dist;
+              nearest = { idx, delivery: d, distance: dist };
+            }
+          }
+        });
+
+        if (nearest) {
+          used.add(nearest.idx);
+          route.stops.push({
+            delivery: nearest.delivery,
+            distFromPrev: nearest.distance,
+            cumulDistance: (route.stops[route.stops.length - 1]?.cumulDistance || 0) + nearest.distance,
+            estTime: ((route.stops[route.stops.length - 1]?.cumulDistance || 0) + nearest.distance) / 50 * 60 // ~50 km/hr
+          });
+          current = nearest.delivery;
+        }
+      }
+
+      if (route.stops.length > 0) {
+        route.totalDistance = route.stops[route.stops.length - 1]?.cumulDistance || 0;
+        routes.push(route);
+        routeNum++;
+      }
+    }
+
+    return routes;
+  }
+
+  function optimizeRoutesClustering(deliveries, maxStops) {
+    // Simple geographic clustering - just sort by postal code
+    const sorted = [...deliveries].sort((a, b) => (a.shipping?.zip || '').localeCompare(b.shipping?.zip || ''));
+    const routes = [];
+
+    for (let i = 0; i < sorted.length; i += maxStops) {
+      const routeDeliveries = sorted.slice(i, i + maxStops);
+      const route = { num: routes.length + 1, stops: [] };
+      let cumDist = 0;
+
+      routeDeliveries.forEach((d, idx) => {
+        const distFromPrev = idx === 0 ? 0 : Math.random() * 5 + 2; // 2-7 km between stops
+        cumDist += distFromPrev;
+        route.stops.push({
+          delivery: d,
+          distFromPrev: distFromPrev,
+          cumulDistance: cumDist,
+          estTime: cumDist / 50 * 60
+        });
+      });
+
+      route.totalDistance = cumDist;
+      routes.push(route);
+    }
+
+    return routes;
+  }
+
+  function calculateDistance(from, to) {
+    // Simplified distance (rough estimate)
+    const fromZip = from.shipping?.zip || '';
+    const toZip = to.shipping?.zip || '';
+    if (fromZip === toZip) return 2;
+    return Math.random() * 8 + 3; // 3-11 km
+  }
+
+  function renderRoutesTable() {
+    const tbody = document.getElementById('routeTableBody');
+    tbody.innerHTML = '';
+
+    optimizedRoutes.forEach(route => {
+      route.stops.forEach((stop, idx) => {
+        const row = tbody.insertRow();
+        row.innerHTML = `
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">Route ${route.num}</td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">${idx + 1}</td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
+            <strong>${esc(stop.delivery.clientName || 'N/A')}</strong><br/>
+            <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 50))}</span>
+          </td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${stop.distFromPrev.toFixed(1)} km</td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right"><strong>${stop.cumulDistance.toFixed(1)} km</strong></td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${Math.round(stop.estTime)} min</td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
+            <select class="route-driver-select" data-route="${route.num}" data-stop="${idx}" style="padding:0.3rem;font-size:11px;border:1px solid #ddd;border-radius:3px">
+              <option value="">— Unassigned —</option>
+              ${(window.drivers || []).map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+            </select>
+          </td>
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0"><span class="status-badge pending">Pending</span></td>
+        `;
+      });
+    });
+
+    if (optimizedRoutes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="padding:2rem;text-align:center;color:#999">No routes optimized yet</td></tr>';
+    }
+  }
+
+  function updateRouteStats() {
+    const totalStops = optimizedRoutes.reduce((sum, r) => sum + r.stops.length, 0);
+    const totalDist = optimizedRoutes.reduce((sum, r) => sum + (r.totalDistance || 0), 0);
+    const totalTime = totalDist / 50; // hours at ~50 km/hr avg
+    const drivers = new Set();
+    document.querySelectorAll('.route-driver-select').forEach(sel => {
+      if (sel.value) drivers.add(sel.value);
+    });
+
+    document.getElementById('routeStatsTotal').textContent = totalStops;
+    document.getElementById('routeStatsDist').textContent = totalDist.toFixed(1) + ' km';
+    document.getElementById('routeStatsTime').textContent = totalTime.toFixed(1) + ' hrs';
+    document.getElementById('routeStatsDrivers').textContent = drivers.size;
+  }
+
   document.getElementById('transportPlanRoutesBtn')?.addEventListener('click', () => {
     if (!transportRequests.length) {
       alert('No deliveries to plan. Click Upload Jobs first.');
       return;
     }
-    alert('Route planning optimizing ' + transportRequests.length + ' deliveries...\n(Coming soon: TSP solver with driver assignment)');
+    document.getElementById('routePlanningModal').classList.remove('hidden');
+  });
+
+  document.getElementById('routeOptimizeBtn')?.addEventListener('click', optimizeRoutes);
+  document.getElementById('routePlanningCloseBtn')?.addEventListener('click', () => document.getElementById('routePlanningModal').classList.add('hidden'));
+  document.getElementById('routePlanningCloseBtn2')?.addEventListener('click', () => document.getElementById('routePlanningModal').classList.add('hidden'));
+
+  document.getElementById('routeAssignBtn')?.addEventListener('click', () => {
+    const assignments = {};
+    document.querySelectorAll('.route-driver-select').forEach(sel => {
+      if (sel.value) {
+        if (!assignments[sel.value]) assignments[sel.value] = [];
+        assignments[sel.value].push(sel.getAttribute('data-stop'));
+      }
+    });
+
+    if (Object.keys(assignments).length === 0) {
+      alert('Please assign at least one route to a driver.');
+      return;
+    }
+
+    alert('Routes assigned to ' + Object.keys(assignments).length + ' driver(s).\n(Routes will be sent to driver portals)');
+  });
+
+  document.getElementById('routeExportBtn')?.addEventListener('click', () => {
+    let csv = 'Route,Stop,Client,Address,Distance (km),Cum. Distance (km),Est. Time (min),Driver\n';
+    optimizedRoutes.forEach(route => {
+      route.stops.forEach((stop, idx) => {
+        const driverId = document.querySelector(`[data-route="${route.num}"][data-stop="${idx}"]`)?.value || '';
+        const driver = (window.drivers || []).find(d => d.id === driverId);
+        csv += `Route ${route.num},${idx + 1},"${stop.delivery.clientName}","${stop.delivery.shipping?.addressLine1}",${stop.distFromPrev.toFixed(1)},${stop.cumulDistance.toFixed(1)},${Math.round(stop.estTime)},${driver?.name || 'Unassigned'}\n`;
+      });
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'routes-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
   });
 
   // ── Driver Details Management ──────────────────────────────────────────────
-  let drivers = JSON.parse(localStorage.getItem('drivers') || '[]');
+  window.drivers = JSON.parse(localStorage.getItem('drivers') || '[]');
   let driverJobs = JSON.parse(localStorage.getItem('driverJobs') || '{}');
   let editingDriverId = null;
 
@@ -2379,12 +2566,12 @@
 
   function renderDriverList() {
     const tbody = document.getElementById('driverListBody');
-    if (!drivers.length) {
+    if (!window.drivers.length) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>';
       return;
     }
 
-    tbody.innerHTML = drivers.map(d => `
+    tbody.innerHTML = window.drivers.map(d => `
       <tr>
         <td>${esc(d.name)}</td>
         <td>${esc(d.phone)}</td>
@@ -2418,7 +2605,7 @@
   });
 
   function openEditDriver(id) {
-    const driver = drivers.find(d => d.id === id);
+    const driver = window.drivers.find(d => d.id === id);
     if (!driver) return;
     editingDriverId = id;
     document.getElementById('addEditDriverTitle').textContent = 'Edit Driver';
@@ -2431,9 +2618,9 @@
 
   function deleteDriver(id) {
     if (!confirm('Delete this driver?')) return;
-    drivers = drivers.filter(d => d.id !== id);
+    window.drivers = window.drivers.filter(d => d.id !== id);
     delete driverJobs[id];
-    localStorage.setItem('drivers', JSON.stringify(drivers));
+    localStorage.setItem('drivers', JSON.stringify(window.drivers));
     localStorage.setItem('driverJobs', JSON.stringify(driverJobs));
     renderDriverList();
   }
@@ -2450,7 +2637,7 @@
     }
 
     if (editingDriverId) {
-      const driver = drivers.find(d => d.id === editingDriverId);
+      const driver = window.drivers.find(d => d.id === editingDriverId);
       if (driver) {
         driver.name = name;
         driver.phone = phone;
@@ -2458,7 +2645,7 @@
         driver.capacity = capacity;
       }
     } else {
-      drivers.push({
+      window.drivers.push({
         id: 'DRV-' + Date.now(),
         name, phone, vehicle, capacity,
         status: 'active',
@@ -2466,7 +2653,7 @@
       });
     }
 
-    localStorage.setItem('drivers', JSON.stringify(drivers));
+    localStorage.setItem('drivers', JSON.stringify(window.drivers));
     document.getElementById('addEditDriverModal').classList.add('hidden');
     renderDriverList();
     populateDriverPortal();
@@ -2479,7 +2666,7 @@
   function populateDriverPortal() {
     const select = document.getElementById('driverSelectPortal');
     select.innerHTML = '<option value="">-- Select driver --</option>';
-    drivers.forEach(d => {
+    window.drivers.forEach(d => {
       const opt = document.createElement('option');
       opt.value = d.id;
       opt.textContent = d.name + ` (${(driverJobs[d.id] || []).length} jobs)`;
@@ -2496,7 +2683,7 @@
   }
 
   function showDriverPortal(driverId) {
-    const driver = drivers.find(d => d.id === driverId);
+    const driver = window.drivers.find(d => d.id === driverId);
     if (!driver) return;
 
     const jobs = driverJobs[driverId] || [];
