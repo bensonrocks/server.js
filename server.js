@@ -689,11 +689,19 @@ function invalidateCustomHeadersCache() { _customHeadersCache = undefined; }
 function readDb() {
   if (_dbCache) return _dbCache;
   try { _dbCache = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { _dbCache = { batches: [], inbound: [], transport: [] }; }
+  catch { _dbCache = { batches: [], inbound: [], transport: [], drivers: [] }; }
   // Ensure all required fields exist
   if (!_dbCache.batches) _dbCache.batches = [];
   if (!_dbCache.inbound) _dbCache.inbound = [];
   if (!_dbCache.transport) _dbCache.transport = [];
+  if (!_dbCache.drivers) {
+    // Initialize with sample drivers
+    _dbCache.drivers = [
+      { id: 'DRV-001', name: 'Ahmad Hassan', pin: '1234', phone: '6581234567', vehicle: 'Van', capacity: 1000, status: 'active' },
+      { id: 'DRV-002', name: 'Sarah Chen', pin: '2345', phone: '6587654321', vehicle: 'Bike', capacity: 50, status: 'active' },
+      { id: 'DRV-003', name: 'Rajesh Kumar', pin: '3456', phone: '6591112222', vehicle: 'Truck', capacity: 2000, status: 'active' }
+    ];
+  }
   return _dbCache;
 }
 // Persist is ATOMIC (tmp file + rename) so a crash mid-write can never leave
@@ -2849,10 +2857,11 @@ const AUTH_PUBLIC = new Set([
   '/api/stats',
   '/api/public/orders',
   '/api/public/config',
+  '/api/driver/login',
 ]);
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
-  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/')) return next();
+  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
   requireAuth(req, res, next);
 });
 
@@ -6939,6 +6948,128 @@ app.post('/api/tms/stops/:id/fail', requireAuth, requireMysql, express.json(), a
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── DRIVER PORTAL API ENDPOINTS ────────────────────────────────────────────
+
+// POST /api/driver/login — PIN-based driver login
+app.post('/api/driver/login', express.json(), (req, res) => {
+  const { pin } = req.body;
+  if (!pin || pin.length !== 4) {
+    return res.status(400).json({ error: 'Invalid PIN format' });
+  }
+
+  // Get database and drivers
+  const db = readDb();
+  const drivers = db.drivers || [];
+  const driver = drivers.find(d => d.pin === pin);
+
+  if (!driver) {
+    return res.status(401).json({ error: 'Invalid PIN' });
+  }
+
+  res.json({
+    id: driver.id,
+    name: driver.name,
+    vehicle: driver.vehicle,
+    message: 'Login successful'
+  });
+});
+
+// GET /api/driver/jobs — Get driver's assigned jobs
+app.get('/api/driver/jobs', (req, res) => {
+  const driverId = req.query.driverId;
+  const pin = req.headers['x-driver-pin'];
+
+  if (!driverId || !pin) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  // Get database and verify driver PIN
+  const db = readDb();
+  const drivers = db.drivers || [];
+  const driver = drivers.find(d => d.id === driverId && d.pin === pin);
+  if (!driver) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  // Get jobs assigned to this driver (from transport requests)
+  const jobs = (db.transport || [])
+    .filter(t => t.assignedDriver === driverId)
+    .map(t => ({
+      id: t.id,
+      customer: t.clientName,
+      address: t.shipping?.addressLine1 || '',
+      postalCode: t.shipping?.zip || '',
+      city: t.shipping?.city || 'Singapore',
+      phone: t.shipping?.phone || '',
+      items: t.items || [],
+      status: t.status || 'pending',
+      location: t.geocoded ? { lat: t.geocoded.lat, lng: t.geocoded.lng } : { lat: 1.3521, lng: 103.8198 },
+      createdAt: t.createdAt
+    }))
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+  const pending = jobs.filter(j => j.status === 'pending' || j.status === 'in-progress');
+  const completed = jobs.filter(j => j.status === 'delivered' || j.status === 'failed');
+
+  res.json({ pending, completed });
+});
+
+// POST /api/driver/jobs/:id/complete — Mark job as completed
+app.post('/api/driver/jobs/:id/complete', express.json(), (req, res) => {
+  const jobId = req.params.id;
+  const driverId = req.headers['x-driver-id'];
+  const pin = req.headers['x-driver-pin'];
+  const { status, completedAt, timeTaken, distanceTravelled, notes, location } = req.body;
+
+  if (!driverId || !pin) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  // Get database and verify driver
+  const db = readDb();
+  const drivers = db.drivers || [];
+  const driver = drivers.find(d => d.id === driverId && d.pin === pin);
+  if (!driver) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  // Update job status
+  const jobIndex = (db.transport || []).findIndex(t => t.id === jobId);
+  if (jobIndex === -1) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const job = db.transport[jobIndex];
+  job.status = status;
+  job.completedAt = completedAt;
+  job.driverStats = {
+    timeTaken,
+    distanceTravelled,
+    completedBy: driverId,
+    notes,
+    location
+  };
+
+  // Persist to database
+  _persistDb();
+
+  // Log audit event
+  logAudit('driver_job_completed', {
+    jobId,
+    driverId,
+    status,
+    timeTaken,
+    distance: distanceTravelled
+  });
+
+  res.json({ success: true, message: `Job marked as ${status}`, job });
+});
+
+// GET /api/driver/serve — Serve the driver portal
+app.get('/driver', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'driver.html'));
 });
 
 const PORT = process.env.PORT || 3000;
