@@ -4469,32 +4469,8 @@ app.post('/api/transport', (req, res) => {
   res.json(newRequest);
 });
 
-app.get('/api/transport/:id', (req, res) => {
-  const db = readDb();
-  const req_data = (db.transport || []).find(r => r.id === req.params.id);
-  if (!req_data) return res.status(404).json({ error: 'Transport request not found' });
-  res.json(req_data);
-});
-
-app.post('/api/transport/:id/update', (req, res) => {
-  const db = readDb();
-  const request = (db.transport || []).find(r => r.id === req.params.id);
-  if (!request) return res.status(404).json({ error: 'Transport request not found' });
-
-  const updates = req.body || {};
-  if (updates.status) request.status = updates.status;
-  if (updates.clientName) request.clientName = updates.clientName;
-  if (updates.shipping) request.shipping = { ...request.shipping, ...updates.shipping };
-  if (updates.notes) request.notes = updates.notes;
-
-  request.updatedAt = new Date().toISOString();
-  _persistDb(db);
-  logAudit('transport_updated', { id: request.id, status: request.status });
-  res.json(request);
-});
-
-// TMS Import — BETIME delivery schedule
 // TMS Import — Unified transport import (handles any file format via attribute-based detection)
+// Must come before :id route to prevent "import" from being treated as an ID
 app.post('/api/transport/import', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -4562,6 +4538,7 @@ app.post('/api/transport/import', upload.single('file'), (req, res) => {
 });
 
 // Fix Schedule Management — Define routing constraints per day
+// Must come before :id route to prevent "fix-schedule" from being treated as an ID
 app.get('/api/transport/fix-schedule', (req, res) => {
   const db = readDb();
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -4597,6 +4574,31 @@ app.post('/api/transport/fix-schedule/:day', (req, res) => {
   logAudit('fix_schedule_updated', { day, enabled, areasCount: priorityAreas?.length || 0 });
 
   res.json(db.fixSchedules[day]);
+});
+
+// Generic transport record endpoints — must come after specific routes
+app.get('/api/transport/:id', (req, res) => {
+  const db = readDb();
+  const req_data = (db.transport || []).find(r => r.id === req.params.id);
+  if (!req_data) return res.status(404).json({ error: 'Transport request not found' });
+  res.json(req_data);
+});
+
+app.post('/api/transport/:id/update', (req, res) => {
+  const db = readDb();
+  const request = (db.transport || []).find(r => r.id === req.params.id);
+  if (!request) return res.status(404).json({ error: 'Transport request not found' });
+
+  const updates = req.body || {};
+  if (updates.status) request.status = updates.status;
+  if (updates.clientName) request.clientName = updates.clientName;
+  if (updates.shipping) request.shipping = { ...request.shipping, ...updates.shipping };
+  if (updates.notes) request.notes = updates.notes;
+
+  request.updatedAt = new Date().toISOString();
+  _persistDb(db);
+  logAudit('transport_updated', { id: request.id, status: request.status });
+  res.json(request);
 });
 
 app.post('/api/scan/learn-barcode', (req, res) => {
