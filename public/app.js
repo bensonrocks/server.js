@@ -3343,7 +3343,7 @@
           <div class="head">
             <div>
               <div class="brand">IDEALONE — Delivery Run Sheet</div>
-              <div class="drv">👤 ${esc(driverName)}${driverRec?.phone ? ` · 📞 ${esc(driverRec.phone)}` : ''}</div>
+              <div class="drv">👤 ${esc(driverName)}${driverRec?.phone ? ` · 📞 ${esc(driverRec.phone)}` : ''}${driverRec?.plate ? ` · 🚚 ${esc(driverRec.plate)}` : ''}</div>
             </div>
             <div class="meta">
               <div>${esc(today)}</div>
@@ -3628,7 +3628,7 @@
   function renderDriverList() {
     const tbody = document.getElementById('driverListBody');
     if (!window.drivers.length) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>';
       return;
     }
 
@@ -3637,7 +3637,8 @@
         <td>${esc(d.name)}</td>
         <td>${esc(d.phone)}</td>
         <td>${esc(d.vehicle)}</td>
-        <td>${d.capacity ? d.capacity + ' kg' : '—'}</td>
+        <td>${d.plate ? `<code>${esc(d.plate)}</code>` : '—'}</td>
+        <td>${[d.capacity ? d.capacity + ' kg' : '', d.capacityM3 ? d.capacityM3 + ' m³' : ''].filter(Boolean).join(' / ') || '—'}</td>
         <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span></td>
         <td style="text-align:center"><strong>${(driverJobs[d.id] || []).length}</strong></td>
         <td>
@@ -3664,7 +3665,9 @@
     document.getElementById('driverNameInput').value = '';
     document.getElementById('driverPhoneInput').value = '';
     document.getElementById('driverVehicleInput').value = 'Van';
+    document.getElementById('driverPlateInput').value = '';
     document.getElementById('driverCapacityInput').value = '';
+    document.getElementById('driverCapacityM3Input').value = '';
     document.getElementById('addEditDriverModal').classList.remove('hidden');
   });
 
@@ -3676,7 +3679,9 @@
     document.getElementById('driverNameInput').value = driver.name;
     document.getElementById('driverPhoneInput').value = driver.phone;
     document.getElementById('driverVehicleInput').value = driver.vehicle;
+    document.getElementById('driverPlateInput').value = driver.plate || '';
     document.getElementById('driverCapacityInput').value = driver.capacity || '';
+    document.getElementById('driverCapacityM3Input').value = driver.capacityM3 || '';
     document.getElementById('addEditDriverModal').classList.remove('hidden');
   }
 
@@ -3693,7 +3698,9 @@
     const name = document.getElementById('driverNameInput').value.trim();
     const phone = document.getElementById('driverPhoneInput').value.trim();
     const vehicle = document.getElementById('driverVehicleInput').value;
+    const plate = document.getElementById('driverPlateInput').value.trim().toUpperCase();
     const capacity = parseInt(document.getElementById('driverCapacityInput').value) || 0;
+    const capacityM3 = parseFloat(document.getElementById('driverCapacityM3Input').value) || 0;
 
     if (!name) {
       alert('Please enter driver name');
@@ -3706,12 +3713,14 @@
         driver.name = name;
         driver.phone = phone;
         driver.vehicle = vehicle;
+        driver.plate = plate;
         driver.capacity = capacity;
+        driver.capacityM3 = capacityM3;
       }
     } else {
       window.drivers.push({
         id: 'DRV-' + Date.now(),
-        name, phone, vehicle, capacity,
+        name, phone, vehicle, plate, capacity, capacityM3,
         status: 'active',
         stats: { distance: 0, time: 0, jobs: 0 }
       });
