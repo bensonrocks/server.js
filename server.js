@@ -26,6 +26,7 @@ const connectionsDb   = require('./lib/db/connections');
 const createStore     = require('./lib/store');
 const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
+const createOrderSync = require('./lib/order-sync');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -1019,6 +1020,194 @@ app.delete('/api/connect/platform/:credentialId', withTenant, (req, res) => {
     });
   } catch (err) {
     console.error('Error deleting credentials:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Order Sync (Generic, Platform-Agnostic) ───────────────────────────────────
+
+/**
+ * POST /api/sync/:source/orders
+ *
+ * Generic endpoint to sync orders from ANY platform source
+ * (ZORT, Shopee, Lazada, TikTok, Shopify, or your own API)
+ *
+ * Supports both:
+ * 1. Pulling orders via adapter (via body.source)
+ * 2. Pushing pre-fetched orders (via body.orders)
+ *
+ * Body:
+ * {
+ *   "source": "zort" | "shopee" | "lazada" | "tiktok" | "shopify",
+ *   "orders": [ StandardOrder[] ],  // Pre-fetched orders to sync
+ *   "autoAllocate": true             // Auto-transition orders to ALLOCATED?
+ * }
+ *
+ * Returns:
+ * {
+ *   "created": 5,
+ *   "updated": 2,
+ *   "failed": 0,
+ *   "message": "Orders synced successfully"
+ * }
+ */
+app.post('/api/sync/:source/orders', withTenant, async (req, res) => {
+  try {
+    const { source } = req.params;
+    const { orders, autoAllocate } = req.body;
+
+    if (!source || !orders || !Array.isArray(orders)) {
+      return res.status(400).json({
+        error: 'Required: source in URL, orders[] in body',
+      });
+    }
+
+    // Get IDEALONE database for this tenant
+    const { db } = req.ctx;
+
+    // Sync orders
+    const orderSync = createOrderSync(db);
+    const result = await orderSync.syncOrders({
+      tenantId: tenantId,
+      source: source,
+      platform: req.body.platform || source,
+      orders: orders,
+      userId: req.user?.id || 'system',
+    });
+
+    // Optionally auto-allocate (transition to ALLOCATED)
+    if (autoAllocate && result.created > 0) {
+      const allocResult = await orderSync.autoAllocateNewOrders(tenantId, source);
+      result.autoAllocated = allocResult.allocated;
+    }
+
+    res.json({
+      success: true,
+      message: `${result.created} orders created, ${result.updated} updated, ${result.failed} failed`,
+      ...result,
+    });
+  } catch (err) {
+    console.error('Error syncing orders:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/sync/zort/orders
+ *
+ * Specific ZORT order sync endpoint
+ * Fetches orders from ZORT API and syncs to IDEALONE
+ *
+ * Query params:
+ * - since: ISO date (fetch orders since this date)
+ * - statuses: Comma-separated list (pending, confirmed, etc)
+ * - autoAllocate: boolean (auto-transition to ALLOCATED?)
+ *
+ * Returns same as generic endpoint
+ */
+app.post('/api/sync/zort/orders', withTenant, async (req, res) => {
+  try {
+    const creds = req.creds.get('zort');
+    if (!creds?.apikey) {
+      return res.status(400).json({
+        error: 'ZORT not connected — save credentials first',
+      });
+    }
+
+    // Parse query params
+    const since = req.query.since ? new Date(req.query.since) : null;
+    const statuses = req.query.statuses?.split(',') || ['pending', 'confirmed'];
+    const autoAllocate = req.query.autoAllocate === 'true';
+
+    // Fetch orders from ZORT (via adapter)
+    const { zortOrdersAdapter } = require('./dist/gateway/adapters/zort/zort-orders.adapter');
+    const orders = await zortOrdersAdapter.fetchOrders(creds, {
+      since,
+      statuses,
+    });
+
+    if (!orders || orders.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No new orders from ZORT',
+        created: 0,
+        updated: 0,
+        failed: 0,
+        orders: [],
+      });
+    }
+
+    // Sync to IDEALONE using generic endpoint
+    const { db } = req.ctx;
+    const orderSync = createOrderSync(db);
+    const result = await orderSync.syncOrders({
+      tenantId: tenantId,
+      source: 'zort',
+      platform: 'zort',
+      orders: orders,
+      userId: req.user?.id || 'system',
+    });
+
+    // Optionally auto-allocate
+    if (autoAllocate && result.created > 0) {
+      const allocResult = await orderSync.autoAllocateNewOrders(tenantId, 'zort');
+      result.autoAllocated = allocResult.allocated;
+    }
+
+    res.json({
+      success: true,
+      message: `${result.created} ZORT orders created, ${result.updated} updated, ${result.failed} failed`,
+      ...result,
+    });
+  } catch (err) {
+    console.error('Error syncing ZORT orders:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/sync/:source/orders/status
+ *
+ * Check sync status for a platform source
+ * Shows: last sync time, total orders imported, pending orders, etc
+ */
+app.get('/api/sync/:source/orders/status', withTenant, (req, res) => {
+  try {
+    const { source } = req.params;
+    const { db } = req.ctx;
+
+    // Get sync statistics
+    const stats = db.prepare(`
+      SELECT
+        source_system as source,
+        COUNT(*) as total_imported,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+        COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed,
+        MAX(sync_timestamp) as last_sync
+      FROM sync_log
+      WHERE tenant_id = ? AND source_system = ?
+      GROUP BY source_system
+    `).get(tenantId, source);
+
+    if (!stats) {
+      return res.json({
+        source,
+        total_imported: 0,
+        pending: 0,
+        confirmed: 0,
+        last_sync: null,
+      });
+    }
+
+    res.json({
+      source,
+      total_imported: stats.total_imported,
+      pending: stats.pending,
+      confirmed: stats.confirmed,
+      last_sync: stats.last_sync,
+    });
+  } catch (err) {
+    console.error('Error fetching sync status:', err);
     res.status(500).json({ error: err.message });
   }
 });
