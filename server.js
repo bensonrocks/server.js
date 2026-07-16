@@ -38,6 +38,7 @@ const createFulfillment = require('./lib/fulfillment');
 const createPicking     = require('./lib/picking');
 const shopifyApp        = require('./lib/shopify-app');
 const inventorySync     = require('./lib/inventory-sync');
+const createSecurity    = require('./lib/security');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -74,6 +75,7 @@ function getBaseUrl(req) {
 }
 
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 20 * 1024 * 1024 } });
+const security = createSecurity(process.env.ENCRYPTION_KEY || 'default-encryption-key');
 
 // verify callback stores the raw Buffer on req so webhook HMAC verification can use it
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
@@ -2430,6 +2432,105 @@ app.post('/api/portal/connection-requests', withClientAuth, (req, res) => {
     ).run(req.clientId, req.clientName || req.clientId, marketplace, store_name, notes);
   } catch (_) {}
   res.json({ ok: true, autoConnected: false });
+});
+
+// ── Client platform credentials management ───────────────────────────────────
+
+const platformSchemas = {
+  shopee:  { required: ['shopId', 'apiKey', 'apiSecret'] },
+  lazada:  { required: ['shopId', 'apiKey', 'apiSecret'] },
+  tiktok:  { required: ['shopId', 'apiKey'] },
+  shopify: { required: ['storeUrl', 'accessToken'] },
+};
+
+app.post('/api/portal/platform-credentials/:platform', withClientAuth, (req, res) => {
+  const platform = (req.params.platform || '').toLowerCase();
+  const schema = platformSchemas[platform];
+
+  if (!schema) {
+    return res.status(400).json({ error: `Unsupported platform: ${platform}. Supported: shopee, lazada, tiktok, shopify` });
+  }
+
+  const missing = schema.required.filter(f => !req.body || !(f in req.body));
+  if (missing.length > 0) {
+    return res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
+  }
+
+  try {
+    const data = JSON.stringify(req.body);
+    const encryptedData = security.encrypt(data);
+    const now = new Date().toISOString();
+
+    connectionsDb.prepare(
+      'INSERT OR REPLACE INTO client_platform_connections (tenant_id, client_id, platform, data, is_deleted, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(req.tenantId || 'default', req.clientId, platform, encryptedData, 0, now);
+
+    res.json({ ok: true, platform });
+  } catch (err) {
+    console.error('Error saving platform credentials:', err);
+    res.status(500).json({ error: 'Failed to save credentials' });
+  }
+});
+
+app.get('/api/portal/platform-credentials', withClientAuth, (req, res) => {
+  try {
+    const tenantId = req.tenantId || 'default';
+    const clientId = req.clientId;
+
+    const rows = connectionsDb.prepare(
+      'SELECT platform, data FROM client_platform_connections WHERE tenant_id = ? AND client_id = ? AND is_deleted = 0 ORDER BY platform'
+    ).all(tenantId, clientId);
+
+    const credentials = rows.map(row => {
+      try {
+        const decrypted = security.decrypt(row.data);
+        const data = JSON.parse(decrypted);
+        // Return safe fields only (no secrets in response)
+        const safe = { platform: row.platform };
+        if (row.platform === 'shopee') {
+          safe.shopId = data.shopId;
+        } else if (row.platform === 'lazada') {
+          safe.shopId = data.shopId;
+        } else if (row.platform === 'tiktok') {
+          safe.shopId = data.shopId;
+        } else if (row.platform === 'shopify') {
+          safe.storeUrl = data.storeUrl;
+        }
+        return safe;
+      } catch (e) {
+        console.error(`Failed to decrypt credentials for ${row.platform}:`, e);
+        return null;
+      }
+    }).filter(Boolean);
+
+    res.json({ credentials });
+  } catch (err) {
+    console.error('Error fetching platform credentials:', err);
+    res.status(500).json({ error: 'Failed to fetch credentials' });
+  }
+});
+
+app.delete('/api/portal/platform-credentials/:platform', withClientAuth, (req, res) => {
+  const platform = (req.params.platform || '').toLowerCase();
+
+  if (!platformSchemas[platform]) {
+    return res.status(400).json({ error: `Unsupported platform: ${platform}` });
+  }
+
+  try {
+    const tenantId = req.tenantId || 'default';
+    const clientId = req.clientId;
+    const now = new Date().toISOString();
+
+    connectionsDb.prepare(
+      'UPDATE client_platform_connections SET is_deleted = 1, updated_at = ? WHERE tenant_id = ? AND client_id = ? AND platform = ?'
+    ).run(now, tenantId, clientId, platform);
+
+    res.json({ ok: true, platform });
+  } catch (err) {
+    console.error('Error deleting platform credentials:', err);
+    res.status(500).json({ error: 'Failed to delete credentials' });
+  }
 });
 
 // ── OAuth result pages ────────────────────────────────────────────────────────
