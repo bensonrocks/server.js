@@ -95,18 +95,70 @@ export class ZortOrdersAdapter {
   }
 
   /**
-   * Placeholder for ZORT API calls
-   * In production, you'd use fetch() or axios here
+   * Call ZORT API
+   * Handles authentication and error handling
    */
   private async callZortApi(
     creds: AdapterCredentials,
     endpoint: string,
     params?: Record<string, any>
   ): Promise<any[]> {
-    // TODO: Implement actual ZORT API call
-    // For now, return empty array
-    console.log(`ZORT API: GET ${endpoint}`, params);
-    return [];
+    const baseUrl = 'https://api.zort.com/v1'; // ZORT API base URL
+    const storename = creds.storename || '';
+    const apikey = creds.apikey || '';
+    const apisecret = creds.apisecret || '';
+
+    try {
+      // Build query string
+      const queryParams = new URLSearchParams();
+      if (params) {
+        Object.entries(params).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            queryParams.append(key, String(value));
+          }
+        });
+      }
+
+      // Add authentication to headers
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Store-Name': storename,
+        'X-API-Key': apikey,
+        'X-API-Secret': apisecret,
+      };
+
+      const url = `${baseUrl}${endpoint}${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+
+      console.log(`[ZORT] Fetching: ${url}`);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: response.statusText }));
+        throw new Error(`ZORT API error (${response.status}): ${error.message || error.error}`);
+      }
+
+      const data = await response.json();
+
+      // ZORT API typically returns: { data: [...], total: N, page: P }
+      // Extract the data array
+      if (Array.isArray(data)) {
+        return data;
+      }
+
+      if (data.data && Array.isArray(data.data)) {
+        return data.data;
+      }
+
+      console.warn(`[ZORT] Unexpected response format:`, data);
+      return [];
+    } catch (err) {
+      console.error(`[ZORT] API call failed:`, err.message);
+      throw err;
+    }
   }
 }
 
