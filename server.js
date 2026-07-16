@@ -50,6 +50,8 @@ const createPrintQueue = require('./lib/print-queue');
 const createPickingOrchestrator = require('./lib/picking-orchestrator');
 const createOrderTypeDetector = require('./lib/order-type-detector');
 const createPOManager = require('./lib/po-manager');
+const createPOCSVImporter = require('./lib/po-csv-importer');
+const createB2BBatchProcessor = require('./lib/b2b-batch-processor');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -3173,6 +3175,91 @@ app.post('/api/b2b-b2c/po/:poId/reject', withStaffTenant, (req, res) => {
     const reason = req.body.reason || 'Rejected by user';
     const result = poManager.rejectPODocument(req.params.poId, reason);
     res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PO CSV Import & Batch Processing (Phase 3) ────────────────────────────────
+
+// Get import template
+app.get('/api/b2b-b2c/po/import/template', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const importer = createPOCSVImporter(ctx.db);
+    const template = importer.importTemplate();
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="po-import-template.csv"');
+    res.send(template);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Upload and import PO CSV
+app.post('/api/b2b-b2c/po/import/csv', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const csvText = req.body.csv || '';
+    const clientId = req.body.client_id || null;
+
+    if (!csvText) return res.status(400).json({ error: 'CSV data required' });
+
+    const importer = createPOCSVImporter(ctx.db);
+    const result = importer.importPOsFromCSV(csvText, clientId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Process PO document (create orders, suggest waves)
+app.post('/api/b2b-b2c/po/:poId/process', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const processor = createB2BBatchProcessor(ctx.db);
+    const result = processor.processPODocument(req.params.poId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Stage carton (auto-called after scan-pack closure)
+app.post('/api/b2b-b2c/staging/carton/:cartonId/stage', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const processor = createB2BBatchProcessor(ctx.db);
+    const poId = req.body.po_id || null;
+    const result = processor.autoStageCarton(req.params.cartonId, poId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Release staged cartons for a PO
+app.post('/api/b2b-b2c/po/:poId/release-staging', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const processor = createB2BBatchProcessor(ctx.db);
+    const result = processor.releaseStagedCartons(req.params.poId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get staged cartons for PO
+app.get('/api/b2b-b2c/po/:poId/staged-cartons', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cartons = ctx.db.prepare(`
+      SELECT * FROM staging_area
+      WHERE po_id = ? AND status = 'staged'
+      ORDER BY received_at DESC
+    `).all(req.params.poId);
+    res.json(cartons || []);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
