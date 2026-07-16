@@ -39,6 +39,12 @@ const createPicking     = require('./lib/picking');
 const shopifyApp        = require('./lib/shopify-app');
 const inventorySync     = require('./lib/inventory-sync');
 const createSecurity    = require('./lib/security');
+const createAutoAllocator = require('./lib/auto-allocator');
+const createPickingWave = require('./lib/picking-wave');
+const createLabelPrinter = require('./lib/label-printer');
+const createReturnsManager = require('./lib/returns-manager');
+const createInventoryForecast = require('./lib/inventory-forecast');
+const createAnalytics = require('./lib/analytics');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -2552,6 +2558,245 @@ app.get('/api/admin/client-connections', withStaffTenant, (req, res) => {
   } catch (err) {
     console.error('Error fetching client connections:', err);
     res.status(500).json({ error: 'Failed to fetch client connections' });
+  }
+});
+
+// ── WMS Routes: Auto-Allocation, Picking Waves, Returns, Forecasting, Analytics ──
+
+// Auto-Allocation endpoints
+app.post('/api/wms/allocate/order/:orderId', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const allocator = createAutoAllocator(ctx.db, ctx.inventory, ctx.store);
+    const result = allocator.allocateOrder(req.params.orderId, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/allocate/batch', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const allocator = createAutoAllocator(ctx.db, ctx.inventory, ctx.store);
+    const result = allocator.allocateBatch(req.body.orderIds || [], req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Picking Wave endpoints
+app.post('/api/wms/waves', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.createWave(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/waves', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.listWaves(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/waves/:waveId/orders', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.addOrdersToWave(req.params.waveId, req.body.orderIds || []);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/waves/:waveId', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.getWaveDetails(req.params.waveId);
+    if (!result) return res.status(404).json({ error: 'Wave not found' });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/waves/:waveId/start', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.startWave(req.params.waveId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/waves/:waveId/stats', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.getWaveStats(req.params.waveId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Returns Management endpoints
+app.post('/api/wms/returns', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const returns = createReturnsManager(ctx.db);
+    const result = returns.createReturn(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/returns/:returnId', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const returns = createReturnsManager(ctx.db);
+    const result = returns.getReturnDetails(req.params.returnId);
+    if (!result) return res.status(404).json({ error: 'Return not found' });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/returns/:returnId/inspect', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const returns = createReturnsManager(ctx.db);
+    const result = returns.inspectReturn(req.params.returnId, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/returns/:returnId/approve-restock', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const returns = createReturnsManager(ctx.db);
+    const result = returns.approveRestock(req.params.returnId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/returns/stats/summary', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const returns = createReturnsManager(ctx.db);
+    const result = returns.getReturnStats(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Inventory Forecasting endpoints
+app.get('/api/wms/forecast/demand/:skuId', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const forecast = createInventoryForecast(ctx.db);
+    const result = forecast.forecastDemand({
+      skuId: req.params.skuId,
+      days: parseInt(req.query.days || 30),
+      method: req.query.method || 'moving_average'
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/forecast/gap', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const forecast = createInventoryForecast(ctx.db);
+    const result = forecast.forecastInventoryGap();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/forecast/platform', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const forecast = createInventoryForecast(ctx.db);
+    const result = forecast.forecastByPlatform({
+      platform: req.query.platform,
+      days: parseInt(req.query.days || 30)
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Analytics Dashboard endpoints
+app.get('/api/wms/analytics/dashboard', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const analy = createAnalytics(ctx.db);
+    const result = analy.getDashboardMetrics(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/analytics/trends', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const analy = createAnalytics(ctx.db);
+    const result = analy.getTrendData({
+      days: parseInt(req.query.days || 30),
+      metric: req.query.metric || 'orders'
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/analytics/warehouses', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const analy = createAnalytics(ctx.db);
+    const result = analy.getWarehouseMetrics();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/analytics/sales-by-platform', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const analy = createAnalytics(ctx.db);
+    const result = analy.getSalesbyPlatform(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
