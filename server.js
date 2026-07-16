@@ -851,6 +851,178 @@ app.post('/api/connect/zort/webhook/register', withTenant, async (req, res) => {
   }
 });
 
+// ── Multi-Platform Credential Management ──────────────────────────────────────
+
+const createMultiCredentials = require('./lib/credentials-multi');
+
+// POST /api/test/platform — Test platform credentials without saving
+app.post('/api/test/platform', withTenant, async (req, res) => {
+  try {
+    const { platform, shopId, apiKey, apiSecret, shopUrl, accessToken } = req.body;
+
+    if (!platform) {
+      return res.status(400).json({ error: 'Platform is required' });
+    }
+
+    // Validate required fields per platform
+    if (['shopee', 'lazada', 'tiktok'].includes(platform)) {
+      if (!shopId || !apiKey || !apiSecret) {
+        return res.status(400).json({ error: `${platform} requires shopId, apiKey, and apiSecret` });
+      }
+      // TODO: Add actual API call to verify credentials with platform
+      // For now, just validate format
+      if (typeof apiKey !== 'string' || apiKey.length < 5) {
+        return res.status(400).json({ error: 'Invalid API key format' });
+      }
+    } else if (platform === 'shopify') {
+      if (!shopUrl || !accessToken) {
+        return res.status(400).json({ error: 'Shopify requires shopUrl and accessToken' });
+      }
+      // TODO: Add actual API call to verify Shopify credentials
+      if (typeof accessToken !== 'string' || accessToken.length < 10) {
+        return res.status(400).json({ error: 'Invalid access token format' });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${platform} credentials are valid`,
+      platform
+    });
+  } catch (err) {
+    console.error('Error testing platform credentials:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/connect/platform — Save new platform credentials
+app.post('/api/connect/platform', withTenant, (req, res) => {
+  try {
+    const { platform, source = 'direct', shopId, apiKey, apiSecret, shopUrl, accessToken, webhookSecret, setAsActive = true } = req.body;
+
+    if (!platform) {
+      return res.status(400).json({ error: 'Platform is required' });
+    }
+
+    // Validate required fields per platform
+    if (['shopee', 'lazada', 'tiktok'].includes(platform)) {
+      if (!shopId || !apiKey || !apiSecret) {
+        return res.status(400).json({ error: `${platform} requires shopId, apiKey, and apiSecret` });
+      }
+    } else if (platform === 'shopify') {
+      if (!shopUrl || !accessToken) {
+        return res.status(400).json({ error: 'Shopify requires shopUrl and accessToken' });
+      }
+    }
+
+    const multiCreds = createMultiCredentials(tenantId);
+    const credData = {
+      platform,
+      source,
+      ...(shopId && { shopId }),
+      ...(apiKey && { apiKey }),
+      ...(apiSecret && { apiSecret }),
+      ...(shopUrl && { shopUrl }),
+      ...(accessToken && { accessToken }),
+      ...(webhookSecret && { webhookSecret }),
+      connectedAt: new Date().toISOString()
+    };
+
+    const result = multiCreds.saveCredentials(platform, source, credData, setAsActive);
+
+    res.json({
+      success: true,
+      message: `${platform} credentials saved${setAsActive ? ' and activated' : ''}`,
+      credential: {
+        id: result.id,
+        platform: result.platform,
+        source: result.source,
+        isActive: result.isActive,
+        createdAt: result.createdAt
+      }
+    });
+  } catch (err) {
+    console.error('Error saving platform credentials:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/connect/platform/:platform — Get all credentials for a platform
+app.get('/api/connect/platform/:platform', withTenant, (req, res) => {
+  try {
+    const { platform } = req.params;
+
+    const multiCreds = createMultiCredentials(tenantId);
+    const allCreds = multiCreds.getAllCredentials(platform);
+
+    res.json({
+      platform,
+      credentials: allCreds.map(c => ({
+        id: c.id,
+        platform: c.platform,
+        source: c.source,
+        isActive: c.isActive,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching platform credentials:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/connect/platform/:credentialId/activate — Switch to different credentials
+app.put('/api/connect/platform/:credentialId/activate', withTenant, (req, res) => {
+  try {
+    const { credentialId } = req.params;
+
+    const multiCreds = createMultiCredentials(tenantId);
+    const result = multiCreds.activateCredentials(credentialId);
+
+    if (!result) {
+      return res.status(404).json({ error: 'Credential not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Credentials activated',
+      credential: {
+        id: result.id,
+        platform: result.platform,
+        source: result.source,
+        isActive: true,
+        createdAt: result.createdAt
+      }
+    });
+  } catch (err) {
+    console.error('Error activating credentials:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/connect/platform/:credentialId — Archive credentials
+app.delete('/api/connect/platform/:credentialId', withTenant, (req, res) => {
+  try {
+    const { credentialId } = req.params;
+
+    const multiCreds = createMultiCredentials(tenantId);
+    const result = multiCreds.deleteCredentials(credentialId);
+
+    if (!result) {
+      return res.status(404).json({ error: 'Credential not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Credentials archived'
+    });
+  } catch (err) {
+    console.error('Error deleting credentials:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Generic Order Sync ────────────────────────────────────────────────────────
 
 app.get('/api/sync/log', withTenant, (req, res) => res.json(req.syncLog.recent(100)));

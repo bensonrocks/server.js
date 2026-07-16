@@ -635,7 +635,7 @@
       showStatus('🔄 Testing connection...', 'loading');
 
       try {
-        const response = await fetch('/api/connect/platform', {
+        const response = await fetch('/api/test/platform', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -671,7 +671,7 @@
       const btn = e.target.querySelector('.submit-btn');
       btn.disabled = true;
 
-      showStatus('🔄 Connecting platform...', 'loading');
+      showStatus('🔄 Saving platform credentials...', 'loading');
 
       try {
         const response = await fetch('/api/connect/platform', {
