@@ -3483,7 +3483,7 @@ app.get('/api/stats', (_req, res) => {
   const yesterdayStr = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
 
   let todayPending = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
-  let totalOrders  = 0, totalLines   = 0;
+  let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0;
   const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
 
   for (const batch of db.batches) {
@@ -3501,6 +3501,7 @@ app.get('/api/stats', (_req, res) => {
     for (const ord of batchOrders) {
       const state  = states[ord.order_number];
       const isPending = !state || state.status === 'pending' || state.status === 'processing';
+      if (isPending) pendingBacklog++; // ANY day — feeds the sidebar Orders badge
       if (batchDate === todayStr) {
         cs.todayUploaded++;
         if (isPending) { cs.todayPending++; todayPending++; }
@@ -3527,7 +3528,7 @@ app.get('/api/stats', (_req, res) => {
     .sort((a, b) => (b[1].todayUploaded - a[1].todayUploaded) || a[0].localeCompare(b[0]))
     .map(([name, v]) => ({ name, ...v }));
 
-  res.json({ todayPending, yesterdayDone, totalOrders, totalLines,
+  res.json({ todayPending, yesterdayDone, totalOrders, totalLines, pendingBacklog,
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats });
 });
 

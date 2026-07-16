@@ -2636,3 +2636,16 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 
 /* Linked Transport job pill on Orders-list rows */
 .job-code-tr { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
+
+/* Sidebar pending-orders badge on the Orders nav button */
+.nav-pending-badge {
+  margin-left: auto;
+  background: #f59e0b;
+  color: #1e293b;
+  font-size: .67rem;
+  font-weight: 800;
+  border-radius: 99px;
+  padding: .12em .55em;
+  line-height: 1.4;
+}
+.sidebar .tab-btn { display: flex; align-items: center; }

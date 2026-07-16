@@ -619,6 +619,23 @@
     if (noteEl) noteEl.remove();
   }
 
+  // ── Sidebar pending-orders badge ───────────────────────────────────────────
+  // Shows the live count of orders still pending/in-progress (any day) on the
+  // Orders nav button. Hidden entirely when the backlog is zero.
+  function updateOrdersNavBadge(count) {
+    const btn = document.querySelector('.sidebar .tab-btn[data-tab="orders"]');
+    if (!btn) return;
+    let badge = btn.querySelector('.nav-pending-badge');
+    if (!count) { badge?.remove(); return; }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'nav-pending-badge';
+      btn.appendChild(badge);
+    }
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.title = `${count} order(s) pending / in progress`;
+  }
+
   // ── Dashboard Stats ────────────────────────────────────────────────────────
   async function fetchAndRenderStats() {
     try {
@@ -671,6 +688,8 @@
           </table>
         </div>` : ''}`;
       document.getElementById('dashStatsSection').classList.remove('hidden');
+      // Sidebar badge: how many orders are still pending/in-progress (any day)
+      updateOrdersNavBadge(s.pendingBacklog || 0);
       // Show live numbers on the login overlay for anyone who hasn't signed in yet
       const liveEl = document.getElementById('loginLiveStats');
       if (liveEl && s.totalOrders > 0) {
@@ -7804,6 +7823,9 @@
       const resp = await fetch(url);
       const data = await resp.json();
       if (Array.isArray(data)) loadedOrders = data;
+      // Keep the sidebar pending badge current after scans/completions —
+      // fire-and-forget, never blocks the orders refresh itself
+      fetchAndRenderStats();
     } catch {}
   }
 
