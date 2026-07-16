@@ -1398,6 +1398,154 @@ a:hover{text-decoration:underline}
       </div><!-- /inventory -->
 
       <!-- ═══════════════════════════════════════
+           B2C ORDERS PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-b2c-orders" class="page">
+        <div class="page-hdr">
+          <h2>🛍️ B2C Orders</h2>
+          <p>Consumer orders from platforms or manual uploads with waybills.</p>
+        </div>
+        <div class="page-content">
+          <div class="form-section">
+            <h3>Detect Order Type</h3>
+            <div class="form-group">
+              <label>Waybill (tracking number)</label>
+              <input type="text" id="b2c-waybill" placeholder="e.g., WAY-SGD-123456">
+            </div>
+            <div class="form-group">
+              <label>Source</label>
+              <select id="b2c-source">
+                <option value="platform">Platform</option>
+                <option value="manual_upload">Manual Upload</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Quantity</label>
+              <input type="number" id="b2c-qty" placeholder="1" min="1">
+            </div>
+            <button class="btn-primary" onclick="detectB2COrder()">Classify Order</button>
+            <div id="b2c-result" style="margin-top:12px;padding:12px;border-radius:8px;background:#f0fdf4;display:none">
+              <div id="b2c-result-text"></div>
+            </div>
+          </div>
+          <div class="form-section" style="margin-top:20px">
+            <h3>B2C Orders List</h3>
+            <div id="b2c-orders-list"></div>
+          </div>
+        </div>
+      </div><!-- /b2c-orders -->
+
+      <!-- ═══════════════════════════════════════
+           B2B ORDERS (PO) PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-b2b-orders" class="page">
+        <div class="page-hdr">
+          <h2>📦 B2B Orders (PO)</h2>
+          <p>Bulk orders managed by Purchase Orders with multi-store consolidation.</p>
+        </div>
+        <div class="page-content">
+          <div class="form-section">
+            <h3>Create New PO</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label>PO Number *</label>
+                <input type="text" id="po-number" placeholder="PO-2026-001" required>
+              </div>
+              <div class="form-group">
+                <label>PO Date *</label>
+                <input type="date" id="po-date" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Client ID *</label>
+                <input type="text" id="po-client-id" placeholder="client-id" required>
+              </div>
+              <div class="form-group">
+                <label>Client Name</label>
+                <input type="text" id="po-client-name" placeholder="Client Name">
+              </div>
+            </div>
+            <div style="background:#f5f5f5;padding:12px;border-radius:8px;margin:16px 0">
+              <h4 style="margin-bottom:10px">Line Items</h4>
+              <div id="po-line-items"></div>
+              <button class="btn-secondary" onclick="addPOLineItem()">+ Add Line Item</button>
+            </div>
+            <button class="btn-primary" onclick="createPODocument()">Create PO</button>
+            <div id="po-result" style="margin-top:12px;padding:12px;border-radius:8px;display:none"></div>
+          </div>
+          <div class="form-section" style="margin-top:20px">
+            <h3>PO Documents</h3>
+            <div id="po-list"></div>
+          </div>
+        </div>
+      </div><!-- /b2b-orders -->
+
+      <!-- ═══════════════════════════════════════
+           STAGING AREA PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-staging" class="page">
+        <div class="page-hdr">
+          <h2>📍 Staging Area</h2>
+          <p>Cartons after picking, ready for consolidation and quality check.</p>
+        </div>
+        <div class="page-content">
+          <div class="form-section">
+            <h3>Staged Cartons</h3>
+            <div id="staging-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+          </div>
+        </div>
+      </div><!-- /staging -->
+
+      <!-- ═══════════════════════════════════════
+           CLIENT PROFILE PAGE
+      ════════════════════════════════════════ -->
+      <div id="page-client-profile" class="page">
+        <div class="page-hdr">
+          <h2>👥 Client Profiles</h2>
+          <p>View and manage B2C/B2B classification ML model per client.</p>
+        </div>
+        <div class="page-content">
+          <div class="form-section">
+            <h3>Select Client</h3>
+            <select id="profile-client-id" onchange="loadClientProfile()" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #e2e8f0">
+              <option value="">— Choose a client —</option>
+            </select>
+          </div>
+          <div id="profile-details" style="margin-top:20px;display:none">
+            <div class="form-section">
+              <h3>ML Model State</h3>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+                <div style="background:#f0fdf4;padding:12px;border-radius:8px">
+                  <div style="font-size:12px;color:#666">Uploads</div>
+                  <div style="font-size:24px;font-weight:bold" id="profile-uploads">—</div>
+                </div>
+                <div style="background:#fef3c7;padding:12px;border-radius:8px">
+                  <div style="font-size:12px;color:#666">B2B Confirmed</div>
+                  <div style="font-size:24px;font-weight:bold" id="profile-b2b">—</div>
+                </div>
+                <div style="background:#fee2e2;padding:12px;border-radius:8px">
+                  <div style="font-size:12px;color:#666">B2C Confirmed</div>
+                  <div style="font-size:24px;font-weight:bold" id="profile-b2c">—</div>
+                </div>
+              </div>
+              <div style="background:#e0e7ff;padding:12px;border-radius:8px;margin-bottom:16px">
+                <div style="font-size:12px;color:#666;margin-bottom:4px">Model Confidence</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="flex:1;height:8px;background:#ccc;border-radius:4px"><div id="profile-confidence-bar" style="height:100%;background:#3b82f6;width:50%;border-radius:4px"></div></div>
+                  <span id="profile-confidence" style="font-weight:bold">50%</span>
+                </div>
+              </div>
+            </div>
+            <div class="form-section">
+              <h3>Detection History</h3>
+              <div id="profile-history"></div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /client-profile -->
+
+      <!-- ═══════════════════════════════════════
            SYNC LOG PAGE
       ════════════════════════════════════════ -->
       <div id="page-synclog" class="page">
@@ -5632,6 +5780,302 @@ function _applyDeepLink(){
     <button class="scan-done-btn" onclick="exitScan();render()">Done</button>
   </div>
 </div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     PHASE 2: B2B/B2C ORDER TYPE DETECTION & LEARNING UI
+═════════════════════════════════════════════════════════════════════════════ -->
+
+<script>
+// B2C Order Detection
+async function detectB2COrder() {
+  const waybill = document.getElementById('b2c-waybill').value.trim();
+  const source = document.getElementById('b2c-source').value;
+  const qty = parseInt(document.getElementById('b2c-qty').value) || 1;
+
+  try {
+    const res = await fetch('/api/b2b-b2c/detect-order-type', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tenant-ID': tenantId,
+      },
+      body: JSON.stringify({ waybill: waybill || null, source, qty }),
+    });
+    const result = await res.json();
+
+    const resultDiv = document.getElementById('b2c-result');
+    const typeColor = result.type === 'b2c' ? '#10b981' : '#f59e0b';
+    const typeIcon = result.type === 'b2c' ? '🛍️' : '📦';
+
+    resultDiv.innerHTML = `
+      <div style="font-size:14px;font-weight:bold;color:${typeColor};margin-bottom:4px">
+        ${typeIcon} ${result.type.toUpperCase()} — ${Math.round(result.confidence * 100)}% confidence
+      </div>
+      <div style="font-size:13px;color:#666">${result.reason}</div>
+      <div style="font-size:11px;color:#999;margin-top:4px">Rule: ${result.rule}</div>
+      ${result.requiresUserConfirmation ? '<div style="color:#ea580c;margin-top:8px">⚠️ Uncertain — user confirmation required for learning</div>' : ''}
+    `;
+    resultDiv.style.display = 'block';
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// PO Line Item Management
+let poLineItems = [];
+function addPOLineItem() {
+  const container = document.getElementById('po-line-items');
+  const itemIdx = poLineItems.length;
+  poLineItems.push({ sku: '', qty: 0, destination_store: '' });
+
+  const itemDiv = document.createElement('div');
+  itemDiv.id = `po-item-${itemIdx}`;
+  itemDiv.style.cssText = 'background:#fff;padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid #e2e8f0';
+  itemDiv.innerHTML = `
+    <div style="display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:8px;margin-bottom:8px">
+      <input type="text" placeholder="SKU" class="po-sku-${itemIdx}" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+      <input type="number" placeholder="Qty" class="po-qty-${itemIdx}" style="padding:8px;border:1px solid #ddd;border-radius:6px" min="1" value="1">
+      <input type="text" placeholder="Destination Store" class="po-store-${itemIdx}" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+      <button class="btn-secondary" style="padding:8px;font-size:12px" onclick="removePOLineItem(${itemIdx})">Remove</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <input type="text" placeholder="Serial # (optional)" class="po-serial-${itemIdx}" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+      <input type="text" placeholder="Batch # (optional)" class="po-batch-${itemIdx}" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+    </div>
+  `;
+  container.appendChild(itemDiv);
+}
+
+function removePOLineItem(idx) {
+  document.getElementById(`po-item-${idx}`).remove();
+  poLineItems[idx] = null;
+}
+
+async function createPODocument() {
+  const poNumber = document.getElementById('po-number').value.trim();
+  const poDate = document.getElementById('po-date').value;
+  const clientId = document.getElementById('po-client-id').value.trim();
+  const clientName = document.getElementById('po-client-name').value.trim();
+
+  if (!poNumber || !poDate || !clientId) {
+    alert('Please fill all required fields');
+    return;
+  }
+
+  // Gather line items
+  const lineItems = poLineItems.map((_, idx) => {
+    if (poLineItems[idx] === null) return null;
+    return {
+      sku: document.querySelector(`.po-sku-${idx}`)?.value || '',
+      qty: parseInt(document.querySelector(`.po-qty-${idx}`)?.value) || 0,
+      destination_store: document.querySelector(`.po-store-${idx}`)?.value || '',
+      serial_number: document.querySelector(`.po-serial-${idx}`)?.value || '',
+      batch_number: document.querySelector(`.po-batch-${idx}`)?.value || '',
+    };
+  }).filter(Boolean);
+
+  if (lineItems.length === 0) {
+    alert('Add at least one line item');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/b2b-b2c/po', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tenant-ID': tenantId,
+      },
+      body: JSON.stringify({
+        po_number: poNumber,
+        po_date: poDate,
+        client_id: clientId,
+        client_name: clientName,
+        line_items: lineItems,
+      }),
+    });
+    const result = await res.json();
+
+    const resultDiv = document.getElementById('po-result');
+    if (result.error) {
+      resultDiv.innerHTML = `<div style="color:#dc2626">❌ ${result.error}</div>`;
+    } else {
+      resultDiv.innerHTML = `<div style="color:#10b981">✓ PO created: ${result.poId}</div>`;
+      // Clear form
+      document.getElementById('po-number').value = '';
+      document.getElementById('po-date').value = '';
+      document.getElementById('po-client-id').value = '';
+      document.getElementById('po-client-name').value = '';
+      document.getElementById('po-line-items').innerHTML = '';
+      poLineItems = [];
+      loadPODocuments();
+    }
+    resultDiv.style.display = 'block';
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function loadPODocuments() {
+  try {
+    const res = await fetch('/api/b2b-b2c/po?limit=20', {
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+    const poList = await res.json();
+
+    const container = document.getElementById('po-list');
+    if (!poList || poList.length === 0) {
+      container.innerHTML = '<p style="color:#999">No PO documents yet</p>';
+      return;
+    }
+
+    container.innerHTML = poList.map(po => `
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-weight:bold">${po.po_number}</div>
+          <span style="font-size:11px;padding:2px 6px;border-radius:4px;background:${po.status === 'approved' ? '#d1fae5' : po.status === 'validation_failed' ? '#fee2e2' : '#fef3c7'};color:${po.status === 'approved' ? '#065f46' : po.status === 'validation_failed' ? '#7f1d1d' : '#92400e'}">${po.status}</span>
+        </div>
+        <div style="font-size:12px;color:#666;margin-bottom:6px">${po.client_name} • ${po.total_lines} lines • ${po.total_qty} qty</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn-secondary" style="flex:1;font-size:12px;padding:6px" onclick="viewPODetail('${po.id}')">View</button>
+          <button class="btn-secondary" style="flex:1;font-size:12px;padding:6px" onclick="validatePO('${po.id}')">Validate</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error('Error loading POs:', e);
+  }
+}
+
+async function validatePO(poId) {
+  try {
+    const res = await fetch(`/api/b2b-b2c/po/${poId}/validate`, {
+      method: 'POST',
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+    const result = await res.json();
+
+    if (result.valid) {
+      alert(`✓ PO is valid (${result.warningCount} warnings)`);
+      await approvePO(poId);
+    } else {
+      alert(`❌ Validation failed:\n${result.errors.map(e => `Line ${e.line}: ${e.issue}`).join('\n')}`);
+    }
+    loadPODocuments();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function approvePO(poId) {
+  try {
+    await fetch(`/api/b2b-b2c/po/${poId}/approve`, {
+      method: 'POST',
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+    loadPODocuments();
+  } catch (e) {
+    console.error('Error approving PO:', e);
+  }
+}
+
+async function viewPODetail(poId) {
+  try {
+    const res = await fetch(`/api/b2b-b2c/po/${poId}`, {
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+    const po = await res.json();
+    alert(`PO ${po.poNumber}\n${po.clientName}\n\nLines:\n${po.lineItems.map((l, i) => `${i+1}. ${l.sku_code} x${l.qty} → ${l.destination_store}`).join('\n')}`);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// Client Profile Management
+async function loadClientProfile() {
+  const clientId = document.getElementById('profile-client-id').value;
+  if (!clientId) {
+    document.getElementById('profile-details').style.display = 'none';
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/b2b-b2c/client-profile/${clientId}`, {
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+    const profile = await res.json();
+
+    document.getElementById('profile-uploads').textContent = profile.uploadCount;
+    document.getElementById('profile-b2b').textContent = profile.b2bConfirmed;
+    document.getElementById('profile-b2c').textContent = profile.b2cConfirmed;
+    document.getElementById('profile-confidence').textContent = Math.round(profile.confidence * 100) + '%';
+    document.getElementById('profile-confidence-bar').style.width = (profile.confidence * 100) + '%';
+
+    // Load detection history
+    const histRes = await fetch(`/api/b2b-b2c/detection-log/${clientId}?limit=20`, {
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+    const hist = await histRes.json();
+
+    const histDiv = document.getElementById('profile-history');
+    histDiv.innerHTML = hist.map(h => `
+      <div style="background:#f9fafb;padding:10px;border-radius:6px;margin-bottom:8px;font-size:12px">
+        <div style="font-weight:600;margin-bottom:3px">${h.detected_type ? h.detected_type.toUpperCase() : '?'} → ${h.user_confirmed_type.toUpperCase()}${h.learned ? ' ✓ learned' : ''}</div>
+        <div style="color:#666">${new Date(h.upload_date).toLocaleDateString()}</div>
+      </div>
+    `).join('');
+
+    document.getElementById('profile-details').style.display = 'block';
+  } catch (e) {
+    console.error('Error loading profile:', e);
+  }
+}
+
+// Initialize client profile dropdown on page load
+(function() {
+  setTimeout(() => {
+    const loadClients = async () => {
+      try {
+        // Use existing client data from dashboard if available
+        const clientSelect = document.getElementById('profile-client-id');
+        if (clientSelect && typeof cl !== 'undefined') {
+          cl.forEach(client => {
+            const opt = document.createElement('option');
+            opt.value = client.id;
+            opt.textContent = client.name;
+            clientSelect.appendChild(opt);
+          });
+        }
+      } catch (e) {
+        console.error('Error loading clients:', e);
+      }
+    };
+    loadClients();
+  }, 1000);
+})();
+
+// Initialize on page load
+(function() {
+  // When switching to b2b-orders page, load PO documents
+  const origSwitch = window.switchPage;
+  window.switchPage = function(page) {
+    origSwitch(page);
+    if (page === 'b2b-orders') loadPODocuments();
+    if (page === 'client-profile') {
+      // Populate clients
+      const clientSelect = document.getElementById('profile-client-id');
+      if (!clientSelect.children.length && typeof cl !== 'undefined') {
+        cl.forEach(client => {
+          const opt = document.createElement('option');
+          opt.value = client.id;
+          opt.textContent = client.name;
+          clientSelect.appendChild(opt);
+        });
+      }
+    }
+  };
+})();
+</script>
 
 </body>
 </html>
