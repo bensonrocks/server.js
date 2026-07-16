@@ -53,6 +53,10 @@ const createPOManager = require('./lib/po-manager');
 const createPOCSVImporter = require('./lib/po-csv-importer');
 const createB2BBatchProcessor = require('./lib/b2b-batch-processor');
 const createDocumentGenerator = require('./lib/document-generator');
+const createInventoryWarehouse = require('./lib/inventory-warehouse');
+const createCustomsLotManager = require('./lib/customs-lot-manager');
+const createWarehouseAllocator = require('./lib/warehouse-allocator');
+const createPickingIntegration = require('./lib/picking-integration');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -3316,6 +3320,319 @@ app.get('/api/b2b-b2c/carton/:cartonId/shipping-label', withStaffTenant, (req, r
     const generator = createDocumentGenerator(ctx.db);
     const label = generator.generateShippingLabel(req.params.cartonId);
     res.json(label);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PHASE 5B: Warehouse Allocation ────────────────────────────────────────────
+
+// Allocate order to warehouse
+app.post('/api/warehouse/allocate', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { orderId, warehouseId, strategy, force } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const allocator = createWarehouseAllocator(ctx.db, inventoryWh);
+    const result = allocator.allocateOrderToWarehouse(orderId, { warehouseId, strategy, force });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get warehouse suggestions for order
+app.get('/api/warehouse/suggest/:orderId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const allocator = createWarehouseAllocator(ctx.db, inventoryWh);
+    const suggestions = allocator.suggestWarehouse(req.params.orderId);
+    res.json(suggestions);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get warehouse statistics
+app.get('/api/warehouse/stats', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const allocator = createWarehouseAllocator(ctx.db, inventoryWh);
+    const stats = allocator.getWarehouseStatistics();
+    res.json(stats);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get allocation history for order
+app.get('/api/warehouse/allocation-history/:orderId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const allocator = createWarehouseAllocator(ctx.db, inventoryWh);
+    const history = allocator.getAllocationHistory(req.params.orderId);
+    res.json(history);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PHASE 5C: Picking & Packing Integration ───────────────────────────────────
+
+// Generate FIFO picking list for wave
+app.get('/api/picking/list/:waveId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const pickingInt = createPickingIntegration(ctx.db, inventoryWh);
+    const list = pickingInt.generatePickingList(req.params.waveId);
+    res.json(list);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Validate item before picking
+app.post('/api/picking/validate-item', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { batchId, orderedQty, expiryDate } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const pickingInt = createPickingIntegration(ctx.db, inventoryWh);
+    const validation = pickingInt.validatePickItem({ batchId, orderedQty, expiryDate });
+    res.json(validation);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Mark item picked (scan)
+app.post('/api/picking/mark-picked', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { lineId, batchId, pickedQty, cartonId } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const pickingInt = createPickingIntegration(ctx.db, inventoryWh);
+    const result = pickingInt.markItemPicked(lineId, batchId, pickedQty, cartonId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Assign batch to carton
+app.post('/api/carton/assign-batch', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { cartonLineId, batchId, quantity, customsLotId } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const pickingInt = createPickingIntegration(ctx.db, inventoryWh);
+    const result = pickingInt.assignBatchToCarton(cartonLineId, batchId, quantity, customsLotId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Close carton (finalize packing)
+app.post('/api/carton/:cartonId/close', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { customsLotId } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const pickingInt = createPickingIntegration(ctx.db, inventoryWh);
+    const result = pickingInt.closeCarton(req.params.cartonId, customsLotId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get wave picking status
+app.get('/api/picking/status/:waveId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const pickingInt = createPickingIntegration(ctx.db, inventoryWh);
+    const status = pickingInt.getWavePickingStatus(req.params.waveId);
+    res.json(status);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PHASE 5A/5B: Inventory Management ─────────────────────────────────────────
+
+// Receive goods into warehouse
+app.post('/api/inventory/receive', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { warehouseId, skuId, batchNumber, serialNumber, expiryDate, quantity, location, poId, notes } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const result = inventoryWh.receiveGoods({ warehouseId, skuId, batchNumber, serialNumber, expiryDate, quantity, location, poId, notes });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Check warehouse availability
+app.post('/api/inventory/check-availability', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { warehouseId, skuId, requiredQty } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const availability = inventoryWh.checkWarehouseAvailability(warehouseId, skuId, requiredQty);
+    res.json(availability);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get warehouse stats
+app.get('/api/inventory/warehouse/:warehouseId/stats', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const stats = inventoryWh.getWarehouseStats(req.params.warehouseId);
+    res.json(stats);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get batch audit trail
+app.get('/api/inventory/batch/:batchId/audit', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const audit = inventoryWh.getBatchAudit(req.params.batchId);
+    res.json(audit);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Adjust batch quantity
+app.post('/api/inventory/batch/adjust', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { batchId, adjustment, reason, targetQty } = req.body;
+    const inventoryWh = createInventoryWarehouse(ctx.db);
+    const result = inventoryWh.adjustBatchQuantity(batchId, adjustment, reason, targetQty);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PHASE 5A: Singapore Customs Lot Management ────────────────────────────────
+
+// Initialize customs lot sequence
+app.post('/api/customs/configure-sequence', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { prefix, year, startingNumber } = req.body;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const result = customsLot.initializeSequence({ prefix, year, startingNumber });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get sequence info
+app.get('/api/customs/sequence-info', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const info = customsLot.getSequenceInfo();
+    res.json(info);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get next customs lot number (preview)
+app.get('/api/customs/next-lot-number', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const customsLot = createCustomsLotManager(ctx.db);
+    // Don't actually increment, just show what's next
+    const seq = ctx.db.prepare('SELECT * FROM customs_lot_sequences WHERE id = 1').get();
+    res.json({
+      nextNumber: seq.current_number + 1,
+      preview: `${seq.prefix}-${seq.year}-${String(seq.current_number + 1).padStart(6, '0')}`,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Assign customs lot to carton
+app.post('/api/carton/:cartonId/assign-customs-lot', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { poId, orderId, hsCode, description, totalPieces, grossWeightKg } = req.body;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const result = customsLot.assignCustomsLot({
+      cartonId: req.params.cartonId,
+      poId, orderId, hsCode, description, totalPieces, grossWeightKg
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get assigned customs lot for carton
+app.get('/api/carton/:cartonId/customs-lot', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const lot = customsLot.getCustomsLot(req.params.cartonId);
+    res.json(lot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// List pending customs lots
+app.get('/api/customs/pending-lots', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { warehouseId } = req.query;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const lots = customsLot.listPendingCustomsLots(warehouseId);
+    res.json(lots);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Mark customs lot as exported
+app.post('/api/customs/:customsLotId/mark-exported', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const { shippingRefNo } = req.body;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const result = customsLot.markAsExported(req.params.customsLotId, shippingRefNo);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get customs lot audit trail
+app.get('/api/customs/:customsLotId/audit', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const customsLot = createCustomsLotManager(ctx.db);
+    const audit = customsLot.getCustomsLotAudit(req.params.customsLotId);
+    res.json(audit);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
