@@ -2040,12 +2040,20 @@
         </div>
       </div>
 
-      <div id="deliveryPlanningSection" class="form-group hidden" style="margin-top:1.1rem;padding:.75rem;background:#f0f9ff;border:1px solid #bfdbfe;border-radius:6px">
-        <label style="display:flex;gap:.5rem;align-items:center;cursor:pointer;font-weight:500">
-          <input type="checkbox" id="confirmPlanDeliveryCheckbox" />
-          <span>📦 Plan delivery jobs (group by postal code)</span>
-        </label>
-        <p class="hint" style="margin:.5rem 0 0 1.5rem;font-size:12px">Creates delivery routes for this shipment. Can be viewed and edited in the Transport tab.</p>
+      <div id="deliveryPlanningSection" class="form-group" style="margin-top:1.1rem;padding:.75rem;background:#f0f9ff;border:1px solid #bfdbfe;border-radius:6px">
+        <label style="font-weight:600;display:block;margin-bottom:.5rem">🚚 Delivery arrangement needed for this batch?</label>
+        <div style="display:flex;gap:1.25rem">
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="radio" name="arrangeDelivery" id="arrangeDeliveryYes" value="yes" />
+            <span>Yes — also create Transport jobs</span>
+          </label>
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="radio" name="arrangeDelivery" id="arrangeDeliveryNo" value="no" />
+            <span>No — Orders only</span>
+          </label>
+        </div>
+        <p class="hint" style="margin:.5rem 0 0 0;font-size:12px">Yes: each order also appears on the Transport map for route planning &amp; drivers. No: orders go to scanning only.</p>
+        <p id="arrangeDeliveryError" class="hint hidden" style="margin:.4rem 0 0 0;font-size:12px;color:var(--danger,#ef4444);font-weight:600">Please choose Yes or No before approving.</p>
       </div>
 
       <div class="modal-actions" style="margin-top:1rem">

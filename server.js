@@ -3135,54 +3135,6 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
 });
 
 // ── Delivery Job Planning — Group orders by postal code/zone ─────────────────
-function planDeliveryJobs(orders) {
-  // Group orders by postal code (primary) and customer (secondary)
-  const jobsByZone = new Map();
-
-  for (const order of orders) {
-    const postalCode = order.postal_code || order.zip || order.zip_code || 'UNKNOWN';
-    const key = postalCode.toString().trim().toUpperCase();
-
-    if (!jobsByZone.has(key)) {
-      jobsByZone.set(key, {
-        zone: key,
-        orders: [],
-        customerCount: new Set(),
-        totalItems: 0,
-        totalQty: 0
-      });
-    }
-
-    const job = jobsByZone.get(key);
-    job.orders.push(order.order_number);
-    if (order.customer_name) job.customerCount.add(order.customer_name);
-    job.totalItems += order.lines?.length || 0;
-    job.totalQty += order.lines?.reduce((sum, l) => sum + (l.qty || 0), 0) || 0;
-  }
-
-  // Convert to delivery jobs array, sorted by zone
-  const deliveryJobs = [];
-  for (const [zone, data] of Array.from(jobsByZone.entries()).sort()) {
-    const jobId = `JOB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-
-    deliveryJobs.push({
-      id: jobId,
-      status: 'pending',
-      zone: zone,
-      postalCode: zone,
-      orders: data.orders,
-      orderCount: data.orders.length,
-      customerCount: data.customerCount.size,
-      totalItems: data.totalItems,
-      totalQty: data.totalQty,
-      createdAt: new Date().toISOString(),
-      source: 'auto-planned'
-    });
-  }
-
-  return deliveryJobs;
-}
-
 // ── OCR preview — photo → text → order parse (no save) ──────────────────────
 app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
@@ -3235,8 +3187,11 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       orders,
     };
     db.batches.unshift(batch);
-    // Photo-scanned picking lists also feed the Transport tab
-    createTransportJobsFromOrders(db, orders, batch.client_name, batchId);
+    // Photo-scanned picking lists also feed the Transport tab — but only when
+    // the user answered YES to the delivery-arrangement question.
+    if (req.body?.arrange_delivery === 'yes' && req.body?.direction !== 'Inbound') {
+      createTransportJobsFromOrders(db, orders, batch.client_name, batchId);
+    }
     writeDb(db);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[ocr-upload] XLSX write error:', err.message);
@@ -3420,8 +3375,13 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     };
 
     db.batches.unshift(batch);
-    // Outbound orders also appear as Transport delivery jobs (deduped by order no)
-    if (direction !== 'Inbound') createTransportJobsFromOrders(db, orders, clientName, batchId);
+    // "Delivery arrangement needed?" — the user answers yes/no in the
+    // Confirm-Upload modal. Yes → each order also becomes a Transport job
+    // (deduped by order no). No → orders go to scanning only.
+    let transportJobsCreated = 0;
+    if (direction !== 'Inbound' && req.body?.arrange_delivery === 'yes') {
+      transportJobsCreated = createTransportJobsFromOrders(db, orders, clientName, batchId);
+    }
     writeDb(db);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[upload] XLSX write error:', err.message);
@@ -3464,31 +3424,9 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       has_order_label:   false,
     }));
 
-    // ── Delivery Job Planning (optional) ────────────────────────────────────────
-    let deliveryJobsCreated = [];
-    if (req.body?.planDeliveryJobs === 'true' || req.body?.planDeliveryJobs === true) {
-      const deliveryJobs = planDeliveryJobs(orders);
-      if (deliveryJobs.length > 0) {
-        // Persist delivery jobs to database
-        if (!db.transport) db.transport = [];
-        for (const job of deliveryJobs) {
-          job.batchId = batchId;
-          job.source = 'order-upload';
-          db.transport.push(job);
-        }
-        deliveryJobsCreated = deliveryJobs;
-        writeDb(db);
-        logAudit('delivery_jobs_planned', {
-          batchId,
-          jobsCreated: deliveryJobs.length,
-          zones: [...new Set(deliveryJobs.map(j => j.zone))].sort()
-        });
-      }
-    }
-
     logAudit('upload', { batchId, jobCode: batch.idealscan_code, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
 
-    console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}${deliveryJobsCreated.length ? `, ${deliveryJobsCreated.length} delivery job(s)` : ''}`);
+    console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}${transportJobsCreated ? `, ${transportJobsCreated} transport job(s)` : ''}`);
     res.json({
       sessionId,
       batchId,
@@ -3496,8 +3434,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       rowCount: mapped.length,
       orderCount: orders.length,
       orders: ordersWithState,
-      deliveryJobs: deliveryJobsCreated,
-      deliveryJobsCreated: deliveryJobsCreated.length
+      transportJobsCreated
     });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);

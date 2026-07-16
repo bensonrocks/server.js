@@ -828,20 +828,29 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   generic `/api/transport/:id` routes (same rule as `import`/`fix-schedule` —
   Express matches in order, and `:id` would swallow them).
 
-### Picking-list uploads AUTO-FEED the Transport tab
+### Picking-list uploads feed Transport — GATED by a per-upload question
 
-`createTransportJobsFromOrders(db, orders, clientName, batchId)` runs inside
-both upload paths (`/api/upload` for Outbound direction only, and the OCR
-photo-scan upload) right after `db.batches.unshift(batch)` — every uploaded
-order also becomes a `pending` transport delivery job (channel
-`'order-upload'`), so Transport reflects the day's workload without a second
-upload. Deduped by order number against `referenceId`/`clientId`, so
-re-uploads never duplicate jobs. The SG postal code is extracted from the
-free-text `delivery_address` (`\b\d{6}\b`); `tel` becomes the shipping phone;
-the carrier goes in `notes`. Scanning completion flips these to `confirmed`
-via the existing `updateTransportOnOrderCompletion()` matcher (referenceId
-=== order_number). Uses `tmsImporter.nextTransportCode()` (now exported from
-lib/tms-importer.js) for TR-YYMMDD-NNN ids.
+The Confirm-Upload modal asks "🚚 Delivery arrangement needed for this
+batch?" (radio yes/no, `input[name="arrangeDelivery"]`, reset to UNANSWERED
+on every upload — the user must choose each time; Approve is blocked with an
+inline error until they do). Hidden for Inbound direction. The answer is sent
+as `arrange_delivery` on both `/api/upload` (FormData) and `/api/ocr/upload`
+(JSON body).
+
+YES → `createTransportJobsFromOrders(db, orders, clientName, batchId)` runs
+right after `db.batches.unshift(batch)`: every uploaded order also becomes a
+`pending` transport delivery job (channel `'order-upload'`). NO → orders go
+to scanning only, Transport untouched. Deduped by order number against
+`referenceId`/`clientId`, so re-uploads never duplicate jobs. The SG postal
+code is extracted from the free-text `delivery_address` (`\b\d{6}\b`); `tel`
+becomes the shipping phone; the carrier goes in `notes`. Scanning completion
+flips these to `confirmed` via the existing
+`updateTransportOnOrderCompletion()` matcher (referenceId === order_number).
+Uses `tmsImporter.nextTransportCode()` (exported from lib/tms-importer.js)
+for TR-YYMMDD-NNN ids. The response's `transportJobsCreated` count feeds the
+upload success message. (The old `planDeliveryJobs` zone-grouping system —
+`confirmPlanDeliveryCheckbox`/`planDeliveryJobs` — was removed; it pushed
+malformed `JOB-...` records into db.transport.)
 
 ### Transport tab scope: TODAY'S workload only
 

@@ -932,6 +932,11 @@
     // Reset direction toggle to Outbound
     uploadDirection = 'Outbound';
     document.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'Outbound'));
+    // Delivery-arrangement question: reset to unanswered on every upload —
+    // the user makes an explicit yes/no choice each time.
+    document.querySelectorAll('input[name="arrangeDelivery"]').forEach(r => { r.checked = false; });
+    document.getElementById('arrangeDeliveryError')?.classList.add('hidden');
+    document.getElementById('deliveryPlanningSection')?.classList.remove('hidden');
     document.getElementById('uploadConfirmOverlay').classList.remove('hidden');
   }
 
@@ -947,11 +952,24 @@
       uploadDirection = btn.dataset.dir;
       document.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      // Delivery arrangement only applies to Outbound work
+      document.getElementById('deliveryPlanningSection')?.classList.toggle('hidden', uploadDirection === 'Inbound');
     });
   });
 
+  function arrangeDeliveryChoice() {
+    return document.querySelector('input[name="arrangeDelivery"]:checked')?.value || '';
+  }
+  document.querySelectorAll('input[name="arrangeDelivery"]').forEach(r =>
+    r.addEventListener('change', () => document.getElementById('arrangeDeliveryError')?.classList.add('hidden')));
 
   document.getElementById('confirmApproveBtn').addEventListener('click', async () => {
+    // Outbound uploads require an explicit delivery-arrangement decision
+    if (uploadDirection !== 'Inbound' && !arrangeDeliveryChoice()) {
+      document.getElementById('arrangeDeliveryError')?.classList.remove('hidden');
+      document.getElementById('deliveryPlanningSection')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     const btn = document.getElementById('confirmApproveBtn');
     btn.disabled    = true;
     btn.textContent = 'Uploading…';
@@ -978,7 +996,7 @@
         const resp = await fetch('/api/ocr/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-session-id': SESSION_ID },
-          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection }),
+          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection, arrange_delivery: arrangeDeliveryChoice() }),
         });
         const data = await resp.json();
         document.getElementById('uploadConfirmOverlay').classList.add('hidden');
@@ -1019,9 +1037,8 @@
       .map(inp => ({ order: inp.dataset.order, sku: inp.dataset.sku, qty: parseInt(inp.value, 10) }))
       .filter(a => Number.isFinite(a.qty) && a.qty >= 0);
     if (adjustments.length) form.append('adjustments', JSON.stringify(adjustments));
-    // Delivery job planning flag
-    const planDelivery = document.getElementById('confirmPlanDeliveryCheckbox')?.checked || false;
-    if (planDelivery) form.append('planDeliveryJobs', 'true');
+    // Delivery-arrangement decision — 'yes' also creates Transport jobs
+    form.append('arrange_delivery', arrangeDeliveryChoice());
 
     try {
       const _uploadAbort = new AbortController();
@@ -1054,8 +1071,8 @@
       activeOrder  = null;
 
       let successMsg = `${data.idealscanCode ? `Job ${data.idealscanCode} — ` : ''}Converted ${data.rowCount} line(s) across ${data.orders.length} order(s) from "${file.name}".`;
-      if (data.deliveryJobsCreated && data.deliveryJobsCreated > 0) {
-        successMsg += ` ✓ Created ${data.deliveryJobsCreated} delivery job(s) grouped by postal code.`;
+      if (data.transportJobsCreated > 0) {
+        successMsg += ` 🚚 ${data.transportJobsCreated} delivery job(s) added to Transport.`;
       }
       setUploadStatus('success', successMsg);
 
