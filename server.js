@@ -4365,6 +4365,93 @@ app.get('/api/inbound/metrics', withStaffTenant, (req, res) => {
   }
 });
 
+// Capture photo during QC/inspection
+app.post('/api/inbound/:inboundId/photos', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.capturePhoto(
+      req.params.inboundId,
+      {
+        scanId: req.body.scanId || null,
+        qcInspectionId: req.body.qcInspectionId || null,
+        context: req.body.context || 'qc',
+        photoBase64: req.body.photoBase64 || req.body.photo,
+        filename: req.body.filename || '',
+        capturedBy: req.body.capturedBy || 'staff',
+        notes: req.body.notes || ''
+      }
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get photos for inbound/scan/QC
+app.get('/api/inbound/:inboundId/photos', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.getPhotos(
+      req.params.inboundId,
+      req.query.scanId || null,
+      req.query.qcInspectionId || null,
+      req.query.context || null
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get photo data (binary image)
+app.get('/api/inbound/photos/:photoId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const photoData = inbound.getPhotoData(req.params.photoId);
+
+    if (!photoData) {
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+
+    // Return base64-encoded image
+    res.json({
+      photoId: photoData.photoId,
+      filename: photoData.filename,
+      mimeType: photoData.mimeType,
+      photoBase64: photoData.photoData
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Delete photo
+app.delete('/api/inbound/photos/:photoId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.deletePhoto(req.params.photoId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get photo statistics for inbound
+app.get('/api/inbound/:inboundId/photos/stats', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.getPhotoStats(req.params.inboundId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ── Enhanced Returns ───────────────────────────────────────────────────────
 
 // Create customer return (RMA)
