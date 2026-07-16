@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect ZORT - Sync Orders & Inventory</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+      width: 100%;
+      padding: 40px;
+    }
+
+    .header {
+      margin-bottom: 30px;
+      text-align: center;
+    }
+
+    .logo {
+      font-size: 48px;
+      margin-bottom: 15px;
+    }
+
+    h1 {
+      font-size: 28px;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 14px;
+    }
+
+    .platforms {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 15px;
+      font-size: 24px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-weight: 500;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .password-group {
+      position: relative;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 12px;
+      top: 38px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #667eea;
+      font-size: 18px;
+      padding: 0;
+    }
+
+    .toggle-password:hover {
+      color: #764ba2;
+    }
+
+    .password-group input {
+      padding-right: 40px;
+    }
+
+    .info-box {
+      background: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 12px 15px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: #333;
+    }
+
+    .info-box strong {
+      color: #667eea;
+    }
+
+    .submit-btn {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .submit-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+    }
+
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+      display: block;
+    }
+
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+      display: block;
+    }
+
+    .status.loading {
+      background: #e2e3e5;
+      color: #383d41;
+      display: block;
+    }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #383d41;
+      border-top: 2px solid transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin-right: 8px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .connection-status {
+      margin-top: 20px;
+      padding: 12px;
+      background: #f9f9f9;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .status-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      background: #ccc;
+    }
+
+    .status-indicator.connected {
+      background: #28a745;
+    }
+
+    .status-indicator.error {
+      background: #dc3545;
+    }
+
+    .help-text {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    .test-btn {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      background: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .test-btn:hover {
+      background: #e0e0e0;
+    }
+
+    .success-screen {
+      display: none;
+      text-align: center;
+    }
+
+    .success-screen.show {
+      display: block;
+    }
+
+    .success-icon {
+      font-size: 64px;
+      margin-bottom: 15px;
+    }
+
+    .success-screen h2 {
+      color: #28a745;
+      margin-bottom: 10px;
+    }
+
+    .next-steps {
+      background: #f0f0f0;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 20px;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .next-steps ol {
+      margin-left: 20px;
+      margin-top: 10px;
+    }
+
+    .next-steps li {
+      margin-bottom: 8px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Form View -->
+    <div id="formView">
+      <div class="header">
+        <div class="logo">🔗</div>
+        <h1>Connect ZORT</h1>
+        <p class="subtitle">Sync orders & inventory across all your platforms</p>
+        <div class="platforms">
+          <span title="Shopee">🛍️</span>
+          <span title="Lazada">📦</span>
+          <span title="TikTok">🎵</span>
+          <span title="Shopify">🏪</span>
+        </div>
+      </div>
+
+      <div class="info-box">
+        <strong>🔒 Secure Connection:</strong> Your API credentials are encrypted and stored securely. We never store your data in plain text.
+      </div>
+
+      <form id="zortForm">
+        <div class="form-group">
+          <label for="storeName">Store Name / Email</label>
+          <input
+            type="text"
+            id="storeName"
+            name="storeName"
+            placeholder="your-store@example.com"
+            required
+          >
+          <p class="help-text">Your ZORT store identifier (usually your email)</p>
+        </div>
+
+        <div class="form-group">
+          <label for="apikey">API Key</label>
+          <div class="password-group">
+            <input
+              type="password"
+              id="apikey"
+              name="apikey"
+              placeholder="••••••••••••••••••••••••"
+              required
+            >
+            <button type="button" class="toggle-password" onclick="togglePassword('apikey')">👁️</button>
+          </div>
+          <p class="help-text">Your ZORT API key (found in ZORT settings)</p>
+        </div>
+
+        <div class="form-group">
+          <label for="apisecret">API Secret</label>
+          <div class="password-group">
+            <input
+              type="password"
+              id="apisecret"
+              name="apisecret"
+              placeholder="••••••••••••••••••••••••"
+              required
+            >
+            <button type="button" class="toggle-password" onclick="togglePassword('apisecret')">👁️</button>
+          </div>
+          <p class="help-text">Your ZORT API secret (keep this confidential)</p>
+        </div>
+
+        <button type="submit" class="submit-btn">Connect ZORT Account</button>
+        <button type="button" class="test-btn" onclick="testConnection()">Test Connection First</button>
+
+        <div id="status" class="status"></div>
+      </form>
+
+      <div class="connection-status">
+        <span class="status-indicator"></span>
+        <span id="connectionText">Not connected</span>
+      </div>
+    </div>
+
+    <!-- Success View -->
+    <div id="successView" class="success-screen">
+      <div class="success-icon">✅</div>
+      <h2>Connected Successfully!</h2>
+      <p>Your ZORT account is now connected and ready to sync.</p>
+
+      <div class="next-steps">
+        <strong>What happens next:</strong>
+        <ol>
+          <li>Your orders from Shopee, Lazada, TikTok, and Shopify will sync automatically</li>
+          <li>Inventory updates will sync every 15 minutes</li>
+          <li>Real-time webhook notifications keep everything in sync</li>
+          <li>You can monitor sync status in your dashboard</li>
+        </ol>
+      </div>
+
+      <button class="submit-btn" onclick="resetForm()" style="margin-top: 20px;">Done</button>
+    </div>
+  </div>
+
+  <script>
+    function togglePassword(fieldId) {
+      const field = document.getElementById(fieldId);
+      const isPassword = field.type === 'password';
+      field.type = isPassword ? 'text' : 'password';
+    }
+
+    function showStatus(message, type) {
+      const status = document.getElementById('status');
+      status.textContent = message;
+      status.className = `status ${type}`;
+    }
+
+    function updateConnectionStatus(connected) {
+      const indicator = document.querySelector('.status-indicator');
+      const text = document.getElementById('connectionText');
+
+      if (connected) {
+        indicator.className = 'status-indicator connected';
+        text.textContent = '✓ Connected to ZORT';
+      } else {
+        indicator.className = 'status-indicator error';
+        text.textContent = '✗ Connection failed';
+      }
+    }
+
+    async function testConnection() {
+      const storeName = document.getElementById('storeName').value;
+      const apikey = document.getElementById('apikey').value;
+      const apisecret = document.getElementById('apisecret').value;
+
+      if (!storeName || !apikey || !apisecret) {
+        showStatus('❌ Please fill in all fields first', 'error');
+        return;
+      }
+
+      showStatus('🔄 Testing connection...', 'loading');
+
+      try {
+        const response = await fetch('/api/connect/zort', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': 'default'
+          },
+          body: JSON.stringify({
+            storeName,
+            storename: storeName,
+            apikey,
+            apisecret
+          })
+        });
+
+        if (response.ok) {
+          showStatus('✅ Connection successful! You can now click "Connect ZORT Account"', 'success');
+          updateConnectionStatus(true);
+        } else {
+          const error = await response.json();
+          showStatus(`❌ Connection failed: ${error.message || 'Invalid credentials'}`, 'error');
+          updateConnectionStatus(false);
+        }
+      } catch (err) {
+        showStatus(`❌ Error: ${err.message}`, 'error');
+        updateConnectionStatus(false);
+      }
+    }
+
+    document.getElementById('zortForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const storeName = document.getElementById('storeName').value;
+      const apikey = document.getElementById('apikey').value;
+      const apisecret = document.getElementById('apisecret').value;
+
+      const btn = e.target.querySelector('.submit-btn');
+      btn.disabled = true;
+
+      showStatus('🔄 Connecting to ZORT...', 'loading');
+
+      try {
+        const response = await fetch('/api/connect/zort', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': 'default'
+          },
+          body: JSON.stringify({
+            storeName,
+            storename: storeName,
+            apikey,
+            apisecret
+          })
+        });
+
+        if (response.ok) {
+          // Hide form, show success
+          document.getElementById('formView').style.display = 'none';
+          document.getElementById('successView').classList.add('show');
+          updateConnectionStatus(true);
+        } else {
+          const error = await response.json();
+          showStatus(`❌ Failed to connect: ${error.message || 'Please check your credentials'}`, 'error');
+          updateConnectionStatus(false);
+          btn.disabled = false;
+        }
+      } catch (err) {
+        showStatus(`❌ Error: ${err.message}`, 'error');
+        updateConnectionStatus(false);
+        btn.disabled = false;
+      }
+    });
+
+    function resetForm() {
+      document.getElementById('zortForm').reset();
+      document.getElementById('formView').style.display = 'block';
+      document.getElementById('successView').classList.remove('show');
+      document.getElementById('status').className = 'status';
+      updateConnectionStatus(false);
+    }
+  </script>
+</body>
+</html>
