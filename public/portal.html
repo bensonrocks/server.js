@@ -503,37 +503,141 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <!-- ── CONNECTIONS SECTION ── -->
   <div id="section-connections" class="connections-section" style="display:none">
     <div class="conn-header">
-      <h2>My Marketplace Connections</h2>
-      <p>Connect your stores and IdealOne OMS will automatically sync your orders.</p>
+      <h2>🔗 My Marketplace Connections</h2>
+      <p>Enter your store credentials so we can sync orders via ZORT. Your credentials are encrypted and secure.</p>
     </div>
 
-    <!-- Add store form -->
-    <div id="add-store-form" style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:10px">+ Connect a New Store</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-        <div style="flex:0 0 160px">
-          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Marketplace</label>
-          <select id="conn-marketplace" style="width:100%;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px">
-            <option value="lazada">Lazada</option>
-            <option value="shopee">Shopee</option>
-            <option value="tiktok">TikTok Shop</option>
-            <option value="shopify">Shopify</option>
-            <option value="zalora">Zalora</option>
-            <option value="other">Other</option>
-          </select>
+    <!-- Platform Cards Grid -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px;">
+      <!-- Shopee -->
+      <div style="background: #fff; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 16px; cursor: pointer;" onclick="expandPlatformForm('shopee')">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+          <div style="width: 32px; height: 32px; border-radius: 6px; background: #ee4d2d; color: white; display: flex; align-items: center; justify-content: center; font-size: 18px;">🏪</div>
+          <div style="flex: 1;">
+            <div style="font-weight: 600; font-size: 13px; color: #0f172a;">Shopee</div>
+            <div style="font-size: 11px; color: #94a3b8;" id="shopee-status">Not Connected</div>
+          </div>
         </div>
-        <div style="flex:1;min-width:180px">
-          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Your Store Name <span style="font-weight:400">(as shown in your marketplace seller centre)</span></label>
-          <input id="conn-store-name" type="text" placeholder="e.g. My Awesome Shop" style="width:100%;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
-        </div>
-        <button onclick="submitStoreConnect()" style="padding:8px 18px;border:none;border-radius:7px;background:#7c3aed;color:#fff;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Connect Store</button>
       </div>
-      <div id="conn-add-msg" style="font-size:12px;margin-top:8px"></div>
+
+      <!-- Lazada -->
+      <div style="background: #fff; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 16px; cursor: pointer;" onclick="expandPlatformForm('lazada')">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+          <div style="width: 32px; height: 32px; border-radius: 6px; background: #2a2a2a; color: white; display: flex; align-items: center; justify-content: center; font-size: 18px;">🛍️</div>
+          <div style="flex: 1;">
+            <div style="font-weight: 600; font-size: 13px; color: #0f172a;">Lazada</div>
+            <div style="font-size: 11px; color: #94a3b8;" id="lazada-status">Not Connected</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TikTok -->
+      <div style="background: #fff; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 16px; cursor: pointer;" onclick="expandPlatformForm('tiktok')">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+          <div style="width: 32px; height: 32px; border-radius: 6px; background: #000; color: white; display: flex; align-items: center; justify-content: center; font-size: 18px;">🎵</div>
+          <div style="flex: 1;">
+            <div style="font-weight: 600; font-size: 13px; color: #0f172a;">TikTok Shop</div>
+            <div style="font-size: 11px; color: #94a3b8;" id="tiktok-status">Not Connected</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Shopify -->
+      <div style="background: #fff; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 16px; cursor: pointer;" onclick="expandPlatformForm('shopify')">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+          <div style="width: 32px; height: 32px; border-radius: 6px; background: #96c32f; color: white; display: flex; align-items: center; justify-content: center; font-size: 18px;">🏬</div>
+          <div style="flex: 1;">
+            <div style="font-weight: 600; font-size: 13px; color: #0f172a;">Shopify</div>
+            <div style="font-size: 11px; color: #94a3b8;" id="shopify-status">Not Connected</div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Connected / pending stores list -->
-    <div id="connections-grid">
-      <div style="color:#94a3b8;font-size:13px;padding:12px 0">Loading&#8230;</div>
+    <!-- Credential Forms (Hidden by default) -->
+    <div id="shopee-form" style="display:none;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px">
+      <h3 style="margin-bottom:12px;font-size:14px;font-weight:600">Shopee Store Credentials</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Shop ID *</label>
+          <input id="shopee-shopid" type="text" placeholder="Your Shop ID" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">API Key *</label>
+          <input id="shopee-apikey" type="password" placeholder="Your API Key" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">API Secret *</label>
+          <input id="shopee-apisecret" type="password" placeholder="Your API Secret" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveClientCredentials('shopee')" style="padding:8px 16px;border:none;border-radius:7px;background:#10b981;color:#fff;font-size:12px;font-weight:700;cursor:pointer">Save & Connect</button>
+        <button onclick="cancelPlatformForm('shopee')" style="padding:8px 16px;border:1.5px solid #e2e8f0;border-radius:7px;background:#fff;color:#64748b;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+
+    <div id="lazada-form" style="display:none;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px">
+      <h3 style="margin-bottom:12px;font-size:14px;font-weight:600">Lazada Store Credentials</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Shop ID *</label>
+          <input id="lazada-shopid" type="text" placeholder="Your Shop ID" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">App Key *</label>
+          <input id="lazada-appkey" type="password" placeholder="Your App Key" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">App Secret *</label>
+          <input id="lazada-appsecret" type="password" placeholder="Your App Secret" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveClientCredentials('lazada')" style="padding:8px 16px;border:none;border-radius:7px;background:#10b981;color:#fff;font-size:12px;font-weight:700;cursor:pointer">Save & Connect</button>
+        <button onclick="cancelPlatformForm('lazada')" style="padding:8px 16px;border:1.5px solid #e2e8f0;border-radius:7px;background:#fff;color:#64748b;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+
+    <div id="tiktok-form" style="display:none;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px">
+      <h3 style="margin-bottom:12px;font-size:14px;font-weight:600">TikTok Shop Credentials</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Shop ID *</label>
+          <input id="tiktok-shopid" type="text" placeholder="Your Shop ID" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">API Key *</label>
+          <input id="tiktok-apikey" type="password" placeholder="Your API Key" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveClientCredentials('tiktok')" style="padding:8px 16px;border:none;border-radius:7px;background:#10b981;color:#fff;font-size:12px;font-weight:700;cursor:pointer">Save & Connect</button>
+        <button onclick="cancelPlatformForm('tiktok')" style="padding:8px 16px;border:1.5px solid #e2e8f0;border-radius:7px;background:#fff;color:#64748b;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+
+    <div id="shopify-form" style="display:none;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px">
+      <h3 style="margin-bottom:12px;font-size:14px;font-weight:600">Shopify Store Credentials</h3>
+      <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Store URL *</label>
+          <input id="shopify-storeurl" type="text" placeholder="e.g. mystore.myshopify.com" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Access Token *</label>
+          <input id="shopify-accesstoken" type="password" placeholder="Your API Access Token" style="width:100%;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveClientCredentials('shopify')" style="padding:8px 16px;border:none;border-radius:7px;background:#10b981;color:#fff;font-size:12px;font-weight:700;cursor:pointer">Save & Connect</button>
+        <button onclick="cancelPlatformForm('shopify')" style="padding:8px 16px;border:1.5px solid #e2e8f0;border-radius:7px;background:#fff;color:#64748b;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Connected Stores List -->
+    <div id="connections-grid" style="background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:16px">
+      <div style="color:#94a3b8;font-size:13px">Loading connections...</div>
     </div>
   </div>
 </div>
@@ -1220,9 +1324,47 @@ function setPortalTab(tab) {
   document.getElementById('section-inventory').style.display   = tab === 'inventory'   ? 'flex' : 'none';
   document.getElementById('section-connections').style.display = tab === 'connections' ? 'flex' : 'none';
   document.getElementById('btn-upload-orders').style.display   = tab === 'orders'      ? ''     : 'none';
-  if (tab === 'connections') loadConnections();
+  if (tab === 'connections') { loadOldConnections(); loadClientPlatformCredentials(); }
   else if (tab === 'inventory') loadInventory();
   else if (tab === 'orders' && !allOrders.length) loadOrders();
+}
+
+async function loadClientPlatformCredentials() {
+  try {
+    const r = await fetch(`${SERVER}/api/portal/platform-credentials`, {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (r.ok) {
+      const creds = await r.json();
+      ['shopee', 'lazada', 'tiktok', 'shopify'].forEach(p => {
+        const status = creds[p] ? '✓ Connected' : 'Not Connected';
+        const el = document.getElementById(p + '-status');
+        if (el) el.textContent = status;
+      });
+      renderClientConnectionsList(creds);
+    }
+  } catch (e) {
+    console.log('Could not load platform credentials');
+  }
+}
+
+function renderClientConnectionsList(creds) {
+  const grid = document.getElementById('connections-grid');
+  const connected = Object.entries(creds || {}).filter(([_, v]) => v);
+
+  if (!connected.length) {
+    grid.innerHTML = '<div style="color:#94a3b8;font-size:13px;text-align:center;padding:24px">No platforms connected yet. Add your credentials above to start syncing orders.</div>';
+    return;
+  }
+
+  grid.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">' +
+    connected.map(([platform, cred]) => `
+      <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:12px">
+        <div style="font-weight:600;font-size:12px;color:#0f172a;margin-bottom:6px;text-transform:capitalize">${platform}</div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px">✓ Connected</div>
+        <button onclick="removePlatformCreds('${platform}')" style="width:100%;padding:6px;border:1.5px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#dc2626;font-size:11px;font-weight:600;cursor:pointer">Disconnect</button>
+      </div>
+    `).join('') + '</div>';
 }
 
 async function loadConnections() {
@@ -1313,6 +1455,139 @@ async function submitStoreConnect() {
     document.getElementById('conn-store-name').value = '';
     loadConnections();
   } catch (e) { if (msg) { msg.textContent = e.message; msg.style.color = '#dc2626'; } }
+}
+
+// ── CLIENT PLATFORM CREDENTIALS ──────────────────────────────────────────────
+
+function expandPlatformForm(platform) {
+  document.getElementById(platform + '-form').style.display = 'block';
+}
+
+function cancelPlatformForm(platform) {
+  document.getElementById(platform + '-form').style.display = 'none';
+  // Clear form
+  const form = document.getElementById(platform + '-form');
+  const inputs = form.querySelectorAll('input');
+  inputs.forEach(i => i.value = '');
+}
+
+async function saveClientCredentials(platform) {
+  let credentials = {};
+
+  if (platform === 'shopee') {
+    credentials = {
+      shopId: document.getElementById('shopee-shopid').value,
+      apikey: document.getElementById('shopee-apikey').value,
+      apisecret: document.getElementById('shopee-apisecret').value
+    };
+  } else if (platform === 'lazada') {
+    credentials = {
+      shopId: document.getElementById('lazada-shopid').value,
+      appKey: document.getElementById('lazada-appkey').value,
+      appSecret: document.getElementById('lazada-appsecret').value
+    };
+  } else if (platform === 'tiktok') {
+    credentials = {
+      shopId: document.getElementById('tiktok-shopid').value,
+      apikey: document.getElementById('tiktok-apikey').value
+    };
+  } else if (platform === 'shopify') {
+    credentials = {
+      storeUrl: document.getElementById('shopify-storeurl').value,
+      accessToken: document.getElementById('shopify-accesstoken').value
+    };
+  }
+
+  // Validate required fields
+  const requiredFields = Object.values(credentials).filter(v => !v);
+  if (requiredFields.length > 0) {
+    showConnToast('error', 'Please fill all required fields');
+    return;
+  }
+
+  try {
+    const r = await fetch(`${SERVER}/api/portal/platform-credentials/${platform}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ platform, credentials })
+    });
+
+    const j = await r.json();
+    if (r.ok) {
+      showConnToast('ok', platform.charAt(0).toUpperCase() + platform.slice(1) + ' connected successfully!');
+      cancelPlatformForm(platform);
+      loadConnections();
+      // Update status badge
+      document.getElementById(platform + '-status').textContent = '✓ Connected';
+    } else {
+      showConnToast('error', j.error || 'Failed to connect');
+    }
+  } catch (e) {
+    showConnToast('error', 'Error: ' + e.message);
+  }
+}
+
+async function loadConnections() {
+  try {
+    const r = await fetch(`${SERVER}/api/portal/platform-credentials`, {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (r.ok) {
+      const creds = await r.json();
+      // Update status for each platform
+      ['shopee', 'lazada', 'tiktok', 'shopify'].forEach(p => {
+        const status = creds[p] ? '✓ Connected' : 'Not Connected';
+        const el = document.getElementById(p + '-status');
+        if (el) el.textContent = status;
+      });
+      // Render connections grid
+      renderConnectionsList(creds);
+    }
+  } catch (e) {
+    console.log('Failed to load connections');
+  }
+}
+
+function renderConnectionsList(creds) {
+  const grid = document.getElementById('connections-grid');
+  const connected = Object.entries(creds).filter(([_, v]) => v);
+
+  if (!connected.length) {
+    grid.innerHTML = '<div style="color:#94a3b8;font-size:13px;text-align:center;padding:24px">No platforms connected yet. Add your credentials above.</div>';
+    return;
+  }
+
+  grid.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">' +
+    connected.map(([platform, cred]) => `
+      <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:12px">
+        <div style="font-weight:600;font-size:12px;color:#0f172a;margin-bottom:6px;text-transform:capitalize">${platform}</div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px">✓ Connected</div>
+        <button onclick="removePlatformCreds('${platform}')" style="width:100%;padding:6px;border:1.5px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#dc2626;font-size:11px;font-weight:600;cursor:pointer">Disconnect</button>
+      </div>
+    `).join('') + '</div>';
+}
+
+async function removePlatformCreds(platform) {
+  if (!confirm(`Disconnect ${platform}? Orders from ${platform} won't sync until you reconnect.`)) return;
+
+  try {
+    const r = await fetch(`${SERVER}/api/portal/platform-credentials/${platform}`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (r.ok) {
+      showConnToast('ok', platform + ' disconnected');
+      loadConnections();
+      document.getElementById(platform + '-status').textContent = 'Not Connected';
+    } else {
+      showConnToast('error', 'Failed to disconnect');
+    }
+  } catch (e) {
+    showConnToast('error', e.message);
+  }
 }
 
 async function disconnectStore(mappingId, storeName) {
