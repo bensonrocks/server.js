@@ -635,6 +635,24 @@ app.get('/api/connect/status', withTenant, (req, res) => {
   res.json(result);
 });
 
+app.get('/api/credentials/:platform', withTenant, (req, res) => {
+  const { platform } = req.params;
+  if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
+
+  const cred = req.creds.get(platform);
+  if (!cred) return res.json(null);
+
+  // Return credential data without sensitive parts
+  const { apiSecret, partnerKey, appSecret, ...safe } = cred;
+  res.json({
+    platform,
+    storeName: safe.storeName,
+    email: safe.email,
+    displayName: safe.displayName || safe.storeName,
+    ...safe
+  });
+});
+
 app.post('/api/connect/:platform', withTenant, (req, res) => {
   const { platform } = req.params;
   if (!registry[platform]) return res.status(400).json({ error: 'Unknown platform' });
