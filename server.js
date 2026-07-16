@@ -7620,7 +7620,15 @@ app.get('/driver', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`));
+app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`))
+  .on('error', err => {
+    if (err.code === 'EADDRINUSE') {
+      // A second copy is already running — exit cleanly instead of crashing
+      console.error(`[IdealScan] Port ${PORT} is already in use — another instance is running. Exiting.`);
+      process.exit(1);
+    }
+    throw err;
+  });
 
 // Initialize MySQL in the background (non-blocking)
 initMysqlPool().catch(err => console.error('[Startup] MySQL init failed:', err.message));
