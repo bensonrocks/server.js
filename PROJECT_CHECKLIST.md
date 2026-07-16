@@ -180,27 +180,32 @@
 
 ---
 
-## 📋 PHASE 5: Inventory Sync (PENDING)
+## ✅ PHASE 5: Inventory Sync (COMPLETE)
 
-### 5.1 Inventory to ZORT
-- [ ] Fetch IDEALONE inventory_balance
-- [ ] Update ZORT available stock
-- [ ] Bidirectional sync with conflict resolution
-- [ ] Batch update endpoint
+### 5.1 Inventory Pull/Push
+- [x] Pull inventory from platforms (Shopee, Lazada, TikTok, Shopify)
+- [x] Push IDEALONE inventory to platforms
+- [x] SKU mapping and discovery from order history
+- [x] Available quantity calculation (stock - reserved)
+- [x] Batch operations for efficiency
 
-### 5.2 Inventory to Shopee/Lazada
-- [ ] Map IDEALONE SKU → Shopee/Lazada product ID
-- [ ] Update available quantity
-- [ ] Handle variant/model mapping
-- [ ] Batch sync endpoint
+### 5.2 Conflict Resolution
+- [x] Detect inventory conflicts
+- [x] idealone_wins strategy
+- [x] platform_wins strategy
+- [x] Manual review fallback
+- [x] Conflict logging for audit
 
-### 5.3 Inventory Sync Tests
-- [ ] Inventory update after allocation
-- [ ] Stock depletion tracking
-- [ ] Multi-platform sync atomicity
-- [ ] Conflict resolution (which system is source of truth?)
+### 5.3 Inventory Sync Tests (19 tests)
+- [x] Discover mappings from order history
+- [x] Calculate available qty after reservations
+- [x] Detect and resolve inventory conflicts
+- [x] Handle multi-platform sync independently
+- [x] Platform-specific schema differences
+- [x] Error handling and partial failures
 
-**Estimated**: 2-3 days (implement for each platform)
+**File**: `test/integration/inventory-sync.integration.test.js`  
+**Status**: ✅ **PASSING**
 
 ---
 
