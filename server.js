@@ -3317,23 +3317,38 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const orders    = summarizeOrders(mapped);
 
     // SAFETY RULE — duplicate order numbers: re-uploading the same file (or
-    // the same picking lists in another file) would create twin orders
+    // the same picking lists in another file) would create twin orders.
+    // The error names the exact batch each duplicate already lives in, so
+    // the user can find it in Upload History without guessing.
     {
-      const existing = new Set();
-      for (const b of readDb().batches || []) for (const o of b.orders || []) existing.add(o.order_number);
-      const dups = [...new Set(orders.map(o => o.order_number).filter(n => existing.has(n)))];
+      const existingIn = new Map(); // order_number → {code, filename, at}
+      for (const b of readDb().batches || []) {
+        for (const o of b.orders || []) {
+          if (!existingIn.has(o.order_number)) {
+            existingIn.set(o.order_number, {
+              code: b.idealscan_code || '', filename: b.filename || '',
+              at: (b.uploaded_at || '').slice(0, 16).replace('T', ' '),
+            });
+          }
+        }
+      }
+      const dups = [...new Set(orders.map(o => o.order_number).filter(n => existingIn.has(n)))];
       if (dups.length) {
         return res.status(422).json({
           error: `UPLOAD ABORTED:\n${dups.length} order(s) in this file already exist in the system.\nNothing was saved.`,
           validation: {
             passed: false, status: 'FAILED', totalErrors: dups.length,
             totalRowsProcessed: mapped.length, rowsWithErrors: dups.length, hasCritical: true,
-            errors: dups.slice(0, 50).map(n => ({
-              excelRow: '—', orderId: n, field: 'order_number',
-              issue: 'DUPLICATE ORDER NUMBER', description: `Order "${n}" was already uploaded earlier.`,
-              action: 'If this is a re-upload, delete the earlier batch in Administrator → Upload History first.',
-              critical: true,
-            })),
+            errors: dups.slice(0, 50).map(n => {
+              const src = existingIn.get(n);
+              return {
+                excelRow: '—', orderId: n, field: 'order_number',
+                issue: 'DUPLICATE ORDER NUMBER',
+                description: `Order "${n}" already exists in job ${src.code || '(unknown)'} — "${src.filename}", uploaded ${src.at}.`,
+                action: `Already uploaded in ${src.code || 'an earlier batch'}. If this file replaces it, delete that batch in Administrator → Upload History first; otherwise remove the duplicated rows from this file.`,
+                critical: true,
+              };
+            }),
           },
         });
       }
