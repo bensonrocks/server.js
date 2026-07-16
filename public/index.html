@@ -1184,6 +1184,7 @@
       <div style="padding-left:2rem;display:none" id="transportSubMenu">
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="uploadJobsBtn">📦 Upload Jobs</button>
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="driverDetailsBtn">👤 Driver Details</button>
+        <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="addressBookBtn">📒 Address Book</button>
       </div>
       <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
       <button class="tab-btn" data-tab="reports"><span class="tab-icon">&#128202;</span>Reports</button>
@@ -1652,6 +1653,57 @@
             <button class="btn-primary" id="routeAssignBtn" style="flex:1">✓ Confirm Plan &amp; Save</button>
             <button class="btn-secondary" id="routeExportBtn" style="flex:1">📥 Export Routes</button>
             <button class="btn-secondary" id="routePlanningCloseBtn2" style="flex:1">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Address Book Modal — fixed-location cross-reference (store → address + postal) -->
+      <div id="addressBookModal" class="modal-overlay hidden">
+        <div class="modal" style="width:94%;max-width:900px;max-height:88vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+            <h2 style="margin:0">📒 Address Book</h2>
+            <button class="btn-close" id="addressBookCloseBtn">✕</button>
+          </div>
+          <p class="hint" style="font-size:12px;margin-bottom:1rem">
+            Fixed delivery locations (e.g. BETIME stores): map a store name/code to its full address and 6-digit postal code.
+            Whenever an import or upload has no address, the book fills it in automatically — map pins and route distances then work.
+            Download the current list, edit it in Excel, and re-upload to replace it; unresolved jobs are fixed immediately.
+          </p>
+
+          <!-- Add / update one entry -->
+          <div style="display:grid;grid-template-columns:110px 1.2fr 2fr 90px 110px auto;gap:.5rem;margin-bottom:1rem;align-items:end">
+            <div><label style="font-size:11px;font-weight:600">Store Code</label><input id="abCode" placeholder="NEX01" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" /></div>
+            <div><label style="font-size:11px;font-weight:600">Store Name *</label><input id="abName" placeholder="NEX" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" /></div>
+            <div><label style="font-size:11px;font-weight:600">Address</label><input id="abAddress" placeholder="23 Serangoon Central" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" /></div>
+            <div><label style="font-size:11px;font-weight:600">Postal *</label><input id="abZip" placeholder="556083" maxlength="6" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" /></div>
+            <div><label style="font-size:11px;font-weight:600">Phone</label><input id="abPhone" placeholder="6123 4567" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" /></div>
+            <button class="btn-primary btn-sm" id="abSaveBtn" style="height:32px">＋ Save</button>
+          </div>
+
+          <div id="abStatus" class="status-bar hidden" style="margin-bottom:.8rem"></div>
+
+          <!-- Current entries -->
+          <div style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:1rem">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead style="background:#f8fafc"><tr>
+                <th style="padding:.5rem;text-align:left">Code</th>
+                <th style="padding:.5rem;text-align:left">Store Name</th>
+                <th style="padding:.5rem;text-align:left">Address</th>
+                <th style="padding:.5rem;text-align:left">Postal</th>
+                <th style="padding:.5rem;text-align:left">Phone</th>
+                <th style="padding:.5rem;width:40px"></th>
+              </tr></thead>
+              <tbody id="addressBookTableBody"></tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:space-between">
+            <div style="display:flex;gap:.6rem">
+              <button class="btn-secondary" id="abDownloadBtn">⬇️ Download List (XLSX)</button>
+              <button class="btn-secondary" id="abUploadBtn">⬆️ Upload Updated List</button>
+              <input type="file" id="abFileInput" accept=".xlsx,.xls,.csv" hidden />
+            </div>
+            <button class="btn-secondary" id="addressBookCloseBtn2">Close</button>
           </div>
         </div>
       </div>

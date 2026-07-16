@@ -856,6 +856,24 @@ upload success message. (The old `planDeliveryJobs` zone-grouping system —
 `confirmPlanDeliveryCheckbox`/`planDeliveryJobs` — was removed; it pushed
 malformed `JOB-...` records into db.transport.)
 
+### Address Book — fixed-location cross-reference (server.js `/api/address-book*`)
+
+BETIME-style imports carry only a store name/code, no address. `db.addressBook`
+= `[{code, name, address, zip, phone}]` maps them to a full address + 6-digit
+postal. `applyAddressBookToTransport(db)` fills `shipping.address/zip/phone`
+on every transport job still missing a zip (matched case-insensitively on
+clientName OR referenceId; never overwrites an existing zip) and runs after
+EVERY path that can leave a job unresolved: order-upload bridge, unified TMS
+import, single-entry upsert, and book file import — so a book update takes
+effect on existing jobs immediately (response includes `jobsFixed`).
+
+UI: 📒 Address Book in the Transport sidebar sub-menu (`#addressBookModal`) —
+add/edit one entry, delete entries, ⬇ download the current list as XLSX
+(serves a template row when empty), ⬆ upload an edited list which REPLACES
+the whole book (typed confirm; rows with non-6-digit postals are skipped and
+reported as warnings). All endpoints require login; changes audit-logged
+(`address_book_upsert`/`_delete`/`_import`).
+
 ### Transport tab scope: TODAY'S workload only
 
 `renderTransportTab()` filters the fetched list before anything renders: the

@@ -817,6 +817,42 @@ function updateTransportOnOrderCompletion(db, order, state) {
   });
 }
 
+// ── Address Book — fixed-location cross-reference (BETIME stores etc.) ──────
+// db.addressBook = [{ code, name, address, zip, phone }]. Import files often
+// carry only a store name/code with no address; the book resolves those to a
+// full address + 6-digit postal so map pins and route distances work.
+function _abNorm(s) { return String(s || '').trim().toUpperCase().replace(/\s+/g, ' '); }
+
+function buildAddressBookIndex(db) {
+  const idx = new Map();
+  for (const e of db.addressBook || []) {
+    if (e.name) idx.set(_abNorm(e.name), e);
+    if (e.code) idx.set(_abNorm(e.code), e);
+  }
+  return idx;
+}
+
+// Fill address/zip/phone on every transport job that lacks a postal code,
+// by looking its client name (or referenceId as a store code) up in the
+// book. Called after every book change and after every job-creation path,
+// so a book update "takes effect" on existing unresolved jobs immediately.
+function applyAddressBookToTransport(db) {
+  const idx = buildAddressBookIndex(db);
+  if (!idx.size) return 0;
+  let updated = 0;
+  for (const job of db.transport || []) {
+    if (job.shipping?.zip) continue; // already resolved — never overwrite
+    const entry = idx.get(_abNorm(job.clientName)) || idx.get(_abNorm(job.referenceId));
+    if (!entry) continue;
+    job.shipping = job.shipping || {};
+    job.shipping.addressLine1 = job.shipping.addressLine1 || entry.address || '';
+    job.shipping.zip = entry.zip || '';
+    if (!job.shipping.phone && entry.phone) job.shipping.phone = entry.phone;
+    updated++;
+  }
+  return updated;
+}
+
 // Every uploaded picking-list order ALSO becomes a transport delivery job,
 // so the Transport tab reflects the day's real workload without a second
 // upload. Deduped by order number (referenceId), so re-uploading a batch or
@@ -864,7 +900,10 @@ function createTransportJobsFromOrders(db, orders, clientName, batchId) {
     });
     created++;
   }
-  if (created) logAudit('transport_jobs_from_upload', { jobs: created, batchId: batchId || '', client: clientName || '' });
+  if (created) {
+    applyAddressBookToTransport(db); // resolve store names → address/postal
+    logAudit('transport_jobs_from_upload', { jobs: created, batchId: batchId || '', client: clientName || '' });
+  }
   return created;
 }
 
@@ -4577,6 +4616,7 @@ app.post('/api/transport/import', upload.single('file'), (req, res) => {
         return res.status(400).json({ error: 'Could not parse file — no valid delivery or order records found' });
       }
       const result = tmsImporter.createOrdersFromImport({ customers: orders }, db);
+      applyAddressBookToTransport(db); // fill address/postal from the Address Book
       _persistDb(db);
       logAudit('tms_import', {
         ordersCreated: result.created.length,
@@ -4598,6 +4638,7 @@ app.post('/api/transport/import', upload.single('file'), (req, res) => {
 
     // Process deliveries with attribute-based parsing
     const result = tmsImporter.createOrdersFromImport({ customers }, db);
+    applyAddressBookToTransport(db); // fill address/postal from the Address Book
     _persistDb(db);
     logAudit('tms_import', {
       ordersCreated: result.created.length,
@@ -4729,6 +4770,101 @@ app.post('/api/transport/mark-delivered', (req, res) => {
   _persistDb(db);
   logAudit('transport_marked_delivered', { jobs: delivered, mode: allConfirmed ? 'all-confirmed' : 'ids', by: req.userId || '' });
   res.json({ success: true, delivered });
+});
+
+// ── Address Book endpoints — maintain the store→address cross-reference ─────
+app.get('/api/address-book', (req, res) => {
+  const db = readDb();
+  res.json(db.addressBook || []);
+});
+
+// Upsert one entry (matched by code, else by name)
+app.post('/api/address-book', (req, res) => {
+  const { code = '', name = '', address = '', zip = '', phone = '' } = req.body || {};
+  if (!name.trim()) return res.status(400).json({ error: 'Store name is required' });
+  if (zip && !/^\d{6}$/.test(String(zip).trim())) {
+    return res.status(400).json({ error: 'Postal code must be exactly 6 digits' });
+  }
+  const db = readDb();
+  if (!db.addressBook) db.addressBook = [];
+  const entry = { code: String(code).trim(), name: String(name).trim(),
+                  address: String(address).trim(), zip: String(zip).trim(), phone: String(phone).trim() };
+  const i = db.addressBook.findIndex(e =>
+    (entry.code && _abNorm(e.code) === _abNorm(entry.code)) || _abNorm(e.name) === _abNorm(entry.name));
+  if (i >= 0) db.addressBook[i] = entry; else db.addressBook.push(entry);
+  const jobsFixed = applyAddressBookToTransport(db);
+  _persistDb(db);
+  logAudit('address_book_upsert', { name: entry.name, jobsFixed, by: req.userId || '' });
+  res.json({ success: true, entries: db.addressBook.length, jobsFixed });
+});
+
+app.delete('/api/address-book/:name', (req, res) => {
+  const key = _abNorm(decodeURIComponent(req.params.name));
+  const db = readDb();
+  const before = (db.addressBook || []).length;
+  db.addressBook = (db.addressBook || []).filter(e => _abNorm(e.name) !== key && _abNorm(e.code) !== key);
+  if (db.addressBook.length === before) return res.status(404).json({ error: 'Entry not found' });
+  _persistDb(db);
+  logAudit('address_book_delete', { name: req.params.name, by: req.userId || '' });
+  res.json({ success: true, entries: db.addressBook.length });
+});
+
+// Download the current list as XLSX (a ready-to-edit template when empty)
+app.get('/api/address-book/export', (req, res) => {
+  const db = readDb();
+  const rows = (db.addressBook || []).length
+    ? db.addressBook.map(e => ({ 'Store Code': e.code || '', 'Store Name': e.name || '',
+        'Address': e.address || '', 'Postal Code': e.zip || '', 'Phone': e.phone || '' }))
+    : [{ 'Store Code': 'NEX01', 'Store Name': 'NEX', 'Address': '23 Serangoon Central',
+        'Postal Code': '556083', 'Phone': '' }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Address Book');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Address_Book_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(buf);
+});
+
+// Re-upload the (edited) list — REPLACES the whole book, then immediately
+// re-resolves every transport job still missing a postal code.
+app.post('/api/address-book/import', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]] || {});
+    const norm = k => String(k).toLowerCase().replace(/[^a-z]/g, '');
+    const entries = [];
+    const badZips = [];
+    for (const row of rows) {
+      const get = (...names) => {
+        for (const key of Object.keys(row)) if (names.includes(norm(key))) return String(row[key] ?? '').trim();
+        return '';
+      };
+      const name = get('storename', 'name', 'store', 'customer', 'client');
+      if (!name) continue;
+      const zip = get('postalcode', 'postal', 'zip', 'zipcode');
+      if (zip && !/^\d{6}$/.test(zip)) { badZips.push(`${name}: "${zip}"`); continue; }
+      entries.push({
+        code: get('storecode', 'code', 'id'),
+        name,
+        address: get('address', 'addressline1', 'deliveryaddress', 'fulladdress'),
+        zip,
+        phone: get('phone', 'tel', 'contact'),
+      });
+    }
+    if (!entries.length) {
+      return res.status(400).json({ error: 'No valid rows found. Columns needed: Store Name (required), Address, Postal Code (6 digits), plus optional Store Code and Phone.' });
+    }
+    const db = readDb();
+    db.addressBook = entries;
+    const jobsFixed = applyAddressBookToTransport(db);
+    _persistDb(db);
+    logAudit('address_book_import', { entries: entries.length, skippedBadZip: badZips.length, jobsFixed, by: req.userId || '' });
+    res.json({ success: true, entries: entries.length, jobsFixed,
+      warnings: badZips.length ? [`${badZips.length} row(s) skipped — postal code not 6 digits: ${badZips.slice(0, 5).join('; ')}`] : [] });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // Transport job deletion — ADMIN ROLE (or master key) only. Warehouse users

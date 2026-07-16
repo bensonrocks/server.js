@@ -3471,6 +3471,102 @@
     } catch (err) { alert('❌ ' + err.message); }
   });
 
+  // ── Address Book — fixed-location cross-reference (store → address) ────────
+  async function renderAddressBook() {
+    const tbody = document.getElementById('addressBookTableBody');
+    try {
+      const resp = await fetch('/api/address-book', { headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
+      const entries = await resp.json();
+      if (!Array.isArray(entries) || !entries.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="padding:1.5rem;text-align:center;color:#64748b">No entries yet — add stores above, or download the template, fill it in, and upload.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = entries.map(e => `
+        <tr style="border-top:1px solid #f0f0f0">
+          <td style="padding:.45rem .5rem"><code>${esc(e.code || '—')}</code></td>
+          <td style="padding:.45rem .5rem"><strong>${esc(e.name)}</strong></td>
+          <td style="padding:.45rem .5rem">${esc(e.address || '—')}</td>
+          <td style="padding:.45rem .5rem">${esc(e.zip || '—')}</td>
+          <td style="padding:.45rem .5rem">${esc(e.phone || '—')}</td>
+          <td style="padding:.45rem .5rem"><button class="ab-del-btn" data-name="${esc(e.name)}" title="Remove" style="background:none;border:none;cursor:pointer">🗑</button></td>
+        </tr>`).join('');
+      tbody.querySelectorAll('.ab-del-btn').forEach(btn => btn.addEventListener('click', async () => {
+        if (!confirm(`Remove "${btn.dataset.name}" from the Address Book?`)) return;
+        await fetch(`/api/address-book/${encodeURIComponent(btn.dataset.name)}`, {
+          method: 'DELETE', headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
+        renderAddressBook();
+      }));
+    } catch {
+      tbody.innerHTML = '<tr><td colspan="6" style="padding:1rem;color:var(--danger)">Failed to load.</td></tr>';
+    }
+  }
+
+  function abStatus(kind, msg) {
+    const el = document.getElementById('abStatus');
+    el.className = `status-bar ${kind}`;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  document.getElementById('addressBookBtn')?.addEventListener('click', () => {
+    document.getElementById('abStatus')?.classList.add('hidden');
+    document.getElementById('addressBookModal').classList.remove('hidden');
+    renderAddressBook();
+  });
+  document.getElementById('addressBookCloseBtn')?.addEventListener('click', () => document.getElementById('addressBookModal').classList.add('hidden'));
+  document.getElementById('addressBookCloseBtn2')?.addEventListener('click', () => document.getElementById('addressBookModal').classList.add('hidden'));
+
+  document.getElementById('abSaveBtn')?.addEventListener('click', async () => {
+    const entry = {
+      code: document.getElementById('abCode').value.trim(),
+      name: document.getElementById('abName').value.trim(),
+      address: document.getElementById('abAddress').value.trim(),
+      zip: document.getElementById('abZip').value.trim(),
+      phone: document.getElementById('abPhone').value.trim(),
+    };
+    if (!entry.name) { abStatus('error', 'Store name is required.'); return; }
+    if (entry.zip && !/^\d{6}$/.test(entry.zip)) { abStatus('error', 'Postal code must be exactly 6 digits.'); return; }
+    try {
+      const resp = await fetch('/api/address-book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify(entry),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Save failed');
+      abStatus('success', `✓ Saved "${entry.name}"${data.jobsFixed ? ` — ${data.jobsFixed} existing job(s) auto-filled` : ''}.`);
+      ['abCode', 'abName', 'abAddress', 'abZip', 'abPhone'].forEach(id => { document.getElementById(id).value = ''; });
+      renderAddressBook();
+      renderTransportTab(); // refresh map pins if jobs got fixed
+    } catch (err) { abStatus('error', '❌ ' + err.message); }
+  });
+
+  document.getElementById('abDownloadBtn')?.addEventListener('click', () =>
+    authDownload('/api/address-book/export', `Address_Book_${new Date().toISOString().slice(0, 10)}.xlsx`));
+
+  document.getElementById('abUploadBtn')?.addEventListener('click', () => document.getElementById('abFileInput')?.click());
+  document.getElementById('abFileInput')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!confirm('Uploading REPLACES the entire Address Book with this file. Continue?')) return;
+    abStatus('progress', 'Uploading and applying...');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const resp = await fetch('/api/address-book/import', {
+        method: 'POST', body: fd,
+        headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' },
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Import failed');
+      abStatus('success', `✓ ${data.entries} entr${data.entries === 1 ? 'y' : 'ies'} loaded — ${data.jobsFixed} job(s) auto-filled.` +
+        (data.warnings?.length ? ` ⚠ ${data.warnings.join(' ')}` : ''));
+      renderAddressBook();
+      renderTransportTab();
+    } catch (err) { abStatus('error', '❌ ' + err.message); }
+  });
+
   // ── Driver Details Management ──────────────────────────────────────────────
   window.drivers = JSON.parse(localStorage.getItem('drivers') || '[]');
   let driverJobs = JSON.parse(localStorage.getItem('driverJobs') || '{}');
