@@ -777,6 +777,57 @@ Verified with real files:
 - ✅ Error handling for missing addresses/fields
 - ✅ Partial import (skip invalid rows, log skipped)
 
+### Maps — Leaflet + OpenStreetMap, NOT Google Maps
+
+The Transport tab map (`initTransportMainMap`, `initTransportMap`,
+`displayDriverLocations` in public/app.js) uses **Leaflet 1.9.4 vendored at
+`public/vendor/leaflet/`** with OpenStreetMap tiles — no API key, no billing
+account, works out of the box. Google Maps was removed after its key failed
+with "Oops! Something went wrong" (invalid key/no billing); do NOT reintroduce
+a keyed map service. Marker positions come from `getPostalCodeCoords()`, which
+maps the FIRST 2 DIGITS of any Singapore 6-digit postal code (the postal
+sector) to its district centroid (`SG_SECTOR_TO_DISTRICT` /
+`SG_DISTRICT_COORDS`, all 28 districts) plus a small deterministic jitter so
+same-district jobs don't stack. This also powers the Haversine distances used
+by route optimization. Marker number labels are Leaflet tooltips styled by
+`.leaflet-tooltip.map-marker-label` (the extra `.leaflet-tooltip` specificity
+is REQUIRED — leaflet.css loads after styles.css and would otherwise win with
+its white box styling).
+
+### Single unified upload — ONE import card only
+
+The Upload Jobs modal has exactly ONE import card (`#transportImportFileInput`)
+posting to the unified `POST /api/transport/import`. The three format-specific
+cards (BETIME / Outright / generic) and their endpoints are GONE — the server
+detects the format by analysing column CONTENT (attribute-based detection in
+lib/tms-importer.js), so users never pick a format. CSV files get a client-side
+column preview first (`analyzeAndPreviewFile`); XLSX is binary so it goes
+straight to the server. Do not add back per-format upload buttons.
+
+### Driver auto-assignment + plan approval (Preplanned → Confirmed)
+
+Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
+(warehouse scanning completed the matching order) → `delivered`.
+
+- "Generate AI Routes" auto-assigns drivers ROUND-ROBIN per route
+  (`autoAssignDrivers()` in app.js; drivers come from Driver Details /
+  `window.drivers`). Every stop's dropdown is prefilled; the user amends any
+  dropdown or stop order before approving. Nothing is saved at generation time.
+- "✓ Assign Routes to Drivers" opens a summary modal grouped by driver
+  (`#planApprovalModal`, built dynamically) for the user to approve or go back
+  and amend. Only on Approve does the client POST
+  `/api/transport/plan/approve` — the server sets each job to `preplanned`
+  with `assignedDriver`/`assignedDriverName`/`routeNum`/`stopSeq`/`plannedAt`.
+  Jobs already `confirmed`/`delivered` are never regressed by a re-approval.
+- `updateTransportOnOrderCompletion()` (called from `/api/scan/complete`)
+  flips the matching job to `confirmed` and records the carton count as
+  `packages`. Matching uses `referenceId`/`clientId` (the PO number captured
+  at import) as well as `id`, because transport ids are `TR-YYMMDD-NNN` codes,
+  not PO numbers.
+- The `/api/transport/plan/approve` route MUST stay registered before the
+  generic `/api/transport/:id` routes (same rule as `import`/`fix-schedule` —
+  Express matches in order, and `:id` would swallow them).
+
 ### Sync Strategy
 
 When porting to IdealScan or other codebases:

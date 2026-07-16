@@ -1850,46 +1850,28 @@
 
     empty.style.display = 'none';
 
-    // Render stats bar
+    // Render stats bar — lifecycle: pending → preplanned (plan approved)
+    // → confirmed (scanning completed) → delivered
     const statusCounts = {
       pending: transportRequests.filter(r => (r.status || 'pending') === 'pending').length,
-      scheduled: transportRequests.filter(r => r.status === 'scheduled').length,
-      'in-transit': transportRequests.filter(r => r.status === 'in-transit').length,
+      preplanned: transportRequests.filter(r => r.status === 'preplanned').length,
+      confirmed: transportRequests.filter(r => r.status === 'confirmed').length,
       delivered: transportRequests.filter(r => r.status === 'delivered').length,
-      cancelled: transportRequests.filter(r => r.status === 'cancelled').length
     };
 
     document.getElementById('transportStatsBar').innerHTML = `
       <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs</div></div>
       <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
-      <div class="stat-box processing"><div class="val">${statusCounts.scheduled}</div><div class="lbl">Scheduled</div></div>
+      <div class="stat-box processing"><div class="val">${statusCounts.preplanned}</div><div class="lbl">Preplanned</div></div>
+      <div class="stat-box done"><div class="val">${statusCounts.confirmed}</div><div class="lbl">Confirmed</div></div>
       <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>`;
 
-    // Initialize and update the main Singapore map
-    const checkMapsReady = () => {
-      if (window.mapsLoaded) {
-        initTransportMainMap();
-      } else if (window.mapsError) {
-        console.error('✗ Maps API failed to load, using fallback table view');
-        renderTransportTableFallback();
-      } else {
-        setTimeout(checkMapsReady, 100);
-      }
-    };
-
-    // Start checking or use timeout fallback
-    const mapTimeoutId = setTimeout(() => {
-      if (!window.mapsLoaded) {
-        console.warn('✗ Maps API loading timeout, using fallback table view');
-        renderTransportTableFallback();
-      }
-    }, 5000);
-
-    if (window.mapsLoaded) {
-      clearTimeout(mapTimeoutId);
+    // Initialize and update the main Singapore map (Leaflet — bundled locally)
+    if (window.L) {
       initTransportMainMap();
     } else {
-      checkMapsReady();
+      console.error('✗ Leaflet failed to load, using fallback table view');
+      renderTransportTableFallback();
     }
   }
 
@@ -1928,7 +1910,7 @@
                   ${req.pendingDeletion ? '<span style="display:inline-block;margin-left:0.3rem;padding:0.2rem 0.4rem;background:#ffcdd2;border-radius:2px;font-size:10px">⏳ Delete Pending</span>' : ''}
                 </td>
                 <td style="padding:0.5rem;text-align:center"><strong>${req.packages || 1}</strong></td>
-                <td style="padding:0.5rem">${req.assignedDriver ? (window.drivers || []).find(d => d.id === req.assignedDriver)?.name || req.assignedDriver : '—'}</td>
+                <td style="padding:0.5rem">${esc(req.assignedDriverName || ((window.drivers || []).find(d => d.id === req.assignedDriver)?.name) || (req.assignedDriver ? req.assignedDriver : '—'))}</td>
                 <td style="padding:0.5rem;text-align:center">
                   <button class="btn-scan-now btn-sm transport-edit-btn" data-id="${esc(req.id)}" style="padding:0.3rem 0.5rem;margin-right:0.2rem">✏️</button>
                   <button class="btn-scan-now btn-sm transport-view-btn" data-id="${esc(req.id)}" style="padding:0.3rem 0.5rem">👁️</button>
@@ -1987,76 +1969,65 @@
     const mapContainer = document.getElementById('transportMainMap');
     if (!mapContainer) return;
 
-    // Check if Google Maps API is available
-    if (!window.google || !window.google.maps) {
-      const errorMsg = window.mapsError === 'API_AUTH_FAILED'
-        ? 'API key invalid or expired - contact administrator'
-        : window.mapsError === 'SCRIPT_ERROR'
-        ? 'Failed to load Maps script - check network connection'
-        : 'Google Maps API not available';
-      console.error('✗ Google Maps API not available:', errorMsg);
-      mapContainer.innerHTML = '<div style="padding:1rem;text-align:center;color:#666"><div style="margin-bottom:0.5rem">📍 Map not available</div><div style="font-size:12px;color:#999">' + errorMsg + '</div><div style="font-size:11px;color:#ccc;margin-top:0.5rem">Check browser console for details</div></div>';
+    if (!window.L) {
+      renderTransportTableFallback();
       return;
     }
 
     // Singapore center coordinates
-    const singaporeCenter = { lat: 1.3521, lng: 103.8198 };
+    const singaporeCenter = [1.3521, 103.8198];
 
-    try {
-      transportMainMap = new google.maps.Map(mapContainer, {
-        zoom: 11,
-        center: singaporeCenter,
-        mapTypeControl: true,
-        fullscreenControl: true,
-        streetViewControl: false
-      });
-    } catch (e) {
-      console.error('Failed to initialize map:', e);
-      mapContainer.innerHTML = '<div style="padding:1rem;color:red">Map initialization failed: ' + e.message + '</div>';
-      return;
+    // (Re)create the Leaflet map — destroy any previous instance first
+    if (transportMainMap) {
+      transportMainMap.remove();
+      transportMainMap = null;
     }
+    mapContainer.innerHTML = '';
+    transportMainMap = L.map(mapContainer).setView(singaporeCenter, 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(transportMainMap);
 
-    // Clear existing markers
-    transportMarkers.forEach(m => m.setMap(null));
     transportMarkers = [];
 
-    // Add delivery markers
-    let bounds = new google.maps.LatLngBounds();
+    // Colour by delivery status
+    const statusColor = s =>
+      s === 'delivered' ? '#22c55e' :
+      s === 'confirmed' ? '#16a34a' :
+      s === 'preplanned' ? '#0ea5e9' :
+      s === 'in-transit' ? '#f59e0b' : '#ef4444';
+
+    // Add delivery markers — position from record coords or postal code
+    const bounds = [];
     transportRequests.forEach((req, idx) => {
-      if (req.lat && req.lng) {
-        const marker = new google.maps.Marker({
-          position: { lat: req.lat, lng: req.lng },
-          map: transportMainMap,
-          title: req.clientName,
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 8,
-            fillColor: req.status === 'delivered' ? '#22c55e' : '#ef4444',
-            fillOpacity: 1,
-            strokeColor: '#fff',
-            strokeWeight: 2
-          },
-          label: String(idx + 1)
-        });
+      const pos = (req.lat && req.lng)
+        ? { lat: req.lat, lng: req.lng }
+        : getPostalCodeCoords(req.shipping?.zip || '');
+      if (!pos) return;
 
-        const infoWindow = new google.maps.InfoWindow({
-          content: `<div style="padding:0.5rem;font-size:12px">
-            <strong>${esc(req.clientName)}</strong><br/>
-            <span class="status-badge" style="display:inline-block;margin-top:0.3rem">${req.status || 'Pending'}</span>
-          </div>`
-        });
+      const marker = L.circleMarker([pos.lat, pos.lng], {
+        radius: 9,
+        fillColor: statusColor(req.status),
+        fillOpacity: 1,
+        color: '#fff',
+        weight: 2
+      }).addTo(transportMainMap);
 
-        marker.addListener('click', () => {
-          infoWindow.open(transportMainMap, marker);
-        });
+      marker.bindTooltip(String(idx + 1), { permanent: true, direction: 'center', className: 'map-marker-label' });
+      marker.bindPopup(`<div style="font-size:12px">
+        <strong>${esc(req.clientName || '')}</strong><br/>
+        ${esc(req.shipping?.addressLine1 || '')}<br/>
+        📍 ${esc(req.shipping?.zip || '—')} &nbsp;|&nbsp; 📦 ${req.packages || 1}<br/>
+        <span class="status-badge" style="display:inline-block;margin-top:0.3rem">${esc(req.status || 'pending')}</span>
+      </div>`);
 
-        transportMarkers.push(marker);
-        bounds.extend({ lat: req.lat, lng: req.lng });
-      }
+      transportMarkers.push(marker);
+      bounds.push([pos.lat, pos.lng]);
     });
 
-    if (transportMarkers.length > 0) {
-      transportMainMap.fitBounds(bounds);
+    if (bounds.length > 0) {
+      transportMainMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
     }
   }
 
@@ -2085,10 +2056,8 @@
     modal.classList.remove('hidden');
 
     // Initialize and display map
-    if (google && google.maps) {
+    if (window.L) {
       setTimeout(() => initTransportMap(req), 100);
-    } else {
-      console.warn('Google Maps not loaded yet');
     }
   }
 
@@ -2097,11 +2066,7 @@
 
   function initTransportMap(req) {
     const mapEl = document.getElementById('transportMap');
-    if (!mapEl) return;
-
-    // Clear previous markers
-    transportMapMarkers.forEach(m => m.setMap(null));
-    transportMapMarkers = [];
+    if (!mapEl || !window.L) return;
 
     // Get stops with coordinates
     const stops = [];
@@ -2118,7 +2083,7 @@
       });
     }
 
-    // Fallback: use shipping address if no items with geocoding
+    // Fallbacks: explicit shipping geocode, then postal code lookup
     if (stops.length === 0 && req.shipping?.geocoded) {
       stops.push({
         lat: parseFloat(req.shipping.geocoded.lat),
@@ -2127,66 +2092,47 @@
         address: `${req.shipping.addressLine1 || ''}, ${req.shipping.city || ''}`
       });
     }
+    if (stops.length === 0 && req.shipping?.zip) {
+      const pos = getPostalCodeCoords(req.shipping.zip);
+      stops.push({
+        lat: pos.lat, lng: pos.lng,
+        name: req.clientName || 'Destination',
+        address: `${req.shipping.addressLine1 || ''} (postal ${req.shipping.zip})`
+      });
+    }
 
     if (stops.length === 0) {
       mapEl.innerHTML = '<p style="padding:2rem;text-align:center;color:#64748b">No location data available</p>';
       return;
     }
 
-    // Calculate bounds
-    const bounds = new google.maps.LatLngBounds();
-    stops.forEach(stop => {
-      bounds.extend(new google.maps.LatLng(stop.lat, stop.lng));
-    });
-
-    // Initialize map
-    if (!transportMap) {
-      transportMap = new google.maps.Map(mapEl, {
-        zoom: 13,
-        center: bounds.getCenter(),
-        mapTypeControl: true,
-        fullscreenControl: false,
-        streetViewControl: false
-      });
-    } else {
-      transportMap.fitBounds(bounds);
-    }
+    // (Re)create the modal map fresh each time
+    if (transportMap) { transportMap.remove(); transportMap = null; }
+    mapEl.innerHTML = '';
+    transportMap = L.map(mapEl).setView([stops[0].lat, stops[0].lng], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(transportMap);
+    transportMapMarkers = [];
 
     // Add markers for each stop
+    const bounds = [];
     stops.forEach((stop, idx) => {
-      const marker = new google.maps.Marker({
-        position: { lat: stop.lat, lng: stop.lng },
-        map: transportMap,
-        title: stop.name,
-        label: String(idx + 1),
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: idx === 0 ? '#ef4444' : idx === stops.length - 1 ? '#22c55e' : '#0ea5e9',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: 2
-        }
-      });
-
-      const infoWindow = new google.maps.InfoWindow({
-        content: `<div style="padding:0.5rem"><strong>${esc(stop.name)}</strong><p style="margin:0.3rem 0 0 0;font-size:12px">${esc(stop.address)}</p></div>`
-      });
-
-      marker.addListener('click', () => {
-        // Close all other info windows
-        document.querySelectorAll('.gm-style-iw-d').forEach(el => {
-          const parent = el.parentElement?.parentElement;
-          if (parent) parent.style.display = 'none';
-        });
-        infoWindow.open(transportMap, marker);
-      });
-
+      const marker = L.circleMarker([stop.lat, stop.lng], {
+        radius: 9,
+        fillColor: idx === 0 ? '#ef4444' : idx === stops.length - 1 ? '#22c55e' : '#0ea5e9',
+        fillOpacity: 1,
+        color: '#fff',
+        weight: 2
+      }).addTo(transportMap);
+      marker.bindTooltip(String(idx + 1), { permanent: true, direction: 'center', className: 'map-marker-label' });
+      marker.bindPopup(`<div><strong>${esc(stop.name)}</strong><p style="margin:0.3rem 0 0 0;font-size:12px">${esc(stop.address)}</p></div>`);
       transportMapMarkers.push(marker);
+      bounds.push([stop.lat, stop.lng]);
     });
 
-    // Fit map to bounds
-    transportMap.fitBounds(bounds);
+    transportMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
   }
 
   // TMS Import handlers
@@ -2234,7 +2180,7 @@
 
         <div style="padding:1rem;background:#e8f5e9;border-left:4px solid #22c55e;border-radius:4px;margin-bottom:1.5rem">
           <strong>✓ File detected:</strong> ${sampleRows.length} preview rows found<br/>
-          <strong>Format:</strong> ${format} | <strong>Columns:</strong> ${headers.join(', ')}
+          <strong>Format:</strong> auto-detected from data | <strong>Columns:</strong> ${headers.join(', ')}
         </div>
 
         <h3 style="margin-top:0;margin-bottom:0.8rem;font-size:14px">Detected Data Types</h3>
@@ -2342,24 +2288,21 @@
     return '📄';
   }
 
-  async function performImport(file, format) {
+  async function performImport(file) {
     const status = document.getElementById('transportImportStatus');
     if (!status) return;
 
     status.className = 'status-bar progress';
-    status.textContent = 'Importing...';
+    status.textContent = 'Importing — auto-detecting file format...';
     status.classList.remove('hidden');
 
     try {
       const fd = new FormData();
       fd.append('file', file);
 
-      let endpoint = '/api/transport/import/betime';
-      if (format === 'outright') endpoint = '/api/transport/import/outright';
-      if (format === 'generic') endpoint = '/api/transport/import/generic';
-
-      // Transport imports need master key authorization (not JSON)
-      const resp = await fetch(endpoint, {
+      // One unified endpoint — the server detects BETIME / Outright / generic
+      // by analysing the column CONTENT, not the file name or a chosen format.
+      const resp = await fetch('/api/transport/import', {
         method: 'POST',
         body: fd,
         headers: { 'x-master-key': atob('MjAxNDMyNTQ3RQ==') } // 201432547E
@@ -2369,7 +2312,8 @@
       if (!resp.ok) throw new Error(data.error || 'Import failed');
 
       status.className = 'status-bar success';
-      status.textContent = `✓ ${data.imported.summary}`;
+      status.textContent = `✓ ${data.imported.summary}` +
+        (data.imported.ordersUpdated ? ` (${data.imported.ordersUpdated} existing updated)` : '');
 
       await renderTransportTab();
 
@@ -2388,39 +2332,22 @@
     console.log('Create new transport request');
   });
 
-  // Wire up import file inputs
-  document.getElementById('transportBetimeFileInput')?.addEventListener('change', (e) => {
-    if (e.target.files[0]) {
-      analyzeAndPreviewFile(e.target.files[0], 'betime');
-      e.target.value = '';
+  // Wire up the single unified import input.
+  // CSV files get a client-side column preview first; XLSX (binary) goes
+  // straight to the server, which does the same attribute analysis there.
+  document.getElementById('transportImportFileInput')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (/\.csv$/i.test(file.name)) {
+      analyzeAndPreviewFile(file, 'auto');
+    } else {
+      performImport(file);
     }
+    e.target.value = '';
   });
 
-  document.getElementById('transportOutrightFileInput')?.addEventListener('change', (e) => {
-    if (e.target.files[0]) {
-      analyzeAndPreviewFile(e.target.files[0], 'outright');
-      e.target.value = '';
-    }
-  });
-
-  document.getElementById('transportBetimeBrowseBtn')?.addEventListener('click', () => {
-    document.getElementById('transportBetimeFileInput')?.click();
-  });
-
-  document.getElementById('transportOutrightBrowseBtn')?.addEventListener('click', () => {
-    document.getElementById('transportOutrightFileInput')?.click();
-  });
-
-  // Generic delivery import
-  document.getElementById('transportGenericFileInput')?.addEventListener('change', (e) => {
-    if (e.target.files[0]) {
-      analyzeAndPreviewFile(e.target.files[0], 'generic');
-      e.target.value = '';
-    }
-  });
-
-  document.getElementById('transportGenericBrowseBtn')?.addEventListener('click', () => {
-    document.getElementById('transportGenericFileInput')?.click();
+  document.getElementById('transportImportBrowseBtn')?.addEventListener('click', () => {
+    document.getElementById('transportImportFileInput')?.click();
   });
 
   // Transport detail modal handlers
@@ -2463,60 +2390,49 @@
     if (showingDrivers) {
       displayDriverLocations();
     } else {
-      driverMarkers.forEach(m => m.setMap(null));
+      driverMarkers.forEach(m => m.remove());
       driverMarkers = [];
     }
   });
 
   function displayDriverLocations() {
-    driverMarkers.forEach(m => m.setMap(null));
+    driverMarkers.forEach(m => m.remove());
     driverMarkers = [];
+    if (!transportMainMap || !window.L) return;
 
-    // Mock driver locations (in production, fetch from /api/tms/drivers)
-    const mockDrivers = [
-      { name: 'Ahmad Bin Mohamed', lat: 1.3521, lng: 103.8198, orders: 3 },
-      { name: 'Sarah Ng Wei Ling', lat: 1.3624, lng: 103.7958, orders: 5 },
-      { name: 'Rajesh Kumar', lat: 1.3521, lng: 103.8400, orders: 2 }
-    ];
+    // Real drivers from Driver Details; no live GPS yet, so spread them near
+    // the city centre and show their assigned-job counts.
+    const driverList = (window.drivers || []).map((d, idx) => ({
+      name: d.name,
+      lat: 1.3521 + (idx % 3 - 1) * 0.02,
+      lng: 103.8198 + (Math.floor(idx / 3) - 1) * 0.03,
+      orders: transportRequests.filter(r => r.assignedDriver === d.id).length
+    }));
 
-    mockDrivers.forEach((driver, idx) => {
-      const marker = new google.maps.Marker({
-        position: { lat: driver.lat, lng: driver.lng },
-        map: transportMainMap,
-        title: driver.name,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 10,
-          fillColor: '#0ea5e9',
-          fillOpacity: 0.8,
-          strokeColor: '#fff',
-          strokeWeight: 2
-        },
-        label: String.fromCharCode(65 + idx)
-      });
-
-      const infoWindow = new google.maps.InfoWindow({
-        content: `<div style="padding:0.5rem;font-size:12px">
-          <strong>${esc(driver.name)}</strong><br/>
-          <span style="color:#0ea5e9">📦 ${driver.orders} orders</span>
-        </div>`
-      });
-
-      marker.addListener('click', () => {
-        infoWindow.open(transportMainMap, marker);
-      });
-
+    driverList.forEach((driver, idx) => {
+      const marker = L.circleMarker([driver.lat, driver.lng], {
+        radius: 11,
+        fillColor: '#0ea5e9',
+        fillOpacity: 0.85,
+        color: '#fff',
+        weight: 2
+      }).addTo(transportMainMap);
+      marker.bindTooltip(String.fromCharCode(65 + idx), { permanent: true, direction: 'center', className: 'map-marker-label' });
+      marker.bindPopup(`<div style="font-size:12px">
+        <strong>${esc(driver.name)}</strong><br/>
+        <span style="color:#0ea5e9">📦 ${driver.orders} assigned job(s)</span>
+      </div>`);
       driverMarkers.push(marker);
     });
 
     // Update driver info box
     const infoList = document.getElementById('driverInfoList');
-    infoList.innerHTML = mockDrivers.map(d => `
+    infoList.innerHTML = driverList.length ? driverList.map(d => `
       <div style="padding:0.5rem;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between">
         <span>${esc(d.name)}</span>
         <span style="color:#0ea5e9;font-weight:600">📦 ${d.orders}</span>
       </div>
-    `).join('');
+    `).join('') : '<div style="padding:0.5rem;color:#64748b">No drivers yet — add them under Driver Details.</div>';
   }
 
   let optimizedRoutes = [];
@@ -2851,8 +2767,25 @@
     // Apply fix schedule constraints to routes (respects order-level bypassFixSchedule flag)
     applyFixScheduleToRoutes(optimizedRoutes);
 
+    // Auto-assign drivers round-robin — the user amends via the dropdowns,
+    // then approves the plan (nothing is saved until approval).
+    autoAssignDrivers(optimizedRoutes);
+
     renderRoutesTable();
     updateRouteStats();
+  }
+
+  // Spread routes across available drivers (round-robin, by route).
+  // Every stop inherits its route's driver unless the user overrides it.
+  function autoAssignDrivers(routes) {
+    const drivers = window.drivers || [];
+    if (!drivers.length) return; // no drivers yet — leave unassigned
+    routes.forEach((route, idx) => {
+      const d = drivers[idx % drivers.length];
+      route.driverId = d.id;
+      route.driverName = d.name;
+      route.stops.forEach(stop => { delete stop.driverId; }); // clear old overrides
+    });
   }
 
   function applyFixScheduleToRoutes(routes) {
@@ -2955,59 +2888,85 @@
     return routes;
   }
 
-  // Singapore postal code to coordinates mapping (simplified - common areas)
-  const POSTAL_CODE_COORDS = {
-    '018945': { lat: 1.2789, lng: 103.8549 }, // Marina Bay
-    '028761': { lat: 1.2856, lng: 103.8711 }, // Raffles
-    '048696': { lat: 1.3316, lng: 103.8477 }, // Bugis
-    '069037': { lat: 1.3382, lng: 103.8670 }, // Geylang
-    '079906': { lat: 1.4425, lng: 103.7618 }, // Yishun
-    '128381': { lat: 1.3452, lng: 103.7496 }, // Toa Payoh
-    '138808': { lat: 1.3321, lng: 103.8445 }, // Kallang
-    '160001': { lat: 1.4233, lng: 103.8344 }, // Serangoon
-    '180154': { lat: 1.3747, lng: 103.8955 }, // Pasir Ris
-    '210010': { lat: 1.4407, lng: 103.7517 }, // Ang Mo Kio
-    '228202': { lat: 1.3849, lng: 103.8625 }, // Tampines
-    '238041': { lat: 1.3569, lng: 103.8421 }, // Bedok
-    '248543': { lat: 1.3342, lng: 103.9650 }, // Changi
-    '258798': { lat: 1.3529, lng: 103.8849 }, // Katong
-    '268833': { lat: 1.3149, lng: 103.8961 }, // East Coast
-    '278057': { lat: 1.3421, lng: 103.7664 }, // Bishan
-    '288321': { lat: 1.3892, lng: 103.8734 }, // Simei
-    '298098': { lat: 1.3214, lng: 103.8456 }, // Clementi
-    '308088': { lat: 1.3456, lng: 103.7812 }, // Bukit Timah
-    '318145': { lat: 1.3456, lng: 103.8234 }, // Bukit Merah
-    '328123': { lat: 1.2945, lng: 103.8321 }, // Tiong Bahru
-    '338065': { lat: 1.2834, lng: 103.8451 }, // Outram
-    '348042': { lat: 1.2756, lng: 103.8567 }, // Tanjong Pagar
-    '358082': { lat: 1.2945, lng: 103.8234 }, // Chinatown
-    '368098': { lat: 1.3045, lng: 103.8345 }, // CBD
-    '378145': { lat: 1.2856, lng: 103.8456 }, // Marina South
-    '388042': { lat: 1.2945, lng: 103.8123 }, // HarbourFront
-    '398089': { lat: 1.3456, lng: 103.7234 }, // Jurong
-    '408056': { lat: 1.3234, lng: 103.7123 }, // Boon Lay
-    '418042': { lat: 1.3812, lng: 103.7456 }, // Clementi
-    '428123': { lat: 1.3456, lng: 103.6789 }, // Jurong West
-    '438065': { lat: 1.3145, lng: 103.6234 }, // Tuas
-    '448089': { lat: 1.3456, lng: 103.8456 }, // Orchard
-    '458123': { lat: 1.3234, lng: 103.8234 }, // Dhoby Ghaut
-    '468056': { lat: 1.3045, lng: 103.8567 }, // Newton
-    '478042': { lat: 1.3156, lng: 103.8234 }, // Tanglin
-    '488065': { lat: 1.2945, lng: 103.8345 }, // Somerset
-    '498089': { lat: 1.3045, lng: 103.8456 }, // Bras Basah
+  // Singapore postal SECTOR map — the first 2 digits of every 6-digit postal
+  // code identify the sector, which maps to one of the 28 postal districts.
+  // Coordinates are district centroids (good to ~1-2 km, enough for route
+  // grouping and map display without an external geocoding service).
+  const SG_DISTRICT_COORDS = {
+    D01: { lat: 1.2850, lng: 103.8520 }, // Raffles Place / Marina / People's Park
+    D02: { lat: 1.2740, lng: 103.8430 }, // Anson / Tanjong Pagar
+    D03: { lat: 1.2900, lng: 103.8100 }, // Queenstown / Tiong Bahru
+    D04: { lat: 1.2650, lng: 103.8220 }, // Telok Blangah / HarbourFront
+    D05: { lat: 1.3110, lng: 103.7650 }, // Pasir Panjang / Clementi New Town
+    D06: { lat: 1.2900, lng: 103.8500 }, // High Street / City Hall
+    D07: { lat: 1.3010, lng: 103.8580 }, // Bugis / Beach Road
+    D08: { lat: 1.3110, lng: 103.8560 }, // Little India / Farrer Park
+    D09: { lat: 1.3050, lng: 103.8320 }, // Orchard / River Valley
+    D10: { lat: 1.3150, lng: 103.8060 }, // Bukit Timah / Holland
+    D11: { lat: 1.3270, lng: 103.8380 }, // Novena / Newton / Thomson
+    D12: { lat: 1.3280, lng: 103.8620 }, // Balestier / Toa Payoh / Serangoon Rd
+    D13: { lat: 1.3350, lng: 103.8780 }, // Macpherson / Potong Pasir
+    D14: { lat: 1.3200, lng: 103.8930 }, // Geylang / Eunos
+    D15: { lat: 1.3060, lng: 103.9020 }, // Katong / Marine Parade
+    D16: { lat: 1.3240, lng: 103.9310 }, // Bedok / Upper East Coast
+    D17: { lat: 1.3570, lng: 103.9880 }, // Changi / Loyang
+    D18: { lat: 1.3520, lng: 103.9440 }, // Tampines / Pasir Ris
+    D19: { lat: 1.3610, lng: 103.8850 }, // Serangoon Gdn / Hougang / Punggol
+    D20: { lat: 1.3620, lng: 103.8380 }, // Bishan / Ang Mo Kio
+    D21: { lat: 1.3350, lng: 103.7770 }, // Upper Bukit Timah / Ulu Pandan
+    D22: { lat: 1.3330, lng: 103.7430 }, // Jurong / Boon Lay / Tuas
+    D23: { lat: 1.3770, lng: 103.7630 }, // Bukit Batok / Choa Chu Kang
+    D24: { lat: 1.3800, lng: 103.7000 }, // Lim Chu Kang / Tengah
+    D25: { lat: 1.4360, lng: 103.7860 }, // Woodlands / Kranji
+    D26: { lat: 1.3900, lng: 103.8280 }, // Upper Thomson / Mandai
+    D27: { lat: 1.4290, lng: 103.8360 }, // Yishun / Sembawang
+    D28: { lat: 1.3910, lng: 103.8720 }, // Seletar / Yio Chu Kang
   };
+  // sector (first 2 digits) → district
+  const SG_SECTOR_TO_DISTRICT = {};
+  [
+    ['D01', ['01','02','03','04','05','06']],
+    ['D02', ['07','08']],
+    ['D03', ['14','15','16']],
+    ['D04', ['09','10']],
+    ['D05', ['11','12','13']],
+    ['D06', ['17']],
+    ['D07', ['18','19']],
+    ['D08', ['20','21']],
+    ['D09', ['22','23']],
+    ['D10', ['24','25','26','27']],
+    ['D11', ['28','29','30']],
+    ['D12', ['31','32','33']],
+    ['D13', ['34','35','36','37']],
+    ['D14', ['38','39','40','41']],
+    ['D15', ['42','43','44','45']],
+    ['D16', ['46','47','48']],
+    ['D17', ['49','50','81']],
+    ['D18', ['51','52']],
+    ['D19', ['53','54','55','82']],
+    ['D20', ['56','57']],
+    ['D21', ['58','59']],
+    ['D22', ['60','61','62','63','64']],
+    ['D23', ['65','66','67','68']],
+    ['D24', ['69','70','71']],
+    ['D25', ['72','73']],
+    ['D26', ['77','78']],
+    ['D27', ['75','76']],
+    ['D28', ['79','80']],
+  ].forEach(([district, sectors]) => sectors.forEach(s => { SG_SECTOR_TO_DISTRICT[s] = district; }));
 
   function getPostalCodeCoords(zip) {
-    // Try exact match first
-    if (POSTAL_CODE_COORDS[zip]) return POSTAL_CODE_COORDS[zip];
-
-    // Try first 2 digits for broader grouping
-    const prefix = zip?.substring(0, 2);
-    for (const [code, coords] of Object.entries(POSTAL_CODE_COORDS)) {
-      if (code.startsWith(prefix)) return coords;
+    const clean = String(zip || '').trim();
+    const sector = clean.substring(0, 2);
+    const district = SG_SECTOR_TO_DISTRICT[sector];
+    if (district) {
+      const c = SG_DISTRICT_COORDS[district];
+      // Small deterministic jitter from the last digits so several jobs in the
+      // same district don't stack on one identical pixel.
+      const tail = parseInt(clean.slice(-3), 10) || 0;
+      return { lat: c.lat + ((tail % 20) - 10) * 0.0008, lng: c.lng + ((Math.floor(tail / 20) % 20) - 10) * 0.0008 };
     }
-
-    // Default to Singapore center
+    // Unknown/foreign code — Singapore centre
     return { lat: 1.3521, lng: 103.8198 };
   }
 
@@ -3052,9 +3011,9 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${Math.round(stop.estTime)} min</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;font-weight:600">${stop.delivery.shipping?.zip || 'N/A'}</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
-            <select class="route-driver-select" data-route="${route.num}" data-stop="${stopIdx}" style="padding:0.4rem;font-size:11px;border:1px solid #ddd;border-radius:3px;width:120px">
+            <select class="route-driver-select" data-routeidx="${routeIdx}" data-route="${route.num}" data-stop="${stopIdx}" style="padding:0.4rem;font-size:11px;border:1px solid #ddd;border-radius:3px;width:120px">
               <option value="">— Unassigned —</option>
-              ${(window.drivers || []).map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+              ${(window.drivers || []).map(d => `<option value="${d.id}" ${(stop.driverId || route.driverId) === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
             </select>
           </td>
         `;
@@ -3079,6 +3038,16 @@
         const routeIdx = parseInt(btn.dataset.route);
         const stopIdx = parseInt(btn.dataset.stop);
         moveRouteStop(routeIdx, stopIdx, 1);
+      });
+    });
+
+    // Record user amendments to the auto-assignment (per stop)
+    document.querySelectorAll('.route-driver-select').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const route = optimizedRoutes[parseInt(sel.dataset.routeidx)];
+        const stop = route?.stops[parseInt(sel.dataset.stop)];
+        if (stop) stop.driverId = sel.value || '';
+        updateRouteStats();
       });
     });
   }
@@ -3146,21 +3115,104 @@
   document.getElementById('routePlanningCloseBtn')?.addEventListener('click', () => document.getElementById('routePlanningModal').classList.add('hidden'));
   document.getElementById('routePlanningCloseBtn2')?.addEventListener('click', () => document.getElementById('routePlanningModal').classList.add('hidden'));
 
-  document.getElementById('routeAssignBtn')?.addEventListener('click', () => {
-    const assignments = {};
-    document.querySelectorAll('.route-driver-select').forEach(sel => {
-      if (sel.value) {
-        if (!assignments[sel.value]) assignments[sel.value] = [];
-        assignments[sel.value].push(sel.getAttribute('data-stop'));
-      }
+  // Build the flat per-job assignment list from the current plan
+  function collectPlanAssignments() {
+    const assignments = [];
+    optimizedRoutes.forEach(route => {
+      route.stops.forEach((stop, stopIdx) => {
+        const driverId = stop.driverId !== undefined ? stop.driverId : (route.driverId || '');
+        const driver = (window.drivers || []).find(d => d.id === driverId);
+        assignments.push({
+          id: stop.delivery.id,
+          clientName: stop.delivery.clientName,
+          zip: stop.delivery.shipping?.zip || '',
+          driverId: driverId || '',
+          driverName: driver?.name || '',
+          route: route.num,
+          stopSeq: stopIdx + 1
+        });
+      });
     });
+    return assignments;
+  }
 
-    if (Object.keys(assignments).length === 0) {
-      alert('Please assign at least one route to a driver.');
+  // "✓ Assign Routes to Drivers" — show the summary for approval first.
+  // Nothing is saved until the user clicks Approve in the summary.
+  document.getElementById('routeAssignBtn')?.addEventListener('click', () => {
+    if (!optimizedRoutes.length) {
+      alert('Generate routes first — click "Generate AI Routes".');
       return;
     }
+    const assignments = collectPlanAssignments();
+    const unassigned = assignments.filter(a => !a.driverId).length;
 
-    alert('Routes assigned to ' + Object.keys(assignments).length + ' driver(s).\n(Routes will be sent to driver portals)');
+    // Group by driver for the summary
+    const byDriver = {};
+    assignments.forEach(a => {
+      const key = a.driverName || '— Unassigned —';
+      if (!byDriver[key]) byDriver[key] = [];
+      byDriver[key].push(a);
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'planApprovalModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:92%;max-width:760px;max-height:85vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+          <h2 style="margin:0">📋 Delivery Plan Summary</h2>
+          <button class="btn-close" id="planApprovalCloseBtn">✕</button>
+        </div>
+        <p class="hint" style="font-size:12px;margin-bottom:1rem">
+          Drivers were assigned automatically. Review below — to amend, close this summary and change any driver dropdown or stop order, then reopen.
+          Approving marks every job <strong>Preplanned</strong>; each job becomes <strong>Confirmed</strong> automatically once its order finishes scanning.
+        </p>
+        ${unassigned ? `<div style="padding:0.7rem;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;margin-bottom:1rem;font-size:12px">⚠️ ${unassigned} stop(s) have no driver${(window.drivers || []).length ? '' : ' — no drivers exist yet (add them under Driver Details)'}. They will be saved as Preplanned without a driver.</div>` : ''}
+        ${Object.entries(byDriver).map(([driverName, jobs]) => `
+          <div style="border:1px solid #e2e8f0;border-radius:6px;margin-bottom:0.8rem;overflow:hidden">
+            <div style="padding:0.6rem 0.8rem;background:#f1f5f9;font-weight:600;font-size:13px;display:flex;justify-content:space-between">
+              <span>👤 ${esc(driverName)}</span><span>${jobs.length} stop(s)</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              ${jobs.map(j => `
+                <tr style="border-top:1px solid #f0f0f0">
+                  <td style="padding:0.4rem 0.8rem;width:90px">Route ${j.route} · #${j.stopSeq}</td>
+                  <td style="padding:0.4rem 0.8rem">${esc(j.clientName || j.id)}</td>
+                  <td style="padding:0.4rem 0.8rem;width:80px;color:#64748b">📍 ${esc(j.zip || '—')}</td>
+                </tr>`).join('')}
+            </table>
+          </div>`).join('')}
+        <div style="display:flex;gap:0.6rem;margin-top:1rem">
+          <button class="btn-primary" id="planApprovalConfirmBtn" style="flex:1">✓ Approve — Mark ${assignments.length} Job(s) Preplanned</button>
+          <button class="btn-secondary" id="planApprovalCancelBtn" style="flex:1">Back to Amend</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    modal.querySelector('#planApprovalCloseBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#planApprovalCancelBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#planApprovalConfirmBtn').addEventListener('click', async () => {
+      const btn = modal.querySelector('#planApprovalConfirmBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving plan...';
+      try {
+        const resp = await fetch('/api/transport/plan/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+          body: JSON.stringify({ assignments })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Failed to save plan');
+        modal.remove();
+        document.getElementById('routePlanningModal').classList.add('hidden');
+        await renderTransportTab();
+        alert(`✓ Plan approved — ${data.assigned} job(s) marked Preplanned.\nThey will switch to Confirmed as scanning completes each order.`);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '✓ Approve';
+        alert('❌ ' + err.message);
+      }
+    });
   });
 
   document.getElementById('routeExportBtn')?.addEventListener('click', () => {

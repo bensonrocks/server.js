@@ -12,25 +12,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="IDEALONE" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  <script src="/vendor/leaflet/leaflet.js"></script>
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+    // Leaflet (OpenStreetMap) is bundled locally — no API key needed.
+    window.mapsLoaded = !!window.L;
+    window.mapsError = window.L ? null : 'SCRIPT_ERROR';
   </script>
-  <script>
-    window.mapsLoaded = false;
-    window.mapsError = null;
-    window.initMap = function() {
-      window.mapsLoaded = true;
-      console.log('✓ Google Maps API loaded successfully');
-    };
-    window.gm_authFailure = function() {
-      window.mapsError = 'API_AUTH_FAILED';
-      console.error('✗ Google Maps API authentication failed - check API key');
-    };
-  </script>
-  <script>
-    console.log('Loading Google Maps API...');
-  </script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&callback=initMap" async defer onerror="window.mapsError='SCRIPT_ERROR';console.error('✗ Maps API script failed to load');"></script>
 </head>
 <body>
 
@@ -1398,46 +1387,18 @@
             <button class="btn-close" id="uploadJobsCloseBtn">✕</button>
           </div>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.2rem">
-            <!-- Generic Delivery Import -->
-            <div class="card" style="border-left:4px solid #22c55e">
-              <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">🚚 Import Deliveries</h3>
-              <p class="hint" style="font-size:12px;margin-bottom:.8rem">CSV or XLSX with customer, address, postal code</p>
-              <div class="upload-area" style="border:2px dashed #22c55e;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
-                   onclick="document.getElementById('transportGenericFileInput').click()">
-                <div style="font-size:24px;margin-bottom:.4rem">📦</div>
-                <div style="font-size:12px;color:#64748b">Drop or click to select file</div>
-                <input type="file" id="transportGenericFileInput" accept=".csv,.xlsx,.xls" hidden />
-              </div>
-              <button class="btn-secondary" id="transportGenericBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
-              <p style="margin:0.6rem 0 0 0;font-size:10px;color:#64748b;line-height:1.4">Columns: customer_name, address (or postal_code), items (qty), etc.</p>
+          <!-- Single smart import — AI attribute detection handles every format -->
+          <div class="card" style="border-left:4px solid #22c55e">
+            <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">🚚 Import Jobs — Any Format</h3>
+            <p class="hint" style="font-size:12px;margin-bottom:.8rem">One upload for everything: BETIME schedules, Outright trackers, or any CSV/XLSX with customer + address/postal code. Columns are detected automatically by analysing the data.</p>
+            <div class="upload-area" style="border:2px dashed #22c55e;border-radius:6px;padding:2rem 1.2rem;text-align:center;cursor:pointer"
+                 onclick="document.getElementById('transportImportFileInput').click()">
+              <div style="font-size:32px;margin-bottom:.4rem">📦</div>
+              <div style="font-size:13px;color:#64748b">Drop or click to select CSV / XLSX</div>
+              <input type="file" id="transportImportFileInput" accept=".csv,.xlsx,.xls" hidden />
             </div>
-
-            <!-- BETIME Delivery Schedule -->
-            <div class="card">
-              <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">&#128241; BETIME Schedule</h3>
-              <p class="hint" style="font-size:12px;margin-bottom:.8rem">BETIME delivery schedule (XLSX)</p>
-              <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
-                   onclick="document.getElementById('transportBetimeFileInput').click()">
-                <div style="font-size:24px;margin-bottom:.4rem">📁</div>
-                <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
-                <input type="file" id="transportBetimeFileInput" accept=".xlsx,.xls" hidden />
-              </div>
-              <button class="btn-secondary" id="transportBetimeBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
-            </div>
-
-            <!-- Outright Order Tracker -->
-            <div class="card">
-              <h3 style="margin:0 0 .8rem 0;font-size:14px;font-weight:600">📊 Outright Tracker</h3>
-              <p class="hint" style="font-size:12px;margin-bottom:.8rem">Outright order tracker (XLSX)</p>
-              <div class="upload-area" style="border:2px dashed #cbd5e1;border-radius:6px;padding:1.2rem;text-align:center;cursor:pointer"
-                   onclick="document.getElementById('transportOutrightFileInput').click()">
-                <div style="font-size:24px;margin-bottom:.4rem">📊</div>
-                <div style="font-size:12px;color:#64748b">Drop or click to select XLSX</div>
-                <input type="file" id="transportOutrightFileInput" accept=".xlsx,.xls" hidden />
-              </div>
-              <button class="btn-secondary" id="transportOutrightBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
-            </div>
+            <button class="btn-secondary" id="transportImportBrowseBtn" style="width:100%;margin-top:.6rem;font-size:12px">Browse Files</button>
+            <p style="margin:0.6rem 0 0 0;font-size:10px;color:#64748b;line-height:1.4">🤖 Auto-detects: customer name, address, postal code, PO/order no, delivery date, quantity, phone — no need to pick a format.</p>
           </div>
 
           <div id="transportImportStatus" class="status-bar hidden" style="margin-top:1.5rem;margin-bottom:0"></div>

@@ -784,14 +784,16 @@ function journalOrderState(orderNumber, state) {
 function updateTransportOnOrderCompletion(db, order, state) {
   if (!db.transport || !order) return;
 
-  // Find matching transport record by order identifiers
+  // Find matching transport record by order identifiers.
+  // Transport ids are TR-YYMMDD-NNN codes, so the real cross-reference is
+  // referenceId/clientId (the PO number captured at import time).
+  const orderIds = [order.order_number, order.waybill_number, order.pick_ticket, order.po_number]
+    .filter(Boolean).map(String);
   const transportRecord = db.transport.find(t =>
-    t.id === order.order_number ||
-    t.id === order.waybill_number ||
-    t.id === order.pick_ticket ||
-    t.id === order.po_number ||
-    t.clientId === (order.customer_name || '').substring(0, 20) ||
-    t.clientName === order.customer_name
+    orderIds.includes(String(t.id)) ||
+    orderIds.includes(String(t.referenceId || '')) ||
+    orderIds.includes(String(t.clientId || '')) ||
+    (t.clientName && t.clientName === order.customer_name)
   );
 
   if (!transportRecord) return;
@@ -4444,7 +4446,14 @@ app.get('/api/transport', (req, res) => {
     status: req.status || 'pending',
     createdAt: req.createdAt,
     items: req.items || [],
-    shipping: req.shipping || {}
+    shipping: req.shipping || {},
+    assignedDriver: req.assignedDriver || '',
+    assignedDriverName: req.assignedDriverName || '',
+    routeNum: req.routeNum || null,
+    stopSeq: req.stopSeq || null,
+    packages: req.packages || 1,
+    plannedAt: req.plannedAt || null,
+    pendingDeletion: !!req.pending_deletion
   }));
   res.json(transportRequests);
 });
@@ -4574,6 +4583,45 @@ app.post('/api/transport/fix-schedule/:day', (req, res) => {
   logAudit('fix_schedule_updated', { day, enabled, areasCount: priorityAreas?.length || 0 });
 
   res.json(db.fixSchedules[day]);
+});
+
+// Approve a route plan — assigns drivers to jobs and marks them PREPLANNED.
+// Jobs stay preplanned until warehouse scanning completes the matching order,
+// at which point updateTransportOnOrderCompletion() flips them to CONFIRMED.
+// Must come before the :id route.
+app.post('/api/transport/plan/approve', (req, res) => {
+  const { assignments } = req.body || {};
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return res.status(400).json({ error: 'assignments array required' });
+  }
+
+  const db = readDb();
+  if (!db.transport) db.transport = [];
+
+  let assigned = 0;
+  const notFound = [];
+  for (const a of assignments) {
+    const rec = db.transport.find(r => r.id === a.id);
+    if (!rec) { notFound.push(a.id); continue; }
+    // Never regress a job that scanning already confirmed/delivered
+    if (rec.status === 'confirmed' || rec.status === 'delivered') continue;
+    rec.status = 'preplanned';
+    rec.assignedDriver = a.driverId || '';
+    rec.assignedDriverName = a.driverName || '';
+    rec.routeNum = a.route || null;
+    rec.stopSeq = a.stopSeq || null;
+    rec.plannedAt = new Date().toISOString();
+    assigned++;
+  }
+
+  _persistDb(db);
+  logAudit('transport_plan_approved', {
+    jobs: assigned,
+    drivers: [...new Set(assignments.map(a => a.driverName).filter(Boolean))].length,
+    notFound: notFound.length
+  });
+
+  res.json({ success: true, assigned, notFound });
 });
 
 // Generic transport record endpoints — must come after specific routes
