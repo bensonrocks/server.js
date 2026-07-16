@@ -3609,20 +3609,30 @@
       if (!resp.ok) return;
       let list = await resp.json();
 
-      // One-time migration of this browser's old local driver list
+      // One-time migration of this browser's old local driver list — MERGE:
+      // push up any local driver the server doesn't already have (matched by
+      // id or name), no matter what's already on the server. Only clear the
+      // local copy once everything is safely up.
       const local = JSON.parse(localStorage.getItem('drivers') || '[]');
-      if (!list.length && local.length) {
-        for (const d of local) {
-          await fetch('/api/drivers', {
+      if (local.length) {
+        const known = new Set(list.flatMap(d => [String(d.id), String(d.name || '').trim().toUpperCase()]));
+        const missing = local.filter(d =>
+          !known.has(String(d.id)) && !known.has(String(d.name || '').trim().toUpperCase()));
+        let allOk = true;
+        for (const d of missing) {
+          const r = await fetch('/api/drivers', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...hdrs },
             body: JSON.stringify(d),
-          }).catch(() => {});
+          }).catch(() => null);
+          if (!r || !r.ok) allOk = false;
         }
-        resp = await fetch('/api/drivers', { headers: hdrs });
-        if (resp.ok) list = await resp.json();
+        if (missing.length) {
+          resp = await fetch('/api/drivers', { headers: hdrs });
+          if (resp.ok) list = await resp.json();
+        }
+        if (allOk) localStorage.removeItem('drivers');
       }
-      if (local.length) localStorage.removeItem('drivers');
 
       window.drivers = Array.isArray(list) ? list : [];
     } catch { /* offline — keep whatever we have */ }
