@@ -852,6 +852,18 @@ map in app.js; keep both in sync), starting from the Marina depot reference
 (018945). Suitable for comparing drivers/days, NOT for odometer or fuel
 claims — the Notes sheet says so.
 
+### Transport job deletion — ADMIN role only, direct (no approval queue)
+
+Unlike orders/inbound (request + Master-approve), transport jobs are planning
+data, so admins delete directly: `DELETE /api/transport/:id` (single, 🗑
+button in each map-point popup — button only rendered for admin role) and
+`POST /api/transport/bulk-delete` `{ids:[...]}` or `{all:true}` (the
+"🗑 Clear All Jobs" button in the Upload Jobs modal, guarded by a typed
+DELETE confirmation). Both use `requireTransportAdmin()` — master key or
+admin role, warehouse gets a real 403 server-side. Every deletion is
+audit-logged (`transport_deleted`, with mode single/ids/all and count).
+bulk-delete must stay registered before the generic `:id` routes.
+
 ### No-driver-app workflow: run sheets + office Mark Delivered
 
 Drivers do NOT need the driver portal — the whole lifecycle works without it:

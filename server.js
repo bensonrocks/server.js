@@ -4700,12 +4700,59 @@ app.post('/api/transport/mark-delivered', (req, res) => {
   res.json({ success: true, delivered });
 });
 
+// Transport job deletion — ADMIN ROLE (or master key) only. Warehouse users
+// get a real 403 even calling the endpoint directly, mirroring the report
+// access pattern. Deletions are audit-logged with who/what/how many.
+function requireTransportAdmin(req, res) {
+  if (req.headers['x-master-key'] === MASTER_PASS) return true;
+  const role = readUsers().find(u => u.id === req.userId)?.role;
+  if (role !== 'admin') {
+    res.status(403).json({ error: 'Administrator access required to delete transport jobs' });
+    return false;
+  }
+  return true;
+}
+
+// Bulk delete — {ids:[...]} for selected jobs, {all:true} wipes every job
+// (clearing test imports / starting fresh). Must come before the :id route.
+app.post('/api/transport/bulk-delete', (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const { ids, all } = req.body || {};
+  const db = readDb();
+  if (!db.transport) db.transport = [];
+  const before = db.transport.length;
+
+  if (all === true) {
+    db.transport = [];
+  } else if (Array.isArray(ids) && ids.length) {
+    db.transport = db.transport.filter(r => !ids.includes(r.id));
+  } else {
+    return res.status(400).json({ error: 'Provide ids array or all:true' });
+  }
+
+  const deleted = before - db.transport.length;
+  _persistDb(db);
+  logAudit('transport_deleted', { jobs: deleted, mode: all === true ? 'all' : 'ids', by: req.userId || '' });
+  res.json({ success: true, deleted });
+});
+
 // Generic transport record endpoints — must come after specific routes
 app.get('/api/transport/:id', (req, res) => {
   const db = readDb();
   const req_data = (db.transport || []).find(r => r.id === req.params.id);
   if (!req_data) return res.status(404).json({ error: 'Transport request not found' });
   res.json(req_data);
+});
+
+app.delete('/api/transport/:id', (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const db = readDb();
+  const idx = (db.transport || []).findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Transport request not found' });
+  const victim = db.transport.splice(idx, 1)[0];
+  _persistDb(db);
+  logAudit('transport_deleted', { jobs: 1, mode: 'single', id: victim.id, client: victim.clientName || '', by: req.userId || '' });
+  res.json({ success: true, deleted: 1 });
 });
 
 app.post('/api/transport/:id/update', (req, res) => {

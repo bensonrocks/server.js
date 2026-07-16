@@ -2045,9 +2045,14 @@
       // Touch devices have no hover — tap opens this popup instead. It also
       // carries the office-side "Mark Delivered" close-out button.
       const canDeliver = req.status !== 'delivered' && req.status !== 'cancelled';
-      marker.bindPopup(detailsHtml + (canDeliver
-        ? `<button class="popup-deliver-btn" data-id="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#16a34a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">✓ Mark Delivered</button>`
-        : ''));
+      const isAdmin = currentUser?.role === 'admin';
+      marker.bindPopup(detailsHtml
+        + (canDeliver
+          ? `<button class="popup-deliver-btn" data-id="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#16a34a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">✓ Mark Delivered</button>`
+          : '')
+        + (isAdmin
+          ? `<button class="popup-delete-btn" data-id="${esc(req.id)}" style="margin-top:.35rem;width:100%;padding:.35rem;background:#fff;color:#ef4444;border:1px solid #ef4444;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">🗑 Delete Job</button>`
+          : ''));
 
       transportMarkers.push(marker);
       bounds.push([pos.lat, pos.lng]);
@@ -3387,6 +3392,43 @@
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed');
       await renderTransportTab();
+    } catch (err) { alert('❌ ' + err.message); }
+  });
+
+  // Individual delete — admin-only button inside a map point's popup
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.popup-delete-btn');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (!confirm(`DELETE job ${id}?\n\nThis removes it permanently — it will no longer appear on the map, in planning, or in future driver reports.`)) return;
+    try {
+      const resp = await fetch(`/api/transport/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' }
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed');
+      await renderTransportTab();
+    } catch (err) { alert('❌ ' + err.message); }
+  });
+
+  // Clear ALL transport jobs — admin-only, typed confirmation required.
+  // Lives in the Upload Jobs modal since that's where jobs come from.
+  document.getElementById('transportClearAllBtn')?.addEventListener('click', async () => {
+    if (currentUser?.role !== 'admin') { alert('Administrator access required.'); return; }
+    const typed = prompt('This deletes EVERY transport job — including delivered history used by the Driver Performance report.\n\nType DELETE to confirm:');
+    if (typed !== 'DELETE') return;
+    try {
+      const resp = await fetch('/api/transport/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ all: true })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed');
+      document.getElementById('uploadJobsModal').classList.add('hidden');
+      await renderTransportTab();
+      alert(`✓ ${data.deleted} job(s) deleted.`);
     } catch (err) { alert('❌ ' + err.message); }
   });
 
