@@ -3655,7 +3655,10 @@
     });
   }
 
-  document.getElementById('addDriverBtn')?.addEventListener('click', () => {
+  // NOTE: unique id — an id="addDriverBtn" also exists in the Administrator
+  // Drivers section; the duplicate meant this modal's button silently got no
+  // listener (getElementById returns the first match only).
+  document.getElementById('transportAddDriverBtn')?.addEventListener('click', () => {
     editingDriverId = null;
     document.getElementById('addEditDriverTitle').textContent = 'Add Driver';
     document.getElementById('driverNameInput').value = '';
