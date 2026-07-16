@@ -1847,15 +1847,11 @@
       sameDay(r.createdAt, todayD) ||                            // new today
       sameDay(r.deliveredAt, todayD));                           // closed out today
 
-    const mapContainer = document.getElementById('transportMapContainer');
+    // Zero jobs is NOT a special case — the dashboard always renders with 0s
+    // and the map always shows (empty Singapore view), so the page never
+    // collapses to a bare text message.
     const empty = document.getElementById('transportMapEmpty');
-
-    if (!transportRequests.length) {
-      empty.style.display = 'block';
-      return;
-    }
-
-    empty.style.display = 'none';
+    if (empty) empty.style.display = 'none';
 
     // Render stats bar — lifecycle: pending → preplanned (plan approved)
     // → confirmed (scanning completed) → delivered
