@@ -4624,6 +4624,38 @@ app.post('/api/transport/plan/approve', (req, res) => {
   res.json({ success: true, assigned, notFound });
 });
 
+// Mark jobs DELIVERED — the office-side close-out for drivers who don't use
+// the driver portal. Accepts explicit ids, or {allConfirmed:true} to close
+// out every currently-confirmed job in one go (end-of-day sweep).
+// Must come before the :id route.
+app.post('/api/transport/mark-delivered', (req, res) => {
+  const { ids, allConfirmed } = req.body || {};
+  const db = readDb();
+  if (!db.transport) db.transport = [];
+
+  let targets;
+  if (allConfirmed === true) {
+    targets = db.transport.filter(r => r.status === 'confirmed');
+  } else if (Array.isArray(ids) && ids.length) {
+    targets = db.transport.filter(r => ids.includes(r.id));
+  } else {
+    return res.status(400).json({ error: 'Provide ids array or allConfirmed:true' });
+  }
+
+  let delivered = 0;
+  const now = new Date().toISOString();
+  for (const rec of targets) {
+    if (rec.status === 'delivered' || rec.status === 'cancelled') continue;
+    rec.status = 'delivered';
+    rec.deliveredAt = now;
+    delivered++;
+  }
+
+  _persistDb(db);
+  logAudit('transport_marked_delivered', { jobs: delivered, mode: allConfirmed ? 'all-confirmed' : 'ids', by: req.userId || '' });
+  res.json({ success: true, delivered });
+});
+
 // Generic transport record endpoints — must come after specific routes
 app.get('/api/transport/:id', (req, res) => {
   const db = readDb();

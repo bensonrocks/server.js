@@ -2034,7 +2034,12 @@
       </div>`;
 
       marker.bindTooltip(detailsHtml, { direction: 'top', offset: [0, -12], sticky: false, opacity: 1, className: 'tjob-tooltip' });
-      marker.bindPopup(detailsHtml); // touch devices have no hover — tap opens this
+      // Touch devices have no hover — tap opens this popup instead. It also
+      // carries the office-side "Mark Delivered" close-out button.
+      const canDeliver = req.status !== 'delivered' && req.status !== 'cancelled';
+      marker.bindPopup(detailsHtml + (canDeliver
+        ? `<button class="popup-deliver-btn" data-id="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#16a34a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">✓ Mark Delivered</button>`
+        : ''));
 
       transportMarkers.push(marker);
       bounds.push([pos.lat, pos.lng]);
@@ -3225,7 +3230,9 @@
         modal.remove();
         document.getElementById('routePlanningModal').classList.add('hidden');
         await renderTransportTab();
-        alert(`✓ Plan approved — ${data.assigned} job(s) marked Preplanned.\nThey will switch to Confirmed as scanning completes each order.`);
+        if (confirm(`✓ Plan approved — ${data.assigned} job(s) marked Preplanned.\nThey will switch to Confirmed as scanning completes each order.\n\nPrint driver run sheets now?`)) {
+          printDriverRunSheets();
+        }
       } catch (err) {
         btn.disabled = false;
         btn.textContent = '✓ Approve';
@@ -3250,6 +3257,128 @@
     a.href = url;
     a.download = 'routes-' + new Date().toISOString().slice(0,10) + '.csv';
     a.click();
+  });
+
+  // ── Driver run sheets — printed route per driver, for drivers who don't
+  //    use the driver app. One page per driver, stops in route order, with
+  //    a signature/time column as proof of delivery. ─────────────────────────
+  function printDriverRunSheets() {
+    const jobs = transportRequests.filter(r =>
+      (r.assignedDriver || r.assignedDriverName) &&
+      r.status !== 'delivered' && r.status !== 'cancelled');
+    if (!jobs.length) {
+      alert('No assigned, undelivered jobs to print.\nApprove a route plan first (Plan Routes → Assign Routes to Drivers).');
+      return;
+    }
+
+    // Group by driver, sort each driver's stops by route + stop sequence
+    const byDriver = {};
+    jobs.forEach(j => {
+      const key = j.assignedDriverName || j.assignedDriver;
+      if (!byDriver[key]) byDriver[key] = [];
+      byDriver[key].push(j);
+    });
+    Object.values(byDriver).forEach(list => list.sort((a, b) =>
+      (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99)));
+
+    const today = new Date().toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+    const pages = Object.entries(byDriver).map(([driverName, list]) => {
+      const driverRec = (window.drivers || []).find(d => d.name === driverName || d.id === list[0].assignedDriver);
+      const totalCartons = list.reduce((s, j) => s + (j.packages || 1), 0);
+      return `
+        <div class="sheet">
+          <div class="head">
+            <div>
+              <div class="brand">IDEALONE — Delivery Run Sheet</div>
+              <div class="drv">👤 ${esc(driverName)}${driverRec?.phone ? ` · 📞 ${esc(driverRec.phone)}` : ''}</div>
+            </div>
+            <div class="meta">
+              <div>${esc(today)}</div>
+              <div>${list.length} stop(s) · ${totalCartons} carton(s)</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr>
+              <th style="width:26px">#</th><th>Client</th><th>Address</th>
+              <th style="width:52px">Postal</th><th style="width:80px">Phone</th>
+              <th style="width:34px">Ctns</th><th style="width:110px">Received by / Time</th>
+            </tr></thead>
+            <tbody>
+              ${list.map((j, i) => `<tr>
+                <td>${i + 1}</td>
+                <td><strong>${esc(j.clientName || j.id)}</strong></td>
+                <td>${esc(j.shipping?.addressLine1 || '')}</td>
+                <td>${esc(j.shipping?.zip || '')}</td>
+                <td>${esc(j.shipping?.phone || '')}</td>
+                <td style="text-align:center">${j.packages || 1}</td>
+                <td></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="foot">Report problems (closed / refused / wrong address) to the office immediately. · Printed ${new Date().toLocaleString('en-SG')}</div>
+        </div>`;
+    }).join('');
+
+    const w = window.open('', '_blank');
+    if (!w) { alert('Pop-up blocked — allow pop-ups to print run sheets.'); return; }
+    w.document.write(`<!DOCTYPE html><html><head><title>Driver Run Sheets</title><style>
+      body { font-family: Arial, sans-serif; margin: 0; color: #111; }
+      .sheet { padding: 14mm 12mm; page-break-after: always; }
+      .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 12px; }
+      .brand { font-size: 15px; font-weight: 800; letter-spacing: .04em; }
+      .drv { font-size: 14px; margin-top: 6px; font-weight: 700; }
+      .meta { text-align: right; font-size: 12px; line-height: 1.6; }
+      table { width: 100%; border-collapse: collapse; font-size: 11px; }
+      th, td { border: 1px solid #999; padding: 6px 5px; text-align: left; vertical-align: top; }
+      th { background: #eee; }
+      td:last-child { height: 30px; }
+      .foot { margin-top: 10px; font-size: 9px; color: #555; }
+      @media print { .sheet { padding: 8mm 6mm; } }
+    </style></head><body>${pages}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  }
+
+  document.getElementById('transportRunSheetsBtn')?.addEventListener('click', printDriverRunSheets);
+
+  // ── Mark Delivered — office-side close-out (no driver app needed) ─────────
+  document.getElementById('transportMarkDeliveredBtn')?.addEventListener('click', async () => {
+    const confirmed = transportRequests.filter(r => r.status === 'confirmed');
+    if (!confirmed.length) {
+      alert('No Confirmed jobs to close out.\n\nJobs become Confirmed when their order finishes scanning. To mark an individual job delivered regardless of status, tap its point on the map.');
+      return;
+    }
+    if (!confirm(`Mark all ${confirmed.length} Confirmed job(s) as DELIVERED?\n\nUse this at end of day once the drivers report their rounds done.`)) return;
+    try {
+      const resp = await fetch('/api/transport/mark-delivered', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ allConfirmed: true })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed');
+      await renderTransportTab();
+      alert(`✓ ${data.delivered} job(s) marked Delivered.`);
+    } catch (err) { alert('❌ ' + err.message); }
+  });
+
+  // Individual mark-delivered — the button inside a map point's popup
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.popup-deliver-btn');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (!confirm(`Mark ${id} as DELIVERED?`)) return;
+    try {
+      const resp = await fetch('/api/transport/mark-delivered', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ ids: [id] })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed');
+      await renderTransportTab();
+    } catch (err) { alert('❌ ' + err.message); }
   });
 
   // ── Driver Details Management ──────────────────────────────────────────────

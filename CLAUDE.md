@@ -828,6 +828,23 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   generic `/api/transport/:id` routes (same rule as `import`/`fix-schedule` —
   Express matches in order, and `:id` would swallow them).
 
+### No-driver-app workflow: run sheets + office Mark Delivered
+
+Drivers do NOT need the driver portal — the whole lifecycle works without it:
+
+- 🖨 **Run Sheets** (`printDriverRunSheets()` in app.js, `#transportRunSheetsBtn`,
+  also offered right after plan approval): prints one page per driver — stops
+  in route order with client, address, postal, phone, carton count and a
+  "Received by / Time" signature column. Same window.open+print pattern as
+  waybill labels/carton slips. Only assigned, undelivered jobs are included.
+- ✓ **Mark Delivered** (`POST /api/transport/mark-delivered`, must ALSO stay
+  before the `:id` routes): body `{ids:[...]}` for individual jobs, or
+  `{allConfirmed:true}` for the end-of-day sweep that closes out every
+  Confirmed job at once (`#transportMarkDeliveredBtn`). Delivered/cancelled
+  jobs are never re-touched. Each map point's tap popup also carries a
+  per-job "✓ Mark Delivered" button (`.popup-deliver-btn`, delegated
+  listener on document).
+
 ### Sync Strategy
 
 When porting to IdealScan or other codebases:
