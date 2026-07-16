@@ -2800,6 +2800,172 @@ app.get('/api/wms/analytics/sales-by-platform', withStaffTenant, (req, res) => {
   }
 });
 
+// ── Wave Mode Suggestion & THU Generation ──────────────────────────────────────
+
+app.post('/api/wms/waves/suggest-mode', withStaffTenant, (req, res) => {
+  try {
+    const { orderIds } = req.body;
+    const ctx = getCtx(req.tenantId);
+    const wave = createPickingWave(ctx.db);
+    const result = wave.suggestWaveMode(orderIds);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Scan-Based Pick-and-Pack (PPP) Workflow ────────────────────────────────────
+
+app.post('/api/wms/scan-pack/session', withStaffTenant, (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.openSession(orderId);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/scan-pack/session/:sessionId/carton', withStaffTenant, (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { thuCode } = req.body;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.openCarton(sessionId, thuCode);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/scan-pack/carton/:cartonId/item', withStaffTenant, (req, res) => {
+  try {
+    const { cartonId } = req.params;
+    const { skuCode, qty = 1, lotNumber = '', expiryDate = '' } = req.body;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.addItemToCarton(cartonId, skuCode, qty, lotNumber, expiryDate);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/scan-pack/carton/:cartonId/close', withStaffTenant, (req, res) => {
+  try {
+    const { cartonId } = req.params;
+    const { weight, length, width, height } = req.body;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.closeCarton(cartonId, weight, length, width, height);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/scan-pack/session/:sessionId/close', withStaffTenant, (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { operatorId } = req.body;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.closeSession(sessionId, operatorId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/scan-pack/session/:sessionId', withStaffTenant, (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.getSessionSummary(sessionId);
+    if (!result) return res.status(404).json({ error: 'Session not found' });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/scan-pack/session/:sessionId/manifest', withStaffTenant, (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const ctx = getCtx(req.tenantId);
+    const scanPack = require('./lib/scan-pack')(ctx.db);
+    const result = scanPack.getPackingManifest(sessionId);
+    if (!result) return res.status(404).json({ error: 'Session not found' });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Print Queue Management ─────────────────────────────────────────────────────
+
+app.post('/api/wms/print-queue/job', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const printQueue = require('./lib/print-queue')(ctx.db);
+    const result = printQueue.queuePrintJob(req.body.labelData, req.body.options || {});
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/print-queue', withStaffTenant, (req, res) => {
+  try {
+    const { printerType, status } = req.query;
+    const ctx = getCtx(req.tenantId);
+    const printQueue = require('./lib/print-queue')(ctx.db);
+    const result = printQueue.getPrintQueue(printerType, status || 'queued');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/print-queue/job/:jobId/start', withStaffTenant, (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const ctx = getCtx(req.tenantId);
+    const printQueue = require('./lib/print-queue')(ctx.db);
+    const result = printQueue.startPrintJob(jobId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/wms/print-queue/job/:jobId/complete', withStaffTenant, (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const ctx = getCtx(req.tenantId);
+    const printQueue = require('./lib/print-queue')(ctx.db);
+    const result = printQueue.completePrintJob(jobId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/wms/print-queue/stats', withStaffTenant, (req, res) => {
+  try {
+    const ctx = getCtx(req.tenantId);
+    const printQueue = require('./lib/print-queue')(ctx.db);
+    const result = printQueue.getPrintStats();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ── OAuth result pages ────────────────────────────────────────────────────────
 
 function okPage(platform) {
