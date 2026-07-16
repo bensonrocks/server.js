@@ -856,13 +856,30 @@ a:hover{text-decoration:underline}
         <li class="nav-li" id="nav-inventory" onclick="switchPage('inventory')">
           <span>&#128202;</span><span class="nav-name" data-i18n="navInventory">Inventory</span><span id="inv-low-badge" class="nbadge" style="display:none;background:#d97706"></span>
         </li>
+      </ul>
+      <div class="sb-label" style="margin-top:12px">Fulfillment</div>
+      <ul>
+        <li class="nav-li" id="nav-b2c-orders" onclick="switchPage('b2c-orders')">
+          <span>🛍️</span><span class="nav-name">B2C Orders</span><span id="b2c-badge" class="nbadge" style="display:none"></span>
+        </li>
+        <li class="nav-li" id="nav-b2b-orders" onclick="switchPage('b2b-orders')">
+          <span>📦</span><span class="nav-name">B2B Orders (PO)</span><span id="b2b-badge" class="nbadge" style="display:none"></span>
+        </li>
+        <li class="nav-li" id="nav-staging" onclick="switchPage('staging')">
+          <span>📍</span><span class="nav-name">Staging Area</span><span id="staging-badge" class="nbadge" style="display:none"></span>
+        </li>
+      </ul>
+      <div class="sb-label" style="margin-top:12px">Admin</div>
+      <ul>
+        <li class="nav-li" id="nav-client-profile" onclick="switchPage('client-profile')">
+          <span>👥</span><span class="nav-name">Client Profiles</span>
+        </li>
         <li class="nav-li" onclick="window.open('/tutorial.html','_blank')">
           <span>&#128209;</span><span class="nav-name" data-i18n="navTutorial">User Guide</span>
         </li>
         <li class="nav-li" onclick="window.open('/about.html','_blank')">
           <span>&#127760;</span><span class="nav-name" data-i18n="navAbout">About IdealOne OMS</span>
         </li>
-
       </ul>
       <div class="sb-label" style="margin-top:8px">Clients</div>
       <ul id="client-list"></ul>

@@ -48,6 +48,8 @@ const createAnalytics = require('./lib/analytics');
 const createScanPack = require('./lib/scan-pack');
 const createPrintQueue = require('./lib/print-queue');
 const createPickingOrchestrator = require('./lib/picking-orchestrator');
+const createOrderTypeDetector = require('./lib/order-type-detector');
+const createPOManager = require('./lib/po-manager');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -3032,6 +3034,149 @@ async function autoSyncAll() {
     }
   }
 }
+
+// ── B2B/B2C Order Type Detection (Phase 1) ────────────────────────────────────
+
+// Detect order type and get recommendation
+app.post('/api/b2b-b2c/detect-order-type', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const detector = createOrderTypeDetector(ctx.db);
+    const result = detector.detectOrderType(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Record order type detection (with user confirmation for learning)
+app.post('/api/b2b-b2c/record-detection', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const detector = createOrderTypeDetector(ctx.db);
+    const { order_data, detected_type, user_confirmed_type } = req.body;
+    const logId = detector.recordDetection(order_data, detected_type, user_confirmed_type);
+    res.json({ logId, learned: user_confirmed_type && user_confirmed_type !== detected_type });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get client profile (ML model state)
+app.get('/api/b2b-b2c/client-profile/:clientId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const detector = createOrderTypeDetector(ctx.db);
+    const profile = detector.getClientProfile(req.params.clientId);
+    res.json(profile);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get detection log for a client
+app.get('/api/b2b-b2c/detection-log/:clientId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const detector = createOrderTypeDetector(ctx.db);
+    const limit = parseInt(req.query.limit) || 50;
+    const log = detector.getDetectionLog(req.params.clientId, limit);
+    res.json(log);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PO Document Management (Phase 1) ──────────────────────────────────────────
+
+// Create PO document
+app.post('/api/b2b-b2c/po', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const poManager = createPOManager(ctx.db);
+    const detector = createOrderTypeDetector(ctx.db);
+
+    const po = poManager.createPODocument(req.body);
+
+    // Record detection
+    if (req.body.client_id) {
+      detector.recordDetection(
+        { po_id: po.poId, client_id: req.body.client_id },
+        'b2b',
+        'b2b'
+      );
+    }
+
+    res.json(po);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Validate PO document
+app.post('/api/b2b-b2c/po/:poId/validate', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const poManager = createPOManager(ctx.db);
+    const result = poManager.validatePODocument(req.params.poId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get PO document
+app.get('/api/b2b-b2c/po/:poId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const poManager = createPOManager(ctx.db);
+    const po = poManager.getPODocument(req.params.poId);
+    if (!po) return res.status(404).json({ error: 'PO not found' });
+    res.json(po);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// List PO documents
+app.get('/api/b2b-b2c/po', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const poManager = createPOManager(ctx.db);
+    const status = req.query.status || null;
+    const clientId = req.query.clientId || null;
+    const limit = parseInt(req.query.limit) || 50;
+    const list = poManager.listPODocuments(status, clientId, limit);
+    res.json(list);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Approve PO document
+app.post('/api/b2b-b2c/po/:poId/approve', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const poManager = createPOManager(ctx.db);
+    const result = poManager.approvePODocument(req.params.poId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Reject PO document
+app.post('/api/b2b-b2c/po/:poId/reject', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const poManager = createPOManager(ctx.db);
+    const reason = req.body.reason || 'Rejected by user';
+    const result = poManager.rejectPODocument(req.params.poId, reason);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
 
 // ── Legal pages ───────────────────────────────────────────────────────────────
 
