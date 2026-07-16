@@ -2649,3 +2649,8 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   line-height: 1.4;
 }
 .sidebar .tab-btn { display: flex; align-items: center; }
+
+/* Contain Leaflet's internal z-indexes (up to 1000) inside the map boxes —
+   without this the map floats above the Administrator/modal overlays when
+   they open over the Transport tab. */
+#transportMainMap, #transportMap { position: relative; z-index: 0; isolation: isolate; }
