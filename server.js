@@ -52,6 +52,7 @@ const createOrderTypeDetector = require('./lib/order-type-detector');
 const createPOManager = require('./lib/po-manager');
 const createPOCSVImporter = require('./lib/po-csv-importer');
 const createB2BBatchProcessor = require('./lib/b2b-batch-processor');
+const createDocumentGenerator = require('./lib/document-generator');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -3260,6 +3261,61 @@ app.get('/api/b2b-b2c/po/:poId/staged-cartons', withStaffTenant, (req, res) => {
       ORDER BY received_at DESC
     `).all(req.params.poId);
     res.json(cartons || []);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Document Generation (Phase 4) ─────────────────────────────────────────────
+
+// Generate invoice (multiple formats)
+app.get('/api/b2b-b2c/po/:poId/invoice', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const format = req.query.format || 'json'; // json, html, csv
+    const generator = createDocumentGenerator(ctx.db);
+    const invoice = generator.generateInvoice(req.params.poId, format);
+
+    if (format === 'html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    } else if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="invoice-${req.params.poId}.csv"`);
+    } else {
+      res.setHeader('Content-Type', 'application/json');
+    }
+    res.send(invoice);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Generate packing slip (HTML or JSON)
+app.get('/api/b2b-b2c/po/:poId/packing-slip', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const format = req.query.format || 'json'; // json, html
+    const generator = createDocumentGenerator(ctx.db);
+    const slip = generator.generatePackingSlip(req.params.poId, format);
+
+    if (format === 'html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    } else {
+      res.setHeader('Content-Type', 'application/json');
+    }
+    res.send(slip);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Generate shipping label
+app.get('/api/b2b-b2c/carton/:cartonId/shipping-label', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const generator = createDocumentGenerator(ctx.db);
+    const label = generator.generateShippingLabel(req.params.cartonId);
+    res.json(label);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
