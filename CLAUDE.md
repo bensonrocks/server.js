@@ -828,6 +828,30 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   generic `/api/transport/:id` routes (same rule as `import`/`fix-schedule` —
   Express matches in order, and `:id` would swallow them).
 
+### Transport tab scope: TODAY'S workload only
+
+`renderTransportTab()` filters the fetched list before anything renders: the
+map/table/planner see only (a) jobs not yet delivered/cancelled — the carried-
+over balance, any age — plus (b) jobs created or delivered TODAY. Anything
+delivered before today disappears from the tab (history lives in Reports).
+The stats bar shows Jobs Today / Pending / Preplanned / Confirmed / Delivered
+(today) / **Done Yday** (delivered yesterday — the one piece of history kept
+visible). Route planning additionally excludes delivered/cancelled jobs so a
+closed job can never re-enter a route.
+
+### Driver Performance report (`kind === 'drivers'`)
+
+In ADMIN_REPORT_KINDS (admin login or master key). Live `db.transport` data
+like `aging`/`inbound`. Three sheets: **Driver Summary** (jobs assigned/
+delivered/confirmed/open, cartons, est. distance km, days active, avg jobs/
+day), **Driver Jobs** (every job line with route/stop/times), **Notes**
+(disclaimer). Distance is an ESTIMATE: per driver-day, stops sorted by
+routeNum+stopSeq, legs summed with `transportLegKm()` over the server-side
+postal-sector table (`SG_SECTOR_TO_DISTRICT_SRV` — a MIRROR of the client
+map in app.js; keep both in sync), starting from the Marina depot reference
+(018945). Suitable for comparing drivers/days, NOT for odometer or fuel
+claims — the Notes sheet says so.
+
 ### No-driver-app workflow: run sheets + office Mark Delivered
 
 Drivers do NOT need the driver portal — the whole lifecycle works without it:

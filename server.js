@@ -817,6 +817,49 @@ function updateTransportOnOrderCompletion(db, order, state) {
   });
 }
 
+// Singapore postal sector (first 2 digits) → district centroid.
+// MIRROR of the client-side map in public/app.js (getPostalCodeCoords) —
+// keep the two in sync. Used server-side for the Driver Performance report's
+// estimated distances.
+const SG_DISTRICT_COORDS_SRV = {
+  D01: [1.2850, 103.8520], D02: [1.2740, 103.8430], D03: [1.2900, 103.8100],
+  D04: [1.2650, 103.8220], D05: [1.3110, 103.7650], D06: [1.2900, 103.8500],
+  D07: [1.3010, 103.8580], D08: [1.3110, 103.8560], D09: [1.3050, 103.8320],
+  D10: [1.3150, 103.8060], D11: [1.3270, 103.8380], D12: [1.3280, 103.8620],
+  D13: [1.3350, 103.8780], D14: [1.3200, 103.8930], D15: [1.3060, 103.9020],
+  D16: [1.3240, 103.9310], D17: [1.3570, 103.9880], D18: [1.3520, 103.9440],
+  D19: [1.3610, 103.8850], D20: [1.3620, 103.8380], D21: [1.3350, 103.7770],
+  D22: [1.3330, 103.7430], D23: [1.3770, 103.7630], D24: [1.3800, 103.7000],
+  D25: [1.4360, 103.7860], D26: [1.3900, 103.8280], D27: [1.4290, 103.8360],
+  D28: [1.3910, 103.8720],
+};
+const SG_SECTOR_TO_DISTRICT_SRV = {};
+[
+  ['D01', ['01','02','03','04','05','06']], ['D02', ['07','08']],
+  ['D03', ['14','15','16']], ['D04', ['09','10']], ['D05', ['11','12','13']],
+  ['D06', ['17']], ['D07', ['18','19']], ['D08', ['20','21']],
+  ['D09', ['22','23']], ['D10', ['24','25','26','27']], ['D11', ['28','29','30']],
+  ['D12', ['31','32','33']], ['D13', ['34','35','36','37']], ['D14', ['38','39','40','41']],
+  ['D15', ['42','43','44','45']], ['D16', ['46','47','48']], ['D17', ['49','50','81']],
+  ['D18', ['51','52']], ['D19', ['53','54','55','82']], ['D20', ['56','57']],
+  ['D21', ['58','59']], ['D22', ['60','61','62','63','64']], ['D23', ['65','66','67','68']],
+  ['D24', ['69','70','71']], ['D25', ['72','73']], ['D26', ['77','78']],
+  ['D27', ['75','76']], ['D28', ['79','80']],
+].forEach(([d, sectors]) => sectors.forEach(s => { SG_SECTOR_TO_DISTRICT_SRV[s] = d; }));
+
+function transportPostalCoords(zip) {
+  const district = SG_SECTOR_TO_DISTRICT_SRV[String(zip || '').trim().substring(0, 2)];
+  return district ? SG_DISTRICT_COORDS_SRV[district] : [1.3521, 103.8198];
+}
+function transportLegKm(zipA, zipB) {
+  const [aLat, aLng] = transportPostalCoords(zipA);
+  const [bLat, bLng] = transportPostalCoords(zipB);
+  const R = 6371, toRad = x => x * Math.PI / 180;
+  const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
 // Apply fix schedule constraints to route planning
 function applyFixScheduleToRoutes(db, routes, transportRecords, options = {}) {
   const dayOfWeek = options.dayOfWeek || new Date().toLocaleDateString('en-US', { weekday: 'long' });
@@ -4453,6 +4496,7 @@ app.get('/api/transport', (req, res) => {
     stopSeq: req.stopSeq || null,
     packages: req.packages || 1,
     plannedAt: req.plannedAt || null,
+    deliveredAt: req.deliveredAt || null,
     pendingDeletion: !!req.pending_deletion
   }));
   res.json(transportRequests);
@@ -5498,7 +5542,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -5744,6 +5788,79 @@ app.get('/api/master/report/:kind', (req, res) => {
       addSheet('Inbound Lines', [
         ['Serial', 'Reference', 'SKU', 'Description', 'Expected Qty', 'Scanned Qty', 'Straight to Inventory', 'Damaged', 'KIV'],
         ...lineRows,
+      ]);
+
+    } else if (kind === 'drivers') {
+      title = 'Driver_Performance';
+      // Live data from db.transport (like 'aging'/'inbound') — transport jobs
+      // aren't audit-log events. A job lands in the range if it was planned,
+      // delivered, or created inside it.
+      const jobs = (db.transport || []).filter(rec => {
+        if (!rec.assignedDriver && !rec.assignedDriverName) return false;
+        const d = day(rec.deliveredAt || rec.plannedAt || rec.createdAt);
+        return d >= from && d <= to;
+      });
+
+      // Group per driver, and per driver-day for distance estimation
+      const drivers = {};
+      for (const rec of jobs) {
+        const key = rec.assignedDriverName || rec.assignedDriver;
+        const drv = drivers[key] ||= { jobs: [], days: {} };
+        drv.jobs.push(rec);
+        const d = day(rec.deliveredAt || rec.plannedAt || rec.createdAt);
+        (drv.days[d] ||= []).push(rec);
+      }
+
+      // Distance: per driver-day, stops in route order, legs measured with the
+      // same postal-sector coordinates route planning uses, starting from the
+      // Marina depot reference (018945). An ESTIMATE (district-to-district),
+      // not odometer data — labelled as such in the sheet.
+      const DEPOT_ZIP = '018945';
+      const dayDistanceKm = list => {
+        const sorted = [...list].sort((a, b) =>
+          (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99));
+        let km = 0, prev = DEPOT_ZIP;
+        for (const rec of sorted) {
+          const zip = rec.shipping?.zip || '';
+          km += transportLegKm(prev, zip);
+          prev = zip;
+        }
+        return km;
+      };
+
+      addSheet('Driver Summary', [
+        ['Driver', 'Jobs Assigned', 'Delivered', 'Confirmed (awaiting delivery)', 'Preplanned (open)', 'Total Cartons', 'Est. Distance (km)', 'Days Active', 'Avg Jobs / Day'],
+        ...Object.keys(drivers).sort().map(name => {
+          const drv = drivers[name];
+          const delivered = drv.jobs.filter(j => j.status === 'delivered').length;
+          const confirmed = drv.jobs.filter(j => j.status === 'confirmed').length;
+          const open      = drv.jobs.filter(j => j.status === 'preplanned' || j.status === 'pending').length;
+          const cartons   = drv.jobs.reduce((s, j) => s + (j.packages || 1), 0);
+          const km        = Object.values(drv.days).reduce((s, list) => s + dayDistanceKm(list), 0);
+          const daysActive = Object.keys(drv.days).length;
+          return [name, drv.jobs.length, delivered, confirmed, open, cartons,
+                  Math.round(km * 10) / 10, daysActive,
+                  Math.round(drv.jobs.length / daysActive * 10) / 10];
+        }),
+      ]);
+
+      addSheet('Driver Jobs', [
+        ['Driver', 'Date', 'Job ID', 'Client', 'Postal', 'Cartons', 'Route', 'Stop #', 'Status', 'Planned At', 'Delivered At'],
+        ...Object.keys(drivers).sort().flatMap(name =>
+          drivers[name].jobs
+            .sort((a, b) => day(a.deliveredAt || a.plannedAt || a.createdAt).localeCompare(day(b.deliveredAt || b.plannedAt || b.createdAt)) ||
+                            (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99))
+            .map(j => [
+              name, day(j.deliveredAt || j.plannedAt || j.createdAt), j.id, j.clientName || '',
+              j.shipping?.zip || '', j.packages || 1, j.routeNum || '', j.stopSeq || '',
+              j.status || 'pending', hhmm(j.plannedAt), hhmm(j.deliveredAt),
+            ])),
+      ]);
+
+      addSheet('Notes', [
+        ['About this report'],
+        ['Distances are ESTIMATES based on Singapore postal-district centroids (the same basis route planning uses), starting each day from the Marina depot reference. They are suitable for comparing drivers and days, not for odometer/fuel claims.'],
+        ['A job counts toward the day it was delivered; undelivered jobs count toward the day they were planned (or created).'],
       ]);
 
     } else {

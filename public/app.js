@@ -1829,16 +1829,23 @@
   let showingDrivers = false;
 
   async function renderTransportTab() {
+    let allTransport = [];
     try {
       const resp = await fetch('/api/transport');
-      if (resp.ok) {
-        transportRequests = await resp.json();
-      } else {
-        transportRequests = [];
-      }
-    } catch {
-      transportRequests = [];
-    }
+      if (resp.ok) allTransport = await resp.json();
+    } catch { /* offline — show nothing */ }
+
+    // The tab shows TODAY'S WORKLOAD, not history: jobs created today (any
+    // status) plus the undelivered balance carried over from earlier days.
+    // Anything delivered before today only appears in Reports.
+    const sameDay = (at, ref) => at && new Date(at).toDateString() === ref.toDateString();
+    const todayD = new Date();
+    const yesterdayD = new Date(Date.now() - 86400000);
+    const doneYesterday = allTransport.filter(r => r.status === 'delivered' && sameDay(r.deliveredAt, yesterdayD)).length;
+    transportRequests = allTransport.filter(r =>
+      (r.status !== 'delivered' && r.status !== 'cancelled') || // balance (any age)
+      sameDay(r.createdAt, todayD) ||                            // new today
+      sameDay(r.deliveredAt, todayD));                           // closed out today
 
     const mapContainer = document.getElementById('transportMapContainer');
     const empty = document.getElementById('transportMapEmpty');
@@ -1860,11 +1867,12 @@
     };
 
     document.getElementById('transportStatsBar').innerHTML = `
-      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs</div></div>
+      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs Today</div></div>
       <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
       <div class="stat-box processing"><div class="val">${statusCounts.preplanned}</div><div class="lbl">Preplanned</div></div>
       <div class="stat-box done"><div class="val">${statusCounts.confirmed}</div><div class="lbl">Confirmed</div></div>
-      <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>`;
+      <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>
+      <div class="stat-box"><div class="val">${doneYesterday}</div><div class="lbl">Done Yday</div></div>`;
 
     // Initialize and update the main Singapore map (Leaflet — bundled locally)
     if (window.L) {
@@ -2780,7 +2788,8 @@
     const maxStops = parseInt(document.getElementById('routeMaxStops')?.value || 10);
 
     optimizedRoutes = [];
-    const unassigned = [...transportRequests];
+    // Plan only live work — delivered/cancelled jobs never re-enter a route
+    const unassigned = transportRequests.filter(r => r.status !== 'delivered' && r.status !== 'cancelled');
 
     if (method === 'nearest-neighbor') {
       optimizedRoutes = optimizeRoutesNearestNeighbor(unassigned, maxStops);
