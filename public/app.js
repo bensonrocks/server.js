@@ -2854,10 +2854,56 @@
     updateRouteStats();
   }
 
-  // Spread routes across available drivers (round-robin, by route).
+  // Which drivers are available for TODAY'S plan — chosen in the picker
+  // that opens before planning (null = everyone). Excluded drivers get no
+  // auto-assigned jobs and don't appear in the stop dropdowns.
+  let activeDriverIds = null;
+  function includedDrivers() {
+    return (window.drivers || []).filter(d => !activeDriverIds || activeDriverIds.includes(d.id));
+  }
+
+  // "Who's driving today?" — include/exclude drivers before the AI assigns.
+  function showDriverPicker(onDone) {
+    const drivers = window.drivers || [];
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'driverPickerModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:92%;max-width:520px">
+        <h2 style="margin:0 0 .4rem 0">👤 Who's driving today?</h2>
+        <p class="hint" style="font-size:12px;margin-bottom:1rem">Untick anyone unavailable (leave, MC, other duties). The AI only assigns jobs to ticked drivers.</p>
+        <div style="display:grid;gap:.4rem;max-height:45vh;overflow-y:auto;margin-bottom:1rem">
+          ${drivers.map(d => `
+            <label style="display:flex;gap:.6rem;align-items:center;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer">
+              <input type="checkbox" class="driver-pick" value="${esc(d.id)}" ${!activeDriverIds || activeDriverIds.includes(d.id) ? 'checked' : ''} />
+              <span style="flex:1"><strong>${esc(d.name)}</strong>${d.plate ? ` <code style="font-size:11px">${esc(d.plate)}</code>` : ''}<br/>
+                <span style="font-size:11px;color:#64748b">${esc(d.vehicle || '')}${d.phone ? ` · ${esc(d.phone)}` : ''}</span></span>
+            </label>`).join('')}
+        </div>
+        <div id="driverPickError" class="hint hidden" style="color:var(--danger,#ef4444);font-weight:600;font-size:12px;margin-bottom:.6rem">Tick at least one driver.</div>
+        <div style="display:flex;gap:.6rem">
+          <button class="btn-primary" id="driverPickContinueBtn" style="flex:1">Continue →</button>
+          <button class="btn-secondary" id="driverPickCancelBtn" style="flex:1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#driverPickCancelBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#driverPickContinueBtn').addEventListener('click', () => {
+      const picked = [...modal.querySelectorAll('.driver-pick:checked')].map(cb => cb.value);
+      if (!picked.length) {
+        modal.querySelector('#driverPickError').classList.remove('hidden');
+        return;
+      }
+      activeDriverIds = picked.length === drivers.length ? null : picked;
+      modal.remove();
+      onDone();
+    });
+  }
+
+  // Spread routes across TODAY'S AVAILABLE drivers (round-robin, by route).
   // Every stop inherits its route's driver unless the user overrides it.
   function autoAssignDrivers(routes) {
-    const drivers = window.drivers || [];
+    const drivers = includedDrivers();
     if (!drivers.length) return; // no drivers yet — leave unassigned
     routes.forEach((route, idx) => {
       const d = drivers[idx % drivers.length];
@@ -3092,7 +3138,7 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
             <select class="route-driver-select" data-routeidx="${routeIdx}" data-route="${route.num}" data-stop="${stopIdx}" style="padding:0.4rem;font-size:11px;border:1px solid #ddd;border-radius:3px;width:120px">
               <option value="">— Unassigned —</option>
-              ${(window.drivers || []).map(d => `<option value="${d.id}" ${(stop.driverId || route.driverId) === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
+              ${includedDrivers().map(d => `<option value="${d.id}" ${(stop.driverId || route.driverId) === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
             </select>
           </td>
         `;
@@ -3178,13 +3224,23 @@
       alert('No deliveries to plan. Click Upload Jobs first.');
       return;
     }
-    document.getElementById('routePlanningModal').classList.remove('hidden');
     // Pull the shared driver list first — drivers may have been added from
-    // another login. The planner opens ALREADY PLANNED: routes generated and
-    // drivers auto-assigned — the user just shifts things around, then saves.
+    // another login.
     await loadDrivers();
-    optimizeRoutes();
+    const openPlanner = () => {
+      document.getElementById('routePlanningModal').classList.remove('hidden');
+      // The planner opens ALREADY PLANNED: routes generated and today's
+      // available drivers auto-assigned — the user just shifts things
+      // around, then saves.
+      optimizeRoutes();
+    };
+    // With 2+ drivers there's a real include/exclude decision — ask first.
+    if ((window.drivers || []).length >= 2) showDriverPicker(openPlanner);
+    else openPlanner();
   });
+  // Change today's driver selection from inside the planner
+  document.getElementById('routeDriversBtn')?.addEventListener('click', () =>
+    showDriverPicker(() => optimizeRoutes()));
   document.getElementById('routePlannerBackBtn')?.addEventListener('click', () =>
     document.getElementById('routePlanningModal').classList.add('hidden'));
 

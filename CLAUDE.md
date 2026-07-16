@@ -831,6 +831,13 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   FULL-PAGE takeover (`.route-planner-page`, ← Back button) and AUTO-GENERATES
   the plan on open — the user arrives at a finished draft and only amends.
   "Generate AI Routes" became "Regenerate Routes".
+- BEFORE the planner opens (when 2+ drivers exist), a "Who's driving
+  today?" picker (`showDriverPicker()`, all ticked by default) lets the user
+  EXCLUDE unavailable drivers (leave/MC). `activeDriverIds` (null = all)
+  scopes `includedDrivers()`, which feeds BOTH the auto-assignment and the
+  per-stop dropdowns — an excluded driver can't be assigned even manually.
+  Changeable mid-plan via the "👤 Today's Drivers" button in the planner
+  header (re-runs generation). Requires at least one ticked driver.
 - Route generation auto-assigns drivers ROUND-ROBIN per route
   (`autoAssignDrivers()` in app.js; drivers come from Driver Details /
   `window.drivers`). Every stop's dropdown is prefilled; the user amends any
