@@ -2633,3 +2633,6 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   border: 1px solid #e2e8f0;
   padding: .6rem .7rem;
 }
+
+/* Linked Transport job pill on Orders-list rows */
+.job-code-tr { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }

@@ -1645,6 +1645,7 @@
           <span class="ord-no-link">${esc(ord.order_number)}</span>
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
           ${ord.issue_no ? `<div class="ord-jobcode" title="GI number"><code class="job-code">GI: ${esc(ord.issue_no)}</code></div>` : ''}
+          ${ord.transport_id ? `<div class="ord-jobcode" title="Linked Transport delivery job"><code class="job-code job-code-tr">🚚 ${esc(ord.transport_id)}</code></div>` : ''}
           ${chips ? `<div class="ord-chips">${chips}</div>` : ''}
           ${isDone && elapsed ? `<div class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</div>` : ''}
         </td>
@@ -2045,7 +2046,8 @@
 
       // Details card — shown on HOVER (desktop) and on tap (mobile popup)
       const detailsHtml = `<div style="font-size:12px;line-height:1.5;min-width:170px">
-        <strong style="font-size:13px">${esc(req.clientName || req.id)}</strong><br/>
+        <strong style="font-size:13px">${esc(req.clientName || req.id)}</strong>
+        <span style="color:#64748b;font-size:10px;font-family:monospace"> ${esc(req.id)}</span><br/>
         ${assigned
           ? `👤 <strong>${esc(driverName)}</strong>${driverRec?.phone ? ` · 📞 ${esc(driverRec.phone)}` : ''}${req.routeNum ? `<br/>🗺️ Route ${req.routeNum}${req.stopSeq ? ` · Stop #${req.stopSeq}` : ''}` : ''}<br/>`
           : `<span style="color:#ef4444;font-weight:600">⚠ No driver assigned</span><br/>`}

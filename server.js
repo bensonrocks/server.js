@@ -3538,6 +3538,23 @@ app.get('/api/stats', (_req, res) => {
 app.get('/api/orders', (req, res) => {
   const { range, from, to } = req.query;
   let orders = globalOrdersWithState();
+  // Cross-reference: show which Transport job (TR-...) each order is linked
+  // to. Linked by order number → referenceId/clientId, the same match the
+  // scan-completion confirm uses. Purely informational on the order row.
+  {
+    const db = readDb();
+    const trByRef = new Map();
+    for (const t of db.transport || []) {
+      if (t.referenceId) trByRef.set(String(t.referenceId), t.id);
+      if (t.clientId)    trByRef.set(String(t.clientId), t.id);
+    }
+    if (trByRef.size) {
+      orders = orders.map(o => {
+        const tid = trByRef.get(String(o.order_number || ''));
+        return tid ? { ...o, transport_id: tid } : o;
+      });
+    }
+  }
   if (range && range !== 'all') {
     const dayOf    = v => v ? new Date(v).toISOString().slice(0, 10) : '';
     const todayStr = new Date().toISOString().slice(0, 10);
