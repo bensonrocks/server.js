@@ -4808,6 +4808,46 @@ app.post('/api/transport/mark-delivered', (req, res) => {
   res.json({ success: true, delivered });
 });
 
+// ── Drivers — the shared fleet list ──────────────────────────────────────────
+// Server-side (db.drivers) so EVERY login/device sees the same drivers.
+// (Was localStorage-only, which made drivers invisible from other logins.)
+app.get('/api/drivers', (req, res) => {
+  const db = readDb();
+  res.json(db.drivers || []);
+});
+
+app.post('/api/drivers', (req, res) => {
+  const { id, name, phone, vehicle, plate, capacity, capacityM3, status } = req.body || {};
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Driver name is required' });
+  const db = readDb();
+  if (!db.drivers) db.drivers = [];
+  const drv = {
+    id: id || 'DRV-' + Date.now(),
+    name: String(name).trim(),
+    phone: String(phone || '').trim(),
+    vehicle: String(vehicle || 'Van'),
+    plate: String(plate || '').trim().toUpperCase(),
+    capacity: Number(capacity) || 0,
+    capacityM3: Number(capacityM3) || 0,
+    status: status || 'active',
+  };
+  const i = db.drivers.findIndex(d => d.id === drv.id);
+  if (i >= 0) db.drivers[i] = { ...db.drivers[i], ...drv }; else db.drivers.push(drv);
+  _persistDb(db);
+  logAudit('driver_upsert', { driverId: drv.id, name: drv.name, by: req.userId || '' });
+  res.json(drv);
+});
+
+app.delete('/api/drivers/:id', (req, res) => {
+  const db = readDb();
+  const before = (db.drivers || []).length;
+  db.drivers = (db.drivers || []).filter(d => d.id !== req.params.id);
+  if (db.drivers.length === before) return res.status(404).json({ error: 'Driver not found' });
+  _persistDb(db);
+  logAudit('driver_delete', { driverId: req.params.id, by: req.userId || '' });
+  res.json({ success: true });
+});
+
 // ── Address Book endpoints — maintain the store→address cross-reference ─────
 app.get('/api/address-book', (req, res) => {
   const db = readDb();

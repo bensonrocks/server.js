@@ -903,6 +903,20 @@ The stats bar shows Jobs Today / Pending / Preplanned / Confirmed / Delivered
 visible). Route planning additionally excludes delivered/cancelled jobs so a
 closed job can never re-enter a route.
 
+### Drivers are SERVER-side (db.drivers, /api/drivers) — not localStorage
+
+`window.drivers` is loaded from `GET /api/drivers` (login, opening Driver
+Management, and opening the route planner all refresh it). Add/edit posts to
+`POST /api/drivers` (upsert by id), delete to `DELETE /api/drivers/:id`; all
+audit-logged. Originally localStorage-only, which meant drivers added on one
+machine were INVISIBLE from every other login — found when the user's team
+couldn't see the fleet list. A one-time migration pushes any drivers still in
+a browser's localStorage up to the server on first load, then clears the
+local copy. GOTCHA: never call an /api/ endpoint before login — the global
+fetch wrapper (top of app.js) force-reloads on 401, so an init-time fetch
+without a token loops the login page; the init-time `loadDrivers()` is
+guarded by a `wms_token` check for exactly this reason.
+
 ### Driver Performance report (`kind === 'drivers'`)
 
 In ADMIN_REPORT_KINDS (admin login or master key). Live `db.transport` data

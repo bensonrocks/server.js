@@ -448,6 +448,7 @@
       fetchUserProfile();
       showUserInHeader();
       fetchAndRenderStats();
+      loadDrivers();
       refreshOrders().then(() => {
         if (document.getElementById('tab-orders').classList.contains('active')) renderOrdersDash();
       });
@@ -3189,14 +3190,16 @@
     document.getElementById('routeStatsDrivers').textContent = drivers.size;
   }
 
-  document.getElementById('transportPlanRoutesBtn')?.addEventListener('click', () => {
+  document.getElementById('transportPlanRoutesBtn')?.addEventListener('click', async () => {
     if (!transportRequests.length) {
       alert('No deliveries to plan. Click Upload Jobs first.');
       return;
     }
     document.getElementById('routePlanningModal').classList.remove('hidden');
-    // The planner opens ALREADY PLANNED: routes generated and drivers
-    // auto-assigned — the user just shifts things around, then saves.
+    // Pull the shared driver list first — drivers may have been added from
+    // another login. The planner opens ALREADY PLANNED: routes generated and
+    // drivers auto-assigned — the user just shifts things around, then saves.
+    await loadDrivers();
     optimizeRoutes();
   });
   document.getElementById('routePlannerBackBtn')?.addEventListener('click', () =>
@@ -3591,12 +3594,46 @@
   });
 
   // ── Driver Details Management ──────────────────────────────────────────────
-  window.drivers = JSON.parse(localStorage.getItem('drivers') || '[]');
+  // Drivers live on the SERVER (db.drivers) so every login/device sees the
+  // same fleet. Previously localStorage-only — drivers added on one machine
+  // were invisible everywhere else. Any drivers still sitting in this
+  // browser's localStorage are migrated up once, then the local copy cleared.
+  window.drivers = [];
   let driverJobs = JSON.parse(localStorage.getItem('driverJobs') || '{}');
   let editingDriverId = null;
 
-  document.getElementById('driverDetailsBtn')?.addEventListener('click', () => {
+  async function loadDrivers() {
+    try {
+      const hdrs = { 'x-auth-token': localStorage.getItem('wms_token') || '' };
+      let resp = await fetch('/api/drivers', { headers: hdrs });
+      if (!resp.ok) return;
+      let list = await resp.json();
+
+      // One-time migration of this browser's old local driver list
+      const local = JSON.parse(localStorage.getItem('drivers') || '[]');
+      if (!list.length && local.length) {
+        for (const d of local) {
+          await fetch('/api/drivers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...hdrs },
+            body: JSON.stringify(d),
+          }).catch(() => {});
+        }
+        resp = await fetch('/api/drivers', { headers: hdrs });
+        if (resp.ok) list = await resp.json();
+      }
+      if (local.length) localStorage.removeItem('drivers');
+
+      window.drivers = Array.isArray(list) ? list : [];
+    } catch { /* offline — keep whatever we have */ }
+  }
+  // Only fetch when a session exists — an unauthenticated /api/ call would
+  // trip the global 401 handler above and reload the login page in a loop.
+  if (localStorage.getItem('wms_token')) loadDrivers();
+
+  document.getElementById('driverDetailsBtn')?.addEventListener('click', async () => {
     document.getElementById('driverDetailsModal').classList.remove('hidden');
+    await loadDrivers();
     renderDriverList();
     populateDriverPortal();
   });
@@ -3708,16 +3745,22 @@
     document.getElementById('addEditDriverModal').classList.remove('hidden');
   }
 
-  function deleteDriver(id) {
+  async function deleteDriver(id) {
     if (!confirm('Delete this driver?')) return;
-    window.drivers = window.drivers.filter(d => d.id !== id);
+    try {
+      const resp = await fetch(`/api/drivers/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' },
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Delete failed');
+    } catch (err) { alert('❌ ' + err.message); return; }
     delete driverJobs[id];
-    localStorage.setItem('drivers', JSON.stringify(window.drivers));
     localStorage.setItem('driverJobs', JSON.stringify(driverJobs));
+    await loadDrivers();
     renderDriverList();
   }
 
-  document.getElementById('addEditDriverSaveBtn')?.addEventListener('click', () => {
+  document.getElementById('addEditDriverSaveBtn')?.addEventListener('click', async () => {
     const name = document.getElementById('driverNameInput').value.trim();
     const phone = document.getElementById('driverPhoneInput').value.trim();
     const vehicle = document.getElementById('driverVehicleInput').value;
@@ -3730,26 +3773,20 @@
       return;
     }
 
-    if (editingDriverId) {
-      const driver = window.drivers.find(d => d.id === editingDriverId);
-      if (driver) {
-        driver.name = name;
-        driver.phone = phone;
-        driver.vehicle = vehicle;
-        driver.plate = plate;
-        driver.capacity = capacity;
-        driver.capacityM3 = capacityM3;
-      }
-    } else {
-      window.drivers.push({
-        id: 'DRV-' + Date.now(),
-        name, phone, vehicle, plate, capacity, capacityM3,
-        status: 'active',
-        stats: { distance: 0, time: 0, jobs: 0 }
+    try {
+      const resp = await fetch('/api/drivers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ id: editingDriverId || undefined, name, phone, vehicle, plate, capacity, capacityM3 }),
       });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Save failed');
+    } catch (err) {
+      alert('❌ ' + err.message);
+      return;
     }
 
-    localStorage.setItem('drivers', JSON.stringify(window.drivers));
+    await loadDrivers();
     document.getElementById('addEditDriverModal').classList.add('hidden');
     renderDriverList();
     populateDriverPortal();
