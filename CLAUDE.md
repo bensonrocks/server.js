@@ -152,6 +152,24 @@ printed picking list that visually repeated a line. This safeguard exists
 so that discrepancy is caught at upload time instead of requiring this kind
 of after-the-fact investigation.
 
+## Duplicate order numbers — hard block vs confirmable (server.js /api/upload)
+
+Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the
+`iWMS GINo` (issue_no) is the actually-unique identifier. The upload
+duplicate rule therefore has two tiers:
+- **HARD abort** (422): earlier order with the same number is still
+  pending/processing (a live twin would collide with scanning), OR the GI
+  numbers match / are missing (indistinguishable → treat as a re-upload).
+  Error names the exact batch (job code, filename, upload time, status).
+- **CONFIRMABLE** (409 `{needsDuplicateConfirm, duplicates[], message}`):
+  earlier order is DONE and the GI differs — almost certainly a different
+  order reusing the client's number. Client shows a confirm() listing each
+  order with old→new GI; resend with `confirm_duplicates=yes` proceeds and
+  is audit-logged (`upload_duplicate_confirmed`). The new batch is
+  unshifted to the FRONT of db.batches, so order-number lookups
+  (findBatchForOrder, scanning) resolve to the new pending order, not the
+  completed old one.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the

@@ -1060,20 +1060,43 @@
     form.append('arrange_delivery', arrangeDeliveryChoice());
 
     try {
-      const _uploadAbort = new AbortController();
-      const _uploadTimer = setTimeout(() => _uploadAbort.abort(), 90000);
-      let resp;
-      try {
-        resp = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'x-session-id': SESSION_ID },
-          body: form,
-          signal: _uploadAbort.signal,
-        });
-      } finally {
-        clearTimeout(_uploadTimer);
+      const sendUpload = async () => {
+        const _uploadAbort = new AbortController();
+        const _uploadTimer = setTimeout(() => _uploadAbort.abort(), 90000);
+        try {
+          return await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'x-session-id': SESSION_ID },
+            body: form,
+            signal: _uploadAbort.signal,
+          });
+        } finally {
+          clearTimeout(_uploadTimer);
+        }
+      };
+
+      let resp = await sendUpload();
+      let data = await resp.json();
+
+      // Recycled order numbers: same number already COMPLETED but with a
+      // different GI — flag what likely happened and let the user decide.
+      if (resp.status === 409 && data.needsDuplicateConfirm) {
+        const lines = (data.duplicates || []).slice(0, 10).map(d =>
+          `• ${d.order} — completed in ${d.job} (${d.at}), GI was ${d.existingGi}, this file has GI ${d.newGi}`).join('\n');
+        const ok = confirm(
+          `⚠ DUPLICATED ORDER NUMBER(S) FROM CLIENT\n\n${data.message}\n\n${lines}` +
+          `${(data.duplicates || []).length > 10 ? `\n…and ${data.duplicates.length - 10} more` : ''}` +
+          `\n\nUpload these as NEW, separate orders?`);
+        if (!ok) {
+          document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+          setUploadStatus('error', 'Upload cancelled — duplicated order numbers not confirmed.');
+          return;
+        }
+        form.append('confirm_duplicates', 'yes');
+        resp = await sendUpload();
+        data = await resp.json();
       }
-      const data = await resp.json();
+
       document.getElementById('uploadConfirmOverlay').classList.add('hidden');
 
       if (!resp.ok) {

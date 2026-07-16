@@ -3357,38 +3357,74 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     // SAFETY RULE — duplicate order numbers: re-uploading the same file (or
     // the same picking lists in another file) would create twin orders.
-    // The error names the exact batch each duplicate already lives in, so
-    // the user can find it in Upload History without guessing.
+    // The error names the exact batch each duplicate already lives in.
+    //
+    // EXCEPTION — clients recycle order numbers (e.g. date-letter codes like
+    // "20260716-H"): when the earlier order is already COMPLETED and the GI
+    // number DIFFERS, this is almost certainly a genuinely different order
+    // that reuses the client's number. That case becomes a CONFIRMABLE
+    // warning instead of a hard block: the user is told what likely happened
+    // and can approve the upload (resent with confirm_duplicates=yes).
     {
-      const existingIn = new Map(); // order_number → {code, filename, at}
+      const existingIn = new Map(); // order_number → {code, filename, at, status, issueNo}
       for (const b of readDb().batches || []) {
         for (const o of b.orders || []) {
           if (!existingIn.has(o.order_number)) {
             existingIn.set(o.order_number, {
               code: b.idealscan_code || '', filename: b.filename || '',
               at: (b.uploaded_at || '').slice(0, 16).replace('T', ' '),
+              status: b.orderStates?.[o.order_number]?.status || 'pending',
+              issueNo: String(o.issue_no || '').trim(),
             });
           }
         }
       }
-      const dups = [...new Set(orders.map(o => o.order_number).filter(n => existingIn.has(n)))];
-      if (dups.length) {
+
+      const hardDups = [];   // live twin or indistinguishable → always abort
+      const softDups = [];   // completed + different GI → confirmable
+      for (const o of orders) {
+        const src = existingIn.get(o.order_number);
+        if (!src) continue;
+        const newGi = String(o.issue_no || '').trim();
+        const giDiffers = newGi && src.issueNo && newGi !== src.issueNo;
+        if (src.status === 'done' && giDiffers) {
+          softDups.push({ order: o.order_number, existingGi: src.issueNo, newGi, ...src });
+        } else {
+          hardDups.push({ order: o.order_number, ...src });
+        }
+      }
+
+      if (hardDups.length) {
         return res.status(422).json({
-          error: `UPLOAD ABORTED:\n${dups.length} order(s) in this file already exist in the system.\nNothing was saved.`,
+          error: `UPLOAD ABORTED:\n${hardDups.length} order(s) in this file already exist in the system.\nNothing was saved.`,
           validation: {
-            passed: false, status: 'FAILED', totalErrors: dups.length,
-            totalRowsProcessed: mapped.length, rowsWithErrors: dups.length, hasCritical: true,
-            errors: dups.slice(0, 50).map(n => {
-              const src = existingIn.get(n);
-              return {
-                excelRow: '—', orderId: n, field: 'order_number',
-                issue: 'DUPLICATE ORDER NUMBER',
-                description: `Order "${n}" already exists in job ${src.code || '(unknown)'} — "${src.filename}", uploaded ${src.at}.`,
-                action: `Already uploaded in ${src.code || 'an earlier batch'}. If this file replaces it, delete that batch in Administrator → Upload History first; otherwise remove the duplicated rows from this file.`,
-                critical: true,
-              };
-            }),
+            passed: false, status: 'FAILED', totalErrors: hardDups.length,
+            totalRowsProcessed: mapped.length, rowsWithErrors: hardDups.length, hasCritical: true,
+            errors: hardDups.slice(0, 50).map(d => ({
+              excelRow: '—', orderId: d.order, field: 'order_number',
+              issue: 'DUPLICATE ORDER NUMBER',
+              description: `Order "${d.order}" already exists in job ${d.code || '(unknown)'} — "${d.filename}", uploaded ${d.at} (status: ${d.status}).`,
+              action: `Already uploaded in ${d.code || 'an earlier batch'}. If this file replaces it, delete that batch in Administrator → Upload History first; otherwise remove the duplicated rows from this file.`,
+              critical: true,
+            })),
           },
+        });
+      }
+
+      if (softDups.length && req.body?.confirm_duplicates !== 'yes') {
+        return res.status(409).json({
+          needsDuplicateConfirm: true,
+          duplicates: softDups.map(d => ({
+            order: d.order, existingGi: d.existingGi, newGi: d.newGi,
+            job: d.code, filename: d.filename, at: d.at,
+          })),
+          message: `${softDups.length} order number(s) in this file were already uploaded AND completed scanning — but with a DIFFERENT GI number. The client has most likely re-used/duplicated their order numbers, so these are probably different orders that happen to share a number. Confirm to upload them as new, separate orders.`,
+        });
+      }
+      if (softDups.length) {
+        logAudit('upload_duplicate_confirmed', {
+          orders: softDups.map(d => `${d.order} (${d.existingGi} → ${d.newGi})`).slice(0, 20),
+          count: softDups.length, by: req.userId || '',
         });
       }
     }
