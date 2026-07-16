@@ -7,3 +7,4 @@ data/tenants/
 .env
 coverage/
 dist/
+db.sqlite
