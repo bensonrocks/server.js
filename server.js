@@ -64,6 +64,8 @@ const createBarcodeScanner = require('./lib/barcode-scanner');
 const createDemandForecast = require('./lib/demand-forecast');
 const createOCRLabels = require('./lib/ocr-labels');
 const createZoneCycleCount = require('./lib/zone-cycle-count');
+const createInboundGoodsReceipt = require('./lib/inbound-goods-receipt');
+const createEnhancedReturns = require('./lib/enhanced-returns');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -4105,6 +4107,273 @@ app.get('/api/cycle-count/zones/analysis', withStaffTenant, (req, res) => {
     const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
     const result = zoneCycleCount.analyzeZonePerformance(
       req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 90
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Inbound Goods Receipt ──────────────────────────────────────────────────
+
+// Create inbound receipt
+app.post('/api/inbound/create', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.createInbound(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Scan item during receipt
+app.post('/api/inbound/:inboundId/scan', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.scanInboundItem(
+      req.params.inboundId,
+      req.body.code,
+      req.body.quantity,
+      req.body
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Create QC inspection
+app.post('/api/inbound/:inboundId/qc/create', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.createQCInspection(req.params.inboundId, req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Record QC result
+app.post('/api/inbound/:inboundId/qc/:qcId/result', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.recordQCResult(
+      req.params.qcId,
+      req.body.scanId,
+      req.body.result,
+      req.body.notes
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Quarantine items
+app.post('/api/inbound/:inboundId/quarantine', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.quarantineItems(
+      req.params.inboundId,
+      req.body.scanIds,
+      req.body.reason
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Release quarantine (manager approval)
+app.post('/api/inbound/:inboundId/quarantine/release', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.releaseQuarantine(
+      req.params.inboundId,
+      req.body.scanIds,
+      req.body.approverName,
+      req.body.decision
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Putaway items to warehouse
+app.post('/api/inbound/:inboundId/putaway', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.putawayItems(req.params.inboundId, req.body.assignments);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Complete receipt
+app.post('/api/inbound/:inboundId/complete', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.completeReceipt(req.params.inboundId, req.body.receivedBy);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get inbound summary
+app.get('/api/inbound/:inboundId/summary', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.getInboundSummary(req.params.inboundId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get receiving status
+app.get('/api/inbound/status', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.getReceivingStatus(req.query.warehouseId || 'wh-main');
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Create SKU code reference (barcode → SKU mapping)
+app.post('/api/sku-references/create', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.createSKUCodeReference(
+      req.body.code,
+      req.body.sku,
+      req.body.description,
+      req.body.clientName
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Enhanced Returns ───────────────────────────────────────────────────────
+
+// Create customer return (RMA)
+app.post('/api/returns/create-rma', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.createCustomerReturn(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Create return to vendor (RTV)
+app.post('/api/returns/create-rtv', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.createReturnToVendor(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Inspect return item
+app.post('/api/returns/:returnItemId/inspect', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.inspectReturnItem(req.params.returnItemId, req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Process disposition (restock, refund, scrap, RTV)
+app.post('/api/returns/:returnId/item/:itemId/disposition', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.processDisposition(
+      req.params.returnId,
+      req.params.itemId,
+      req.body.disposition,
+      req.body.options || {}
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Generate credit memo
+app.post('/api/returns/:returnId/credit-memo', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.generateCreditMemo(req.params.returnId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Complete return processing
+app.post('/api/returns/:returnId/complete', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.completeReturn(req.params.returnId, req.body.notes);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get return analytics
+app.get('/api/returns/analytics', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.getReturnAnalytics(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 30
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get high-return SKUs
+app.get('/api/returns/high-return-skus', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const returns = createEnhancedReturns(ctx.db, ctx.inventoryWarehouse);
+    const result = returns.getHighReturnSKUs(
+      parseInt(req.query.threshold) || 5,
       parseInt(req.query.days) || 90
     );
     res.json(result);
