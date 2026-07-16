@@ -817,6 +817,57 @@ function updateTransportOnOrderCompletion(db, order, state) {
   });
 }
 
+// Every uploaded picking-list order ALSO becomes a transport delivery job,
+// so the Transport tab reflects the day's real workload without a second
+// upload. Deduped by order number (referenceId), so re-uploading a batch or
+// uploading the same order twice never duplicates jobs. Scanning completion
+// then flips these to 'confirmed' via updateTransportOnOrderCompletion()
+// (matcher already checks referenceId === order_number).
+function createTransportJobsFromOrders(db, orders, clientName, batchId) {
+  if (!Array.isArray(orders) || !orders.length) return 0;
+  if (!db.transport) db.transport = [];
+
+  let created = 0;
+  for (const order of orders) {
+    const ref = String(order.order_number || '').trim();
+    if (!ref) continue;
+    const exists = db.transport.some(t =>
+      String(t.referenceId || '') === ref || String(t.clientId || '') === ref);
+    if (exists) continue;
+
+    const addr = String(order.delivery_address || '').trim();
+    const zip  = (addr.match(/\b(\d{6})\b/) || [])[1] || ''; // SG postal from address text
+
+    db.transport.push({
+      // tmsImporter is required lower in this file — fine here since this
+      // helper only runs at request time, long after module load completes
+      id: tmsImporter.nextTransportCode(db),
+      referenceId: ref,
+      clientId: ref,
+      clientName: order.customer_name || clientName || ref,
+      channel: 'order-upload',
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+      currency: 'SGD',
+      notes: order.carrier ? `Carrier: ${order.carrier}` : 'From picking-list upload',
+      items: [{ sku: ref, name: `Order ${ref} — ${order.line_count || (order.lines || []).length || 0} line(s)`, qty: 1, unitPrice: 0 }],
+      shipping: {
+        recipient: order.customer_name || '',
+        addressLine1: addr,
+        addressLine2: '',
+        city: 'Singapore', state: 'SG', zip, country: 'SG',
+        phone: order.tel || '',
+        email: ''
+      },
+      subtotal: 0, shippingCost: 0, tax: 0, total: 0,
+      source: { importedAt: new Date().toISOString(), customerId: ref, format: 'order-upload', batchId: batchId || '' }
+    });
+    created++;
+  }
+  if (created) logAudit('transport_jobs_from_upload', { jobs: created, batchId: batchId || '', client: clientName || '' });
+  return created;
+}
+
 // Singapore postal sector (first 2 digits) → district centroid.
 // MIRROR of the client-side map in public/app.js (getPostalCodeCoords) —
 // keep the two in sync. Used server-side for the Driver Performance report's
@@ -3184,6 +3235,8 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       orders,
     };
     db.batches.unshift(batch);
+    // Photo-scanned picking lists also feed the Transport tab
+    createTransportJobsFromOrders(db, orders, batch.client_name, batchId);
     writeDb(db);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[ocr-upload] XLSX write error:', err.message);
@@ -3367,6 +3420,8 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     };
 
     db.batches.unshift(batch);
+    // Outbound orders also appear as Transport delivery jobs (deduped by order no)
+    if (direction !== 'Inbound') createTransportJobsFromOrders(db, orders, clientName, batchId);
     writeDb(db);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[upload] XLSX write error:', err.message);

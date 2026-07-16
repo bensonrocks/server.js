@@ -828,6 +828,21 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   generic `/api/transport/:id` routes (same rule as `import`/`fix-schedule` —
   Express matches in order, and `:id` would swallow them).
 
+### Picking-list uploads AUTO-FEED the Transport tab
+
+`createTransportJobsFromOrders(db, orders, clientName, batchId)` runs inside
+both upload paths (`/api/upload` for Outbound direction only, and the OCR
+photo-scan upload) right after `db.batches.unshift(batch)` — every uploaded
+order also becomes a `pending` transport delivery job (channel
+`'order-upload'`), so Transport reflects the day's workload without a second
+upload. Deduped by order number against `referenceId`/`clientId`, so
+re-uploads never duplicate jobs. The SG postal code is extracted from the
+free-text `delivery_address` (`\b\d{6}\b`); `tel` becomes the shipping phone;
+the carrier goes in `notes`. Scanning completion flips these to `confirmed`
+via the existing `updateTransportOnOrderCompletion()` matcher (referenceId
+=== order_number). Uses `tmsImporter.nextTransportCode()` (now exported from
+lib/tms-importer.js) for TR-YYMMDD-NNN ids.
+
 ### Transport tab scope: TODAY'S workload only
 
 `renderTransportTab()` filters the fetched list before anything renders: the
