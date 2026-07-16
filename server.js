@@ -3563,6 +3563,12 @@ app.get('/api/orders', (req, res) => {
     const weekStr  = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
     const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
     orders = orders.filter(o => {
+      // Unfinished work is NEVER hidden by the date window: the Active list
+      // always shows today's orders PLUS the pending/in-progress balance
+      // carried over from earlier days — so it tallies with the sidebar
+      // badge. The date filter effectively applies to settled orders
+      // (done/unprocessed) only.
+      if (o.scan_status === 'pending' || o.scan_status === 'processing') return true;
       const d = orderDay(o);
       if (!d) return true; // never hide records with no usable date
       if (range === 'today')     return d === todayStr;
