@@ -59,6 +59,11 @@ const createWarehouseAllocator = require('./lib/warehouse-allocator');
 const createPickingIntegration = require('./lib/picking-integration');
 const createCycleCount = require('./lib/cycle-count');
 const createReplenishment = require('./lib/replenishment');
+const createAutoTriggerScheduler = require('./lib/auto-trigger-scheduler');
+const createBarcodeScanner = require('./lib/barcode-scanner');
+const createDemandForecast = require('./lib/demand-forecast');
+const createOCRLabels = require('./lib/ocr-labels');
+const createZoneCycleCount = require('./lib/zone-cycle-count');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -3844,6 +3849,265 @@ app.get('/api/replenishment/history', withStaffTenant, (req, res) => {
       parseInt(req.query.days) || 30
     );
     res.json(history);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Auto-Trigger Replenishment ────────────────────────────────────────────────
+
+// Start scheduler
+app.post('/api/auto-trigger/start', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db, ctx.inventoryWarehouse);
+    const scheduler = createAutoTriggerScheduler(ctx.db, replenishment);
+    const result = scheduler.startScheduler(req.body.intervalMinutes || 240);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Stop scheduler
+app.post('/api/auto-trigger/stop', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db, ctx.inventoryWarehouse);
+    const scheduler = createAutoTriggerScheduler(ctx.db, replenishment);
+    const result = scheduler.stopScheduler();
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get scheduler status
+app.get('/api/auto-trigger/status', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db, ctx.inventoryWarehouse);
+    const scheduler = createAutoTriggerScheduler(ctx.db, replenishment);
+    const result = scheduler.getSchedulerStatus();
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Barcode Scanner ────────────────────────────────────────────────────────────
+
+// Generate scannable barcode
+app.post('/api/barcode/generate', withStaffTenant, async (req, res) => {
+  try {
+    const barcodeScanner = createBarcodeScanner();
+    const result = await barcodeScanner.generateScannableBarcode(
+      req.body.data,
+      req.body.options || {}
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Validate barcode
+app.post('/api/barcode/validate', withStaffTenant, (req, res) => {
+  try {
+    const barcodeScanner = createBarcodeScanner();
+    const result = barcodeScanner.validateBarcode(req.body.data, req.body.format);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Generate label with barcode
+app.post('/api/barcode/label', withStaffTenant, async (req, res) => {
+  try {
+    const barcodeScanner = createBarcodeScanner();
+    const result = await barcodeScanner.generateShippingLabelWithBarcode(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Demand Forecasting ─────────────────────────────────────────────────────────
+
+// Forecast demand for SKU
+app.get('/api/forecast/demand/:skuId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const forecast = createDemandForecast(ctx.db);
+    const result = forecast.forecastDemand(
+      req.params.skuId,
+      parseInt(req.query.days) || 30,
+      req.query.method || 'auto'
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Calculate reorder point
+app.get('/api/forecast/reorder-point/:skuId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const forecast = createDemandForecast(ctx.db);
+    const result = forecast.calculateReorderPoint(
+      req.params.skuId,
+      parseInt(req.query.leadTime) || 7,
+      parseInt(req.query.safetyStock) || 7
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get inventory gap
+app.get('/api/forecast/inventory-gap', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const forecast = createDemandForecast(ctx.db);
+    const result = forecast.forecastInventoryGap(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 30
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── OCR Label Extraction ───────────────────────────────────────────────────────
+
+// Extract label fields from text
+app.post('/api/ocr/extract', withStaffTenant, (req, res) => {
+  try {
+    const ocr = createOCRLabels();
+    const result = ocr.extractLabelFields(req.body.text);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Validate extracted fields
+app.post('/api/ocr/validate', withStaffTenant, (req, res) => {
+  try {
+    const ocr = createOCRLabels();
+    const result = ocr.validateExtraction(req.body.extracted);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Process image (placeholder for actual OCR integration)
+app.post('/api/ocr/process-image', withStaffTenant, (req, res) => {
+  try {
+    const ocr = createOCRLabels();
+    const result = ocr.processLabelImage(req.body.imagePath);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Zone-Based Cycle Counting ──────────────────────────────────────────────────
+
+// Define zones
+app.get('/api/cycle-count/zones', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db, ctx.inventoryWarehouse);
+    const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
+    const result = zoneCycleCount.defineZones(req.query.warehouseId || 'wh-main');
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get zone statistics
+app.get('/api/cycle-count/zones/:zone/stats', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db, ctx.inventoryWarehouse);
+    const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
+    const result = zoneCycleCount.getZoneStatistics(
+      req.query.warehouseId || 'wh-main',
+      req.params.zone
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Create zone count
+app.post('/api/cycle-count/zones/:zone', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db, ctx.inventoryWarehouse);
+    const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
+    const result = zoneCycleCount.createZoneCountBatch(
+      req.query.warehouseId || 'wh-main',
+      req.params.zone,
+      req.body
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get rotation schedule
+app.get('/api/cycle-count/zones/schedule', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db, ctx.inventoryWarehouse);
+    const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
+    const result = zoneCycleCount.getZoneRotationSchedule(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.daysPerZone) || 7
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get zone drift report
+app.get('/api/cycle-count/zones/drift', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db, ctx.inventoryWarehouse);
+    const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
+    const result = zoneCycleCount.getZoneDriftReport(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 90
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Analyze zone performance
+app.get('/api/cycle-count/zones/analysis', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db, ctx.inventoryWarehouse);
+    const zoneCycleCount = createZoneCycleCount(ctx.db, cycleCount);
+    const result = zoneCycleCount.analyzeZonePerformance(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 90
+    );
+    res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
