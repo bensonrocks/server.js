@@ -1,4 +1,4 @@
-import { AdapterCredentials, AdapterMeta } from '../../adapter.interface';
+import { AdapterCredentials, AdapterMeta } from '../adapter.interface';
 import { StandardOrder } from '../../models/standard-order';
 
 export class ZortOrdersAdapter {
@@ -33,7 +33,8 @@ export class ZortOrdersAdapter {
 
       return orders.map((order: any) => this.mapZortOrderToStandard(order));
     } catch (err) {
-      throw new Error(`ZORT order fetch failed: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new Error(`ZORT order fetch failed: ${errorMessage}`);
     }
   }
 
@@ -137,11 +138,11 @@ export class ZortOrdersAdapter {
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: response.statusText }));
+        const error = (await response.json().catch(() => ({ message: response.statusText }))) as Record<string, any>;
         throw new Error(`ZORT API error (${response.status}): ${error.message || error.error}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, any>;
 
       // ZORT API typically returns: { data: [...], total: N, page: P }
       // Extract the data array
@@ -156,7 +157,8 @@ export class ZortOrdersAdapter {
       console.warn(`[ZORT] Unexpected response format:`, data);
       return [];
     } catch (err) {
-      console.error(`[ZORT] API call failed:`, err.message);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[ZORT] API call failed:`, errorMessage);
       throw err;
     }
   }
