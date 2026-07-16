@@ -2533,6 +2533,28 @@ app.delete('/api/portal/platform-credentials/:platform', withClientAuth, (req, r
   }
 });
 
+// ── Admin client connections view ─────────────────────────────────────────────
+
+app.get('/api/admin/client-connections', withStaffTenant, (req, res) => {
+  try {
+    const tenantId = req.tenantId || 'default';
+    const rows = connectionsDb.prepare(
+      'SELECT tenant_id, client_id, platform FROM client_platform_connections WHERE tenant_id = ? AND is_deleted = 0 ORDER BY client_id, platform'
+    ).all(tenantId);
+
+    const grouped = {};
+    for (const row of rows) {
+      if (!grouped[row.client_id]) grouped[row.client_id] = { tenant_id: row.tenant_id, client_id: row.client_id, platforms: [] };
+      grouped[row.client_id].platforms.push(row.platform);
+    }
+
+    res.json({ clients: Object.values(grouped) });
+  } catch (err) {
+    console.error('Error fetching client connections:', err);
+    res.status(500).json({ error: 'Failed to fetch client connections' });
+  }
+});
+
 // ── OAuth result pages ────────────────────────────────────────────────────────
 
 function okPage(platform) {

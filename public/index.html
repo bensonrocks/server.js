@@ -1069,6 +1069,18 @@ a:hover{text-decoration:underline}
               </div>
             </div>
           </div>
+
+          <!-- Client Platform Connections -->
+          <div style="border-top:1px solid #e5e7eb;margin-top:14px;padding-top:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-weight:700;color:#374151;font-size:13px">&#128707; Client Platform Connections</div>
+                <div style="font-size:11px;color:#6b7280">Overview of which platforms each client has connected.</div>
+              </div>
+              <button onclick="loadClientConnections()" style="background:#2563eb;color:#fff;border:none;border-radius:7px;padding:5px 12px;font-weight:700;font-size:12px;cursor:pointer">Load</button>
+            </div>
+            <div id="client-connections-list" style="display:flex;flex-direction:column;gap:5px;font-size:12px;max-height:300px;overflow-y:auto"></div>
+          </div>
         </div>
         <!-- Tiny admin toggle — not labelled, sits at bottom of section -->
         <div style="text-align:right;margin-bottom:6px">
@@ -3064,6 +3076,31 @@ async function toggleClientActive(id,currentActive){
   const r=await fetch(`${SERVER}/api/admin/client-users/${encodeURIComponent(id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({active:!currentActive})});
   const j=await r.json();
   if(j.ok){loadClientUsers();}else{alert('Error: '+(j.error||'Failed'));}
+}
+
+async function loadClientConnections(){
+  if(!serverAvailable)return;
+  try{
+    const r=await fetch(`${SERVER}/api/admin/client-connections`);
+    if(!r.ok)return;
+    const data=await r.json();
+    const el=$('client-connections-list');
+    if(!el)return;
+    if(!data.clients || !data.clients.length){
+      el.innerHTML='<div style="color:#94a3b8;font-style:italic;padding:4px 0">No client connections yet.</div>';
+      return;
+    }
+    el.innerHTML=data.clients.map(c=>`
+      <div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:7px 11px;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px">
+          <div style="font-weight:700;color:#0f172a">${c.client_id}</div>
+          <div style="color:#64748b;font-size:11px">Tenant: ${c.tenant_id}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${c.platforms.map(p=>`<span style="background:#f0f9ff;color:#0369a1;border:1px solid #bfdbfe;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">${p}</span>`).join('')}
+        </div>
+      </div>`).join('');
+  }catch(e){console.error('Error loading client connections:',e);}
 }
 
 function showAddClientUser(){
