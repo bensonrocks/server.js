@@ -3172,7 +3172,12 @@
       return;
     }
     document.getElementById('routePlanningModal').classList.remove('hidden');
+    // The planner opens ALREADY PLANNED: routes generated and drivers
+    // auto-assigned — the user just shifts things around, then saves.
+    optimizeRoutes();
   });
+  document.getElementById('routePlannerBackBtn')?.addEventListener('click', () =>
+    document.getElementById('routePlanningModal').classList.add('hidden'));
 
   // Fix Schedule Management
   document.getElementById('transportFixScheduleBtn')?.addEventListener('click', openFixScheduleModal);
@@ -3208,11 +3213,11 @@
     return assignments;
   }
 
-  // "✓ Assign Routes to Drivers" — show the summary for approval first.
-  // Nothing is saved until the user clicks Approve in the summary.
+  // "✓ Confirm Plan & Save" — show the summary for a final look first.
+  // Nothing is saved until the user clicks Save in the summary.
   document.getElementById('routeAssignBtn')?.addEventListener('click', () => {
     if (!optimizedRoutes.length) {
-      alert('Generate routes first — click "Generate AI Routes".');
+      alert('No routes yet — click "Regenerate Routes".');
       return;
     }
     const assignments = collectPlanAssignments();
@@ -3236,8 +3241,8 @@
           <button class="btn-close" id="planApprovalCloseBtn">✕</button>
         </div>
         <p class="hint" style="font-size:12px;margin-bottom:1rem">
-          Drivers were assigned automatically. Review below — to amend, close this summary and change any driver dropdown or stop order, then reopen.
-          Approving marks every job <strong>Preplanned</strong>; each job becomes <strong>Confirmed</strong> automatically once its order finishes scanning.
+          Final check before saving. To amend, go back and change any driver dropdown or stop order, then confirm again.
+          Saving marks every job <strong>Preplanned</strong>; each job becomes a <strong>Confirmed</strong> delivery automatically once its order finishes scanning (live).
         </p>
         ${unassigned ? `<div style="padding:0.7rem;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;margin-bottom:1rem;font-size:12px">⚠️ ${unassigned} stop(s) have no driver${(window.drivers || []).length ? '' : ' — no drivers exist yet (add them under Driver Details)'}. They will be saved as Preplanned without a driver.</div>` : ''}
         ${Object.entries(byDriver).map(([driverName, jobs]) => `
@@ -3255,7 +3260,7 @@
             </table>
           </div>`).join('')}
         <div style="display:flex;gap:0.6rem;margin-top:1rem">
-          <button class="btn-primary" id="planApprovalConfirmBtn" style="flex:1">✓ Approve — Mark ${assignments.length} Job(s) Preplanned</button>
+          <button class="btn-primary" id="planApprovalConfirmBtn" style="flex:1">💾 Save Plan — ${assignments.length} Job(s) → Preplanned</button>
           <button class="btn-secondary" id="planApprovalCancelBtn" style="flex:1">Back to Amend</button>
         </div>
       </div>`;

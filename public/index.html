@@ -1337,7 +1337,7 @@
         <button class="btn-secondary btn-sm" id="transportFixScheduleBtn">📅 Fix Schedule</button>
         <button class="btn-secondary btn-sm" id="transportRunSheetsBtn">🖨 Run Sheets</button>
         <button class="btn-secondary btn-sm" id="transportMarkDeliveredBtn">✓ Mark Delivered</button>
-        <button class="btn-primary btn-sm" id="transportPlanRoutesBtn">🗺️ Plan Routes</button>
+        <button class="btn-primary btn-sm" id="transportPlanRoutesBtn">🤖 AI Plan Routes</button>
       </div>
 
       <!-- Map Container -->
@@ -1564,9 +1564,12 @@
 
       <!-- Route Planning Modal -->
       <div id="routePlanningModal" class="modal-overlay hidden">
-        <div class="modal" style="width:95%;max-width:1400px;max-height:90vh;overflow-y:auto">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
-            <h2 style="margin:0">🗺️ Route Planning & Optimization</h2>
+        <div class="modal route-planner-page">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;gap:.8rem;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:.8rem">
+              <button class="btn-secondary btn-sm" id="routePlannerBackBtn">← Back</button>
+              <h2 style="margin:0">🤖 AI Route Plan</h2>
+            </div>
             <button class="btn-close" id="routePlanningCloseBtn">✕</button>
           </div>
 
@@ -1609,11 +1612,11 @@
                 <input type="number" id="routeMaxStops" value="10" min="3" max="50" style="width:100%;padding:0.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
               </div>
               <div style="display:flex;align-items:flex-end">
-                <button id="routeOptimizeBtn" class="btn-primary" style="width:100%">⚡ Generate AI Routes</button>
+                <button id="routeOptimizeBtn" class="btn-primary" style="width:100%">⚡ Regenerate Routes</button>
               </div>
             </div>
             <div style="padding:0.75rem;background:#e8f4f8;border-left:3px solid #0ea5e9;border-radius:3px;font-size:11px;color:#0c5a8f">
-              💡 <strong>How to use:</strong> Click "Generate AI Routes" to see optimized routes based on Singapore 6-digit postal codes (e.g., 018945, 238041). Reorder stops, assign drivers, and adjust routes as needed.
+              💡 The AI has already planned routes and assigned drivers — just shift things around: reorder stops with the ▲▼ arrows, change any driver dropdown, or adjust the settings above and Regenerate. When it looks right, hit <strong>Confirm Plan &amp; Save</strong> — jobs become <strong>Preplanned</strong> and switch to <strong>Confirmed</strong> automatically as each order completes scanning.
             </div>
           </div>
 
@@ -1646,7 +1649,7 @@
 
           <!-- Actions -->
           <div style="display:flex;gap:0.6rem;margin-top:1.5rem">
-            <button class="btn-primary" id="routeAssignBtn" style="flex:1">✓ Assign Routes to Drivers</button>
+            <button class="btn-primary" id="routeAssignBtn" style="flex:1">✓ Confirm Plan &amp; Save</button>
             <button class="btn-secondary" id="routeExportBtn" style="flex:1">📥 Export Routes</button>
             <button class="btn-secondary" id="routePlanningCloseBtn2" style="flex:1">Close</button>
           </div>

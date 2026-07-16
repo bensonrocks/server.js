@@ -809,7 +809,11 @@ straight to the server. Do not add back per-format upload buttons.
 Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
 (warehouse scanning completed the matching order) → `delivered`.
 
-- "Generate AI Routes" auto-assigns drivers ROUND-ROBIN per route
+- "🤖 AI Plan Routes" (renamed from "Plan Routes") opens the planner as a
+  FULL-PAGE takeover (`.route-planner-page`, ← Back button) and AUTO-GENERATES
+  the plan on open — the user arrives at a finished draft and only amends.
+  "Generate AI Routes" became "Regenerate Routes".
+- Route generation auto-assigns drivers ROUND-ROBIN per route
   (`autoAssignDrivers()` in app.js; drivers come from Driver Details /
   `window.drivers`). Every stop's dropdown is prefilled; the user amends any
   dropdown or stop order before approving. Nothing is saved at generation time.

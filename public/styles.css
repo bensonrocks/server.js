@@ -2654,3 +2654,16 @@ tr.row-pendingsync td { background: #fffbeb !important; }
    without this the map floats above the Administrator/modal overlays when
    they open over the Transport tab. */
 #transportMainMap, #transportMap { position: relative; z-index: 0; isolation: isolate; }
+
+/* AI Route Plan — full-page takeover, not a cramped centre modal */
+#routePlanningModal { padding: 0; align-items: stretch; }
+#routePlanningModal .route-planner-page {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border-radius: 0;
+  margin: 0;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 2rem;
+}
