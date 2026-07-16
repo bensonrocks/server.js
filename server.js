@@ -66,6 +66,7 @@ const createOCRLabels = require('./lib/ocr-labels');
 const createZoneCycleCount = require('./lib/zone-cycle-count');
 const createInboundGoodsReceipt = require('./lib/inbound-goods-receipt');
 const createEnhancedReturns = require('./lib/enhanced-returns');
+const createASNManager = require('./lib/inbound-asn');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -4273,6 +4274,97 @@ app.post('/api/sku-references/create', withStaffTenant, (req, res) => {
   }
 });
 
+// Review quantity variances
+app.post('/api/inbound/:inboundId/review-variances', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.reviewVariances(
+      req.params.inboundId,
+      req.body.varianceDecisions || []
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Quality check items
+app.post('/api/inbound/:inboundId/quality-check', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.qualityCheckItems(
+      req.params.inboundId,
+      req.body.checks || []
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Approve receipt (manager sign-off)
+app.post('/api/inbound/:inboundId/approve', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.approveReceipt(
+      req.params.inboundId,
+      req.body
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Auto-assign putaway locations based on velocity
+app.post('/api/inbound/:inboundId/putaway-auto', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.autoPutawayAssignments(
+      req.params.inboundId,
+      req.body.warehouseId || 'wh-main',
+      req.body.options || {}
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Generate Goods Receive Note
+app.post('/api/inbound/:inboundId/grn', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.generateGRN(
+      req.params.inboundId,
+      req.body.recipientInfo || {}
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get receiving performance metrics
+app.get('/api/inbound/metrics', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const inbound = createInboundGoodsReceipt(ctx.db, ctx.inventoryWarehouse);
+    const result = inbound.getReceivingMetrics(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 7
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ── Enhanced Returns ───────────────────────────────────────────────────────
 
 // Create customer return (RMA)
@@ -4376,6 +4468,73 @@ app.get('/api/returns/high-return-skus', withStaffTenant, (req, res) => {
       parseInt(req.query.threshold) || 5,
       parseInt(req.query.days) || 90
     );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Advance Shipment Notice (ASN) ──────────────────────────────────────────
+
+// Create ASN
+app.post('/api/asn/create', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const asn = createASNManager(ctx.db);
+    const result = asn.createASN(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Upload ASN from file (CSV/Excel)
+app.post('/api/asn/upload', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const asn = createASNManager(ctx.db);
+    const result = asn.uploadASNFromFile(req.body.fileData || [], {
+      asnNumber: req.body.asnNumber,
+      vendorName: req.body.vendorName,
+      poNumber: req.body.poNumber || null
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get ASN details
+app.get('/api/asn/:asnId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const asn = createASNManager(ctx.db);
+    const result = asn.getASNDetails(req.params.asnId);
+    if (!result) return res.status(404).json({ error: 'ASN not found' });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Link inbound receipt to ASN
+app.post('/api/asn/:asnId/link-receipt', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const asn = createASNManager(ctx.db);
+    const result = asn.linkReceiptToASN(req.body.inboundId, req.params.asnId);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Close ASN
+app.post('/api/asn/:asnId/close', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const asn = createASNManager(ctx.db);
+    const result = asn.closeASN(req.params.asnId);
     res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
