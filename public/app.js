@@ -2536,29 +2536,10 @@
 
   // Update transport record when order completes
   function updateTransportRecordOnOrderCompletion(completedOrder) {
-    if (!transportRequests) return;
-
-    // Try to find matching transport record by order number or waybill
-    let transportRecord = transportRequests.find(r =>
-      r.id === completedOrder.order_number ||
-      r.id === completedOrder.waybill_number ||
-      r.id === completedOrder.pick_ticket ||
-      r.id === completedOrder.po_number ||
-      r.clientName === completedOrder.customer_name
-    );
-
-    if (!transportRecord) return; // No matching transport record
-
-    // Update transport record
-    transportRecord.status = 'confirmed';
-    transportRecord.packages = completedOrder.cartonCount || 1; // Number of cartons/packages
-    transportRecord.completedAt = new Date().toISOString();
-    transportRecord.scannedPieces = Object.values(completedOrder.scanned || {}).reduce((sum, qty) => sum + qty, 0);
-
-    // Persist to localStorage
-    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
-
-    console.log(`✓ Updated transport record ${transportRecord.id}: confirmed, ${transportRecord.packages} package(s)`);
+    // The SERVER flips the matching transport job to confirmed inside
+    // /api/scan/complete (updateTransportOnOrderCompletion) — nothing to
+    // store client-side. Just refresh the tab if it's the one on screen.
+    if (document.getElementById('tab-transport')?.classList.contains('active')) renderTransportTab();
   }
 
   // Fix Schedule Management
@@ -2735,7 +2716,7 @@
     document.getElementById('editTransportModal').classList.remove('hidden');
   }
 
-  function saveTransportChanges() {
+  async function saveTransportChanges() {
     const record = transportRequests.find(r => r.id === editingTransportId);
     if (!record) return;
 
@@ -2755,25 +2736,32 @@
 
     record.updatedAt = new Date().toISOString();
 
-    // Save to localStorage
-    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    // Persist to the SERVER — every login must see the same record
+    try {
+      const resp = await fetch(`/api/transport/${encodeURIComponent(record.id)}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName: record.clientName, notes: record.notes,
+          packages: record.packages, shipping: record.shipping,
+        }),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Save failed');
+    } catch (err) { alert('❌ ' + err.message); return; }
 
     document.getElementById('editTransportModal').classList.add('hidden');
     renderTransportTab();
   }
 
-  function requestTransportDeletion() {
-    if (!editingTransportId || !confirm('Request deletion for this record? Master approval required.')) return;
+  async function requestTransportDeletion() {
+    if (!editingTransportId || !confirm('Delete this transport job? (Administrator only — removed immediately.)')) return;
 
-    const record = transportRequests.find(r => r.id === editingTransportId);
-    if (!record) return;
-
-    record.pendingDeletion = {
-      requestedAt: new Date().toISOString(),
-      requestedBy: currentUser?.name || 'Admin'
-    };
-
-    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    try {
+      const resp = await fetch(`/api/transport/${encodeURIComponent(editingTransportId)}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Delete failed');
+    } catch (err) { alert('❌ ' + err.message); return; }
     document.getElementById('editTransportModal').classList.add('hidden');
 
     alert('Deletion request submitted. Master approval pending.');
@@ -2781,7 +2769,7 @@
   }
 
   // Bulk operations
-  document.getElementById('bulkAssignDriverBtn')?.addEventListener('click', () => {
+  document.getElementById('bulkAssignDriverBtn')?.addEventListener('click', async () => {
     const driverId = prompt('Enter Driver ID to assign to ' + transportSelectedIds.size + ' records:');
     if (!driverId) return;
 
@@ -2791,15 +2779,13 @@
       return;
     }
 
-    transportSelectedIds.forEach(id => {
-      const record = transportRequests.find(r => r.id === id);
-      if (record) {
-        record.assignedDriver = driverId;
-        record.status = 'assigned';
-      }
-    });
-
-    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    for (const id of transportSelectedIds) {
+      await fetch(`/api/transport/${encodeURIComponent(id)}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignedDriver: driverId, assignedDriverName: driver.name }),
+      }).catch(() => {});
+    }
     transportSelectedIds.clear();
     updateBulkActionsBar();
     renderTransportTab();
@@ -2811,20 +2797,17 @@
     // TODO: Show bulk edit modal for common fields
   });
 
-  document.getElementById('bulkDeleteBtn')?.addEventListener('click', () => {
-    if (!confirm('Request deletion for ' + transportSelectedIds.size + ' records? Master approval required.')) return;
+  document.getElementById('bulkDeleteBtn')?.addEventListener('click', async () => {
+    if (!confirm('Delete ' + transportSelectedIds.size + ' transport job(s)? (Administrator only — removed immediately.)')) return;
 
-    transportSelectedIds.forEach(id => {
-      const record = transportRequests.find(r => r.id === id);
-      if (record) {
-        record.pendingDeletion = {
-          requestedAt: new Date().toISOString(),
-          requestedBy: currentUser?.name || 'Admin'
-        };
-      }
-    });
-
-    localStorage.setItem('transportRequests', JSON.stringify(transportRequests));
+    try {
+      const resp = await fetch('/api/transport/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...transportSelectedIds] }),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Delete failed');
+    } catch (err) { alert('❌ ' + err.message); return; }
     transportSelectedIds.clear();
     updateBulkActionsBar();
     renderTransportTab();
@@ -3599,8 +3582,20 @@
   // were invisible everywhere else. Any drivers still sitting in this
   // browser's localStorage are migrated up once, then the local copy cleared.
   window.drivers = [];
-  let driverJobs = JSON.parse(localStorage.getItem('driverJobs') || '{}');
   let editingDriverId = null;
+
+  // Driver job lists are DERIVED from the server's transport records
+  // (assignedDriver on each job) — no separate browser-side store.
+  let _transportCacheAll = [];
+  async function refreshTransportCache() {
+    try {
+      const r = await fetch('/api/transport');
+      if (r.ok) _transportCacheAll = await r.json();
+    } catch {}
+  }
+  function jobsForDriver(driverId) {
+    return _transportCacheAll.filter(r => r.assignedDriver === driverId && r.status !== 'cancelled');
+  }
 
   async function loadDrivers() {
     try {
@@ -3643,7 +3638,7 @@
 
   document.getElementById('driverDetailsBtn')?.addEventListener('click', async () => {
     document.getElementById('driverDetailsModal').classList.remove('hidden');
-    await loadDrivers();
+    await Promise.all([loadDrivers(), refreshTransportCache()]);
     renderDriverList();
     populateDriverPortal();
   });
@@ -3710,7 +3705,7 @@
         <td>${d.plate ? `<code>${esc(d.plate)}</code>` : '—'}</td>
         <td>${[d.capacity ? d.capacity + ' kg' : '', d.capacityM3 ? d.capacityM3 + ' m³' : ''].filter(Boolean).join(' / ') || '—'}</td>
         <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span></td>
-        <td style="text-align:center"><strong>${(driverJobs[d.id] || []).length}</strong></td>
+        <td style="text-align:center"><strong>${jobsForDriver(d.id).filter(j => j.status !== 'delivered').length}</strong></td>
         <td>
           <button class="btn-scan-now btn-sm" data-driver-edit="${esc(d.id)}" style="margin-right:0.3rem">Edit</button>
           <button class="btn-scan-now btn-sm" data-driver-delete="${esc(d.id)}" style="background:#ef4444">Delete</button>
@@ -3764,8 +3759,6 @@
       });
       if (!resp.ok) throw new Error((await resp.json()).error || 'Delete failed');
     } catch (err) { alert('❌ ' + err.message); return; }
-    delete driverJobs[id];
-    localStorage.setItem('driverJobs', JSON.stringify(driverJobs));
     await loadDrivers();
     renderDriverList();
   }
@@ -3812,7 +3805,7 @@
     window.drivers.forEach(d => {
       const opt = document.createElement('option');
       opt.value = d.id;
-      opt.textContent = d.name + ` (${(driverJobs[d.id] || []).length} jobs)`;
+      opt.textContent = d.name + ` (${jobsForDriver(d.id).filter(j => j.status !== 'delivered').length} open jobs)`;
       select.appendChild(opt);
     });
 
@@ -3829,7 +3822,13 @@
     const driver = window.drivers.find(d => d.id === driverId);
     if (!driver) return;
 
-    const jobs = driverJobs[driverId] || [];
+    const jobs = jobsForDriver(driverId).map(r => ({
+      id: r.id,
+      customer: r.clientName || r.id,
+      address: [r.shipping?.addressLine1, r.shipping?.zip].filter(Boolean).join(', '),
+      status: r.status === 'delivered' ? 'delivered' : (r.status || 'pending'),
+      notes: r.notes || '',
+    }));
     const content = document.getElementById('driverPortalContent');
 
     if (!jobs.length) {
@@ -3848,7 +3847,7 @@
               </div>
               <span class="status-badge ${job.status || 'pending'}" style="font-size:11px">${job.status || 'Pending'}</span>
             </div>
-            ${job.status && job.status !== 'pending' ? `
+            ${job.status === 'delivered' ? `
               <div style="padding:0.6rem;background:white;border-radius:4px;font-size:12px;margin-bottom:0.5rem">
                 <p style="margin:0;color:#22c55e"><strong>✓ ${job.status === 'delivered' ? 'Delivered' : job.status === 'failed' ? 'Failed' : 'Partial'}</strong></p>
                 ${job.notes ? `<p style="margin:0.3rem 0 0 0;color:#64748b">${esc(job.notes)}</p>` : ''}
@@ -3867,7 +3866,7 @@
   }
 
   function openJobCompletion(driverId, jobIdx) {
-    const jobs = driverJobs[driverId] || [];
+    const jobs = jobsForDriver(driverId).map(r => ({ id: r.id, customer: r.clientName || r.id, address: r.shipping?.addressLine1 || '' }));
     const job = jobs[jobIdx];
     if (!job) return;
 
@@ -3878,17 +3877,31 @@
     document.getElementById('jobNotesInput').value = '';
     document.getElementById('jobPODInput').value = '';
 
-    document.getElementById('jobCompletionSaveBtn').onclick = () => {
+    document.getElementById('jobCompletionSaveBtn').onclick = async () => {
       const status = document.getElementById('jobStatusSelect').value;
       const notes = document.getElementById('jobNotesInput').value;
 
-      jobs[jobIdx].status = status;
-      jobs[jobIdx].notes = notes;
-      jobs[jobIdx].completedAt = new Date().toISOString();
+      try {
+        if (status === 'delivered') {
+          const r = await fetch('/api/transport/mark-delivered', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: [job.id] }),
+          });
+          if (!r.ok) throw new Error((await r.json()).error || 'Failed');
+          if (notes) await fetch(`/api/transport/${encodeURIComponent(job.id)}/update`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes }),
+          }).catch(() => {});
+        } else {
+          const r = await fetch(`/api/transport/${encodeURIComponent(job.id)}/update`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, notes }),
+          });
+          if (!r.ok) throw new Error((await r.json()).error || 'Failed');
+        }
+      } catch (err) { alert('❌ ' + err.message); return; }
 
-      driverJobs[driverId] = jobs;
-      localStorage.setItem('driverJobs', JSON.stringify(driverJobs));
-
+      await refreshTransportCache();
       document.getElementById('jobCompletionModal').classList.add('hidden');
       showDriverPortal(driverId);
       alert(`Job marked as ${status}!`);
@@ -3905,8 +3918,8 @@
     let totalDistance = 0, totalTime = 0, totalJobs = 0;
     const statsData = [];
 
-    drivers.forEach(driver => {
-      const jobs = driverJobs[driver.id] || [];
+    (window.drivers || []).forEach(driver => {
+      const jobs = jobsForDriver(driver.id);
       const completed = jobs.filter(j => j.status === 'delivered').length;
       const dist = (driver.stats?.distance || 0);
       const time = (driver.stats?.time || 0);
@@ -3943,8 +3956,13 @@
   }
 
   // ── Transport Route Templates ──────────────────────────────────────────────
-  function loadTransportTemplates() {
-    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
+  let _transportTemplates = {};
+  async function loadTransportTemplates() {
+    try {
+      const r = await fetch('/api/transport/templates');
+      if (r.ok) _transportTemplates = await r.json();
+    } catch {}
+    const templates = _transportTemplates;
     const selector = document.getElementById('transportTemplateSelect');
     if (!selector) return;
     selector.innerHTML = '<option value="">-- Select a saved template --</option>';
@@ -3973,20 +3991,23 @@
     URL.revokeObjectURL(url);
   });
 
-  document.getElementById('transportSaveTemplateBtn')?.addEventListener('click', () => {
+  document.getElementById('transportSaveTemplateBtn')?.addEventListener('click', async () => {
     if (!transportRequests.length) {
       alert('No transport requests to save as template');
       return;
     }
     const name = prompt('Template name:', `Route-${new Date().toLocaleDateString()}`);
     if (!name) return;
-    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
-    templates[name] = {
-      requests: transportRequests.map(r => ({ clientName: r.clientName, postalCode: r.postalCode, items: r.items, city: r.city, phone: r.phone, email: r.email })),
-      savedAt: new Date().toISOString()
-    };
-    localStorage.setItem('transportTemplates', JSON.stringify(templates));
-    alert(`Template "${name}" saved!`);
+    try {
+      const r = await fetch('/api/transport/templates', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, data: {
+          requests: transportRequests.map(r2 => ({ clientName: r2.clientName, zip: r2.shipping?.zip, items: r2.items, phone: r2.shipping?.phone })),
+        } }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
+    } catch (err) { alert('❌ ' + err.message); return; }
+    alert(`Template "${name}" saved — visible to every login.`);
     loadTransportTemplates();
   });
 
@@ -3996,24 +4017,22 @@
       alert('Please select a template');
       return;
     }
-    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
-    const template = templates[name];
+    const template = _transportTemplates[name];
     if (!template) return;
-    transportRequests = template.requests;
-    renderTransportTab();
-    alert(`Applied template "${name}". You can now adjust and save again.`);
+    alert(`Template "${name}" has ${(template.requests || []).length} stop(s) (saved ${String(template.savedAt || '').slice(0, 10)}). Use it as a reference for planning — live jobs stay untouched.`);
   });
 
-  document.getElementById('transportDeleteTemplateBtn')?.addEventListener('click', () => {
+  document.getElementById('transportDeleteTemplateBtn')?.addEventListener('click', async () => {
     const name = document.getElementById('transportTemplateSelect').value;
     if (!name) {
       alert('Please select a template');
       return;
     }
     if (!confirm(`Delete template "${name}"?`)) return;
-    const templates = JSON.parse(localStorage.getItem('transportTemplates') || '{}');
-    delete templates[name];
-    localStorage.setItem('transportTemplates', JSON.stringify(templates));
+    try {
+      const r = await fetch(`/api/transport/templates/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json()).error || 'Delete failed');
+    } catch (err) { alert('❌ ' + err.message); return; }
     loadTransportTemplates();
     alert(`Template "${name}" deleted`);
   });

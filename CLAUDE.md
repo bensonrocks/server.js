@@ -903,6 +903,33 @@ The stats bar shows Jobs Today / Pending / Preplanned / Confirmed / Delivered
 visible). Route planning additionally excludes delivered/cancelled jobs so a
 closed job can never re-enter a route.
 
+### ALL business records live on the SERVER — localStorage is device-local only
+
+Rule from the user: records from different users must be maintained
+server-side. localStorage is reserved for genuinely device-local things:
+session token (`wms_token`/`wms_user`), the app-lock PIN, the offline scan
+queue (`is_offline_scans` — a network-outage buffer, by design), and the
+scan resolve cache. Everything else was migrated:
+- drivers → `db.drivers` (`/api/drivers`, see below)
+- transport record edits / bulk driver assignment / deletion → the real
+  `/api/transport/:id/update`, `DELETE /:id`, `/bulk-delete` endpoints
+  (five call sites used to write `transportRequests` to localStorage only —
+  edits were invisible to other logins and lost on refresh). `:id/update`
+  now also accepts `packages` and `assignedDriver`/`assignedDriverName`
+  (assignment flips status to preplanned unless explicit, never regresses
+  confirmed/delivered).
+- driver job lists/stats → DERIVED live from transport records
+  (`jobsForDriver()` over `/api/transport`; `driverJobs` localStorage store
+  removed). Driver Portal "Complete Delivery" calls mark-delivered.
+- route templates → `db.transportTemplates`
+  (`/api/transport/templates` GET/POST/DELETE — registered BEFORE `:id`).
+  Template "apply" no longer clobbers the live in-memory job list (the old
+  behaviour replaced `transportRequests` with partial objects lacking
+  ids/status).
+- the client-side copy of order-completion→transport-confirm logic was
+  gutted — the server's `updateTransportOnOrderCompletion()` is the single
+  implementation; the client just re-renders.
+
 ### Drivers are SERVER-side (db.drivers, /api/drivers) — not localStorage
 
 `window.drivers` is loaded from `GET /api/drivers` (login, opening Driver

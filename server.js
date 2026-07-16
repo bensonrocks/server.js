@@ -4979,6 +4979,32 @@ app.post('/api/transport/bulk-delete', (req, res) => {
   res.json({ success: true, deleted });
 });
 
+// Route templates — SHARED across users (db.transportTemplates), was
+// localStorage-only. Must be registered before the :id routes.
+app.get('/api/transport/templates', (req, res) => {
+  const db = readDb();
+  res.json(db.transportTemplates || {});
+});
+app.post('/api/transport/templates', (req, res) => {
+  const { name, data } = req.body || {};
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Template name required' });
+  const db = readDb();
+  if (!db.transportTemplates) db.transportTemplates = {};
+  db.transportTemplates[String(name).trim()] = { ...(data || {}), savedAt: new Date().toISOString(), savedBy: req.userId || '' };
+  _persistDb(db);
+  logAudit('transport_template_saved', { template: String(name).trim(), by: req.userId || '' });
+  res.json({ success: true });
+});
+app.delete('/api/transport/templates/:name', (req, res) => {
+  const db = readDb();
+  const name = decodeURIComponent(req.params.name);
+  if (!db.transportTemplates?.[name]) return res.status(404).json({ error: 'Template not found' });
+  delete db.transportTemplates[name];
+  _persistDb(db);
+  logAudit('transport_template_deleted', { template: name, by: req.userId || '' });
+  res.json({ success: true });
+});
+
 // Generic transport record endpoints — must come after specific routes
 app.get('/api/transport/:id', (req, res) => {
   const db = readDb();
@@ -5007,11 +5033,24 @@ app.post('/api/transport/:id/update', (req, res) => {
   if (updates.status) request.status = updates.status;
   if (updates.clientName) request.clientName = updates.clientName;
   if (updates.shipping) request.shipping = { ...request.shipping, ...updates.shipping };
-  if (updates.notes) request.notes = updates.notes;
+  if (updates.notes !== undefined) request.notes = updates.notes;
+  if (updates.packages !== undefined) request.packages = Number(updates.packages) || 1;
+  // Assigning a driver outside the planner (bulk assign / edit modal) —
+  // moves the job to preplanned unless a status was explicitly given,
+  // and never regresses a confirmed/delivered job.
+  if (updates.assignedDriver !== undefined) {
+    request.assignedDriver = updates.assignedDriver || '';
+    request.assignedDriverName = updates.assignedDriverName || '';
+    if (!updates.status && updates.assignedDriver &&
+        request.status !== 'confirmed' && request.status !== 'delivered') {
+      request.status = 'preplanned';
+      request.plannedAt = new Date().toISOString();
+    }
+  }
 
   request.updatedAt = new Date().toISOString();
   _persistDb(db);
-  logAudit('transport_updated', { id: request.id, status: request.status });
+  logAudit('transport_updated', { id: request.id, status: request.status, by: req.userId || '' });
   res.json(request);
 });
 
