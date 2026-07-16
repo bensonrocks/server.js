@@ -1328,7 +1328,7 @@
     </section>
 
     <!-- ── TAB: Transport (TMS with Map) ── -->
-    <section id="tab-transport" class="tab" style="display:flex;flex-direction:column;height:100%;gap:0">
+    <section id="tab-transport" class="tab tab-transport-layout">
       <!-- Control Bar -->
       <div style="padding:1rem;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;gap:0.8rem;flex-wrap:wrap;align-items:center">
         <div class="stats-bar" id="transportStatsBar" style="margin:0;flex:1;min-width:400px"></div>
@@ -1346,16 +1346,17 @@
           <h4 style="margin:0 0 0.5rem 0">Legend</h4>
           <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem">
             <div style="width:12px;height:12px;background:#ef4444;border-radius:50%"></div>
-            <span>Delivery (Pending)</span>
+            <span>Not assigned</span>
           </div>
           <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem">
-            <div style="width:12px;height:12px;background:#22c55e;border-radius:50%"></div>
-            <span>Delivery (Assigned)</span>
-          </div>
-          <div id="driverLegendItem" style="display:none;display:flex;align-items:center;gap:0.5rem">
             <div style="width:12px;height:12px;background:#0ea5e9;border-radius:50%"></div>
-            <span>Driver Location</span>
+            <span>Assigned (preplanned)</span>
           </div>
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem">
+            <div style="width:12px;height:12px;background:#16a34a;border-radius:50%"></div>
+            <span>Confirmed / delivered</span>
+          </div>
+          <div style="font-size:10px;color:#94a3b8;margin-top:0.4rem">Hover or tap a point for driver, client &amp; carton details</div>
         </div>
 
         <!-- Driver Info Box (bottom right) -->

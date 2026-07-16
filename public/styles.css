@@ -305,6 +305,10 @@ main {
 }
 .tab { display: none; }
 .tab.active { display: block; }
+/* Transport needs a flex column layout — but ONLY when active. An inline
+   display:flex on the section itself would override .tab{display:none} and
+   leak the Transport UI under every other tab (bit us on the Upload page). */
+.tab.tab-transport-layout.active { display: flex; flex-direction: column; height: 100%; gap: 0; }
 
 /* ── Two-column upload layout ──────────────────────────────── */
 .upload-two-col {
@@ -2613,3 +2617,19 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   padding: 0;
 }
 .leaflet-tooltip.map-marker-label::before { display: none; }
+
+/* ── Transport job markers (numbered dots) + hover details card ───────────── */
+.tjob-marker-wrap { background: transparent; border: none; }
+.tjob-marker {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  color: #fff; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.leaflet-tooltip.tjob-tooltip {
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18);
+  border: 1px solid #e2e8f0;
+  padding: .6rem .7rem;
+}

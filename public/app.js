@@ -1991,12 +1991,15 @@
 
     transportMarkers = [];
 
-    // Colour by delivery status
-    const statusColor = s =>
-      s === 'delivered' ? '#22c55e' :
-      s === 'confirmed' ? '#16a34a' :
-      s === 'preplanned' ? '#0ea5e9' :
-      s === 'in-transit' ? '#f59e0b' : '#ef4444';
+    // Colour rule: NOT ASSIGNED = red. Assigned = blue while preplanned,
+    // green once scanning confirms / delivers, amber in transit.
+    const jobColor = req => {
+      if (!req.assignedDriver && !req.assignedDriverName) return '#ef4444';
+      if (req.status === 'confirmed') return '#16a34a';
+      if (req.status === 'delivered') return '#22c55e';
+      if (req.status === 'in-transit') return '#f59e0b';
+      return '#0ea5e9'; // assigned / preplanned
+    };
 
     // Add delivery markers — position from record coords or postal code
     const bounds = [];
@@ -2006,29 +2009,44 @@
         : getPostalCodeCoords(req.shipping?.zip || '');
       if (!pos) return;
 
-      const marker = L.circleMarker([pos.lat, pos.lng], {
-        radius: 9,
-        fillColor: statusColor(req.status),
-        fillOpacity: 1,
-        color: '#fff',
-        weight: 2
+      const assigned = !!(req.assignedDriver || req.assignedDriverName);
+      const driverRec = (window.drivers || []).find(d => d.id === req.assignedDriver);
+      const driverName = req.assignedDriverName || driverRec?.name || '';
+
+      const marker = L.marker([pos.lat, pos.lng], {
+        icon: L.divIcon({
+          className: 'tjob-marker-wrap',
+          html: `<div class="tjob-marker" style="background:${jobColor(req)}">${idx + 1}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11]
+        })
       }).addTo(transportMainMap);
 
-      marker.bindTooltip(String(idx + 1), { permanent: true, direction: 'center', className: 'map-marker-label' });
-      marker.bindPopup(`<div style="font-size:12px">
-        <strong>${esc(req.clientName || '')}</strong><br/>
+      // Details card — shown on HOVER (desktop) and on tap (mobile popup)
+      const detailsHtml = `<div style="font-size:12px;line-height:1.5;min-width:170px">
+        <strong style="font-size:13px">${esc(req.clientName || req.id)}</strong><br/>
+        ${assigned
+          ? `👤 <strong>${esc(driverName)}</strong>${driverRec?.phone ? ` · 📞 ${esc(driverRec.phone)}` : ''}${req.routeNum ? `<br/>🗺️ Route ${req.routeNum}${req.stopSeq ? ` · Stop #${req.stopSeq}` : ''}` : ''}<br/>`
+          : `<span style="color:#ef4444;font-weight:600">⚠ No driver assigned</span><br/>`}
+        📦 ${req.packages || 1} carton(s) &nbsp;|&nbsp; 📍 ${esc(req.shipping?.zip || '—')}<br/>
         ${esc(req.shipping?.addressLine1 || '')}<br/>
-        📍 ${esc(req.shipping?.zip || '—')} &nbsp;|&nbsp; 📦 ${req.packages || 1}<br/>
         <span class="status-badge" style="display:inline-block;margin-top:0.3rem">${esc(req.status || 'pending')}</span>
-      </div>`);
+      </div>`;
+
+      marker.bindTooltip(detailsHtml, { direction: 'top', offset: [0, -12], sticky: false, opacity: 1, className: 'tjob-tooltip' });
+      marker.bindPopup(detailsHtml); // touch devices have no hover — tap opens this
 
       transportMarkers.push(marker);
       bounds.push([pos.lat, pos.lng]);
     });
 
-    if (bounds.length > 0) {
-      transportMainMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
-    }
+    const fit = () => {
+      if (bounds.length > 0) transportMainMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
+    };
+    fit();
+    // The tab container may have been hidden/resizing during init (common on
+    // mobile) — Leaflet then computes wrong bounds. Re-measure and re-fit.
+    setTimeout(() => { transportMainMap.invalidateSize(); fit(); }, 300);
   }
 
   function handleTransportRequest(id) {
@@ -2384,7 +2402,8 @@
   document.getElementById('transportToggleDriversBtn')?.addEventListener('click', function() {
     showingDrivers = !showingDrivers;
     this.textContent = showingDrivers ? '👤 Hide Drivers' : '👤 Show Drivers';
-    document.getElementById('driverLegendItem').style.display = showingDrivers ? 'flex' : 'none';
+    const legendItem = document.getElementById('driverLegendItem');
+    if (legendItem) legendItem.style.display = showingDrivers ? 'flex' : 'none';
     document.getElementById('driverInfoBox').style.display = showingDrivers ? 'block' : 'none';
 
     if (showingDrivers) {
