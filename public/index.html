@@ -1007,8 +1007,13 @@ a:hover{text-decoration:underline}
       ════════════════════════════════════════ -->
       <div id="page-connections" class="page">
         <div class="page-hdr">
-          <h2 data-i18n="hdrConnections">&#128279; Marketplace Connections</h2>
-          <p data-i18n="hdrConnectionsSub">Click a platform to enter credentials and sync orders into IdealOne OMS.</p>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+            <div style="flex: 1;">
+              <h2 data-i18n="hdrConnections">&#128279; Marketplace Connections</h2>
+              <p data-i18n="hdrConnectionsSub">Click a platform to enter credentials and sync orders into IdealOne OMS.</p>
+            </div>
+            <a href="/platform-credentials.html" target="_blank" style="padding: 10px 16px; background: #fb923c; color: white; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; display: inline-block;">🔧 Manage Credentials</a>
+          </div>
         </div>
 
         <div id="server-banner" class="server-banner hidden">
@@ -1947,6 +1952,52 @@ a:hover{text-decoration:underline}
 
 <script>
 'use strict';
+
+// ── CONNECTION STATUS ─────────────────────────────────────────────────────────
+async function updateConnectionStatus() {
+  try {
+    const res = await fetch('/api/connect/status');
+    if (!res.ok) return;
+    const status = await res.json();
+
+    // Update ZORT status in gateway row
+    if (status.zort) {
+      const gwZortEl = document.getElementById('gw-zort-st');
+      const tileZortEl = document.getElementById('tile-zort-st');
+      if (gwZortEl && status.zort.connected) {
+        gwZortEl.className = 'gw-status on';
+        gwZortEl.innerHTML = `<span class="dot"></span>Connected${status.zort.storeName ? ' — ' + status.zort.storeName : ''}`;
+      }
+      if (tileZortEl && status.zort.connected) {
+        tileZortEl.className = 'pt-status on';
+        tileZortEl.innerHTML = `<span class="dot-sm" style="background:#10b981"></span>&ensp;Connected`;
+      }
+    }
+
+    // Update other platform statuses
+    ['shopee', 'lazada', 'tiktok', 'shopify'].forEach(platform => {
+      if (status[platform]?.connected) {
+        const tileEl = document.getElementById(`tile-${platform}-st`);
+        if (tileEl) {
+          tileEl.className = 'pt-status on';
+          tileEl.innerHTML = `<span class="dot-sm" style="background:#10b981"></span>&ensp;Connected`;
+        }
+      }
+    });
+  } catch (error) {
+    console.log('Connection status check skipped');
+  }
+}
+
+// Call on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', updateConnectionStatus);
+} else {
+  updateConnectionStatus();
+}
+
+// Refresh every 30 seconds
+setInterval(updateConnectionStatus, 30000);
 
 // ── SEED DATA ─────────────────────────────────────────────────────────────────
 const SEED=[
