@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Connect ZORT - Sync Orders & Inventory</title>
+  <title>Connect Your Platforms - Sync Orders & Inventory</title>
   <style>
     * {
       margin: 0;
@@ -275,6 +275,37 @@
       margin-bottom: 8px;
       color: #333;
     }
+
+    select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+      cursor: pointer;
+      background-color: white;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .platform-fields {
+      animation: fadeIn 0.3s ease-in;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        max-height: 0;
+      }
+      to {
+        opacity: 1;
+        max-height: 1000px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -283,8 +314,8 @@
     <div id="formView">
       <div class="header">
         <div class="logo">🔗</div>
-        <h1>Connect ZORT</h1>
-        <p class="subtitle">Sync orders & inventory across all your platforms</p>
+        <h1>Connect Your Platforms</h1>
+        <p class="subtitle">Link your Shopee, Lazada, TikTok & Shopify accounts</p>
         <div class="platforms">
           <span title="Shopee">🛍️</span>
           <span title="Lazada">📦</span>
@@ -294,53 +325,190 @@
       </div>
 
       <div class="info-box">
-        <strong>🔒 Secure Connection:</strong> Your API credentials are encrypted and stored securely. We never store your data in plain text.
+        <strong>🔒 Secure Connection:</strong> Your credentials are encrypted and stored securely. We never store your data in plain text.
       </div>
 
-      <form id="zortForm">
+      <form id="connectForm">
         <div class="form-group">
-          <label for="storeName">Store Name / Email</label>
-          <input
-            type="text"
-            id="storeName"
-            name="storeName"
-            placeholder="your-store@example.com"
-            required
-          >
-          <p class="help-text">Your ZORT store identifier (usually your email)</p>
+          <label for="platform">Select Platform</label>
+          <select id="platform" name="platform" required onchange="updateFormFields()">
+            <option value="">-- Choose a platform --</option>
+            <option value="shopee">🛍️ Shopee</option>
+            <option value="lazada">📦 Lazada</option>
+            <option value="tiktok">🎵 TikTok Shop</option>
+            <option value="shopify">🏪 Shopify</option>
+          </select>
         </div>
 
-        <div class="form-group">
-          <label for="apikey">API Key</label>
-          <div class="password-group">
+        <!-- Shopee Fields -->
+        <div id="shopee-fields" class="platform-fields" style="display: none;">
+          <div class="form-group">
+            <label for="shopee-shop-id">Shop ID</label>
             <input
-              type="password"
-              id="apikey"
-              name="apikey"
-              placeholder="••••••••••••••••••••••••"
-              required
+              type="text"
+              id="shopee-shop-id"
+              name="shopee-shop-id"
+              placeholder="Your Shopee shop ID"
             >
-            <button type="button" class="toggle-password" onclick="togglePassword('apikey')">👁️</button>
+            <p class="help-text">Found in Shopee Seller Centre → Settings → Shop Info</p>
           </div>
-          <p class="help-text">Your ZORT API key (found in ZORT settings)</p>
+
+          <div class="form-group">
+            <label for="shopee-api-key">API Key</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="shopee-api-key"
+                name="shopee-api-key"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('shopee-api-key')">👁️</button>
+            </div>
+            <p class="help-text">Generate in Shopee Seller Centre → Integration → API Keys</p>
+          </div>
+
+          <div class="form-group">
+            <label for="shopee-api-secret">API Secret</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="shopee-api-secret"
+                name="shopee-api-secret"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('shopee-api-secret')">👁️</button>
+            </div>
+            <p class="help-text">Provided when you generate API keys</p>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label for="apisecret">API Secret</label>
-          <div class="password-group">
+        <!-- Lazada Fields -->
+        <div id="lazada-fields" class="platform-fields" style="display: none;">
+          <div class="form-group">
+            <label for="lazada-shop-id">Shop ID</label>
             <input
-              type="password"
-              id="apisecret"
-              name="apisecret"
-              placeholder="••••••••••••••••••••••••"
-              required
+              type="text"
+              id="lazada-shop-id"
+              name="lazada-shop-id"
+              placeholder="Your Lazada shop ID"
             >
-            <button type="button" class="toggle-password" onclick="togglePassword('apisecret')">👁️</button>
+            <p class="help-text">Found in Lazada Seller Centre → Account → My Account</p>
           </div>
-          <p class="help-text">Your ZORT API secret (keep this confidential)</p>
+
+          <div class="form-group">
+            <label for="lazada-api-key">API Key</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="lazada-api-key"
+                name="lazada-api-key"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('lazada-api-key')">👁️</button>
+            </div>
+            <p class="help-text">Create in Lazada Seller Centre → Seller API → Create API Account</p>
+          </div>
+
+          <div class="form-group">
+            <label for="lazada-api-secret">API Secret</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="lazada-api-secret"
+                name="lazada-api-secret"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('lazada-api-secret')">👁️</button>
+            </div>
+            <p class="help-text">Provided when you create API credentials</p>
+          </div>
         </div>
 
-        <button type="submit" class="submit-btn">Connect ZORT Account</button>
+        <!-- TikTok Shop Fields -->
+        <div id="tiktok-fields" class="platform-fields" style="display: none;">
+          <div class="form-group">
+            <label for="tiktok-shop-id">Shop ID</label>
+            <input
+              type="text"
+              id="tiktok-shop-id"
+              name="tiktok-shop-id"
+              placeholder="Your TikTok Shop ID"
+            >
+            <p class="help-text">Found in TikTok Shop → Settings → Shop Info</p>
+          </div>
+
+          <div class="form-group">
+            <label for="tiktok-api-key">API Key</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="tiktok-api-key"
+                name="tiktok-api-key"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('tiktok-api-key')">👁️</button>
+            </div>
+            <p class="help-text">Create in TikTok Shop → Developer → API Keys</p>
+          </div>
+
+          <div class="form-group">
+            <label for="tiktok-api-secret">API Secret</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="tiktok-api-secret"
+                name="tiktok-api-secret"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('tiktok-api-secret')">👁️</button>
+            </div>
+            <p class="help-text">Provided when you create API credentials</p>
+          </div>
+        </div>
+
+        <!-- Shopify Fields -->
+        <div id="shopify-fields" class="platform-fields" style="display: none;">
+          <div class="form-group">
+            <label for="shopify-shop-url">Store URL</label>
+            <input
+              type="text"
+              id="shopify-shop-url"
+              name="shopify-shop-url"
+              placeholder="your-store.myshopify.com"
+            >
+            <p class="help-text">Your Shopify store URL</p>
+          </div>
+
+          <div class="form-group">
+            <label for="shopify-access-token">Access Token</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="shopify-access-token"
+                name="shopify-access-token"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('shopify-access-token')">👁️</button>
+            </div>
+            <p class="help-text">Create in Shopify Admin → Apps & integrations → App & sales channel settings</p>
+          </div>
+
+          <div class="form-group">
+            <label for="shopify-webhook-secret">Webhook Secret (Optional)</label>
+            <div class="password-group">
+              <input
+                type="password"
+                id="shopify-webhook-secret"
+                name="shopify-webhook-secret"
+                placeholder="••••••••••••••••••••••••"
+              >
+              <button type="button" class="toggle-password" onclick="togglePassword('shopify-webhook-secret')">👁️</button>
+            </div>
+            <p class="help-text">For secure webhook verification</p>
+          </div>
+        </div>
+
+        <button type="submit" class="submit-btn">Connect Platform</button>
         <button type="button" class="test-btn" onclick="testConnection()">Test Connection First</button>
 
         <div id="status" class="status"></div>
@@ -356,19 +524,19 @@
     <div id="successView" class="success-screen">
       <div class="success-icon">✅</div>
       <h2>Connected Successfully!</h2>
-      <p>Your ZORT account is now connected and ready to sync.</p>
+      <p>Your platform account is now connected and ready to sync.</p>
 
       <div class="next-steps">
         <strong>What happens next:</strong>
         <ol>
-          <li>Your orders from Shopee, Lazada, TikTok, and Shopify will sync automatically</li>
-          <li>Inventory updates will sync every 15 minutes</li>
+          <li>Your platform orders will be synced to your dashboard</li>
+          <li>Inventory updates will sync automatically</li>
           <li>Real-time webhook notifications keep everything in sync</li>
-          <li>You can monitor sync status in your dashboard</li>
+          <li>You can monitor all your platforms in one place</li>
         </ol>
       </div>
 
-      <button class="submit-btn" onclick="resetForm()" style="margin-top: 20px;">Done</button>
+      <button class="submit-btn" onclick="resetForm()" style="margin-top: 20px;">Add Another Platform</button>
     </div>
   </div>
 
@@ -377,6 +545,24 @@
       const field = document.getElementById(fieldId);
       const isPassword = field.type === 'password';
       field.type = isPassword ? 'text' : 'password';
+    }
+
+    function updateFormFields() {
+      const platform = document.getElementById('platform').value;
+
+      // Hide all platform fields
+      document.querySelectorAll('.platform-fields').forEach(el => {
+        el.style.display = 'none';
+      });
+
+      // Show selected platform fields
+      if (platform) {
+        const fieldId = `${platform}-fields`;
+        const field = document.getElementById(fieldId);
+        if (field) {
+          field.style.display = 'block';
+        }
+      }
     }
 
     function showStatus(message, type) {
@@ -391,42 +577,75 @@
 
       if (connected) {
         indicator.className = 'status-indicator connected';
-        text.textContent = '✓ Connected to ZORT';
+        text.textContent = '✓ Platform connected';
       } else {
         indicator.className = 'status-indicator error';
         text.textContent = '✗ Connection failed';
       }
     }
 
-    async function testConnection() {
-      const storeName = document.getElementById('storeName').value;
-      const apikey = document.getElementById('apikey').value;
-      const apisecret = document.getElementById('apisecret').value;
+    function getCredentialsFromForm() {
+      const platform = document.getElementById('platform').value;
 
-      if (!storeName || !apikey || !apisecret) {
-        showStatus('❌ Please fill in all fields first', 'error');
+      if (!platform) {
+        return null;
+      }
+
+      const credentials = { platform };
+
+      if (platform === 'shopee') {
+        credentials.shopId = document.getElementById('shopee-shop-id').value;
+        credentials.apiKey = document.getElementById('shopee-api-key').value;
+        credentials.apiSecret = document.getElementById('shopee-api-secret').value;
+      } else if (platform === 'lazada') {
+        credentials.shopId = document.getElementById('lazada-shop-id').value;
+        credentials.apiKey = document.getElementById('lazada-api-key').value;
+        credentials.apiSecret = document.getElementById('lazada-api-secret').value;
+      } else if (platform === 'tiktok') {
+        credentials.shopId = document.getElementById('tiktok-shop-id').value;
+        credentials.apiKey = document.getElementById('tiktok-api-key').value;
+        credentials.apiSecret = document.getElementById('tiktok-api-secret').value;
+      } else if (platform === 'shopify') {
+        credentials.shopUrl = document.getElementById('shopify-shop-url').value;
+        credentials.accessToken = document.getElementById('shopify-access-token').value;
+        credentials.webhookSecret = document.getElementById('shopify-webhook-secret').value;
+      }
+
+      return credentials;
+    }
+
+    async function testConnection() {
+      const credentials = getCredentialsFromForm();
+
+      if (!credentials || !credentials.platform) {
+        showStatus('❌ Please select a platform first', 'error');
+        return;
+      }
+
+      const requiredFields = credentials.platform === 'shopify'
+        ? ['shopUrl', 'accessToken']
+        : ['shopId', 'apiKey', 'apiSecret'];
+
+      const hasAllFields = requiredFields.every(field => credentials[field]);
+      if (!hasAllFields) {
+        showStatus('❌ Please fill in all required fields first', 'error');
         return;
       }
 
       showStatus('🔄 Testing connection...', 'loading');
 
       try {
-        const response = await fetch('/api/connect/zort', {
+        const response = await fetch('/api/connect/platform', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-tenant-id': 'default'
           },
-          body: JSON.stringify({
-            storeName,
-            storename: storeName,
-            apikey,
-            apisecret
-          })
+          body: JSON.stringify(credentials)
         });
 
         if (response.ok) {
-          showStatus('✅ Connection successful! You can now click "Connect ZORT Account"', 'success');
+          showStatus('✅ Connection successful! You can now click "Connect Platform"', 'success');
           updateConnectionStatus(true);
         } else {
           const error = await response.json();
@@ -439,35 +658,32 @@
       }
     }
 
-    document.getElementById('zortForm').addEventListener('submit', async (e) => {
+    document.getElementById('connectForm').addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      const storeName = document.getElementById('storeName').value;
-      const apikey = document.getElementById('apikey').value;
-      const apisecret = document.getElementById('apisecret').value;
+      const credentials = getCredentialsFromForm();
+
+      if (!credentials || !credentials.platform) {
+        showStatus('❌ Please select a platform', 'error');
+        return;
+      }
 
       const btn = e.target.querySelector('.submit-btn');
       btn.disabled = true;
 
-      showStatus('🔄 Connecting to ZORT...', 'loading');
+      showStatus('🔄 Connecting platform...', 'loading');
 
       try {
-        const response = await fetch('/api/connect/zort', {
+        const response = await fetch('/api/connect/platform', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-tenant-id': 'default'
           },
-          body: JSON.stringify({
-            storeName,
-            storename: storeName,
-            apikey,
-            apisecret
-          })
+          body: JSON.stringify(credentials)
         });
 
         if (response.ok) {
-          // Hide form, show success
           document.getElementById('formView').style.display = 'none';
           document.getElementById('successView').classList.add('show');
           updateConnectionStatus(true);
@@ -485,11 +701,12 @@
     });
 
     function resetForm() {
-      document.getElementById('zortForm').reset();
+      document.getElementById('connectForm').reset();
       document.getElementById('formView').style.display = 'block';
       document.getElementById('successView').classList.remove('show');
       document.getElementById('status').className = 'status';
       updateConnectionStatus(false);
+      updateFormFields();
     }
   </script>
 </body>
