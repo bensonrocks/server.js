@@ -57,6 +57,8 @@ const createInventoryWarehouse = require('./lib/inventory-warehouse');
 const createCustomsLotManager = require('./lib/customs-lot-manager');
 const createWarehouseAllocator = require('./lib/warehouse-allocator');
 const createPickingIntegration = require('./lib/picking-integration');
+const createCycleCount = require('./lib/cycle-count');
+const createReplenishment = require('./lib/replenishment');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -3633,6 +3635,215 @@ app.get('/api/customs/:customsLotId/audit', withStaffTenant, (req, res) => {
     const customsLot = createCustomsLotManager(ctx.db);
     const audit = customsLot.getCustomsLotAudit(req.params.customsLotId);
     res.json(audit);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Cycle Count Management ────────────────────────────────────────────────────
+
+// Create cycle count batch
+app.post('/api/cycle-count/batch', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const result = cycleCount.createCycleCountBatch(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Record count for item
+app.post('/api/cycle-count/item/:countItemId/record', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const result = cycleCount.recordCount(
+      req.params.countItemId,
+      req.body.countedQty,
+      req.body.notes
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get batch progress
+app.get('/api/cycle-count/batch/:batchId/progress', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const progress = cycleCount.getCountBatchProgress(req.params.batchId);
+    res.json(progress);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Finalize batch
+app.post('/api/cycle-count/batch/:batchId/finalize', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const result = cycleCount.finalizeCycleCountBatch(
+      req.params.batchId,
+      req.body.approverName
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get variance investigation
+app.get('/api/cycle-count/variance/:varianceId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const variance = cycleCount.getVarianceInvestigation(req.params.varianceId);
+    res.json(variance);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Resolve variance
+app.post('/api/cycle-count/variance/:varianceId/resolve', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const result = cycleCount.resolveVariance(
+      req.params.varianceId,
+      req.body.resolution,
+      req.body.notes
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get pending variances
+app.get('/api/cycle-count/pending-variances', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const cycleCount = createCycleCount(ctx.db);
+    const variances = cycleCount.getPendingVariances(req.query.warehouseId);
+    res.json({ variances });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Replenishment Management ──────────────────────────────────────────────────
+
+// Get SKU velocity
+app.get('/api/replenishment/velocity/:skuId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const velocity = replenishment.calculateSkuVelocity(req.params.skuId);
+    res.json(velocity);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get replenishment suggestions
+app.get('/api/replenishment/suggest', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const suggestions = replenishment.suggestReplenishmentTasks({
+      warehouseId: req.query.warehouseId || 'wh-main',
+      minVelocity: parseFloat(req.query.minVelocity) || 0.5,
+      limitTasks: parseInt(req.query.limit) || 50
+    });
+    res.json(suggestions);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Create replenishment wave
+app.post('/api/replenishment/wave', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const result = replenishment.createReplenishmentWave(
+      req.body.taskIds,
+      req.body.options || {}
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Execute replenishment task
+app.post('/api/replenishment/task/:taskId/execute', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const result = replenishment.executeReplenishmentTask(
+      req.params.taskId,
+      req.body.movedQty,
+      req.body.notes
+    );
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get wave status
+app.get('/api/replenishment/wave/:waveId', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const status = replenishment.getReplenishmentWaveStatus(req.params.waveId);
+    res.json(status);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Auto-trigger replenishment
+app.post('/api/replenishment/auto-trigger', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const result = replenishment.autoTriggerReplenishment(req.body.warehouseId || 'wh-main');
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get pick face status
+app.get('/api/replenishment/pick-face-status', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const status = replenishment.getPickFaceStatus(req.query.warehouseId || 'wh-main');
+    res.json(status);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Get replenishment history
+app.get('/api/replenishment/history', withStaffTenant, (req, res) => {
+  try {
+    const { ctx } = req;
+    const replenishment = createReplenishment(ctx.db);
+    const history = replenishment.getReplenishmentHistory(
+      req.query.warehouseId || 'wh-main',
+      parseInt(req.query.days) || 30
+    );
+    res.json(history);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
