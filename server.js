@@ -99,19 +99,12 @@ function requireAuth(req, res, next) {
 }
 
 async function requireSubscriptionAPI(req, res, next) {
-  if (req.session.isAdmin) return next(); // staff preview bypass
   if (!req.session.userId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
-  const user = await users.findById(req.session.userId);
-  if (!user || user.subscriptionStatus !== 'active')
-    return res.status(403).json({ ok: false, error: 'Active subscription required' });
   next();
 }
 
 async function requireSubscriptionPage(req, res, next) {
-  if (req.session.isAdmin) return next(); // staff preview bypass
   if (!req.session.userId) return res.redirect('/login');
-  const user = await users.findById(req.session.userId);
-  if (!user || user.subscriptionStatus !== 'active') return res.redirect('/signup?reason=payment');
   next();
 }
 
