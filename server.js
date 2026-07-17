@@ -828,6 +828,12 @@ function buildAddressBookIndex(db) {
   for (const e of db.addressBook || []) {
     if (e.name) idx.set(_abNorm(e.name), e);
     if (e.code) idx.set(_abNorm(e.code), e);
+    // Chain + branch combos — orders often say "Watsons YEW TEE POINT"
+    // while the book stores chain="Watsons", name="YEW TEE POINT"
+    if (e.chain && e.name) {
+      idx.set(_abNorm(`${e.chain} ${e.name}`), e);
+      idx.set(_abNorm(`${e.name} ${e.chain}`), e);
+    }
   }
   return idx;
 }
@@ -4889,10 +4895,11 @@ app.delete('/api/address-book/:name', (req, res) => {
 app.get('/api/address-book/export', (req, res) => {
   const db = readDb();
   const rows = (db.addressBook || []).length
-    ? db.addressBook.map(e => ({ 'Store Code': e.code || '', 'Store Name': e.name || '',
-        'Address': e.address || '', 'Postal Code': e.zip || '', 'Phone': e.phone || '' }))
-    : [{ 'Store Code': 'NEX01', 'Store Name': 'NEX', 'Address': '23 Serangoon Central',
-        'Postal Code': '556083', 'Phone': '' }];
+    ? db.addressBook.map(e => ({ 'Store': e.chain || '', 'Branch Name': e.name || '',
+        'Branch Code': e.code || '', 'Address': e.address || '',
+        'Postal Code': e.zip || '', 'Phone': e.phone || '' }))
+    : [{ 'Store': 'Watsons', 'Branch Name': 'NEX', 'Branch Code': 'NEX01',
+        'Address': '23 Serangoon Central', 'Postal Code': '556083', 'Phone': '' }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Address Book');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -4916,13 +4923,22 @@ app.post('/api/address-book/import', upload.single('file'), (req, res) => {
         for (const key of Object.keys(row)) if (names.includes(norm(key))) return String(row[key] ?? '').trim();
         return '';
       };
-      const name = get('storename', 'name', 'store', 'customer', 'client');
+      // Branch-level name first (STORE_CODE_with_postal_code.xlsx layout:
+      // Store=chain, Branch Name=the actual location); plain layouts after.
+      const name = get('branchname', 'storename', 'name', 'customer', 'client') || get('store');
       if (!name) continue;
-      const zip = get('postalcode', 'postal', 'zip', 'zipcode');
+      const chainCol = get('store', 'chain', 'brand');
+      const chain = chainCol && _abNorm(chainCol) !== _abNorm(name) ? chainCol : '';
+      let zip = get('postalcode', 'postal', 'zip', 'zipcode');
+      // Excel stores numeric postals as numbers — a leading zero is lost
+      // (018945 → 18945). SG postals are exactly 6 digits: repair 5-digit
+      // numerics by restoring the zero.
+      if (/^\d{5}$/.test(zip)) zip = '0' + zip;
       if (zip && !/^\d{6}$/.test(zip)) { badZips.push(`${name}: "${zip}"`); continue; }
       entries.push({
-        code: get('storecode', 'code', 'id'),
+        code: get('branchcode', 'storecode', 'code', 'id'),
         name,
+        chain,
         address: get('address', 'addressline1', 'deliveryaddress', 'fulladdress'),
         zip,
         phone: get('phone', 'tel', 'contact'),

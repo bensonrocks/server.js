@@ -892,6 +892,15 @@ EVERY path that can leave a job unresolved: order-upload bridge, unified TMS
 import, single-entry upsert, and book file import — so a book update takes
 effect on existing jobs immediately (response includes `jobsFixed`).
 
+IMPORT PARSER — tuned for the real STORE_CODE_with_postal_code.xlsx layout
+(452 Watsons/Guardian-style rows): `Store` = CHAIN (saved as `chain`),
+`Branch Name` = the entry name, `Branch Code` = code, `POSTAL CODE` may be
+numeric (a 5-digit numeric postal gets its lost leading zero restored —
+018945 → 18945 → 018945). The lookup index also registers "chain + name"
+and "name + chain" combos so orders saying "Watsons WESTGATE" resolve, and
+branch codes like "WSS (189)" match as codes. Export round-trips the same
+Store/Branch Name/Branch Code column layout.
+
 UI: 📒 Address Book in the Transport sidebar sub-menu (`#addressBookModal`) —
 add/edit one entry, delete entries, ⬇ download the current list as XLSX
 (serves a template row when empty), ⬆ upload an edited list which REPLACES
