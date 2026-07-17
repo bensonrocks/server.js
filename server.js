@@ -4868,6 +4868,33 @@ app.post('/api/transport/plan/export', (req, res) => {
   res.send(buf);
 });
 
+// Batch status update — the office moves whole groups of jobs through the
+// delivery lifecycle (Staging → On the road → Delivered[/w Remarks]) until
+// a driver-side app takes over. Before the :id routes.
+app.post('/api/transport/bulk-status', (req, res) => {
+  const { ids, status, remarks } = req.body || {};
+  const allowed = ['confirmed', 'in-transit', 'delivered'];
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+  if (!allowed.includes(status)) return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
+
+  const db = readDb();
+  const now = new Date().toISOString();
+  let updated = 0;
+  for (const rec of db.transport || []) {
+    if (!ids.includes(rec.id) || rec.status === 'cancelled') continue;
+    rec.status = status;
+    if (status === 'delivered') {
+      if (!rec.deliveredAt) rec.deliveredAt = now;
+      if (String(remarks || '').trim()) rec.podRemarks = String(remarks).trim();
+    }
+    rec.updatedAt = now;
+    updated++;
+  }
+  _persistDb(db);
+  logAudit('transport_bulk_status', { jobs: updated, status, withRemarks: !!String(remarks || '').trim(), by: req.userId || '' });
+  res.json({ success: true, updated });
+});
+
 // Mark jobs DELIVERED — the office-side close-out for drivers who don't use
 // the driver portal. Accepts explicit ids, or {allConfirmed:true} to close
 // out every currently-confirmed job in one go (end-of-day sweep).

@@ -3572,16 +3572,17 @@
             <thead><tr>
               <th style="width:26px">#</th><th>Client</th><th>Address</th>
               <th style="width:52px">Postal</th><th style="width:80px">Phone</th>
-              <th style="width:34px">Ctns</th><th style="width:110px">Received by / Time</th>
+              <th style="width:34px">Ctns</th><th style="width:78px">Status</th><th style="width:110px">Received by / Time</th>
             </tr></thead>
             <tbody>
               ${list.map((j, i) => `<tr>
                 <td>${i + 1}</td>
-                <td><strong>${esc(j.clientName || j.id)}</strong></td>
+                <td><strong>${esc(j.clientName || j.id)}</strong><br/><span style="font-size:9px;color:#555;font-family:monospace">${esc(j.id)}</span></td>
                 <td>${esc(j.shipping?.addressLine1 || '')}</td>
                 <td>${esc(j.shipping?.zip || '')}</td>
                 <td>${esc(j.shipping?.phone || '')}</td>
                 <td style="text-align:center">${j.packages || 1}</td>
+                <td>${esc(tmsStatusLabel(j).label)}</td>
                 <td></td>
               </tr>`).join('')}
             </tbody>
@@ -3633,6 +3634,93 @@
       alert(`✓ ${data.delivered} job(s) marked Delivered.`);
     } catch (err) { alert('❌ ' + err.message); }
   });
+
+  // ── Batch status update — office moves groups of jobs through the
+  //    lifecycle (until the driver-side app exists) ──────────────────────────
+  function openBatchStatusModal() {
+    const live = transportRequests.filter(r => r.status !== 'cancelled');
+    if (!live.length) { alert('No jobs to update.'); return; }
+
+    const drivers = [...new Map(live.filter(r => r.assignedDriver)
+      .map(r => [r.assignedDriver, r.assignedDriverName || r.assignedDriver])).entries()];
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'batchStatusModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:92%;max-width:520px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+          <h2 style="margin:0">🔄 Batch Status Update</h2>
+          <button class="btn-close" id="bsCloseBtn">✕</button>
+        </div>
+        <p class="hint" style="font-size:12px;margin-bottom:1rem">Move a whole group of jobs at once — e.g. everything a driver loaded goes "On the road" in one tap. (Driver-side app can take this over later.)</p>
+        <div style="display:grid;gap:.7rem">
+          <div><label style="font-size:12px;font-weight:600">Driver</label>
+            <select id="bsDriver" style="width:100%;padding:.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+              <option value="">All drivers</option>
+              ${drivers.map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join('')}
+            </select></div>
+          <div><label style="font-size:12px;font-weight:600">Jobs currently in</label>
+            <select id="bsFrom" style="width:100%;padding:.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+              <option value="">Any status (not delivered)</option>
+              <option value="preplanned">Preplanned</option>
+              <option value="confirmed">Staging</option>
+              <option value="in-transit">On the road</option>
+            </select></div>
+          <div><label style="font-size:12px;font-weight:600">Move them to</label>
+            <select id="bsTo" style="width:100%;padding:.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+              <option value="confirmed">Staging (scanned, awaiting pickup)</option>
+              <option value="in-transit" selected>On the road (picked up)</option>
+              <option value="delivered">Delivered (clean POD)</option>
+              <option value="delivered-remarks">Delivered w/ Remarks (issue to follow up)</option>
+            </select></div>
+          <div id="bsRemarksWrap" class="hidden"><label style="font-size:12px;font-weight:600">Remarks (applied to every selected job)</label>
+            <input id="bsRemarks" placeholder="e.g. customer closed — redeliver tomorrow" style="width:100%;padding:.5rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" /></div>
+          <div id="bsCount" style="font-size:12px;font-weight:600;color:#1d4ed8"></div>
+        </div>
+        <div style="display:flex;gap:.6rem;margin-top:1rem">
+          <button class="btn-primary" id="bsApplyBtn" style="flex:1">Apply</button>
+          <button class="btn-secondary" id="bsCancelBtn" style="flex:1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const matching = () => live.filter(r =>
+      r.status !== 'delivered' &&
+      (!modal.querySelector('#bsDriver').value || r.assignedDriver === modal.querySelector('#bsDriver').value) &&
+      (!modal.querySelector('#bsFrom').value || r.status === modal.querySelector('#bsFrom').value ||
+        (modal.querySelector('#bsFrom').value === 'preplanned' && (r.status === 'pending' || r.status === 'preplanned'))));
+    const refresh = () => {
+      modal.querySelector('#bsCount').textContent = `${matching().length} job(s) will be updated`;
+      modal.querySelector('#bsRemarksWrap').classList.toggle('hidden', modal.querySelector('#bsTo').value !== 'delivered-remarks');
+    };
+    ['bsDriver', 'bsFrom', 'bsTo'].forEach(id => modal.querySelector('#' + id).addEventListener('change', refresh));
+    refresh();
+
+    modal.querySelector('#bsCloseBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#bsCancelBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#bsApplyBtn').addEventListener('click', async () => {
+      const jobs = matching();
+      if (!jobs.length) { alert('No jobs match this selection.'); return; }
+      const toRaw = modal.querySelector('#bsTo').value;
+      const status = toRaw === 'delivered-remarks' ? 'delivered' : toRaw;
+      const remarks = toRaw === 'delivered-remarks' ? modal.querySelector('#bsRemarks').value.trim() : '';
+      if (toRaw === 'delivered-remarks' && !remarks) { alert('Enter the remarks to record on these deliveries.'); return; }
+      if (!confirm(`Move ${jobs.length} job(s) to "${modal.querySelector('#bsTo').selectedOptions[0].textContent.trim()}"?`)) return;
+      try {
+        const resp = await fetch('/api/transport/bulk-status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: jobs.map(j => j.id), status, remarks }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Update failed');
+        modal.remove();
+        await renderTransportTab();
+        alert(`✓ ${data.updated} job(s) updated.`);
+      } catch (err) { alert('❌ ' + err.message); }
+    });
+  }
+  document.getElementById('transportBatchStatusBtn')?.addEventListener('click', openBatchStatusModal);
 
   // Individual mark-delivered — asks for POD remarks (empty = clean delivery,
   // anything typed = 'Delivered with Remarks', flagged red for follow-up)

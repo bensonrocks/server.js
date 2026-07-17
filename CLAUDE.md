@@ -887,6 +887,16 @@ unassigned #ef4444). `in-transit` jobs are excluded from re-planning. Stats
 bar: Jobs Today / Pending / Preplanned / Staging / On Road / Delivered /
 Done Yday.
 
+### Batch status updates + run-sheet statuses (until a driver app exists)
+
+`POST /api/transport/bulk-status {ids, status, remarks}` (before `:id`;
+allowed: confirmed/in-transit/delivered, remarks → podRemarks) powers the
+"🔄 Batch Status" button on the Transport bar: filter by driver and current
+status, pick the target state (incl. Delivered w/ Remarks with a mandatory
+remarks field), live count, one confirm — e.g. "everything LAK loaded goes
+On the road". Driver run sheets print a Status column (same
+`tmsStatusLabel` wording) and each stop's TR- id under the client name.
+
 ### Picking-list uploads feed Transport — GATED by a per-upload question
 
 The Confirm-Upload modal asks "🚚 Delivery arrangement needed for this
