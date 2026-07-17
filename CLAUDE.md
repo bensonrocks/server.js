@@ -912,7 +912,11 @@ resolver modal preselects the best. Confirming calls
 misspelling to the book as an alias row (`aliasOf`, inherits the target's
 zip/address/phone) and re-runs `applyAddressBookToTransport` — so the fix
 applies now AND every future upload with that spelling resolves
-automatically. No-match names show "add manually" instead of a dropdown.
+automatically. No-match names (and the "➕ None of these" dropdown choice) reveal inline
+KEY-IN fields in the resolver itself — code/address/postal(required 6
+digits)/phone, with the entry name fixed to the exact spelling the orders
+use — posted to the normal `/api/address-book` upsert, so the new store is
+added to the book, the jobs fix immediately, and future uploads resolve.
 
 UI: 📒 Address Book in the Transport sidebar sub-menu (`#addressBookModal`) —
 add/edit one entry, delete entries, ⬇ download the current list as XLSX

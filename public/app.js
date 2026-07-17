@@ -3586,9 +3586,16 @@
               ${it.suggestions.length ? `
                 <select class="resolve-pick" data-idx="${idx}" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
                   ${it.suggestions.map((sg, si) => `<option value="${esc(sg.name)}" ${si === 0 ? 'selected' : ''}>${esc(sg.name)}${sg.chain ? ` (${esc(sg.chain)})` : ''} — 📍 ${esc(sg.zip)} · ${sg.score}% match</option>`).join('')}
-                  <option value="">— skip, none of these —</option>
+                  <option value="__new__">➕ None of these — key in this store's details</option>
+                  <option value="">— skip for now —</option>
                 </select>` :
-                `<div class="hint" style="font-size:12px;color:#ef4444">No close match found — add this store to the Address Book manually.</div>`}
+                `<div class="hint" style="font-size:12px;color:#b45309;margin-bottom:.4rem">Not in the Address Book — key in the store details to add it:</div>`}
+              <div class="resolve-new-store ${it.suggestions.length ? 'hidden' : ''}" data-idx="${idx}" style="margin-top:.5rem;display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
+                <input class="rns-code" placeholder="Store code (optional)" style="padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                <input class="rns-zip" placeholder="Postal code * (6 digits)" maxlength="6" style="padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                <input class="rns-address" placeholder="Address" style="grid-column:1/-1;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                <input class="rns-phone" placeholder="Phone (optional)" style="grid-column:1/-1;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+              </div>
             </div>`).join('')}
         </div>
         <div style="display:flex;gap:.6rem">
@@ -3599,13 +3606,31 @@
     document.body.appendChild(modal);
     modal.querySelector('#resolveStoresCloseBtn').addEventListener('click', () => modal.remove());
     modal.querySelector('#resolveStoresCancelBtn').addEventListener('click', () => modal.remove());
+    // "None of these" reveals the key-in fields for that row
+    modal.querySelectorAll('.resolve-pick').forEach(sel => sel.addEventListener('change', () => {
+      modal.querySelector(`.resolve-new-store[data-idx="${sel.dataset.idx}"]`)
+        ?.classList.toggle('hidden', sel.value !== '__new__');
+    }));
     modal.querySelector('#resolveStoresConfirmBtn').addEventListener('click', async () => {
+      // Validate any keyed-in stores first — postal is mandatory there
+      const newForms = [...modal.querySelectorAll('.resolve-new-store:not(.hidden)')];
+      for (const f of newForms) {
+        const zip = f.querySelector('.rns-zip').value.trim();
+        if (!/^\d{6}$/.test(zip)) {
+          alert(`"${items[parseInt(f.dataset.idx)].clientName}": enter a valid 6-digit postal code (or switch that row back to skip).`);
+          f.querySelector('.rns-zip').focus();
+          return;
+        }
+      }
+
       const btn = modal.querySelector('#resolveStoresConfirmBtn');
-      btn.disabled = true; btn.textContent = 'Learning...';
-      let learned = 0, fixed = 0;
+      btn.disabled = true; btn.textContent = 'Saving...';
+      let learned = 0, added = 0, fixed = 0;
+
+      // Fuzzy confirmations → learn as aliases
       for (const sel of modal.querySelectorAll('.resolve-pick')) {
         const target = sel.value;
-        if (!target) continue;
+        if (!target || target === '__new__') continue;
         const it = items[parseInt(sel.dataset.idx)];
         try {
           const r = await fetch('/api/address-book/learn-alias', {
@@ -3616,9 +3641,33 @@
           if (r.ok) { learned++; fixed += d.jobsFixed || 0; }
         } catch {}
       }
+
+      // Keyed-in stores → brand-new Address Book entries (name = the exact
+      // spelling the orders use, so they resolve immediately and forever)
+      for (const f of newForms) {
+        const it = items[parseInt(f.dataset.idx)];
+        try {
+          const r = await fetch('/api/address-book', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: it.clientName,
+              code: f.querySelector('.rns-code').value.trim(),
+              address: f.querySelector('.rns-address').value.trim(),
+              zip: f.querySelector('.rns-zip').value.trim(),
+              phone: f.querySelector('.rns-phone').value.trim(),
+            }),
+          });
+          const d = await r.json();
+          if (r.ok) { added++; fixed += d.jobsFixed || 0; }
+        } catch {}
+      }
+
       modal.remove();
       await renderTransportTab();
-      alert(`✓ ${learned} store name(s) learned into the Address Book — ${fixed} job(s) now have postal codes.\nFuture uploads with these spellings resolve automatically.`);
+      const parts = [];
+      if (learned) parts.push(`${learned} spelling(s) learned`);
+      if (added) parts.push(`${added} new store(s) added`);
+      alert(`✓ ${parts.join(', ') || 'Nothing changed'} — ${fixed} job(s) now have postal codes.\nFuture uploads with these names resolve automatically.`);
     });
   }
 
