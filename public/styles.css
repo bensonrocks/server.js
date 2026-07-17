@@ -787,6 +787,10 @@ body.scan-open { overflow: hidden; }
 
 /* SKU cell — 3× enlarged for easy warehouse reading */
 .sku-code { font-size: 2.4rem; font-weight: 700; background: none; padding: 0; border-radius: 0; letter-spacing: .03em; }
+/* Description-under-SKU line — hidden by default (desktop shows the
+   Description COLUMN); the ≤768px breakpoint reveals it when that column
+   is display:none'd away */
+.sku-desc-sub { display: none; font-size: .82rem; font-weight: 500; color: #64748b; white-space: normal; word-break: break-word; margin-top: .1rem; line-height: 1.25; }
 /* Description / Ordered / Scanned at ≥80% of the SKU size so everything
    reads at arm's length (completed rows stay slim via row-compact) */
 .scan-items-table td.desc-cell { font-size: 1.95rem; color: var(--text); font-weight: 500; vertical-align: middle; }
@@ -1435,7 +1439,17 @@ body.log-open { overflow: hidden; }
 
   .phase-items  { height: 100dvh; }
 
-  .scan-order-header { padding: .6rem .9rem; gap: .6rem; }
+  /* On a narrow phone the single header row (brand + back + timer + carton
+     badge + new-carton) overflows and the flexible order-number title is the
+     first thing squeezed to zero width — the packer loses the ORDER NUMBER.
+     Let the header wrap instead: the title keeps a guaranteed minimum width
+     and the right-hand cluster flows onto its own line when space runs out. */
+  .scan-order-header { padding: .6rem .9rem; gap: .4rem .6rem; flex-wrap: wrap; }
+  .scan-order-title { min-width: 9rem; }
+  /* Never ellipsize the order number on a phone — the packer must see the
+     whole thing. Wrap it instead. */
+  .scan-order-no { white-space: normal; word-break: break-word; line-height: 1.15; }
+  .scan-header-right { flex: 1 1 auto; justify-content: flex-end; }
   .back-btn { padding: .42rem .85rem; font-size: .88rem; }
   .scan-order-no { font-size: 1rem; }
   .scan-progress { font-size: .8rem; padding: .22em .75em; }
@@ -1445,6 +1459,9 @@ body.log-open { overflow: hidden; }
 
   .scan-items-table th:nth-child(2),
   .scan-items-table td:nth-child(2) { display: none; }
+  /* The Description column is hidden above — show the per-row description
+     as a second line under the SKU instead (rendered by renderItemsTable) */
+  .sku-desc-sub { display: block; }
   .scan-items-table th { padding: .5rem .75rem; font-size: .78rem; }
   .scan-items-table td { padding: .7rem .75rem; font-size: .9rem; }
   .qty-col  { width: 60px; }

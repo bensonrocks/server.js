@@ -6355,13 +6355,18 @@
       ].filter(Boolean).join(' ');
       const pendMark = p > 0 ? ` <span class="pend-mark" title="${p} scan(s) waiting for connection">&#8987;</span>` : '';
       const icon = done ? '&#10003;' : over ? '&#10007;' : s > 0 ? '&#8230;' : '';
-      const desc = (item.description && item.description !== item.sku) ? item.description : '—';
+      const hasDesc = !!(item.description && item.description !== item.sku);
+      const desc = hasDesc ? item.description : '—';
+      // Phones hide the Description COLUMN (no room) — when a description
+      // exists it renders as a second line under the SKU instead
+      // (.sku-desc-sub, shown only at the mobile breakpoint).
+      const descSub = hasDesc ? `<div class="sku-desc-sub">${esc(desc)}</div>` : '';
 
       // Completed rows: slim single line, no lot row, no input
       if (done) {
         return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
-          <td><code class="sku-code sku-code-sm">${esc(item.sku)}</code></td>
+          <td><code class="sku-code sku-code-sm">${esc(item.sku)}</code>${descSub}</td>
           <td class="desc-cell desc-cell-sm">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
           <td class="qty-col done-frac">${s}/${item.qty}${pendMark}</td>
@@ -6401,7 +6406,7 @@
         : (noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; count buttons, or wait for its turn</div>' : '');
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
-          <td><code class="sku-code">${esc(item.sku)}</code>${lotBadges}${inlineBc}</td>
+          <td><code class="sku-code">${esc(item.sku)}</code>${descSub}${lotBadges}${inlineBc}</td>
           <td class="desc-cell">${esc(desc)}</td>
           <td class="qty-col">${item.qty}</td>
           ${scannedCell}
