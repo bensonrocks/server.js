@@ -2042,11 +2042,7 @@
 
     document.querySelectorAll('.transport-view-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const recordId = e.target.closest('button').dataset.id;
-        const record = transportRequests.find(r => r.id === recordId);
-        if (record) {
-          alert(`${record.clientName}\n${record.shipping?.addressLine1}\n📦 Packages: ${record.packages || 1}\n📍 Postal: ${record.shipping?.zip || 'N/A'}`);
-        }
+        openDeliveryDetail(e.target.closest('button').dataset.id);
       });
     });
   }
@@ -2126,6 +2122,7 @@
       const canDeliver = req.status !== 'delivered' && req.status !== 'cancelled';
       const isAdmin = currentUser?.role === 'admin';
       marker.bindPopup(detailsHtml
+        + `<button class="popup-details-btn" data-jobid="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#1d4ed8;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">📝 Details / Fix Postal</button>`
         + (canDeliver
           ? `<button class="popup-deliver-btn" data-id="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#16a34a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">✓ Mark Delivered</button>`
           : '')
@@ -3175,8 +3172,10 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0"><strong>Route ${route.num}</strong></td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">${stopIdx + 1}</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
-            <strong>${esc(stop.delivery.clientName || 'N/A')}</strong><br/>
-            <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
+            <span class="route-stop-client" data-jobid="${esc(stop.delivery.id)}" style="cursor:pointer" title="Click for delivery details / fix postal">
+              <strong style="color:#1d4ed8">${esc(stop.delivery.clientName || 'N/A')}</strong><br/>
+              <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
+            </span>
           </td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${stop.distFromPrev.toFixed(1)} km</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right"><strong>${stop.cumulDistance.toFixed(1)} km</strong></td>
@@ -3740,6 +3739,91 @@
       alert(`✓ ${parts.join(', ') || 'Nothing changed'} — ${fixed} job(s) now have postal codes.\nFuture uploads with these names resolve automatically.`);
     });
   }
+
+  // ── Delivery detail — click a stop/job to see the full summary and fix
+  //    its postal code (which also updates the Address Book master list) ─────
+  async function openDeliveryDetail(jobId) {
+    const job = transportRequests.find(r => r.id === jobId) || _transportCacheAll.find(r => r.id === jobId);
+    if (!job) { alert('Job not found'); return; }
+
+    // Which Address Book entry did this job resolve through?
+    let book = [];
+    try { book = await (await fetch('/api/address-book')).json(); } catch {}
+    const nrm = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    const q = nrm(job.clientName), qr = nrm(job.referenceId);
+    const entry = book.find(e =>
+      nrm(e.name) === q || nrm(e.code) === q || nrm(e.name) === qr || nrm(e.code) === qr ||
+      (e.chain && (nrm(`${e.chain} ${e.name}`) === q || nrm(`${e.name} ${e.chain}`) === q)));
+
+    const drv = (window.drivers || []).find(d => d.id === job.assignedDriver);
+    const row = (label, val) => `<div style="display:flex;gap:.6rem;font-size:12px;padding:.28rem 0;border-bottom:1px solid #f1f5f9">
+      <span style="width:110px;color:#64748b;flex-shrink:0">${label}</span><span style="font-weight:600">${val || '—'}</span></div>`;
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'deliveryDetailModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:92%;max-width:520px;max-height:85vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+          <h2 style="margin:0;font-size:1.05rem">📦 ${esc(job.clientName || job.id)}</h2>
+          <button class="btn-close" id="ddCloseBtn">✕</button>
+        </div>
+        ${row('Job ID', `<code>${esc(job.id)}</code>`)}
+        ${row('Order ref', esc(job.referenceId || ''))}
+        ${row('Matched store', entry ? `${esc([entry.chain, entry.name].filter(Boolean).join(' '))}${entry.aliasOf ? ` <span style="color:#64748b;font-weight:400">(alias of ${esc(entry.aliasOf)})</span>` : ''}${entry.code ? ` <code style="font-size:10px">${esc(entry.code)}</code>` : ''}` : '<span style="color:#ef4444">not in Address Book</span>')}
+        ${row('Address', esc(job.shipping?.addressLine1 || entry?.address || ''))}
+        ${row('Phone', esc(job.shipping?.phone || ''))}
+        ${row('Cartons', String(job.packages || 1))}
+        ${row('Status', `<span class="status-badge">${esc(job.status || 'pending')}</span>`)}
+        ${row('Driver', esc(job.assignedDriverName || drv?.name || ''))}
+        ${row('Route / Stop', job.routeNum ? `Route ${job.routeNum} · Stop #${job.stopSeq || '—'}` : '')}
+        ${row('Notes', esc(job.notes || ''))}
+
+        <div style="margin-top:.9rem;padding:.7rem;background:#f0f9ff;border:1px solid #bfdbfe;border-radius:6px">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">📍 Postal code</label>
+          <div style="display:flex;gap:.5rem">
+            <input id="ddZipInput" maxlength="6" value="${esc(job.shipping?.zip || '')}" placeholder="6 digits"
+              style="flex:1;padding:.5rem;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;font-family:monospace" />
+            <button class="btn-primary btn-sm" id="ddZipSaveBtn">💾 Update</button>
+          </div>
+          <p class="hint" style="font-size:11px;margin:.4rem 0 0 0">Updating fixes this delivery AND the Address Book master entry${entry ? ` ("${esc(entry.name)}")` : ` (a new entry "${esc(job.clientName)}" is created)`} — future uploads use the corrected postal.</p>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#ddCloseBtn').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+    modal.querySelector('#ddZipSaveBtn').addEventListener('click', async () => {
+      const zip = modal.querySelector('#ddZipInput').value.trim();
+      if (!/^\d{6}$/.test(zip)) { alert('Postal code must be exactly 6 digits.'); return; }
+      const btn = modal.querySelector('#ddZipSaveBtn');
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        // 1. Master list — merge-upsert keeps the entry's other fields
+        const r1 = await fetch('/api/address-book', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: entry?.name || job.clientName, zip }),
+        });
+        if (!r1.ok) throw new Error((await r1.json()).error || 'Address Book update failed');
+        // 2. This job — direct update (the book sweep never overwrites)
+        const r2 = await fetch(`/api/transport/${encodeURIComponent(job.id)}/update`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shipping: { zip } }),
+        });
+        if (!r2.ok) throw new Error((await r2.json()).error || 'Job update failed');
+      } catch (err) { alert('❌ ' + err.message); btn.disabled = false; btn.textContent = '💾 Update'; return; }
+      modal.remove();
+      await renderTransportTab();
+      if (!document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
+      alert(`✓ Postal updated to ${zip} — delivery fixed and Address Book master list updated.`);
+    });
+  }
+
+  // Clickable stops in the planner table + details button in map popups
+  document.addEventListener('click', e => {
+    const el = e.target.closest('.route-stop-client, .popup-details-btn');
+    if (el?.dataset.jobid) openDeliveryDetail(el.dataset.jobid);
+  });
 
   // ── Address Book — fixed-location cross-reference (store → address) ────────
   async function renderAddressBook() {

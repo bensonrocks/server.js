@@ -932,6 +932,18 @@ digits)/phone, with the entry name fixed to the exact spelling the orders
 use — posted to the normal `/api/address-book` upsert, so the new store is
 added to the book, the jobs fix immediately, and future uploads resolve.
 
+DELIVERY DETAIL + POSTAL CORRECTION — clicking a stop's client name in the
+route planner (`.route-stop-client`), the "📝 Details / Fix Postal" button
+in a map popup, or the 👁 view button in the fallback table opens
+`openDeliveryDetail(jobId)`: job id, order ref, the MATCHED Address Book
+entry (reverse-looked-up client-side, shows alias parentage), address,
+phone, cartons, status, driver, route/stop, notes — plus an editable
+postal field. Saving updates BOTH the job (`/api/transport/:id/update`,
+because the book sweep never overwrites) AND the Address Book master
+entry (merge-upsert: the `/api/address-book` upsert now MERGES per-field
+with the existing entry so a postal-only update keeps code/chain/address).
+Re-plans automatically if the planner is open.
+
 UI: 📒 Address Book in the Transport sidebar sub-menu (`#addressBookModal`) —
 add/edit one entry, delete entries, ⬇ download the current list as XLSX
 (serves a template row when empty), ⬆ upload an edited list which REPLACES

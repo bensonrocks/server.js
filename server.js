@@ -4632,6 +4632,7 @@ app.get('/api/transport', (req, res) => {
   const db = readDb();
   const transportRequests = (db.transport || []).map(req => ({
     id: req.id,
+    referenceId: req.referenceId || req.clientId || '',
     clientName: req.clientName,
     status: req.status || 'pending',
     createdAt: req.createdAt,
@@ -4904,10 +4905,17 @@ app.post('/api/address-book', (req, res) => {
   }
   const db = readDb();
   if (!db.addressBook) db.addressBook = [];
-  const entry = { code: String(code).trim(), name: String(name).trim(),
-                  address: String(address).trim(), zip: String(zip).trim(), phone: String(phone).trim() };
   const i = db.addressBook.findIndex(e =>
-    (entry.code && _abNorm(e.code) === _abNorm(entry.code)) || _abNorm(e.name) === _abNorm(entry.name));
+    (String(code).trim() && _abNorm(e.code) === _abNorm(code)) || _abNorm(e.name) === _abNorm(name));
+  // MERGE with any existing entry — a postal-only update (e.g. from the
+  // delivery-detail editor) must not wipe the address/code/chain fields.
+  const prev = i >= 0 ? db.addressBook[i] : {};
+  const pick = (v, old) => String(v ?? '').trim() || old || '';
+  const entry = {
+    ...prev,
+    code: pick(code, prev.code), name: pick(name, prev.name),
+    address: pick(address, prev.address), zip: pick(zip, prev.zip), phone: pick(phone, prev.phone),
+  };
   if (i >= 0) db.addressBook[i] = entry; else db.addressBook.push(entry);
   const jobsFixed = applyAddressBookToTransport(db);
   _persistDb(db);
