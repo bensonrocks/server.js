@@ -4809,6 +4809,7 @@ app.post('/api/sync/stop', (req, res) => {
 app.get('/tnc',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'tnc.html')));
 app.get('/privacypolicy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacypolicy.html')));
 app.get('/sync-dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'sync-dashboard.html')));
+app.get('/locations-master', (req, res) => res.sendFile(path.join(__dirname, 'public', 'locations-master.html')));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
