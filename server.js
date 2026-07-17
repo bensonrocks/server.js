@@ -3675,16 +3675,18 @@ app.get('/api/batches', (_req, res) => {
 
 app.get('/api/stats', (_req, res) => {
   const db  = readDb();
-  const now = new Date();
-  const todayStr     = now.toISOString().split('T')[0];
-  const yesterdayStr = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+  // Calendar days are SGT (Asia/Singapore) — naive UTC slicing put anything
+  // before 08:00 SGT on the previous day, so morning uploads/completions
+  // vanished from "today" counts.
+  const todayStr     = sgDateStr();
+  const yesterdayStr = sgDateStr(new Date(Date.now() - 86400000));
 
-  let todayPending = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
-  let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0;
+  let todayPending = 0, todayDone = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
+  let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0, totalDone = 0;
   const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
 
   for (const batch of db.batches) {
-    const batchDate   = batch.uploaded_at.split('T')[0];
+    const batchDate   = sgDateStr(new Date(batch.uploaded_at));
     const states      = batch.orderStates || {};
     const batchOrders = batch.orders      || [];
     const cname       = (batch.client_name || 'General').trim();
@@ -3709,7 +3711,10 @@ app.get('/api/stats', (_req, res) => {
 
     for (const state of Object.values(states)) {
       if (state.status === 'done') {
-        const doneDate = (state.endTime || state.updated_at || '').split('T')[0];
+        totalDone++; // all-time processed (live 12-month window)
+        const doneAt   = state.endTime || state.updated_at || '';
+        const doneDate = doneAt ? sgDateStr(new Date(doneAt)) : '';
+        if (doneDate === todayStr)     todayDone++;
         if (doneDate === yesterdayStr) yesterdayDone++;
         if (state.startTime && state.endTime) {
           const ms = new Date(state.endTime) - new Date(state.startTime);
@@ -3725,7 +3730,8 @@ app.get('/api/stats', (_req, res) => {
     .sort((a, b) => (b[1].todayUploaded - a[1].todayUploaded) || a[0].localeCompare(b[0]))
     .map(([name, v]) => ({ name, ...v }));
 
-  res.json({ todayPending, yesterdayDone, totalOrders, totalLines, pendingBacklog,
+  res.json({ todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
+    pendingBacklog, totalDone,
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats });
 });
 
@@ -3754,10 +3760,12 @@ app.get('/api/orders', (req, res) => {
     }
   }
   if (range && range !== 'all') {
-    const dayOf    = v => v ? new Date(v).toISOString().slice(0, 10) : '';
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const yestStr  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    const weekStr  = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+    // SGT calendar days — see /api/stats note; UTC slicing shifted anything
+    // before 08:00 SGT onto the previous day.
+    const dayOf    = v => v ? sgDateStr(new Date(v)) : '';
+    const todayStr = sgDateStr();
+    const yestStr  = sgDateStr(new Date(Date.now() - 86400000));
+    const weekStr  = sgDateStr(new Date(Date.now() - 6 * 86400000));
     const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
     orders = orders.filter(o => {
       // Unfinished work is NEVER hidden by the date window: the Active list
@@ -4938,7 +4946,7 @@ app.post('/api/transport/plan/export', (req, res) => {
 // (The Transport tab itself deliberately shows only today's workload.)
 // Before the :id routes.
 function deliveryHistoryRows(db, from, to) {
-  const day = at => String(at || '').slice(0, 10);
+  const day = at => at ? sgDateStr(new Date(at)) : ''; // SGT calendar day
   return (db.transport || [])
     .filter(r => r.status === 'delivered' && day(r.deliveredAt) >= from && day(r.deliveredAt) <= to)
     .sort((a, b) => String(b.deliveredAt).localeCompare(String(a.deliveredAt)))
@@ -4956,14 +4964,14 @@ function deliveryHistoryRows(db, from, to) {
 }
 
 app.get('/api/transport/history', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = sgDateStr();
   const from = (req.query.from || '').slice(0, 10) || today;
   const to   = (req.query.to   || '').slice(0, 10) || today;
   res.json(deliveryHistoryRows(readDb(), from, to));
 });
 
 app.get('/api/transport/history/export', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = sgDateStr();
   const from = (req.query.from || '').slice(0, 10) || today;
   const to   = (req.query.to   || '').slice(0, 10) || today;
   const rows = deliveryHistoryRows(readDb(), from, to);
@@ -6218,14 +6226,14 @@ app.get('/api/master/report/:kind', (req, res) => {
   try {
     const db  = readDb();
 
-    const today = new Date().toISOString().slice(0, 10);
-    const from  = (req.query.from || '').slice(0, 10) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const today = sgDateStr();
+    const from  = (req.query.from || '').slice(0, 10) || sgDateStr(new Date(Date.now() - 30 * 86400000));
     const to    = (req.query.to   || '').slice(0, 10) || today;
     // Transparently pulls in archived months when the range reaches past
     // what's still live in db.auditLog — reports can filter back at least
     // 6 months regardless of how long ago the data actually happened.
     const log   = readAuditLogForRange(db, from, to);
-    const day   = at => String(at || '').slice(0, 10);
+    const day   = at => at ? sgDateStr(new Date(at)) : ''; // SGT calendar day
     const inRange = ev => day(ev.at) >= from && day(ev.at) <= to;
     const mins  = ev => (ev.startTime && ev.endTime) ? Math.round((new Date(ev.endTime) - new Date(ev.startTime)) / 6000) / 10 : null;
     const avg   = a => a.length ? Math.round(a.reduce((s, v) => s + v, 0) / a.length * 10) / 10 : '';

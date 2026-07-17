@@ -121,6 +121,33 @@ scannable: shown as a `GI: <value>` pill on the Orders-list row (next to the
 included in the Completed-tab free-text search (`ordersView === 'completed'`
 filter) alongside order_number/waybill_number/pick_ticket/po_number.
 
+## Day-bucketing is SGT everywhere; Orders tab never hides unfinished work
+
+Two scoping rules that keep the sidebar badge, the Orders stat tiles, and
+the Active tab IN TUNE (a real screenshot once showed 41+4 active in the
+tiles but "Active 16" below them):
+
+- **SGT calendar days, never UTC.** `sgDateStr()` (server) /
+  `toLocaleDateString('en-CA', {timeZone:'Asia/Singapore'})` (client) is
+  the ONLY way to turn a timestamp into a day. Naive
+  `toISOString().slice(0,10)` puts anything before 08:00 SGT on the
+  previous day — morning uploads/completions vanished from "today".
+  Applied to: `/api/stats`, `/api/orders` range filter, `renderOrdersList`
+  date chips, `deliveryHistoryRows` + history route defaults, and the
+  audit-log report day buckets. (Filenames etc. don't matter.)
+- **PACKER RULE — the Active view always shows current day + ALL
+  pending/in-progress backlog from past days.** Both the server
+  (`/api/orders`, active orders bypass the range filter) and the client
+  (`renderOrdersList`, active orders bypass the date chips) enforce it;
+  the chips effectively slice only the Completed view (by completion
+  date). Sidebar badge = `pendingBacklog` from `/api/stats` = the same
+  set, so all three always agree.
+- **Upload page = management view**: historical throughput ("Processed
+  Til Date" = `totalDone`, all done orders in the live 12-month window)
+  PLUS today's operational tiles (`todayPending`, `todayDone` "Processed
+  Today", `yesterdayDone`). Orders tab = packer view (today + backlog
+  only). The two are deliberately different scopes.
+
 ## Duplicate-line upload safeguard (server.js `findDuplicateLineWarnings`)
 
 Two lines in the SAME order sharing SKU + batch_number + expiry_date is

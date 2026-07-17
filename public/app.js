@@ -680,8 +680,16 @@
           <div class="dstat-lbl">Pending Today</div>
         </div>
         <div class="dstat done">
+          <div class="dstat-val">${s.todayDone ?? 0}</div>
+          <div class="dstat-lbl">Processed Today</div>
+        </div>
+        <div class="dstat done">
           <div class="dstat-val">${s.yesterdayDone}</div>
           <div class="dstat-lbl">Done Yesterday</div>
+        </div>
+        <div class="dstat">
+          <div class="dstat-val">${s.totalDone ?? 0}</div>
+          <div class="dstat-lbl">Processed Til Date</div>
         </div>
         <div class="dstat">
           <div class="dstat-val">${s.totalOrders}</div>
@@ -1561,14 +1569,21 @@
     if (activeClientFilter  !== 'all') orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
 
-    // Date filter — default TODAY. Active orders filter on upload date,
-    // completed orders on completion date.
-    const dayOf = v => v ? new Date(v).toISOString().slice(0, 10) : '';
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const yestStr  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    const weekStr  = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+    // Date filter — default TODAY, sliced in SGT calendar days (naive UTC
+    // slicing put pre-08:00 uploads/completions on the previous day).
+    //
+    // PACKER RULE: unfinished work is NEVER hidden by the date chips — the
+    // Active view always shows today's orders PLUS the pending/in-progress
+    // backlog carried over from earlier days, exactly like the server's
+    // /api/orders rule and the sidebar badge. The chips only slice the
+    // COMPLETED view (by completion date).
+    const dayOf = v => v ? new Date(v).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }) : '';
+    const todayStr = dayOf(new Date());
+    const yestStr  = dayOf(new Date(Date.now() - 86400000));
+    const weekStr  = dayOf(new Date(Date.now() - 6 * 86400000));
     const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
     const inDateFilter = o => {
+      if (o.scan_status === 'pending' || o.scan_status === 'processing') return true;
       const d = orderDay(o);
       if (!d) return true; // never hide records with no usable date
       switch (ordersDateFilter) {
