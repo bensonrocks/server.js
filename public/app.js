@@ -2113,7 +2113,7 @@
           : `<span style="color:#ef4444;font-weight:600">⚠ No driver assigned</span><br/>`}
         📦 ${req.packages || 1} carton(s) &nbsp;|&nbsp; 📍 ${esc(req.shipping?.zip || '—')}<br/>
         ${esc(req.shipping?.addressLine1 || '')}<br/>
-        <span class="status-badge" style="display:inline-block;margin-top:0.3rem">${esc(req.status || 'pending')}</span>
+        ${(() => { const st = tmsStatusLabel(req.status); return `<span style="display:inline-block;margin-top:0.3rem;padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:11px;font-weight:700">${st.label}</span>`; })()}
       </div>`;
 
       marker.bindTooltip(detailsHtml, { direction: 'top', offset: [0, -12], sticky: false, opacity: 1, className: 'tjob-tooltip' });
@@ -2886,6 +2886,15 @@
     updateRouteStats();
   }
 
+  // Delivery status wording: a job is "Preplanned" until its order finishes
+  // scanning, then "Completed" (internally 'confirmed'), then "Delivered".
+  function tmsStatusLabel(s) {
+    if (s === 'confirmed') return { label: 'Completed', color: '#16a34a' };
+    if (s === 'delivered') return { label: 'Delivered', color: '#22c55e' };
+    if (s === 'cancelled') return { label: 'Cancelled', color: '#94a3b8' };
+    return { label: 'Preplanned', color: '#0ea5e9' };
+  }
+
   // Route START LOCATION — the warehouse where drivers pick up cargo.
   // Server-stored (shared); default is 40 Penjuru Lane #04-01 S609216.
   let transportDepot = { name: 'IDEALONE Warehouse', address: '40 Penjuru Lane #04-01', zip: '609216' };
@@ -3173,8 +3182,9 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">${stopIdx + 1}</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
             <span class="route-stop-client" data-jobid="${esc(stop.delivery.id)}" style="cursor:pointer" title="Click for delivery details / fix postal">
-              <strong style="color:#1d4ed8">${esc(stop.delivery.clientName || 'N/A')}</strong><br/>
-              ${stop.delivery.referenceId ? `<span style="font-size:10px;font-family:monospace;color:#475569">PO: ${esc(stop.delivery.referenceId)}</span><br/>` : ''}
+              <strong style="color:#1d4ed8">${esc(stop.delivery.clientName || 'N/A')}</strong>
+              ${(() => { const st = tmsStatusLabel(stop.delivery.status); return `<span style="display:inline-block;margin-left:.35rem;padding:.05rem .45rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:10px;font-weight:700">${st.label}</span>`; })()}<br/>
+              <span style="font-size:10px;font-family:monospace;color:#94a3b8">${esc(stop.delivery.id)}</span>${stop.delivery.referenceId ? `<span style="font-size:10px;font-family:monospace;color:#475569"> · PO: ${esc(stop.delivery.referenceId)}</span>` : ''}<br/>
               <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
             </span>
           </td>
@@ -3830,7 +3840,7 @@
         ${row('Address', esc(job.shipping?.addressLine1 || entry?.address || ''))}
         ${row('Phone', esc(job.shipping?.phone || ''))}
         ${row('Cartons', String(job.packages || 1))}
-        ${row('Status', `<span class="status-badge">${esc(job.status || 'pending')}</span>`)}
+        ${row('Status', (() => { const st = tmsStatusLabel(job.status); return `<span style="padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-weight:700">${st.label}</span>`; })())}
         ${row('Driver', esc(job.assignedDriverName || drv?.name || ''))}
         ${row('Route / Stop', job.routeNum ? `Route ${job.routeNum} · Stop #${job.stopSeq || '—'}` : '')}
         ${row('Notes', esc(job.notes || ''))}
