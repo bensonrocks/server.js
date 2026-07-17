@@ -400,6 +400,19 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/admin/create-user', requireAdmin, async (req, res) => {
+  const { name, email, password, status } = req.body;
+  if (!name || !email || !password)
+    return res.status(400).json({ ok: false, error: 'name, email and password required' });
+  if (await users.findByEmail(email))
+    return res.status(409).json({ ok: false, error: 'Email already registered' });
+  const allowed = ['active', 'inactive', 'pending', 'cancelled'];
+  const subscriptionStatus = allowed.includes(status) ? status : 'active';
+  const passwordHash = await bcrypt.hash(password, 12);
+  const user = await users.create({ name, email, passwordHash, subscriptionStatus });
+  res.json({ ok: true, user: safeUser(user) });
+});
+
 // ── Trading API (subscriber-only) ──────────────────────────────────────
 app.get('/api/analysis', requireSubscriptionAPI, async (req, res) => {
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
