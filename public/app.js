@@ -1944,6 +1944,7 @@
   // ── Transport Tab (TMS Importer) ──────────────────────────────────────────────
   // Import delivery schedules from BETIME and Outright, manage transport requests.
   let transportRequests = [];
+  let transportDateFilter = 'today';   // 'today' | 'yesterday' | 'week' | 'month' | 'all'
 
   let transportMainMap = null;
   let transportMarkers = [];
@@ -1957,17 +1958,47 @@
       if (resp.ok) allTransport = await resp.json();
     } catch { /* offline — show nothing */ }
 
-    // The tab shows TODAY'S WORKLOAD, not history: jobs created today (any
-    // status) plus the undelivered balance carried over from earlier days.
-    // Anything delivered before today only appears in Reports.
-    const sameDay = (at, ref) => at && new Date(at).toDateString() === ref.toDateString();
-    const todayD = new Date();
-    const yesterdayD = new Date(Date.now() - 86400000);
-    const doneYesterday = allTransport.filter(r => r.status === 'delivered' && sameDay(r.deliveredAt, yesterdayD)).length;
+    // Default scope: TODAY'S WORKLOAD — jobs created today (any status) plus
+    // the undelivered balance carried over from earlier days. The date chips
+    // let the user widen the window; the undelivered balance is NEVER hidden
+    // regardless of the chip (same packer rule as the Orders tab), so the
+    // chips effectively slice only the settled (delivered/cancelled) jobs.
+    // Days are SGT calendar days, never UTC.
+    const dayOf = at => at ? new Date(at).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }) : '';
+    const todayStr = dayOf(new Date());
+    const yestStr  = dayOf(new Date(Date.now() - 86400000));
+    const weekStr  = dayOf(new Date(Date.now() - 6 * 86400000));
+    const monthStr = todayStr.slice(0, 8) + '01';
+    const doneYesterday = allTransport.filter(r => r.status === 'delivered' && dayOf(r.deliveredAt) === yestStr).length;
+    const inRange = d => {
+      if (!d) return false;
+      switch (transportDateFilter) {
+        case 'today':     return d === todayStr;
+        case 'yesterday': return d === yestStr;
+        case 'week':      return d >= weekStr && d <= todayStr;
+        case 'month':     return d >= monthStr && d <= todayStr;
+        default:          return true; // 'all'
+      }
+    };
     transportRequests = allTransport.filter(r =>
-      (r.status !== 'delivered' && r.status !== 'cancelled') || // balance (any age)
-      sameDay(r.createdAt, todayD) ||                            // new today
-      sameDay(r.deliveredAt, todayD));                           // closed out today
+      (r.status !== 'delivered' && r.status !== 'cancelled') || // balance (any age, always visible)
+      inRange(dayOf(r.createdAt)) ||                            // created in the selected window
+      inRange(dayOf(r.deliveredAt)));                           // closed out in the selected window
+
+    // Date-filter chips — mirror the Orders tab pattern
+    const dateRow = document.getElementById('transportDateRow');
+    if (dateRow) {
+      dateRow.innerHTML = `
+        <span class="odr-label">SHOW:</span>
+        ${[['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Last 7 Days'], ['month', 'This Month'], ['all', 'All']]
+          .map(([k, lbl]) => `<button class="filter-chip ${transportDateFilter === k ? 'active' : ''}" data-tdate="${k}">${lbl}</button>`).join('')}`;
+      dateRow.querySelectorAll('.filter-chip[data-tdate]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          transportDateFilter = btn.dataset.tdate;
+          renderTransportTab();
+        });
+      });
+    }
 
     // Zero jobs is NOT a special case — the dashboard always renders with 0s
     // and the map always shows (empty Singapore view), so the page never
@@ -2006,8 +2037,9 @@
       unresolvedBanner.remove();
     }
 
+    const jobsLbl = { today: 'Jobs Today', yesterday: 'Jobs Yday', week: 'Jobs 7 Days', month: 'Jobs Month', all: 'Jobs All' }[transportDateFilter] || 'Jobs';
     document.getElementById('transportStatsBar').innerHTML = `
-      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs Today</div></div>
+      <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">${jobsLbl}</div></div>
       <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
       <div class="stat-box processing"><div class="val">${statusCounts.preplanned}</div><div class="lbl">Preplanned</div></div>
       <div class="stat-box"><div class="val">${statusCounts.staging}</div><div class="lbl">Staging</div></div>

@@ -1057,16 +1057,23 @@ the whole book (typed confirm; rows with non-6-digit postals are skipped and
 reported as warnings). All endpoints require login; changes audit-logged
 (`address_book_upsert`/`_delete`/`_import`).
 
-### Transport tab scope: TODAY'S workload only
+### Transport tab scope: today's workload + balance, user-adjustable window
 
-`renderTransportTab()` filters the fetched list before anything renders: the
-map/table/planner see only (a) jobs not yet delivered/cancelled — the carried-
-over balance, any age — plus (b) jobs created or delivered TODAY. Anything
-delivered before today disappears from the tab (history lives in Reports).
-The stats bar shows Jobs Today / Pending / Preplanned / Confirmed / Delivered
-(today) / **Done Yday** (delivered yesterday — the one piece of history kept
-visible). Route planning additionally excludes delivered/cancelled jobs so a
-closed job can never re-enter a route.
+`renderTransportTab()` filters the fetched list before anything renders,
+same PACKER RULE as the Orders tab: jobs not yet delivered/cancelled — the
+carried-over balance, ANY age — are ALWAYS visible, regardless of the date
+chips. The chips (`#transportDateRow`, `transportDateFilter`: Today
+default / Yesterday / Last 7 Days / This Month / All — mirror the Orders
+`.filter-chip` pattern) effectively slice only the settled jobs, matched by
+`createdAt` OR `deliveredAt` falling in the SGT window (`en-CA` +
+`Asia/Singapore`, never `toDateString`/`toISOString`). Anything delivered
+before the selected window stays hidden (full history lives in Delivery
+History / Reports). The stats bar's first tile relabels with the window
+(Jobs Today / Jobs Yday / Jobs 7 Days / Jobs Month / Jobs All); the rest
+count within the filtered set, plus the fixed **Done Yday** tile. The map,
+fallback table, and planner all read the same filtered `transportRequests`;
+route planning additionally excludes delivered/cancelled jobs so a closed
+job can never re-enter a route.
 
 ### ALL business records live on the SERVER — localStorage is device-local only
 
