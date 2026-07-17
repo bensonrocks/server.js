@@ -5684,6 +5684,7 @@ app.get('/api/profile', requireAuth, (req, res) => {
     printerName: user.printerName || '',
     labelSize:   user.labelSize   || '100x160',
     tablePrefs:  user.tablePrefs  || null,
+    features:    user.features    || null,
   });
 });
 
@@ -6955,7 +6956,7 @@ app.post('/api/label/doc', requireAuth, express.json(), async (req, res) => {
 // ── Master: User management ──────────────────────────────────────────────────
 app.get('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
-  res.json(readUsers().map(({ id, name, role }) => ({ id, name, role: role || 'admin' })));
+  res.json(readUsers().map(({ id, name, role, features }) => ({ id, name, role: role || 'admin', features: features || null })));
 });
 
 app.post('/api/master/users', (req, res) => {
@@ -7004,6 +7005,26 @@ app.delete('/api/master/users/:id', (req, res) => {
   if (users.length <= 1) return res.status(400).json({ error: 'Cannot delete the only user' });
   writeUsers(users.filter(u => u.id !== req.params.id));
   res.json({ ok: true });
+});
+
+// Per-user FEATURE TOGGLES — which main functions this user sees.
+// Absent/never-set = everything visible (role rules still apply on top).
+const USER_FEATURE_KEYS = ['upload', 'orders', 'inbound', 'transport', 'labels', 'reports'];
+app.put('/api/master/users/:id/features', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const users = readUsers();
+  const idx = users.findIndex(u => u.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: 'User not found' });
+  const incoming = req.body?.features || {};
+  const features = {};
+  for (const k of USER_FEATURE_KEYS) features[k] = incoming[k] !== false; // default true
+  users[idx].features = features;
+  writeUsers(users);
+  logAudit('user_features_updated', {
+    userId: req.params.id,
+    hidden: USER_FEATURE_KEYS.filter(k => !features[k]).join(',') || '(none)',
+  });
+  res.json({ ok: true, features });
 });
 
 // ── Master: Email configuration ──────────────────────────────────────────────

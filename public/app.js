@@ -178,9 +178,28 @@
       const p = await r.json();
       currentUser.printerName = p.printerName || '';
       currentUser.labelSize   = p.labelSize   || '100x160';
+      currentUser.features    = p.features    || null;
       if (p.tablePrefs) tablePrefs = { widths: p.tablePrefs.widths || {}, hidden: p.tablePrefs.hidden || [] };
+      applyFeatureToggles(currentUser.features);
     } catch {}
     fetchNoBarcodeSkus();
+  }
+
+  // Per-user feature visibility — set by the Administrator per user.
+  // null = everything visible. Role rules (e.g. warehouse can't open the
+  // Administrator panel) still apply on top of these.
+  function applyFeatureToggles(features) {
+    const tabs = ['upload', 'orders', 'inbound', 'transport', 'labels', 'reports'];
+    tabs.forEach(tab => {
+      const off = features && features[tab] === false;
+      document.querySelector(`.sidebar .tab-btn[data-tab="${tab}"]`)?.classList.toggle('hidden', off);
+      if (tab === 'transport') document.getElementById('transportSubMenu')?.classList.toggle('hidden', off);
+    });
+    // If the tab currently on screen was just hidden, move to the first visible one
+    const active = document.querySelector('.sidebar .tab-btn.active');
+    if (active?.classList.contains('hidden')) {
+      document.querySelector('.sidebar .tab-btn[data-tab]:not(.hidden)')?.click();
+    }
   }
 
   // ── No-barcode items (GWPs etc.) — counted by button or substitute barcode ─
@@ -7494,6 +7513,7 @@
               ${u.role === 'warehouse' ? '&#8593; Make Admin' : '&#8595; Warehouse'}
             </button>
             <button class="btn-chpass" data-id="${esc(u.id)}" title="Change password">&#128273; Password</button>
+            <button class="btn-user-features" data-id="${esc(u.id)}" title="Toggle which functions this user sees">&#9881; Features</button>
             <button class="btn-del-user" data-id="${esc(u.id)}" title="Delete user">&#128465;</button>
           </div>
         </div>`).join('');
@@ -7528,6 +7548,13 @@
         });
       });
 
+      listEl.querySelectorAll('.btn-user-features').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const u = users.find(x => x.id === btn.dataset.id);
+          openUserFeaturesModal(u);
+        });
+      });
+
       listEl.querySelectorAll('.btn-del-user').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm(`Delete user "${btn.dataset.id}"? They will no longer be able to log in.`)) return;
@@ -7542,6 +7569,58 @@
     } catch (err) {
       listEl.innerHTML = `<p class="scan-error" style="font-size:.8rem">${esc(err.message)}</p>`;
     }
+  }
+
+  // Which functions a user sees — ticked = visible. Applies at their next
+  // login / page refresh.
+  function openUserFeaturesModal(user) {
+    const FEATURES = [
+      ['upload',    '⬆️ Upload — picking-list uploads'],
+      ['orders',    '📋 Orders — scanning dashboard'],
+      ['inbound',   '📦 Inbound — receiving'],
+      ['transport', '🚚 Transport — deliveries, map, route planning'],
+      ['labels',    '🏷 Labels'],
+      ['reports',   '📊 Reports'],
+    ];
+    const f = user.features || {};
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'userFeaturesModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:92%;max-width:460px">
+        <h2 style="margin:0 0 .3rem 0">⚙ Functions for ${esc(user.name || user.id)}</h2>
+        <p class="hint" style="font-size:12px;margin-bottom:1rem">Untick anything this user should NOT see. Takes effect the next time they log in or refresh.</p>
+        <div style="display:grid;gap:.4rem;margin-bottom:1rem">
+          ${FEATURES.map(([key, label]) => `
+            <label style="display:flex;gap:.6rem;align-items:center;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="uf-toggle" value="${key}" ${f[key] === false ? '' : 'checked'} />
+              <span>${label}</span>
+            </label>`).join('')}
+        </div>
+        <div style="display:flex;gap:.6rem">
+          <button class="btn-primary" id="ufSaveBtn" style="flex:1">💾 Save</button>
+          <button class="btn-secondary" id="ufCancelBtn" style="flex:1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#ufCancelBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#ufSaveBtn').addEventListener('click', async () => {
+      const features = {};
+      modal.querySelectorAll('.uf-toggle').forEach(cb => { features[cb.value] = cb.checked; });
+      if (!Object.values(features).some(Boolean)) { alert('At least one function must stay visible.'); return; }
+      try {
+        const r = await fetch(`/api/master/users/${encodeURIComponent(user.id)}/features`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+          body: JSON.stringify({ features }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+      } catch (err) { alert('❌ ' + err.message); return; }
+      modal.remove();
+      showUserStatus(`Functions updated for ${user.id}.`, 'success');
+      loadUserList();
+    });
   }
 
   document.getElementById('addUserBtn').addEventListener('click', async () => {

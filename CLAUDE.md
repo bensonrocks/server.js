@@ -570,6 +570,20 @@ breaking the default.
     everywhere. Any FUTURE `logAudit()` call anywhere in this file must
     avoid a bare `type` key in its data object for the same reason.
 
+## Per-user feature toggles (Administrator → Users → ⚙ Features)
+
+`user.features` = `{upload, orders, inbound, transport, labels, reports}`
+(absent/null = all visible). Set via `PUT /api/master/users/:id/features`
+(checkMaster, keys whitelisted in `USER_FEATURE_KEYS`, audit-logged as
+`user_features_updated`); returned by `/api/profile` and the master users
+list. Client `applyFeatureToggles()` hides the corresponding sidebar tab
+buttons (+ `#transportSubMenu` with transport) after profile load, and
+kicks the user to the first visible tab if their current one was hidden.
+This is UI visibility control layered ON TOP of roles — the role rules
+(warehouse can't open Administrator, server-side report/deletion guards)
+remain the actual security boundary. At least one function must stay
+ticked (client-enforced).
+
 ## Report data retention (server.js — `db.auditLog` / `AUDIT_ARCHIVE_AFTER_DAYS`)
 
 - Every report reads from `db.auditLog`, which otherwise grows forever (the
