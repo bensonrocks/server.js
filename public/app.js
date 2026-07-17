@@ -3638,10 +3638,11 @@
               <div style="font-weight:600;font-size:13px;margin-bottom:.4rem">"${esc(it.clientName)}"</div>
               ${it.suggestions.length ? `
                 <select class="resolve-pick" data-idx="${idx}" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
-                  ${it.suggestions.map((sg, si) => `<option value="${esc(sg.name)}" ${si === 0 ? 'selected' : ''}>${esc(sg.name)}${sg.chain ? ` (${esc(sg.chain)})` : ''} — 📍 ${esc(sg.zip)} · ${sg.score}% match</option>`).join('')}
+                  ${it.suggestions.map((sg, si) => `<option value="${esc(sg.name)}" ${si === 0 ? 'selected' : ''}>${esc(sg.name)}${sg.chain ? ` (${esc(sg.chain)})` : ''}${sg.address ? ` — ${esc(sg.address)}` : ''} — 📍 ${esc(sg.zip)} · ${sg.score}% match</option>`).join('')}
                   <option value="__new__">➕ None of these — key in this store's details</option>
                   <option value="">— skip for now —</option>
-                </select>` :
+                </select>
+                <div class="resolve-match-info" data-idx="${idx}" style="margin-top:.35rem;font-size:11px;color:#16a34a"></div>` :
                 `<div class="hint" style="font-size:12px;color:#b45309;margin-bottom:.4rem">Not in the Address Book — key in the store details to add it:</div>`}
               <div class="resolve-new-store ${it.suggestions.length ? 'hidden' : ''}" data-idx="${idx}" style="margin-top:.5rem;display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
                 <input class="rns-code" placeholder="Store code (optional)" style="padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
@@ -3659,11 +3660,25 @@
     document.body.appendChild(modal);
     modal.querySelector('#resolveStoresCloseBtn').addEventListener('click', () => modal.remove());
     modal.querySelector('#resolveStoresCancelBtn').addEventListener('click', () => modal.remove());
-    // "None of these" reveals the key-in fields for that row
-    modal.querySelectorAll('.resolve-pick').forEach(sel => sel.addEventListener('change', () => {
-      modal.querySelector(`.resolve-new-store[data-idx="${sel.dataset.idx}"]`)
-        ?.classList.toggle('hidden', sel.value !== '__new__');
-    }));
+    // "None of these" reveals the key-in fields; the green line under each
+    // dropdown displays the MATCHED ADDRESS the job will be pointed at.
+    const updateMatchInfo = (sel) => {
+      const it = items[parseInt(sel.dataset.idx)];
+      const info = modal.querySelector(`.resolve-match-info[data-idx="${sel.dataset.idx}"]`);
+      if (!info) return;
+      const sg = it.suggestions.find(x => x.name === sel.value);
+      info.textContent = sg
+        ? `→ will deliver to: ${[sg.chain, sg.name].filter(Boolean).join(' ')}${sg.address ? ', ' + sg.address : ''}, S${sg.zip}`
+        : '';
+    };
+    modal.querySelectorAll('.resolve-pick').forEach(sel => {
+      updateMatchInfo(sel);
+      sel.addEventListener('change', () => {
+        modal.querySelector(`.resolve-new-store[data-idx="${sel.dataset.idx}"]`)
+          ?.classList.toggle('hidden', sel.value !== '__new__');
+        updateMatchInfo(sel);
+      });
+    });
     modal.querySelector('#resolveStoresConfirmBtn').addEventListener('click', async () => {
       // Validate any keyed-in stores first — postal is mandatory there
       const newForms = [...modal.querySelectorAll('.resolve-new-store:not(.hidden)')];
