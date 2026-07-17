@@ -35,6 +35,8 @@ const { createClientAuth } = require('./lib/client-auth');
 const staffAuth = require('./lib/staff-auth');
 const createInventory   = require('./lib/inventory');
 const createFulfillment = require('./lib/fulfillment');
+const { createTmsModule } = require('./lib/tms-module');
+const { initTmsSchema } = require('./lib/db/tms-schema');
 const createPicking     = require('./lib/picking');
 const shopifyApp        = require('./lib/shopify-app');
 const inventorySync     = require('./lib/inventory-sync');
@@ -4809,6 +4811,139 @@ app.post('/api/sync/stop', (req, res) => {
   }
   syncDaemon.stop();
   res.json({ success: true, message: 'Sync daemon stopped' });
+});
+
+// ── TMS (Transport Management System) ──────────────────────────────────────────
+
+app.get('/api/tms/address-book', withTenant, (req, res) => {
+  try {
+    const tms = createTmsModule(req.db);
+    res.json(tms.getAddressBook());
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/tms/address-book', withTenant, (req, res) => {
+  try {
+    const tms = createTmsModule(req.db);
+    tms.upsertAddressEntry(req.body);
+    res.json({ ok: true, message: 'Address entry saved' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/tms/address-book/suggest', withTenant, (req, res) => {
+  try {
+    const tms = createTmsModule(req.db);
+    const suggestions = tms.suggestAddressEntry(req.query.q || '');
+    res.json(suggestions);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/tms/depot', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    res.json(tms.getDepot());
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/tms/depot', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    const { zip, address } = req.body;
+    tms.setDepot(zip, address);
+    res.json({ ok: true, message: 'Depot location updated' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/tms/delivery-jobs', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    const filters = {};
+    if (req.query.status) filters.status = req.query.status;
+    if (req.query.driver) filters.driver = req.query.driver;
+    if (req.query.from) filters.from = req.query.from;
+    if (req.query.to) filters.to = req.query.to;
+    res.json(tms.getDeliveryJobs(filters));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/tms/delivery-jobs', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    const tmsId = tms.createDeliveryJob(req.body);
+    res.json({ tmsId, message: 'Delivery job created' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/tms/delivery-jobs/:tmsId/status', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    const { status, remarks } = req.body;
+    tms.updateJobStatus(req.params.tmsId, status, remarks);
+    res.json({ ok: true, message: 'Job status updated' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/tms/delivery-history', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    const from = req.query.from || new Date().toISOString().split('T')[0];
+    const to = req.query.to || new Date().toISOString().split('T')[0];
+    res.json(tms.getDeliveryHistory(from, to));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/tms/routes', withTenant, (req, res) => {
+  try {
+    res.json({ routes: [] }); // Placeholder
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/tms/routes', withTenant, (req, res) => {
+  try {
+    initTmsSchema(req.db);
+    const tms = createTmsModule(req.db);
+    const routeId = tms.createDeliveryRoute(req.body.jobIds || []);
+    res.json({ routeId, message: 'Route created' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/staff/users/:username/features', withAdmin, (req, res) => {
+  try {
+    mainDb.prepare('SELECT id FROM staff_users WHERE username = ?').get(req.params.username);
+    const tms = createTmsModule(mainDb);
+    tms.setUserFeatures(req.params.username, req.body);
+    res.json({ ok: true, message: 'User features updated' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ── Legal pages ───────────────────────────────────────────────────────────────

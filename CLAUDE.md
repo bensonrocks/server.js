@@ -556,6 +556,198 @@ Target: Analytics dashboard < 500ms with 1M orders.
 
 ---
 
+## 9. TMS (Transport Management System) — Delivery Routing & Status Tracking
+
+**File:** `lib/tms-module.js` | **Schema:** `lib/db/tms-schema.js`
+
+The TMS layer complements WMS by managing post-fulfillment delivery operations: store locations, route optimization, driver assignment, and delivery status tracking.
+
+### 1. Address Book — Store Master Data
+
+```javascript
+tms.getAddressBook()                    // Read all stores
+tms.upsertAddressEntry({                // Create/update store
+  chain: 'Watsons',
+  name: 'WESTGATE',
+  code: 'WSS-189',
+  address: '3 Gateway Drive',
+  zip: '609921',
+  phone: '65012345678'
+})
+tms.suggestAddressEntry('Watsons WEST') // Fuzzy match top-3
+```
+
+**Features:**
+- Chain field (`Watsons`, `Guardian`) for large retail networks
+- Postal code repair (Excel drops leading zeros: `18945` → `018945`)
+- Fuzzy matching on "chain + name" combos for order reconciliation
+- Soft-delete (never hard-delete for compliance)
+
+### 2. Depot Settings — Warehouse Location
+
+The delivery router measures all first-leg distances from the depot (default: IDEALONE warehouse, 40 Penjuru Lane S609216).
+
+```javascript
+tms.getDepot()       // { zip: '609216', address: '40 Penjuru Lane #04-01' }
+tms.setDepot('609921', '3 Gateway Drive')  // Change startup point
+```
+
+Used in:
+- Route planning (first-leg distance)
+- Run sheet headers (pickup location)
+- Driver performance reports
+
+### 3. Delivery Jobs — Status Lifecycle
+
+Every delivery tracked end-to-end with unique TMS ID and status lifecycle:
+
+```
+Preplanned (blue)
+   ↓
+Staging (grey) — waiting pickup
+   ↓
+On the Road (yellow) — driver in transit
+   ↓
+Delivered (green)
+    OR
+Delivered w/ Remarks (red) — finished with issue notes
+```
+
+```javascript
+tms.createDeliveryJob({
+  orderId: 'ORD-SG-117',
+  store: 'Watsons WESTGATE',
+  address: '3 Gateway Drive',
+  zip: '609921',
+  phone: '65012345678',
+  cartons: ['THU-202607170001']  // Array of carton IDs
+})
+// Returns: tmsId = "TR-A1B2C3"
+
+tms.updateJobStatus('TR-A1B2C3', 'delivered', 'No one home, left with neighbour')
+```
+
+**Status Transitions:**
+- Preplanned → Staging: manual or automated on carton closure
+- Staging → On the Road: driver picks up (via `/api/tms/delivery-jobs/:tmsId/status`)
+- On the Road → Delivered: mark-delivered with optional POD remarks
+- Any → Delivered w/ Remarks: if remarks field is non-empty
+
+### 4. Delivery Routes — Batch Assignments
+
+Group jobs by driver and optimize route:
+
+```javascript
+tms.createDeliveryRoute(['TR-A1B2C3', 'TR-D4E5F6', 'TR-G7H8I9'])
+// Returns: routeId = "ROUTE-1721262400000"
+
+tms.approveRoute('ROUTE-1721262400000')  // Lock in the route
+```
+
+**Plan Export** generates two-sheet Excel:
+- **Summary:** per-driver drops, distance, cartons, phone, plate
+- **Details:** every stop with PO, address, postal, leg km, ETA
+
+### 5. Delivery History — Compliance View
+
+Track all completed deliveries with date-range filters:
+
+```javascript
+tms.getDeliveryHistory('2026-07-01', '2026-07-31')
+// Returns: all jobs with status='delivered' in that month
+// Exported as 1-sheet XLSX: store, address, status, remarks, deliveredAt
+```
+
+Used for:
+- Driver KPI reports (deliveries/day, on-time rate)
+- Compliance audit (7-year retention)
+- Customer follow-up on delivery issues
+
+### 6. User Feature Toggles — Admin Control
+
+Hide/show entire feature sets per staff user (non-security):
+
+```javascript
+tms.setUserFeatures('alice@example.com', {
+  upload: true,
+  orders: true,
+  inbound: true,
+  transport: false,   // ← Alice won't see Transport in her sidebar
+  labels: false,
+  reports: false
+})
+// At least one feature must remain enabled
+```
+
+**API:** `PUT /api/staff/users/:username/features`
+
+Stored in `users.features` (JSON), returned by `/api/profile`.
+
+### 7. SKU Trust Levels — Quality Gate
+
+Mark AI-detected SKUs that *look like location codes* for review:
+
+```javascript
+const trust = tms.validateSkuTrustLevel('AB-005-001-A', 'ai_detected')
+// { trusted: false, level: 'suspect', reason: 'Looks like location code' }
+
+const trust2 = tms.validateSkuTrustLevel('THT-64-427-3', 'schema')
+// { trusted: true, level: 'schema' }
+```
+
+**Sources:**
+- `'schema'` — from explicit d-SKUCODE column (Keyfields)
+- `'named_column'` — from a known column name
+- `'ai_detected'` — heuristic guess
+
+**Location pattern:** `[A-Z]{2}-\d{3}-\d{3}-[A-Z]` triggers suspect flag.
+
+### TMS API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/tms/address-book` | List all stores |
+| POST | `/api/tms/address-book` | Create/update store |
+| GET | `/api/tms/address-book/suggest?q=...` | Fuzzy store match |
+| GET | `/api/tms/depot` | Get depot location |
+| POST | `/api/tms/depot` | Set depot location |
+| GET | `/api/tms/delivery-jobs?status=...&driver=...` | List jobs with filters |
+| POST | `/api/tms/delivery-jobs` | Create delivery job |
+| POST | `/api/tms/delivery-jobs/:tmsId/status` | Update job status + remarks |
+| GET | `/api/tms/delivery-history?from=&to=` | Historical deliveries |
+| POST | `/api/tms/routes` | Create route from job IDs |
+
+### Database Tables
+
+```
+address_book(id, chain, name, code, address, zip, phone, created_at, deleted_at)
+depot_settings(id, zip, address, updated_at)
+delivery_jobs(id, tms_id, order_id, store, address, zip, phone, cartons, driver, status, pod_remarks, created_at, delivered_at, deleted_at)
+delivery_routes(id, route_id, job_ids[], driver, vehicle, status, estimated_km, estimated_mins, created_at, deleted_at)
+users.features (JSON) — per-user feature visibility
+```
+
+### Common Patterns
+
+**Resolve an order to a store:**
+1. Call `/api/tms/address-book/suggest` with order's store name
+2. If fuzzy match succeeds → `store_id` in the book
+3. If no match → User types address inline; `/api/tms/address-book` upserts + learns alias
+
+**Plan a delivery day:**
+1. Load all jobs for today via `/api/tms/delivery-jobs?status=preplanned`
+2. Suggest routes (call route optimizer with depot start)
+3. `/api/tms/routes` creates the route plan
+4. Update driver assignments and export plan as Excel
+
+**Mark day complete:**
+1. Scan each job to `delivered` via `/api/tms/delivery-jobs/:tmsId/status`
+2. If issues noted → add `remarks` → status becomes "delivered w/ remarks" (red)
+3. `/api/tms/delivery-history` shows all completions for that day
+4. Export for reporting and driver KPI
+
+---
+
 ## Future Enhancements
 
 - [ ] **Real barcode scanning** — Integrate `bwip-js` for CODE128 generation
@@ -568,4 +760,4 @@ Target: Analytics dashboard < 500ms with 1M orders.
 
 ---
 
-Last updated: 2026-07-16
+Last updated: 2026-07-17
