@@ -2855,8 +2855,22 @@
     const maxStops = parseInt(document.getElementById('routeMaxStops')?.value || 10);
 
     optimizedRoutes = [];
-    // Plan only live work — delivered/cancelled jobs never re-enter a route
-    const unassigned = transportRequests.filter(r => r.status !== 'delivered' && r.status !== 'cancelled');
+    // Plan only live work — delivered/cancelled jobs never re-enter a route.
+    // Jobs WITHOUT a postal code are HELD OUT of the plan entirely: a stop
+    // with no location would poison every distance and the stop order.
+    // They stay pending until Match & Fix (or the Address Book) resolves
+    // them — the notice below the settings says how many are held.
+    const eligible = transportRequests.filter(r => r.status !== 'delivered' && r.status !== 'cancelled');
+    const unassigned = eligible.filter(r => r.shipping?.zip);
+    const heldCount = eligible.length - unassigned.length;
+    const heldNotice = document.getElementById('routeHeldNotice');
+    if (heldNotice) {
+      heldNotice.classList.toggle('hidden', heldCount === 0);
+      if (heldCount > 0) {
+        document.getElementById('routeHeldNoticeText').innerHTML =
+          `⚠ <strong>${heldCount}</strong> job(s) HELD out of this plan — no postal code yet (store not matched in the Address Book). They stay pending until fixed, then Regenerate to include them.`;
+      }
+    }
 
     if (method === 'nearest-neighbor') {
       optimizedRoutes = optimizeRoutesNearestNeighbor(unassigned, maxStops);
@@ -3275,6 +3289,9 @@
   // Change today's driver selection from inside the planner
   document.getElementById('routeDriversBtn')?.addEventListener('click', () =>
     showDriverPicker(() => optimizeRoutes()));
+
+  // Held-jobs notice → open Match & Fix without leaving the planner
+  document.getElementById('routeHeldFixBtn')?.addEventListener('click', openUnresolvedResolver);
 
   // Change the starting location (cargo pickup point) — routes re-plan
   // from the new postal immediately, and the setting is saved for everyone.
@@ -3700,6 +3717,8 @@
 
       modal.remove();
       await renderTransportTab();
+      // If the planner is open, re-plan so the newly-fixed jobs join the routes
+      if (!document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
       const parts = [];
       if (learned) parts.push(`${learned} spelling(s) learned`);
       if (added) parts.push(`${added} new store(s) added`);

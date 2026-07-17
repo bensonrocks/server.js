@@ -831,6 +831,13 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   FULL-PAGE takeover (`.route-planner-page`, ← Back button) and AUTO-GENERATES
   the plan on open — the user arrives at a finished draft and only amends.
   "Generate AI Routes" became "Regenerate Routes".
+- JOBS WITHOUT A POSTAL CODE ARE HELD OUT OF THE PLAN — a stop with no
+  location poisons every distance and the stop order (all 0.0 km, N/A).
+  `optimizeRoutes()` filters to `shipping.zip` only; an amber notice under
+  the planner settings says how many are held, with a "Match & Fix Now"
+  button that opens the resolver in place. After resolving, the plan
+  regenerates automatically so fixed jobs join it. Uploads are NEVER
+  blocked by unresolved stores — the jobs simply wait as pending.
 - START LOCATION (cargo pickup) — routes begin at the depot stored in
   `db.transportDepot` (GET/POST `/api/transport/depot`, before `:id`;
   default `40 Penjuru Lane #04-01, 609216`). Both optimizers' `startPoint`
