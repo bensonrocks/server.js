@@ -68,6 +68,7 @@ const createInboundGoodsReceipt = require('./lib/inbound-goods-receipt');
 const createEnhancedReturns = require('./lib/enhanced-returns');
 const createASNManager = require('./lib/inbound-asn');
 const createImporter = require('./lib/excel-importer');
+const createSyncDaemon = require('./lib/sync-daemon');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -4745,10 +4746,69 @@ app.post('/api/tms/import-adjustments', withStaffTenant, upload.single('file'), 
   }
 });
 
+// ── IdealScan ↔ IdealOMS Sync Monitoring ──────────────────────────────────────
+
+app.get('/api/sync/status', (req, res) => {
+  const syncDaemon = app.locals.syncDaemon;
+  if (!syncDaemon) {
+    return res.status(400).json({ error: 'Sync daemon not initialized' });
+  }
+  res.json(syncDaemon.getStatus());
+});
+
+app.post('/api/sync/run', async (req, res) => {
+  const syncDaemon = app.locals.syncDaemon;
+  if (!syncDaemon) {
+    return res.status(400).json({ error: 'Sync daemon not initialized' });
+  }
+  try {
+    const result = await syncDaemon.syncNow();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/sync/errors', (req, res) => {
+  const syncDaemon = app.locals.syncDaemon;
+  if (!syncDaemon) {
+    return res.status(400).json({ error: 'Sync daemon not initialized' });
+  }
+  res.json({ errors: syncDaemon.getErrors() });
+});
+
+app.post('/api/sync/errors/clear', (req, res) => {
+  const syncDaemon = app.locals.syncDaemon;
+  if (!syncDaemon) {
+    return res.status(400).json({ error: 'Sync daemon not initialized' });
+  }
+  syncDaemon.clearErrors();
+  res.json({ success: true, message: 'Sync errors cleared' });
+});
+
+app.post('/api/sync/start', (req, res) => {
+  const syncDaemon = app.locals.syncDaemon;
+  if (!syncDaemon) {
+    return res.status(400).json({ error: 'Sync daemon not initialized' });
+  }
+  syncDaemon.start();
+  res.json({ success: true, message: 'Sync daemon started' });
+});
+
+app.post('/api/sync/stop', (req, res) => {
+  const syncDaemon = app.locals.syncDaemon;
+  if (!syncDaemon) {
+    return res.status(400).json({ error: 'Sync daemon not initialized' });
+  }
+  syncDaemon.stop();
+  res.json({ success: true, message: 'Sync daemon stopped' });
+});
+
 // ── Legal pages ───────────────────────────────────────────────────────────────
 
 app.get('/tnc',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'tnc.html')));
 app.get('/privacypolicy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacypolicy.html')));
+app.get('/sync-dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'sync-dashboard.html')));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -4767,4 +4827,36 @@ app.listen(PORT, () => {
   autoSyncAll().catch(() => {});
   setInterval(autoSyncAll, SYNC_INTERVAL_MS);
   console.log(`  Auto-sync every ${SYNC_INTERVAL_MS / 60000} min (set SYNC_INTERVAL_MINUTES to change)\n`);
+
+  // Initialize IdealScan ↔ IdealOMS sync daemon (if enabled)
+  if (process.env.ENABLE_SYNC_DAEMON !== 'false') {
+    const tenantDb = getTenantDb('default');
+    const sourceDbPath = path.join(__dirname, 'data', 'idealoms.db');
+
+    if (fs.existsSync(sourceDbPath)) {
+      try {
+        const sqlite3 = require('better-sqlite3');
+        const sourceDb = new sqlite3(sourceDbPath);
+
+        const syncDaemon = createSyncDaemon(tenantDb, {
+          sourceDb,
+          pollingInterval: parseInt(process.env.SYNC_INTERVAL_MS || '30000'),
+          port: PORT,
+          apiKey: process.env.API_KEY || 'migration-key'
+        });
+
+        // Start the daemon
+        syncDaemon.start();
+
+        // Store for later access
+        app.locals.syncDaemon = syncDaemon;
+
+        console.log('  ✅ IdealScan↔IdealOMS sync daemon started (30s polling)');
+      } catch (e) {
+        console.warn('  ⚠️  Sync daemon initialization failed:', e.message);
+      }
+    } else {
+      console.log('  ℹ️  IdealScan database not found (sync skipped)');
+    }
+  }
 });
