@@ -116,9 +116,9 @@ async function testB2CWorkflow() {
     log('B2C', orderRes.status === 200 ? 'PASS' : 'FAIL',
       `Orders imported (status: ${orderRes.status})`);
 
-    // Get orders list
+    // Get orders list (API returns array directly)
     const getRes = await apiCall('GET', '/api/orders');
-    const orderCount = getRes.data.orders?.length || 0;
+    const orderCount = Array.isArray(getRes.data) ? getRes.data.length : (getRes.data.orders?.length || 0);
     log('B2C', getRes.status === 200 && orderCount > 0 ? 'PASS' : 'FAIL',
       `Found ${orderCount} orders in system`);
 

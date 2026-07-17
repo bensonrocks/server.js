@@ -508,9 +508,10 @@ app.post('/api/orders/ingest-email', withTenant, (req, res) => {
 function extractedToOrder(data, index) {
   const now   = new Date().toISOString();
   const refNo = data.trackingNumber || data.orderNumber;
-  const orderId = refNo
-    ? 'IMP-' + refNo.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 18)
-    : 'IMP-' + Date.now().toString(36).toUpperCase() + String(index).padStart(3, '0');
+  const orderId = data.id ||
+    (refNo
+      ? 'IMP-' + refNo.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 18)
+      : 'IMP-' + Date.now().toString(36).toUpperCase() + String(index).padStart(3, '0'));
 
   const clientName = (data.clientName || 'Imported').trim();
   const clientId   = clientName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 40);
@@ -597,6 +598,12 @@ app.post('/api/orders/bulk-import', withTenant, (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Dashboard KPI stats ───────────────────────────────────────────────────────
+app.get('/api/dashboard', withTenant, (req, res) => {
+  const orders = req.store.getOrders();
+  const totalOrders = Array.isArray(orders) ? orders.length : 0;
+  res.json({ totalOrders });
+});
+
 app.get('/api/dashboard/stats', withTenant, (req, res) => {
   const db = req.db;
   const { clientId, from, to } = req.query;
