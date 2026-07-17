@@ -5077,6 +5077,32 @@ app.post('/api/transport/bulk-delete', (req, res) => {
   res.json({ success: true, deleted });
 });
 
+// Route START LOCATION (depot) — where drivers pick up cargo. Defaults to
+// the IDEALONE warehouse; changeable from the planner and shared across
+// users. Must be registered before the :id routes.
+const DEFAULT_TRANSPORT_DEPOT = { name: 'IDEALONE Warehouse', address: '40 Penjuru Lane #04-01', zip: '609216' };
+function getTransportDepot(db) {
+  return { ...DEFAULT_TRANSPORT_DEPOT, ...(db.transportDepot || {}) };
+}
+app.get('/api/transport/depot', (req, res) => {
+  res.json(getTransportDepot(readDb()));
+});
+app.post('/api/transport/depot', (req, res) => {
+  const { address = '', zip = '', name = '' } = req.body || {};
+  if (!/^\d{6}$/.test(String(zip).trim())) {
+    return res.status(400).json({ error: 'Postal code must be exactly 6 digits' });
+  }
+  const db = readDb();
+  db.transportDepot = {
+    name: String(name).trim() || DEFAULT_TRANSPORT_DEPOT.name,
+    address: String(address).trim(),
+    zip: String(zip).trim(),
+  };
+  _persistDb(db);
+  logAudit('transport_depot_updated', { ...db.transportDepot, by: req.userId || '' });
+  res.json(db.transportDepot);
+});
+
 // Route templates — SHARED across users (db.transportTemplates), was
 // localStorage-only. Must be registered before the :id routes.
 app.get('/api/transport/templates', (req, res) => {
@@ -6240,9 +6266,9 @@ app.get('/api/master/report/:kind', (req, res) => {
 
       // Distance: per driver-day, stops in route order, legs measured with the
       // same postal-sector coordinates route planning uses, starting from the
-      // Marina depot reference (018945). An ESTIMATE (district-to-district),
-      // not odometer data — labelled as such in the sheet.
-      const DEPOT_ZIP = '018945';
+      // configured depot (default: Penjuru warehouse). An ESTIMATE
+      // (district-to-district), not odometer data — labelled in the sheet.
+      const DEPOT_ZIP = getTransportDepot(db).zip;
       const dayDistanceKm = list => {
         const sorted = [...list].sort((a, b) =>
           (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99));

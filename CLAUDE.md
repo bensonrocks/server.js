@@ -831,6 +831,13 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   FULL-PAGE takeover (`.route-planner-page`, ← Back button) and AUTO-GENERATES
   the plan on open — the user arrives at a finished draft and only amends.
   "Generate AI Routes" became "Regenerate Routes".
+- START LOCATION (cargo pickup) — routes begin at the depot stored in
+  `db.transportDepot` (GET/POST `/api/transport/depot`, before `:id`;
+  default `40 Penjuru Lane #04-01, 609216`). Both optimizers' `startPoint`
+  and the Driver Performance report's distance legs use it; run sheets
+  print "Pickup: <address> (<zip>)" in the header. Changeable via the
+  "🏭 Start:" button in the planner header (postal prompt, 6-digit
+  validated, shared server-side, re-plans immediately).
 - BEFORE the planner opens (when 2+ drivers exist), a "Who's driving
   today?" picker (`showDriverPicker()`, all ticked by default) lets the user
   EXCLUDE unavailable drivers (leave/MC). `activeDriverIds` (null = all)

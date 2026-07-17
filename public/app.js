@@ -2875,6 +2875,18 @@
     updateRouteStats();
   }
 
+  // Route START LOCATION — the warehouse where drivers pick up cargo.
+  // Server-stored (shared); default is 40 Penjuru Lane #04-01 S609216.
+  let transportDepot = { name: 'IDEALONE Warehouse', address: '40 Penjuru Lane #04-01', zip: '609216' };
+  async function loadTransportDepot() {
+    try {
+      const r = await fetch('/api/transport/depot');
+      if (r.ok) transportDepot = await r.json();
+    } catch {}
+    const btn = document.getElementById('routeDepotBtn');
+    if (btn) btn.textContent = `🏭 Start: ${transportDepot.address || transportDepot.zip} (${transportDepot.zip})`;
+  }
+
   // Which drivers are available for TODAY'S plan — chosen in the picker
   // that opens before planning (null = everyone). Excluded drivers get no
   // auto-assigned jobs and don't appear in the stop dropdowns.
@@ -2945,7 +2957,7 @@
     const routes = [];
     const used = new Set();
     let routeNum = 1;
-    const startPoint = { shipping: { zip: '018945' } }; // Marina Bay - Singapore center
+    const startPoint = { shipping: { zip: transportDepot.zip } }; // warehouse pickup point
 
     while (used.size < deliveries.length) {
       const route = { num: routeNum, stops: [] };
@@ -3004,7 +3016,7 @@
     // Sort clusters by size (larger first) and convert to routes
     const sortedClusters = Object.values(clusters).sort((a, b) => b.length - a.length);
     const routes = [];
-    const startPoint = { shipping: { zip: '018945' } };
+    const startPoint = { shipping: { zip: transportDepot.zip } }; // warehouse pickup point
 
     sortedClusters.forEach(cluster => {
       // Split large clusters into multiple routes
@@ -3248,6 +3260,7 @@
     // Pull the shared driver list first — drivers may have been added from
     // another login.
     await loadDrivers();
+    await loadTransportDepot();
     const openPlanner = () => {
       document.getElementById('routePlanningModal').classList.remove('hidden');
       // The planner opens ALREADY PLANNED: routes generated and today's
@@ -3262,6 +3275,27 @@
   // Change today's driver selection from inside the planner
   document.getElementById('routeDriversBtn')?.addEventListener('click', () =>
     showDriverPicker(() => optimizeRoutes()));
+
+  // Change the starting location (cargo pickup point) — routes re-plan
+  // from the new postal immediately, and the setting is saved for everyone.
+  document.getElementById('routeDepotBtn')?.addEventListener('click', async () => {
+    const zip = prompt(
+      `Starting location for routes (cargo pickup point).\nCurrent: ${transportDepot.address} (${transportDepot.zip})\n\nEnter the postal code (6 digits):`,
+      transportDepot.zip);
+    if (zip === null) return;
+    if (!/^\d{6}$/.test(zip.trim())) { alert('Postal code must be exactly 6 digits.'); return; }
+    const address = prompt('Address label for this location:', transportDepot.address) ?? transportDepot.address;
+    try {
+      const r = await fetch('/api/transport/depot', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zip: zip.trim(), address: address.trim() }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
+      transportDepot = await r.json();
+    } catch (err) { alert('❌ ' + err.message); return; }
+    await loadTransportDepot();
+    optimizeRoutes(); // re-plan from the new start
+  });
   document.getElementById('routePlannerBackBtn')?.addEventListener('click', () =>
     document.getElementById('routePlanningModal').classList.add('hidden'));
 
@@ -3401,7 +3435,8 @@
   // ── Driver run sheets — printed route per driver, for drivers who don't
   //    use the driver app. One page per driver, stops in route order, with
   //    a signature/time column as proof of delivery. ─────────────────────────
-  function printDriverRunSheets() {
+  async function printDriverRunSheets() {
+    await loadTransportDepot(); // pickup point shown on each sheet
     const jobs = transportRequests.filter(r =>
       (r.assignedDriver || r.assignedDriverName) &&
       r.status !== 'delivered' && r.status !== 'cancelled');
@@ -3434,6 +3469,7 @@
             <div class="meta">
               <div>${esc(today)}</div>
               <div>${list.length} stop(s) · ${totalCartons} carton(s)</div>
+              <div>Pickup: ${esc(transportDepot.address)} (${esc(transportDepot.zip)})</div>
             </div>
           </div>
           <table>
