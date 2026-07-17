@@ -3458,22 +3458,50 @@
     });
   });
 
-  document.getElementById('routeExportBtn')?.addEventListener('click', () => {
-    let csv = 'Route,Stop,Client,Address,Distance (km),Cum. Distance (km),Est. Time (min),Driver\n';
+  // Export the plan as a two-sheet Excel workbook (per-driver summary +
+  // full route details with PO, address, postal, cartons and driver info)
+  document.getElementById('routeExportBtn')?.addEventListener('click', async () => {
+    if (!optimizedRoutes.length) { alert('No routes to export — generate a plan first.'); return; }
+
+    const rows = [];
     optimizedRoutes.forEach(route => {
       route.stops.forEach((stop, idx) => {
-        const driverId = document.querySelector(`[data-route="${route.num}"][data-stop="${idx}"]`)?.value || '';
-        const driver = (window.drivers || []).find(d => d.id === driverId);
-        csv += `Route ${route.num},${idx + 1},"${stop.delivery.clientName}","${stop.delivery.shipping?.addressLine1}",${stop.distFromPrev.toFixed(1)},${stop.cumulDistance.toFixed(1)},${Math.round(stop.estTime)},${driver?.name || 'Unassigned'}\n`;
+        const dId = stop.driverId !== undefined ? stop.driverId : (route.driverId || '');
+        const drv = (window.drivers || []).find(d => d.id === dId);
+        rows.push({
+          route: route.num, stopSeq: idx + 1,
+          ref: stop.delivery.referenceId || '',
+          client: stop.delivery.clientName || '',
+          address: stop.delivery.shipping?.addressLine1 || '',
+          zip: stop.delivery.shipping?.zip || '',
+          packages: stop.delivery.packages || 1,
+          legKm: Math.round(stop.distFromPrev * 10) / 10,
+          cumKm: Math.round(stop.cumulDistance * 10) / 10,
+          estMin: Math.round(stop.estTime),
+          driverName: drv?.name || stop.delivery.assignedDriverName || '',
+          driverPhone: drv?.phone || '', driverPlate: drv?.plate || '', driverVehicle: drv?.vehicle || '',
+        });
       });
     });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'routes-' + new Date().toISOString().slice(0,10) + '.csv';
-    a.click();
+    try {
+      const resp = await fetch('/api/transport/plan/export', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows,
+          depot: `${transportDepot.address} (${transportDepot.zip})`,
+          generatedAt: new Date().toLocaleString('en-SG'),
+        }),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Export failed');
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Route_Plan_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { alert('❌ ' + err.message); }
   });
 
   // ── Driver run sheets — printed route per driver, for drivers who don't

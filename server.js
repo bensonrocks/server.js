@@ -4818,6 +4818,55 @@ app.post('/api/transport/plan/approve', (req, res) => {
   res.json({ success: true, assigned, notFound });
 });
 
+// Export the CURRENT route plan as a two-sheet Excel workbook: a per-driver
+// summary + full route details (PO, address, postal, cartons, driver).
+// The client posts the plan exactly as displayed. Before the :id routes.
+app.post('/api/transport/plan/export', (req, res) => {
+  const { rows = [], depot = '', generatedAt = '' } = req.body || {};
+  if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No plan rows to export' });
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1 — per-driver summary
+  const byDriver = new Map();
+  for (const r of rows) {
+    const key = r.driverName || '— Unassigned —';
+    const d = byDriver.get(key) || { phone: r.driverPhone || '', plate: r.driverPlate || '', vehicle: r.driverVehicle || '',
+                                     routes: new Set(), drops: 0, cartons: 0, km: new Map() };
+    d.routes.add(r.route);
+    d.drops++;
+    d.cartons += Number(r.packages) || 1;
+    d.km.set(r.route, Math.max(d.km.get(r.route) || 0, Number(r.cumKm) || 0));
+    byDriver.set(key, d);
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Route Plan Summary'],
+    ['Generated', generatedAt || new Date().toISOString(), 'Pickup / depot', depot],
+    [],
+    ['Driver', 'Phone', 'Plate', 'Vehicle', 'Routes', 'Drops', 'Cartons', 'Depot → Last Drop (km)'],
+    ...[...byDriver.entries()].map(([name, d]) => [
+      name, d.phone, d.plate, d.vehicle,
+      [...d.routes].sort((a, b) => a - b).join(', '), d.drops, d.cartons,
+      Math.round([...d.km.values()].reduce((s, v) => s + v, 0) * 10) / 10,
+    ]),
+  ]), 'Plan Summary');
+
+  // Sheet 2 — every stop with full details
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Route', 'Stop #', 'PO / Order Ref', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Leg (km)', 'Cumulative (km)', 'Est (mins)', 'Driver', 'Driver Phone', 'Plate'],
+    ...rows.map(r => [
+      `Route ${r.route}`, r.stopSeq, r.ref || '', r.client || '', r.address || '', r.zip || '',
+      Number(r.packages) || 1, Number(r.legKm) || 0, Number(r.cumKm) || 0, Number(r.estMin) || 0,
+      r.driverName || '', r.driverPhone || '', r.driverPlate || '',
+    ]),
+  ]), 'Route Details');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Route_Plan_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(buf);
+});
+
 // Mark jobs DELIVERED — the office-side close-out for drivers who don't use
 // the driver portal. Accepts explicit ids, or {allConfirmed:true} to close
 // out every currently-confirmed job in one go (end-of-day sweep).
