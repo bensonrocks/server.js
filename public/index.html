@@ -1185,6 +1185,7 @@
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="uploadJobsBtn">📦 Upload Jobs</button>
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="driverDetailsBtn">👤 Driver Details</button>
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="addressBookBtn">📒 Address Book</button>
+        <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="deliveryHistoryBtn">📜 Delivery History</button>
       </div>
       <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
       <button class="tab-btn" data-tab="reports"><span class="tab-icon">&#128202;</span>Reports</button>
@@ -1728,6 +1729,45 @@
               <input type="file" id="abFileInput" accept=".xlsx,.xls,.csv" hidden />
             </div>
             <button class="btn-secondary" id="addressBookCloseBtn2">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Delivery History Modal — everything already delivered, by date -->
+      <div id="deliveryHistoryModal" class="modal-overlay hidden">
+        <div class="modal" style="width:96%;max-width:1000px;max-height:88vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+            <h2 style="margin:0">📜 Delivery History</h2>
+            <button class="btn-close" id="dhCloseBtn">✕</button>
+          </div>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.8rem">
+            <button class="btn-secondary btn-sm dh-range active" data-range="today">Today</button>
+            <button class="btn-secondary btn-sm dh-range" data-range="yesterday">Yesterday</button>
+            <button class="btn-secondary btn-sm dh-range" data-range="week">Last 7 Days</button>
+            <button class="btn-secondary btn-sm dh-range" data-range="month">This Month</button>
+            <span style="font-size:12px;color:#64748b">or</span>
+            <input type="date" id="dhFrom" style="padding:.35rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+            <span style="font-size:12px">→</span>
+            <input type="date" id="dhTo" style="padding:.35rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+            <button class="btn-secondary btn-sm" id="dhApplyRangeBtn">Apply</button>
+            <span style="flex:1"></span>
+            <button class="btn-primary btn-sm" id="dhDownloadBtn">⬇️ Download (Excel)</button>
+          </div>
+          <div id="dhSummary" style="font-size:12px;color:#64748b;margin-bottom:.5rem"></div>
+          <div style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:6px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead style="background:#f8fafc"><tr>
+                <th style="padding:.5rem;text-align:left">Delivered At</th>
+                <th style="padding:.5rem;text-align:left">TMS ID</th>
+                <th style="padding:.5rem;text-align:left">PO / Ref</th>
+                <th style="padding:.5rem;text-align:left">Client / Store</th>
+                <th style="padding:.5rem;text-align:left">Postal</th>
+                <th style="padding:.5rem;text-align:center">Ctns</th>
+                <th style="padding:.5rem;text-align:left">Driver</th>
+                <th style="padding:.5rem;text-align:left">Status</th>
+              </tr></thead>
+              <tbody id="dhTableBody"></tbody>
+            </table>
           </div>
         </div>
       </div>

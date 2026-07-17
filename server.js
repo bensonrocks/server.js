@@ -4868,6 +4868,59 @@ app.post('/api/transport/plan/export', (req, res) => {
   res.send(buf);
 });
 
+// Delivery HISTORY — everything already delivered, filterable by date.
+// (The Transport tab itself deliberately shows only today's workload.)
+// Before the :id routes.
+function deliveryHistoryRows(db, from, to) {
+  const day = at => String(at || '').slice(0, 10);
+  return (db.transport || [])
+    .filter(r => r.status === 'delivered' && day(r.deliveredAt) >= from && day(r.deliveredAt) <= to)
+    .sort((a, b) => String(b.deliveredAt).localeCompare(String(a.deliveredAt)))
+    .map(r => ({
+      id: r.id,
+      referenceId: r.referenceId || r.clientId || '',
+      clientName: r.clientName || '',
+      address: r.shipping?.addressLine1 || '',
+      zip: r.shipping?.zip || '',
+      packages: r.packages || 1,
+      driver: r.assignedDriverName || '',
+      deliveredAt: r.deliveredAt || '',
+      podRemarks: r.podRemarks || '',
+    }));
+}
+
+app.get('/api/transport/history', (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = (req.query.from || '').slice(0, 10) || today;
+  const to   = (req.query.to   || '').slice(0, 10) || today;
+  res.json(deliveryHistoryRows(readDb(), from, to));
+});
+
+app.get('/api/transport/history/export', (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = (req.query.from || '').slice(0, 10) || today;
+  const to   = (req.query.to   || '').slice(0, 10) || today;
+  const rows = deliveryHistoryRows(readDb(), from, to);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Delivery History', `${from} to ${to}`, `${rows.length} delivery(ies)`],
+    [],
+    ['Delivered At', 'TMS ID', 'PO / Order Ref', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Driver', 'Status', 'POD Remarks'],
+    ...rows.map(r => [
+      r.deliveredAt ? new Date(r.deliveredAt).toLocaleString('en-SG') : '',
+      r.id, r.referenceId, r.clientName, r.address, r.zip, r.packages, r.driver,
+      r.podRemarks ? 'Delivered w/ Remarks' : 'Delivered',
+      r.podRemarks,
+    ]),
+  ]), 'Delivery History');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Delivery_History_${from}_to_${to}.xlsx"`);
+  res.send(buf);
+});
+
 // Batch status update — the office moves whole groups of jobs through the
 // delivery lifecycle (Staging → On the road → Delivered[/w Remarks]) until
 // a driver-side app takes over. Before the :id routes.

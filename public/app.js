@@ -3944,6 +3944,77 @@
     });
   }
 
+  // ── Delivery History — separate view of everything delivered, by date ─────
+  let _dhFrom = '', _dhTo = '';
+  function dhRangeDates(range) {
+    const d = (offset) => { const x = new Date(Date.now() + offset * 86400000); return x.toLocaleDateString('en-CA'); };
+    if (range === 'today') return [d(0), d(0)];
+    if (range === 'yesterday') return [d(-1), d(-1)];
+    if (range === 'week') return [d(-6), d(0)];
+    if (range === 'month') { const n = new Date(); return [`${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`, d(0)]; }
+    return [d(0), d(0)];
+  }
+
+  async function loadDeliveryHistory() {
+    const tbody = document.getElementById('dhTableBody');
+    tbody.innerHTML = '<tr><td colspan="8" style="padding:1.2rem;text-align:center;color:#64748b">Loading…</td></tr>';
+    try {
+      const resp = await fetch(`/api/transport/history?from=${_dhFrom}&to=${_dhTo}`);
+      const rows = await resp.json();
+      const cartons = rows.reduce((s, r) => s + (r.packages || 1), 0);
+      const withRemarks = rows.filter(r => r.podRemarks).length;
+      document.getElementById('dhSummary').textContent =
+        `${_dhFrom} → ${_dhTo}: ${rows.length} delivery(ies) · ${cartons} carton(s)` +
+        (withRemarks ? ` · ⚠ ${withRemarks} with remarks` : '');
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:1.2rem;text-align:center;color:#64748b">No deliveries in this period.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(r => `
+        <tr style="border-top:1px solid #f1f5f9">
+          <td style="padding:.45rem .5rem;white-space:nowrap">${r.deliveredAt ? esc(new Date(r.deliveredAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : '—'}</td>
+          <td style="padding:.45rem .5rem"><code>${esc(r.id)}</code></td>
+          <td style="padding:.45rem .5rem;font-family:monospace;font-size:11px">${esc(r.referenceId || '—')}</td>
+          <td style="padding:.45rem .5rem"><strong>${esc(r.clientName)}</strong></td>
+          <td style="padding:.45rem .5rem">${esc(r.zip || '—')}</td>
+          <td style="padding:.45rem .5rem;text-align:center">${r.packages}</td>
+          <td style="padding:.45rem .5rem">${esc(r.driver || '—')}</td>
+          <td style="padding:.45rem .5rem">${r.podRemarks
+            ? `<span style="color:#ef4444;font-weight:600" title="${esc(r.podRemarks)}">Delivered w/ Remarks</span><br/><span style="font-size:10px;color:#64748b">${esc(r.podRemarks)}</span>`
+            : '<span style="color:#22c55e;font-weight:600">Delivered</span>'}</td>
+        </tr>`).join('');
+    } catch {
+      tbody.innerHTML = '<tr><td colspan="8" style="padding:1rem;color:var(--danger)">Failed to load.</td></tr>';
+    }
+  }
+
+  document.getElementById('deliveryHistoryBtn')?.addEventListener('click', () => {
+    [_dhFrom, _dhTo] = dhRangeDates('today');
+    document.getElementById('dhFrom').value = _dhFrom;
+    document.getElementById('dhTo').value = _dhTo;
+    document.querySelectorAll('.dh-range').forEach(b => b.classList.toggle('active', b.dataset.range === 'today'));
+    document.getElementById('deliveryHistoryModal').classList.remove('hidden');
+    loadDeliveryHistory();
+  });
+  document.getElementById('dhCloseBtn')?.addEventListener('click', () =>
+    document.getElementById('deliveryHistoryModal').classList.add('hidden'));
+  document.querySelectorAll('.dh-range').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.dh-range').forEach(b => b.classList.toggle('active', b === btn));
+    [_dhFrom, _dhTo] = dhRangeDates(btn.dataset.range);
+    document.getElementById('dhFrom').value = _dhFrom;
+    document.getElementById('dhTo').value = _dhTo;
+    loadDeliveryHistory();
+  }));
+  document.getElementById('dhApplyRangeBtn')?.addEventListener('click', () => {
+    const f = document.getElementById('dhFrom').value, t = document.getElementById('dhTo').value;
+    if (!f || !t) { alert('Pick both dates.'); return; }
+    document.querySelectorAll('.dh-range').forEach(b => b.classList.remove('active'));
+    _dhFrom = f; _dhTo = t;
+    loadDeliveryHistory();
+  });
+  document.getElementById('dhDownloadBtn')?.addEventListener('click', () =>
+    authDownload(`/api/transport/history/export?from=${_dhFrom}&to=${_dhTo}`, `Delivery_History_${_dhFrom}_to_${_dhTo}.xlsx`));
+
   // ── Delivery detail — click a stop/job to see the full summary and fix
   //    its postal code (which also updates the Address Book master list) ─────
   async function openDeliveryDetail(jobId) {

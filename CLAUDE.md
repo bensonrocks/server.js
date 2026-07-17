@@ -1085,6 +1085,34 @@ Drivers do NOT need the driver portal — the whole lifecycle works without it:
   per-job "✓ Mark Delivered" button (`.popup-deliver-btn`, delegated
   listener on document).
 
+### Delivery History — viewer tab + Excel download (server.js `/api/transport/history*`)
+
+The Transport tab's today-only scope (see above) deliberately hides past
+deliveries — Delivery History is where they live. 📜 Delivery History in the
+Transport sidebar sub-menu (`#deliveryHistoryBtn`, after Address Book) opens
+`#deliveryHistoryModal`: date-filter chips (`.dh-range` — Today / Yesterday /
+Last 7 Days / This Month) plus a custom from→to picker (`#dhFrom`/`#dhTo`/
+`#dhApplyRangeBtn`), a summary line (`#dhSummary` — count, total cartons,
+"⚠ N with remarks"), and a read-only table (Delivered At, TMS ID, PO/Ref,
+Client/Store, Postal, Cartons, Driver, Status). Status renders green
+"Delivered" or red "Delivered w/ Remarks" with the remark text underneath —
+same `podRemarks` rule as `tmsStatusLabel`.
+
+- `GET /api/transport/history?from&to` (both `YYYY-MM-DD`, default today)
+  returns a BARE ARRAY of delivered-only rows — filter is
+  `status === 'delivered'` with `deliveredAt` day-sliced (`.slice(0,10)`)
+  into the inclusive from/to range, sorted newest first. Pending/preplanned/
+  confirmed/in-transit jobs never appear regardless of dates.
+- `GET /api/transport/history/export?from&to` → XLSX, single "Delivery
+  History" sheet (title row + header + one row per delivery incl. address +
+  POD remarks), filename `Delivery_History_<from>_to_<to>.xlsx`, downloaded
+  via `authDownload`.
+- Both routes MUST stay registered before the generic `/api/transport/:id`
+  routes (same Express-ordering rule as import/plan/bulk-status/etc).
+- Chip date maths (`dhRangeDates` in app.js) uses
+  `toLocaleDateString('en-CA')` for LOCAL dates (never `toISOString`, which
+  would shift the day near midnight); "This Month" = 1st → today.
+
 ### Sync Strategy
 
 When porting to IdealScan or other codebases:
