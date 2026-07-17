@@ -77,7 +77,7 @@
 <script>
 // Already logged in?
 fetch('/api/auth/me').then(r=>r.json()).then(d=>{
-  if(d.user && d.user.subscriptionStatus==='active') location.href='/dashboard';
+  if(d.user) location.href='/dashboard';
 });
 
 document.getElementById('form').addEventListener('submit', async e => {
@@ -89,9 +89,7 @@ document.getElementById('form').addEventListener('submit', async e => {
     const res = await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})});
     const data = await res.json();
     if (!data.ok) { err.textContent=data.error; err.style.display='block'; btn.disabled=false; btn.textContent='Sign In'; return; }
-    if (data.user.subscriptionStatus==='active') location.href='/dashboard';
-    else if (data.user.subscriptionStatus==='pending') location.href='/signup?reason=pending';
-    else location.href='/signup?reason=payment';
+    location.href='/dashboard';
   } catch {
     err.textContent='Network error — please try again.'; err.style.display='block';
     btn.disabled=false; btn.textContent='Sign In';
