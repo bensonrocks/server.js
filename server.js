@@ -838,6 +838,41 @@ function buildAddressBookIndex(db) {
   return idx;
 }
 
+// Fuzzy similarity for "spelled differently" store names — token overlap
+// plus a Levenshtein ratio, so both word-order differences ("WESTGATE
+// Watsons") and typos ("WESTGTE") score high.
+function _abLev(a, b) {
+  const m = a.length, n = b.length;
+  if (!m || !n) return Math.max(m, n);
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+function addressBookSimilarity(query, entry) {
+  const q = _abNorm(query);
+  const candidates = [entry.name, entry.code, entry.chain && entry.name ? `${entry.chain} ${entry.name}` : '']
+    .filter(Boolean).map(_abNorm);
+  let best = 0;
+  for (const c of candidates) {
+    if (!c) continue;
+    if (q === c) return 1;
+    const qT = new Set(q.split(' ')), cT = new Set(c.split(' '));
+    const inter = [...qT].filter(t => cT.has(t)).length;
+    const tokenScore = inter / Math.max(qT.size, cT.size);
+    const levScore = 1 - _abLev(q, c) / Math.max(q.length, c.length);
+    let score = Math.max(tokenScore, levScore);
+    if (q.includes(c) || c.includes(q)) score = Math.max(score, 0.75);
+    best = Math.max(best, score);
+  }
+  return best;
+}
+
 // Fill address/zip/phone on every transport job that lacks a postal code,
 // by looking its client name (or referenceId as a store code) up in the
 // book. Called after every book change and after every job-creation path,
@@ -4957,6 +4992,53 @@ app.post('/api/address-book/import', upload.single('file'), (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+// Unresolved jobs + nearest Address Book suggestions — feeds the client's
+// "confirm the closest match" resolver. Must come before the :id route.
+app.get('/api/transport/unresolved-suggestions', (req, res) => {
+  const db = readDb();
+  const book = db.addressBook || [];
+  const unresolved = (db.transport || []).filter(j =>
+    !j.shipping?.zip && j.status !== 'delivered' && j.status !== 'cancelled');
+
+  const out = unresolved.map(j => {
+    const scored = book
+      .map(e => ({ name: e.name, code: e.code || '', chain: e.chain || '', zip: e.zip || '', address: e.address || '',
+                   score: Math.round(addressBookSimilarity(j.clientName || j.referenceId || '', e) * 100) }))
+      .filter(x => x.zip && x.score >= 40)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+    return { jobId: j.id, clientName: j.clientName || j.referenceId || '', suggestions: scored };
+  });
+  res.json(out);
+});
+
+// Confirming a fuzzy match LEARNS it: the misspelled variant is added to
+// the Address Book as an alias of the confirmed store, then every job
+// carrying that name resolves — now and on all future uploads.
+app.post('/api/address-book/learn-alias', (req, res) => {
+  const { alias, targetName } = req.body || {};
+  if (!String(alias || '').trim() || !String(targetName || '').trim()) {
+    return res.status(400).json({ error: 'alias and targetName required' });
+  }
+  const db = readDb();
+  const target = (db.addressBook || []).find(e => _abNorm(e.name) === _abNorm(targetName) || _abNorm(e.code) === _abNorm(targetName));
+  if (!target) return res.status(404).json({ error: `No Address Book entry named "${targetName}"` });
+  if (!db.addressBook) db.addressBook = [];
+  const aliasName = String(alias).trim();
+  const exists = db.addressBook.some(e => _abNorm(e.name) === _abNorm(aliasName));
+  if (!exists) {
+    db.addressBook.push({
+      code: '', name: aliasName, chain: '',
+      address: target.address || '', zip: target.zip || '', phone: target.phone || '',
+      aliasOf: target.name, learnedAt: new Date().toISOString(), learnedBy: req.userId || '',
+    });
+  }
+  const jobsFixed = applyAddressBookToTransport(db);
+  _persistDb(db);
+  logAudit('address_book_alias_learned', { alias: aliasName, target: target.name, jobsFixed, by: req.userId || '' });
+  res.json({ success: true, jobsFixed, target: { name: target.name, zip: target.zip } });
 });
 
 // Transport job deletion — ADMIN ROLE (or master key) only. Warehouse users

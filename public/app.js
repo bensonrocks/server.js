@@ -1923,6 +1923,27 @@
       delivered: transportRequests.filter(r => r.status === 'delivered').length,
     };
 
+    // Jobs whose store name didn't match the Address Book — offer the
+    // nearest matches for the user to confirm (and learn).
+    const unresolvedCount = transportRequests.filter(r =>
+      !r.shipping?.zip && r.status !== 'delivered' && r.status !== 'cancelled').length;
+    let unresolvedBanner = document.getElementById('transportUnresolvedBanner');
+    if (unresolvedCount > 0) {
+      if (!unresolvedBanner) {
+        unresolvedBanner = document.createElement('div');
+        unresolvedBanner.id = 'transportUnresolvedBanner';
+        unresolvedBanner.style.cssText = 'margin:.4rem 0;padding:.55rem .8rem;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:.8rem;flex-wrap:wrap';
+        const statsBar = document.getElementById('transportStatsBar');
+        statsBar.parentNode.parentNode.insertBefore(unresolvedBanner, statsBar.parentNode.nextSibling);
+      }
+      unresolvedBanner.innerHTML = `
+        <span>⚠ <strong>${unresolvedCount}</strong> job(s) have no postal code — store name not found in the Address Book (possibly spelled differently).</span>
+        <button class="btn-primary btn-sm" id="transportResolveBtn">🔍 Match &amp; Fix</button>`;
+      unresolvedBanner.querySelector('#transportResolveBtn').addEventListener('click', openUnresolvedResolver);
+    } else if (unresolvedBanner) {
+      unresolvedBanner.remove();
+    }
+
     document.getElementById('transportStatsBar').innerHTML = `
       <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs Today</div></div>
       <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
@@ -3535,6 +3556,71 @@
       alert(`✓ ${data.deleted} job(s) deleted.`);
     } catch (err) { alert('❌ ' + err.message); }
   });
+
+  // ── Unresolved-store resolver — confirm nearest match, learn the alias ─────
+  async function openUnresolvedResolver() {
+    let items = [];
+    try {
+      const resp = await fetch('/api/transport/unresolved-suggestions');
+      items = await resp.json();
+    } catch { alert('Failed to load suggestions'); return; }
+    if (!items.length) { alert('Nothing to resolve — all jobs have postal codes.'); return; }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'resolveStoresModal';
+    modal.innerHTML = `
+      <div class="modal" style="width:94%;max-width:760px;max-height:85vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+          <h2 style="margin:0">🔍 Match Store Names</h2>
+          <button class="btn-close" id="resolveStoresCloseBtn">✕</button>
+        </div>
+        <p class="hint" style="font-size:12px;margin-bottom:1rem">
+          These store names didn't exactly match the Address Book. Confirm the nearest correct store for each —
+          the spelling is <strong>learned</strong> into the book, so future uploads resolve automatically.
+        </p>
+        <div style="display:grid;gap:.6rem;margin-bottom:1rem">
+          ${items.map((it, idx) => `
+            <div style="border:1px solid #e2e8f0;border-radius:6px;padding:.7rem .8rem">
+              <div style="font-weight:600;font-size:13px;margin-bottom:.4rem">"${esc(it.clientName)}"</div>
+              ${it.suggestions.length ? `
+                <select class="resolve-pick" data-idx="${idx}" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+                  ${it.suggestions.map((sg, si) => `<option value="${esc(sg.name)}" ${si === 0 ? 'selected' : ''}>${esc(sg.name)}${sg.chain ? ` (${esc(sg.chain)})` : ''} — 📍 ${esc(sg.zip)} · ${sg.score}% match</option>`).join('')}
+                  <option value="">— skip, none of these —</option>
+                </select>` :
+                `<div class="hint" style="font-size:12px;color:#ef4444">No close match found — add this store to the Address Book manually.</div>`}
+            </div>`).join('')}
+        </div>
+        <div style="display:flex;gap:.6rem">
+          <button class="btn-primary" id="resolveStoresConfirmBtn" style="flex:1">✓ Confirm &amp; Learn</button>
+          <button class="btn-secondary" id="resolveStoresCancelBtn" style="flex:1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#resolveStoresCloseBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#resolveStoresCancelBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#resolveStoresConfirmBtn').addEventListener('click', async () => {
+      const btn = modal.querySelector('#resolveStoresConfirmBtn');
+      btn.disabled = true; btn.textContent = 'Learning...';
+      let learned = 0, fixed = 0;
+      for (const sel of modal.querySelectorAll('.resolve-pick')) {
+        const target = sel.value;
+        if (!target) continue;
+        const it = items[parseInt(sel.dataset.idx)];
+        try {
+          const r = await fetch('/api/address-book/learn-alias', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ alias: it.clientName, targetName: target }),
+          });
+          const d = await r.json();
+          if (r.ok) { learned++; fixed += d.jobsFixed || 0; }
+        } catch {}
+      }
+      modal.remove();
+      await renderTransportTab();
+      alert(`✓ ${learned} store name(s) learned into the Address Book — ${fixed} job(s) now have postal codes.\nFuture uploads with these spellings resolve automatically.`);
+    });
+  }
 
   // ── Address Book — fixed-location cross-reference (store → address) ────────
   async function renderAddressBook() {

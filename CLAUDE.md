@@ -901,6 +901,19 @@ and "name + chain" combos so orders saying "Watsons WESTGATE" resolve, and
 branch codes like "WSS (189)" match as codes. Export round-trips the same
 Store/Branch Name/Branch Code column layout.
 
+FUZZY MATCH + LEARN — when an order's store name is spelled differently
+from every book entry, the job stays unresolved and the Transport tab shows
+an amber "N job(s) have no postal code" banner with a 🔍 Match & Fix button.
+`GET /api/transport/unresolved-suggestions` (before `:id`) scores every book
+entry against each unresolved clientName (`addressBookSimilarity`: token
+overlap + Levenshtein ratio + substring bonus, threshold 40%, top 3) and the
+resolver modal preselects the best. Confirming calls
+`POST /api/address-book/learn-alias {alias, targetName}` which ADDS the
+misspelling to the book as an alias row (`aliasOf`, inherits the target's
+zip/address/phone) and re-runs `applyAddressBookToTransport` — so the fix
+applies now AND every future upload with that spelling resolves
+automatically. No-match names show "add manually" instead of a dropdown.
+
 UI: 📒 Address Book in the Transport sidebar sub-menu (`#addressBookModal`) —
 add/edit one entry, delete entries, ⬇ download the current list as XLSX
 (serves a template row when empty), ⬆ upload an edited list which REPLACES
