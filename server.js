@@ -4645,6 +4645,7 @@ app.get('/api/transport', (req, res) => {
     packages: req.packages || 1,
     plannedAt: req.plannedAt || null,
     deliveredAt: req.deliveredAt || null,
+    podRemarks: req.podRemarks || '',
     pendingDeletion: !!req.pending_deletion
   }));
   res.json(transportRequests);
@@ -4872,13 +4873,14 @@ app.post('/api/transport/plan/export', (req, res) => {
 // out every currently-confirmed job in one go (end-of-day sweep).
 // Must come before the :id route.
 app.post('/api/transport/mark-delivered', (req, res) => {
-  const { ids, allConfirmed } = req.body || {};
+  const { ids, allConfirmed, remarks } = req.body || {};
   const db = readDb();
   if (!db.transport) db.transport = [];
 
   let targets;
   if (allConfirmed === true) {
-    targets = db.transport.filter(r => r.status === 'confirmed');
+    // end-of-day sweep: staging (confirmed) AND on-the-road (in-transit)
+    targets = db.transport.filter(r => r.status === 'confirmed' || r.status === 'in-transit');
   } else if (Array.isArray(ids) && ids.length) {
     targets = db.transport.filter(r => ids.includes(r.id));
   } else {
@@ -4891,6 +4893,8 @@ app.post('/api/transport/mark-delivered', (req, res) => {
     if (rec.status === 'delivered' || rec.status === 'cancelled') continue;
     rec.status = 'delivered';
     rec.deliveredAt = now;
+    // Non-empty remarks = 'Delivered with Remarks' — an issue to follow up
+    if (String(remarks || '').trim()) rec.podRemarks = String(remarks).trim();
     delivered++;
   }
 
@@ -5215,6 +5219,7 @@ app.post('/api/transport/:id/update', (req, res) => {
   if (updates.clientName) request.clientName = updates.clientName;
   if (updates.shipping) request.shipping = { ...request.shipping, ...updates.shipping };
   if (updates.notes !== undefined) request.notes = updates.notes;
+  if (updates.podRemarks !== undefined) request.podRemarks = String(updates.podRemarks || '');
   if (updates.packages !== undefined) request.packages = Number(updates.packages) || 1;
   // Assigning a driver outside the planner (bulk assign / edit modal) —
   // moves the job to preplanned unless a status was explicitly given,

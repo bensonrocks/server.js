@@ -871,6 +871,22 @@ Job lifecycle: `pending` → `preplanned` (plan approved) → `confirmed`
   generic `/api/transport/:id` routes (same rule as `import`/`fix-schedule` —
   Express matches in order, and `:id` would swallow them).
 
+### Delivery status lifecycle & display wording (tmsStatusLabel in app.js)
+
+Internal → displayed: `pending`/`preplanned` → **Preplanned** (blue),
+`confirmed` → **Staging** (grey — scanning done, waiting pickup),
+`in-transit` → **On the road** (yellow — set via the map popup's "Picked Up"
+button on staging jobs), `delivered` → **Delivered** (green) or **Delivered
+w/ Remarks** (red) when `podRemarks` is non-empty. Remarks are captured by
+the per-job Mark Delivered prompt (empty = clean) and by the Driver Portal
+completion notes; `/api/transport/mark-delivered` accepts `remarks`, and
+`{allConfirmed:true}` sweeps BOTH confirmed and in-transit (clean only —
+issue deliveries should be closed individually). Map marker colours + legend
+follow the same scheme (delivered-with-remarks = darker red #dc2626 vs
+unassigned #ef4444). `in-transit` jobs are excluded from re-planning. Stats
+bar: Jobs Today / Pending / Preplanned / Staging / On Road / Delivered /
+Done Yday.
+
 ### Picking-list uploads feed Transport — GATED by a per-upload question
 
 The Confirm-Upload modal asks "🚚 Delivery arrangement needed for this

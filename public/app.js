@@ -1919,7 +1919,8 @@
     const statusCounts = {
       pending: transportRequests.filter(r => (r.status || 'pending') === 'pending').length,
       preplanned: transportRequests.filter(r => r.status === 'preplanned').length,
-      confirmed: transportRequests.filter(r => r.status === 'confirmed').length,
+      staging: transportRequests.filter(r => r.status === 'confirmed').length,
+      onroad: transportRequests.filter(r => r.status === 'in-transit').length,
       delivered: transportRequests.filter(r => r.status === 'delivered').length,
     };
 
@@ -1948,7 +1949,8 @@
       <div class="stat-box"><div class="val">${transportRequests.length}</div><div class="lbl">Jobs Today</div></div>
       <div class="stat-box pending"><div class="val">${statusCounts.pending}</div><div class="lbl">Pending</div></div>
       <div class="stat-box processing"><div class="val">${statusCounts.preplanned}</div><div class="lbl">Preplanned</div></div>
-      <div class="stat-box done"><div class="val">${statusCounts.confirmed}</div><div class="lbl">Confirmed</div></div>
+      <div class="stat-box"><div class="val">${statusCounts.staging}</div><div class="lbl">Staging</div></div>
+      <div class="stat-box processing"><div class="val">${statusCounts.onroad}</div><div class="lbl">On Road</div></div>
       <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>
       <div class="stat-box"><div class="val">${doneYesterday}</div><div class="lbl">Done Yday</div></div>`;
 
@@ -2076,10 +2078,10 @@
     // Colour rule: NOT ASSIGNED = red. Assigned = blue while preplanned,
     // green once scanning confirms / delivers, amber in transit.
     const jobColor = req => {
-      if (!req.assignedDriver && !req.assignedDriverName) return '#ef4444';
-      if (req.status === 'confirmed') return '#16a34a';
-      if (req.status === 'delivered') return '#22c55e';
-      if (req.status === 'in-transit') return '#f59e0b';
+      if (req.status === 'delivered') return String(req.podRemarks || '').trim() ? '#dc2626' : '#22c55e';
+      if (req.status === 'in-transit') return '#f59e0b'; // on the road
+      if (req.status === 'confirmed') return '#64748b';  // staging
+      if (!req.assignedDriver && !req.assignedDriverName) return '#ef4444'; // not assigned
       return '#0ea5e9'; // assigned / preplanned
     };
 
@@ -2113,7 +2115,7 @@
           : `<span style="color:#ef4444;font-weight:600">⚠ No driver assigned</span><br/>`}
         📦 ${req.packages || 1} carton(s) &nbsp;|&nbsp; 📍 ${esc(req.shipping?.zip || '—')}<br/>
         ${esc(req.shipping?.addressLine1 || '')}<br/>
-        ${(() => { const st = tmsStatusLabel(req.status); return `<span style="display:inline-block;margin-top:0.3rem;padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:11px;font-weight:700">${st.label}</span>`; })()}
+        ${(() => { const st = tmsStatusLabel(req); return `<span style="display:inline-block;margin-top:0.3rem;padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:11px;font-weight:700">${st.label}</span>`; })()}
       </div>`;
 
       marker.bindTooltip(detailsHtml, { direction: 'top', offset: [0, -12], sticky: false, opacity: 1, className: 'tjob-tooltip' });
@@ -2123,6 +2125,9 @@
       const isAdmin = currentUser?.role === 'admin';
       marker.bindPopup(detailsHtml
         + `<button class="popup-details-btn" data-jobid="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#1d4ed8;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">📝 Details / Fix Postal</button>`
+        + (req.status === 'confirmed'
+          ? `<button class="popup-onroad-btn" data-id="${esc(req.id)}" style="margin-top:.35rem;width:100%;padding:.4rem;background:#f59e0b;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">🚚 Picked Up — On the Road</button>`
+          : '')
         + (canDeliver
           ? `<button class="popup-deliver-btn" data-id="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#16a34a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">✓ Mark Delivered</button>`
           : '')
@@ -2857,7 +2862,7 @@
     // with no location would poison every distance and the stop order.
     // They stay pending until Match & Fix (or the Address Book) resolves
     // them — the notice below the settings says how many are held.
-    const eligible = transportRequests.filter(r => r.status !== 'delivered' && r.status !== 'cancelled');
+    const eligible = transportRequests.filter(r => r.status !== 'delivered' && r.status !== 'cancelled' && r.status !== 'in-transit');
     const unassigned = eligible.filter(r => r.shipping?.zip);
     const heldCount = eligible.length - unassigned.length;
     const heldNotice = document.getElementById('routeHeldNotice');
@@ -2886,12 +2891,21 @@
     updateRouteStats();
   }
 
-  // Delivery status wording: a job is "Preplanned" until its order finishes
-  // scanning, then "Completed" (internally 'confirmed'), then "Delivered".
-  function tmsStatusLabel(s) {
-    if (s === 'confirmed') return { label: 'Completed', color: '#16a34a' };
-    if (s === 'delivered') return { label: 'Delivered', color: '#22c55e' };
-    if (s === 'cancelled') return { label: 'Cancelled', color: '#94a3b8' };
+  // Delivery status wording (job = whole record, so remarks can be seen):
+  //   Preplanned            — before scanning completes (blue)
+  //   Staging               — scanning done, waiting pickup (grey)
+  //   On the road           — picked up and moving (yellow)
+  //   Delivered             — finished with POD (green)
+  //   Delivered w/ Remarks  — finished but issue to follow up (red)
+  function tmsStatusLabel(job) {
+    const s = typeof job === 'string' ? job : job?.status;
+    const remarks = typeof job === 'object' ? String(job?.podRemarks || '').trim() : '';
+    if (s === 'confirmed')  return { label: 'Staging', color: '#64748b' };
+    if (s === 'in-transit') return { label: 'On the road', color: '#f59e0b' };
+    if (s === 'delivered')  return remarks
+      ? { label: 'Delivered w/ Remarks', color: '#ef4444' }
+      : { label: 'Delivered', color: '#22c55e' };
+    if (s === 'cancelled')  return { label: 'Cancelled', color: '#94a3b8' };
     return { label: 'Preplanned', color: '#0ea5e9' };
   }
 
@@ -3183,7 +3197,7 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
             <span class="route-stop-client" data-jobid="${esc(stop.delivery.id)}" style="cursor:pointer" title="Click for delivery details / fix postal">
               <strong style="color:#1d4ed8">${esc(stop.delivery.clientName || 'N/A')}</strong>
-              ${(() => { const st = tmsStatusLabel(stop.delivery.status); return `<span style="display:inline-block;margin-left:.35rem;padding:.05rem .45rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:10px;font-weight:700">${st.label}</span>`; })()}<br/>
+              ${(() => { const st = tmsStatusLabel(stop.delivery); return `<span style="display:inline-block;margin-left:.35rem;padding:.05rem .45rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:10px;font-weight:700">${st.label}</span>`; })()}<br/>
               <span style="font-size:10px;font-family:monospace;color:#94a3b8">${esc(stop.delivery.id)}</span>${stop.delivery.referenceId ? `<span style="font-size:10px;font-family:monospace;color:#475569"> · PO: ${esc(stop.delivery.referenceId)}</span>` : ''}<br/>
               <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
             </span>
@@ -3601,12 +3615,12 @@
 
   // ── Mark Delivered — office-side close-out (no driver app needed) ─────────
   document.getElementById('transportMarkDeliveredBtn')?.addEventListener('click', async () => {
-    const confirmed = transportRequests.filter(r => r.status === 'confirmed');
+    const confirmed = transportRequests.filter(r => r.status === 'confirmed' || r.status === 'in-transit');
     if (!confirmed.length) {
-      alert('No Confirmed jobs to close out.\n\nJobs become Confirmed when their order finishes scanning. To mark an individual job delivered regardless of status, tap its point on the map.');
+      alert('No Staging / On-the-road jobs to close out.\n\nJobs reach Staging when their order finishes scanning. To mark an individual job delivered (with POD remarks), tap its point on the map.');
       return;
     }
-    if (!confirm(`Mark all ${confirmed.length} Confirmed job(s) as DELIVERED?\n\nUse this at end of day once the drivers report their rounds done.`)) return;
+    if (!confirm(`Mark all ${confirmed.length} Staging / On-the-road job(s) as DELIVERED (clean, no remarks)?\n\nUse this at end of day once the drivers report their rounds done. For deliveries WITH issues, close those individually from the map first.`)) return;
     try {
       const resp = await fetch('/api/transport/mark-delivered', {
         method: 'POST',
@@ -3620,20 +3634,37 @@
     } catch (err) { alert('❌ ' + err.message); }
   });
 
-  // Individual mark-delivered — the button inside a map point's popup
+  // Individual mark-delivered — asks for POD remarks (empty = clean delivery,
+  // anything typed = 'Delivered with Remarks', flagged red for follow-up)
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('.popup-deliver-btn');
     if (!btn) return;
     const id = btn.dataset.id;
-    if (!confirm(`Mark ${id} as DELIVERED?`)) return;
+    const remarks = prompt(`Mark ${id} as DELIVERED.\n\nPOD remarks — leave EMPTY if delivered clean; type the issue if there's something to follow up:`, '');
+    if (remarks === null) return; // cancelled
     try {
       const resp = await fetch('/api/transport/mark-delivered', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
-        body: JSON.stringify({ ids: [id] })
+        body: JSON.stringify({ ids: [id], remarks: remarks.trim() })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed');
+      await renderTransportTab();
+    } catch (err) { alert('❌ ' + err.message); }
+  });
+
+  // Picked up → On the road (staging jobs only)
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.popup-onroad-btn');
+    if (!btn) return;
+    try {
+      const resp = await fetch(`/api/transport/${encodeURIComponent(btn.dataset.id)}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ status: 'in-transit' })
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Failed');
       await renderTransportTab();
     } catch (err) { alert('❌ ' + err.message); }
   });
@@ -3840,10 +3871,11 @@
         ${row('Address', esc(job.shipping?.addressLine1 || entry?.address || ''))}
         ${row('Phone', esc(job.shipping?.phone || ''))}
         ${row('Cartons', String(job.packages || 1))}
-        ${row('Status', (() => { const st = tmsStatusLabel(job.status); return `<span style="padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-weight:700">${st.label}</span>`; })())}
+        ${row('Status', (() => { const st = tmsStatusLabel(job); return `<span style="padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-weight:700">${st.label}</span>`; })())}
         ${row('Driver', esc(job.assignedDriverName || drv?.name || ''))}
         ${row('Route / Stop', job.routeNum ? `Route ${job.routeNum} · Stop #${job.stopSeq || '—'}` : '')}
         ${row('Notes', esc(job.notes || ''))}
+        ${String(job.podRemarks || '').trim() ? row('POD remarks', `<span style="color:#ef4444">${esc(job.podRemarks)}</span>`) : ''}
 
         <div style="margin-top:.9rem;padding:.7rem;background:#f0f9ff;border:1px solid #bfdbfe;border-radius:6px">
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">📍 Postal code</label>
@@ -4301,7 +4333,7 @@
           if (!r.ok) throw new Error((await r.json()).error || 'Failed');
           if (notes) await fetch(`/api/transport/${encodeURIComponent(job.id)}/update`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ notes }),
+            body: JSON.stringify({ podRemarks: notes }),
           }).catch(() => {});
         } else {
           const r = await fetch(`/api/transport/${encodeURIComponent(job.id)}/update`, {
