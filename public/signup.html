@@ -210,9 +210,10 @@ function showPaymentStep(name){
 
 async function startPayment(){
   const btn=document.getElementById('btn-pay');
-  btn.disabled=true; btn.textContent='Redirecting to Stripe…';
+  btn.disabled=true; btn.textContent='Redirecting to payment…';
   try {
     const res = await fetch('/api/payment/create-checkout',{method:'POST',headers:{'Content-Type':'application/json'}});
+    if(res.status===401){ location.href='/login'; return; }
     const data = await res.json();
     if(!data.ok){ alert('Payment error: '+data.error); btn.disabled=false; btn.textContent='Subscribe Now — $3.99/mo'; return; }
     location.href = data.url;

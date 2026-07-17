@@ -327,7 +327,9 @@ app.get('/payment/success', async (req, res) => {
     } catch { /* webhook will handle it */ }
   }
 
-  res.redirect('/dashboard');
+  // Must save session before redirect — otherwise the userId set above
+  // won't be in the store when the browser hits /dashboard next.
+  req.session.save(() => res.redirect('/dashboard'));
 });
 
 // ── Subscription cancel ────────────────────────────────────────────────
