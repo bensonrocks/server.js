@@ -3174,6 +3174,7 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
             <span class="route-stop-client" data-jobid="${esc(stop.delivery.id)}" style="cursor:pointer" title="Click for delivery details / fix postal">
               <strong style="color:#1d4ed8">${esc(stop.delivery.clientName || 'N/A')}</strong><br/>
+              ${stop.delivery.referenceId ? `<span style="font-size:10px;font-family:monospace;color:#475569">PO: ${esc(stop.delivery.referenceId)}</span><br/>` : ''}
               <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
             </span>
           </td>
@@ -3263,6 +3264,33 @@
     document.getElementById('routeStatsDist').textContent = totalDist.toFixed(1) + ' km';
     document.getElementById('routeStatsTime').textContent = totalTime.toFixed(1) + ' hrs';
     document.getElementById('routeStatsDrivers').textContent = drivers.size;
+
+    // Per-driver workload: number of drops + distance from the depot out to
+    // their LAST drop (summed across their routes). Every driver ticked for
+    // today is shown — 0 drops · 0 km when nothing is assigned to them.
+    const summaryEl = document.getElementById('routeDriverSummary');
+    if (summaryEl) {
+      const per = new Map(); // driverId → {drops, km}
+      optimizedRoutes.forEach(route => {
+        const byDriver = new Map(); // driverId → max cumulDistance in this route
+        route.stops.forEach(stop => {
+          const dId = stop.driverId !== undefined ? stop.driverId : (route.driverId || '');
+          if (!dId) return;
+          const rec = per.get(dId) || { drops: 0, km: 0 };
+          rec.drops++;
+          per.set(dId, rec);
+          byDriver.set(dId, Math.max(byDriver.get(dId) || 0, stop.cumulDistance || 0));
+        });
+        byDriver.forEach((km, dId) => { per.get(dId).km += km; });
+      });
+      summaryEl.innerHTML = includedDrivers().map(d => {
+        const rec = per.get(d.id) || { drops: 0, km: 0 };
+        const idle = rec.drops === 0;
+        return `<div style="padding:.5rem .8rem;border:1px solid ${idle ? '#e2e8f0' : '#bfdbfe'};border-radius:6px;background:${idle ? '#f8fafc' : '#eff6ff'};font-size:12px;${idle ? 'color:#94a3b8' : ''}">
+          👤 <strong>${esc(d.name)}</strong> — ${rec.drops} drop(s) · ${rec.km.toFixed(1)} km depot→last drop
+        </div>`;
+      }).join('');
+    }
   }
 
   document.getElementById('transportPlanRoutesBtn')?.addEventListener('click', async () => {
