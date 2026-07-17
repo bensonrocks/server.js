@@ -67,6 +67,7 @@ const createZoneCycleCount = require('./lib/zone-cycle-count');
 const createInboundGoodsReceipt = require('./lib/inbound-goods-receipt');
 const createEnhancedReturns = require('./lib/enhanced-returns');
 const createASNManager = require('./lib/inbound-asn');
+const createImporter = require('./lib/excel-importer');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -4625,6 +4626,122 @@ app.post('/api/asn/:asnId/close', withStaffTenant, (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// ── TMS (Transportation Management) ────────────────────────────────────────────
+
+// Import customers from Excel (TMS delivery jobs)
+app.post('/api/tms/import-customers', withStaffTenant, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const importer = createImporter({ store: req.store });
+    const buffer = fs.readFileSync(req.file.path);
+    const sheets = importer.parseExcel(buffer);
+    const customersSheet = sheets['Customers'] || sheets['TMS_CUSTOMER'] || Object.values(sheets)[0] || [];
+
+    const customers = importer.importCustomers(customersSheet);
+    const createdOrders = [];
+
+    for (const customer of customers) {
+      try {
+        const orderId = `TMS-${customer.customerId.replace(/[^A-Z0-9]/g, '').toUpperCase().slice(0, 20)}`;
+        req.store.addOrder({
+          id: orderId,
+          clientId: 'tms-import',
+          clientName: 'TMS Import',
+          channel: 'tms',
+          orderDate: customer.deliveryDate || new Date().toISOString(),
+          status: 'pending',
+          currency: 'SGD',
+          items: customer.items || [{ sku: 'DELIVERY', name: customer.name, qty: 1, unitPrice: 0 }],
+          shipping: {
+            recipient: customer.name,
+            addressLine1: customer.addressLine1,
+            addressLine2: customer.addressLine2,
+            city: customer.city,
+            state: customer.state,
+            zip: customer.zip,
+            country: customer.country,
+            phone: customer.phone,
+            email: customer.email
+          },
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          source: { type: 'tms-excel', ingestedAt: new Date().toISOString() }
+        });
+        createdOrders.push(orderId);
+      } catch (e) {
+        // Skip duplicate or invalid
+      }
+    }
+
+    res.json({
+      success: true,
+      imported: {
+        customersCount: customers.length,
+        ordersCreated: createdOrders.length,
+        createdOrders
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    if (req.file && req.file.path) try { fs.unlinkSync(req.file.path); } catch {}
+  }
+});
+
+// Import store codes (hubs/depots)
+app.post('/api/tms/import-store-codes', withStaffTenant, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const importer = createImporter({ store: req.store });
+    const buffer = fs.readFileSync(req.file.path);
+    const sheets = importer.parseExcel(buffer);
+    const storesSheet = sheets['Store Codes'] || sheets['TMS_STORE_CODE'] || Object.values(sheets)[0] || [];
+
+    const stores = importer.importStoreCodes(storesSheet);
+
+    res.json({
+      success: true,
+      imported: {
+        storesCount: stores.length,
+        stores: stores.slice(0, 5)
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    if (req.file && req.file.path) try { fs.unlinkSync(req.file.path); } catch {}
+  }
+});
+
+// Import adjustments (quantity/pricing changes)
+app.post('/api/tms/import-adjustments', withStaffTenant, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const importer = createImporter({ store: req.store });
+    const buffer = fs.readFileSync(req.file.path);
+    const sheets = importer.parseExcel(buffer);
+    const adjSheet = sheets['Adjustments'] || sheets['TMS_ADJUSTMENT'] || Object.values(sheets)[0] || [];
+
+    const adjustments = importer.importAdjustments(adjSheet);
+
+    res.json({
+      success: true,
+      imported: {
+        adjustmentsCount: adjustments.length,
+        adjustments: adjustments.slice(0, 5)
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    if (req.file && req.file.path) try { fs.unlinkSync(req.file.path); } catch {}
   }
 });
 
