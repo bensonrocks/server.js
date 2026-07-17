@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VaultKeepers — Staff Panel</title>
+<link rel="icon" type="image/svg+xml" href="/logo-icon.svg">
 <meta name="robots" content="noindex, nofollow">
 <style>
   :root{--bg:#060709;--bg-2:#0d0f14;--surface:#111520;--border:rgba(255,255,255,.08);--text:#e4e0d8;--text-2:#888480;--text-3:#484440;--cyan:#00e5cc;--green:#00e676;--red:#ff4060;--gold:#f5c842;--purple:#a080ff;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
@@ -72,6 +73,12 @@
   .empty{text-align:center;padding:48px;color:var(--text-3);font-size:.85rem}
   .refresh-btn{font-family:var(--mono);font-size:.62rem;padding:5px 12px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--cyan);cursor:pointer;letter-spacing:.06em}
   .refresh-btn:hover{background:rgba(0,229,204,.08)}
+  @media(max-width:480px){
+    .login-card{padding:32px 24px}
+    #login-screen{padding:16px}
+    .lfield input{font-size:16px}
+    .content{padding:18px}
+  }
 </style>
 </head>
 <body>
@@ -96,6 +103,7 @@
     <div class="vk-brand">Vault<span>Keepers</span></div>
     <div class="tb-right">
       <span class="tb-badge">STAFF</span>
+      <a class="btn-sm" href="/dashboard" target="_blank" style="text-decoration:none;color:var(--cyan);border-color:rgba(0,229,204,.3)">⬡ View Dashboard</a>
       <button class="btn-sm" onclick="loadData()">↻ Refresh</button>
       <button class="btn-sm" onclick="adminLogout()">Sign Out</button>
     </div>
@@ -148,7 +156,12 @@ async function adminLogout(){
 async function loadData(){
   try{
     const res=await fetch('/api/admin/users');
-    if(res.status===401){ location.reload(); return; }
+    if(res.status===401){
+      // Session expired — show login form without a disorienting full reload
+      document.getElementById('dashboard').style.display='none';
+      document.getElementById('login-screen').style.display='flex';
+      return;
+    }
     const data=await res.json();
     if(!data.ok) return;
     allUsers=data.users;

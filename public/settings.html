@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Subscription Settings — VaultSignals</title>
+<link rel="icon" type="image/svg+xml" href="/logo-icon.svg">
 <meta name="robots" content="noindex">
 <style>
   :root{--bg:#08090d;--surface:#111420;--border:rgba(255,255,255,.09);--text:#e8e4dc;--text-2:#9a9490;--text-3:#5a5650;--cyan:#00e5cc;--green:#00e676;--red:#ff4060;--gold:#f5c842;--mono:'Courier New',Courier,monospace;--sans:system-ui,-apple-system,'Segoe UI',sans-serif}
@@ -52,12 +53,17 @@
   .msg{font-size:.82rem;padding:10px 14px;border-radius:6px;margin-top:14px;display:none}
   .msg.err{background:rgba(255,64,96,.1);border:1px solid rgba(255,64,96,.3);color:var(--red)}
   .msg.ok{background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.3);color:var(--green)}
+  @media(max-width:480px){
+    .page{padding:32px 16px}
+    .card{padding:20px 18px}
+    .cancel-zone{padding:20px 18px}
+  }
 </style>
 </head>
 <body>
 <div class="topbar">
   <a class="brand" href="/dashboard">
-    <span class="brand-dot"></span>
+    <img src="/logo-icon.svg" alt="" width="28" height="28" style="border-radius:5px;flex-shrink:0">
     <span class="brand-first">Vault</span><span class="brand-second">Signals</span>
   </a>
   <a class="tb-link" href="/dashboard">← Back to Dashboard</a>

@@ -3,6 +3,8 @@
 const express = require('express');
 const path    = require('path');
 const crypto  = require('crypto');
+const https   = require('https');
+const http    = require('http');
 const bcrypt  = require('bcryptjs');
 const session = require('express-session');
 const Stripe  = require('stripe');
@@ -10,6 +12,7 @@ const Stripe  = require('stripe');
 const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
+const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 
@@ -60,6 +63,10 @@ app.post('/api/payment/webhook',
 );
 
 // ── Middleware ─────────────────────────────────────────────────────────
+// Railway (and most PaaS) terminate TLS at their edge and proxy HTTP
+// internally. Trust the first hop so req.secure reflects the real
+// protocol — required for express-session to set Secure cookies.
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -91,6 +98,7 @@ function requireAuth(req, res, next) {
 }
 
 async function requireSubscriptionAPI(req, res, next) {
+  if (req.session.isAdmin) return next(); // staff preview bypass
   if (!req.session.userId) return res.status(401).json({ ok: false, error: 'Not authenticated' });
   const user = await users.findById(req.session.userId);
   if (!user || user.subscriptionStatus !== 'active')
@@ -99,6 +107,7 @@ async function requireSubscriptionAPI(req, res, next) {
 }
 
 async function requireSubscriptionPage(req, res, next) {
+  if (req.session.isAdmin) return next(); // staff preview bypass
   if (!req.session.userId) return res.redirect('/login');
   const user = await users.findById(req.session.userId);
   if (!user || user.subscriptionStatus !== 'active') return res.redirect('/signup?reason=payment');
@@ -112,20 +121,41 @@ function requireAdmin(req, res, next) {
 
 // ── SEO ────────────────────────────────────────────────────────────────
 app.get('/robots.txt', (req, res) => {
-  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const base = process.env.APP_URL || `https://${req.get('host')}`;
   res.type('text/plain').send(
-    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /vaultkeepers\nDisallow: /api/\nSitemap: ${base}/sitemap.xml`
+    `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /vaultkeepers\nDisallow: /api/\n\nSitemap: ${base}/sitemap.xml`
   );
 });
 
 app.get('/sitemap.xml', (req, res) => {
-  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const base  = process.env.APP_URL || `https://${req.get('host')}`;
   const today = new Date().toISOString().split('T')[0];
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>${base}/</loc><lastmod>${today}</lastmod><priority>1.0</priority></url>
-  <url><loc>${base}/tutorial.html</loc><lastmod>${today}</lastmod><priority>0.8</priority></url>
-  <url><loc>${base}/signup</loc><lastmod>${today}</lastmod><priority>0.7</priority></url>
+  <url>
+    <loc>${base}/</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>${base}/tutorial.html</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>${base}/signup</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+  </url>
+  <url>
+    <loc>${base}/login</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
 </urlset>`);
 });
 
@@ -176,9 +206,15 @@ app.post('/api/auth/login', async (req, res) => {
   // Dev mode: auto-activate accounts that are still pending
   if (!useHitPay && !stripe && user.subscriptionStatus === 'pending') {
     const activated = await users.update(user.id, { subscriptionStatus: 'active' });
-    return res.json({ ok: true, user: safeUser(activated) });
+    return req.session.save(err => {
+      if (err) return res.status(500).json({ ok: false, error: 'Session error' });
+      res.json({ ok: true, user: safeUser(activated) });
+    });
   }
-  res.json({ ok: true, user: safeUser(user) });
+  req.session.save(err => {
+    if (err) return res.status(500).json({ ok: false, error: 'Session error' });
+    res.json({ ok: true, user: safeUser(user) });
+  });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -186,6 +222,8 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', async (req, res) => {
+  if (req.session.isAdmin)
+    return res.json({ ok: true, user: { id: 'staff', name: 'Staff', email: '', subscriptionStatus: 'active', isAdmin: true } });
   if (!req.session.userId) return res.json({ ok: true, user: null });
   const user = await users.findById(req.session.userId);
   res.json({ ok: true, user: user ? safeUser(user) : null });
@@ -289,7 +327,9 @@ app.get('/payment/success', async (req, res) => {
     } catch { /* webhook will handle it */ }
   }
 
-  res.redirect('/dashboard');
+  // Must save session before redirect — otherwise the userId set above
+  // won't be in the store when the browser hits /dashboard next.
+  req.session.save(() => res.redirect('/dashboard'));
 });
 
 // ── Subscription cancel ────────────────────────────────────────────────
@@ -321,7 +361,12 @@ app.post('/api/admin/login', (req, res) => {
   if (req.body.password !== secret)
     return res.status(401).json({ ok: false, error: 'Wrong password' });
   req.session.isAdmin = true;
-  res.json({ ok: true });
+  // Explicitly save before responding so the session is in the store
+  // before the client fires the next request (GET /api/admin/users).
+  req.session.save(err => {
+    if (err) return res.status(500).json({ ok: false, error: 'Session error' });
+    res.json({ ok: true });
+  });
 });
 
 app.post('/api/admin/logout', (req, res) => {
@@ -358,14 +403,148 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 app.get('/api/analysis', requireSubscriptionAPI, async (req, res) => {
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
   const results = {};
+  const allCandles = {};
   try {
     for (const key of Object.keys(SYMBOLS)) {
       const candles = await fetchDailyCandles(key, { apiKey });
+      allCandles[key] = candles;
       results[key] = analyze(candles, key);
     }
+
+    // Track signal outcomes and record today's signal (live mode only)
+    if (apiKey) {
+      for (const key of Object.keys(SYMBOLS)) {
+        const candles = allCandles[key];
+
+        // Resolve any open signals against subsequent candles
+        const openSigs = await signals.getOpenSignals(key);
+        for (const sig of openSigs) {
+          const later = candles.filter(c => c.date > sig.signalDate);
+          for (const candle of later) {
+            const outcome = signals.resolveOutcome(sig, candle);
+            if (outcome) {
+              await signals.updateOutcome(sig.id, outcome, candle.date);
+              break;
+            }
+          }
+        }
+
+        // Save today's signal if a trade plan was generated
+        const tp = results[key].tradePlan;
+        if (tp) {
+          await signals.saveSignal({
+            instrument: key,
+            direction:  tp.direction,
+            entry:      tp.entry,
+            stopLoss:   tp.stopLoss,
+            tp1:        tp.takeProfits[0].price,
+            tp2:        tp.takeProfits[1].price,
+            tp3:        tp.takeProfits[2].price,
+            rr1:        tp.takeProfits[0].riskReward,
+            signalDate: results[key].asOf,
+          });
+        }
+      }
+    }
+
     res.json({ ok: true, data: results, live: !!apiKey });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/stats', requireSubscriptionAPI, async (req, res) => {
+  try {
+    const all    = await signals.getAll();
+    const stats  = signals.calculateStats(all);
+    const recent = await signals.getRecent(30);
+    res.json({ ok: true, stats, recent });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── Market News ────────────────────────────────────────────────────────────
+let _newsCache = { articles: [], ts: 0 };
+const NEWS_TTL = 10 * 60 * 1000; // 10 min cache
+
+function _fetchUrl(url, hops = 0) {
+  return new Promise((resolve, reject) => {
+    if (hops > 3) return reject(new Error('Too many redirects'));
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; VaultSignals/1.0)',
+        Accept: 'application/rss+xml, text/xml, application/xml',
+      },
+    }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location)
+        return _fetchUrl(res.headers.location, hops + 1).then(resolve).catch(reject);
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.setTimeout(7000, () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+function _parseRSS(xml, source) {
+  const clean = s => s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/<[^>]+>/g, '').trim();
+  const grab = (chunk, tag) => {
+    const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(chunk);
+    return m ? clean(m[1]) : '';
+  };
+  const items = [];
+  const re = /<item[^>]*>([\s\S]*?)<\/item>/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null && items.length < 8) {
+    const c = m[1];
+    const title = grab(c, 'title');
+    const link  = (/<link>([^<]+)<\/link>/i.exec(c) || [])[1]?.trim() || '';
+    const pubDate = grab(c, 'pubDate') || grab(c, 'dc:date');
+    const desc  = grab(c, 'description').slice(0, 180);
+    if (title && title.length > 8)
+      items.push({
+        title, source,
+        link: link.startsWith('http') ? link : '',
+        date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+        summary: desc,
+      });
+  }
+  return items;
+}
+
+const NEWS_FEEDS = [
+  { url: 'https://www.kitco.com/rss/lo100.rss',  source: 'Kitco'    },
+  { url: 'https://www.fxstreet.com/rss/news',     source: 'FXStreet' },
+];
+
+async function _fetchNews() {
+  const results = await Promise.allSettled(
+    NEWS_FEEDS.map(async f => _parseRSS(await _fetchUrl(f.url), f.source))
+  );
+  const all = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+  const seen = new Set();
+  return all
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .filter(a => { const k = a.title.slice(0, 50); if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, 15);
+}
+
+app.get('/api/news', requireSubscriptionAPI, async (req, res) => {
+  if (Date.now() - _newsCache.ts < NEWS_TTL && _newsCache.articles.length)
+    return res.json({ ok: true, articles: _newsCache.articles });
+  try {
+    const articles = await _fetchNews();
+    if (articles.length) _newsCache = { articles, ts: Date.now() };
+    res.json({ ok: true, articles: _newsCache.articles });
+  } catch (e) {
+    console.error('News fetch error:', e.message);
+    res.json({ ok: true, articles: _newsCache.articles });
   }
 });
 
