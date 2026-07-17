@@ -73,6 +73,24 @@
   .empty{text-align:center;padding:48px;color:var(--text-3);font-size:.85rem}
   .refresh-btn{font-family:var(--mono);font-size:.62rem;padding:5px 12px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--cyan);cursor:pointer;letter-spacing:.06em}
   .refresh-btn:hover{background:rgba(0,229,204,.08)}
+  .btn-create{font-family:var(--mono);font-size:.62rem;padding:5px 12px;border-radius:5px;border:1px solid rgba(0,230,118,.35);background:rgba(0,230,118,.08);color:var(--green);cursor:pointer;letter-spacing:.06em}
+  .btn-create:hover{background:rgba(0,230,118,.18)}
+  /* Modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:200;padding:24px}
+  .modal-overlay.open{display:flex}
+  .modal{background:var(--surface);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:32px 28px;width:100%;max-width:360px}
+  .modal-title{font-size:1rem;font-weight:700;margin-bottom:20px}
+  .mfield{margin-bottom:14px}
+  .mfield label{display:block;font-family:var(--mono);font-size:.58rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}
+  .mfield input,.mfield select{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:.88rem;outline:none;transition:border-color .15s}
+  .mfield input:focus,.mfield select:focus{border-color:var(--green)}
+  .mfield select option{background:#111}
+  .modal-btns{display:flex;gap:10px;margin-top:20px}
+  .btn-modal-submit{flex:1;background:var(--green);color:#000;font-weight:700;font-size:.88rem;padding:11px;border-radius:6px;border:none;cursor:pointer;transition:opacity .15s}
+  .btn-modal-submit:hover{opacity:.85}.btn-modal-submit:disabled{opacity:.4;cursor:default}
+  .btn-modal-cancel{flex:1;background:transparent;color:var(--text-2);font-size:.88rem;padding:11px;border-radius:6px;border:1px solid var(--border);cursor:pointer;transition:border-color .15s}
+  .btn-modal-cancel:hover{border-color:rgba(255,255,255,.25);color:var(--text)}
+  .merr{font-size:.75rem;color:var(--red);margin-top:10px;display:none}
   @media(max-width:480px){
     .login-card{padding:32px 24px}
     #login-screen{padding:16px}
@@ -113,7 +131,10 @@
     <div class="stats" id="stats"></div>
     <div class="table-header">
       <span class="section-title">All Members</span>
-      <input class="search-box" id="search" placeholder="Search name or email…" oninput="filterTable()">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-create" onclick="openCreateModal()">+ Create User</button>
+        <input class="search-box" id="search" placeholder="Search name or email…" oninput="filterTable()">
+      </div>
     </div>
     <div class="table-wrap">
       <table>
@@ -124,6 +145,29 @@
         </thead>
         <tbody id="tbody"></tbody>
       </table>
+    </div>
+  </div>
+</div>
+
+<!-- Create User Modal -->
+<div class="modal-overlay" id="create-modal" onclick="if(event.target===this)closeCreateModal()">
+  <div class="modal">
+    <div class="modal-title">Create User</div>
+    <div class="mfield"><label>Name</label><input type="text" id="cu-name" placeholder="Full name"></div>
+    <div class="mfield"><label>Email</label><input type="email" id="cu-email" placeholder="user@example.com"></div>
+    <div class="mfield"><label>Password</label><input type="text" id="cu-password" placeholder="Any password"></div>
+    <div class="mfield">
+      <label>Status</label>
+      <select id="cu-status">
+        <option value="active" selected>Active (full access)</option>
+        <option value="pending">Pending</option>
+        <option value="inactive">Inactive</option>
+      </select>
+    </div>
+    <div class="merr" id="cu-err"></div>
+    <div class="modal-btns">
+      <button class="btn-modal-cancel" onclick="closeCreateModal()">Cancel</button>
+      <button class="btn-modal-submit" id="cu-btn" onclick="submitCreateUser()">Create</button>
     </div>
   </div>
 </div>
@@ -227,6 +271,42 @@ async function delUser(id, name){
 }
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function openCreateModal(){
+  document.getElementById('cu-name').value='';
+  document.getElementById('cu-email').value='';
+  document.getElementById('cu-password').value='';
+  document.getElementById('cu-status').value='active';
+  document.getElementById('cu-err').style.display='none';
+  document.getElementById('cu-btn').disabled=false;
+  document.getElementById('cu-btn').textContent='Create';
+  document.getElementById('create-modal').classList.add('open');
+  document.getElementById('cu-name').focus();
+}
+
+function closeCreateModal(){
+  document.getElementById('create-modal').classList.remove('open');
+}
+
+async function submitCreateUser(){
+  const name=document.getElementById('cu-name').value.trim();
+  const email=document.getElementById('cu-email').value.trim();
+  const password=document.getElementById('cu-password').value;
+  const status=document.getElementById('cu-status').value;
+  const btn=document.getElementById('cu-btn');
+  const err=document.getElementById('cu-err');
+  if(!name||!email||!password){ err.textContent='All fields required.'; err.style.display='block'; return; }
+  btn.disabled=true; btn.textContent='Creating…'; err.style.display='none';
+  try{
+    const res=await fetch('/api/admin/create-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,password,status})});
+    const data=await res.json();
+    if(!data.ok){ err.textContent=data.error||'Error'; err.style.display='block'; btn.disabled=false; btn.textContent='Create'; return; }
+    closeCreateModal();
+    loadData();
+  }catch{
+    err.textContent='Network error.'; err.style.display='block'; btn.disabled=false; btn.textContent='Create';
+  }
+}
 
 // Check if already logged in
 fetch('/api/admin/users').then(r=>{

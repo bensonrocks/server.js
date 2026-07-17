@@ -170,6 +170,33 @@
   .ptv.win{color:var(--bull)}.ptv.loss{color:var(--bear)}.ptv.neutral{color:var(--text-2)}.ptv.gold{color:var(--gold)}
   .perf-empty{font-family:var(--mono);font-size:.72rem;color:var(--text-3);padding:18px;border:1px solid var(--border);background:var(--surface)}
 
+  /* ── MT4/MT5 BRIDGE PANEL ── */
+  .mt-wrap{margin-top:20px;display:none}
+  .mt-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+  .mt-badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;padding:3px 9px;border:1px solid}
+  .mt-badge.online{background:var(--bull-bg);color:var(--bull);border-color:var(--bull)}
+  .mt-badge.offline{background:var(--bg-3);color:var(--text-3);border-color:var(--border)}
+  .mt-badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .mt-terminal{font-family:var(--mono);font-size:.62rem;color:var(--text-3);letter-spacing:.04em}
+  .mt-prices{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);margin-bottom:1px}
+  .mt-price-tile{background:var(--surface);padding:14px 18px}
+  .mt-sym{font-family:var(--mono);font-size:.58rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px}
+  .mt-bid-ask{display:flex;align-items:baseline;gap:10px}
+  .mt-bid{font-family:var(--mono);font-size:1.55rem;font-variant-numeric:tabular-nums;font-weight:bold;color:var(--bear)}
+  .mt-ask{font-family:var(--mono);font-size:1.55rem;font-variant-numeric:tabular-nums;font-weight:bold;color:var(--bull)}
+  .mt-ba-label{font-family:var(--mono);font-size:.56rem;color:var(--text-3);letter-spacing:.08em}
+  .mt-spread{font-family:var(--mono);font-size:.63rem;color:var(--text-3);margin-top:3px}
+  .mt-positions{margin-top:1px}
+  .mt-pos-hdr{padding:10px 18px;background:var(--surface);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3)}
+  .mt-pos-table{width:100%;border-collapse:collapse}
+  .mt-pos-table th{font-family:var(--mono);font-size:.56rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--surface)}
+  .mt-pos-table td{padding:8px 10px;border-bottom:1px solid var(--bg-2);font-family:var(--mono);font-size:.74rem;font-variant-numeric:tabular-nums;white-space:nowrap;vertical-align:middle;background:var(--surface)}
+  .mt-pos-table tr:last-child td{border-bottom:none}
+  .mt-type-buy{color:var(--bull);font-weight:bold}.mt-type-sell{color:var(--bear);font-weight:bold}
+  .mt-profit-pos{color:var(--bull)}.mt-profit-neg{color:var(--bear)}
+  .mt-empty{font-family:var(--mono);font-size:.72rem;color:var(--text-3);padding:16px 18px;background:var(--surface)}
+  @media(max-width:600px){.mt-prices{grid-template-columns:1fr}}
+
   /* ── SIGNAL HISTORY ── */
   .hist-wrap{margin-top:20px}
   .hist-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -212,6 +239,7 @@
       <span class="brand-first">Vault</span><span class="brand-second">Signals</span>
     </div>
     <span class="live-pip"><span class="live-pip-dot"></span><span class="live-pip-txt">LIVE</span></span>
+    <span id="mt-topbar" style="display:none;font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border:1px solid var(--bull);background:var(--bull-bg);color:var(--bull);cursor:pointer" onclick="document.getElementById('mt-wrap').scrollIntoView({behavior:'smooth'})">MT LIVE</span>
     <div class="sessions" id="sessions">
       <div class="session-pill" data-session="NY"><span class="sp-ring"></span>NY</div>
       <div class="session-pill" data-session="SIN"><span class="sp-ring"></span>SIN</div>
@@ -251,6 +279,19 @@
   </div>
 
   <div class="grid" id="grid"></div>
+
+  <!-- MT4/MT5 Bridge panel -->
+  <div class="mt-wrap" id="mt-wrap">
+    <div class="mt-hdr">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="perf-label">MT4 / MT5 Bridge</span>
+        <span class="mt-badge offline" id="mt-badge"><span class="mt-badge-dot"></span><span id="mt-badge-txt">OFFLINE</span></span>
+      </div>
+      <span class="mt-terminal" id="mt-terminal"></span>
+    </div>
+    <div class="mt-prices" id="mt-prices"></div>
+    <div class="mt-positions" id="mt-positions"></div>
+  </div>
 
   <!-- Signal history -->
   <div class="hist-wrap" id="hist-wrap" style="display:none">
@@ -575,6 +616,106 @@ async function refresh(){
 refresh();
 loadStats();
 loadNews();
+
+// ── MT4/MT5 Bridge panel ───────────────────────────────────────────────
+function fmtMt(n, d) { return typeof n === 'number' ? n.toFixed(d) : '—'; }
+
+function renderMt(data) {
+  const wrap     = document.getElementById('mt-wrap');
+  const badge    = document.getElementById('mt-badge');
+  const badgeTxt = document.getElementById('mt-badge-txt');
+  const termEl   = document.getElementById('mt-terminal');
+  const topbar   = document.getElementById('mt-topbar');
+
+  if (!data) { wrap.style.display = 'none'; topbar.style.display = 'none'; return; }
+
+  wrap.style.display = 'block';
+  const online = data.connected;
+  badge.className = 'mt-badge ' + (online ? 'online' : 'offline');
+  badgeTxt.textContent = online ? 'CONNECTED' : 'OFFLINE';
+  topbar.style.display = online ? 'inline-block' : 'none';
+
+  if (data.terminal) {
+    const t = data.terminal;
+    termEl.textContent = [t.platform, t.broker, t.account ? '#' + t.account : ''].filter(Boolean).join(' · ');
+  } else {
+    termEl.textContent = '';
+  }
+
+  // Prices
+  const pricesEl = document.getElementById('mt-prices');
+  const symbolMap = { XAUUSD: 'Gold · XAU/USD', XAGUSD: 'Silver · XAG/USD' };
+  const ticks = data.ticks || {};
+  const hasTicks = Object.keys(ticks).length > 0;
+  if (hasTicks) {
+    pricesEl.innerHTML = Object.entries(ticks).map(([sym, t]) => {
+      const label = symbolMap[sym] || sym;
+      const digits = sym === 'XAUUSD' ? 2 : 3;
+      const spread = t.spread != null ? (t.spread * (sym === 'XAUUSD' ? 10 : 100)).toFixed(1) + ' pts' : '—';
+      const age = t.time ? Math.round((Date.now() - t.time) / 1000) : null;
+      return `<div class="mt-price-tile">
+        <div class="mt-sym">${label}</div>
+        <div class="mt-bid-ask">
+          <div><div class="mt-ba-label">BID</div><div class="mt-bid">${fmtMt(t.bid, digits)}</div></div>
+          <div><div class="mt-ba-label">ASK</div><div class="mt-ask">${fmtMt(t.ask, digits)}</div></div>
+        </div>
+        <div class="mt-spread">Spread: ${spread}${age != null ? ' · ' + age + 's ago' : ''}</div>
+      </div>`;
+    }).join('');
+  } else {
+    pricesEl.innerHTML = online
+      ? '<div class="mt-empty" style="background:var(--surface)">Waiting for price data from EA…</div>'
+      : '<div class="mt-empty" style="background:var(--surface)">EA not connected — attach the bridge EA to a chart in MT4/MT5</div>';
+  }
+
+  // Positions
+  const posEl = document.getElementById('mt-positions');
+  const positions = data.positions || [];
+  if (positions.length === 0) {
+    posEl.innerHTML = '<div class="mt-empty">No open positions</div>';
+  } else {
+    const typeLabel = t => t === 0 ? 'BUY' : t === 1 ? 'SELL' : `OP${t}`;
+    const typeCls   = t => t === 0 ? 'mt-type-buy' : 'mt-type-sell';
+    posEl.innerHTML = `
+      <div class="mt-pos-hdr">Open Positions — ${positions.length}</div>
+      <div style="overflow-x:auto">
+      <table class="mt-pos-table">
+        <thead><tr>
+          <th>Ticket</th><th>Symbol</th><th>Type</th><th>Lots</th>
+          <th>Open</th><th>SL</th><th>TP</th><th>P/L ($)</th>
+        </tr></thead>
+        <tbody>
+          ${positions.map(p => {
+            const dp = p.symbol === 'XAUUSD' ? 2 : 3;
+            const plCls = p.profit >= 0 ? 'mt-profit-pos' : 'mt-profit-neg';
+            const plSign = p.profit >= 0 ? '+' : '';
+            return `<tr>
+              <td>#${p.ticket}</td>
+              <td>${p.symbol}</td>
+              <td class="${typeCls(p.type)}">${typeLabel(p.type)}</td>
+              <td>${(+p.lots).toFixed(2)}</td>
+              <td>${fmtMt(+p.openPrice, dp)}</td>
+              <td>${p.sl ? fmtMt(+p.sl, dp) : '—'}</td>
+              <td>${p.tp ? fmtMt(+p.tp, dp) : '—'}</td>
+              <td class="${plCls}">${plSign}${(+p.profit).toFixed(2)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table></div>`;
+  }
+}
+
+async function loadMtStatus() {
+  try {
+    const res  = await fetch('/api/mt/status');
+    if (res.status === 503) { renderMt(null); return; } // bridge not configured
+    const data = await res.json();
+    if (data.ok) renderMt(data);
+  } catch { renderMt(null); }
+}
+
+loadMtStatus();
+setInterval(loadMtStatus, 5000); // refresh every 5 s
 
 function timeAgo(iso) {
   const diff = Date.now() - new Date(iso).getTime();

@@ -15,6 +15,7 @@ const users                          = require('./lib/users');
 const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
+const mtBridge                       = require('./lib/mtBridge');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -85,7 +86,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: !!sessionStore || process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000,
   },
@@ -399,6 +400,19 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/admin/create-user', requireAdmin, async (req, res) => {
+  const { name, email, password, status } = req.body;
+  if (!name || !email || !password)
+    return res.status(400).json({ ok: false, error: 'name, email and password required' });
+  if (await users.findByEmail(email))
+    return res.status(409).json({ ok: false, error: 'Email already registered' });
+  const allowed = ['active', 'inactive', 'pending', 'cancelled'];
+  const subscriptionStatus = allowed.includes(status) ? status : 'active';
+  const passwordHash = await bcrypt.hash(password, 12);
+  const user = await users.create({ name, email, passwordHash, subscriptionStatus });
+  res.json({ ok: true, user: safeUser(user) });
+});
+
 // ── Trading API (subscriber-only) ──────────────────────────────────────
 app.get('/api/analysis', requireSubscriptionAPI, async (req, res) => {
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
@@ -557,6 +571,59 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
   res.json({ ok: true, data: results, live: false });
 });
 
+// ── MT4/MT5 Bridge ────────────────────────────────────────────────────
+// All EA-facing endpoints are authenticated with MT_BRIDGE_KEY.
+// If not configured, return a clear setup error (not a 500).
+function requireMtKey(req, res, next) {
+  const key = process.env.MT_BRIDGE_KEY;
+  if (!key) return res.status(503).json({ ok: false, error: 'MT_BRIDGE_KEY not configured on server' });
+  const provided = req.query.key || (req.body && req.body.key);
+  if (provided !== key) return res.status(401).json({ ok: false, error: 'Invalid bridge key' });
+  next();
+}
+
+// EA → server: register/heartbeat (POST every 60 s)
+app.post('/api/mt/heartbeat', requireMtKey, (req, res) => {
+  mtBridge.heartbeat(req.body.terminal || null);
+  res.json({ ok: true, ts: Date.now() });
+});
+
+// EA → server: push tick prices (POST every 1 s)
+app.post('/api/mt/tick', requireMtKey, (req, res) => {
+  const { symbol, bid, ask } = req.body;
+  if (!symbol || bid == null || ask == null)
+    return res.status(400).json({ ok: false, error: 'symbol, bid and ask required' });
+  mtBridge.updateTick(symbol, bid, ask);
+  res.json({ ok: true });
+});
+
+// EA → server: push open positions (POST every 5 s)
+app.post('/api/mt/positions', requireMtKey, (req, res) => {
+  const { positions } = req.body;
+  if (!Array.isArray(positions))
+    return res.status(400).json({ ok: false, error: 'positions must be an array' });
+  mtBridge.updatePositions(positions);
+  res.json({ ok: true });
+});
+
+// EA → server: poll for signal alerts (GET every 30 s)
+app.get('/api/mt/signals', requireMtKey, (req, res) => {
+  res.json({ ok: true, signals: mtBridge.getPendingSignals() });
+});
+
+// EA → server: acknowledge a signal (POST after showing alert)
+app.post('/api/mt/ack', requireMtKey, (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ ok: false, error: 'id required' });
+  const found = mtBridge.ackSignal(id);
+  res.json({ ok: true, found });
+});
+
+// Dashboard → server: get MT connection status + prices + positions
+app.get('/api/mt/status', requireSubscriptionAPI, (req, res) => {
+  res.json({ ok: true, ...mtBridge.getStatus() });
+});
+
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
   .then(() => {
@@ -565,6 +632,7 @@ initDb()
       console.log(`DB: ${hasDb ? 'PostgreSQL' : 'JSON file'}`);
       console.log(`Payment: ${useHitPay ? 'HitPay' : stripe ? 'Stripe' : 'dev mode (no payment)'}`);
       console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
+      console.log(`MT bridge: ${process.env.MT_BRIDGE_KEY ? 'ENABLED (key set)' : 'DISABLED — set MT_BRIDGE_KEY to enable'}`);
     });
   })
   .catch(err => {

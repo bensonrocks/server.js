@@ -50,6 +50,17 @@
   .signin-link{margin-top:18px;text-align:center;font-size:.82rem;color:var(--text-2)}
   .signin-link a{color:var(--cyan);text-decoration:none}
 
+  /* Pending step */
+  #step-pending{display:none}
+  .pending-card{background:var(--surface);border:2px solid var(--gold);border-radius:12px;padding:32px 28px;text-align:center}
+  .pending-icon{font-size:2.4rem;margin-bottom:14px}
+  .pending-title{font-weight:700;font-size:1.1rem;margin-bottom:10px;color:var(--gold)}
+  .pending-sub{font-size:.85rem;color:var(--text-2);margin-bottom:24px;line-height:1.7}
+  .btn-refresh{background:var(--gold);color:#000;font-weight:700;font-size:.9rem;padding:12px 24px;border-radius:6px;border:none;cursor:pointer;transition:opacity .15s}
+  .btn-refresh:hover{opacity:.85}
+  .pending-contact{margin-top:14px;font-size:.78rem;color:var(--text-3)}
+  .pending-contact a{color:var(--cyan);text-decoration:none}
+
   /* Payment step */
   #step-payment{display:none}
   .payment-card{background:var(--surface);border:2px solid var(--cyan);border-radius:12px;padding:32px 28px;text-align:center}
@@ -123,6 +134,20 @@
       </div>
     </div>
 
+    <!-- Payment pending confirmation -->
+    <div id="step-pending">
+      <div class="step">Awaiting Confirmation</div>
+      <div class="form-title">Payment Processing</div>
+      <div class="form-sub">Your payment is being confirmed. This usually takes just a moment.</div>
+      <div class="pending-card">
+        <div class="pending-icon">⏳</div>
+        <div class="pending-title">Almost there!</div>
+        <div class="pending-sub">Your account is set up and payment is on its way. Once confirmed, you'll have full access to your dashboard.<br><br>Please refresh in a moment — it typically clears within a minute or two.</div>
+        <button class="btn-refresh" onclick="location.href='/dashboard'">Check Dashboard →</button>
+        <div class="pending-contact">Still seeing this after a few minutes? <a href="mailto:support@vaultsignals.com">Contact support</a></div>
+      </div>
+    </div>
+
     <!-- Step 2: Payment -->
     <div id="step-payment">
       <div class="step">Step 2 of 2</div>
@@ -179,7 +204,10 @@ fetch('/api/auth/me').then(r=>r.json()).then(d=>{
 
 // Handle reason param
 const reason = new URLSearchParams(location.search).get('reason');
-if(reason==='cancelled') {
+if(reason==='pending') {
+  document.getElementById('step-account').style.display='none';
+  document.getElementById('step-pending').style.display='block';
+} else if(reason==='cancelled') {
   const e=document.getElementById('err');
   e.textContent='Payment was cancelled. You can try again below.';
   e.style.display='block';
