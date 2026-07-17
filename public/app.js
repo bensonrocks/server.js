@@ -1098,6 +1098,33 @@
       let resp = await sendUpload();
       let data = await resp.json();
 
+      // Suspect SKUs: the AI column detection found SKUs shaped like
+      // warehouse location codes (e.g. THT-64-427-3 vs bin AC-007-003-B).
+      // The server won't assume either way — confirm with the user.
+      if (resp.status === 409 && data.needsSkuConfirm) {
+        const lines = (data.suspects || []).slice(0, 12).map(s =>
+          `• ${s.sku}  (order ${s.order}, qty ${s.qty})`).join('\n');
+        const more = (data.suspects || []).length > 12 ? `\n…and ${data.suspects.length - 12} more` : '';
+        const asSkus = confirm(
+          `⚠ PLEASE CONFIRM — ARE THESE REAL PRODUCT SKUs?\n\n${data.message}\n\n${lines}${more}` +
+          `\n\nOK = yes, these are real products (include them)\nCancel = they are NOT products`);
+        if (asSkus) {
+          form.append('suspect_skus', 'include');
+        } else {
+          const dropThem = confirm(
+            `Upload WITHOUT these ${data.suspects.length} line(s) instead?\n\n` +
+            `OK = upload the rest, leave these lines out\nCancel = abort the whole upload`);
+          if (!dropThem) {
+            document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+            setUploadStatus('error', 'Upload cancelled — suspect SKU lines not confirmed.');
+            return;
+          }
+          form.append('suspect_skus', 'exclude');
+        }
+        resp = await sendUpload();
+        data = await resp.json();
+      }
+
       // Recycled order numbers: same number already COMPLETED but with a
       // different GI — flag what likely happened and let the user decide.
       if (resp.status === 409 && data.needsDuplicateConfirm) {

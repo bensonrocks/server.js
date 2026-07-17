@@ -2757,10 +2757,27 @@ function isMetadataRow(r) {
   if (/\s/.test(sku)) return true;
   // SKU is a known label word (Status, Account, Reference, …)
   if (_LABEL_WORDS.has(sku.toLowerCase())) return true;
-  // Warehouse bin/location address pattern (e.g. AC-007-003-B, A-01-02-C)
-  // Format: [1-4 letters]-[2-5 digits]-[2-5 digits][-optional 1-2 alphanum]
-  if (/^[A-Z]{1,4}-\d{2,5}-\d{2,5}(-[A-Z0-9]{1,2})?$/i.test(sku)) return true;
   return false;
+}
+
+// ── Location-code-shaped SKU check ───────────────────────────────────────────
+// Warehouse bin/location pattern (e.g. AC-007-003-B, A-01-02-C) — but real
+// product SKUs can share this exact shape (THT-64-427-3). This used to live
+// inside isMetadataRow and SILENTLY dropped such rows, which lost legitimate
+// lines. Now: rows whose SKU came from a KNOWN named column (_skuSource ===
+// 'schema', e.g. d-SKUCODE or an "SKU"/"Item Code" header) are trusted
+// outright; rows where only the AI column-scoring picked the SKU column are
+// flagged as SUSPECTS for the user to confirm at upload time — never dropped
+// without asking, never accepted on a guess.
+const LOCATION_SKU_PAT = /^[A-Z]{1,4}-\d{2,5}-\d{2,5}(-[A-Z0-9]{1,2})?$/i;
+
+function splitSuspectSkuRows(rows) {
+  const kept = [], suspects = [];
+  for (const r of rows) {
+    if (r._skuSource !== 'schema' && LOCATION_SKU_PAT.test(String(r.sku || '').trim())) suspects.push(r);
+    else kept.push(r);
+  }
+  return { kept, suspects };
 }
 
 // Quick pre-filter: strip obvious footer/total rows before column-map detection
@@ -3176,6 +3193,16 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     const orders     = summarizeOrders(allRows);
     const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     errors.push(...pdfWarnings);
+    // Heads-up for AI-detected SKUs shaped like warehouse location codes —
+    // the actual include/exclude decision happens at upload time (409
+    // needsSkuConfirm), this just makes the doubt visible before Approve.
+    {
+      const { suspects } = splitSuspectSkuRows(allRows);
+      if (suspects.length) {
+        const uniq = [...new Set(suspects.map(r => r.sku))];
+        errors.push(`⚠ ${suspects.length} line(s) have SKUs shaped like warehouse location codes: ${uniq.slice(0, 6).join(', ')}${uniq.length > 6 ? '…' : ''} — you'll be asked to confirm they are real products when you approve.`);
+      }
+    }
     // Read-only heads-up, deliberately NOT fed into `flagged` — that array
     // drives the editable quantity-adjustment table, which matches rows by
     // order+SKU only. Two duplicate rows share that same key, so editing one
@@ -3372,6 +3399,45 @@ app.post('/api/upload', uploadFields, async (req, res) => {
         },
       });
     }
+    // SUSPECT SKUs — AI-detected SKU column values shaped like warehouse
+    // location codes (THT-64-427-3 vs bin AC-007-003-B are indistinguishable
+    // by pattern). Never assume either way: ask the user. Client resends with
+    // suspect_skus=include (they're real SKUs) or =exclude (drop those lines).
+    // PDF picking lists are exempt — their parser separates location and SKU
+    // columns explicitly (lib/ocr-parse.js LOCATION_CODE_PAT).
+    if (orderExt !== '.pdf') {
+      const { kept, suspects } = splitSuspectSkuRows(mapped);
+      if (suspects.length) {
+        const decision = String(req.body?.suspect_skus || '').toLowerCase();
+        if (decision === 'include') {
+          logAudit('upload_suspect_skus_included', {
+            count: suspects.length,
+            skus: [...new Set(suspects.map(r => r.sku))].slice(0, 20),
+            ...clientInfo(req),
+          });
+        } else if (decision === 'exclude') {
+          mapped = kept;
+          logAudit('upload_suspect_skus_excluded', {
+            count: suspects.length,
+            skus: [...new Set(suspects.map(r => r.sku))].slice(0, 20),
+            ...clientInfo(req),
+          });
+        } else {
+          return res.status(409).json({
+            needsSkuConfirm: true,
+            suspects: suspects.map(r => ({
+              order: r.order_number, sku: r.sku, qty: r.qty,
+              description: String(r.description || '').slice(0, 60),
+            })),
+            message:
+              `${suspects.length} line(s) have SKUs shaped like warehouse location codes ` +
+              `(letters-digits-digits). The system cannot tell if these are real products or ` +
+              `bin locations that leaked into the SKU column — please confirm.`,
+          });
+        }
+      }
+    }
+
     // Quantity amendments approved by the user in the Confirm window
     let adjustmentsApplied = 0;
     if (req.body?.adjustments) {

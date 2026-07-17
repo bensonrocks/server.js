@@ -152,6 +152,45 @@ printed picking list that visually repeated a line. This safeguard exists
 so that discrepancy is caught at upload time instead of requiring this kind
 of after-the-fact investigation.
 
+## Spreadsheet SKU trust levels — schema vs AI-detected (lib/keyfields.js + server.js)
+
+Real product SKUs can be SHAPED exactly like warehouse location codes
+(`THT-64-427-3` vs bin `AC-007-003-B`) — pattern alone cannot distinguish
+them. The old behaviour (location-pattern check inside `isMetadataRow`)
+silently DROPPED such lines from XLSX/CSV uploads; found via a real
+Keyfields IssueDetail file whose THT-64-427-3 line vanished. Now:
+
+- `mapRow` tags every row with `_skuSource`: `'schema'` when the SKU came
+  from a KNOWN named column (the alias chain — `sku`, `item_code`,
+  `d-SKUCODE`, … — or an `explicit: true` detected map), `'detected'` when
+  only the AI column-scoring fallback found it.
+- KEYFIELDS/ISSUEDETAIL FAST-PATH: `detectColumnMap` returns
+  `{explicit: true, schema: 'keyfields', sku_key: 'd_skucode', order_key:
+  'd_exref2', qty_key: 'd_expectedqty'}` whenever `d-SKUCODE` is among the
+  headers — NEVER heuristic-scores a d- schema file. (Heuristics once
+  picked `d-exline`, the line NUMBER, as qty — "expectedqty" missed the
+  old `^qty$` keyword regex and the two columns tied on numeric stats.)
+  `d_expectedqty` is also in `mapRow`'s hardcoded qty chain so single-row
+  files (detectColumnMap needs 2+) still get the right qty.
+- `scoreQty` now: substring qty/quantity keyword match (catches
+  `expectedqty`, `ship_qty`) AND a -15 penalty for line/seq/serial/row
+  numbering column names.
+- SCHEMA SKUs ARE TRUSTED OUTRIGHT — no location-pattern filtering at all
+  (`splitSuspectSkuRows` in server.js skips `_skuSource === 'schema'`).
+- DETECTED SKUs matching `LOCATION_SKU_PAT` are NEVER silently dropped and
+  never silently accepted — the system is "in doubt" and asks: `/api/preview`
+  appends an ⚠ warning naming the SKUs; `/api/upload` returns 409
+  `{needsSkuConfirm, suspects[], message}` unless the request carries
+  `suspect_skus=include` (they're real products, audit-logged
+  `upload_suspect_skus_included`) or `=exclude` (drop those lines,
+  audit-logged `..._excluded`). The client (app.js, right before the
+  `needsDuplicateConfirm` handler) walks the user through two confirm()s:
+  "are these real SKUs?" → include; else "upload without them?" → exclude
+  or abort.
+- PDF picking lists are exempt from all of this — `parsePdfPicklistDetailed`
+  separates location and SKU columns explicitly (lib/ocr-parse.js
+  `LOCATION_CODE_PAT`), and its rows carry no `_skuSource`.
+
 ## Duplicate order numbers — hard block vs confirmable (server.js /api/upload)
 
 Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the
