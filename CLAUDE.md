@@ -202,8 +202,12 @@ Keyfields IssueDetail file whose THT-64-427-3 line vanished. Now:
 - `scoreQty` now: substring qty/quantity keyword match (catches
   `expectedqty`, `ship_qty`) AND a -15 penalty for line/seq/serial/row
   numbering column names.
-- SCHEMA SKUs ARE TRUSTED OUTRIGHT — no location-pattern filtering at all
-  (`splitSuspectSkuRows` in server.js skips `_skuSource === 'schema'`).
+- SCHEMA SKUs ARE TRUSTED OUTRIGHT — no location-pattern filtering
+  (`splitSuspectSkuRows` skips `_skuSource === 'schema'`) AND no
+  SKU-shape heuristics in `isMetadataRow` (spaces / label words): a real
+  Keyfields line "Thermal Grease X23-7783D" was silently dropped by the
+  SKU-with-spaces check before `isMetadataRow` learned to return false
+  early for schema rows. Order-number checks still apply to every row.
 - DETECTED SKUs matching `LOCATION_SKU_PAT` are NEVER silently dropped and
   never silently accepted — the system is "in doubt" and asks: `/api/preview`
   appends an ⚠ warning naming the SKUs; `/api/upload` returns 409

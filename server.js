@@ -2769,6 +2769,11 @@ function isMetadataRow(r) {
   if (on === sku && on !== '') return true;
   // Multi-word phrase with no digits (e.g. "Pick Ticket", "Issuing Date/Time")
   if (/\s/.test(on) && !/\d/.test(on) && /^[A-Za-z]/.test(on)) return true;
+  // The SKU-shape heuristics below exist to catch summary labels leaking in
+  // from AI-DETECTED columns. A SKU from a KNOWN schema column (d-SKUCODE,
+  // "SKU", "Item Code", …) is real data and may legitimately contain spaces
+  // ("Thermal Grease X23-7783D") or label-like words — trust it outright.
+  if (r._skuSource === 'schema') return false;
   // SKU with spaces → a summary label like "Total Whole Qty", "Grand Total Loose"
   if (/\s/.test(sku)) return true;
   // SKU is a known label word (Status, Account, Reference, …)
