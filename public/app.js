@@ -204,9 +204,6 @@
 
   // ── No-barcode items (GWPs etc.) — counted by button or substitute barcode ─
   let noBarcodeSkus = new Set();
-  let nbShortBySku  = {};   // full SKU → short scan code (NB####) — long SKUs
-                            // make Code128 too dense to scan, so substitute
-                            // barcodes always encode the short code instead
   const NO_BARCODE_PAT = /\bGWP\b/i;
   function isNoBarcodeItem(item) {
     return noBarcodeSkus.has(item.sku) || NO_BARCODE_PAT.test(item.sku + ' ' + (item.description || ''));
@@ -214,27 +211,18 @@
   async function fetchNoBarcodeSkus() {
     try {
       const r = await fetch('/api/no-barcode-skus', { headers: hdrs() });
-      if (r.ok) {
-        const arr = await r.json();
-        noBarcodeSkus = new Set(arr.map(x => typeof x === 'string' ? x : x.sku));
-        nbShortBySku = {};
-        for (const x of arr) { if (x && x.sku && x.shortCode) nbShortBySku[x.sku] = x.shortCode; }
-      }
+      if (r.ok) noBarcodeSkus = new Set(await r.json());
     } catch {}
   }
   async function learnNoBarcodeSku(item) {
     if (noBarcodeSkus.has(item.sku)) return;
     noBarcodeSkus.add(item.sku);
     try {
-      const r = await fetch('/api/no-barcode-skus', {
+      await fetch('/api/no-barcode-skus', {
         method: 'POST',
         headers: { ...hdrs(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ sku: item.sku, description: item.description || '', client_name: activeOrder?.client_name || '' }),
       });
-      if (r.ok) {
-        const d = await r.json();
-        if (d.shortCode) nbShortBySku[item.sku] = d.shortCode;
-      }
     } catch {}
   }
 
@@ -6464,14 +6452,12 @@
       });
     });
 
-    // Render the single on-screen substitute barcode — encodes the SHORT
-    // scan code (NB####) when one exists, since a long SKU as Code128 is
-    // too dense to read off a screen; the server resolves it back to the
-    // SKU through the normal scan path either way.
+    // Render the single on-screen substitute barcode (CODE128 of the SKU) —
+    // scanning it off the monitor goes through the normal scan path
     const bcEl = document.querySelector('#scanItemsTbody svg.nb-inline-bc');
     if (bcEl && window.JsBarcode) {
       try {
-        JsBarcode(bcEl, nbShortBySku[bcEl.dataset.bcSku] || bcEl.dataset.bcSku, { format: 'CODE128', width: 2.4, height: 54, displayValue: false, margin: 6, background: '#ffffff' });
+        JsBarcode(bcEl, bcEl.dataset.bcSku, { format: 'CODE128', width: 2.4, height: 54, displayValue: false, margin: 6, background: '#ffffff' });
       } catch {}
     }
 
@@ -6764,7 +6750,6 @@
     const k = String(raw).trim();
     const c = _resolveCache || {};
     let sku = (c.code2 && (c.code2[k] || c.code2[strip0(k)]))
-           || (c.nbShort && c.nbShort[k.toUpperCase()])  // NB#### substitute codes
            || (c.learned && (c.learned[k] || c.learned[strip0(k)]))
            || k;
     const lines = mergedScanLines(order);

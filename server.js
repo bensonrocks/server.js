@@ -1199,8 +1199,6 @@ try {
     console.log(`[IdealScan] No-barcode SKUs seeded: +${added} (total ${Object.keys(db.noBarcodeSkus).length})`);
   }
 } catch (e) { /* no seed shipped — fine */ }
-// Load the short-code lookup (NB#### → SKU) for scan resolution
-try { rebuildNbShortMap(readDb()); } catch {}
 
 // One-time audit backfill — synthesize ledger events from batches that
 // existed before the ledger was introduced, so reports cover old activity.
@@ -1279,9 +1277,6 @@ function resolveBeTimeCode2(scanned) {
   const k = scanned.trim();
   const official = officialResolveCode2(k);
   if (official) return official;
-  // System-assigned short scan codes (NB####) — substitute barcodes for
-  // no-barcode / too-long SKUs resolve back to the full SKU here
-  if (/^nb\d{3,}$/i.test(k) && _nbShortMap[k.toUpperCase()]) return _nbShortMap[k.toUpperCase()];
   // Teach-on-scan learned mappings — always LOWER priority than the official
   // CODE2 listing above, so a client refresh stays authoritative
   const kStripped = k.replace(/^0+(?=.)/, '');
@@ -2505,57 +2500,25 @@ app.get('/api/order-label/:orderNumber/pdf', requireAuthOrToken, (req, res) => {
 // matching the GWP pattern in uploaded orders.
 const NO_BARCODE_PAT = /\bGWP\b/i;
 
-// ── Short scan codes (NB####) for no-barcode SKUs ────────────────────────────
-// Long SKUs (e.g. MA-IDC3B-N-20F-Z-0100-N-0A, 26 chars) make a Code128
-// barcode so wide/dense that guns cannot read it once it's squeezed onto a
-// printed card or a phone screen — the "barcode too long" problem. Substitute
-// barcodes therefore encode a SHORT, stable, system-assigned code instead
-// (NB1001, NB1002, …) and scanning resolves it back to the full SKU.
-// Codes are assigned once and never change — a printed sheet stays valid
-// forever. The NB prefix keeps them from ever colliding with real product
-// codes or barcodes.
-let _nbShortMap = {}; // shortCode (uppercase) → full SKU
-function rebuildNbShortMap(db) {
-  _nbShortMap = {};
-  for (const [sku, info] of Object.entries(db.noBarcodeSkus || {})) {
-    if (info && info.shortCode) _nbShortMap[String(info.shortCode).toUpperCase()] = sku;
-  }
-}
-function ensureNbShortCode(db, sku, info = {}) {
-  if (!db.noBarcodeSkus) db.noBarcodeSkus = {};
-  let rec = db.noBarcodeSkus[sku];
-  if (!rec) {
-    rec = db.noBarcodeSkus[sku] = {
-      description: String(info.description || '').slice(0, 200),
-      client_name: String(info.client_name || '').slice(0, 80),
-      addedAt:     new Date().toISOString(),
-      addedBy:     String(info.addedBy || ''),
-    };
-  }
-  if (!rec.shortCode) {
-    db.nbShortSeq = (db.nbShortSeq || 1000) + 1;
-    rec.shortCode = 'NB' + db.nbShortSeq;
-    _nbShortMap[rec.shortCode] = sku;
-  }
-  return rec.shortCode;
-}
-
 app.post('/api/no-barcode-skus', requireAuth, (req, res) => {
   const sku = String(req.body?.sku || '').trim();
   if (!sku) return res.status(400).json({ error: 'sku required' });
   const db = readDb();
-  const shortCode = ensureNbShortCode(db, sku, {
-    description: req.body?.description,
-    client_name: req.body?.client_name,
-    addedBy:     req.userId || '',
-  });
-  writeDb(db);
-  res.json({ ok: true, shortCode });
+  if (!db.noBarcodeSkus) db.noBarcodeSkus = {};
+  if (!db.noBarcodeSkus[sku]) {
+    db.noBarcodeSkus[sku] = {
+      description: String(req.body?.description || '').slice(0, 200),
+      client_name: String(req.body?.client_name || '').slice(0, 80),
+      addedAt:     new Date().toISOString(),
+      addedBy:     req.userId || '',
+    };
+    writeDb(db);
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/no-barcode-skus', requireAuth, (req, res) => {
-  res.json(Object.entries(readDb().noBarcodeSkus || {})
-    .map(([sku, v]) => ({ sku, shortCode: v?.shortCode || null })));
+  res.json(Object.keys(readDb().noBarcodeSkus || {}));
 });
 
 // Printable sheet: one CODE128 barcode card per no-barcode SKU, grouped by
@@ -2584,30 +2547,16 @@ app.get('/api/no-barcode-sheet', requireAuthOrToken, (req, res) => {
     .map(([sku, v]) => ({ sku, ...v }))
     .sort((a, b) => (a.client_name || '').localeCompare(b.client_name || '') || a.sku.localeCompare(b.sku));
 
-  // Every card's barcode encodes the SHORT scan code (NB####), never the full
-  // SKU — a 26-char SKU as Code128 is too dense to scan off a card ("barcode
-  // too long"). Codes are assigned on first print and stay stable forever.
-  {
-    let assigned = false;
-    for (const it of items) {
-      const had = db.noBarcodeSkus?.[it.sku]?.shortCode;
-      it.shortCode = ensureNbShortCode(db, it.sku, it);
-      if (!had) assigned = true;
-    }
-    if (assigned) writeDb(db);
-  }
-
   const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const cards = items.map((it, i) => `
     <div class="card">
       ${it.client_name ? `<div class="client">${esc(it.client_name)}</div>` : ''}
       <svg id="bc${i}"></svg>
-      <div class="code">${esc(it.shortCode)}</div>
       <div class="sku">${esc(it.sku)}</div>
       ${it.description && it.description !== it.sku ? `<div class="desc">${esc(it.description)}</div>` : ''}
     </div>`).join('');
   const scripts = items.map((it, i) =>
-    `JsBarcode("#bc${i}", ${JSON.stringify(it.shortCode)}, {format:"CODE128", width:2.4, height:64, displayValue:false, margin:6});`
+    `JsBarcode("#bc${i}", ${JSON.stringify(it.sku)}, {format:"CODE128", width:2.4, height:64, displayValue:false, margin:6});`
   ).join('\n');
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -2626,8 +2575,7 @@ app.get('/api/no-barcode-sheet', requireAuthOrToken, (req, res) => {
   .card { border:2px solid #000; border-radius:8px; padding:10px 12px; text-align:center; break-inside:avoid; }
   .card .client { font-size:10px; font-weight:700; letter-spacing:1px; color:#555; text-transform:uppercase; }
   .card svg { width:100%; height:70px; }
-  .card .code { font-size:15px; font-weight:800; font-family:Consolas,monospace; letter-spacing:2px; color:#2563eb; }
-  .card .sku { font-size:22px; font-weight:800; font-family:Consolas,monospace; letter-spacing:1px; overflow-wrap:break-word; }
+  .card .sku { font-size:22px; font-weight:800; font-family:Consolas,monospace; letter-spacing:1px; }
   .card .desc { font-size:11px; color:#333; margin-top:2px; }
   .empty { color:#64748b; font-size:15px; padding:40px; text-align:center; }
 </style></head><body>
@@ -3901,7 +3849,6 @@ function refreshClaim(state, userId) {
 app.get('/api/scan/resolve-cache', (req, res) => {
   res.json({
     code2:   _beTimeCode2Map,
-    nbShort: _nbShortMap, // NB#### substitute codes → full SKU (offline scans)
     learned: Object.fromEntries(Object.entries(_learnedBarcodeMap).map(([k, v]) => [k, v.sku])),
     aliases: _learnedSkuAliases.map(al => ({ a: al.a, b: al.b })),
   });
