@@ -244,6 +244,30 @@ duplicate rule therefore has two tiers:
    the suffix fallback only fires when nothing matched as scanned, so orders that
    genuinely contain both `8006` and `8006NP` lines still count separately.
 
+## Short scan codes for no-barcode SKUs (server.js `_nbShortMap` / NB####)
+
+Long SKUs (real WESCO example: `MA-IDC3B-N-20F-Z-0100-N-0A`, 26 chars) make
+a Code128 barcode so wide/dense that guns cannot read it off a printed card
+or phone screen — reported by packers as "barcode too long". Substitute
+barcodes therefore NEVER encode the SKU itself:
+
+- `ensureNbShortCode(db, sku, info)` assigns each no-barcode SKU a stable
+  `NB<seq>` code (`db.noBarcodeSkus[sku].shortCode`, counter
+  `db.nbShortSeq`), assigned once and never changed — a printed sheet stays
+  valid forever. `_nbShortMap` (shortCode→SKU) is the runtime lookup,
+  rebuilt at startup (`rebuildNbShortMap`).
+- Assignment points: `POST /api/no-barcode-skus` (packer taps ⚠ on a line;
+  response returns the shortCode) and `/api/no-barcode-sheet` (assigns for
+  every card on first print, persists once).
+- The printed No-Barcode Sheet and the on-screen inline substitute barcode
+  both encode the SHORT code (full SKU stays as text on the card/row).
+- Resolution: `resolveBeTimeCode2` maps `^NB\d{3,}$` (case-insensitive)
+  through `_nbShortMap` — after the official CODE2 listing, before learned
+  barcodes. Offline scans resolve via the `nbShort` map added to
+  `/api/scan/resolve-cache` (client `resolveScanLocally`).
+- Client keeps `nbShortBySku` (from GET /api/no-barcode-skus, now
+  `[{sku, shortCode}]`, and from the POST response when learning).
+
 ## Teach-on-scan learned barcodes (server.js)
 
 - Unknown product barcodes scanned during picking can be taught: packer picks the
