@@ -44,6 +44,15 @@
   </svg>
 
   <!-- ── Login Overlay ── -->
+  <!-- Install-app helper: iOS never shows an install prompt (Add to Home
+       Screen is buried in Safari's Share menu), Android exposes one we can
+       trigger. Shown until installed or dismissed; dismissal is per-device. -->
+  <div id="installHintBar" class="install-hint hidden">
+    <span id="installHintText" class="install-hint-text"></span>
+    <button id="installHintAction" class="install-hint-btn hidden">Install</button>
+    <button id="installHintClose" class="install-hint-close" title="Dismiss">&#10005;</button>
+  </div>
+
   <div id="loginOverlay" class="login-overlay">
     <div class="login-box">
       <div class="login-logo-wrap">

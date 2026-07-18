@@ -695,6 +695,23 @@ breaking the default.
     everywhere. Any FUTURE `logAudit()` call anywhere in this file must
     avoid a bare `type` key in its data object for the same reason.
 
+## PWA install — iOS has no prompt; the app guides instead (installHintBar)
+
+The PWA plumbing (manifest.json, /icons/*, apple-touch-icon + apple-mobile
+meta tags, and a deliberately NO-CACHE sw.js — scanning is live-data, every
+deploy must reach devices immediately) was already in place and serving 200.
+"iOS cannot install" is Apple policy, not a bug: Safari never fires an
+install prompt — install = Share → Add to Home Screen, manually. So
+`#installHintBar` (bottom-fixed, app.js `initInstallHint`):
+- iOS Safari → spells out Share → "Add to Home Screen"; iOS Chrome/Firefox
+  (CriOS/FxiOS) → says to open the page in Safari first.
+- Android/desktop Chrome → captures `beforeinstallprompt` and shows a real
+  Install button that calls `prompt()`.
+- Hidden when already running standalone (`display-mode: standalone` /
+  `navigator.standalone`) and after ✕ dismissal
+  (`is_install_hint_dismissed`, localStorage — device-local by design).
+- iPadOS pretends to be Macintosh — detected via `maxTouchPoints > 1`.
+
 ## Per-user feature toggles (Administrator → Users → ⚙ Features)
 
 `user.features` = `{upload, orders, inbound, transport, labels, reports}`

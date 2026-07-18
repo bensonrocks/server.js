@@ -9407,6 +9407,55 @@
     document.getElementById('labelManualMatchOverlay').classList.add('hidden')
   );
 
+  // ── Install-app helper ─────────────────────────────────────────────────────
+  // iOS NEVER fires an install prompt — installing means Safari → Share →
+  // "Add to Home Screen", which nobody finds unaided, so we spell it out.
+  // Android/Chrome exposes beforeinstallprompt, so there we show a real
+  // Install button. Hidden once running standalone or after dismissal
+  // (per-device, localStorage — allowed under the device-local rule).
+  (function initInstallHint() {
+    const bar = document.getElementById('installHintBar');
+    if (!bar) return;
+    const txt       = document.getElementById('installHintText');
+    const actionBtn = document.getElementById('installHintAction');
+    const closeBtn  = document.getElementById('installHintClose');
+    const DISMISS_KEY = 'is_install_hint_dismissed';
+
+    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+    if (isStandalone) return;
+    try { if (localStorage.getItem(DISMISS_KEY)) return; } catch {}
+
+    closeBtn.addEventListener('click', () => {
+      bar.classList.add('hidden');
+      try { localStorage.setItem(DISMISS_KEY, '1'); } catch {}
+    });
+
+    const ua = navigator.userAgent || '';
+    // iPadOS 13+ masquerades as Macintosh — the touch check catches it
+    const isIOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      const inSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+      txt.innerHTML = inSafari
+        ? '&#128242; Install this app: tap the <b>Share</b> button (square with &#8593;), then <b>&ldquo;Add to Home Screen&rdquo;</b>.'
+        : '&#128242; To install on iPhone/iPad: open this page in <b>Safari</b>, tap <b>Share</b>, then <b>&ldquo;Add to Home Screen&rdquo;</b>.';
+      bar.classList.remove('hidden');
+      return;
+    }
+    // Android / desktop Chrome & Edge — a real, tappable install prompt
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      txt.innerHTML = '&#128242; Install <b>IDEALONE</b> on this device for full-screen scanning.';
+      actionBtn.classList.remove('hidden');
+      bar.classList.remove('hidden');
+      actionBtn.addEventListener('click', () => {
+        bar.classList.add('hidden');
+        e.prompt();
+      }, { once: true });
+    });
+    window.addEventListener('appinstalled', () => bar.classList.add('hidden'));
+  })();
+
   // ── Init ───────────────────────────────────────────────────────────────────
   initLogin();
 })();

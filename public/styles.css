@@ -2701,3 +2701,13 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 
 /* jsQR-fallback notice inside the camera viewfinder */
 .camera-qronly-hint { position: absolute; bottom: .6rem; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,.75); color: #fbbf24; font-size: .72rem; font-weight: 600; padding: .3rem .7rem; border-radius: 999px; white-space: nowrap; }
+
+/* ── Install-app hint bar (iOS Add-to-Home-Screen guidance / Android install) ── */
+.install-hint { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 12000;
+  display: flex; align-items: center; gap: .6rem; max-width: min(94vw, 460px);
+  background: #0f172a; color: #f1f5f9; border-radius: 12px; padding: .6rem .8rem;
+  font-size: .82rem; line-height: 1.35; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.install-hint-text b { color: #fbbf24; }
+.install-hint-btn { border: 0; background: #2563eb; color: #fff; font-weight: 700; border-radius: 8px;
+  padding: .45rem .9rem; font-size: .82rem; cursor: pointer; flex-shrink: 0; }
+.install-hint-close { border: 0; background: none; color: #94a3b8; font-size: 1rem; cursor: pointer; flex-shrink: 0; padding: .2rem .3rem; }
