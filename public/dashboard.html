@@ -15,7 +15,7 @@
   body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.5;min-height:100vh}
 
   /* ── MARKET PULSE STYLE HEADER ── */
-  .topbar{background:#0d0f14;border-bottom:1px solid rgba(255,255,255,.07);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:100}
+  .topbar{background:#0d0f14;border-bottom:1px solid rgba(255,255,255,.07);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:100;will-change:transform}
   .brand{display:flex;align-items:center;gap:9px;font-size:.9rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;font-family:var(--sans);text-decoration:none;white-space:nowrap}
   .brand-dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 8px #00e676;flex-shrink:0}
   .brand-first{color:#fff}
@@ -349,14 +349,15 @@ function toggleTheme(){const r=document.documentElement;const t=r.getAttribute('
 (function(){
   const tEl=document.getElementById('clock-time');
   const dEl=document.getElementById('clock-date');
-  const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
   const tzAbbr=()=>new Date().toLocaleTimeString('en',{timeZoneName:'short'}).split(' ').pop();
+  let lastTzAbbr='';
   function tick(){
+    if(!tEl||tEl.offsetParent===null) return; // skip when hidden (mobile)
     const now=new Date();
     const hms=now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
-    const date=now.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-    if(tEl)tEl.textContent=hms+' '+tzAbbr();
-    if(dEl)dEl.textContent=date;
+    if(!lastTzAbbr) lastTzAbbr=tzAbbr(); // compute once, not every second
+    tEl.textContent=hms+' '+lastTzAbbr;
+    if(dEl) dEl.textContent=now.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
   }
   tick();
   setInterval(tick,1000);
@@ -620,6 +621,7 @@ loadNews();
 // ── MT4/MT5 Bridge panel ───────────────────────────────────────────────
 function fmtMt(n, d) { return typeof n === 'number' ? n.toFixed(d) : '—'; }
 
+let _mtOnline = null;
 function renderMt(data) {
   const wrap     = document.getElementById('mt-wrap');
   const badge    = document.getElementById('mt-badge');
@@ -627,13 +629,20 @@ function renderMt(data) {
   const termEl   = document.getElementById('mt-terminal');
   const topbar   = document.getElementById('mt-topbar');
 
-  if (!data) { wrap.style.display = 'none'; topbar.style.display = 'none'; return; }
+  if (!data) {
+    if (wrap.style.display !== 'none') wrap.style.display = 'none';
+    if (topbar.style.display !== 'none') topbar.style.display = 'none';
+    return;
+  }
 
-  wrap.style.display = 'block';
+  if (wrap.style.display !== 'block') wrap.style.display = 'block';
   const online = data.connected;
-  badge.className = 'mt-badge ' + (online ? 'online' : 'offline');
-  badgeTxt.textContent = online ? 'CONNECTED' : 'OFFLINE';
-  topbar.style.display = online ? 'inline-block' : 'none';
+  if (_mtOnline !== online) {
+    _mtOnline = online;
+    badge.className = 'mt-badge ' + (online ? 'online' : 'offline');
+    badgeTxt.textContent = online ? 'CONNECTED' : 'OFFLINE';
+    topbar.style.display = online ? 'inline-block' : 'none';
+  }
 
   if (data.terminal) {
     const t = data.terminal;
@@ -642,13 +651,14 @@ function renderMt(data) {
     termEl.textContent = '';
   }
 
-  // Prices
+  // Prices — build new HTML and only write if changed to avoid reflow
   const pricesEl = document.getElementById('mt-prices');
   const symbolMap = { XAUUSD: 'Gold · XAU/USD', XAGUSD: 'Silver · XAG/USD' };
   const ticks = data.ticks || {};
   const hasTicks = Object.keys(ticks).length > 0;
+  let newPricesHtml;
   if (hasTicks) {
-    pricesEl.innerHTML = Object.entries(ticks).map(([sym, t]) => {
+    newPricesHtml = Object.entries(ticks).map(([sym, t]) => {
       const label = symbolMap[sym] || sym;
       const digits = sym === 'XAUUSD' ? 2 : 3;
       const spread = t.spread != null ? (t.spread * (sym === 'XAUUSD' ? 10 : 100)).toFixed(1) + ' pts' : '—';
@@ -663,10 +673,11 @@ function renderMt(data) {
       </div>`;
     }).join('');
   } else {
-    pricesEl.innerHTML = online
+    newPricesHtml = online
       ? '<div class="mt-empty" style="background:var(--surface)">Waiting for price data from EA…</div>'
       : '<div class="mt-empty" style="background:var(--surface)">EA not connected — attach the bridge EA to a chart in MT4/MT5</div>';
   }
+  if (pricesEl.innerHTML !== newPricesHtml) pricesEl.innerHTML = newPricesHtml;
 
   // Positions
   const posEl = document.getElementById('mt-positions');
@@ -715,7 +726,7 @@ async function loadMtStatus() {
 }
 
 loadMtStatus();
-setInterval(loadMtStatus, 5000); // refresh every 5 s
+setInterval(loadMtStatus, 30000); // refresh every 30 s (reduces layout reflows)
 
 function timeAgo(iso) {
   const diff = Date.now() - new Date(iso).getTime();
