@@ -604,7 +604,6 @@ function renderHistory(sigs) {
 
 async function refresh(){
   setStatus('loading','Fetching live analysis…');
-  document.getElementById('grid').innerHTML='';
   try{
     const res=await fetch('/api/analysis');
     const json=await res.json();
@@ -635,8 +634,10 @@ function renderMt(data) {
     return;
   }
 
-  if (wrap.style.display !== 'block') wrap.style.display = 'block';
   const online = data.connected;
+  const targetDisplay = online ? 'block' : 'none';
+  if (wrap.style.display !== targetDisplay) wrap.style.display = targetDisplay;
+  if (!online) return;
   if (_mtOnline !== online) {
     _mtOnline = online;
     badge.className = 'mt-badge ' + (online ? 'online' : 'offline');
