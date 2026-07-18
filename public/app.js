@@ -1133,6 +1133,26 @@
         data = await resp.json();
       }
 
+      // Same order number already uploaded and NOT yet completed — the
+      // uploader chooses: overwrite the earlier upload with this file's
+      // version (scan progress on it is discarded) or abort.
+      if (resp.status === 409 && data.needsOverwriteConfirm) {
+        const lines = (data.duplicates || []).slice(0, 10).map(d =>
+          `• ${d.order} — job ${d.job || '?'} ("${d.filename}", ${d.at}, status: ${d.status})`).join('\n');
+        const more = (data.duplicates || []).length > 10 ? `\n…and ${data.duplicates.length - 10} more` : '';
+        const ok = confirm(
+          `⚠ ALREADY UPLOADED — NOT YET COMPLETED\n\n${data.message}\n\n${lines}${more}` +
+          `\n\nOK = OVERWRITE with this file's version\nCancel = abort upload (keep the existing order)`);
+        if (!ok) {
+          document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+          setUploadStatus('error', 'Upload cancelled — existing order(s) kept unchanged.');
+          return;
+        }
+        form.append('overwrite_duplicates', 'yes');
+        resp = await sendUpload();
+        data = await resp.json();
+      }
+
       // Recycled order numbers: same number already COMPLETED but with a
       // different GI — flag what likely happened and let the user decide.
       if (resp.status === 409 && data.needsDuplicateConfirm) {

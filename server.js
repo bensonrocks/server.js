@@ -3231,12 +3231,34 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
     // these as plain informational warnings instead; the uploader fixes the
     // source file and re-uploads if the duplicate is a mistake.
     const duplicateWarnings = findDuplicateLineWarnings(orders).map(w => w.problem);
-    // Duplicate check so the Confirm dialog warns BEFORE approving
+    // Duplicate check so the Confirm dialog warns BEFORE approving — mirrors
+    // /api/upload's three-way split: completed+sameGI = blocked, still
+    // pending/processing = Overwrite-or-Abort prompt, completed+differentGI
+    // = upload-as-new prompt.
     {
-      const existing = new Set();
-      for (const b of readDb().batches || []) for (const o of b.orders || []) existing.add(o.order_number);
-      const dups = [...new Set(orders.map(o => o.order_number).filter(n => existing.has(n)))];
-      if (dups.length) errors.push(`⛔ ${dups.length} order(s) already uploaded earlier: ${dups.slice(0, 8).join(', ')}${dups.length > 8 ? '…' : ''} — upload will be blocked`);
+      const existing = new Map(); // order_number → {status, issueNo}
+      for (const b of readDb().batches || []) for (const o of b.orders || []) {
+        if (!existing.has(o.order_number)) {
+          existing.set(o.order_number, {
+            status: b.orderStates?.[o.order_number]?.status || 'pending',
+            issueNo: String(o.issue_no || '').trim(),
+          });
+        }
+      }
+      const locked = [], overwritable = [], asNew = [];
+      for (const o of orders) {
+        const src = existing.get(o.order_number);
+        if (!src) continue;
+        const newGi = String(o.issue_no || '').trim();
+        const giDiffers = newGi && src.issueNo && newGi !== src.issueNo;
+        if (src.status === 'done' && giDiffers) asNew.push(o.order_number);
+        else if (src.status === 'done')         locked.push(o.order_number);
+        else                                    overwritable.push(o.order_number);
+      }
+      const list = a => [...new Set(a)].slice(0, 8).join(', ') + (new Set(a).size > 8 ? '…' : '');
+      if (locked.length)       errors.push(`⛔ ${locked.length} order(s) already uploaded AND completed: ${list(locked)} — upload will be blocked`);
+      if (overwritable.length) errors.push(`⚠ ${overwritable.length} order(s) already uploaded earlier (not yet completed): ${list(overwritable)} — you'll be asked to Overwrite or Abort when you approve`);
+      if (asNew.length)        errors.push(`⚠ ${asNew.length} completed order(s) share a number with this file but have a different GI: ${list(asNew)} — you'll be asked to confirm uploading them as new orders`);
     }
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
@@ -3508,8 +3530,9 @@ app.post('/api/upload', uploadFields, async (req, res) => {
         }
       }
 
-      const hardDups = [];   // live twin or indistinguishable → always abort
-      const softDups = [];   // completed + different GI → confirmable
+      const lockedDups    = [];   // earlier order already DONE (same/missing GI) → always abort, completed work is never overwritten
+      const overwriteDups = [];   // earlier order still pending/processing → user chooses Abort or Overwrite
+      const softDups      = [];   // completed + different GI → confirmable as a NEW separate order
       for (const o of orders) {
         const src = existingIn.get(o.order_number);
         if (!src) continue;
@@ -3517,25 +3540,61 @@ app.post('/api/upload', uploadFields, async (req, res) => {
         const giDiffers = newGi && src.issueNo && newGi !== src.issueNo;
         if (src.status === 'done' && giDiffers) {
           softDups.push({ order: o.order_number, existingGi: src.issueNo, newGi, ...src });
+        } else if (src.status === 'done') {
+          lockedDups.push({ order: o.order_number, ...src });
         } else {
-          hardDups.push({ order: o.order_number, ...src });
+          overwriteDups.push({ order: o.order_number, ...src });
         }
       }
 
-      if (hardDups.length) {
+      if (lockedDups.length) {
         return res.status(422).json({
-          error: `UPLOAD ABORTED:\n${hardDups.length} order(s) in this file already exist in the system.\nNothing was saved.`,
+          error: `UPLOAD ABORTED:\n${lockedDups.length} order(s) in this file were already uploaded AND completed.\nNothing was saved.`,
           validation: {
-            passed: false, status: 'FAILED', totalErrors: hardDups.length,
-            totalRowsProcessed: mapped.length, rowsWithErrors: hardDups.length, hasCritical: true,
-            errors: hardDups.slice(0, 50).map(d => ({
+            passed: false, status: 'FAILED', totalErrors: lockedDups.length,
+            totalRowsProcessed: mapped.length, rowsWithErrors: lockedDups.length, hasCritical: true,
+            errors: lockedDups.slice(0, 50).map(d => ({
               excelRow: '—', orderId: d.order, field: 'order_number',
-              issue: 'DUPLICATE ORDER NUMBER',
-              description: `Order "${d.order}" already exists in job ${d.code || '(unknown)'} — "${d.filename}", uploaded ${d.at} (status: ${d.status}).`,
-              action: `Already uploaded in ${d.code || 'an earlier batch'}. If this file replaces it, delete that batch in Administrator → Upload History first; otherwise remove the duplicated rows from this file.`,
+              issue: 'ORDER ALREADY COMPLETED',
+              description: `Order "${d.order}" was already completed in job ${d.code || '(unknown)'} — "${d.filename}", uploaded ${d.at}.`,
+              action: 'Completed orders are never overwritten. If this is genuinely a different order, its GI number must differ; if the completed record is wrong, use the Master deletion workflow first.',
               critical: true,
             })),
           },
+        });
+      }
+
+      // Same order number, earlier copy NOT yet completed — the uploader
+      // decides: abort, or OVERWRITE (replace the earlier upload with this
+      // file's version; any scan progress on it is discarded).
+      if (overwriteDups.length && req.body?.overwrite_duplicates !== 'yes') {
+        return res.status(409).json({
+          needsOverwriteConfirm: true,
+          duplicates: overwriteDups.map(d => ({
+            order: d.order, job: d.code, filename: d.filename, at: d.at, status: d.status,
+          })),
+          message: `${overwriteDups.length} order number(s) in this file were already uploaded and are still ${overwriteDups.some(d => d.status === 'processing') ? 'pending / in progress' : 'pending'}. You can OVERWRITE them with this file's version (the earlier upload — including any scan progress — is discarded) or abort.`,
+        });
+      }
+      if (overwriteDups.length) {
+        const dupNums = new Set(overwriteDups.map(d => d.order));
+        const db0 = readDb();
+        for (const b of db0.batches || []) {
+          const before = (b.orders || []).length;
+          if (!before) continue;
+          b.orders = b.orders.filter(o => !dupNums.has(o.order_number));
+          if (b.orders.length !== before) {
+            for (const on of dupNums) { if (b.orderStates?.[on]) delete b.orderStates[on]; }
+            b.order_count = b.orders.length;
+            b.row_count   = b.orders.reduce((s, o) => s + (o.lines?.length || 0), 0);
+          }
+        }
+        // A batch whose every order was overwritten would linger as an empty shell
+        db0.batches = (db0.batches || []).filter(b => (b.orders || []).length > 0);
+        writeDb(db0);
+        logAudit('upload_duplicate_overwritten', {
+          orders: overwriteDups.map(d => `${d.order} (was ${d.status} in ${d.code})`).slice(0, 20),
+          count: overwriteDups.length, by: req.userId || '',
         });
       }
 

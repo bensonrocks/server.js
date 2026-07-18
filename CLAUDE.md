@@ -222,15 +222,25 @@ Keyfields IssueDetail file whose THT-64-427-3 line vanished. Now:
   separates location and SKU columns explicitly (lib/ocr-parse.js
   `LOCATION_CODE_PAT`), and its rows carry no `_skuSource`.
 
-## Duplicate order numbers — hard block vs confirmable (server.js /api/upload)
+## Duplicate order numbers — locked vs overwritable vs confirmable (server.js /api/upload)
 
 Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the
 `iWMS GINo` (issue_no) is the actually-unique identifier. The upload
-duplicate rule therefore has two tiers:
-- **HARD abort** (422): earlier order with the same number is still
-  pending/processing (a live twin would collide with scanning), OR the GI
-  numbers match / are missing (indistinguishable → treat as a re-upload).
-  Error names the exact batch (job code, filename, upload time, status).
+duplicate rule has three tiers:
+- **HARD abort** (422): earlier order with the same number (same/missing
+  GI) is already DONE — completed work is never overwritten by an upload
+  (same rule as deletion); the error points to the Master deletion
+  workflow. Error names the exact batch (job code, filename, upload time).
+- **OVERWRITE-OR-ABORT** (409 `{needsOverwriteConfirm, duplicates[]}`):
+  earlier order is still pending/processing. The client confirm() offers
+  OK = overwrite / Cancel = abort; resend with `overwrite_duplicates=yes`
+  REMOVES the earlier order from its batch (order, orderStates, counts;
+  empty batches are dropped) and proceeds with this file's version —
+  any scan progress on the old copy is deliberately discarded (fresh
+  `pending` state, new job code). Audit-logged
+  `upload_duplicate_overwritten`. `/api/preview` mirrors the three-way
+  split in its warning wording so the Confirm modal says what will happen
+  BEFORE approve.
 - **CONFIRMABLE** (409 `{needsDuplicateConfirm, duplicates[], message}`):
   earlier order is DONE and the GI differs — almost certainly a different
   order reusing the client's number. Client shows a confirm() listing each
