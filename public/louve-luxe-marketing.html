@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Louve Luxe - Automated Marketing Agent</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+      color: #f0f0f0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #d4af37 0%, #f4c430 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: #b0b0b0;
+      font-size: 1.1em;
+    }
+
+    .main-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      margin-bottom: 40px;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(212, 175, 55, 0.3);
+      border-radius: 12px;
+      padding: 30px;
+      backdrop-filter: blur(10px);
+    }
+
+    .card h2 {
+      color: #d4af37;
+      margin-bottom: 20px;
+      font-size: 1.5em;
+    }
+
+    .upload-zone {
+      border: 2px dashed rgba(212, 175, 55, 0.5);
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: rgba(212, 175, 55, 0.05);
+    }
+
+    .upload-zone:hover {
+      border-color: #d4af37;
+      background: rgba(212, 175, 55, 0.1);
+    }
+
+    .upload-zone.active {
+      border-color: #d4af37;
+      background: rgba(212, 175, 55, 0.2);
+    }
+
+    .upload-zone input {
+      display: none;
+    }
+
+    .upload-text {
+      font-size: 1.1em;
+      margin-bottom: 10px;
+    }
+
+    .upload-hint {
+      color: #888;
+      font-size: 0.9em;
+    }
+
+    #preview {
+      width: 100%;
+      max-width: 400px;
+      border-radius: 8px;
+      margin-top: 20px;
+      display: none;
+    }
+
+    button {
+      background: linear-gradient(135deg, #d4af37 0%, #f4c430 100%);
+      color: #1a1a1a;
+      border: none;
+      padding: 12px 30px;
+      font-size: 1em;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+      font-weight: 600;
+      margin-top: 20px;
+      width: 100%;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(212, 175, 55, 0.3);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .results {
+      display: none;
+    }
+
+    .results.visible {
+      display: block;
+    }
+
+    .result-section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: rgba(212, 175, 55, 0.05);
+      border-left: 4px solid #d4af37;
+      border-radius: 4px;
+    }
+
+    .result-section h3 {
+      color: #d4af37;
+      margin-bottom: 12px;
+      font-size: 1.2em;
+    }
+
+    .result-section p {
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }
+
+    .result-section ul {
+      margin-left: 20px;
+      line-height: 1.8;
+    }
+
+    .result-section li {
+      margin-bottom: 8px;
+    }
+
+    .hashtags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .hashtag {
+      background: rgba(212, 175, 55, 0.2);
+      color: #d4af37;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.9em;
+    }
+
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .loading.active {
+      display: block;
+    }
+
+    .spinner {
+      border: 3px solid rgba(212, 175, 55, 0.2);
+      border-top: 3px solid #d4af37;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 15px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .error {
+      background: rgba(255, 0, 0, 0.1);
+      border: 1px solid rgba(255, 0, 0, 0.5);
+      color: #ff6b6b;
+      padding: 15px;
+      border-radius: 6px;
+      display: none;
+      margin-top: 15px;
+    }
+
+    .error.visible {
+      display: block;
+    }
+
+    @media (max-width: 768px) {
+      .main-content {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 2em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>✨ Louve Luxe Marketing Agent</h1>
+      <p class="subtitle">Intelligent AI-powered product marketing analysis for Instagram</p>
+    </header>
+
+    <div class="main-content">
+      <div class="card">
+        <h2>📸 Upload Product Image</h2>
+        <div class="upload-zone" id="uploadZone">
+          <div class="upload-text">Click to upload or drag and drop</div>
+          <div class="upload-hint">PNG, JPG, GIF up to 10MB</div>
+          <input type="file" id="imageInput" accept="image/*">
+        </div>
+        <img id="preview" alt="Preview">
+        <button id="analyzeBtn" disabled>Analyze Product</button>
+        <div class="loading" id="loading">
+          <div class="spinner"></div>
+          <p>Analyzing your product... This may take a moment.</p>
+        </div>
+        <div class="error" id="error"></div>
+      </div>
+
+      <div class="card">
+        <h2>📊 Analysis Results</h2>
+        <div class="results" id="results">
+          <div class="result-section" id="productAnalysisSection">
+            <h3>Product Analysis</h3>
+            <p id="productAnalysisText"></p>
+          </div>
+
+          <div class="result-section" id="marketingCommentsSection">
+            <h3>Marketing Comments</h3>
+            <ul id="marketingCommentsList"></ul>
+          </div>
+
+          <div class="result-section" id="targetAudienceSection">
+            <h3>Target Audience</h3>
+            <p id="targetAudienceText"></p>
+          </div>
+
+          <div class="result-section" id="competitiveEdgeSection">
+            <h3>Competitive Edge</h3>
+            <p id="competitiveEdgeText"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📱 Instagram Strategy</h2>
+      <div class="results" id="instagramResults">
+        <div class="result-section" id="instagramStrategySection">
+          <h3>Best Posting Times & Frequency</h3>
+          <p id="bestPostingTimeText"></p>
+
+          <h3 style="margin-top: 20px;">Recommended Hashtags</h3>
+          <div class="hashtags" id="hashtagsContainer"></div>
+
+          <h3 style="margin-top: 20px;">Caption Styles</h3>
+          <ul id="captionStylesList"></ul>
+
+          <h3 style="margin-top: 20px;">Content Angles</h3>
+          <ul id="contentAnglesList"></ul>
+
+          <h3 style="margin-top: 20px;">Engagement Tactics</h3>
+          <ul id="engagementTacticsList"></ul>
+
+          <h3 style="margin-top: 20px;">Carousel & Reel Ideas</h3>
+          <ul id="carouselReelsList"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const uploadZone = document.getElementById('uploadZone');
+    const imageInput = document.getElementById('imageInput');
+    const preview = document.getElementById('preview');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const loading = document.getElementById('loading');
+    const error = document.getElementById('error');
+    const results = document.getElementById('results');
+    const instagramResults = document.getElementById('instagramResults');
+
+    // Drag and drop
+    uploadZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      uploadZone.classList.add('active');
+    });
+
+    uploadZone.addEventListener('dragleave', () => {
+      uploadZone.classList.remove('active');
+    });
+
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadZone.classList.remove('active');
+      const files = e.dataTransfer.files;
+      if (files.length > 0 && files[0].type.startsWith('image/')) {
+        imageInput.files = files;
+        handleImageSelect();
+      }
+    });
+
+    // Click to upload
+    uploadZone.addEventListener('click', () => imageInput.click());
+    imageInput.addEventListener('change', handleImageSelect);
+
+    function handleImageSelect() {
+      const file = imageInput.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          preview.src = e.target.result;
+          preview.style.display = 'block';
+          analyzeBtn.disabled = false;
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+
+    analyzeBtn.addEventListener('click', async () => {
+      const file = imageInput.files[0];
+      if (!file) return;
+
+      analyzeBtn.disabled = true;
+      loading.classList.add('active');
+      error.classList.remove('visible');
+
+      try {
+        const formData = new FormData();
+        formData.append('image', file);
+
+        const response = await fetch('/api/louve-luxe/analyze-image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.ok) {
+          displayResults(data.analysis);
+        } else {
+          throw new Error(data.error || 'Analysis failed');
+        }
+      } catch (err) {
+        error.textContent = 'Error: ' + err.message;
+        error.classList.add('visible');
+        console.error('Error:', err);
+      } finally {
+        loading.classList.remove('active');
+        analyzeBtn.disabled = false;
+      }
+    });
+
+    function displayResults(analysis) {
+      // Product Analysis
+      if (analysis.productAnalysis) {
+        document.getElementById('productAnalysisText').textContent = analysis.productAnalysis;
+      }
+
+      // Marketing Comments
+      if (analysis.marketingComments && Array.isArray(analysis.marketingComments)) {
+        const list = document.getElementById('marketingCommentsList');
+        list.innerHTML = analysis.marketingComments
+          .map(comment => `<li>${comment}</li>`)
+          .join('');
+      }
+
+      // Target Audience
+      if (analysis.targetAudience) {
+        document.getElementById('targetAudienceText').textContent = analysis.targetAudience;
+      }
+
+      // Competitive Edge
+      if (analysis.competitiveEdge) {
+        document.getElementById('competitiveEdgeText').textContent = analysis.competitiveEdge;
+      }
+
+      // Instagram Strategy
+      if (analysis.instagramStrategy) {
+        const strategy = analysis.instagramStrategy;
+
+        if (strategy.bestPostingTime) {
+          document.getElementById('bestPostingTimeText').textContent = strategy.bestPostingTime;
+        }
+
+        // Hashtags
+        if (strategy.hashtags && Array.isArray(strategy.hashtags)) {
+          const hashtagsContainer = document.getElementById('hashtagsContainer');
+          hashtagsContainer.innerHTML = strategy.hashtags
+            .map(tag => `<div class="hashtag">${tag.startsWith('#') ? tag : '#' + tag}</div>`)
+            .join('');
+        }
+
+        // Caption Styles
+        if (strategy.captionStyles && Array.isArray(strategy.captionStyles)) {
+          const list = document.getElementById('captionStylesList');
+          list.innerHTML = strategy.captionStyles
+            .map(style => `<li>${style}</li>`)
+            .join('');
+        }
+
+        // Content Angles
+        if (strategy.contentAngles && Array.isArray(strategy.contentAngles)) {
+          const list = document.getElementById('contentAnglesList');
+          list.innerHTML = strategy.contentAngles
+            .map(angle => `<li>${angle}</li>`)
+            .join('');
+        }
+
+        // Engagement Tactics
+        if (strategy.engagementTactics && Array.isArray(strategy.engagementTactics)) {
+          const list = document.getElementById('engagementTacticsList');
+          list.innerHTML = strategy.engagementTactics
+            .map(tactic => `<li>${tactic}</li>`)
+            .join('');
+        }
+
+        // Carousel & Reel Ideas
+        if (strategy.carouselReels && Array.isArray(strategy.carouselReels)) {
+          const list = document.getElementById('carouselReelsList');
+          list.innerHTML = strategy.carouselReels
+            .map(idea => `<li>${idea}</li>`)
+            .join('');
+        }
+      }
+
+      results.classList.add('visible');
+      instagramResults.classList.add('visible');
+
+      // Scroll to results
+      setTimeout(() => {
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  </script>
+</body>
+</html>

@@ -8,6 +8,7 @@ const http    = require('http');
 const bcrypt  = require('bcryptjs');
 const session = require('express-session');
 const Stripe  = require('stripe');
+const multer  = require('multer');
 
 const { analyze }                    = require('./lib/trading/ictAnalysis');
 const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
@@ -16,6 +17,7 @@ const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 const mtBridge                       = require('./lib/mtBridge');
+const { analyzeProductImage }        = require('./lib/marketingAgent');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +25,19 @@ const PORT = process.env.PORT || 3000;
 const stripe = process.env.STRIPE_SECRET_KEY
   ? Stripe(process.env.STRIPE_SECRET_KEY)
   : null;
+
+// Multer configuration for image uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  },
+});
 
 // HitPay takes priority over Stripe when configured
 const useHitPay = hitpay.configured;
@@ -68,8 +83,8 @@ app.post('/api/payment/webhook',
 // internally. Trust the first hop so req.secure reflects the real
 // protocol — required for express-session to set Secure cookies.
 app.set('trust proxy', 1);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const sessionStore = hasDb
   ? new (require('connect-pg-simple')(session))({ pool, createTableIfMissing: true })
@@ -165,6 +180,9 @@ app.get('/settings',     requireSubscriptionPage, (req, res) =>
 );
 app.get('/vaultkeepers', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'vaultkeepers.html'))
+);
+app.get('/louve-luxe', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'louve-luxe-marketing.html'))
 );
 
 // ── Static assets (tutorial.html, images, etc.) ────────────────────────
@@ -562,6 +580,45 @@ app.get('/api/demo', requireSubscriptionAPI, (req, res) => {
     SILVER: analyze(generateCandles(32.5, 0.01, 100, 'bull'), 'SILVER'),
   };
   res.json({ ok: true, data: results, live: false });
+});
+
+// ── Louve Luxe Marketing Agent ────────────────────────────────────────
+app.post('/api/louve-luxe/analyze-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: 'No image file provided' });
+    }
+
+    // Convert buffer to base64
+    const imageBase64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype;
+
+    // Analyze the product image
+    const analysis = await analyzeProductImage(imageBase64, mediaType);
+
+    res.json({ ok: true, analysis });
+  } catch (err) {
+    console.error('Marketing agent error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/louve-luxe/analyze-base64', async (req, res) => {
+  try {
+    const { imageBase64, mediaType } = req.body;
+
+    if (!imageBase64) {
+      return res.status(400).json({ ok: false, error: 'imageBase64 required' });
+    }
+
+    // Analyze the product image
+    const analysis = await analyzeProductImage(imageBase64, mediaType || 'image/jpeg');
+
+    res.json({ ok: true, analysis });
+  } catch (err) {
+    console.error('Marketing agent error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ── MT4/MT5 Bridge ────────────────────────────────────────────────────
