@@ -6402,7 +6402,7 @@
            </td>`;
 
       const inlineBc = item.sku === inlineBcSku
-        ? `<div class="nb-inline-bc-wrap"><svg class="nb-inline-bc" data-bc-sku="${esc(item.sku)}"></svg><div class="nb-inline-bc-hint">&#9535; scan this barcode off the screen</div></div>`
+        ? `<div class="nb-inline-bc-wrap"><div class="nb-inline-bc" data-bc-sku="${esc(item.sku)}"></div><div class="nb-inline-bc-hint">&#9535; scan this QR code off the screen</div></div>`
         : (noBarcode ? '<div class="nb-badge">&#9888; no barcode &mdash; count buttons, or wait for its turn</div>' : '');
       return `
         <tr class="${rowClass}" data-sku="${esc(item.sku)}">
@@ -6452,12 +6452,17 @@
       });
     });
 
-    // Render the single on-screen substitute barcode (CODE128 of the SKU) —
-    // scanning it off the monitor goes through the normal scan path
-    const bcEl = document.querySelector('#scanItemsTbody svg.nb-inline-bc');
-    if (bcEl && window.JsBarcode) {
+    // Render the single on-screen substitute code as a QR of the FULL SKU —
+    // QR stays compact and scannable at any SKU length (a long SKU as
+    // Code128 is too dense to read off a screen). Scanning it feeds the
+    // exact SKU value through the normal scan path.
+    const bcEl = document.querySelector('#scanItemsTbody div.nb-inline-bc');
+    if (bcEl && window.qrcode) {
       try {
-        JsBarcode(bcEl, bcEl.dataset.bcSku, { format: 'CODE128', width: 2.4, height: 54, displayValue: false, margin: 6, background: '#ffffff' });
+        const q = qrcode(0, 'M');
+        q.addData(bcEl.dataset.bcSku);
+        q.make();
+        bcEl.innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
       } catch {}
     }
 

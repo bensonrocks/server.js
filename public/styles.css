@@ -2318,6 +2318,7 @@ body.ls-open { overflow: hidden; }
 /* on-screen substitute barcode for the current no-barcode item */
 .nb-inline-bc-wrap { margin-top: .35rem; display: inline-block; background: #fff; border: 2px solid #f59e0b; border-radius: 8px; padding: .3rem .5rem .15rem; }
 .nb-inline-bc { display: block; }
+.nb-inline-bc svg { display: block; width: 96px; height: 96px; margin: 0 auto; }
 .nb-inline-bc-hint { text-align: center; font-size: .68rem; color: #92400e; font-weight: 600; padding-bottom: .1rem; }
 
 /* scan table pager — no scrolling for warehouse staff */
@@ -2365,7 +2366,7 @@ body.ls-open { overflow: hidden; }
   .nb-all                                { padding: 0 .5rem; font-size: .78rem; }
   .nb-cell                               { white-space: normal; }
   .nb-badge                              { font-size: .6rem; }
-  .nb-inline-bc-wrap svg                 { max-width: 130px; height: 40px; }
+  .nb-inline-bc-wrap svg                 { width: 76px; height: 76px; }
   .scan-meta-primary .meta-pill          { font-size: .95rem; padding: .3rem .7rem; }
   .meta-details-btn                      { font-size: .9rem; }
   .scan-meta-details                     { font-size: .95rem; }

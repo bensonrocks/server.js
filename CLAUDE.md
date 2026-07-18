@@ -244,6 +244,37 @@ duplicate rule therefore has two tiers:
    the suffix fallback only fires when nothing matched as scanned, so orders that
    genuinely contain both `8006` and `8006NP` lines still count separately.
 
+## QR codes are the substitute-code format (NOT Code128, NOT short codes)
+
+Real WESCO SKUs run to 26 chars (`MA-IDC3B-N-20F-Z-0100-N-0A`); as Code128
+that's too wide/dense to scan off a card or screen ("barcode too long").
+The user explicitly rejected system-assigned short codes (an NB#### scheme
+was built and REVERTED — commit e34977f, reverted 5531170): the requirement
+is scan a QR and take its DECODED VALUE into processing, identically for
+outbound scanning and IdealInbound receiving. Current state:
+
+- `qrcode-generator` (npm) served at `/vendor/qrcode.js` (same
+  serve-from-node_modules pattern as jsbarcode); loaded by index.html and
+  the no-barcode sheet.
+- The printed No-Barcode Sheet (`/api/no-barcode-sheet`) renders one QR per
+  card encoding the FULL SKU (110px, error level M, `createSvgTag`), full
+  SKU + description as text.
+- The on-screen substitute in the scan overlay (`.nb-inline-bc`, now a
+  `<div>` not an `<svg>`) renders a QR of the full SKU; requires
+  `window.qrcode`.
+- No resolution layer needed: the decoded value IS the SKU, so the normal
+  scan paths (exact match → NP fallback → aliases → learned) just work —
+  verified by decoding rendered QRs with an independent reader (jsQR) and
+  POSTing the value to `/api/scan/increment` (outbound) and
+  `/api/inbound/:id/scan` (inbound; field name is `code`, not `sku`).
+- The camera scanner already reads QR — `BarcodeDetector` is constructed
+  with `getSupportedFormats()` (includes `qr_code` on real devices), and
+  `dispatchCameraScan` routes to `handleItemScan`/`inboundScan` by target.
+  Hardware 2D guns are keyboard wedges — decoded QR text arrives through
+  `_globalScanKeydown` like any typed value, no code path needed.
+- JsBarcode stays for everything 1D that ISN'T a SKU substitute: waybill
+  labels, NEWCARTON control card, carton-slip order barcode.
+
 ## Teach-on-scan learned barcodes (server.js)
 
 - Unknown product barcodes scanned during picking can be taught: packer picks the

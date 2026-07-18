@@ -581,6 +581,11 @@ app.get('/home', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'hom
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
+// QR generator — substitute codes for long SKUs are QR (a 26-char SKU as
+// Code128 is too dense to scan; QR encodes it compactly)
+app.get('/vendor/qrcode.js', (_req, res) =>
+  res.sendFile(path.join(__dirname, 'node_modules/qrcode-generator/dist/qrcode.js'))
+);
 
 // ── Persistent storage ──────────────────────────────────────────────────────
 const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -2548,21 +2553,25 @@ app.get('/api/no-barcode-sheet', requireAuthOrToken, (req, res) => {
     .sort((a, b) => (a.client_name || '').localeCompare(b.client_name || '') || a.sku.localeCompare(b.sku));
 
   const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // QR, not Code128 — the QR encodes the FULL SKU value, so scanning it
+  // feeds the exact SKU into processing. A long SKU (26+ chars) as Code128
+  // is too wide/dense to read off a card; QR stays compact at any length.
   const cards = items.map((it, i) => `
     <div class="card">
       ${it.client_name ? `<div class="client">${esc(it.client_name)}</div>` : ''}
-      <svg id="bc${i}"></svg>
+      <div class="qr" id="qr${i}"></div>
       <div class="sku">${esc(it.sku)}</div>
       ${it.description && it.description !== it.sku ? `<div class="desc">${esc(it.description)}</div>` : ''}
     </div>`).join('');
-  const scripts = items.map((it, i) =>
-    `JsBarcode("#bc${i}", ${JSON.stringify(it.sku)}, {format:"CODE128", width:2.4, height:64, displayValue:false, margin:6});`
+  const scripts = items.map((it, i) => `
+    (function(){ var q = qrcode(0, 'M'); q.addData(${JSON.stringify(it.sku)}); q.make();
+      document.getElementById("qr${i}").innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }); })();`
   ).join('\n');
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>No-Barcode SKU Sheet</title>
-<script src="/vendor/jsbarcode.min.js"></script>
+<script src="/vendor/qrcode.js"></script>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; font-family:Arial,Helvetica,sans-serif; }
   body { padding:14px; }
@@ -2574,8 +2583,9 @@ app.get('/api/no-barcode-sheet', requireAuthOrToken, (req, res) => {
   .grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; }
   .card { border:2px solid #000; border-radius:8px; padding:10px 12px; text-align:center; break-inside:avoid; }
   .card .client { font-size:10px; font-weight:700; letter-spacing:1px; color:#555; text-transform:uppercase; }
-  .card svg { width:100%; height:70px; }
-  .card .sku { font-size:22px; font-weight:800; font-family:Consolas,monospace; letter-spacing:1px; }
+  .card .qr { display:flex; justify-content:center; padding:4px 0; }
+  .card .qr svg { width:110px; height:110px; }
+  .card .sku { font-size:20px; font-weight:800; font-family:Consolas,monospace; letter-spacing:1px; overflow-wrap:break-word; }
   .card .desc { font-size:11px; color:#333; margin-top:2px; }
   .empty { color:#64748b; font-size:15px; padding:40px; text-align:center; }
 </style></head><body>
