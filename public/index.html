@@ -379,6 +379,8 @@
         <div class="aim-corner bl"></div><div class="aim-corner br"></div>
         <div class="aim-scan-line"></div>
       </div>
+      <!-- Shown only in the jsQR fallback (phones without BarcodeDetector, e.g. iPhone) -->
+      <div id="cameraQrOnlyHint" class="camera-qronly-hint hidden">QR codes only on this phone &mdash; use a scanner gun for 1D barcodes</div>
       <!-- Single mode: flash result -->
       <div id="cameraSingleResult" class="camera-single-result hidden"></div>
       <!-- Single mode hint -->
@@ -435,7 +437,7 @@
     <div id="cameraNoSupport" class="camera-no-support hidden">
       <div class="camera-no-support-icon">&#128483;</div>
       <p><strong>Camera scanning not available</strong></p>
-      <p class="hint">Requires Chrome or Edge on Android.<br>Use a physical scanner or type SKU manually on other devices.</p>
+      <p class="hint">This browser cannot access the camera.<br>Use a physical scanner or type the SKU manually.</p>
     </div>
 
   </div><!-- /cameraScanOverlay -->
@@ -2434,6 +2436,7 @@
 
   <script src="/vendor/jsbarcode.min.js"></script>
   <script src="/vendor/qrcode.js"></script>
+  <script src="/vendor/jsqr.js"></script>
   <script src="batch-scan.js"></script>
   <script src="label-scan.js"></script>
   <script src="app.js"></script>

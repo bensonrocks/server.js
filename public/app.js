@@ -8807,6 +8807,7 @@
   let cameraStream    = null;
   let cameraAnimFrame = null;
   let barcodeDetector = null;
+  let cameraUsesJsQR  = false; // true on phones without BarcodeDetector (iPhone Safari) — jsQR decodes QR frames instead
   let cameraScanMode  = 'single'; // 'single' | 'batch' | 'label'
   let cameraScanTarget = 'outbound'; // 'outbound' | 'inbound' — where a detected value gets applied
   const batchMap      = new Map(); // rawValue → { checked: bool }
@@ -8946,19 +8947,27 @@
     document.getElementById('cameraLabelPanel').classList.add('hidden');
     document.getElementById('cameraLabelAim').classList.add('hidden');
 
-    if (!('BarcodeDetector' in window)) {
+    // BarcodeDetector (Android Chrome/Edge) reads every format natively.
+    // iPhones (Safari) don't have it — fall back to jsQR, which decodes QR
+    // codes from video frames in JS, so warehouse staff can use their OWN
+    // smartphones as scanners regardless of platform. Only when NEITHER
+    // path exists is the no-support screen shown.
+    cameraUsesJsQR = false;
+    if ('BarcodeDetector' in window) {
+      if (!barcodeDetector) {
+        let fmts;
+        try { fmts = await BarcodeDetector.getSupportedFormats(); }
+        catch { fmts = ['code_128', 'ean_13', 'ean_8', 'qr_code', 'upc_a', 'upc_e', 'code_39', 'itf', 'data_matrix']; }
+        barcodeDetector = new BarcodeDetector({ formats: fmts });
+      }
+    } else if (window.jsQR) {
+      cameraUsesJsQR = true;
+    } else {
       document.getElementById('cameraViewfinderWrap').classList.add('hidden');
       document.getElementById('cameraBatchPanel').classList.add('hidden');
       document.getElementById('cameraLabelPanel').classList.add('hidden');
       document.getElementById('cameraNoSupport').classList.remove('hidden');
       return;
-    }
-
-    if (!barcodeDetector) {
-      let fmts;
-      try { fmts = await BarcodeDetector.getSupportedFormats(); }
-      catch { fmts = ['code_128', 'ean_13', 'ean_8', 'qr_code', 'upc_a', 'upc_e', 'code_39', 'itf', 'data_matrix']; }
-      barcodeDetector = new BarcodeDetector({ formats: fmts });
     }
 
     try {
@@ -8970,6 +8979,7 @@
       await new Promise(r => { video.onloadedmetadata = r; });
       await video.play();
       setCameraMode(cameraScanMode);
+      document.getElementById('cameraQrOnlyHint')?.classList.toggle('hidden', !cameraUsesJsQR);
       startCameraLoop();
     } catch (err) {
       document.getElementById('cameraViewfinderWrap').classList.add('hidden');
@@ -8990,11 +9000,30 @@
 
   function startCameraLoop() {
     const video = document.getElementById('cameraVideo');
+    // jsQR fallback decodes frames on a canvas — CPU-bound, so it runs
+    // downscaled (max 640px) and throttled (~6 fps) instead of every frame.
+    let jsqrCanvas = null, jsqrLastRun = 0;
+    const JSQR_INTERVAL_MS = 160;
+    function detectWithJsQR() {
+      const now = Date.now();
+      if (now - jsqrLastRun < JSQR_INTERVAL_MS) return [];
+      jsqrLastRun = now;
+      if (!jsqrCanvas) jsqrCanvas = document.createElement('canvas');
+      const scale = Math.min(1, 640 / (video.videoWidth || 640));
+      const w = Math.max(1, Math.round((video.videoWidth  || 640) * scale));
+      const h = Math.max(1, Math.round((video.videoHeight || 480) * scale));
+      jsqrCanvas.width = w; jsqrCanvas.height = h;
+      const ctx = jsqrCanvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const img = ctx.getImageData(0, 0, w, h);
+      const hit = jsQR(img.data, w, h);
+      return hit && hit.data ? [{ rawValue: hit.data }] : [];
+    }
     async function loop() {
       if (!cameraStream) return;
       try {
         if (video.readyState >= 2) {
-          const results = await barcodeDetector.detect(video);
+          const results = cameraUsesJsQR ? detectWithJsQR() : await barcodeDetector.detect(video);
           if (results.length) processDetected(results);
         }
       } catch {}

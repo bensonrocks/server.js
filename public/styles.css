@@ -2698,3 +2698,6 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   .ab-entry-grid { grid-template-columns: 1fr 1fr; }
   .ab-entry-grid > button { grid-column: 1 / -1; }
 }
+
+/* jsQR-fallback notice inside the camera viewfinder */
+.camera-qronly-hint { position: absolute; bottom: .6rem; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,.75); color: #fbbf24; font-size: .72rem; font-weight: 600; padding: .3rem .7rem; border-radius: 999px; white-space: nowrap; }

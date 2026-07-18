@@ -586,6 +586,12 @@ app.get('/vendor/jsbarcode.min.js', (_req, res) =>
 app.get('/vendor/qrcode.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/qrcode-generator/dist/qrcode.js'))
 );
+// QR decoder — camera-scan fallback for phones without BarcodeDetector
+// (iPhone Safari): frames are decoded in JS so warehouse staff can use
+// their own smartphones as scanners
+app.get('/vendor/jsqr.js', (_req, res) =>
+  res.sendFile(path.join(__dirname, 'node_modules/jsqr/dist/jsQR.js'))
+);
 
 // ── Persistent storage ──────────────────────────────────────────────────────
 const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');

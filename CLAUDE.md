@@ -267,11 +267,25 @@ outbound scanning and IdealInbound receiving. Current state:
   verified by decoding rendered QRs with an independent reader (jsQR) and
   POSTing the value to `/api/scan/increment` (outbound) and
   `/api/inbound/:id/scan` (inbound; field name is `code`, not `sku`).
-- The camera scanner already reads QR — `BarcodeDetector` is constructed
-  with `getSupportedFormats()` (includes `qr_code` on real devices), and
+- The camera scanner reads QR on EVERY smartphone — warehouse staff use
+  their own phones as scanners, so this cannot depend on platform:
+  `BarcodeDetector` (Android Chrome/Edge; constructed with
+  `getSupportedFormats()`, all 1D+2D formats) when available, else a jsQR
+  fallback (`cameraUsesJsQR` in openCameraScanner/startCameraLoop —
+  decodes video frames on a canvas, downscaled to ≤640px and throttled to
+  ~6fps since it's CPU-bound). jsQR is served at `/vendor/jsqr.js` from
+  node_modules like the other vendor libs. The fallback is QR-ONLY — an
+  amber pill in the viewfinder (`#cameraQrOnlyHint`) says so (1D barcodes
+  need a gun on those phones). The no-support screen now only appears
+  when NEITHER decoder exists or the camera itself fails.
   `dispatchCameraScan` routes to `handleItemScan`/`inboundScan` by target.
   Hardware 2D guns are keyboard wedges — decoded QR text arrives through
   `_globalScanKeydown` like any typed value, no code path needed.
+  TESTING TRICK: the whole camera path is testable headless with
+  `--use-fake-device-for-media-stream` +
+  `--use-file-for-fake-video-capture=<qr>.y4m` (ffmpeg from a QR PNG) —
+  Linux Chromium has no BarcodeDetector, so it exercises exactly the
+  iPhone/jsQR path end to end.
 - JsBarcode stays for everything 1D that ISN'T a SKU substitute: waybill
   labels, NEWCARTON control card, carton-slip order barcode.
 
