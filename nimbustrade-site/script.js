@@ -1,5 +1,18 @@
 document.getElementById('year').textContent = new Date().getFullYear();
 
+// ---------- Theme toggle ----------
+const root = document.documentElement;
+const themeToggle = document.getElementById('theme-toggle');
+const storedTheme = localStorage.getItem('nimbustrade-theme');
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+root.dataset.theme = storedTheme || (prefersDark ? 'dark' : 'light');
+
+themeToggle.addEventListener('click', () => {
+  const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  root.dataset.theme = next;
+  localStorage.setItem('nimbustrade-theme', next);
+});
+
 const navToggle = document.getElementById('nav-toggle');
 const mainNav = document.getElementById('main-nav');
 
@@ -73,7 +86,7 @@ function setupReveal(selector, stagger = 90, threshold = 0.15) {
   els.forEach((el) => observer.observe(el));
 }
 
-setupReveal('.pillars-flow > *', 110, 0.4);
+setupReveal('.ledger-flow > *', 110, 0.4);
 setupReveal('.pillar-card', 100);
 setupReveal('.problem-card', 100);
 setupReveal('.step', 90);
@@ -101,6 +114,6 @@ function animateCount(el) {
   requestAnimationFrame(tick);
 }
 
-document.querySelectorAll('.hero-stats [data-count]').forEach((el) => {
+document.querySelectorAll('.hero-ledger [data-count]').forEach((el) => {
   setTimeout(() => animateCount(el), 300);
 });

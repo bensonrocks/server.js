@@ -8,6 +8,7 @@
 <meta name="keywords" content="4PL Singapore, 3PL Singapore, supply chain consulting SEA, market entry Singapore, white-glove delivery furniture, e-commerce fulfillment Southeast Asia, omnichannel enablement, Singapore Customs licensing" />
 <meta name="robots" content="index, follow, max-image-preview:large" />
 <meta name="author" content="NimbusTrade Solutions Pte Ltd" />
+<meta name="theme-color" content="#10141c" />
 <link rel="canonical" href="https://www.nimbustrade.co/" />
 
 <meta property="og:type" content="website" />
@@ -21,6 +22,9 @@
 <meta name="twitter:description" content="Singapore-based 4PL/3PL partner for market entry, fulfillment, white-glove delivery, and omnichannel growth across Southeast Asia." />
 
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800;900&family=Newsreader:ital,wght@0,400;0,500;0,600;1,400;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css" />
 
 <script type="application/ld+json">
@@ -148,7 +152,7 @@
   <div class="container">
     <a href="#home" class="brand">
       <span class="brand-cn">云腾贸易方案私人有限公司</span>
-      <span class="brand-en">Nimbus<span>Trade</span> Solutions</span>
+      <span class="brand-en">Nimbus<span>Trade</span></span>
     </a>
     <nav class="main-nav" id="main-nav">
       <a href="#pillars">What We Do</a>
@@ -160,6 +164,10 @@
       <a href="/client-portal" class="nav-client" title="Client portal coming soon">Client Access</a>
       <a href="#contact" class="nav-cta">Book a scoping call</a>
     </nav>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.3A8.4 8.4 0 1 1 9.7 4a6.6 6.6 0 0 0 10.3 10.3z"/></svg>
+    </button>
     <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
       <span></span><span></span><span></span>
     </button>
@@ -167,25 +175,58 @@
 </header>
 
 <section class="hero" id="home">
-  <div class="hero-routes"></div>
-  <div class="container">
-    <div class="hero-cn">云腾贸易方案私人有限公司</div>
-    <h1>NimbusTrade Solutions</h1>
-    <p class="hero-tagline">Where strategy meets execution.</p>
-    <p class="lede">
-      NimbusTrade Solutions is a Singapore-based 4PL and 3PL partner helping international
-      brands enter and scale across Southeast Asia — without handing over ownership of their
-      brand to do it. Southeast Asia is the world's fastest-growing consumer market, and
-      Singapore sits at its commercial and regulatory heart. Most brands trying to get in
-      stall out on the same three things: regulatory red tape, supply chain setup, and
-      channel scaling. We remove all three.
-    </p>
-    <a href="#contact" class="btn btn-primary">Book a scoping call</a>
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <div class="hero-cn">云腾贸易方案私人有限公司</div>
+      <h1>Cleared for<br />Southeast&nbsp;Asia.</h1>
+      <p class="hero-tagline">Where strategy meets execution.</p>
+      <p class="lede">
+        NimbusTrade Solutions is a Singapore-based 4PL and 3PL partner helping international
+        brands enter and scale across Southeast Asia — without handing over ownership of their
+        brand to do it. Southeast Asia is the world's fastest-growing consumer market, and
+        Singapore sits at its commercial and regulatory heart. Most brands trying to get in
+        stall out on the same three things: regulatory red tape, supply chain setup, and
+        channel scaling. We remove all three.
+      </p>
+      <a href="#contact" class="btn btn-primary">Book a scoping call</a>
 
-    <div class="hero-stats">
-      <div><div class="num" data-count="3">3</div><div class="label">Integrated pillars, one team</div></div>
-      <div><div class="num" data-count="11">11</div><div class="label">Markets covered from Singapore</div></div>
-      <div><div class="num" data-count="30" data-suffix=" min">30 min</div><div class="label">Complimentary scoping call</div></div>
+      <dl class="hero-ledger">
+        <div><dt>Pillars</dt><dd><span class="num" data-count="3">3</span></dd></div>
+        <div><dt>Markets served</dt><dd><span class="num" data-count="11">11</span></dd></div>
+        <div><dt>Scoping call</dt><dd><span class="num" data-count="30" data-suffix=" min">30 min</span></dd></div>
+      </dl>
+    </div>
+
+    <div class="hero-seal-wrap" aria-hidden="true">
+      <svg class="hero-seal" viewBox="0 0 200 200">
+        <defs>
+          <path id="sealArc" d="M 100,100 m -78,0 a 78,78 0 1,1 156,0 a 78,78 0 1,1 -156,0" />
+        </defs>
+        <circle cx="100" cy="100" r="94" class="seal-ring-outer" />
+        <circle cx="100" cy="100" r="70" class="seal-ring-inner" />
+        <text class="seal-text">
+          <textPath href="#sealArc" startOffset="0%">ENABLEMENT&#160;&#160;•&#160;&#160;NOT&#160;DISTRIBUTION&#160;&#160;•&#160;&#160;</textPath>
+        </text>
+        <g class="seal-mark">
+          <path d="M100 62v20M84 78h32M78 92h44l-4 34a18 18 0 0 1-36 0z" />
+          <circle cx="100" cy="122" r="3.2" />
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="manifest-strip" aria-hidden="true">
+    <div class="manifest-track">
+      <span>SG · ORIGIN</span><span class="sep">—</span>
+      <span>MY</span><span class="sep">·</span><span>TH</span><span class="sep">·</span><span>VN</span><span class="sep">·</span>
+      <span>ID</span><span class="sep">·</span><span>PH</span><span class="sep">·</span><span>CN</span><span class="sep">·</span>
+      <span>AU</span><span class="sep">·</span><span>US</span><span class="sep">·</span><span>CA</span><span class="sep">·</span>
+      <span>UK</span><span class="sep manifest-gap">//</span>
+      <span>SG · ORIGIN</span><span class="sep">—</span>
+      <span>MY</span><span class="sep">·</span><span>TH</span><span class="sep">·</span><span>VN</span><span class="sep">·</span>
+      <span>ID</span><span class="sep">·</span><span>PH</span><span class="sep">·</span><span>CN</span><span class="sep">·</span>
+      <span>AU</span><span class="sep">·</span><span>US</span><span class="sep">·</span><span>CA</span><span class="sep">·</span>
+      <span>UK</span><span class="sep manifest-gap">//</span>
     </div>
   </div>
 </section>
@@ -193,32 +234,39 @@
 <section id="pillars">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">Our Three Pillars</p>
+      <p class="eyebrow">Form&nbsp;01 — Our Three Pillars</p>
       <h2 class="section-title">Everything a market entry actually requires</h2>
       <p class="section-lede">This is the core structure of the business — one team covering
         regulatory, logistics, and channel growth, so nothing falls into the gap between vendors.</p>
     </div>
-    <div class="pillars-flow" aria-hidden="true">
-      <div class="flow-node">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+
+    <div class="ledger-flow" aria-hidden="true">
+      <div class="ledger-line">
+        <span class="ledger-tag">01</span>
+        <span class="ledger-label">Market Entry &amp; Regulatory</span>
+        <span class="ledger-leader"></span>
+        <span class="ledger-status">FILED</span>
       </div>
-      <div class="flow-arrow">&#8594;</div>
-      <div class="flow-node">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v9H3z"/><path d="M14 10h4l3 3v3h-7"/><circle cx="7.5" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/></svg>
+      <div class="ledger-line">
+        <span class="ledger-tag">02</span>
+        <span class="ledger-label">Fulfillment &amp; Logistics</span>
+        <span class="ledger-leader"></span>
+        <span class="ledger-status">IN TRANSIT</span>
       </div>
-      <div class="flow-arrow">&#8594;</div>
-      <div class="flow-node">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M7.7 7.3L10.5 16M16.3 7.3L13.5 16M8.2 6h7.6"/></svg>
+      <div class="ledger-line">
+        <span class="ledger-tag">03</span>
+        <span class="ledger-label">Omnichannel Growth</span>
+        <span class="ledger-leader"></span>
+        <span class="ledger-status">LIVE</span>
       </div>
-      <div class="flow-arrow">&#8594;</div>
-      <div class="flow-result">Your brand, operational</div>
+      <div class="ledger-result">Your brand, operational</div>
     </div>
 
     <div class="pillars">
       <div class="pillar-card">
         <div class="pillar-top">
           <div class="pillar-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
           </div>
           <div class="pillar-num">01</div>
         </div>
@@ -230,7 +278,7 @@
       <div class="pillar-card">
         <div class="pillar-top">
           <div class="pillar-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v9H3z"/><path d="M14 10h4l3 3v3h-7"/><circle cx="7.5" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v9H3z"/><path d="M14 10h4l3 3v3h-7"/><circle cx="7.5" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/></svg>
           </div>
           <div class="pillar-num">02</div>
         </div>
@@ -262,7 +310,7 @@
       <div class="pillar-card">
         <div class="pillar-top">
           <div class="pillar-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M7.7 7.3L10.5 16M16.3 7.3L13.5 16M8.2 6h7.6"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M7.7 7.3L10.5 16M16.3 7.3L13.5 16M8.2 6h7.6"/></svg>
           </div>
           <div class="pillar-num">03</div>
         </div>
@@ -279,7 +327,7 @@
 <section id="problem">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">The Problem</p>
+      <p class="eyebrow">Form&nbsp;02 — The Problem</p>
       <h2 class="section-title">Where international brands get stuck</h2>
       <p class="section-lede">Entering Singapore and SEA isn't one problem. It's five or six,
         hitting you at once, with no local partner who's actually done it before.</p>
@@ -305,7 +353,7 @@
 <section id="why-not-distributor" class="section-alt">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">Why Not a Distributor</p>
+      <p class="eyebrow">Form&nbsp;03 — Why Not a Distributor</p>
       <h2 class="section-title">The distribution model was never built for your brand</h2>
       <p class="section-lede">Distributors buy your goods, take their margin, and put you in a
         queue with 10–20 other brands — all fighting for one marketing budget that isn't yours
@@ -333,27 +381,27 @@
 <section id="process">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">How We Work</p>
+      <p class="eyebrow">Form&nbsp;04 — How We Work</p>
       <h2 class="section-title">Our engagement process</h2>
     </div>
     <div class="process">
       <div class="step">
-        <div class="step-num">1</div>
+        <div class="step-num">01</div>
         <h3>Discovery &amp; assessment</h3>
         <p>We map your product, your regulatory exposure, your supply chain gaps, and your channel ambitions. Straight to the critical path, no fluff.</p>
       </div>
       <div class="step">
-        <div class="step-num">2</div>
+        <div class="step-num">02</div>
         <h3>Solution design</h3>
         <p>A roadmap covering licensing, logistics, and go-to-market — with real timelines, real costs, and the risks flagged upfront, not buried.</p>
       </div>
       <div class="step">
-        <div class="step-num">3</div>
+        <div class="step-num">03</div>
         <h3>Execution &amp; activation</h3>
         <p>We don't hand you a deck and disappear. We file the paperwork, set up the 3PL, onboard the channels — hands on until it's live.</p>
       </div>
       <div class="step">
-        <div class="step-num">4</div>
+        <div class="step-num">04</div>
         <h3>Optimise &amp; scale</h3>
         <p>Once you're operating, we tighten the system and map the path into the next SEA market.</p>
       </div>
@@ -364,7 +412,7 @@
 <section id="team" class="section-alt">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">Our Team</p>
+      <p class="eyebrow">Form&nbsp;05 — Our Team</p>
       <h2 class="section-title">Operators, not just advisors</h2>
       <p class="section-lede">NimbusTrade is led by a small team of hands-on operators — not career consultants working from a template.</p>
     </div>
@@ -391,7 +439,7 @@
 <section id="why-us">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">Why NimbusTrade</p>
+      <p class="eyebrow">Form&nbsp;06 — Why NimbusTrade</p>
       <h2 class="section-title">What makes this partnership different</h2>
     </div>
     <div class="why-grid">
@@ -430,7 +478,7 @@
 <section id="engagement" class="section-alt">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">Engagement Models</p>
+      <p class="eyebrow">Form&nbsp;07 — Engagement Models</p>
       <h2 class="section-title">Ways to work with us</h2>
     </div>
     <div class="engage-grid">
@@ -439,7 +487,7 @@
         <p>Scoped work for a defined deliverable — a licence application, a logistics audit, a channel strategy, a market entry roadmap. Fixed scope, fixed fee, clear milestones.</p>
       </div>
       <div class="engage-card featured">
-        <span class="engage-badge">Most Popular</span>
+        <span class="engage-badge">Most Booked</span>
         <h3>Retainer Advisory</h3>
         <p>Ongoing monthly advisory for brands actively operating or scaling in SG and SEA. Dedicated consultant hours, regulatory monitoring included.</p>
       </div>
@@ -455,7 +503,7 @@
 <section id="faq">
   <div class="container">
     <div class="section-head">
-      <p class="eyebrow">Frequently Asked Questions</p>
+      <p class="eyebrow">Form&nbsp;08 — FAQ</p>
       <h2 class="section-title">Common questions about working with us</h2>
     </div>
     <div class="faq-list" id="faq-list">
@@ -489,6 +537,7 @@
 
 <section class="closing" id="contact">
   <div class="container">
+    <p class="eyebrow closing-eyebrow">Form&nbsp;09 — Get Started</p>
     <h2>Let's open the gateway together</h2>
     <p>Whether you're taking your first steps into Singapore or scaling an existing operation
       across SEA, NimbusTrade is the partner that's already walked the path — and can walk it
