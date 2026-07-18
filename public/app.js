@@ -5762,6 +5762,7 @@
   function closeScanOverlay() {
     document.getElementById('scanOverlay').classList.add('hidden');
     document.body.classList.remove('scan-open');
+    stopInlineCam();
     detachGlobalScanCapture();
     _scanQueue.length = 0;
     _scanBusy = false;
@@ -5769,6 +5770,123 @@
     activeOrder = null;
     focusWaybillInput();
   }
+
+  // ── Warehouse-mobile scan layout: inline live camera above the item list ──
+  // Mirrors the courier pickup-scan pattern: viewfinder always on at the top,
+  // Camera / Scanner tabs, manual entry + ADD below. Enabled for
+  // warehouse-role users on phone-width screens; everyone else keeps the
+  // desktop layout with the separate full-screen camera overlay.
+  let inlineCamStream = null, inlineCamFrame = null, inlineCamDetector = null;
+  let inlineCamUsesJsQR = false;
+  const inlineCamLastHit = {};
+  function whMobileScanLayout() {
+    return (currentUser?.role === 'warehouse') && window.matchMedia('(max-width: 768px)').matches;
+  }
+  function setInlineCamTab(tab) {
+    document.getElementById('inlineCamTabCamera').classList.toggle('active', tab === 'camera');
+    document.getElementById('inlineCamTabScanner').classList.toggle('active', tab === 'scanner');
+    document.getElementById('inlineCamView').classList.toggle('hidden', tab !== 'camera');
+    if (tab === 'camera') startInlineCam();
+    else { stopInlineCam(); setTimeout(focusActiveQty, 60); }
+  }
+  async function startInlineCam() {
+    if (inlineCamStream) return; // already running
+    const video = document.getElementById('inlineCamVideo');
+    const errEl = document.getElementById('inlineCamError');
+    errEl.classList.add('hidden');
+    inlineCamUsesJsQR = false;
+    if ('BarcodeDetector' in window) {
+      if (!inlineCamDetector) {
+        let fmts;
+        try { fmts = await BarcodeDetector.getSupportedFormats(); }
+        catch { fmts = ['code_128', 'ean_13', 'ean_8', 'qr_code', 'upc_a', 'upc_e', 'code_39', 'itf', 'data_matrix']; }
+        inlineCamDetector = new BarcodeDetector({ formats: fmts });
+      }
+    } else if (window.jsQR) {
+      inlineCamUsesJsQR = true;
+    } else {
+      errEl.textContent = 'Camera decoding not supported in this browser — use the Scanner tab.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    document.getElementById('inlineCamQrHint').classList.toggle('hidden', !inlineCamUsesJsQR);
+    try {
+      inlineCamStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      video.srcObject = inlineCamStream;
+      await new Promise(r => { video.onloadedmetadata = r; });
+      await video.play();
+    } catch (err) {
+      stopInlineCam();
+      errEl.textContent = 'Camera error: ' + err.message + ' — use the Scanner tab.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    let jsqrCanvas = null, jsqrLast = 0;
+    const decodeJsQR = () => {
+      const now = Date.now();
+      if (now - jsqrLast < 160) return null;
+      jsqrLast = now;
+      if (!jsqrCanvas) jsqrCanvas = document.createElement('canvas');
+      const scale = Math.min(1, 640 / (video.videoWidth || 640));
+      const w = Math.max(1, Math.round((video.videoWidth || 640) * scale));
+      const h = Math.max(1, Math.round((video.videoHeight || 480) * scale));
+      jsqrCanvas.width = w; jsqrCanvas.height = h;
+      const ctx = jsqrCanvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const img = ctx.getImageData(0, 0, w, h);
+      const hit = jsQR(img.data, w, h);
+      return hit && hit.data ? hit.data : null;
+    };
+    async function loop() {
+      if (!inlineCamStream) return;
+      try {
+        if (video.readyState >= 2) {
+          let vals = [];
+          if (inlineCamUsesJsQR) {
+            const v = decodeJsQR();
+            if (v) vals = [v];
+          } else {
+            vals = (await inlineCamDetector.detect(video)).map(b => (b.rawValue || '').trim());
+          }
+          const now = Date.now();
+          for (const val of vals) {
+            if (!val) continue;
+            if (now - (inlineCamLastHit[val] || 0) < SINGLE_COOLDOWN_MS) continue;
+            inlineCamLastHit[val] = now;
+            const flash = document.getElementById('inlineCamFlash');
+            flash.textContent = '✓ ' + val;
+            flash.classList.remove('hidden');
+            clearTimeout(flash._t);
+            flash._t = setTimeout(() => flash.classList.add('hidden'), 1400);
+            // NEWCARTON control cards and item codes both flow through the
+            // same path a typed/wedge scan takes
+            _scanBuf = val;
+            _flushScanBuf();
+          }
+        }
+      } catch {}
+      inlineCamFrame = requestAnimationFrame(loop);
+    }
+    inlineCamFrame = requestAnimationFrame(loop);
+  }
+  function stopInlineCam() {
+    if (inlineCamFrame)  { cancelAnimationFrame(inlineCamFrame); inlineCamFrame = null; }
+    if (inlineCamStream) { inlineCamStream.getTracks().forEach(t => t.stop()); inlineCamStream = null; }
+    const video = document.getElementById('inlineCamVideo');
+    if (video) video.srcObject = null;
+  }
+  document.getElementById('inlineCamTabCamera').addEventListener('click', () => setInlineCamTab('camera'));
+  document.getElementById('inlineCamTabScanner').addEventListener('click', () => setInlineCamTab('scanner'));
+  document.getElementById('scanAddBtn').addEventListener('click', () => {
+    const inp = document.getElementById('itemScanInput');
+    const v = (inp.value || '').trim();
+    if (!v) { inp.focus(); return; }
+    _scanBuf = v;
+    _flushScanBuf();
+    inp.value = '';
+  });
 
   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
   document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
@@ -6026,6 +6144,18 @@
     document.getElementById('scanMetaDetailsBtn')?.addEventListener('click', () => {
       document.getElementById('scanMetaDetails').classList.toggle('hidden');
     });
+
+    // Warehouse-mobile layout: inline viewfinder pinned above the list,
+    // ADD button next to the input, no separate camera overlay button
+    {
+      const panel = document.getElementById('inlineCamPanel');
+      const whMobile = whMobileScanLayout();
+      panel.classList.toggle('hidden', !whMobile);
+      document.getElementById('scanAddBtn').classList.toggle('hidden', !whMobile);
+      document.getElementById('openCameraBtn').classList.toggle('hidden', whMobile);
+      if (whMobile) setInlineCamTab('camera');
+      else stopInlineCam();
+    }
 
     scanPage = 0; scanPageManual = false; scanFocusSku = null;
     _autoCompleteFired = false;

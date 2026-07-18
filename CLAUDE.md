@@ -344,6 +344,31 @@ outbound scanning and IdealInbound receiving. Current state:
 - `/api/scan/resolve-cache` gives the client CODE2/learned/alias maps so
   offline scans resolve to the right line locally.
 
+## Warehouse-mobile scan layout — inline camera panel (`#inlineCamPanel`)
+
+For WAREHOUSE-role users on phone-width screens (`whMobileScanLayout()`:
+role check + `max-width: 768px`), the scan overlay follows the courier
+pickup-scan pattern the user supplied as reference: a live camera
+viewfinder pinned ABOVE the item list with **Camera / Scanner** tabs, an
+**ADD** button next to the manual input, and the normal
+Cancel/Pause/Complete dock below. Admin users and desktops keep the
+original layout with the separate full-screen camera overlay
+(`#openCameraBtn`, hidden in wh-mobile mode).
+
+- `enterItemsPhase` toggles the whole mode; `closeScanOverlay` always
+  stops the stream. Tab switch to Scanner stops the camera and focuses
+  the input.
+- The inline decode loop mirrors the full-screen scanner: BarcodeDetector
+  when available, jsQR fallback (QR-only hint pill) otherwise; decoded
+  values go through `_scanBuf = val; _flushScanBuf()` so NEWCARTON
+  control cards and every scan rule behave identically to a wedge scan.
+- Same-value cooldown is `SINGLE_COOLDOWN_MS` (1.8s) — holding the camera
+  on one code deliberately counts another piece every cooldown (multiple
+  identical pieces = point repeatedly), same behaviour as the full-screen
+  scanner's single mode.
+- The ADD button submits the typed input through the same
+  `_flushScanBuf()` path (not a separate code path).
+
 ## Scan buffer — Enter handler (public/app.js `_globalScanKeydown`/`_scanBuf`)
 
 `_scanBuf` is mirrored from `#itemScanInput`'s value on every keystroke while

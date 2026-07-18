@@ -154,6 +154,22 @@
     <div class="scan-order-meta" id="scanOrderMeta"></div>
     <div class="scan-progressbar"><i id="scanProgressBarFill"></i></div>
 
+    <!-- Warehouse-mobile layout: live camera viewfinder pinned above the item
+         list with Camera / Scanner tabs (courier pickup-scan style). Shown by
+         enterItemsPhase only for warehouse-role users on phones. -->
+    <div id="inlineCamPanel" class="inline-cam-panel hidden">
+      <div class="inline-cam-tabs">
+        <button id="inlineCamTabCamera" class="ict-btn active">&#128247; Camera</button>
+        <button id="inlineCamTabScanner" class="ict-btn">&#8983; Scanner / Type</button>
+      </div>
+      <div class="inline-cam-view" id="inlineCamView">
+        <video id="inlineCamVideo" autoplay playsinline muted></video>
+        <div id="inlineCamFlash" class="inline-cam-flash hidden"></div>
+        <div id="inlineCamQrHint" class="camera-qronly-hint hidden">QR codes only on this phone</div>
+        <div id="inlineCamError" class="inline-cam-error hidden"></div>
+      </div>
+    </div>
+
     <!-- shown only when re-opening an unprocessed order -->
     <div id="unprocessedBanner" class="unprocessed-banner hidden">
       <div class="unproc-header">
@@ -190,6 +206,7 @@
         <input type="text" id="itemScanInput" class="big-scan-input"
           placeholder="Scan item barcode / SKU&#8230;"
           autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button class="btn-camera-open hidden" id="scanAddBtn" title="Add the typed code">ADD</button>
         <button class="btn-camera-open" id="openCameraBtn" title="Camera scan">&#128247; Scan</button>
       </div>
       <div id="itemScanFeedback" class="scan-feedback hidden"></div>
