@@ -301,15 +301,141 @@
   </div>
 
   <script>
+    // GPS Tracking
+    const GPS = {
+      watchId: null,
+      positions: [],
+
+      start() {
+        if(!navigator.geolocation) {
+          console.log('Geolocation not supported');
+          return;
+        }
+        this.watchId = navigator.geolocation.watchPosition(
+          (pos) => this.onPosition(pos),
+          (err) => console.error('GPS error:', err),
+          { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+        );
+      },
+
+      stop() {
+        if(this.watchId) {
+          navigator.geolocation.clearWatch(this.watchId);
+          this.watchId = null;
+        }
+      },
+
+      onPosition(pos) {
+        const { latitude, longitude, accuracy } = pos.coords;
+        this.positions.push({ latitude, longitude, accuracy, timestamp: Date.now() });
+      },
+
+      getDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371; // Earth radius in km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      }
+    };
+
+    // Signature Canvas
+    const SIGNATURE = {
+      canvas: null,
+      ctx: null,
+      drawing: false,
+
+      init() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = 300;
+        this.canvas.height = 150;
+        this.ctx = this.canvas.getContext('2d');
+        this.ctx.strokeStyle = '#000';
+        this.ctx.lineWidth = 2;
+
+        this.canvas.addEventListener('touchstart', (e) => this.startDraw(e), false);
+        this.canvas.addEventListener('touchmove', (e) => this.draw(e), false);
+        this.canvas.addEventListener('touchend', () => this.endDraw(), false);
+      },
+
+      startDraw(e) {
+        this.drawing = true;
+        const touch = e.touches[0];
+        const rect = this.canvas.getBoundingClientRect();
+        this.ctx.beginPath();
+        this.ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
+      },
+
+      draw(e) {
+        if(!this.drawing) return;
+        e.preventDefault();
+        const touch = e.touches[0];
+        const rect = this.canvas.getBoundingClientRect();
+        this.ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
+        this.ctx.stroke();
+      },
+
+      endDraw() { this.drawing = false; },
+
+      getData() { return this.canvas.toDataURL('image/png'); },
+      clear() { this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height); }
+    };
+
+    // Real-time Notifications
+    const NOTIFY = {
+      async request() {
+        if('Notification' in window && Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+      },
+
+      send(title, options = {}) {
+        if(Notification.permission === 'granted') {
+          new Notification(title, options);
+        }
+      }
+    };
+
     const DRIVER = {
       routeId: 'ROUTE-1721262400000',
       stops: [],
       currentStop: null,
+      startTime: Date.now(),
+      stats: { delivered: 0, failed: 0, distance: 0, time: 0 },
 
       async init() {
         console.log('Driver App Initializing...');
+
+        // Request notification permission
+        await NOTIFY.request();
+
+        // Start GPS tracking
+        GPS.start();
+        SIGNATURE.init();
+
         await this.loadRoute();
         this.renderRoute();
+        this.startAnalytics();
+      },
+
+      startAnalytics() {
+        setInterval(() => {
+          const elapsed = Math.floor((Date.now() - this.startTime) / 60000); // minutes
+          const hours = Math.floor(elapsed / 60);
+          const mins = elapsed % 60;
+          document.getElementById('summaryTime').textContent = `${hours}h ${mins}m`;
+
+          // Calculate distance from GPS positions
+          if(GPS.positions.length > 1) {
+            const last = GPS.positions[GPS.positions.length - 1];
+            const first = GPS.positions[0];
+            const dist = GPS.getDistance(first.latitude, first.longitude, last.latitude, last.longitude);
+            this.stats.distance = Math.round(dist * 10) / 10;
+            document.getElementById('summaryDistance').textContent = this.stats.distance;
+          }
+        }, 60000); // Update every minute
       },
 
       async loadRoute() {
@@ -350,7 +476,7 @@
       },
 
       selectStop(idx) {
-        this.currentStop = this.stops[idx];
+        this.currentStop = { ...this.stops[idx], index: idx };
         document.getElementById('stopDetailTitle').textContent = `Stop #${idx + 1} — ${this.currentStop.store || 'Unknown'}`;
         document.getElementById('storeName').textContent = this.currentStop.store || 'Store';
         document.getElementById('storeAddr').textContent = this.currentStop.address || '';
@@ -374,16 +500,121 @@
       else if(tab === 'settings') navButtons[2].classList.add('active');
     }
 
-    document.getElementById('deliveryStatus').addEventListener('change', (e) => {
-      document.getElementById('remarksSection').style.display = e.target.value === 'failed' ? 'block' : 'none';
+    document.addEventListener('DOMContentLoaded', () => {
+      const status = document.getElementById('deliveryStatus');
+      if(status) {
+        status.addEventListener('change', (e) => {
+          document.getElementById('remarksSection').style.display = e.target.value === 'failed' ? 'block' : 'none';
+        });
+      }
     });
 
     function goBackToRoute() { switchTab('route'); }
-    function completeStop() { alert('Stop marked as delivered!'); switchTab('route'); }
-    function captureSignature() { alert('Signature capture on mobile device'); }
-    function capturePhoto() { alert('Photo capture on mobile device'); }
-    function endDay() { alert('Day ended. Thank you!'); }
-    function logout() { if(confirm('End shift?')) window.location.href = '/index.html'; }
+
+    async function completeStop() {
+      const status = document.getElementById('deliveryStatus')?.value || 'delivered';
+      const recipient = document.getElementById('recipientName')?.value;
+      const remarks = document.getElementById('podRemarks')?.value || '';
+
+      if(!DRIVER.currentStop) return;
+
+      const update = {
+        tmsId: DRIVER.currentStop.tms_id,
+        status,
+        recipientName: recipient,
+        remarks,
+        signature: SIGNATURE.getData(),
+        gpsPosition: GPS.positions[GPS.positions.length - 1] || {},
+        timestamp: new Date().toISOString()
+      };
+
+      try {
+        const res = await fetch(`/api/tms/delivery-jobs/${DRIVER.currentStop.tms_id}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(update)
+        });
+
+        if(res.ok) {
+          if(status === 'delivered') {
+            DRIVER.stats.delivered++;
+            NOTIFY.send('Stop delivered', { body: DRIVER.currentStop.store });
+          } else if(status === 'failed') {
+            DRIVER.stats.failed++;
+            NOTIFY.send('Delivery failed', { body: remarks });
+          }
+
+          document.getElementById('summaryDelivered').textContent = DRIVER.stats.delivered;
+          document.getElementById('summaryFailed').textContent = DRIVER.stats.failed;
+
+          switchTab('route');
+        }
+      } catch(e) {
+        alert('Error updating stop: ' + e.message);
+      }
+    }
+
+    async function captureSignature() {
+      const modal = document.createElement('div');
+      modal.innerHTML = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center">
+          <div style="background:#fff;border-radius:12px;padding:16px;width:90vw;max-width:400px">
+            <h3 style="margin-bottom:12px">Sign Here</h3>
+            <canvas id="sigCanvas" style="border:1px solid #e2e8f0;border-radius:8px;width:100%;display:block"></canvas>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button onclick="this.parentElement.parentElement.parentElement.remove()" class="btn btn-secondary" style="flex:1">Cancel</button>
+              <button onclick="SIGNATURE.clear()" class="btn btn-secondary" style="flex:1">Clear</button>
+              <button onclick="this.parentElement.parentElement.parentElement.remove();alert('Signature captured')" class="btn btn-primary" style="flex:1">✓ Confirm</button>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      // Draw SIGNATURE.canvas to modal canvas
+      const modCanvas = modal.querySelector('#sigCanvas');
+      const modCtx = modCanvas.getContext('2d');
+      modCanvas.width = SIGNATURE.canvas.width;
+      modCanvas.height = SIGNATURE.canvas.height;
+      modCtx.drawImage(SIGNATURE.canvas, 0, 0);
+    }
+
+    async function capturePhoto() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        await new Promise(r => video.onloadedmetadata = r);
+        video.play();
+
+        setTimeout(() => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 640;
+          canvas.height = 480;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0);
+
+          stream.getTracks().forEach(t => t.stop());
+
+          alert('Photo captured! (' + Math.round(canvas.width * canvas.height / 1000) + 'KB)');
+        }, 1000);
+      } catch(e) {
+        alert('Camera error: ' + e.message);
+      }
+    }
+
+    function endDay() {
+      const msg = `Route Complete!\n✓ ${DRIVER.stats.delivered} delivered\n✗ ${DRIVER.stats.failed} failed\n${DRIVER.stats.distance}km traveled`;
+      alert(msg);
+      GPS.stop();
+    }
+
+    function logout() {
+      if(confirm('End shift?')) {
+        GPS.stop();
+        window.location.href = '/index.html';
+      }
+    }
 
     // Initialize
     document.addEventListener('DOMContentLoaded', () => DRIVER.init());

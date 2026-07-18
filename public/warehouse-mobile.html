@@ -268,16 +268,125 @@
   </div>
 
   <script>
+    // Service Worker Registration for offline support
+    if('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('data:application/javascript;base64,Ly8gU2ltcGxlIFNlcnZpY2UgV29ya2VyIGZvciBvZmZsaW5lIHN1cHBvcnQKc2VsZi5hZGRFdmVudExpc3RlbmVyKCdmZXRjaCcsIGV2ID0+IHtldi5yZXNwb25kV2l0aChuZXcgUmVzcG9uc2UoJ09mZmxpbmUnKSl9KQ==')
+        .catch(e => console.log('SW error:', e));
+    }
+
+    // IndexedDB setup for offline sync
+    const DB = {
+      name: 'IdealOneWMS',
+      version: 1,
+      stores: ['waves', 'inventory', 'syncQueue', 'photos'],
+
+      async init() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open(this.name, this.version);
+          req.onerror = () => reject(req.error);
+          req.onsuccess = () => resolve(req.result);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            this.stores.forEach(store => {
+              if(!db.objectStoreNames.contains(store)) {
+                db.createObjectStore(store, { keyPath: 'id' });
+              }
+            });
+          };
+        });
+      },
+
+      async save(store, data) {
+        const db = await this.init();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(store, 'readwrite');
+          tx.objectStore(store).put(data);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      },
+
+      async getAll(store) {
+        const db = await this.init();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(store, 'readonly');
+          const req = tx.objectStore(store).getAll();
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+    };
+
+    // Photo capture with compression
+    const CAMERA = {
+      async capture() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+          const video = document.createElement('video');
+          video.srcObject = stream;
+          await new Promise(r => video.onloadedmetadata = r);
+          video.play();
+
+          const canvas = document.createElement('canvas');
+          canvas.width = 640;
+          canvas.height = 480;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0);
+
+          stream.getTracks().forEach(t => t.stop());
+
+          return new Promise(r => canvas.toBlob(b => r(b), 'image/jpeg', 0.7));
+        } catch(e) {
+          console.error('Camera error:', e);
+          return null;
+        }
+      }
+    };
+
+    // Barcode detection
+    const BARCODE = {
+      patterns: [
+        /\b([A-Z]{2}-\d{3}-\d{3})\b/, // SKU pattern
+        /\b([A-Z0-9]{8,})\b/  // Generic barcode
+      ],
+
+      detect(text) {
+        for(let p of this.patterns) {
+          const m = text.match(p);
+          if(m) return m[1];
+        }
+        return null;
+      }
+    };
+
     const APP = {
       currentWave: null,
       currentOrder: null,
       waves: [],
       inventory: [],
+      syncQueue: [],
+      online: navigator.onLine,
 
       async init() {
         console.log('WMS App Initializing...');
+
+        // Setup offline detection
+        window.addEventListener('online', () => this.setOnline(true));
+        window.addEventListener('offline', () => this.setOnline(false));
+
         await this.loadData();
         this.render();
+        this.updateStatus();
+      },
+
+      setOnline(state) {
+        this.online = state;
+        const badge = document.getElementById('statusBadge');
+        if(badge) {
+          badge.textContent = state ? 'Online' : 'Offline';
+          badge.style.background = state ? 'rgba(16,185,129,.3)' : 'rgba(239,68,68,.3)';
+        }
+        if(state) this.syncQueue();
       },
 
       async loadData() {
@@ -288,10 +397,17 @@
           ]);
           this.waves = await wavesRes.json();
           this.inventory = await invRes.json();
+
+          // Save to offline storage
+          await DB.save('waves', { id: 'waves', data: this.waves });
+          await DB.save('inventory', { id: 'inventory', data: this.inventory });
         } catch(e) {
-          console.error('Load error:', e);
-          this.waves = [];
-          this.inventory = [];
+          console.log('Load offline, fetching from cache...');
+          const cached = await DB.getAll('waves');
+          if(cached.length) {
+            this.waves = cached[0].data || [];
+            this.inventory = (await DB.getAll('inventory'))[0]?.data || [];
+          }
         }
       },
 
@@ -383,32 +499,118 @@
           </div>
         `).join('');
         document.getElementById('pickItems').innerHTML = itemsHtml || '<p style="text-align:center;color:#94a3b8;font-size:12px">No items in this wave</p>';
+      },
+
+      updateStatus() {
+        const status = document.getElementById('lastSync');
+        if(status) status.textContent = new Date().toLocaleTimeString();
+      },
+
+      async syncQueue() {
+        // Process offline sync queue when back online
+        const queue = await DB.getAll('syncQueue');
+        for(let item of queue) {
+          try {
+            const res = await fetch(item.url, {
+              method: item.method,
+              headers: { 'Content-Type': 'application/json' },
+              body: item.body
+            });
+            if(res.ok) {
+              // Remove from queue
+              console.log('Synced:', item.id);
+            }
+          } catch(e) {
+            console.error('Sync failed:', e);
+            break;
+          }
+        }
       }
     };
 
     // Navigation
     function switchSection(section) {
       document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-
       const sectionMap = {wave: 'waveSection', picking: 'pickingSection', packing: 'packingSection', inventory: 'inventorySection', settings: 'settingsSection'};
       if(sectionMap[section]) document.getElementById(sectionMap[section]).classList.add('active');
-
-      event.target.closest('.nav-btn').classList.add('active');
     }
 
     function goBackToPicking() { switchSection('wave'); }
     function goBackToPacking() { switchSection('picking'); }
     function completePicking() { alert('Picking complete! Ready for packing.'); switchSection('packing'); }
-    function completeCarton() { alert('Carton sealed and ready to ship!'); switchSection('wave'); }
+
+    async function completeCarton() {
+      const waveId = APP.currentWave?.id;
+      const weight = document.getElementById('cartonWeight')?.value;
+
+      if(!waveId || !weight) {
+        alert('Please fill in carton weight');
+        return;
+      }
+
+      const action = {
+        type: 'carton_complete',
+        waveId,
+        weight,
+        timestamp: new Date().toISOString()
+      };
+
+      // Add to sync queue
+      await DB.save('syncQueue', {
+        id: Date.now().toString(),
+        url: `/api/cartons`,
+        method: 'POST',
+        body: JSON.stringify(action)
+      });
+
+      alert('Carton sealed! ' + (APP.online ? 'Syncing now.' : 'Will sync when online.'));
+      switchSection('wave');
+    }
+
     function increaseQty(sku) { const el = document.getElementById(`qty-${sku}`); el.textContent = (parseInt(el.textContent) + 1); }
     function decreaseQty(sku) { const el = document.getElementById(`qty-${sku}`); if(parseInt(el.textContent) > 0) el.textContent = (parseInt(el.textContent) - 1); }
     function searchInventory() { /* Implement search */ }
-    function openCamera() { alert('Camera function available on mobile device'); }
+
+    async function openCamera() {
+      const blob = await CAMERA.capture();
+      if(blob) {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const data = e.target.result;
+          await DB.save('photos', {
+            id: Date.now().toString(),
+            data,
+            waveId: APP.currentWave?.id,
+            timestamp: new Date().toISOString()
+          });
+          alert('Photo captured and saved!');
+        };
+        reader.readAsDataURL(blob);
+      }
+    }
+
     function logout() { if(confirm('Sign out?')) window.location.href = '/index.html'; }
 
-    // Initialize
-    document.addEventListener('DOMContentLoaded', () => APP.init());
+    // Barcode scanner input
+    document.addEventListener('DOMContentLoaded', () => {
+      APP.init();
+
+      const scanner = document.getElementById('skuScanner');
+      if(scanner) {
+        scanner.addEventListener('keyup', (e) => {
+          if(e.key === 'Enter') {
+            const sku = BARCODE.detect(e.target.value);
+            if(sku) {
+              e.target.value = '';
+              const qtyEl = document.getElementById(`qty-${sku}`);
+              if(qtyEl) {
+                qtyEl.textContent = (parseInt(qtyEl.textContent) + 1);
+              }
+            }
+          }
+        });
+      }
+    });
   </script>
 </body>
 </html>

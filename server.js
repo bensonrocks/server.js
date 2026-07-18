@@ -4923,6 +4923,193 @@ app.get('/privacypolicy', (req, res) => res.sendFile(path.join(__dirname, 'publi
 app.get('/sync-dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'sync-dashboard.html')));
 app.get('/locations-master', (req, res) => res.sendFile(path.join(__dirname, 'public', 'locations-master.html')));
 
+// ─── MOBILE ENHANCEMENTS (Photo, GPS, Analytics, Sync) ─────────────────────────
+
+// Photo upload endpoint (warehouse + driver)
+app.post('/api/photos/upload', withTenant, upload.single('photo'), (req, res) => {
+  try {
+    if(!req.file) return res.status(400).json({ error: 'No photo provided' });
+
+    const photoPath = path.join(__dirname, 'data', 'photos', req.tenantId);
+    if(!fs.existsSync(photoPath)) fs.mkdirSync(photoPath, { recursive: true });
+
+    const filename = `${Date.now()}-${req.file.originalname}`;
+    const filepath = path.join(photoPath, filename);
+    fs.copyFileSync(req.file.path, filepath);
+    fs.unlinkSync(req.file.path);
+
+    res.json({ ok: true, url: `/data/photos/${req.tenantId}/${filename}` });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GPS position logging (driver tracking)
+app.post('/api/driver/gps', withTenant, (req, res) => {
+  try {
+    const { driverId, latitude, longitude, accuracy, timestamp } = req.body;
+    if(!driverId || latitude === undefined || longitude === undefined) {
+      return res.status(400).json({ error: 'Missing required GPS fields' });
+    }
+
+    const db = getTenantDb(req.tenantId);
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS driver_gps_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        driver_id TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        accuracy REAL,
+        timestamp TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+
+    db.prepare(`
+      INSERT INTO driver_gps_log (driver_id, latitude, longitude, accuracy, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(driverId, latitude, longitude, accuracy || null, timestamp || new Date().toISOString());
+
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Driver daily analytics
+app.get('/api/driver/analytics/:driverId', withTenant, (req, res) => {
+  try {
+    const { driverId } = req.params;
+    const db = getTenantDb(req.tenantId);
+
+    const stats = {
+      delivered: db.prepare(`
+        SELECT COUNT(*) as count FROM delivery_jobs
+        WHERE status = 'delivered' AND driver = ?
+      `).get(driverId)?.count || 0,
+
+      failed: db.prepare(`
+        SELECT COUNT(*) as count FROM delivery_jobs
+        WHERE status = 'delivered_with_remarks' AND driver = ?
+      `).get(driverId)?.count || 0,
+
+      gpsPoints: db.prepare(`
+        SELECT COUNT(*) as count FROM driver_gps_log WHERE driver_id = ?
+      `).get(driverId)?.count || 0
+    };
+
+    res.json(stats);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Offline sync queue processing
+app.post('/api/sync/queue', withTenant, (req, res) => {
+  try {
+    const { items } = req.body;
+    if(!Array.isArray(items)) return res.status(400).json({ error: 'Items must be array' });
+
+    const db = getTenantDb(req.tenantId);
+    let processed = 0;
+    let failed = 0;
+
+    for(const item of items) {
+      try {
+        if(item.type === 'carton_complete') {
+          // Log carton completion
+          db.prepare(`
+            CREATE TABLE IF NOT EXISTS carton_completions (
+              id TEXT PRIMARY KEY,
+              wave_id TEXT,
+              weight REAL,
+              completed_at TEXT
+            )
+          `).run();
+
+          db.prepare(`
+            INSERT OR IGNORE INTO carton_completions (id, wave_id, weight, completed_at)
+            VALUES (?, ?, ?, ?)
+          `).run(item.id || Date.now().toString(), item.waveId, item.weight, item.timestamp);
+
+          processed++;
+        } else if(item.type === 'delivery_update') {
+          // Update delivery status
+          db.prepare(`
+            UPDATE delivery_jobs SET status = ?, pod_remarks = ?, updated_at = ?
+            WHERE tms_id = ?
+          `).run(item.status, item.remarks, item.timestamp, item.tmsId);
+
+          processed++;
+        }
+      } catch(e) {
+        console.error('Sync item error:', e.message);
+        failed++;
+      }
+    }
+
+    res.json({ processed, failed, total: items.length });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Carton completion tracking
+app.post('/api/cartons', withTenant, (req, res) => {
+  try {
+    const { waveId, weight, timestamp } = req.body;
+    const db = getTenantDb(req.tenantId);
+
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS carton_track (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wave_id TEXT,
+        weight REAL,
+        completed_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+
+    db.prepare(`
+      INSERT INTO carton_track (wave_id, weight, completed_at)
+      VALUES (?, ?, ?)
+    `).run(waveId, weight, timestamp);
+
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Real-time notifications (for push to connected clients)
+const connectedClients = new Map();
+
+app.post('/api/notify', withTenant, (req, res) => {
+  try {
+    const { clientId, title, message } = req.body;
+
+    // Store notification
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id TEXT,
+        title TEXT,
+        message TEXT,
+        read INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+
+    db.prepare(`
+      INSERT INTO notifications (client_id, title, message) VALUES (?, ?, ?)
+    `).run(clientId, title, message);
+
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
