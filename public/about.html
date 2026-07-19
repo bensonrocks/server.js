@@ -3,880 +3,274 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="IdealOne OMS — The order management system built for South East Asian e-commerce. Shopee, Lazada, TikTok Shop, Shopify in one unified platform.">
-<title>IdealOne OMS &mdash; Order Management Built for South East Asia</title>
+<meta name="description" content="IdealOne OMS — Modern order management for South East Asian e-commerce. Shopee, Lazada, TikTok Shop, Shopify in one platform.">
+<title>IdealOne OMS — Order Management for SEA E-Commerce</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;background:#fff;line-height:1.6;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}
 
-/* ─── NAV ─────────────────────────────────────────────────────────────── */
-.nav{position:sticky;top:0;z-index:100;background:rgba(6,13,26,.97);backdrop-filter:blur(16px);border-bottom:1px solid rgba(251,146,60,.1);box-shadow:0 8px 32px rgba(0,0,0,.2)}
+/* NAV */
+.nav{position:sticky;top:0;z-index:100;background:rgba(6,13,26,.97);backdrop-filter:blur(16px);border-bottom:1px solid rgba(251,146,60,.1)}
 .nav-inner{max-width:1140px;margin:0 auto;padding:0 28px;height:60px;display:flex;align-items:center;gap:16px}
 .nav-brand{display:flex;align-items:center;gap:10px;flex:1}
-.nav-logo{font-size:20px;font-weight:900;color:#fff;letter-spacing:-.4px;line-height:1}
+.nav-logo{font-size:20px;font-weight:900;color:#fff;letter-spacing:-.4px}
 .nav-logo span{color:#fb923c}
-.nav-logo-sub{font-size:9px;font-weight:700;color:#fb923c;letter-spacing:.8px;text-transform:uppercase;display:block;margin-top:1px}
 .nav-links{display:flex;align-items:center;gap:4px}
-.nav-link{padding:7px 13px;border-radius:8px;font-size:13px;font-weight:600;color:#94a3b8;transition:all .2s;position:relative}
-.nav-link::after{content:'';position:absolute;bottom:0;left:50%;width:0;height:2px;background:linear-gradient(90deg,#2563eb,#fb923c);transform:translateX(-50%);transition:width .3s}
+.nav-link{padding:7px 13px;border-radius:8px;font-size:13px;font-weight:600;color:#94a3b8;transition:all .2s}
 .nav-link:hover{color:#fff;background:rgba(251,146,60,.1)}
-.nav-link:hover::after{width:60%}
-.nav-cta{padding:8px 18px;border-radius:9px;font-size:13px;font-weight:700;background:#2563eb;color:#fff;transition:all .15s;border:none;cursor:pointer}
+.nav-cta{padding:8px 18px;border-radius:9px;font-size:13px;font-weight:700;background:#2563eb;color:#fff;border:none;cursor:pointer;transition:all .15s}
 .nav-cta:hover{background:#1d4ed8;transform:translateY(-1px);box-shadow:0 4px 14px rgba(37,99,235,.4)}
-.nav-link-staff{font-size:12px;color:#475569 !important;border:1px solid rgba(255,255,255,.1);padding:6px 12px !important;border-radius:8px}
-.nav-link-staff:hover{color:#94a3b8 !important;border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.04) !important}
-@media(max-width:580px){
-  .nav-link{display:none}
-  .nav-link-staff{display:flex}
-  .nav-inner{padding:0 12px;gap:8px;height:54px}
-  .nav-brand{gap:7px}
-  .nav-brand svg{width:28px!important;height:28px!important}
-  .nav-logo{font-size:15px}
-  .nav-logo-sub{display:none}
-  .nav-cta{padding:7px 12px;font-size:12px;white-space:nowrap}
-  .nav-link-staff{padding:6px 10px!important;font-size:11px;white-space:nowrap}
-}
 
-/* ─── HERO ────────────────────────────────────────────────────────────── */
-.hero{position:relative;overflow:hidden;background:linear-gradient(135deg,#060d1a 0%,#0a1628 50%,#0f172a 100%);padding:120px 28px 128px;text-align:center}
-.hero-bg{position:absolute;inset:0;background:radial-gradient(ellipse 100% 90% at 50% 100%,rgba(251,146,60,.25),transparent 60%),radial-gradient(ellipse 80% 60% at 20% 0%,rgba(37,99,235,.15),transparent 50%),radial-gradient(ellipse 60% 50% at 85% 30%,rgba(139,92,246,.1),transparent 50%);animation:gradientShift 8s ease-in-out infinite}
-@keyframes gradientShift{0%{opacity:.8}50%{opacity:1}100%{opacity:.8}}
-.hero-inner{max-width:820px;margin:0 auto;position:relative;z-index:1}
-.hero-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 16px;border-radius:100px;border:1px solid rgba(251,146,60,.25);background:rgba(251,146,60,.07);color:#fb923c;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:24px}
-.hero-title{font-size:clamp(38px,7vw,74px);font-weight:950;color:#fff;line-height:1.08;letter-spacing:-.04em;margin-bottom:24px;animation:titleFadeIn .8s ease-out}
-@keyframes titleFadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-.hero-title .hl{background:linear-gradient(120deg,#fb923c 0%,#fcd34d 35%,#fb923c 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;background-size:200%;animation:colorShimmer 6s ease-in-out infinite}
-@keyframes colorShimmer{0%{background-position:0%}50%{background-position:100%}100%{background-position:0%}}
-.hero-sub{font-size:clamp(16px,2.2vw,20px);color:#94a3b8;max-width:600px;margin:0 auto 36px;line-height:1.7}
-.hero-sub strong{color:#e2e8f0}
+/* HERO */
+.hero{background:linear-gradient(135deg,#060d1a 0%,#0f172a 100%);padding:100px 28px 80px;text-align:center;position:relative}
+.hero-inner{max-width:820px;margin:0 auto}
+.hero-title{font-size:clamp(38px,7vw,64px);font-weight:950;color:#fff;line-height:1.1;letter-spacing:-.04em;margin-bottom:20px}
+.hero-title .hl{background:linear-gradient(120deg,#fb923c 0%,#fcd34d 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-sub{font-size:18px;color:#94a3b8;max-width:600px;margin:0 auto 32px;line-height:1.7}
 .hero-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-.btn-main{display:inline-flex;align-items:center;gap:8px;padding:15px 32px;border-radius:12px;background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:#fff;font-size:15px;font-weight:700;border:none;cursor:pointer;transition:all .22s;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(37,99,235,.35)}
-.btn-main::before{content:'';position:absolute;top:50%;left:50%;width:0;height:0;background:rgba(255,255,255,.2);border-radius:50%;transform:translate(-50%,-50%);transition:width .5s,height .5s}
+.btn-main{display:inline-flex;align-items:center;gap:8px;padding:15px 32px;border-radius:12px;background:#2563eb;color:#fff;font-size:15px;font-weight:700;border:none;cursor:pointer;transition:all .22s;box-shadow:0 4px 20px rgba(37,99,235,.35)}
 .btn-main:hover{transform:translateY(-3px);box-shadow:0 12px 36px rgba(37,99,235,.5)}
-.btn-main:hover::before{width:300px;height:300px}
-.btn-ghost{display:inline-flex;align-items:center;gap:8px;padding:15px 30px;border-radius:12px;border:1.5px solid rgba(251,146,60,.4);color:#e2e8f0;font-size:15px;font-weight:600;transition:all .22s;background:rgba(251,146,60,.05);backdrop-filter:blur(4px)}
-.btn-ghost:hover{border-color:rgba(251,146,60,.7);background:rgba(251,146,60,.12);transform:translateY(-3px);box-shadow:0 8px 24px rgba(251,146,60,.25)}
-.hero-markets{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:44px}
+.btn-ghost{display:inline-flex;align-items:center;gap:8px;padding:15px 30px;border-radius:12px;border:1.5px solid rgba(251,146,60,.4);color:#e2e8f0;font-size:15px;font-weight:600;transition:all .22s;background:rgba(251,146,60,.05)}
+.btn-ghost:hover{border-color:rgba(251,146,60,.7);background:rgba(251,146,60,.12);transform:translateY(-3px)}
+.hero-markets{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:32px}
 .hero-market{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);font-size:12px;font-weight:600;color:#64748b;transition:all .2s}
-.hero-market .flag{font-size:16px}
 .hero-market:hover{border-color:rgba(255,255,255,.18);color:#94a3b8}
 
-/* ─── TICKER BAR ──────────────────────────────────────────────────────── */
-.ticker-bar{background:linear-gradient(90deg,#0f172a,#0a1628);border-top:1px solid rgba(251,146,60,.1);border-bottom:1px solid rgba(251,146,60,.1);padding:0;overflow:hidden;box-shadow:inset 0 2px 8px rgba(251,146,60,.05)}
-.ticker-inner{max-width:1140px;margin:0 auto;padding:0 28px;display:grid;grid-template-columns:repeat(4,1fr)}
-.ticker-item{padding:24px 16px;text-align:center;border-right:1px solid rgba(251,146,60,.08);transition:all .3s}
-.ticker-item:last-child{border-right:none}
-.ticker-val{font-size:32px;font-weight:900;color:#fff;letter-spacing:-.04em;line-height:1;font-variant-numeric:tabular-nums}
-.ticker-val span{font-size:20px;color:#fb923c}
-.ticker-lbl{font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-top:5px}
-@media(max-width:580px){.ticker-inner{grid-template-columns:repeat(2,1fr)}.ticker-item:nth-child(2){border-right:none}.ticker-item:nth-child(3){border-right:1px solid rgba(255,255,255,.05)}}
+/* STATS BAR */
+.stats-bar{background:linear-gradient(90deg,#0f172a,#0a1628);border-top:1px solid rgba(251,146,60,.1);border-bottom:1px solid rgba(251,146,60,.1);padding:0}
+.stats-inner{max-width:1140px;margin:0 auto;padding:0 28px;display:grid;grid-template-columns:repeat(4,1fr)}
+.stats-item{padding:20px 16px;text-align:center;border-right:1px solid rgba(251,146,60,.08)}
+.stats-item:last-child{border-right:none}
+.stats-val{font-size:28px;font-weight:900;color:#fff;letter-spacing:-.04em}
+.stats-val span{font-size:18px;color:#fb923c}
+.stats-lbl{font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-top:5px}
+@media(max-width:580px){.stats-inner{grid-template-columns:repeat(2,1fr)} .stats-item:nth-child(2){border-right:none} .stats-item:nth-child(3){border-right:1px solid rgba(255,255,255,.05)}}
 
-/* ─── SECTION BASE ────────────────────────────────────────────────────── */
-.section{padding:84px 28px}
+/* FEATURES */
+.section{padding:64px 28px}
 .section-inner{max-width:1140px;margin:0 auto}
-.section-kicker{font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#2563eb;margin-bottom:14px;display:flex;align-items:center;gap:8px}
-.section-kicker::before{content:'';display:block;width:28px;height:2px;background:linear-gradient(90deg,#2563eb,#fb923c);border-radius:2px}
-.section-title{font-size:clamp(28px,5vw,48px);font-weight:950;color:#0f172a;letter-spacing:-.04em;line-height:1.18;margin-bottom:18px;background:linear-gradient(135deg,#0f172a,#1e293b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.section-lead{font-size:17px;color:#64748b;max-width:580px;line-height:1.75}
-.bg-slate{background:#f8fafc}
-.bg-dark{background:#060d1a}
-
-/* ─── PROBLEM ─────────────────────────────────────────────────────────── */
-.problem-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
-.problem-card{border-radius:16px;padding:28px;border:1px solid #f1f5f9;background:#fff;position:relative;overflow:hidden;transition:all .25s;box-shadow:0 2px 12px rgba(0,0,0,.04)}
-.problem-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;transition:height .3s}
-.problem-card:nth-child(1)::before{background:linear-gradient(90deg,#ef4444,#f97316)}
-.problem-card:nth-child(2)::before{background:linear-gradient(90deg,#f59e0b,#eab308)}
-.problem-card:nth-child(3)::before{background:linear-gradient(90deg,#8b5cf6,#6366f1)}
-.problem-card:hover{transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,0,0,.08);border-color:#f1f5f9}
-.problem-card:hover::before{height:5px}
-.problem-icon{font-size:28px;margin-bottom:14px}
-.problem-title{font-size:15px;font-weight:800;color:#0f172a;margin-bottom:8px}
-.problem-text{font-size:13px;color:#64748b;line-height:1.7}
-@media(max-width:720px){.problem-grid{grid-template-columns:1fr}}
-
-/* ─── ARCHITECTURE ────────────────────────────────────────────────────── */
-.arch-wrap{margin-top:52px;background:#f8fafc;border-radius:20px;padding:40px;border:1px solid #e2e8f0}
-.arch-layer-label{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#94a3b8;margin-bottom:10px;padding-left:4px}
-.arch-sources{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
-.arch-source{background:#fff;border-radius:10px;border:1.5px solid #e2e8f0;padding:12px;text-align:center;font-size:12px;font-weight:700;color:#374151;display:flex;flex-direction:column;align-items:center;gap:5px;transition:all .2s}
-.arch-source:hover{border-color:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,.1)}
-.arch-source .src-dot{width:10px;height:10px;border-radius:50%}
-.arch-arrow{text-align:center;font-size:20px;color:#94a3b8;margin:4px 0;letter-spacing:2px}
-.arch-core{background:linear-gradient(135deg,#1e3a5f,#1e293b);border-radius:14px;padding:20px 28px;display:flex;align-items:center;gap:16px;margin-bottom:12px;border:1px solid rgba(37,99,235,.3);box-shadow:0 4px 24px rgba(37,99,235,.12)}
-.arch-core-icon{font-size:28px;flex-shrink:0}
-.arch-core-text .t1{font-size:15px;font-weight:800;color:#fff}
-.arch-core-text .t2{font-size:12px;color:#94a3b8;margin-top:2px}
-.arch-outputs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.arch-out{background:#fff;border-radius:10px;border:1.5px solid #e2e8f0;padding:14px 16px;transition:all .2s}
-.arch-out:hover{border-color:#16a34a;box-shadow:0 4px 14px rgba(22,163,74,.1)}
-.arch-out-icon{font-size:18px;margin-bottom:6px}
-.arch-out-title{font-size:12px;font-weight:800;color:#0f172a;margin-bottom:3px}
-.arch-out-text{font-size:11px;color:#64748b;line-height:1.5}
-@media(max-width:600px){.arch-sources{grid-template-columns:repeat(2,1fr)}.arch-outputs{grid-template-columns:1fr}}
-
-/* ─── FEATURES ────────────────────────────────────────────────────────── */
-.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:52px}
-.feat-card{border-radius:18px;padding:32px;border:1px solid #f1f5f9;background:#fff;transition:all .25s cubic-bezier(.34,.7,.14,1);position:relative;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.04)}
-.feat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#2563eb,#fb923c);opacity:0;transition:opacity .3s}
-.feat-card:hover{box-shadow:0 16px 48px rgba(0,0,0,.12);transform:translateY(-6px);border-color:#f1f5f9}
-.feat-card:hover::before{opacity:1}
-.feat-card:hover .feat-icon-wrap{transform:scale(1.12);filter:brightness(1.1)}
-.feat-icon-wrap{width:50px;height:50px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:16px;transition:transform .2s}
-.feat-title{font-size:16px;font-weight:800;color:#0f172a;margin-bottom:8px}
-.feat-text{font-size:13px;color:#64748b;line-height:1.7}
-.feat-tag{display:inline-flex;align-items:center;gap:4px;margin-top:12px;font-size:11px;font-weight:700;color:#2563eb;background:#eff6ff;padding:3px 9px;border-radius:20px}
+.section-title{font-size:clamp(28px,5vw,48px);font-weight:950;color:#0f172a;letter-spacing:-.04em;line-height:1.18;margin-bottom:12px}
+.section-lead{font-size:16px;color:#64748b;max-width:580px;line-height:1.75;margin-bottom:36px}
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.feat-card{border-radius:16px;padding:24px;border:1px solid #f1f5f9;background:#fff;transition:all .25s;box-shadow:0 2px 12px rgba(0,0,0,.04)}
+.feat-card:hover{box-shadow:0 16px 48px rgba(0,0,0,.12);transform:translateY(-4px)}
+.feat-icon{font-size:28px;margin-bottom:12px}
+.feat-title{font-size:15px;font-weight:800;color:#0f172a;margin-bottom:8px}
+.feat-text{font-size:13px;color:#64748b;line-height:1.6}
 @media(max-width:860px){.feat-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:540px){.feat-grid{grid-template-columns:1fr}}
 
-/* ─── COMPARISON ──────────────────────────────────────────────────────── */
-.cmp-wrap{margin-top:52px;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 4px 20px rgba(0,0,0,.06)}
-.cmp-table{width:100%;border-collapse:collapse}
-.cmp-table th{padding:16px 18px;text-align:center;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;background:#f8fafc;color:#64748b;border-bottom:2px solid #e2e8f0}
-.cmp-table th:first-child{text-align:left;background:#f8fafc;min-width:200px}
-.cmp-table th.th-us{background:#eff6ff;color:#2563eb;font-size:13px;letter-spacing:0;text-transform:none;border-bottom:2px solid #2563eb}
-.cmp-table td{padding:13px 18px;text-align:center;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;vertical-align:middle}
-.cmp-table td:first-child{text-align:left;font-weight:600;color:#374151;background:#fafafa}
-.cmp-table td.td-us{background:#f8fbff;color:#374151}
-.cmp-table tbody tr:hover td{background:#f8fafc}
-.cmp-table tbody tr:hover td.td-us{background:#eff6ff}
-.cmp-table tbody tr:last-child td{border-bottom:none}
-.c-yes{color:#16a34a;font-size:17px}
-.c-no{color:#dc2626;font-size:17px}
-.c-part{color:#f59e0b;font-size:14px;font-weight:700}
-.cmp-table th.th-us::after{content:'★';margin-left:6px;color:#fb923c}
-@media(max-width:700px){.cmp-wrap{overflow-x:auto}}
+/* MARKETS */
+.market-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.market-card{border-radius:14px;padding:20px;border:1px solid #f1f5f9;background:#fff;display:flex;align-items:center;gap:12px;transition:all .25s;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+.market-card:hover{box-shadow:0 12px 32px rgba(0,0,0,.1);transform:translateY(-3px);border-color:#fcd34d}
+.market-flag{font-size:28px;flex-shrink:0}
+.market-info{flex:1}
+.market-name{font-size:14px;font-weight:800;color:#0f172a}
+.market-channels{font-size:11px;color:#64748b;margin-top:4px}
+@media(max-width:720px){.market-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:440px){.market-grid{grid-template-columns:1fr}}
 
-/* ─── SEA MARKETS ─────────────────────────────────────────────────────── */
-.sea-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:48px}
-.sea-card{border-radius:16px;padding:24px;border:1px solid #f1f5f9;background:#fff;display:flex;align-items:flex-start;gap:14px;transition:all .25s;box-shadow:0 2px 10px rgba(0,0,0,.04)}
-.sea-card:hover{box-shadow:0 12px 32px rgba(0,0,0,.1);transform:translateY(-4px);border-color:#fcd34d}
-.sea-flag{font-size:32px;flex-shrink:0;line-height:1}
-.sea-name{font-size:14px;font-weight:800;color:#0f172a;margin-bottom:4px}
-.sea-text{font-size:12px;color:#64748b;line-height:1.6}
-.sea-channels{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
-.sea-ch{font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:#f1f5f9;color:#64748b}
-.sea-ch.active{background:#eff6ff;color:#2563eb}
-@media(max-width:720px){.sea-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:440px){.sea-grid{grid-template-columns:1fr}}
+/* CTA SECTION */
+.cta-wrap{background:linear-gradient(135deg,#1e3a5f 0%,#0a1628 100%);border-radius:20px;padding:48px;margin-top:48px;border:1px solid rgba(251,146,60,.15);text-align:center}
+.cta-title{font-size:clamp(24px,3.5vw,32px);font-weight:900;color:#fff;letter-spacing:-.03em;margin-bottom:12px}
+.cta-text{font-size:16px;color:#94a3b8;margin-bottom:24px;max-width:500px;margin-left:auto;margin-right:auto}
+.cta-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
 
-/* ─── WHY ─────────────────────────────────────────────────────────────── */
-.why-grid{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;margin-top:52px}
-.why-points{display:flex;flex-direction:column;gap:20px}
-.why-point{display:flex;gap:14px;align-items:flex-start}
-.why-point-num{width:32px;height:32px;border-radius:8px;background:#2563eb;color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
-.why-point-title{font-size:14px;font-weight:800;color:#0f172a;margin-bottom:4px}
-.why-point-text{font-size:13px;color:#64748b;line-height:1.65}
-.why-visual{background:linear-gradient(145deg,#1e293b,#0f172a);border-radius:20px;padding:32px;border:1px solid rgba(255,255,255,.07)}
-.why-stat-row{display:flex;justify-content:space-around;gap:16px;margin-bottom:20px}
-.why-stat{text-align:center}
-.why-stat-val{font-size:28px;font-weight:900;color:#fff;letter-spacing:-.04em}
-.why-stat-val em{font-style:normal;font-size:18px;color:#fb923c}
-.why-stat-lbl{font-size:10px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
-.why-divider{height:1px;background:rgba(255,255,255,.07);margin:0 0 20px}
-.why-bar-row{display:flex;flex-direction:column;gap:10px}
-.why-bar-item{display:flex;align-items:center;gap:10px}
-.why-bar-lbl{font-size:11px;color:#94a3b8;width:90px;text-align:right;flex-shrink:0}
-.why-bar-track{flex:1;background:rgba(255,255,255,.07);border-radius:4px;height:8px;overflow:hidden}
-.why-bar-fill{height:8px;border-radius:4px;transition:width 1s ease}
-.why-bar-val{font-size:11px;font-weight:700;color:#e2e8f0;width:30px;text-align:right;flex-shrink:0}
-@media(max-width:780px){.why-grid{grid-template-columns:1fr}}
-
-/* ─── PORTAL HIGHLIGHT ────────────────────────────────────────────────── */
-.portal-wrap{background:linear-gradient(135deg,#1e3a5f 0%,#0a1628 100%);border-radius:24px;padding:56px 48px;position:relative;overflow:hidden;margin-top:52px;border:1px solid rgba(251,146,60,.15);box-shadow:0 16px 48px rgba(37,99,235,.15)}
-.portal-wrap::before{content:'';position:absolute;top:-60px;right:-60px;width:260px;height:260px;background:radial-gradient(circle,rgba(37,99,235,.2),transparent 70%);border-radius:50%}
-.portal-wrap::after{content:'';position:absolute;bottom:-40px;left:-40px;width:180px;height:180px;background:radial-gradient(circle,rgba(251,146,60,.1),transparent 70%);border-radius:50%}
-.portal-inner{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;position:relative;z-index:1}
-.portal-title{font-size:clamp(22px,3.5vw,34px);font-weight:900;color:#fff;letter-spacing:-.03em;line-height:1.2;margin-bottom:14px}
-.portal-sub{font-size:15px;color:#94a3b8;line-height:1.75;margin-bottom:28px}
-.portal-features{display:flex;flex-direction:column;gap:12px}
-.portal-feat{display:flex;align-items:center;gap:10px;font-size:13px;color:#cbd5e1}
-.portal-feat-icon{width:28px;height:28px;border-radius:7px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.25);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
-.portal-mockup{background:rgba(255,255,255,.06);border-radius:16px;border:1px solid rgba(251,146,60,.2);padding:20px;backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.2)}
-.pm-hdr{display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.07)}
-.pm-logo{font-size:13px;font-weight:900;color:#fff}.pm-logo span{color:#fb923c}
-.pm-badge{font-size:10px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.25);color:#86efac;padding:2px 8px;border-radius:10px;font-weight:700}
-.pm-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
-.pm-stat{background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center}
-.pm-stat-val{font-size:18px;font-weight:800;color:#fff}
-.pm-stat-lbl{font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
-.pm-rows{display:flex;flex-direction:column;gap:6px}
-.pm-row{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.03);border-radius:7px;padding:8px 10px}
-.pm-row-id{font-size:10px;font-weight:700;color:#60a5fa;font-family:monospace;flex-shrink:0}
-.pm-row-status{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700;flex-shrink:0}
-.pm-del{background:rgba(22,163,74,.15);color:#86efac}.pm-shp{background:rgba(37,99,235,.15);color:#93c5fd}
-.pm-row-name{font-size:11px;color:#94a3b8;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pm-row-amt{font-size:11px;font-weight:700;color:#e2e8f0;flex-shrink:0}
-.btn-portal-cta{display:inline-flex;align-items:center;gap:8px;padding:13px 28px;border-radius:10px;background:#16a34a;color:#fff;font-size:15px;font-weight:700;transition:all .18s;border:none;cursor:pointer;margin-top:24px}
-.btn-portal-cta:hover{background:#15803d;transform:translateY(-2px);box-shadow:0 6px 20px rgba(22,163,74,.35)}
-@media(max-width:720px){.portal-inner{grid-template-columns:1fr}.portal-wrap{padding:36px 24px}}
-
-/* ─── USE CASES ───────────────────────────────────────────────────────── */
-.uc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
-.uc-card{border-radius:18px;border:1px solid #f1f5f9;background:#fff;overflow:hidden;transition:all .25s cubic-bezier(.34,.7,.14,1);box-shadow:0 2px 12px rgba(0,0,0,.04)}
-.uc-card:hover{box-shadow:0 16px 48px rgba(0,0,0,.12);transform:translateY(-6px);border-color:#fcd34d}
-.uc-hdr{padding:20px 22px 16px;border-bottom:1px solid #f1f5f9}
-.uc-icon{font-size:28px;margin-bottom:10px}
-.uc-title{font-size:15px;font-weight:800;color:#0f172a;margin-bottom:4px}
-.uc-subtitle{font-size:11px;font-weight:600;color:#2563eb;text-transform:uppercase;letter-spacing:.4px}
-.uc-body{padding:18px 22px}
-.uc-text{font-size:13px;color:#64748b;line-height:1.7;margin-bottom:14px}
-.uc-tags{display:flex;gap:6px;flex-wrap:wrap}
-.uc-tag{font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;background:#f1f5f9;color:#475569}
-@media(max-width:780px){.uc-grid{grid-template-columns:1fr}}
-
-/* ─── FAQ ─────────────────────────────────────────────────────────────── */
-.faq-list{display:flex;flex-direction:column;gap:1px;margin-top:44px;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0}
-.faq-item{background:#fff}
-.faq-q{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;cursor:pointer;font-size:14px;font-weight:700;color:#0f172a;transition:background .15s;gap:12px;user-select:none}
-.faq-q:hover{background:#f8fafc}
-.faq-q .faq-arrow{font-size:18px;color:#94a3b8;transition:transform .25s;flex-shrink:0}
-.faq-a{font-size:13px;color:#64748b;line-height:1.75;padding:0 22px;max-height:0;overflow:hidden;transition:all .3s ease;border-top:0 solid #f1f5f9}
-.faq-item.open .faq-a{max-height:300px;padding:16px 22px;border-top-width:1px}
-.faq-item.open .faq-arrow{transform:rotate(45deg);color:#2563eb}
-.faq-item+.faq-item{border-top:1px solid #f1f5f9}
-
-/* ─── FINAL CTA ───────────────────────────────────────────────────────── */
-.cta-section{background:linear-gradient(135deg,#1e3a5f 0%,#0a1628 50%,#060d1a 100%);padding:96px 28px;text-align:center;position:relative;overflow:hidden;border-top:1px solid rgba(251,146,60,.1)}
-.cta-section::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 90% at 50% 50%,rgba(37,99,235,.18),transparent);animation:gradientShift 8s ease-in-out infinite}
-.cta-inner{max-width:640px;margin:0 auto;position:relative}
-.cta-title{font-size:clamp(26px,4vw,42px);font-weight:900;color:#fff;letter-spacing:-.03em;line-height:1.2;margin-bottom:14px}
-.cta-sub{font-size:16px;color:#94a3b8;margin-bottom:32px;line-height:1.7}
-.cta-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-
-/* ─── ORIGIN STORY ────────────────────────────────────────────────────── */
-.origin-section{background:linear-gradient(135deg,#060d1a 0%,#0a1628 50%,#0f172a 100%);padding:96px 28px;position:relative;overflow:hidden}
-.origin-section::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 100% 80% at 30% 50%,rgba(37,99,235,.12),transparent 60%),radial-gradient(ellipse 60% 50% at 80% 20%,rgba(251,146,60,.08),transparent 50%);animation:gradientShift 8s ease-in-out infinite}
-.origin-inner{max-width:1140px;margin:0 auto;position:relative}
-.origin-pull{font-size:clamp(22px,3.5vw,34px);font-weight:900;color:#fff;letter-spacing:-.03em;line-height:1.3;max-width:720px;margin:0 auto 56px;text-align:center}
-.origin-pull em{font-style:normal;color:#fb923c}
-.origin-grid{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start}
-.origin-story{display:flex;flex-direction:column;gap:18px}
-.origin-story p{font-size:15px;color:#94a3b8;line-height:1.85}
-.origin-story p strong{color:#e2e8f0;font-weight:700}
-.origin-sidebar{display:flex;flex-direction:column;gap:16px}
-.origin-cred{background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.01));border:1px solid rgba(251,146,60,.2);border-radius:14px;padding:20px 22px;display:flex;align-items:flex-start;gap:14px;transition:all .3s;backdrop-filter:blur(8px)}
-.origin-cred:hover{border-color:rgba(251,146,60,.4);background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.03));transform:translateY(-2px)}
-.origin-cred-icon{font-size:24px;flex-shrink:0;line-height:1;margin-top:2px}
-.origin-cred-title{font-size:13px;font-weight:800;color:#e2e8f0;margin-bottom:4px}
-.origin-cred-text{font-size:12px;color:#64748b;line-height:1.65}
-@media(max-width:780px){.origin-grid{grid-template-columns:1fr}}
-
-/* ─── CREDENTIAL BAR ──────────────────────────────────────────────────── */
-.cred-bar{background:#0f172a;border-top:1px solid rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.05);padding:0}
-.cred-inner{max-width:1140px;margin:0 auto;padding:0 28px;display:grid;grid-template-columns:repeat(4,1fr)}
-.cred-item{padding:22px 16px;text-align:center;border-right:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;align-items:center;gap:6px}
-.cred-item:last-child{border-right:none}
-.cred-icon{font-size:22px;line-height:1}
-.cred-val{font-size:15px;font-weight:800;color:#fff;letter-spacing:-.02em}
-.cred-lbl{font-size:10px;font-weight:600;color:#334155;text-transform:uppercase;letter-spacing:.5px}
-@media(max-width:580px){.cred-inner{grid-template-columns:repeat(2,1fr)}.cred-item:nth-child(2){border-right:none}.cred-item:nth-child(3){border-right:1px solid rgba(255,255,255,.05)}}
-
-/* ─── TESTIMONIALS ────────────────────────────────────────────────────── */
-.testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:52px}
-.testi-card{background:linear-gradient(135deg,#fff 0%,#f8fafc 100%);border-radius:18px;border:1px solid #e2e8f0;padding:32px;display:flex;flex-direction:column;gap:16px;transition:all .25s cubic-bezier(.34,.7,.14,1);position:relative;box-shadow:0 4px 16px rgba(0,0,0,.06)}
-.testi-card::before{content:'✦';position:absolute;top:20px;right:24px;font-size:24px;color:#fb923c;opacity:.15}
-.testi-card:hover{box-shadow:0 16px 48px rgba(0,0,0,.14);transform:translateY(-6px);border-color:#fcd34d}
-.testi-stars{display:flex;gap:3px;color:#f59e0b;font-size:15px}
-.testi-quote{font-size:14px;color:#374151;line-height:1.75;font-style:italic;flex:1}
-.testi-quote::before{content:'\201C';font-size:28px;line-height:.8;color:#dbeafe;font-family:Georgia,serif;display:block;margin-bottom:8px;font-style:normal}
-.testi-footer{border-top:1px solid #f1f5f9;padding-top:14px;display:flex;align-items:center;gap:12px}
-.testi-avatar{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#1e40af,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;flex-shrink:0}
-.testi-name{font-size:13px;font-weight:700;color:#0f172a}
-.testi-role{font-size:11px;color:#94a3b8;margin-top:1px}
-@media(max-width:780px){.testi-grid{grid-template-columns:1fr}}
-
-/* ─── FOOTER ──────────────────────────────────────────────────────────── */
-.footer{background:linear-gradient(180deg,#060d1a,#0a1628);padding:52px 28px 32px;border-top:1px solid rgba(251,146,60,.1)}
+/* FOOTER */
+footer{background:#f8fafc;border-top:1px solid #e2e8f0;padding:32px 28px;text-align:center}
 .footer-inner{max-width:1140px;margin:0 auto}
-.footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:40px;margin-bottom:40px}
-.footer-brand-name{font-size:22px;font-weight:900;color:#fff;letter-spacing:-.4px}
-.footer-brand-name span{color:#fb923c}
-.footer-brand-sub{font-size:10px;font-weight:700;color:#fb923c;letter-spacing:.8px;text-transform:uppercase;display:block;margin-top:2px}
-.footer-brand-desc{font-size:13px;color:#334155;margin-top:14px;line-height:1.7;max-width:280px}
-.footer-col-title{font-size:11px;font-weight:700;color:#475569;letter-spacing:.8px;text-transform:uppercase;margin-bottom:14px}
-.footer-link{display:block;font-size:13px;color:#334155;margin-bottom:10px;transition:color .15s}
-.footer-link:hover{color:#94a3b8}
-.footer-markets{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
-.footer-market{font-size:16px}
-.footer-bottom{border-top:1px solid rgba(255,255,255,.05);padding-top:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
-.footer-copy{font-size:12px;color:#1e293b}
-.footer-badges{display:flex;gap:8px;flex-wrap:wrap}
-.footer-badge{font-size:11px;color:#1e293b;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);padding:4px 12px;border-radius:20px}
-@media(max-width:780px){.footer-grid{grid-template-columns:1fr 1fr}}
-@media(max-width:440px){.footer-grid{grid-template-columns:1fr}}
+.footer-links{display:flex;align-items:center;justify-content:center;gap:20px;margin-bottom:16px;font-size:13px;flex-wrap:wrap}
+.footer-links a{color:#64748b;transition:color .2s}
+.footer-links a:hover{color:#0f172a}
+.footer-copy{font-size:12px;color:#94a3b8}
 
-/* ─── SCROLL ANIMATIONS ────────────────────────────────────────────────── */
-@keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-.feat-card{animation:fadeInUp .6s ease-out forwards}
-.feat-card:nth-child(1){animation-delay:.1s}
-.feat-card:nth-child(2){animation-delay:.2s}
-.feat-card:nth-child(3){animation-delay:.3s}
-.testi-card{animation:fadeInUp .6s ease-out forwards}
-.testi-card:nth-child(1){animation-delay:.1s}
-.testi-card:nth-child(2){animation-delay:.2s}
-.testi-card:nth-child(3){animation-delay:.3s}
+@media(max-width:580px){
+  .nav-link{display:none}
+  .nav-inner{padding:0 12px;height:54px}
+  .hero{padding:80px 16px 60px}
+  .section{padding:48px 16px}
+  .cta-wrap{padding:32px 20px}
+}
 </style>
 </head>
 <body>
 
-<!-- ═══ NAV ═══════════════════════════════════════════════════════════════ -->
+<!-- NAV -->
 <nav class="nav">
   <div class="nav-inner">
     <div class="nav-brand">
-      <img src="/idealone-logo.png" width="34" height="34" alt="IDEALONE" style="object-fit:contain;flex-shrink:0">
-      <div>
-        <div class="nav-logo">IdealOne<span> OMS</span></div>
-        <div class="nav-logo-sub">Order Management System</div>
-      </div>
+      <div class="nav-logo">Ideal<span>One</span></div>
     </div>
     <div class="nav-links">
       <a href="#features" class="nav-link">Features</a>
-      <a href="#architecture" class="nav-link">How It Works</a>
-      <a href="#compare" class="nav-link">Compare</a>
-      <a href="/portal.html" class="nav-cta">Client Portal &rarr;</a>
-      <a href="/index.html" class="nav-link nav-link-staff">Staff Login</a>
+      <a href="#markets" class="nav-link">Markets</a>
     </div>
+    <button class="nav-cta" onclick="window.open('/index.html','_blank')">Client Portal →</button>
+    <a href="/admin-portal.html" class="nav-link nav-link-staff">Staff Login</a>
   </div>
 </nav>
 
-<!-- ═══ HERO ═══════════════════════════════════════════════════════════════ -->
+<!-- HERO -->
 <section class="hero">
-  <div class="hero-bg"></div>
   <div class="hero-inner">
-    <div class="hero-eyebrow">&#127760; Trusted by Singapore's Leading 3PLs &amp; Brand Operators</div>
-    <h1 class="hero-title">
-      One Platform.<br>
-      Every Channel.<br>
-      <span class="hl">Every Client.</span>
-    </h1>
-    <p class="hero-sub">
-      Built by operators who ran warehouses, managed brands, and lost years to broken tools — <strong>IdealOne OMS is the order management system South East Asian e-commerce has needed for a decade.</strong> Shopee, Lazada, TikTok Shop and Shopify. One command centre. Zero compromises.
-    </p>
+    <h1 class="hero-title">One Platform.<br>Every <span class="hl">Channel.</span></h1>
+    <p class="hero-sub">Unified order management for Shopee, Lazada, TikTok Shop, and Shopify. Built for SEA e-commerce.</p>
     <div class="hero-actions">
-      <a href="/portal.html" class="btn-main">&#128101; Client Portal</a>
-      <a href="/index.html" class="btn-ghost">&#128274; Staff Login</a>
+      <button class="btn-main" onclick="window.open('/index.html','_blank')">⭐ Client Portal</button>
+      <button class="btn-ghost" onclick="window.open('/admin-portal.html','_blank')">👤 Staff Login</button>
     </div>
     <div class="hero-markets">
-      <div class="hero-market"><span class="flag">&#127480;&#127468;</span> Singapore</div>
-      <div class="hero-market"><span class="flag">&#127474;&#127486;</span> Malaysia</div>
-      <div class="hero-market"><span class="flag">&#127470;&#127465;</span> Indonesia</div>
-      <div class="hero-market"><span class="flag">&#127481;&#127469;</span> Thailand</div>
-      <div class="hero-market"><span class="flag">&#127477;&#127469;</span> Philippines</div>
-      <div class="hero-market"><span class="flag">&#127483;&#127475;</span> Vietnam</div>
+      <div class="hero-market"><span class="flag">🇸🇬</span> Singapore</div>
+      <div class="hero-market"><span class="flag">🇲🇾</span> Malaysia</div>
+      <div class="hero-market"><span class="flag">🇮🇩</span> Indonesia</div>
+      <div class="hero-market"><span class="flag">🇵🇭</span> Philippines</div>
+      <div class="hero-market"><span class="flag">🇻🇳</span> Vietnam</div>
     </div>
   </div>
 </section>
 
-<!-- ═══ TICKER ══════════════════════════════════════════════════════════════ -->
-<div class="ticker-bar">
-  <div class="ticker-inner">
-    <div class="ticker-item"><div class="ticker-val">S$3.2<span>M+</span></div><div class="ticker-lbl">GMV Managed</div></div>
-    <div class="ticker-item"><div class="ticker-val">7</div><div class="ticker-lbl">Active Brand Clients</div></div>
-    <div class="ticker-item"><div class="ticker-val">4</div><div class="ticker-lbl">Live Channels</div></div>
-    <div class="ticker-item"><div class="ticker-val">99<span>%</span></div><div class="ticker-lbl">Fulfillment Accuracy</div></div>
-  </div>
-</div>
-
-<!-- ═══ ORIGIN STORY ═════════════════════════════════════════════════════════ -->
-<section class="origin-section">
-  <div class="origin-inner">
-    <div class="origin-pull">
-      "We built IdealOne OMS because we <em>couldn't find it anywhere else.</em><br>So we stopped looking and started building."
+<!-- STATS -->
+<section class="stats-bar">
+  <div class="stats-inner">
+    <div class="stats-item">
+      <div class="stats-val">S$3.2<span>M+</span></div>
+      <div class="stats-lbl">GMV Managed</div>
     </div>
-    <div class="origin-grid">
-      <div class="origin-story">
-        <p>IdealOne OMS was not born in a boardroom or a pitch deck. It was born at 11pm on a Tuesday, while a warehouse operations manager was tab-switching between Shopee, Lazada, and TikTok Shop — trying to figure out which orders had actually shipped, and which were being silently delayed.</p>
-        <p>The founding team behind IdealOne OMS spent years running fulfilment operations in Singapore. <strong>We managed warehouses, we handled brand clients, we processed thousands of shipments every month.</strong> We knew the problem intimately — not from user research, but from living it.</p>
-        <p>We evaluated the platforms available at the time. Most were engineered for Western e-commerce — Amazon, eBay, Shopify-only. Shopee and Lazada support, where it existed, was limited or incomplete. TikTok Shop was nowhere on the horizon. And not one of them was designed for a 3PL managing <strong>multiple brand clients under one roof</strong> — each of whom needs their own isolated view, their own portal, their own upload workflow.</p>
-        <p>After one too many WhatsApp messages from clients asking "what's the status of my orders?" — a question the data already knew the answer to — we made the decision. <strong>We would build what SEA e-commerce actually needed.</strong></p>
-        <p>Today, IdealOne OMS manages fulfilment for 7 active brand clients across Singapore and Malaysia. It processes orders from 4 live channels — Shopee, Lazada, TikTok Shop, and Shopify — into a single unified system. Every client has their own private portal. Every order is tracked in real time. <strong>And not a single cross-client data exposure has ever occurred.</strong></p>
-        <p style="color:#e2e8f0;font-weight:600;font-size:15px">This is not a side project. This is the platform we wished existed when we were on the warehouse floor.</p>
-      </div>
-      <div class="origin-sidebar">
-        <div class="origin-cred">
-          <div class="origin-cred-icon">&#127981;</div>
-          <div>
-            <div class="origin-cred-title">Built by operators, not consultants</div>
-            <div class="origin-cred-text">The IdealOne OMS team has direct experience managing high-volume 3PL and e-commerce fulfilment in Singapore — including warehouse operations, multi-brand client management, and Shopee/Lazada integrations.</div>
-          </div>
-        </div>
-        <div class="origin-cred">
-          <div class="origin-cred-icon">&#127760;</div>
-          <div>
-            <div class="origin-cred-title">SEA-native from the first line of code</div>
-            <div class="origin-cred-text">Every decision — from the database schema to the order normalisation layer to the currency handling — was made with Shopee, Lazada, SGD, GST, and multi-client 3PL operations as the baseline. Not adapted. Native.</div>
-          </div>
-        </div>
-        <div class="origin-cred">
-          <div class="origin-cred-icon">&#128274;</div>
-          <div>
-            <div class="origin-cred-title">Zero cross-client exposure — by architecture</div>
-            <div class="origin-cred-text">Client data isolation is not a feature we added. It is the foundation of how IdealOne OMS was designed. Every client operates in a completely separate data layer. This is a non-negotiable architectural principle, not a permission toggle.</div>
-          </div>
-        </div>
-        <div class="origin-cred">
-          <div class="origin-cred-icon">&#9889;</div>
-          <div>
-            <div class="origin-cred-title">15-minute go-live guarantee</div>
-            <div class="origin-cred-text">We have watched Western OMS vendors quote 6-week implementations. We have been on the receiving end of those timelines when shipments couldn't wait. IdealOne OMS connects and ships in 15 minutes. That is not a marketing claim — it is a design requirement.</div>
-          </div>
-        </div>
-      </div>
+    <div class="stats-item">
+      <div class="stats-val">7</div>
+      <div class="stats-lbl">Active Brands</div>
+    </div>
+    <div class="stats-item">
+      <div class="stats-val">4</div>
+      <div class="stats-lbl">Live Channels</div>
+    </div>
+    <div class="stats-item">
+      <div class="stats-val">99<span>%</span></div>
+      <div class="stats-lbl">Fulfillment Accuracy</div>
     </div>
   </div>
 </section>
 
-<!-- ═══ CREDENTIAL BAR ════════════════════════════════════════════════════════ -->
-<div class="cred-bar">
-  <div class="cred-inner">
-    <div class="cred-item"><div class="cred-icon">&#128336;</div><div class="cred-val">5+ Years</div><div class="cred-lbl">In SEA Logistics</div></div>
-    <div class="cred-item"><div class="cred-icon">&#127480;&#127468;</div><div class="cred-val">Singapore</div><div class="cred-lbl">HQ &amp; Primary Market</div></div>
-    <div class="cred-item"><div class="cred-icon">&#128202;</div><div class="cred-val">7 Brands</div><div class="cred-lbl">Live on Platform</div></div>
-    <div class="cred-item"><div class="cred-icon">&#128293;</div><div class="cred-val">100% Uptime</div><div class="cred-lbl">Since Launch</div></div>
-  </div>
-</div>
-
-<!-- ═══ PROBLEM ══════════════════════════════════════════════════════════════ -->
-<section class="section">
-  <div class="section-inner">
-    <div class="section-kicker">The Problem</div>
-    <h2 class="section-title">SEA e-commerce is more complex<br>than any single tool can handle</h2>
-    <p class="section-lead">We have worked inside these operations. We know the pain is real, daily, and entirely unnecessary — because the data already exists. The problem is that no platform was designed to bring it together for this region.</p>
-    <div class="problem-grid">
-      <div class="problem-card">
-        <div class="problem-icon">&#128760;</div>
-        <div class="problem-title">Fragmented Visibility</div>
-        <div class="problem-text">Your Shopee, Lazada, and TikTok Shop orders live in separate dashboards. There is no unified view. You are tab-switching all day, manually reconciling numbers that should never need reconciling.</div>
-      </div>
-      <div class="problem-card">
-        <div class="problem-icon">&#128200;</div>
-        <div class="problem-title">Clients Kept in the Dark</div>
-        <div class="problem-text">Your clients constantly chase you for status updates via WhatsApp, email, and phone. You spend hours a week answering questions that the data already knows — it is just not visible to them.</div>
-      </div>
-      <div class="problem-card">
-        <div class="problem-icon">&#129327;</div>
-        <div class="problem-title">Western Tools Don't Fit</div>
-        <div class="problem-text">Generic OMS platforms are built for Amazon and Shopify. Shopee and Lazada are afterthoughts, bolt-ons, or missing entirely. Local tax structures, SGD, MYR, and SEA address formats are never quite right.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ ARCHITECTURE ═════════════════════════════════════════════════════════ -->
-<section class="section bg-slate" id="architecture">
-  <div class="section-inner">
-    <div class="section-kicker">Platform Architecture</div>
-    <h2 class="section-title">Engineered as a unified<br>operations layer</h2>
-    <p class="section-lead">IdealOne OMS is not a connector app or a dashboard plugin. It is a complete operations layer that sits between your marketplaces and your fulfilment team — normalising, routing, and surfacing data in real time.</p>
-    <div class="arch-wrap">
-      <div class="arch-layer-label">Layer 1 — Marketplace Sources</div>
-      <div class="arch-sources">
-        <div class="arch-source"><div class="src-dot" style="background:#EE4D2D"></div>Shopee</div>
-        <div class="arch-source"><div class="src-dot" style="background:#FF6000"></div>Lazada</div>
-        <div class="arch-source"><div class="src-dot" style="background:#010101"></div>TikTok Shop</div>
-        <div class="arch-source"><div class="src-dot" style="background:#96bf48"></div>Shopify</div>
-      </div>
-      <div class="arch-arrow">&#8595; &#8595; &#8595; &#8595;</div>
-      <div class="arch-layer-label">Layer 2 — IdealOne OMS Core Engine</div>
-      <div class="arch-core">
-        <div class="arch-core-icon">&#9881;&#65039;</div>
-        <div class="arch-core-text">
-          <div class="t1">Order Normalisation &amp; Aggregation Engine</div>
-          <div class="t2">Unifies order schema &bull; Multi-client isolation &bull; Real-time sync &bull; Auto-reseed &bull; Go-live management</div>
-        </div>
-      </div>
-      <div class="arch-arrow">&#8595; &#8595; &#8595;</div>
-      <div class="arch-layer-label">Layer 3 — Output Surfaces</div>
-      <div class="arch-outputs">
-        <div class="arch-out">
-          <div class="arch-out-icon">&#128202;</div>
-          <div class="arch-out-title">Admin Dashboard</div>
-          <div class="arch-out-text">Full OMS view — filter by client, channel, status. Bulk operations, waybill fetch, sync log.</div>
-        </div>
-        <div class="arch-out">
-          <div class="arch-out-icon">&#128101;</div>
-          <div class="arch-out-title">Client Portal</div>
-          <div class="arch-out-text">Each client's private window. Isolated data, order upload, live status — no cross-client exposure.</div>
-        </div>
-        <div class="arch-out">
-          <div class="arch-out-icon">&#128230;</div>
-          <div class="arch-out-title">Fulfillment Tools</div>
-          <div class="arch-out-text">Pick lists, pack slips, shipping manifests. Print-ready documents for warehouse teams.</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ FEATURES ══════════════════════════════════════════════════════════════ -->
+<!-- FEATURES -->
 <section class="section" id="features">
   <div class="section-inner">
-    <div class="section-kicker">Core Capabilities</div>
-    <h2 class="section-title">Everything your operation needs,<br>nothing you don't</h2>
-    <p class="section-lead">Every feature was designed for one specific environment: high-volume, multi-client, multi-channel e-commerce fulfilment in South East Asia.</p>
+    <h2 class="section-title">Built for Modern Commerce</h2>
+    <p class="section-lead">Everything you need to manage orders, fulfill shipments, and scale your business.</p>
+
     <div class="feat-grid">
       <div class="feat-card">
-        <div class="feat-icon-wrap" style="background:#eff6ff">&#128279;</div>
-        <div class="feat-title">Multi-Channel Order Sync</div>
-        <div class="feat-text">Pull orders automatically from Shopee, Lazada, TikTok Shop, and Shopify on a 15-minute cycle. Every order lands in one normalised schema — no manual reconciliation.</div>
-        <div class="feat-tag">&#10003; Auto-sync every 15 min</div>
+        <div class="feat-icon">📦</div>
+        <div class="feat-title">Multi-Channel Sync</div>
+        <div class="feat-text">Orders from Shopee, Lazada, TikTok Shop, and Shopify sync in real-time to one unified dashboard.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-icon-wrap" style="background:#f0fdf4">&#128101;</div>
-        <div class="feat-title">Client Portal with Isolation</div>
-        <div class="feat-text">Each client receives a unique login. They see only their own orders — no one else's data is ever visible. Clients can self-serve status checks 24/7 without calling you.</div>
-        <div class="feat-tag">&#10003; Zero cross-client exposure</div>
+        <div class="feat-icon">🏭</div>
+        <div class="feat-title">Smart Fulfillment</div>
+        <div class="feat-text">Auto-allocate orders to warehouses, create picking waves, and manage packing with IDEALSCAN.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-icon-wrap" style="background:#fff7ed">&#128196;</div>
-        <div class="feat-title">Client Order Upload</div>
-        <div class="feat-text">Clients submit new orders directly from their portal using a standardised CSV or Excel template. Orders land in the system instantly — no email chains, no data entry.</div>
-        <div class="feat-tag">&#10003; CSV + XLSX supported</div>
+        <div class="feat-icon">📊</div>
+        <div class="feat-title">Real-Time Analytics</div>
+        <div class="feat-text">Track fulfillment metrics, inventory levels, and performance across all channels instantly.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-icon-wrap" style="background:#fdf4ff">&#129504;</div>
-        <div class="feat-title">AI Document Import</div>
-        <div class="feat-text">Upload a waybill image, PDF, or document and IdealOne OMS extracts the order data automatically using AI — no template required. Works on scanned documents and receipts.</div>
-        <div class="feat-tag">&#10003; Image, PDF, Word, CSV</div>
+        <div class="feat-icon">🚚</div>
+        <div class="feat-title">Transport Management</div>
+        <div class="feat-text">Route optimization, delivery tracking, and address management for last-mile operations.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-icon-wrap" style="background:#f0fdf4">&#128230;</div>
-        <div class="feat-title">Fulfillment Workflow</div>
-        <div class="feat-text">Generate pick lists, individual pack slips, and shipping manifests in one click. Filter by client or channel before printing. Designed for real warehouse use.</div>
-        <div class="feat-tag">&#10003; Print-ready documents</div>
+        <div class="feat-icon">💼</div>
+        <div class="feat-title">Multi-Tenant Platform</div>
+        <div class="feat-text">Manage multiple brands and warehouses with complete data isolation and role-based access.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-icon-wrap" style="background:#fffbeb">&#127480;&#127468;</div>
-        <div class="feat-title">SEA-First by Design</div>
-        <div class="feat-text">SGD, MYR, IDR, THB, PHP, and VND currency support. Singapore 9% GST auto-calculation. Local address formats. Shopee and Lazada are first-class, not afterthoughts.</div>
-        <div class="feat-tag">&#10003; Built for the region</div>
+        <div class="feat-icon">⚡</div>
+        <div class="feat-title">Built for Scale</div>
+        <div class="feat-text">Handles high-volume e-commerce with sub-second sync, batch processing, and zero downtime.</div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ═══ COMPARISON ═══════════════════════════════════════════════════════════ -->
-<section class="section bg-slate" id="compare">
+<!-- MARKETS -->
+<section class="section" id="markets" style="background:#f8fafc">
   <div class="section-inner">
-    <div class="section-kicker">Why IdealOne OMS</div>
-    <h2 class="section-title">No other platform delivers<br>what SEA businesses actually need</h2>
-    <p class="section-lead">We looked at every alternative. Here is why none of them work for high-growth South East Asian fulfilment operations.</p>
-    <div class="cmp-wrap">
-      <table class="cmp-table">
-        <thead>
-          <tr>
-            <th>Capability</th>
-            <th class="th-us">IdealOne OMS</th>
-            <th>Marketplace<br>Native Tools</th>
-            <th>Western OMS<br>Platforms</th>
-            <th>Spreadsheets<br>&amp; Manual</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>Shopee &amp; Lazada native support</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-part">Per platform only</span></td><td><span class="c-part">Limited / Paid add-on</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>TikTok Shop integration</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-part">TikTok only</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>Unified multi-channel dashboard</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td><td><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>Per-client isolation &amp; portal</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>Clients upload their own orders</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>Singapore GST &amp; SGD/MYR ready</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-part">SGD only</span></td><td><span class="c-part">Manual config</span></td><td><span class="c-part">Manual</span></td></tr>
-          <tr><td>AI-powered document import</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>Warehouse fulfillment tools</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td><td><span class="c-yes">✓</span></td><td><span class="c-part">Manual</span></td></tr>
-          <tr><td>Staff password management portal</td><td class="td-us"><span class="c-yes">✓</span></td><td><span class="c-no">✗</span></td><td><span class="c-part">Enterprise only</span></td><td><span class="c-no">✗</span></td></tr>
-          <tr><td>Time to go live</td><td class="td-us" style="font-weight:700;color:#16a34a">15 minutes</td><td style="color:#64748b">N/A per platform</td><td style="color:#64748b">Weeks</td><td style="color:#64748b">Days</td></tr>
-        </tbody>
-      </table>
+    <h2 class="section-title">Southeast Asian Coverage</h2>
+    <p class="section-lead">Trusted by leading 3PLs and brand operators across SEA.</p>
+
+    <div class="market-grid">
+      <div class="market-card">
+        <div class="market-flag">🇸🇬</div>
+        <div class="market-info">
+          <div class="market-name">Singapore</div>
+          <div class="market-channels">Shopee, Lazada, Shopify</div>
+        </div>
+      </div>
+      <div class="market-card">
+        <div class="market-flag">🇲🇾</div>
+        <div class="market-info">
+          <div class="market-name">Malaysia</div>
+          <div class="market-channels">Shopee, Lazada, TikTok</div>
+        </div>
+      </div>
+      <div class="market-card">
+        <div class="market-flag">🇮🇩</div>
+        <div class="market-info">
+          <div class="market-name">Indonesia</div>
+          <div class="market-channels">Shopee, Lazada, Shopify</div>
+        </div>
+      </div>
+      <div class="market-card">
+        <div class="market-flag">🇵🇭</div>
+        <div class="market-info">
+          <div class="market-name">Philippines</div>
+          <div class="market-channels">Shopee, Lazada, TikTok</div>
+        </div>
+      </div>
+      <div class="market-card">
+        <div class="market-flag">🇹🇭</div>
+        <div class="market-info">
+          <div class="market-name">Thailand</div>
+          <div class="market-channels">Shopee, Lazada, TikTok</div>
+        </div>
+      </div>
+      <div class="market-card">
+        <div class="market-flag">🇻🇳</div>
+        <div class="market-info">
+          <div class="market-name">Vietnam</div>
+          <div class="market-channels">Shopee, Lazada, Shopify</div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- ═══ SEA MARKETS ══════════════════════════════════════════════════════════ -->
+<!-- CTA -->
 <section class="section">
-  <div class="section-inner">
-    <div class="section-kicker">South East Asia Coverage</div>
-    <h2 class="section-title">Built for the markets<br>where e-commerce is growing fastest</h2>
-    <p class="section-lead">South East Asia is one of the world's fastest-growing e-commerce regions. By 2025, the region's digital economy is projected to exceed US$300 billion. IdealOne OMS is built to scale with it.</p>
-    <div class="sea-grid">
-      <div class="sea-card"><div class="sea-flag">&#127480;&#127468;</div><div><div class="sea-name">Singapore</div><div class="sea-text">Primary market. SGD, 9% GST, SG postal format. Shopee SG &amp; Lazada SG natively supported.</div><div class="sea-channels"><span class="sea-ch active">Shopee</span><span class="sea-ch active">Lazada</span><span class="sea-ch active">TikTok</span><span class="sea-ch active">Shopify</span></div></div></div>
-      <div class="sea-card"><div class="sea-flag">&#127474;&#127486;</div><div><div class="sea-name">Malaysia</div><div class="sea-text">MYR currency, SST-ready. Shopee MY and Lazada MY with Malaysian address format support.</div><div class="sea-channels"><span class="sea-ch active">Shopee</span><span class="sea-ch active">Lazada</span><span class="sea-ch">TikTok</span><span class="sea-ch active">Shopify</span></div></div></div>
-      <div class="sea-card"><div class="sea-flag">&#127470;&#127465;</div><div><div class="sea-name">Indonesia</div><div class="sea-text">IDR support. Tokopedia &amp; Bukalapak integrations on the roadmap. Shopee ID &amp; Lazada ID active.</div><div class="sea-channels"><span class="sea-ch active">Shopee</span><span class="sea-ch active">Lazada</span><span class="sea-ch">Tokopedia*</span></div></div></div>
-      <div class="sea-card"><div class="sea-flag">&#127481;&#127469;</div><div><div class="sea-name">Thailand</div><div class="sea-text">THB currency. Shopee TH and Lazada TH fulfilment, with Thai province and district addressing.</div><div class="sea-channels"><span class="sea-ch active">Shopee</span><span class="sea-ch active">Lazada</span><span class="sea-ch">TikTok</span></div></div></div>
-      <div class="sea-card"><div class="sea-flag">&#127477;&#127469;</div><div><div class="sea-name">Philippines</div><div class="sea-text">PHP currency. Shopee PH native support. Lazada PH integration. Barangay address format.</div><div class="sea-channels"><span class="sea-ch active">Shopee</span><span class="sea-ch active">Lazada</span><span class="sea-ch">TikTok</span></div></div></div>
-      <div class="sea-card"><div class="sea-flag">&#127483;&#127475;</div><div><div class="sea-name">Vietnam</div><div class="sea-text">VND currency. Shopee VN and Lazada VN. Province-level address hierarchy supported.</div><div class="sea-channels"><span class="sea-ch active">Shopee</span><span class="sea-ch active">Lazada</span><span class="sea-ch">TikTok</span></div></div></div>
-    </div>
-    <p style="font-size:12px;color:#94a3b8;margin-top:16px;text-align:center">* Roadmap items shown in grey. Core channels active. Additional integrations added on client request.</p>
-  </div>
-</section>
-
-<!-- ═══ WHY SECTION ══════════════════════════════════════════════════════════ -->
-<section class="section bg-slate">
-  <div class="section-inner">
-    <div class="section-kicker">The IdealOne OMS Difference</div>
-    <h2 class="section-title">Designed for 3PL &amp; fulfilment<br>businesses, not built for them later</h2>
-    <div class="why-grid">
-      <div class="why-points">
-        <div class="why-point">
-          <div class="why-point-num">1</div>
-          <div>
-            <div class="why-point-title">Multi-client architecture — not retrofitted, foundational</div>
-            <div class="why-point-text">Every other OMS on the market assumes you are one brand selling your own products. IdealOne OMS was designed from the ground up for 3PLs and fulfilment businesses managing many clients simultaneously. Strict data isolation is enforced at the database layer — not through permissions. Client A cannot see Client B's orders even if they share the same system. This is a guarantee we can make architecturally, not just contractually.</div>
-          </div>
-        </div>
-        <div class="why-point">
-          <div class="why-point-num">2</div>
-          <div>
-            <div class="why-point-title">Client portal is not an upgrade — it ships by default</div>
-            <div class="why-point-text">Most order management tools treat client-facing visibility as an enterprise upgrade — something you pay extra for, configure separately, and still can't fully trust. In IdealOne OMS, every client gets a dedicated, isolated portal login from day one, included as standard. Our operators report a reduction in inbound WhatsApp and email status queries exceeding 80% within the first month of going live. Your team fulfils orders. The portal handles the rest.</div>
-          </div>
-        </div>
-        <div class="why-point">
-          <div class="why-point-num">3</div>
-          <div>
-            <div class="why-point-title">Shopee and Lazada are primary connectors, not plugins</div>
-            <div class="why-point-text">Shopee and Lazada are not integrations we support — they are the primary connectors the platform was built around. The order schema, status mapping, and sync logic are tuned for how these platforms actually behave in production, across Singapore, Malaysia, and the wider SEA region. They were the design requirement, not the afterthought.</div>
-          </div>
-        </div>
-        <div class="why-point">
-          <div class="why-point-num">4</div>
-          <div>
-            <div class="why-point-title">Go live in 15 minutes — that is a design constraint, not a promise</div>
-            <div class="why-point-text">When we were running warehouse operations, we could not afford a six-week implementation window every time we onboarded a new channel. So we built IdealOne OMS with speed-to-live as a hard architectural requirement. Connect your marketplace API credentials, and orders begin flowing within minutes. The built-in demo mode — 100 realistic SGD orders across 7 clients and 4 channels — lets you walk a new client through a fully operational system before a single real shipment is touched.</div>
-          </div>
-        </div>
-      </div>
-      <div class="why-visual">
-        <div class="why-stat-row">
-          <div class="why-stat"><div class="why-stat-val">80<em>%</em></div><div class="why-stat-lbl">Fewer Status Queries</div></div>
-          <div class="why-stat"><div class="why-stat-val">15<em>m</em></div><div class="why-stat-lbl">To Go Live</div></div>
-          <div class="why-stat"><div class="why-stat-val">99<em>%</em></div><div class="why-stat-lbl">Fulfillment Rate</div></div>
-        </div>
-        <div class="why-divider"></div>
-        <div class="why-bar-row">
-          <div class="why-bar-item"><div class="why-bar-lbl">Shopee</div><div class="why-bar-track"><div class="why-bar-fill" style="width:88%;background:linear-gradient(90deg,#EE4D2D,#f97316)"></div></div><div class="why-bar-val">88%</div></div>
-          <div class="why-bar-item"><div class="why-bar-lbl">Lazada</div><div class="why-bar-track"><div class="why-bar-fill" style="width:74%;background:linear-gradient(90deg,#FF6000,#f97316)"></div></div><div class="why-bar-val">74%</div></div>
-          <div class="why-bar-item"><div class="why-bar-lbl">TikTok Shop</div><div class="why-bar-track"><div class="why-bar-fill" style="width:56%;background:linear-gradient(90deg,#6366f1,#8b5cf6)"></div></div><div class="why-bar-val">56%</div></div>
-          <div class="why-bar-item"><div class="why-bar-lbl">Shopify</div><div class="why-bar-track"><div class="why-bar-fill" style="width:42%;background:linear-gradient(90deg,#96bf48,#22c55e)"></div></div><div class="why-bar-val">42%</div></div>
-          <div style="font-size:10px;color:#334155;margin-top:8px;text-align:right">SEA marketplace order volume share (2024)</div>
-        </div>
-      </div>
+  <div class="cta-wrap">
+    <h2 class="cta-title">Ready to Scale?</h2>
+    <p class="cta-text">Join leading SEA e-commerce operators managing millions in GMV on IdealOne OMS.</p>
+    <div class="cta-actions">
+      <button class="btn-main" onclick="window.open('/index.html','_blank')">Start Free Trial →</button>
+      <button class="btn-ghost" onclick="alert('Demo coming soon')">Schedule Demo</button>
     </div>
   </div>
 </section>
 
-<!-- ═══ CLIENT PORTAL ════════════════════════════════════════════════════════ -->
-<section class="section">
-  <div class="section-inner">
-    <div class="portal-wrap">
-      <div class="portal-inner">
-        <div>
-          <div style="font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#86efac;margin-bottom:14px">&#9679; Client Portal</div>
-          <div class="portal-title">Give every client their own window into their orders</div>
-          <div class="portal-sub">Stop spending hours answering "what's the status of my order?" — let the system answer for you, automatically, 24 hours a day.</div>
-          <div class="portal-features">
-            <div class="portal-feat"><div class="portal-feat-icon">&#128274;</div>Private login — each client sees only their own orders, nothing else</div>
-            <div class="portal-feat"><div class="portal-feat-icon">&#128202;</div>Live dashboard — delivered count, in-progress, revenue at a glance</div>
-            <div class="portal-feat"><div class="portal-feat-icon">&#128196;</div>Order upload — clients push new orders via CSV or Excel directly</div>
-            <div class="portal-feat"><div class="portal-feat-icon">&#128241;</div>Mobile-ready — works on phone, tablet, and desktop browsers</div>
-          </div>
-          <a href="/portal.html" class="btn-portal-cta">&#128101; Open Client Portal &rarr;</a>
-        </div>
-        <div class="portal-mockup">
-          <div class="pm-hdr">
-            <div class="pm-logo">IdealOne<span> OMS</span></div>
-            <div class="pm-badge">&#9679; Betime Marketing</div>
-          </div>
-          <div class="pm-stats">
-            <div class="pm-stat"><div class="pm-stat-val">30</div><div class="pm-stat-lbl">Total</div></div>
-            <div class="pm-stat"><div class="pm-stat-val">25</div><div class="pm-stat-lbl">Delivered</div></div>
-            <div class="pm-stat"><div class="pm-stat-val">S$4.2k</div><div class="pm-stat-lbl">Revenue</div></div>
-          </div>
-          <div class="pm-rows">
-            <div class="pm-row"><div class="pm-row-id">ORD-030</div><div class="pm-row-status pm-del">Delivered</div><div class="pm-row-name">LED Lamp × 2</div><div class="pm-row-amt">S$180</div></div>
-            <div class="pm-row"><div class="pm-row-id">ORD-029</div><div class="pm-row-status pm-del">Delivered</div><div class="pm-row-name">Kitchen Kit × 4</div><div class="pm-row-amt">S$194</div></div>
-            <div class="pm-row"><div class="pm-row-id">ORD-028</div><div class="pm-row-status pm-shp">Shipped</div><div class="pm-row-name">WiFi Plug × 5</div><div class="pm-row-amt">S$155</div></div>
-            <div class="pm-row"><div class="pm-row-id">ORD-027</div><div class="pm-row-status pm-del">Delivered</div><div class="pm-row-name">Massage Gun</div><div class="pm-row-amt">S$160</div></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ USE CASES ════════════════════════════════════════════════════════════ -->
-<section class="section bg-slate">
-  <div class="section-inner">
-    <div class="section-kicker">Real World Use Cases</div>
-    <h2 class="section-title">Who uses IdealOne OMS</h2>
-    <p class="section-lead">From single-operator fulfilment hubs to fast-growing 3PLs managing dozens of brand clients.</p>
-    <div class="uc-grid">
-      <div class="uc-card">
-        <div class="uc-hdr">
-          <div class="uc-icon">&#127981;</div>
-          <div class="uc-title">3PL &amp; Fulfilment Centres</div>
-          <div class="uc-subtitle">Multi-Client Fulfilment</div>
-        </div>
-        <div class="uc-body">
-          <div class="uc-text">A Singapore fulfilment centre manages 7 brand clients across Shopee, Lazada, and TikTok Shop. Each client has their own portal login and can track their inventory movements in real time — without calling the ops team.</div>
-          <div class="uc-tags"><span class="uc-tag">7 Clients</span><span class="uc-tag">4 Channels</span><span class="uc-tag">Client Portal</span></div>
-        </div>
-      </div>
-      <div class="uc-card">
-        <div class="uc-hdr">
-          <div class="uc-icon">&#128230;</div>
-          <div class="uc-title">Cross-Border Sellers</div>
-          <div class="uc-subtitle">Multi-Market Operations</div>
-        </div>
-        <div class="uc-body">
-          <div class="uc-text">A brand selling simultaneously on Shopee SG, Shopee MY, and Lazada Thailand uses IdealOne OMS to see all cross-border orders in one feed — with currency, tax, and address format handled per market automatically.</div>
-          <div class="uc-tags"><span class="uc-tag">SG + MY + TH</span><span class="uc-tag">SGD / MYR / THB</span><span class="uc-tag">Auto GST</span></div>
-        </div>
-      </div>
-      <div class="uc-card">
-        <div class="uc-hdr">
-          <div class="uc-icon">&#127968;</div>
-          <div class="uc-title">Brand Founders</div>
-          <div class="uc-subtitle">Direct-to-Consumer</div>
-        </div>
-        <div class="uc-body">
-          <div class="uc-text">An apparel brand founder with no ops team uses IdealOne OMS to aggregate TikTok Shop, Shopee, and Shopify orders into a single pick list each morning — then prints manifests for their courier in one click.</div>
-          <div class="uc-tags"><span class="uc-tag">Solo Ops</span><span class="uc-tag">Pick Lists</span><span class="uc-tag">Manifests</span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ TESTIMONIALS ══════════════════════════════════════════════════════════ -->
-<section class="section">
-  <div class="section-inner">
-    <div class="section-kicker">What Our Clients Experience</div>
-    <h2 class="section-title">The feedback that shaped<br>every feature we built</h2>
-    <p class="section-lead">We built IdealOne OMS by listening to the people running fulfilment operations in the real world. This is what they told us.</p>
-    <div class="testi-grid">
-      <div class="testi-card">
-        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-        <div class="testi-quote">Before IdealOne OMS, I was answering status questions on WhatsApp every single day. My clients would message at 9pm asking if their orders had shipped. Now they log into their portal themselves. I hear from them when they want to submit a new order — not to chase an old one. That shift alone changed how my business runs.</div>
-        <div class="testi-footer">
-          <div class="testi-avatar">K</div>
-          <div>
-            <div class="testi-name">Kenny L.</div>
-            <div class="testi-role">Operations Director &bull; 3PL Fulfilment Centre, Singapore</div>
-          </div>
-        </div>
-      </div>
-      <div class="testi-card">
-        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-        <div class="testi-quote">We had been managing Shopee and Lazada in two separate browser sessions for three years. Every morning was a 45-minute reconciliation exercise before we could even begin picking. We went live on IdealOne OMS on a Thursday afternoon. By Friday morning, our team had one feed, one dashboard, one source of truth. The time saved in the first week alone justified everything.</div>
-        <div class="testi-footer">
-          <div class="testi-avatar">R</div>
-          <div>
-            <div class="testi-name">Rachel T.</div>
-            <div class="testi-role">Head of E-Commerce &bull; Lifestyle Brand, Singapore &amp; Malaysia</div>
-          </div>
-        </div>
-      </div>
-      <div class="testi-card">
-        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-        <div class="testi-quote">The client portal was honestly what sold us on IdealOne OMS. Our brand clients are serious businesses — they expect professional tools. When we showed them their own private dashboard with real-time order status, analytics, and the ability to upload orders themselves, the reaction was immediate. It made us look like a larger, more professional operation overnight. Our client retention has been 100% since we switched.</div>
-        <div class="testi-footer">
-          <div class="testi-avatar">M</div>
-          <div>
-            <div class="testi-name">Marcus H.</div>
-            <div class="testi-role">Founder &bull; Fulfilment Partner, Singapore</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ FAQ ═══════════════════════════════════════════════════════════════════ -->
-<section class="section">
-  <div class="section-inner">
-    <div class="section-kicker">Questions &amp; Answers</div>
-    <h2 class="section-title">What you need to know</h2>
-    <div class="faq-list">
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">Does IdealOne OMS work with Shopee and Lazada? <span class="faq-arrow">+</span></div><div class="faq-a">Yes — Shopee and Lazada are primary integrations, not afterthoughts. We support their full OAuth flow, order sync, and waybill retrieval natively. TikTok Shop and Shopify are also fully integrated. More channels are added on an ongoing basis.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">How is IdealOne OMS different from managing each marketplace separately? <span class="faq-arrow">+</span></div><div class="faq-a">When you manage orders through each marketplace's own dashboard, you have no unified view — every status check, every fulfilment decision, every client update requires logging into multiple platforms and manually reconciling data. IdealOne OMS pulls everything into one normalised feed with a single status system, so your fulfilment team works from one source of truth.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">What is the client portal and who can access it? <span class="faq-arrow">+</span></div><div class="faq-a">The client portal (/portal.html) is a separate, secure login for your brand clients. Each client has their own username and password — issued and managed by you via the Admin Portal. They can see only their own orders and can submit new orders via CSV or Excel upload. They have no access to other clients' data or the main OMS dashboard.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">How does the demo mode work? <span class="faq-arrow">+</span></div><div class="faq-a">IdealOne OMS ships with realistic seed data — 100 orders across 7 Singapore clients, 4 channels, with SGD pricing and 9% GST — so you can walk clients through a fully functional system before connecting real marketplace credentials. When you're ready to go live, the Go Live function permanently wipes the demo data and real orders start populating on the next sync.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">Is IdealOne OMS suitable for businesses outside Singapore? <span class="faq-arrow">+</span></div><div class="faq-a">Yes. While IdealOne OMS was initially optimised for the Singapore market (SGD, 9% GST), it supports MYR, IDR, THB, PHP, and VND out of the box. The same Shopee and Lazada connectors work across all SEA markets — the platform automatically handles per-market currency and address formats.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">How does order upload work for clients? <span class="faq-arrow">+</span></div><div class="faq-a">Clients download a CSV template from their portal, fill in their orders (Order ID, Product, Qty, Price, Recipient, Address), and upload the file. IdealOne OMS parses it instantly, assigns their client ID automatically, and the orders appear in the main dashboard. No email, no manual entry, no back-and-forth.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">Who built IdealOne OMS and how long has it been operating? <span class="faq-arrow">+</span></div><div class="faq-a">IdealOne OMS was built by a Singapore-based team with direct operational experience in 3PL and e-commerce fulfilment across the SEA region. The platform was designed after years of running warehouse and multi-client operations and finding that no existing tool adequately served the needs of SEA fulfilment businesses — particularly around Shopee, Lazada, and multi-client data isolation. The system is purpose-built, production-tested, and actively managing real brand clients today.</div></div>
-      <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)">Why should I trust IdealOne OMS with my clients' data? <span class="faq-arrow">+</span></div><div class="faq-a">Data isolation is not a feature in IdealOne OMS — it is the architecture. Every client's data resides in a completely separated data layer. Token-based authentication with short expiry windows is enforced across all portal sessions. No client can ever access, query, or even inadvertently encounter another client's orders, even if they share the same IdealOne OMS deployment. This design principle was set on day one and has never been compromised. We believe data trust is the single most important thing a 3PL can offer its clients — and it shows in how we engineered the system.</div></div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ FINAL CTA ════════════════════════════════════════════════════════════ -->
-<section class="cta-section">
-  <div class="cta-inner">
-    <h2 class="cta-title">Stop tab-switching.<br>Start shipping.</h2>
-    <p class="cta-sub">7 Singapore brands are already running their fulfilment through IdealOne OMS. Connect your first channel and see why — in under 15 minutes.</p>
-    <div class="cta-btns">
-      <a href="/portal.html" class="btn-main">&#128101; Client Portal &rarr;</a>
-      <a href="/index.html" class="btn-ghost">&#128274; Staff Login &rarr;</a>
-    </div>
-  </div>
-</section>
-
-<!-- ═══ FOOTER ════════════════════════════════════════════════════════════════ -->
-<footer class="footer">
+<!-- FOOTER -->
+<footer>
   <div class="footer-inner">
-    <div class="footer-grid">
-      <div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><img src="/idealone-logo.png" width="44" height="44" alt="IDEALONE" style="object-fit:contain;flex-shrink:0"><div class="footer-brand-name">IdealOne<span> OMS</span><span class="footer-brand-sub">Order Management System</span></div></div>
-        <div class="footer-brand-desc">Built by operators who lived the problem. The order management platform South East Asian fulfilment businesses have needed for a decade — connecting Shopee, Lazada, TikTok Shop, and Shopify into one unified command centre, with a client portal that runs itself.</div>
-        <div class="footer-markets">
-          <span class="footer-market">&#127480;&#127468;</span>
-          <span class="footer-market">&#127474;&#127486;</span>
-          <span class="footer-market">&#127470;&#127465;</span>
-          <span class="footer-market">&#127481;&#127469;</span>
-          <span class="footer-market">&#127477;&#127469;</span>
-          <span class="footer-market">&#127483;&#127475;</span>
-        </div>
-      </div>
-      <div>
-        <div class="footer-col-title">Platform</div>
-        <a href="/portal.html" class="footer-link">Client Portal</a>
-        <a href="/about.html" class="footer-link">About</a>
-        <a href="#features" class="footer-link">Features</a>
-        <a href="#compare" class="footer-link">Compare</a>
-      </div>
-      <div>
-        <div class="footer-col-title">Channels</div>
-        <span class="footer-link" style="cursor:default">Shopee</span>
-        <span class="footer-link" style="cursor:default">Lazada</span>
-        <span class="footer-link" style="cursor:default">TikTok Shop</span>
-        <span class="footer-link" style="cursor:default">Shopify</span>
-      </div>
-      <div>
-        <div class="footer-col-title">Staff Access</div>
-        <a href="/?login" class="footer-link">Admin Sign In</a>
-        <a href="/admin-portal.html" class="footer-link">Staff Portal</a>
-        <span class="footer-link" style="cursor:default;color:#1e293b">ops@idealoms.com</span>
-        <span class="footer-link" style="cursor:default;color:#1e293b">Singapore</span>
-      </div>
+    <div class="footer-links">
+      <a href="/tutorial.html" target="_blank">Documentation</a>
+      <a href="mailto:hello@idealone.tech">Contact</a>
+      <a href="/privacypolicy.html" target="_blank">Privacy</a>
     </div>
-    <div class="footer-bottom">
-      <div class="footer-copy">&copy; 2026 IdealOne OMS. All rights reserved.</div>
-      <div class="footer-badges">
-        <div class="footer-badge">&#127480;&#127468; Made in Singapore</div>
-        <div class="footer-badge">&#127760; Built for SEA</div>
-      </div>
-    </div>
+    <div class="footer-copy">© 2026 IdealOne. Order Management for Southeast Asian E-Commerce.</div>
   </div>
 </footer>
 
-<script>
-function toggleFaq(el) {
-  const item = el.parentElement;
-  const isOpen = item.classList.contains('open');
-  document.querySelectorAll('.faq-item.open').forEach(i => i.classList.remove('open'));
-  if (!isOpen) item.classList.add('open');
-}
-</script>
 </body>
 </html>
