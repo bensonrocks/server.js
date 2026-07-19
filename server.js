@@ -69,6 +69,7 @@ const createEnhancedReturns = require('./lib/enhanced-returns');
 const createASNManager = require('./lib/inbound-asn');
 const createImporter = require('./lib/excel-importer');
 const createSyncDaemon = require('./lib/sync-daemon');
+const createClientConfig = require('./lib/client-config');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
@@ -118,14 +119,15 @@ const tenantCtx = new Map();
 
 function getCtx(tenantId) {
   if (!tenantCtx.has(tenantId)) {
-    const db         = getTenantDb(tenantId);
-    const store      = createStore(db);
-    const creds      = createCreds(tenantId);
-    const syncLog    = createSyncLog(db);
-    const inventory   = createInventory(db);
-    const fulfillment = createFulfillment({ store, creds, inventory, db });
-    const picking     = createPicking({ db, store });
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking });
+    const db           = getTenantDb(tenantId);
+    const store        = createStore(db);
+    const creds        = createCreds(tenantId);
+    const syncLog      = createSyncLog(db);
+    const inventory    = createInventory(db);
+    const fulfillment  = createFulfillment({ store, creds, inventory, db });
+    const picking      = createPicking({ db, store });
+    const clientConfig = createClientConfig(db);
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig });
   }
   return tenantCtx.get(tenantId);
 }
@@ -2439,6 +2441,112 @@ app.delete('/api/client/connections/:platform', withClientAuth, (req, res) => {
     'DELETE FROM client_platform_connections WHERE tenant_id = ? AND client_id = ? AND platform = ?'
   ).run(req.tenantId, req.clientId, req.params.platform);
   res.json({ ok: true });
+});
+
+// ── Client-level customization (bundling, virtual warehouse) ─────────────────
+
+// Get client configuration (bundling, virtual warehouse status)
+app.get('/api/clients/:clientId/config', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const config = req.ctx.clientConfig.getConfig(clientId);
+    const bundles = req.ctx.clientConfig.getBundles(clientId);
+    const virtualSkus = req.ctx.clientConfig.getVirtualSkus(clientId);
+
+    res.json({
+      config,
+      bundles,
+      virtualSkus
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Enable bundling for a client
+app.post('/api/clients/:clientId/bundling/enable', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const result = req.ctx.clientConfig.enableBundling(clientId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Create a bundle for a client
+// Body: { bundleSku, bundleName, description, components: [{ sku, qty, name, unitPrice }, ...] }
+app.post('/api/clients/:clientId/bundles', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { bundleSku, bundleName, description, components } = req.body;
+
+    if (!bundleSku || !bundleName || !components) {
+      return res.status(400).json({ error: 'bundleSku, bundleName, and components required' });
+    }
+
+    const bundle = req.ctx.clientConfig.createBundle(clientId, bundleSku, bundleName, components, description);
+    res.status(201).json(bundle);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get bundles for a client
+app.get('/api/clients/:clientId/bundles', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const bundles = req.ctx.clientConfig.getBundles(clientId);
+    res.json({ bundles });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Enable virtual warehouse for a client
+app.post('/api/clients/:clientId/virtual-warehouse/enable', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const result = req.ctx.clientConfig.enableVirtualWarehouse(clientId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Add a virtual warehouse SKU
+// Body: { sku, warehouseName, fulfillmentMethod, supplierInfo }
+app.post('/api/clients/:clientId/virtual-skus', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { sku, warehouseName, fulfillmentMethod, supplierInfo } = req.body;
+
+    if (!sku) {
+      return res.status(400).json({ error: 'sku required' });
+    }
+
+    const result = req.ctx.clientConfig.addVirtualSku(
+      clientId,
+      sku,
+      warehouseName || 'Virtual',
+      fulfillmentMethod || 'dropship',
+      supplierInfo || ''
+    );
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get virtual warehouse SKUs for a client
+app.get('/api/clients/:clientId/virtual-skus', withStaffTenant, (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const virtualSkus = req.ctx.clientConfig.getVirtualSkus(clientId);
+    res.json({ virtualSkus });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ── Client portal dashboard stats ────────────────────────────────────────────
