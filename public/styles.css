@@ -2723,3 +2723,16 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .inline-cam-view .camera-qronly-hint { bottom: auto; top: .5rem; }
 .inline-cam-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; color: #fca5a5; font-size: .85rem; padding: 1rem; background: #0f172a; }
 @media (min-width: 769px) { .inline-cam-panel { display: none !important; } }
+
+/* ── Connections tab (marketplace / OMS connectors) ──────────────────────── */
+#tab-connections { padding: 1.2rem; overflow-y: auto; }
+.conn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .8rem; margin-bottom: 1.4rem; }
+.conn-card { position: relative; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 1rem; background: var(--surface, #fff); }
+.conn-card-name { font-weight: 800; font-size: 1.05rem; margin-bottom: .25rem; }
+.conn-card-desc { font-size: .78rem; color: #64748b; line-height: 1.35; }
+.conn-badge { position: absolute; top: .7rem; right: .7rem; font-size: .6rem; font-weight: 800; letter-spacing: .05em; padding: .2rem .5rem; border-radius: 999px; }
+.conn-badge.live { background: #dcfce7; color: #15803d; }
+.conn-badge.soon { background: #f1f5f9; color: #94a3b8; }
+.conn-card.conn-soon { opacity: .75; }
+.conn-card.conn-live { border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e33; }
+#connZortPanel .admin-section-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: .8rem; }

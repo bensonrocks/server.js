@@ -418,6 +418,7 @@
     // Upload tab button — hidden for warehouse
     document.querySelectorAll('.tab-btn[data-tab="upload"]').forEach(b => b.classList.toggle('hidden', isWarehouse));
     document.querySelectorAll('.tab-btn[data-tab="reports"]').forEach(b => b.classList.toggle('hidden', isWarehouse));
+    document.querySelectorAll('.tab-btn[data-tab="connections"]').forEach(b => b.classList.toggle('hidden', isWarehouse));
 
     // Admin button — hidden for warehouse
     const logBtn = document.getElementById('logAccessBtn');
@@ -588,7 +589,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', transport: 'Transport', labels: 'Labels', reports: 'Reports', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -598,7 +599,7 @@
 
   function switchTab(name) {
     // Warehouse users cannot access the upload tab
-    if ((name === 'upload' || name === 'reports') && (currentUser?.role || 'admin') === 'warehouse') return;
+    if ((name === 'upload' || name === 'reports' || name === 'connections') && (currentUser?.role || 'admin') === 'warehouse') return;
     if (!document.getElementById(`tab-${name}`)) return;
     if (pendingDownload && name === 'orders') {
       const dlWrap = document.getElementById('uploadDownloadWrap');
@@ -625,6 +626,7 @@
       document.getElementById('transportSubMenu').style.display = 'none';
     }
     if (name === 'labels') { renderLabelsTab(); }
+    if (name === 'connections') { loadZortStores(); }
   }
 
   function lockTabsForDownload() {
@@ -7733,7 +7735,6 @@
       if (btn.dataset.adminTab === 'tms') renderTmsTab();
       if (btn.dataset.adminTab === 'drivers') loadDriverList();
       if (btn.dataset.adminTab === 'users') loadUserList();
-      if (btn.dataset.adminTab === 'zort') loadZortStores();
     });
   });
 

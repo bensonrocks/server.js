@@ -264,9 +264,15 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   lastResult}`. SECRETS NEVER GO TO GIT — they live only in db.json;
   the API returns masked keys, and blank key/secret on edit keeps the
   stored value.
-- Admin UI: Administrator → 🔌 ZORT (`data-admin-tab="zort"`), master-key
-  guarded endpoints `/api/master/zort/stores` (GET/POST/DELETE),
-  `/:id/test` (Merchant/ValidateApi), `/:id/pull`.
+- UI: the 🔌 CONNECTIONS sidebar tab (`data-tab="connections"`,
+  admin-role only — hidden for warehouse both in the sidebar and in
+  switchTab). Platform cards (ZORT = ACTIVE; Lazada/Shopee/TikTok/
+  Shopify = COMING SOON placeholders matching the
+  packages/platform-gateway scaffolds) above the ZORT store manager
+  (`#connZortPanel`, moved here from the former Administrator → ZORT
+  admin tab). Endpoints stay master-key guarded:
+  `/api/master/zort/stores` (GET/POST/DELETE), `/:id/test`
+  (Merchant/ValidateApi), `/:id/pull`.
 - PULL (`pullZortStore`): Order/GetOrders paged (limit 100, ≤20 pages),
   `updatedafter` = lastPullAt − 1 day (first run: 7 days back). Zort
   status 2 = void → skipped; orders whose number already exists anywhere
