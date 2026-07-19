@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Client Access | NimbusTrade Solutions</title>
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ---------- Login screen ---------- -->
+<div class="login-screen" id="login-screen">
+  <form class="login-card" id="login-form">
+    <div class="login-brand">
+      <span class="brand-cn">云腾贸易方案私人有限公司</span>
+      <span class="brand-en">Nimbus<span>Trade</span></span>
+    </div>
+    <p class="login-eyebrow">Client Access</p>
+    <h1>Sign in to your operations portal</h1>
+    <p class="login-sub">Drop orders, track fulfillment status, and monitor inventory across your markets.</p>
+
+    <label class="field">
+      <span>Username</span>
+      <input type="text" id="login-username" autocomplete="username" required />
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" id="login-password" autocomplete="current-password" required />
+    </label>
+
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    <p class="login-error" id="login-error" hidden></p>
+    <p class="login-hint">Demo credentials — username <code>bwlonline</code>, password <code>BWLOnline@2026</code></p>
+  </form>
+</div>
+
+<!-- ---------- Dashboard ---------- -->
+<div class="app" id="app" hidden>
+  <header class="app-header">
+    <div class="app-brand">
+      <span class="brand-cn">云腾贸易方案私人有限公司</span>
+      <span class="brand-en">Nimbus<span>Trade</span> <em>Client Access</em></span>
+    </div>
+    <div class="app-header-right">
+      <span class="client-name" id="client-name">—</span>
+      <button class="btn btn-ghost-sm" id="logout-btn">Log out</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <div class="app-toolbar">
+      <div>
+        <p class="eyebrow">Operations Dashboard</p>
+        <h2>June order flow across your markets</h2>
+      </div>
+      <button class="btn btn-primary" id="open-drop-order">+ Drop New Order</button>
+    </div>
+
+    <!-- Stat tiles -->
+    <section class="stat-grid" id="stat-grid">
+      <div class="stat-tile" data-status="">
+        <span class="stat-label">Total Orders</span>
+        <span class="stat-value" id="stat-total">—</span>
+      </div>
+      <div class="stat-tile stat-dropped" data-status="dropped">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Dropped</span>
+        <span class="stat-value" id="stat-dropped">—</span>
+      </div>
+      <div class="stat-tile stat-processing" data-status="processing">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Processing</span>
+        <span class="stat-value" id="stat-processing">—</span>
+      </div>
+      <div class="stat-tile stat-completed" data-status="completed">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Completed</span>
+        <span class="stat-value" id="stat-completed">—</span>
+      </div>
+      <div class="stat-tile stat-issue" data-status="issue">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Issues</span>
+        <span class="stat-value" id="stat-issue">—</span>
+      </div>
+    </section>
+
+    <!-- World map -->
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Order status by market</h3>
+        <div class="legend">
+          <span><i class="dot dot-green"></i> Healthy</span>
+          <span><i class="dot dot-amber"></i> In motion</span>
+          <span><i class="dot dot-red"></i> Needs attention</span>
+        </div>
+      </div>
+      <div class="map-wrap">
+        <svg id="world-map" viewBox="0 0 1000 460" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="map-tooltip" id="map-tooltip" hidden></div>
+      </div>
+      <p class="map-hint" id="map-filter-hint">Click a market to filter the table below. <button id="clear-map-filter" hidden>Clear filter</button></p>
+    </section>
+
+    <!-- Orders table -->
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Orders — quick reference</h3>
+        <div class="table-controls">
+          <input type="search" id="order-search" placeholder="Search ref, customer, SKU…" />
+          <select id="status-filter">
+            <option value="">All statuses</option>
+            <option value="dropped">Dropped</option>
+            <option value="processing">Processing</option>
+            <option value="completed">Completed</option>
+            <option value="issue">Issue</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>Order Ref</th>
+              <th>Market</th>
+              <th>Customer</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Status</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="orders-tbody">
+            <tr><td colspan="7" class="table-loading">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </section>
+
+    <!-- Inventory -->
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Inventory balance by location</h3>
+        <p class="panel-sub">Set a replenishment threshold — locations below it are flagged automatically.</p>
+      </div>
+      <div class="inventory-grid" id="inventory-grid">
+        <p class="table-loading">Loading…</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ---------- Drop order modal ---------- -->
+<div class="modal-overlay" id="drop-order-overlay" hidden>
+  <form class="modal-card" id="drop-order-form">
+    <h3>Drop a new order</h3>
+    <p class="modal-sub">This creates a live order in your queue — it appears in the dashboard immediately with status <strong>Dropped</strong>.</p>
+
+    <label class="field">
+      <span>Customer name</span>
+      <input type="text" id="order-customer" required />
+    </label>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Destination market</span>
+        <select id="order-country" required>
+          <option value="AE" data-name="United Arab Emirates">United Arab Emirates</option>
+          <option value="GB" data-name="United Kingdom">United Kingdom</option>
+          <option value="MX" data-name="Mexico">Mexico</option>
+          <option value="US" data-name="United States">United States</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Quantity</span>
+        <input type="number" id="order-qty" min="1" value="1" required />
+      </label>
+    </div>
+
+    <label class="field">
+      <span>Product / SKU</span>
+      <select id="order-sku" required></select>
+    </label>
+
+    <label class="field">
+      <span>Order date</span>
+      <input type="date" id="order-date" required />
+    </label>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" id="cancel-drop-order">Cancel</button>
+      <button type="submit" class="btn btn-primary">Drop order</button>
+    </div>
+    <p class="modal-error" id="drop-order-error" hidden></p>
+  </form>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

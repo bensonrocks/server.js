@@ -31,6 +31,12 @@ const importer        = require('./lib/file-importer');
 const { createClientAuth } = require('./lib/client-auth');
 const staffAuth = require('./lib/staff-auth');
 
+// NimbusTrade Client Access portal — fully isolated from the OMS product above:
+// its own SQLite file (lib/nimbustrade-portal/db.js), its own auth, own routes.
+const ntAuth  = require('./lib/nimbustrade-portal/auth');
+const ntStore = require('./lib/nimbustrade-portal/store');
+const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
+
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
 (function migrateLegacy() {
@@ -69,6 +75,7 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/nimbustrade', nimbustradeStatic);
+app.use('/client-access', express.static(path.join(__dirname, 'nimbustrade-client-portal')));
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
 
@@ -1088,6 +1095,99 @@ function errPage(platform, msg) {
 </head><body><div class="box"><div class="ico">&#10007;</div><div class="ttl">Connection Failed</div><p class="sub">${platform}</p><div class="err">${msg}</div><a href="/" class="btn">Back to IdealOMS</a></div></body></html>`;
 }
 
+// ── NimbusTrade Client Access portal ──────────────────────────────────────────
+// Fully isolated feature: own DB (lib/nimbustrade-portal/db.js), own auth, own
+// routes. Nothing here reads or writes the OMS tables above.
+
+function withNTAuth(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = ntAuth.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+  req.ntClientId = session.clientId;
+  next();
+}
+
+app.post('/client-access/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const user = ntAuth.checkPassword(username, password);
+  if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+  res.json({ token: ntAuth.generateToken(user), name: user.name, clientId: user.client_id });
+});
+
+app.post('/client-access/api/logout', withNTAuth, (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  ntAuth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+app.get('/client-access/api/dashboard', withNTAuth, (req, res) => {
+  res.json({
+    counts: ntStore.getDashboardCounts(req.ntClientId),
+    countries: ntStore.getCountryBreakdown(req.ntClientId),
+  });
+});
+
+app.get('/client-access/api/orders', withNTAuth, (req, res) => {
+  const { country, status, search, page, pageSize } = req.query;
+  res.json(ntStore.listOrders(req.ntClientId, {
+    country: country || undefined,
+    status: status || undefined,
+    search: search || undefined,
+    page: parseInt(page) || 1,
+    pageSize: Math.min(parseInt(pageSize) || 25, 100),
+  }));
+});
+
+app.post('/client-access/api/orders', withNTAuth, (req, res) => {
+  const { customerName, country, countryName, sku, productName, qty, orderDate } = req.body || {};
+  if (!customerName || !country || !sku) {
+    return res.status(400).json({ error: 'customerName, country, and sku are required' });
+  }
+  const order = ntStore.createOrder(req.ntClientId, {
+    customerName, country, countryName: countryName || country, sku,
+    productName: productName || sku, qty, orderDate,
+  });
+  res.status(201).json(order);
+});
+
+app.patch('/client-access/api/orders/:id/status', withNTAuth, (req, res) => {
+  const { status, issueNote } = req.body || {};
+  try {
+    res.json(ntStore.updateOrderStatus(req.ntClientId, req.params.id, status, issueNote));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/client-access/api/inventory', withNTAuth, (req, res) => {
+  res.json(ntStore.listLocationsWithInventory(req.ntClientId));
+});
+
+app.patch('/client-access/api/inventory/:id/threshold', withNTAuth, (req, res) => {
+  const { threshold } = req.body || {};
+  if (typeof threshold !== 'number' || threshold < 0) {
+    return res.status(400).json({ error: 'threshold must be a non-negative number' });
+  }
+  try {
+    res.json(ntStore.updateReplenishThreshold(req.ntClientId, req.params.id, threshold));
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
+app.patch('/client-access/api/inventory/:id/qty', withNTAuth, (req, res) => {
+  const { qty } = req.body || {};
+  if (typeof qty !== 'number' || qty < 0) {
+    return res.status(400).json({ error: 'qty must be a non-negative number' });
+  }
+  try {
+    res.json(ntStore.updateInventoryQty(req.ntClientId, req.params.id, qty));
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
 // ── Auto-sync ─────────────────────────────────────────────────────────────────
 
 const SYNC_INTERVAL_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES) || 15) * 60 * 1000;
@@ -1111,6 +1211,17 @@ async function autoSyncAll() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+(function seedNimbusTradeDemo() {
+  try {
+    const result = seedBWLDemo();
+    if (!result.alreadySeeded) {
+      console.log(`  NimbusTrade Client Access: seeded BWL Online demo (${result.ordersSeeded} orders)`);
+    }
+  } catch (e) {
+    console.warn('  NimbusTrade Client Access seed skipped:', e.message);
+  }
+})();
 
 app.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
