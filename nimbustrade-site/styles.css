@@ -459,8 +459,6 @@ a:focus-visible, button:focus-visible {
   stroke-linejoin: round;
 }
 
-.seal-mark circle { fill: currentColor; stroke: none; }
-
 @keyframes sealSpin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
