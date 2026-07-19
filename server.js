@@ -5691,6 +5691,9 @@ app.post('/api/scan/complete', (req, res) => {
     updateTransportOnOrderCompletion(db, ord, state);
     writeDb(db);
     logAudit('order_completed', completionAuditData(batch, ord, state));
+    // Zort-sourced order? Push the completion back to the client's store
+    // (async, never blocks completion; failures are audit-logged).
+    pushZortCompletion(db, ord, state);
     sendCompletionAlert(orderNumber, ord, operator).then(result => {
       const db2    = readDb();
       const batch2 = findBatchForOrder(db2, orderNumber);
@@ -7217,6 +7220,215 @@ app.delete('/api/master/users/:id', (req, res) => {
 // Per-user FEATURE TOGGLES — which main functions this user sees.
 // Absent/never-set = everything visible (role rules still apply on top).
 const USER_FEATURE_KEYS = ['upload', 'orders', 'inbound', 'transport', 'labels', 'reports'];
+// ── ZORT integration — per-client merchant store connections ────────────────
+// Each fulfillment CLIENT connects their own Zort store (storename/apikey/
+// apisecret). Their paid sales orders pull into IDEALONE as normal batches
+// (tagged with the client's name), get picked/scanned like any upload, and on
+// completion the status can be pushed back to THAT client's store. Secrets
+// live only in db.json (never in git); API responses mask them.
+const zortApi = require('./lib/zort.js');
+
+function zortStores(db) { return db.zortStores || (db.zortStores = []); }
+function zortMask(s) { s = String(s || ''); return s.length <= 6 ? '••••' : s.slice(0, 3) + '••••' + s.slice(-3); }
+function zortStorePublic(s) {
+  return {
+    id: s.id, clientName: s.clientName, storename: s.storename,
+    apikeyMasked: zortMask(s.apikey), apisecretMasked: zortMask(s.apisecret),
+    endpoint: s.endpoint || '', enabled: !!s.enabled,
+    autoPullMinutes: s.autoPullMinutes || 0,
+    completeAction: s.completeAction || 'none',
+    completeStatusCode: s.completeStatusCode ?? 1,
+    lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
+  };
+}
+
+// Pull new/updated orders from one store into a fresh batch.
+async function pullZortStore(db, store) {
+  const existing = new Set();
+  for (const b of db.batches || []) for (const o of b.orders || []) existing.add(o.order_number);
+
+  // Look back 1 day past the last pull (or 7 days on first pull) — date
+  // params are day-granular, overlap is deduped by order number anyway.
+  const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
+  const query = { limit: 100, page: 1, updatedafter: new Date(sinceMs).toISOString().slice(0, 10) };
+
+  const rows = [];
+  const zortMeta = {}; // order_number → {zort_id, zort_status}
+  let fetched = 0, skippedExisting = 0, skippedVoid = 0;
+  for (let page = 1; page <= 20; page++) {
+    const resp = await zortApi.getOrders(store, { ...query, page });
+    const list = resp.list || resp.orders || resp.data || [];
+    fetched += list.length;
+    for (const o of list) {
+      const number = String(o.number || '').trim();
+      if (!number) continue;
+      // Zort status 2 = voided/cancelled in their scheme — never import
+      if (Number(o.status) === 2) { skippedVoid++; continue; }
+      if (existing.has(number)) { skippedExisting++; continue; }
+      const lines = o.list || o.orderlist || [];
+      if (!lines.length) continue;
+      zortMeta[number] = { zort_id: o.id, zort_status: o.status };
+      for (const l of lines) {
+        rows.push({
+          order_number:     number,
+          customer_name:    String(o.customername || o.customer_name || o.shippingname || '').trim(),
+          client_name:      store.clientName || 'ZORT',
+          sku:              String(l.sku || '').trim(),
+          qty:              Math.max(0, Math.round(Number(l.number) || 0)),
+          description:      String(l.name || '').slice(0, 200),
+          delivery_address: String(o.shippingaddress || o.customeraddress || '').trim(),
+          tel:              String(o.shippingphone || o.customerphone || '').trim(),
+          carrier:          String(o.shippingchannel || '').trim(),
+          platform:         String(o.saleschannel || o.channel || '').trim(),
+          waybill_number:   String(o.trackingno || '').trim(),
+          date:             String(o.orderdate || '').slice(0, 10),
+        });
+      }
+    }
+    if (list.length < query.limit) break;
+  }
+
+  const orders = summarizeOrders(rows.filter(r => r.sku && r.qty > 0));
+  // summarizeOrders keeps only known fields — re-attach the Zort linkage the
+  // completion push needs
+  for (const o of orders) {
+    const m = zortMeta[o.order_number] || {};
+    o.zort_id = m.zort_id;
+    o.zort_store_id = store.id;
+  }
+
+  if (orders.length) {
+    const batch = {
+      id: uuidv4(),
+      filename:    `zort-${(store.clientName || 'store').replace(/[^A-Za-z0-9_-]+/g, '_')}-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '')}`,
+      idealscan_code: nextIdealscanCode(db),
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: 'zort-sync',
+      client_name: store.clientName || 'ZORT',
+      order_count: orders.length,
+      row_count:   rows.length,
+      orderStates: {},
+      orders,
+    };
+    db.batches.unshift(batch);
+  }
+  store.lastPullAt = new Date().toISOString();
+  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid };
+  writeDb(db);
+  logAudit('zort_pull', { client: store.clientName || '', storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid });
+  return store.lastResult;
+}
+
+// Fire-and-forget push of a completed order back to its client's Zort store.
+function pushZortCompletion(db, ord, state) {
+  try {
+    if (!ord?.zort_id || !ord?.zort_store_id) return;
+    const store = zortStores(db).find(s => s.id === ord.zort_store_id);
+    if (!store || !store.enabled) return;
+    const action = store.completeAction || 'none';
+    if (action === 'none') return;
+    const tracking = String(ord.waybill_number || '').trim();
+    const p =
+      action === 'pack'        ? zortApi.packOrder(store, { id: ord.zort_id, trackingno: tracking || undefined }) :
+      action === 'readytoship' ? zortApi.readyToShip(store, { id: ord.zort_id, trackingno: tracking || undefined }) :
+      zortApi.updateOrderStatus(store, { id: ord.zort_id, status: store.completeStatusCode ?? 1, actionDate: new Date().toISOString().slice(0, 10) });
+    p.then(() => {
+      logAudit('zort_completion_pushed', { order: ord.order_number, client: store.clientName || '', action });
+    }).catch(err => {
+      console.error(`[zort] completion push failed for ${ord.order_number}:`, err.message);
+      logAudit('zort_completion_push_failed', { order: ord.order_number, client: store.clientName || '', action, error: String(err.message).slice(0, 200) });
+    });
+  } catch (e) { console.error('[zort] push error:', e.message); }
+}
+
+app.get('/api/master/zort/stores', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(zortStores(readDb()).map(zortStorePublic));
+});
+
+app.post('/api/master/zort/stores', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const b = req.body || {};
+  const db = readDb();
+  const stores = zortStores(db);
+  let store = b.id ? stores.find(s => s.id === b.id) : null;
+  if (!store) {
+    if (!b.clientName || !b.storename || !b.apikey || !b.apisecret) {
+      return res.status(400).json({ error: 'clientName, storename, apikey and apisecret are required' });
+    }
+    store = { id: uuidv4(), createdAt: new Date().toISOString() };
+    stores.push(store);
+  }
+  store.clientName = String(b.clientName ?? store.clientName ?? '').slice(0, 80);
+  store.storename  = String(b.storename  ?? store.storename  ?? '').trim();
+  // Blank key/secret on edit = keep the stored one (the UI shows masks)
+  if (b.apikey)    store.apikey    = String(b.apikey).trim();
+  if (b.apisecret) store.apisecret = String(b.apisecret).trim();
+  if (b.endpoint !== undefined) store.endpoint = String(b.endpoint || '').trim();
+  store.enabled = b.enabled !== undefined ? !!b.enabled : (store.enabled ?? true);
+  store.autoPullMinutes = Math.max(0, Math.min(1440, parseInt(b.autoPullMinutes, 10) || 0));
+  if (['none', 'status', 'pack', 'readytoship'].includes(b.completeAction)) store.completeAction = b.completeAction;
+  if (b.completeStatusCode !== undefined) store.completeStatusCode = parseInt(b.completeStatusCode, 10) || 1;
+  writeDb(db);
+  logAudit('zort_store_saved', { client: store.clientName, storeId: store.id, by: req.userId || '' });
+  res.json(zortStorePublic(store));
+});
+
+app.delete('/api/master/zort/stores/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const stores = zortStores(db);
+  const idx = stores.findIndex(s => s.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: 'Store not found' });
+  const [gone] = stores.splice(idx, 1);
+  writeDb(db);
+  logAudit('zort_store_deleted', { client: gone.clientName || '', storeId: gone.id, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
+app.post('/api/master/zort/stores/:id/test', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const store = zortStores(readDb()).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  try {
+    const info = await zortApi.validateApi(store);
+    res.json({ ok: true, info });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/master/zort/stores/:id/pull', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  try {
+    res.json({ ok: true, result: await pullZortStore(db, store) });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+// Auto-pull scheduler: each enabled store with autoPullMinutes > 0 is pulled
+// on its own cadence. Errors are logged, never fatal.
+let _zortPulling = false;
+setInterval(async () => {
+  if (_zortPulling) return;
+  _zortPulling = true;
+  try {
+    const db = readDb();
+    for (const store of zortStores(db)) {
+      if (!store.enabled || !(store.autoPullMinutes > 0)) continue;
+      const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
+      if (Date.now() - last < store.autoPullMinutes * 60000) continue;
+      try { await pullZortStore(db, store); }
+      catch (e) { console.error(`[zort] auto-pull failed (${store.clientName}):`, e.message); }
+    }
+  } catch (e) { console.error('[zort] scheduler error:', e.message); }
+  finally { _zortPulling = false; }
+}, 60000);
+
 app.put('/api/master/users/:id/features', (req, res) => {
   if (!checkMaster(req, res)) return;
   const users = readUsers();

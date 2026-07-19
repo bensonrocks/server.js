@@ -492,6 +492,7 @@
         <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
         <button class="admin-nav-btn" data-admin-tab="reports">&#128202; Reports</button>
         <button class="admin-nav-btn" data-admin-tab="tms">🚚 TMS Management</button>
+        <button class="admin-nav-btn" data-admin-tab="zort">🔌 ZORT</button>
         <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
 
@@ -808,6 +809,45 @@
       </div>
 
       <!-- Tab: Email -->
+      <div class="admin-tab hidden" id="adminTab-zort">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">ZORT Merchant Connections</div>
+            <div class="admin-section-sub">Each fulfillment client connects their own ZORT store. Their paid orders pull in as normal batches under the client's name; completing the scan can push the status back to their store.</div>
+          </div>
+          <button class="btn-primary btn-sm" id="zortAddStoreBtn">+ Connect Store</button>
+        </div>
+        <div id="zortStoreStatus" class="status-bar hidden"></div>
+        <div class="dcs-wrap">
+          <table class="dcs-table" id="zortStoresTable">
+            <thead><tr><th>Client</th><th>Store</th><th>API Key</th><th>Auto-pull</th><th>On complete</th><th>Last pull</th><th>Actions</th></tr></thead>
+            <tbody id="zortStoresTbody"></tbody>
+          </table>
+        </div>
+        <div id="zortStoreForm" class="hidden" style="margin-top:1rem;max-width:520px">
+          <div class="admin-section-title" id="zortFormTitle" style="font-size:.95rem">Connect a ZORT store</div>
+          <input type="hidden" id="zfId" />
+          <div class="form-group"><label>Client name (shown on orders/batches)</label><input type="text" id="zfClient" placeholder="e.g. Glowverse" autocomplete="off" /></div>
+          <div class="form-group"><label>ZORT storename</label><input type="text" id="zfStorename" placeholder="store email / name from ZORT API settings" autocomplete="off" /></div>
+          <div class="form-group"><label>API key</label><input type="text" id="zfApikey" placeholder="leave blank to keep current" autocomplete="off" /></div>
+          <div class="form-group"><label>API secret</label><input type="text" id="zfApisecret" placeholder="leave blank to keep current" autocomplete="off" /></div>
+          <div class="form-group"><label>Auto-pull every (minutes, 0 = manual only)</label><input type="number" id="zfAutoPull" min="0" max="1440" value="0" /></div>
+          <div class="form-group"><label>When scan completes</label>
+            <select id="zfCompleteAction">
+              <option value="none">Do nothing (pull only)</option>
+              <option value="pack">Mark PACKED in ZORT (PackOrder)</option>
+              <option value="readytoship">Mark READY TO SHIP in ZORT</option>
+              <option value="status">Set order status code&hellip;</option>
+            </select>
+          </div>
+          <div class="form-group hidden" id="zfStatusCodeWrap"><label>Status code to set</label><input type="number" id="zfStatusCode" value="1" /></div>
+          <div style="display:flex;gap:.6rem">
+            <button class="btn-primary btn-sm" id="zortSaveStoreBtn">Save</button>
+            <button class="btn-secondary btn-sm" id="zortCancelStoreBtn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <div class="admin-tab hidden" id="adminTab-email">
         <div class="admin-section-header">
           <div>

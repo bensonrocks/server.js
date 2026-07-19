@@ -250,6 +250,50 @@ duplicate rule has three tiers:
   (findBatchForOrder, scanning) resolve to the new pending order, not the
   completed old one.
 
+## ZORT integration — per-client merchant store connections (lib/zort.js + server.js)
+
+ZORT (zortout.com) is the e-commerce OMS the user's merchant CLIENTS use;
+this integration is the window through which those clients' orders reach
+IDEALONE for fulfillment. Spec source: the ZORT_Api_v4.0 Postman collection
+(auth = three plain headers storename/apikey/apisecret on every request,
+base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
+
+- MULTI-STORE BY DESIGN: `db.zortStores[]` — one entry per client
+  `{id, clientName, storename, apikey, apisecret, endpoint?, enabled,
+  autoPullMinutes, completeAction, completeStatusCode, lastPullAt,
+  lastResult}`. SECRETS NEVER GO TO GIT — they live only in db.json;
+  the API returns masked keys, and blank key/secret on edit keeps the
+  stored value.
+- Admin UI: Administrator → 🔌 ZORT (`data-admin-tab="zort"`), master-key
+  guarded endpoints `/api/master/zort/stores` (GET/POST/DELETE),
+  `/:id/test` (Merchant/ValidateApi), `/:id/pull`.
+- PULL (`pullZortStore`): Order/GetOrders paged (limit 100, ≤20 pages),
+  `updatedafter` = lastPullAt − 1 day (first run: 7 days back). Zort
+  status 2 = void → skipped; orders whose number already exists anywhere
+  → skipped (idempotent re-pulls). Lines map list[].sku/name/number →
+  sku/description/qty; customer/shipping fields are mapped defensively
+  (multiple fallback key names — REAL response field names should be
+  verified on the first production pull). Each pull creates ONE batch
+  (client_name = store.clientName, uploaded_by 'zort-sync', normal
+  idealscan_code) so Zort orders scan/report exactly like uploads.
+  Orders carry `zort_id` + `zort_store_id` (re-attached after
+  summarizeOrders, which strips unknown fields).
+- AUTO-PULL: one 60s scheduler; each enabled store with autoPullMinutes>0
+  pulls on its own cadence; `_zortPulling` guards reentry.
+- PUSH-BACK (`pushZortCompletion`, called in /api/scan/complete after
+  logAudit): per-store `completeAction` = none (default — pull-only) |
+  pack (Order/PackOrder + trackingno) | readytoship | status
+  (Order/UpdateOrderStatus with configurable completeStatusCode).
+  Fire-and-forget: NEVER blocks completion; success/failure audit-logged
+  (`zort_completion_pushed` / `zort_completion_push_failed`).
+- TESTED against a local mock of the Zort API (scratchpad zort-mock.js
+  pattern — endpoint override makes the client point anywhere): pull
+  imported 2/3 orders (void skipped), completion pushed PackOrder with
+  correct id+trackingno, re-pull created 0. The sandbox proxy blocks
+  open-api.zortout.com, so live verification must happen from production.
+- Webhook/UpdateWebhook exists in the API — a future push-based
+  alternative to polling, not yet used.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the

@@ -7733,7 +7733,121 @@
       if (btn.dataset.adminTab === 'tms') renderTmsTab();
       if (btn.dataset.adminTab === 'drivers') loadDriverList();
       if (btn.dataset.adminTab === 'users') loadUserList();
+      if (btn.dataset.adminTab === 'zort') loadZortStores();
     });
+  });
+
+  // ── ZORT merchant connections (Administrator → ZORT) ───────────────────────
+  const zortHdrs = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
+  function zortStatus(kind, msg) {
+    const el = document.getElementById('zortStoreStatus');
+    el.className = `status-bar ${kind}`;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.add('hidden'), 6000);
+  }
+  async function loadZortStores() {
+    const tbody = document.getElementById('zortStoresTbody');
+    try {
+      const r = await fetch('/api/master/zort/stores', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const stores = await r.json();
+      if (!stores.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:1rem;color:#64748b">No ZORT stores connected yet. Click “+ Connect Store” and paste the client\'s API credentials from their ZORT settings page.</td></tr>';
+        return;
+      }
+      const actLbl = { none: 'nothing', pack: 'Pack', readytoship: 'Ready to ship', status: 'status code' };
+      tbody.innerHTML = stores.map(s => `
+        <tr data-zid="${esc(s.id)}">
+          <td><b>${esc(s.clientName)}</b>${s.enabled ? '' : ' <span style="color:#ef4444">(disabled)</span>'}</td>
+          <td>${esc(s.storename)}</td>
+          <td><code>${esc(s.apikeyMasked)}</code></td>
+          <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
+          <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
+          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>` : 'never'}</td>
+          <td style="white-space:nowrap">
+            <button class="btn-secondary btn-sm z-test">Test</button>
+            <button class="btn-primary btn-sm z-pull">Pull now</button>
+            <button class="btn-secondary btn-sm z-edit">&#9998;</button>
+            <button class="btn-danger btn-sm z-del">&#128465;</button>
+          </td>
+        </tr>`).join('');
+      tbody.querySelectorAll('tr').forEach(tr => {
+        const id = tr.dataset.zid;
+        const store = stores.find(s => s.id === id);
+        tr.querySelector('.z-test').addEventListener('click', async e => {
+          e.target.disabled = true;
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/test`, { method: 'POST', headers: zortHdrs() });
+            const d = await r2.json();
+            zortStatus(d.ok ? 'success' : 'error', d.ok ? `✓ ${store.clientName}: connection OK` : `✗ ${store.clientName}: ${d.error}`);
+          } catch (err) { zortStatus('error', 'Test failed: ' + err.message); }
+          e.target.disabled = false;
+        });
+        tr.querySelector('.z-pull').addEventListener('click', async e => {
+          e.target.disabled = true;
+          zortStatus('progress', `Pulling orders from ${store.clientName}…`);
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/pull`, { method: 'POST', headers: zortHdrs() });
+            const d = await r2.json();
+            if (d.ok) {
+              zortStatus('success', `✓ ${store.clientName}: ${d.result.created} new order(s) imported (${d.result.fetched} fetched, ${d.result.skippedExisting} already known, ${d.result.skippedVoid} voided)`);
+              loadZortStores();
+            } else zortStatus('error', `✗ ${d.error}`);
+          } catch (err) { zortStatus('error', 'Pull failed: ' + err.message); }
+          e.target.disabled = false;
+        });
+        tr.querySelector('.z-edit').addEventListener('click', () => openZortForm(store));
+        tr.querySelector('.z-del').addEventListener('click', async () => {
+          if (!confirm(`Disconnect ZORT store for "${store.clientName}"?\n\nAlready-imported orders stay; new orders will no longer pull and completions will no longer push back.`)) return;
+          await fetch(`/api/master/zort/stores/${id}`, { method: 'DELETE', headers: zortHdrs() });
+          loadZortStores();
+        });
+      });
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:#ef4444;padding:1rem">Failed to load: ${esc(err.message)}</td></tr>`;
+    }
+  }
+  function openZortForm(store) {
+    document.getElementById('zortStoreForm').classList.remove('hidden');
+    document.getElementById('zortFormTitle').textContent = store ? `Edit — ${store.clientName}` : 'Connect a ZORT store';
+    document.getElementById('zfId').value = store?.id || '';
+    document.getElementById('zfClient').value = store?.clientName || '';
+    document.getElementById('zfStorename').value = store?.storename || '';
+    document.getElementById('zfApikey').value = '';
+    document.getElementById('zfApisecret').value = '';
+    document.getElementById('zfApikey').placeholder = store ? `current: ${store.apikeyMasked} — leave blank to keep` : 'API key from ZORT settings';
+    document.getElementById('zfApisecret').placeholder = store ? `current: ${store.apisecretMasked} — leave blank to keep` : 'API secret from ZORT settings';
+    document.getElementById('zfAutoPull').value = store?.autoPullMinutes || 0;
+    document.getElementById('zfCompleteAction').value = store?.completeAction || 'none';
+    document.getElementById('zfStatusCode').value = store?.completeStatusCode ?? 1;
+    document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', (store?.completeAction || 'none') !== 'status');
+  }
+  document.getElementById('zortAddStoreBtn')?.addEventListener('click', () => openZortForm(null));
+  document.getElementById('zortCancelStoreBtn')?.addEventListener('click', () => document.getElementById('zortStoreForm').classList.add('hidden'));
+  document.getElementById('zfCompleteAction')?.addEventListener('change', e => {
+    document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', e.target.value !== 'status');
+  });
+  document.getElementById('zortSaveStoreBtn')?.addEventListener('click', async () => {
+    const body = {
+      id: document.getElementById('zfId').value || undefined,
+      clientName: document.getElementById('zfClient').value.trim(),
+      storename: document.getElementById('zfStorename').value.trim(),
+      apikey: document.getElementById('zfApikey').value.trim(),
+      apisecret: document.getElementById('zfApisecret').value.trim(),
+      autoPullMinutes: parseInt(document.getElementById('zfAutoPull').value, 10) || 0,
+      completeAction: document.getElementById('zfCompleteAction').value,
+      completeStatusCode: parseInt(document.getElementById('zfStatusCode').value, 10) || 1,
+      enabled: true,
+    };
+    try {
+      const r = await fetch('/api/master/zort/stores', { method: 'POST', headers: zortHdrs(), body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) return zortStatus('error', d.error || 'Save failed');
+      document.getElementById('zortStoreForm').classList.add('hidden');
+      zortStatus('success', `✓ Saved — ${d.clientName}`);
+      loadZortStores();
+    } catch (err) { zortStatus('error', 'Save failed: ' + err.message); }
   });
 
   // ── Activity Overview (Admin & Master only — server-enforced) ──────────────
