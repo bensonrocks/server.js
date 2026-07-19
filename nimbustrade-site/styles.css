@@ -28,6 +28,13 @@
   --hero-muted: #93a0af;
   --hero-accent: #dd8d6c;
 
+  --plate-bg: #ffffff;
+  --plate-ink: #171a20;
+  --plate-muted: #6b7280;
+  --plate-brass: #9a7326;
+  --plate-brass-strong: #b8862b;
+  --plate-line: rgba(23, 26, 32, 0.14);
+
   --radius: 3px;
   --radius-lg: 7px;
   --max: 1180px;
@@ -521,6 +528,69 @@ h2.section-title {
   font-size: 17px;
   margin: 0 0 44px;
 }
+
+/* ---------- Network plate (always white, regardless of theme) ---------- */
+.section-plate {
+  background: var(--plate-bg);
+  color: var(--plate-ink);
+}
+
+.section-plate .eyebrow { color: var(--plate-brass); }
+.section-plate .section-title { color: var(--plate-ink); }
+.section-plate .section-lede { color: var(--plate-muted); }
+
+.plate-wrap {
+  border: 1px solid var(--plate-line);
+  border-radius: var(--radius-lg);
+  padding: clamp(20px, 4vw, 48px);
+  margin-bottom: 28px;
+}
+
+.plate-map { display: block; width: 100%; height: auto; }
+
+.plate-routes path {
+  fill: none;
+  stroke: var(--plate-brass);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+  opacity: 0.55;
+}
+
+.plate-node {
+  fill: var(--plate-bg);
+  stroke: var(--plate-ink);
+  stroke-width: 1.5;
+}
+
+.plate-origin-dot { fill: var(--plate-brass-strong); }
+
+.plate-origin-ring {
+  fill: none;
+  stroke: var(--plate-brass-strong);
+  stroke-width: 1;
+}
+
+.plate-origin line {
+  stroke: var(--plate-brass-strong);
+  stroke-width: 1;
+}
+
+.plate-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 20px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--plate-line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--plate-muted);
+}
+
+.plate-caption-origin { color: var(--plate-brass-strong); font-weight: 600; }
+.plate-caption-list { letter-spacing: 0.16em; }
 
 /* ---------- Ledger flow (pillars summary) ---------- */
 .ledger-flow {
