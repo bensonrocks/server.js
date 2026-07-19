@@ -283,6 +283,41 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .active-badge.off { background: var(--grey-tint); color: var(--grey); }
 .row-action { border: none; background: none; color: var(--accent); font-weight: 600; font-size: 12px; cursor: pointer; padding: 2px 4px; }
 
+/* ---------- Inventory, grouped per client ---------- */
+.client-inv-panel { margin-bottom: 22px; }
+.client-inv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.client-inv-head h3 { font-size: 19px; font-weight: 700; }
+
+.location-block { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 18px; margin-bottom: 14px; }
+.location-block:last-child { margin-bottom: 0; }
+.location-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.location-head h4 { font-family: var(--font-display); font-size: 16px; font-weight: 700; }
+.location-head span { font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); }
+
+.inv-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.inv-item-row:first-of-type { border-top: none; }
+.inv-item-row .item-name { flex: 1; font-size: 13.5px; }
+.inv-item-row .item-name small { display: block; color: var(--fg-muted); font-family: var(--font-mono); font-size: 10.5px; }
+.inv-item-row input { width: 62px; padding: 5px 7px; border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-mono); font-size: 12.5px; text-align: center; }
+.inv-item-row .item-label { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; }
+.empty-note { color: var(--fg-muted); font-size: 13px; padding: 6px 0; }
+
 .status-update-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .status-update-cell select, .status-update-cell input {
   padding: 5px 7px;

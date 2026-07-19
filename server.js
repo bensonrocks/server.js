@@ -1329,6 +1329,12 @@ app.post('/staff-access/api/clients/:id/locations', withStaffAuth, (req, res) =>
   res.status(201).json(ntStore.createLocation(req.params.id, { country, countryName, city, lat, lng }));
 });
 
+app.post('/staff-access/api/locations/:id/inventory', withStaffAuth, (req, res) => {
+  const { sku, productName, qty, threshold } = req.body || {};
+  if (!sku || !productName) return res.status(400).json({ error: 'sku and productName are required' });
+  res.status(201).json(ntStore.createInventoryItem(req.params.id, { sku, productName, qty, threshold }));
+});
+
 // Vendors
 app.get('/staff-access/api/vendors', withStaffAuth, (req, res) => {
   res.json(ntStore.listAllVendors());

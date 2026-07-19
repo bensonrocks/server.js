@@ -178,18 +178,11 @@
       <div class="app-toolbar">
         <div>
           <p class="eyebrow">Inventory — All Clients</p>
-          <h2>Balance and replenishment across every location</h2>
+          <h2>Balance and replenishment, maintained per client</h2>
         </div>
       </div>
 
-      <section class="panel">
-        <div class="table-wrap">
-          <table class="orders-table">
-            <thead><tr><th>Client</th><th>Market</th><th>Product</th><th>Qty</th><th>Threshold</th><th>Status</th><th></th></tr></thead>
-            <tbody id="inventory-tbody"><tr><td colspan="7" class="table-loading">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </section>
+      <div id="inventory-clients"><p class="table-loading">Loading…</p></div>
     </section>
 
   </main>
@@ -244,6 +237,46 @@
       <button type="submit" class="btn btn-primary">Create vendor</button>
     </div>
     <p class="modal-error" id="add-vendor-error" hidden></p>
+  </form>
+</div>
+
+<div class="modal-overlay" id="add-location-overlay" hidden>
+  <form class="modal-card" id="add-location-form">
+    <h3>Add a fulfillment location for <span id="add-location-client-name"></span></h3>
+    <input type="hidden" id="add-location-client-id" />
+    <p class="modal-sub">Picking a market fills in the country code and coordinates — adjust the city if the actual warehouse is elsewhere.</p>
+    <label class="field">
+      <span>Market</span>
+      <select id="new-location-preset" required></select>
+    </label>
+    <label class="field"><span>City</span><input type="text" id="new-location-city" required /></label>
+    <div class="field-row">
+      <label class="field"><span>Latitude</span><input type="number" step="0.0001" id="new-location-lat" required /></label>
+      <label class="field"><span>Longitude</span><input type="number" step="0.0001" id="new-location-lng" required /></label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" data-close="add-location-overlay">Cancel</button>
+      <button type="submit" class="btn btn-primary">Add location</button>
+    </div>
+    <p class="modal-error" id="add-location-error" hidden></p>
+  </form>
+</div>
+
+<div class="modal-overlay" id="add-item-overlay" hidden>
+  <form class="modal-card" id="add-item-form">
+    <h3>Add an inventory item</h3>
+    <input type="hidden" id="add-item-location-id" />
+    <label class="field"><span>SKU</span><input type="text" id="new-item-sku" required /></label>
+    <label class="field"><span>Product name</span><input type="text" id="new-item-name" required /></label>
+    <div class="field-row">
+      <label class="field"><span>Starting quantity</span><input type="number" min="0" id="new-item-qty" value="0" required /></label>
+      <label class="field"><span>Replenish threshold</span><input type="number" min="0" id="new-item-threshold" value="0" required /></label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" data-close="add-item-overlay">Cancel</button>
+      <button type="submit" class="btn btn-primary">Add item</button>
+    </div>
+    <p class="modal-error" id="add-item-error" hidden></p>
   </form>
 </div>
 

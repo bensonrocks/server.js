@@ -8,6 +8,22 @@
   let allClients = [];
   let allVendors = [];
 
+  const MARKET_PRESETS = [
+    { code: 'SG', name: 'Singapore', city: 'Singapore', lat: 1.3521, lng: 103.8198 },
+    { code: 'MY', name: 'Malaysia', city: 'Kuala Lumpur', lat: 3.1390, lng: 101.6869 },
+    { code: 'TH', name: 'Thailand', city: 'Bangkok', lat: 13.7563, lng: 100.5018 },
+    { code: 'VN', name: 'Vietnam', city: 'Ho Chi Minh City', lat: 10.8231, lng: 106.6297 },
+    { code: 'ID', name: 'Indonesia', city: 'Jakarta', lat: -6.2088, lng: 106.8456 },
+    { code: 'PH', name: 'Philippines', city: 'Manila', lat: 14.5995, lng: 120.9842 },
+    { code: 'CN', name: 'China', city: 'Shanghai', lat: 31.2304, lng: 121.4737 },
+    { code: 'AU', name: 'Australia', city: 'Sydney', lat: -33.8688, lng: 151.2093 },
+    { code: 'US', name: 'United States', city: 'Los Angeles', lat: 34.0522, lng: -118.2437 },
+    { code: 'CA', name: 'Canada', city: 'Toronto', lat: 43.6532, lng: -79.3832 },
+    { code: 'GB', name: 'United Kingdom', city: 'London', lat: 51.5072, lng: -0.1276 },
+    { code: 'AE', name: 'United Arab Emirates', city: 'Dubai', lat: 25.2048, lng: 55.2708 },
+    { code: 'MX', name: 'Mexico', city: 'Mexico City', lat: 19.4326, lng: -99.1332 },
+  ];
+
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
   const loginScreen = $('#login-screen');
@@ -69,13 +85,12 @@
     doLogout();
   });
 
-  function showApp() {
+  async function showApp() {
     loginScreen.hidden = true;
     app.hidden = false;
     $('#staff-name').textContent = staffName;
     loadOverview();
-    loadClients();
-    loadVendors();
+    await Promise.all([loadClients(), loadVendors()]);
     loadOrders();
     loadInventory();
   }
@@ -165,7 +180,8 @@
     try {
       await api('/clients', { method: 'POST', body: JSON.stringify({ name: $('#new-client-name').value.trim() }) });
       $('#add-client-overlay').hidden = true;
-      loadClients();
+      await loadClients();
+      loadInventory();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;
@@ -362,28 +378,91 @@
     });
   }
 
-  // ---------- Inventory ----------
+  // ---------- Inventory — maintained per client ----------
+
+  // Populate the market preset dropdown once.
+  $('#new-location-preset').innerHTML = MARKET_PRESETS.map((m) =>
+    `<option value="${m.code}" data-name="${m.name}" data-city="${m.city}" data-lat="${m.lat}" data-lng="${m.lng}">${m.name}</option>`
+  ).join('');
+
+  function applyLocationPreset() {
+    const opt = $('#new-location-preset').selectedOptions[0];
+    $('#new-location-city').value = opt.dataset.city;
+    $('#new-location-lat').value = opt.dataset.lat;
+    $('#new-location-lng').value = opt.dataset.lng;
+  }
+  $('#new-location-preset').addEventListener('change', applyLocationPreset);
 
   async function loadInventory() {
-    const items = await api('/inventory');
-    const tbody = $('#inventory-tbody');
-    if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="table-loading">No inventory yet.</td></tr>';
+    const container = $('#inventory-clients');
+    const [locations, inventory] = await Promise.all([api('/locations'), api('/inventory')]);
+
+    if (!allClients.length) {
+      container.innerHTML = '<p class="table-loading">Add a client first, from the Clients tab.</p>';
       return;
     }
-    tbody.innerHTML = items.map((i) => `
-      <tr data-id="${i.id}">
-        <td>${escapeHtml(i.client_name)}</td>
-        <td>${i.country_name}</td>
-        <td>${escapeHtml(i.product_name)} <span style="color:var(--fg-muted)">(${i.sku})</span></td>
-        <td><input type="number" class="qty-input" min="0" value="${i.qty_on_hand}" style="width:70px" /></td>
-        <td><input type="number" class="threshold-input" min="0" value="${i.replenish_threshold}" style="width:60px" /></td>
-        <td>${i.lowStock ? '<span class="active-badge off">Low stock</span>' : '<span class="active-badge on">OK</span>'}</td>
-        <td><button class="row-action save-inv-btn">Save</button></td>
-      </tr>
-    `).join('');
 
-    tbody.querySelectorAll('tr[data-id]').forEach((row) => {
+    container.innerHTML = allClients.map((client) => {
+      const clientLocations = locations.filter((l) => l.client_id === client.id);
+      const locationsHtml = clientLocations.length
+        ? clientLocations.map((loc) => {
+            const items = inventory.filter((i) => i.location_id === loc.id);
+            const itemsHtml = items.length
+              ? items.map((i) => `
+                  <div class="inv-item-row" data-id="${i.id}">
+                    <div class="item-name">${escapeHtml(i.product_name)}<small>${i.sku}</small></div>
+                    <span class="item-label">qty</span><input type="number" class="qty-input" min="0" value="${i.qty_on_hand}" />
+                    <span class="item-label">alert at</span><input type="number" class="threshold-input" min="0" value="${i.replenish_threshold}" />
+                    ${i.lowStock ? '<span class="active-badge off">Low stock</span>' : '<span class="active-badge on">OK</span>'}
+                    <button class="row-action save-inv-btn">Save</button>
+                  </div>
+                `).join('')
+              : '<p class="empty-note">No inventory items yet.</p>';
+            return `
+              <div class="location-block" data-location-id="${loc.id}">
+                <div class="location-head">
+                  <h4>${loc.country_name}</h4>
+                  <span>${escapeHtml(loc.city)} &nbsp;·&nbsp; <button class="row-action" data-add-item="${loc.id}">+ Add item</button></span>
+                </div>
+                ${itemsHtml}
+              </div>
+            `;
+          }).join('')
+        : '<p class="empty-note">No fulfillment locations yet — add one to start tracking inventory.</p>';
+
+      return `
+        <div class="panel client-inv-panel">
+          <div class="client-inv-head">
+            <h3>${escapeHtml(client.name)}</h3>
+            <button class="btn btn-ghost-sm" data-add-location="${client.id}" data-name="${escapeHtml(client.name)}">+ Add Location</button>
+          </div>
+          ${locationsHtml}
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('[data-add-location]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        $('#add-location-client-id').value = btn.dataset.addLocation;
+        $('#add-location-client-name').textContent = btn.dataset.name;
+        $('#add-location-error').hidden = true;
+        $('#add-location-form').reset();
+        $('#new-location-preset').selectedIndex = 0;
+        applyLocationPreset();
+        $('#add-location-overlay').hidden = false;
+      });
+    });
+
+    container.querySelectorAll('[data-add-item]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        $('#add-item-location-id').value = btn.dataset.addItem;
+        $('#add-item-error').hidden = true;
+        $('#add-item-form').reset();
+        $('#add-item-overlay').hidden = false;
+      });
+    });
+
+    container.querySelectorAll('.inv-item-row[data-id]').forEach((row) => {
       row.querySelector('.save-inv-btn').addEventListener('click', async () => {
         const qty = parseInt(row.querySelector('.qty-input').value, 10);
         const threshold = parseInt(row.querySelector('.threshold-input').value, 10);
@@ -392,6 +471,54 @@
       });
     });
   }
+
+  $('#add-location-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = $('#add-location-error');
+    errEl.hidden = true;
+    const clientId = $('#add-location-client-id').value;
+    const opt = $('#new-location-preset').selectedOptions[0];
+    try {
+      await api(`/clients/${clientId}/locations`, {
+        method: 'POST',
+        body: JSON.stringify({
+          country: opt.value,
+          countryName: opt.dataset.name,
+          city: $('#new-location-city').value.trim(),
+          lat: parseFloat($('#new-location-lat').value),
+          lng: parseFloat($('#new-location-lng').value),
+        }),
+      });
+      $('#add-location-overlay').hidden = true;
+      loadInventory();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+  });
+
+  $('#add-item-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = $('#add-item-error');
+    errEl.hidden = true;
+    const locationId = $('#add-item-location-id').value;
+    try {
+      await api(`/locations/${locationId}/inventory`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sku: $('#new-item-sku').value.trim(),
+          productName: $('#new-item-name').value.trim(),
+          qty: parseInt($('#new-item-qty').value, 10) || 0,
+          threshold: parseInt($('#new-item-threshold').value, 10) || 0,
+        }),
+      });
+      $('#add-item-overlay').hidden = true;
+      loadInventory();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+  });
 
   // ---------- Boot ----------
 
