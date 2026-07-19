@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -100,10 +101,10 @@
         </div>
       </div>
       <div class="map-wrap">
-        <svg id="world-map" viewBox="0 0 1000 460" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="map-tooltip" id="map-tooltip" hidden></div>
+        <div id="world-map"></div>
       </div>
-      <p class="map-hint" id="map-filter-hint">Click a market to filter the table below. <button id="clear-map-filter" hidden>Clear filter</button></p>
+      <div class="market-chips" id="market-chips"></div>
+      <p class="map-hint" id="map-filter-hint">Click a market on the map, or a chip above, to filter the table below. <button id="clear-map-filter" hidden>Clear filter</button></p>
     </section>
 
     <!-- Orders table -->
@@ -200,6 +201,7 @@
   </form>
 </div>
 
+<script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

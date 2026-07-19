@@ -10,7 +10,6 @@
     { sku: 'VTC-CLN-100', name: 'Vitamin C Cleanser 100ml' },
   ];
   const SG_HUB = { lat: 1.3521, lng: 103.8198 };
-  const MAP_W = 1000, MAP_H = 460;
 
   let token = localStorage.getItem('nt-client-token') || '';
   let clientName = localStorage.getItem('nt-client-name') || '';
@@ -94,12 +93,6 @@
     renderMap(data.countries);
   }
 
-  function project(lat, lng) {
-    const x = (lng + 180) / 360 * MAP_W;
-    const y = (90 - lat) / 180 * MAP_H;
-    return [x, y];
-  }
-
   function statusOf(c) {
     // Rate-based, not raw-count-based: a couple of exceptions in a month of
     // hundreds of orders is normal operations, not a market in trouble.
@@ -109,95 +102,112 @@
     return 'green';
   }
 
+  // Real OpenStreetMap tiles (via CARTO's free dark basemap — same OSM data,
+  // dark style to match the rest of the site) instead of a hand-drawn map.
+  // Pan/zoom/scroll are disabled so it reads as a static reference map;
+  // markers stay fully interactive.
+  let leafletMap = null;
+  let markerLayer = null;
+  let lastCountries = [];
+  let boundsSet = false;
+
+  function initMap() {
+    leafletMap = L.map('world-map', {
+      zoomControl: false,
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      touchZoom: false,
+      attributionControl: true,
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 19,
+    }).addTo(leafletMap);
+
+    markerLayer = L.layerGroup().addTo(leafletMap);
+  }
+
+  function markerIcon(status, selected, size) {
+    return L.divIcon({
+      className: '',
+      html: `<div class="nt-marker status-${status}${selected ? ' selected' : ''}" style="width:${size}px;height:${size}px;">
+               <div class="nt-marker-ring"></div><div class="nt-marker-dot"></div>
+             </div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+  }
+
   function renderMap(countries) {
-    const svg = $('#world-map');
-    const parts = [];
+    if (!leafletMap) initMap();
+    lastCountries = countries;
+    markerLayer.clearLayers();
 
-    // Graticule
-    for (let lng = -160; lng <= 160; lng += 40) {
-      const [x1] = project(0, lng);
-      parts.push(`<line class="map-graticule" x1="${x1}" y1="0" x2="${x1}" y2="${MAP_H}" />`);
-    }
-    for (let lat = -60; lat <= 60; lat += 30) {
-      const [, y1] = project(lat, 0);
-      parts.push(`<line class="map-graticule" x1="0" y1="${y1}" x2="${MAP_W}" y2="${y1}" />`);
-    }
+    const hubIcon = L.divIcon({ className: '', html: '<div class="nt-hub-marker"></div>', iconSize: [9, 9], iconAnchor: [4.5, 4.5] });
+    L.marker([SG_HUB.lat, SG_HUB.lng], { icon: hubIcon, interactive: false })
+      .bindTooltip('SG · HUB', { permanent: true, direction: 'right', offset: [8, 0], className: '' })
+      .addTo(markerLayer);
 
-    const [hx, hy] = project(SG_HUB.lat, SG_HUB.lng);
+    const allPoints = [[SG_HUB.lat, SG_HUB.lng]];
 
-    // Trade-route arcs from Singapore hub to each market
     countries.forEach((c) => {
-      const [cx, cy] = project(c.lat, c.lng);
-      const midX = (hx + cx) / 2;
-      const midY = Math.min(hy, cy) - 40;
-      parts.push(`<path class="map-hub-line" d="M ${hx} ${hy} Q ${midX} ${midY} ${cx} ${cy}" />`);
+      allPoints.push([c.lat, c.lng]);
+      L.polyline([[SG_HUB.lat, SG_HUB.lng], [c.lat, c.lng]], {
+        color: '#dd8d6c', weight: 1.2, dashArray: '3 4', opacity: 0.5, interactive: false,
+      }).addTo(markerLayer);
     });
 
-    // Hub marker
-    parts.push(`
-      <g>
-        <circle class="map-hub" cx="${hx}" cy="${hy}" r="4.5" />
-        <text class="map-hub-label" x="${hx + 10}" y="${hy + 4}">SG · HUB</text>
-      </g>
-    `);
+    let selectedMarker = null;
 
-    // Country markers
     countries.forEach((c) => {
-      const [cx, cy] = project(c.lat, c.lng);
       const status = statusOf(c);
-      const r = Math.max(7, Math.min(16, 6 + Math.sqrt(c.total) * 0.9));
+      const size = Math.max(20, Math.min(38, 16 + Math.sqrt(c.total) * 2));
+      const selected = c.country === selectedCountry;
+      const marker = L.marker([c.lat, c.lng], { icon: markerIcon(status, selected, size) });
+      marker.bindPopup(`
+        <span class="nt-popup-title">${c.countryName}</span>
+        <div class="nt-popup-row"><span>Dropped</span><span>${c.dropped}</span></div>
+        <div class="nt-popup-row"><span>Processing</span><span>${c.processing}</span></div>
+        <div class="nt-popup-row"><span>Completed</span><span>${c.completed}</span></div>
+        <div class="nt-popup-row"><span>Issues</span><span>${c.issue}</span></div>
+      `, { className: 'nt-popup' });
+      marker.on('click', () => selectMarket(c.country));
+      if (selected) selectedMarker = marker;
+      marker.addTo(markerLayer);
+    });
+
+    if (!boundsSet) {
+      leafletMap.fitBounds(L.latLngBounds(allPoints), { padding: [30, 30] });
+      boundsSet = true;
+    }
+    if (selectedMarker) selectedMarker.openPopup();
+    renderMarketChips(countries);
+  }
+
+  function selectMarket(country) {
+    selectedCountry = selectedCountry === country ? '' : country;
+    currentPage = 1;
+    renderMap(lastCountries);
+    loadOrders();
+    updateMapFilterHint();
+  }
+
+  function renderMarketChips(countries) {
+    const wrap = $('#market-chips');
+    wrap.innerHTML = countries.map((c) => {
+      const status = statusOf(c);
       const selected = c.country === selectedCountry ? 'selected' : '';
-      parts.push(`
-        <g class="map-marker status-${status} ${selected}" data-country="${c.country}"
-           data-name="${c.countryName}" data-dropped="${c.dropped}" data-processing="${c.processing}"
-           data-completed="${c.completed}" data-issue="${c.issue}" data-total="${c.total}"
-           data-cx="${cx}" data-cy="${cy}">
-          <circle class="marker-ring" cx="${cx}" cy="${cy}" r="${r + 6}" />
-          <circle class="marker-dot" cx="${cx}" cy="${cy}" r="${r}" />
-          <text x="${cx}" y="${cy - r - 10}" text-anchor="middle">${c.country}</text>
-          <text class="marker-count" x="${cx}" y="${cy - r + 2}" text-anchor="middle" dy="0">${c.total}</text>
-        </g>
-      `);
-    });
-
-    svg.innerHTML = parts.join('');
-
-    svg.querySelectorAll('.map-marker').forEach((el) => {
-      el.addEventListener('mouseenter', () => showTooltip(el));
-      el.addEventListener('mouseleave', hideTooltip);
-      el.addEventListener('click', () => {
-        selectedCountry = selectedCountry === el.dataset.country ? '' : el.dataset.country;
-        renderMap(countries);
-        currentPage = 1;
-        loadOrders();
-        updateMapFilterHint();
-      });
+      return `<button type="button" class="market-chip status-${status} ${selected}" data-country="${c.country}"><span class="dot"></span>${c.countryName} · ${c.total}</button>`;
+    }).join('');
+    wrap.querySelectorAll('.market-chip').forEach((chip) => {
+      chip.addEventListener('click', () => selectMarket(chip.dataset.country));
     });
   }
-
-  function showTooltip(el) {
-    const tt = $('#map-tooltip');
-    const wrap = $('.map-wrap');
-    const wrapRect = wrap.getBoundingClientRect();
-    const svgRect = $('#world-map').getBoundingClientRect();
-    const scaleX = svgRect.width / MAP_W;
-    const scaleY = svgRect.height / MAP_H;
-    const cx = parseFloat(el.dataset.cx) * scaleX + (svgRect.left - wrapRect.left);
-    const cy = parseFloat(el.dataset.cy) * scaleY + (svgRect.top - wrapRect.top);
-
-    tt.innerHTML = `
-      <strong>${el.dataset.name}</strong>
-      <div class="tt-row"><span>Dropped</span><span>${el.dataset.dropped}</span></div>
-      <div class="tt-row"><span>Processing</span><span>${el.dataset.processing}</span></div>
-      <div class="tt-row"><span>Completed</span><span>${el.dataset.completed}</span></div>
-      <div class="tt-row"><span>Issues</span><span>${el.dataset.issue}</span></div>
-    `;
-    tt.style.left = `${cx}px`;
-    tt.style.top = `${cy}px`;
-    tt.hidden = false;
-  }
-
-  function hideTooltip() { $('#map-tooltip').hidden = true; }
 
   function updateMapFilterHint() {
     const btn = $('#clear-map-filter');
@@ -207,7 +217,7 @@
   $('#clear-map-filter').addEventListener('click', () => {
     selectedCountry = '';
     currentPage = 1;
-    loadDashboard();
+    renderMap(lastCountries);
     loadOrders();
     updateMapFilterHint();
   });

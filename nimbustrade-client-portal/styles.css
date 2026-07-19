@@ -249,45 +249,67 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .dot-amber { background: var(--amber); }
 .dot-red { background: var(--red); }
 
-/* ---------- Map ---------- */
+/* ---------- Map (Leaflet + OpenStreetMap tiles, no API key) ---------- */
 .map-wrap { position: relative; background: var(--hero-bg); border-radius: var(--radius); overflow: hidden; }
-#world-map { width: 100%; height: auto; display: block; }
+#world-map { width: 100%; height: 420px; background: var(--hero-bg); font-family: var(--font-body); }
 
-.map-graticule { stroke: rgba(238, 240, 234, 0.08); stroke-width: 1; }
-.map-hub-line { stroke: #dd8d6c; stroke-width: 1.2; stroke-dasharray: 3 4; fill: none; opacity: 0.55; }
-.map-hub { fill: #dd8d6c; }
-.map-hub-label { fill: #dd8d6c; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; }
-
-.map-marker { cursor: pointer; }
-.map-marker circle.marker-ring { fill: none; stroke-width: 1.5; opacity: 0.5; }
-.map-marker.status-green circle.marker-dot { fill: var(--green); }
-.map-marker.status-green circle.marker-ring { stroke: var(--green); }
-.map-marker.status-amber circle.marker-dot { fill: var(--amber); }
-.map-marker.status-amber circle.marker-ring { stroke: var(--amber); }
-.map-marker.status-red circle.marker-dot { fill: var(--red); }
-.map-marker.status-red circle.marker-ring { stroke: var(--red); }
-.map-marker.selected circle.marker-ring { stroke-width: 2.5; opacity: 0.9; }
-.map-marker text { fill: #eef0ea; font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
-.map-marker .marker-count { fill: #93a0af; font-size: 10.5px; font-weight: 400; }
-
-.map-tooltip {
+/* Custom divIcon markers */
+.nt-marker { display: flex; align-items: center; justify-content: center; }
+.nt-marker-ring {
   position: absolute;
-  pointer-events: none;
-  background: var(--surface);
-  color: var(--fg);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  font-size: 12.5px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
-  min-width: 190px;
-  z-index: 10;
-  transform: translate(-50%, -110%);
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  opacity: 0.5;
+  inset: 0;
 }
-.map-tooltip strong { display: block; font-family: var(--font-display); font-size: 14.5px; margin-bottom: 6px; }
-.map-tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px; font-family: var(--font-mono); font-size: 11.5px; padding: 1px 0; }
+.nt-marker-dot {
+  position: absolute;
+  border-radius: 50%;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60%; height: 60%;
+}
+.nt-marker.status-green { color: var(--green); }
+.nt-marker.status-green .nt-marker-dot { background: var(--green); }
+.nt-marker.status-amber { color: var(--amber); }
+.nt-marker.status-amber .nt-marker-dot { background: var(--amber); }
+.nt-marker.status-red { color: var(--red); }
+.nt-marker.status-red .nt-marker-dot { background: var(--red); }
+.nt-marker.selected .nt-marker-ring { border-width: 2.5px; opacity: 0.9; }
+.nt-hub-marker { width: 9px; height: 9px; border-radius: 50%; background: #dd8d6c; box-shadow: 0 0 0 4px rgba(221, 141, 108, 0.25); }
+
+/* Popup theming to match the dark map ground */
+.leaflet-popup-content-wrapper.nt-popup { background: var(--surface); color: var(--fg); border-radius: var(--radius); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35); }
+.leaflet-popup-tip.nt-popup-tip { background: var(--surface); }
+.nt-popup .leaflet-popup-content { margin: 10px 14px; font-size: 12.5px; }
+.nt-popup-title { display: block; font-family: var(--font-display); font-size: 14.5px; margin-bottom: 6px; color: var(--fg); }
+.nt-popup-row { display: flex; justify-content: space-between; gap: 12px; font-family: var(--font-mono); font-size: 11.5px; padding: 1px 0; }
+.leaflet-container a.leaflet-popup-close-button { color: var(--fg-muted); }
 
 .map-hint { margin: 12px 0 0; font-size: 12.5px; color: var(--fg-muted); }
 .map-hint button { border: none; background: none; color: var(--accent); font-weight: 600; cursor: pointer; padding: 0; font-size: 12.5px; text-decoration: underline; }
+
+/* Market chips — the "click to filter" affordance since a map tile can't take per-pixel handlers */
+.market-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.market-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.market-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+.market-chip.status-green .dot { background: var(--green); }
+.market-chip.status-amber .dot { background: var(--amber); }
+.market-chip.status-red .dot { background: var(--red); }
+.market-chip.selected { border-color: var(--accent-strong); background: var(--accent-tint); }
+.market-chip:hover { border-color: var(--accent-strong); }
 
 /* ---------- Table ---------- */
 .table-controls { display: flex; gap: 10px; }
