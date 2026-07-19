@@ -29,6 +29,7 @@ const createSyncLog   = require('./lib/sync-log');
 const createOrderSync = require('./lib/order-sync');
 const createOrderApproval = require('./lib/order-approval');
 const createBOMApproval = require('./lib/bom-approval');
+const createClientAnalytics = require('./lib/client-analytics');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -121,17 +122,18 @@ const tenantCtx = new Map();
 
 function getCtx(tenantId) {
   if (!tenantCtx.has(tenantId)) {
-    const db             = getTenantDb(tenantId);
-    const store          = createStore(db);
-    const creds          = createCreds(tenantId);
-    const syncLog        = createSyncLog(db);
-    const inventory      = createInventory(db);
-    const fulfillment    = createFulfillment({ store, creds, inventory, db });
-    const picking        = createPicking({ db, store });
-    const clientConfig   = createClientConfig(db);
-    const orderApproval  = createOrderApproval(db, clientConfig);
-    const bomApproval    = createBOMApproval(db);
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval });
+    const db              = getTenantDb(tenantId);
+    const store           = createStore(db);
+    const creds           = createCreds(tenantId);
+    const syncLog         = createSyncLog(db);
+    const inventory       = createInventory(db);
+    const fulfillment     = createFulfillment({ store, creds, inventory, db });
+    const picking         = createPicking({ db, store });
+    const clientConfig    = createClientConfig(db);
+    const orderApproval   = createOrderApproval(db, clientConfig);
+    const bomApproval     = createBOMApproval(db);
+    const clientAnalytics = createClientAnalytics(db);
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval, clientAnalytics });
   }
   return tenantCtx.get(tenantId);
 }
@@ -2243,6 +2245,77 @@ app.post('/api/staff/pending-virtual-skus/:skuId/reject', withStaffTenant, (req,
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// ── Client Analytics Endpoints ────────────────────────────────────────────────
+
+// Get top sellers
+app.get('/api/client/analytics/top-sellers', withClientAuth, (req, res) => {
+  const { sortBy = 'revenue', limit = 10, days = 30 } = req.query;
+
+  const sellers = req.ctx.clientAnalytics.getTopSellers(req.clientId, {
+    sortBy,
+    limit: parseInt(limit),
+    days: parseInt(days)
+  });
+
+  res.json({
+    topSellers: sellers,
+    period: { days: parseInt(days) },
+    sortedBy: sortBy
+  });
+});
+
+// Get least movement (slow-moving items)
+app.get('/api/client/analytics/least-movement', withClientAuth, (req, res) => {
+  const { minDays = 30, limit = 10 } = req.query;
+
+  const slowMovers = req.ctx.clientAnalytics.getLeastMovement(req.clientId, {
+    minDays: parseInt(minDays),
+    limit: parseInt(limit)
+  });
+
+  res.json({
+    slowMovers,
+    minDays: parseInt(minDays),
+    note: 'SKUs with lowest order count and sales volume'
+  });
+});
+
+// Get inventory health metrics
+app.get('/api/client/analytics/inventory-metrics', withClientAuth, (req, res) => {
+  const { days = 30 } = req.query;
+
+  const metrics = req.ctx.clientAnalytics.getInventoryMetrics(req.clientId, {
+    days: parseInt(days)
+  });
+
+  res.json(metrics);
+});
+
+// Get fulfillment performance metrics
+app.get('/api/client/analytics/fulfillment-metrics', withClientAuth, (req, res) => {
+  const { days = 30 } = req.query;
+
+  const metrics = req.ctx.clientAnalytics.getFulfillmentMetrics(req.clientId, {
+    days: parseInt(days)
+  });
+
+  res.json(metrics);
+});
+
+// Get channel performance comparison
+app.get('/api/client/analytics/channel-performance', withClientAuth, (req, res) => {
+  const { days = 30 } = req.query;
+
+  const channels = req.ctx.clientAnalytics.getChannelPerformance(req.clientId, {
+    days: parseInt(days)
+  });
+
+  res.json({
+    channels,
+    period: { days: parseInt(days) }
+  });
 });
 
 // ── API key ingest endpoint ───────────────────────────────────────────────────
