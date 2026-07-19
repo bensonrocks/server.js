@@ -1,0 +1,48 @@
+{
+  "name": "@idealone/platform-gateway",
+  "version": "1.0.0",
+  "description": "Portable, zero-dependency marketplace integration gateway — one unified API over ZORT and the major selling platforms (Shopee, Lazada, TikTok Shop, Shopify), returning normalised Standard Models.",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "example": "tsx examples/basic-usage.ts"
+  },
+  "keywords": [
+    "zort",
+    "zortout",
+    "marketplace",
+    "gateway",
+    "shopee",
+    "lazada",
+    "tiktok-shop",
+    "shopify",
+    "oms",
+    "order-management",
+    "adapter"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
