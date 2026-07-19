@@ -128,8 +128,8 @@ function getCtx(tenantId) {
     const syncLog         = createSyncLog(db);
     const inventory       = createInventory(db);
     const fulfillment     = createFulfillment({ store, creds, inventory, db });
-    const picking         = createPicking({ db, store });
     const clientConfig    = createClientConfig(db);
+    const picking         = createPicking({ db, store, clientConfig });
     const orderApproval   = createOrderApproval(db, clientConfig);
     const bomApproval     = createBOMApproval(db);
     const clientAnalytics = createClientAnalytics(db);
