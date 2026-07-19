@@ -40,6 +40,7 @@
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
   let uploadDirection     = 'Outbound';
   let logUnlocked         = false;
+  let _pendingUnlockTab   = null;   // tab waiting behind the Administrator password gate
   let pendingDownload     = false;
 
   // ── IdealInbound — receiving (POs/ASNs and returns) ─────────────────────────
@@ -600,6 +601,16 @@
   function switchTab(name) {
     // Warehouse users cannot access the upload tab
     if ((name === 'upload' || name === 'reports' || name === 'connections') && (currentUser?.role || 'admin') === 'warehouse') return;
+    // Connections is ADMINISTRATOR-ONLY: same password gate as the
+    // Administrator panel. Unlock once per session, then it opens freely.
+    if (name === 'connections' && !logUnlocked) {
+      _pendingUnlockTab = 'connections';
+      document.getElementById('logPasswordInput').value = '';
+      document.getElementById('logPasswordError').classList.add('hidden');
+      document.getElementById('logPasswordOverlay').classList.remove('hidden');
+      setTimeout(() => document.getElementById('logPasswordInput').focus(), 100);
+      return;
+    }
     if (!document.getElementById(`tab-${name}`)) return;
     if (pendingDownload && name === 'orders') {
       const dlWrap = document.getElementById('uploadDownloadWrap');
@@ -7454,7 +7465,13 @@
     if (val === LOG_PASSWORD) {
       logUnlocked = true;
       document.getElementById('logPasswordOverlay').classList.add('hidden');
-      openLogOverlay();
+      if (_pendingUnlockTab) {
+        const t = _pendingUnlockTab;
+        _pendingUnlockTab = null;
+        switchTab(t);              // the unlock was for a gated tab, not the panel
+      } else {
+        openLogOverlay();
+      }
       renderOrdersList(); // Orders tab may be rendered underneath — pick up delete buttons now
     } else {
       document.getElementById('logPasswordError').classList.remove('hidden');
@@ -7463,6 +7480,7 @@
   });
 
   document.getElementById('logPasswordCancelBtn').addEventListener('click', () => {
+    _pendingUnlockTab = null;
     document.getElementById('logPasswordOverlay').classList.add('hidden');
   });
 
@@ -7767,6 +7785,7 @@
           <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
           <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>` : 'never'}</td>
           <td style="white-space:nowrap">
+            <button class="btn-secondary btn-sm z-channels" title="Marketplaces this client has linked inside their ZORT account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
             <button class="btn-secondary btn-sm z-edit">&#9998;</button>
@@ -7776,6 +7795,21 @@
       tbody.querySelectorAll('tr').forEach(tr => {
         const id = tr.dataset.zid;
         const store = stores.find(s => s.id === id);
+        tr.querySelector('.z-channels').addEventListener('click', async e => {
+          e.target.disabled = true;
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/channels`, { headers: { 'x-master-key': LOG_PASSWORD } });
+            const d = await r2.json();
+            if (d.ok) {
+              const list = Array.isArray(d.channels) ? d.channels : [];
+              const names = list.map(c => c.name || c.channelname || c.saleschannel || c.type || JSON.stringify(c).slice(0, 30));
+              alert(`${store.clientName} — marketplaces linked in their ZORT account:\n\n` +
+                (names.length ? names.map(n => '• ' + n).join('\n') : '(none yet)') +
+                `\n\nTo add one (Lazada, Shopee, TikTok…): the merchant logs into ZORT → Settings → Sales Channels and authorises it there. Orders then flow to IDEALONE automatically through this connection.`);
+            } else zortStatus('error', d.error || 'Could not load channels');
+          } catch (err) { zortStatus('error', 'Channels failed: ' + err.message); }
+          e.target.disabled = false;
+        });
         tr.querySelector('.z-test').addEventListener('click', async e => {
           e.target.disabled = true;
           try {

@@ -7398,6 +7398,22 @@ app.post('/api/master/zort/stores/:id/test', async (req, res) => {
   }
 });
 
+// Which marketplaces has this client linked INSIDE their Zort account?
+// (Lazada/Shopee/TikTok credentials are keyed into ZORT's own dashboard by
+// the merchant — Settings → Sales Channels — never into IDEALONE. We can
+// only READ the resulting list and show it.)
+app.get('/api/master/zort/stores/:id/channels', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const store = zortStores(readDb()).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  try {
+    const d = await zortApi.getSalesChannels(store);
+    res.json({ ok: true, channels: d.list || d.channels || d.data || d });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/master/zort/stores/:id/pull', async (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();

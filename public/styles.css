@@ -2733,6 +2733,7 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .conn-badge { position: absolute; top: .7rem; right: .7rem; font-size: .6rem; font-weight: 800; letter-spacing: .05em; padding: .2rem .5rem; border-radius: 999px; }
 .conn-badge.live { background: #dcfce7; color: #15803d; }
 .conn-badge.soon { background: #f1f5f9; color: #94a3b8; }
+.conn-badge.via { background: #dbeafe; color: #1d4ed8; }
 .conn-card.conn-soon { opacity: .75; }
 .conn-card.conn-live { border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e33; }
 #connZortPanel .admin-section-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: .8rem; }
