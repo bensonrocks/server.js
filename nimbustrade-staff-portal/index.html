@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Staff Access | NimbusTrade Solutions</title>
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ---------- Login screen ---------- -->
+<div class="login-screen" id="login-screen">
+  <form class="login-card" id="login-form">
+    <div class="login-brand">
+      <span class="brand-cn">云腾贸易方案私人有限公司</span>
+      <span class="brand-en">Nimbus<span>Trade</span></span>
+    </div>
+    <p class="login-eyebrow">Staff Access · Master Panel</p>
+    <h1>Sign in to operations control</h1>
+    <p class="login-sub">Every client, every vendor, every order — one place to manage all of it.</p>
+
+    <label class="field">
+      <span>Username</span>
+      <input type="text" id="login-username" autocomplete="username" required />
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" id="login-password" autocomplete="current-password" required />
+    </label>
+
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    <p class="login-error" id="login-error" hidden></p>
+    <p class="login-hint">Demo staff login — username <code>ntstaff</code>, password <code>NimbusStaff@2026</code></p>
+  </form>
+</div>
+
+<!-- ---------- App ---------- -->
+<div class="app" id="app" hidden>
+  <header class="app-header">
+    <div class="app-brand">
+      <span class="brand-cn">云腾贸易方案私人有限公司</span>
+      <span class="brand-en">Nimbus<span>Trade</span> <em>Staff Access</em></span>
+    </div>
+    <div class="app-header-right">
+      <span class="client-name" id="staff-name">—</span>
+      <button class="btn btn-ghost-sm" id="logout-btn">Log out</button>
+    </div>
+  </header>
+
+  <nav class="tab-nav">
+    <div class="app-main tab-nav-inner">
+      <button class="tab-btn active" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="orders">Orders</button>
+      <button class="tab-btn" data-tab="clients">Clients</button>
+      <button class="tab-btn" data-tab="vendors">Vendors</button>
+      <button class="tab-btn" data-tab="inventory">Inventory</button>
+    </div>
+  </nav>
+
+  <main class="app-main">
+
+    <!-- ---------- Overview ---------- -->
+    <section class="tab-panel active" id="tab-overview">
+      <div class="app-toolbar">
+        <div>
+          <p class="eyebrow">All Clients</p>
+          <h2>Network-wide order flow</h2>
+        </div>
+      </div>
+      <section class="stat-grid stat-grid-4" id="global-stats">
+        <div class="stat-tile stat-dropped"><span class="stat-dot"></span><span class="stat-label">Dropped</span><span class="stat-value" id="ov-dropped">—</span></div>
+        <div class="stat-tile stat-processing"><span class="stat-dot"></span><span class="stat-label">Processing</span><span class="stat-value" id="ov-processing">—</span></div>
+        <div class="stat-tile stat-completed"><span class="stat-dot"></span><span class="stat-label">Completed</span><span class="stat-value" id="ov-completed">—</span></div>
+        <div class="stat-tile stat-issue"><span class="stat-dot"></span><span class="stat-label">Issues</span><span class="stat-value" id="ov-issue">—</span></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h3>By client</h3></div>
+        <div class="table-wrap">
+          <table class="orders-table" id="by-client-table">
+            <thead><tr><th>Client</th><th>Dropped</th><th>Processing</th><th>Completed</th><th>Issues</th><th>Total</th></tr></thead>
+            <tbody><tr><td colspan="6" class="table-loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- ---------- Orders ---------- -->
+    <section class="tab-panel" id="tab-orders">
+      <div class="app-toolbar">
+        <div>
+          <p class="eyebrow">Master Order Log</p>
+          <h2>Every order, every client, every vendor</h2>
+        </div>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="table-controls table-controls-wrap">
+            <input type="search" id="order-search" placeholder="Search ref, customer, SKU…" />
+            <select id="filter-client"><option value="">All clients</option></select>
+            <select id="filter-country">
+              <option value="">All markets</option>
+              <option value="AE">United Arab Emirates</option>
+              <option value="GB">United Kingdom</option>
+              <option value="MX">Mexico</option>
+              <option value="US">United States</option>
+            </select>
+            <select id="filter-status">
+              <option value="">All statuses</option>
+              <option value="dropped">Dropped</option>
+              <option value="processing">Processing</option>
+              <option value="completed">Completed</option>
+              <option value="issue">Issue</option>
+            </select>
+            <select id="filter-vendor"><option value="">All vendors</option></select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead>
+              <tr><th>Order Ref</th><th>Client</th><th>Market</th><th>Product</th><th>Qty</th><th>Date</th><th>Vendor</th><th>Status / Note</th></tr>
+            </thead>
+            <tbody id="orders-tbody"><tr><td colspan="8" class="table-loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="orders-pagination"></div>
+      </section>
+    </section>
+
+    <!-- ---------- Clients ---------- -->
+    <section class="tab-panel" id="tab-clients">
+      <div class="app-toolbar">
+        <div>
+          <p class="eyebrow">Client Roster</p>
+          <h2>Onboard and manage client accounts</h2>
+        </div>
+        <button class="btn btn-primary" id="open-add-client">+ Add Client</button>
+      </div>
+
+      <section class="panel">
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead><tr><th>Client</th><th>Orders</th><th>Active Logins</th><th>Since</th><th></th></tr></thead>
+            <tbody id="clients-tbody"><tr><td colspan="5" class="table-loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- ---------- Vendors ---------- -->
+    <section class="tab-panel" id="tab-vendors">
+      <div class="app-toolbar">
+        <div>
+          <p class="eyebrow">Vendor Roster</p>
+          <h2>Fulfillment partners by market</h2>
+        </div>
+        <button class="btn btn-primary" id="open-add-vendor">+ Add Vendor</button>
+      </div>
+
+      <section class="panel">
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead><tr><th>Market</th><th>Vendor</th><th>Username</th><th>Assigned Orders</th><th>Status</th><th></th></tr></thead>
+            <tbody id="vendors-tbody"><tr><td colspan="6" class="table-loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- ---------- Inventory ---------- -->
+    <section class="tab-panel" id="tab-inventory">
+      <div class="app-toolbar">
+        <div>
+          <p class="eyebrow">Inventory — All Clients</p>
+          <h2>Balance and replenishment across every location</h2>
+        </div>
+      </div>
+
+      <section class="panel">
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead><tr><th>Client</th><th>Market</th><th>Product</th><th>Qty</th><th>Threshold</th><th>Status</th><th></th></tr></thead>
+            <tbody id="inventory-tbody"><tr><td colspan="7" class="table-loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+  </main>
+</div>
+
+<!-- ---------- Modals ---------- -->
+<div class="modal-overlay" id="add-client-overlay" hidden>
+  <form class="modal-card" id="add-client-form">
+    <h3>Add a new client</h3>
+    <p class="modal-sub">Creates the client record. Add a login for them afterward from the Clients tab.</p>
+    <label class="field"><span>Client name</span><input type="text" id="new-client-name" required /></label>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" data-close="add-client-overlay">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create client</button>
+    </div>
+    <p class="modal-error" id="add-client-error" hidden></p>
+  </form>
+</div>
+
+<div class="modal-overlay" id="add-user-overlay" hidden>
+  <form class="modal-card" id="add-user-form">
+    <h3>Add a login for <span id="add-user-client-name"></span></h3>
+    <input type="hidden" id="add-user-client-id" />
+    <label class="field"><span>Contact name</span><input type="text" id="new-user-name" required /></label>
+    <label class="field"><span>Username</span><input type="text" id="new-user-username" required /></label>
+    <label class="field"><span>Password</span><input type="text" id="new-user-password" required /></label>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" data-close="add-user-overlay">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create login</button>
+    </div>
+    <p class="modal-error" id="add-user-error" hidden></p>
+  </form>
+</div>
+
+<div class="modal-overlay" id="add-vendor-overlay" hidden>
+  <form class="modal-card" id="add-vendor-form">
+    <h3>Add a fulfillment vendor</h3>
+    <label class="field">
+      <span>Market</span>
+      <select id="new-vendor-country" required>
+        <option value="AE">United Arab Emirates</option>
+        <option value="GB">United Kingdom</option>
+        <option value="MX">Mexico</option>
+        <option value="US">United States</option>
+      </select>
+    </label>
+    <label class="field"><span>Vendor name</span><input type="text" id="new-vendor-name" required /></label>
+    <label class="field"><span>Username</span><input type="text" id="new-vendor-username" required /></label>
+    <label class="field"><span>Password</span><input type="text" id="new-vendor-password" required /></label>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" data-close="add-vendor-overlay">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create vendor</button>
+    </div>
+    <p class="modal-error" id="add-vendor-error" hidden></p>
+  </form>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

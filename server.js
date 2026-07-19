@@ -35,6 +35,7 @@ const staffAuth = require('./lib/staff-auth');
 // its own SQLite file (lib/nimbustrade-portal/db.js), its own auth, own routes.
 const ntAuth       = require('./lib/nimbustrade-portal/auth');
 const ntVendorAuth = require('./lib/nimbustrade-portal/vendor-auth');
+const ntStaffAuth  = require('./lib/nimbustrade-portal/staff-auth');
 const ntStore      = require('./lib/nimbustrade-portal/store');
 const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
 
@@ -75,14 +76,20 @@ const VENDOR_ACCESS_HOSTS = (process.env.VENDOR_ACCESS_HOSTS || 'nimbustrade-ven
   .split(',')
   .map((h) => h.trim())
   .filter(Boolean);
+const STAFF_ACCESS_HOSTS = (process.env.STAFF_ACCESS_HOSTS || 'nimbustrade-staff.up.railway.app')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
 const nimbustradeStatic  = express.static(path.join(__dirname, 'nimbustrade-site'));
 const clientPortalStatic = express.static(path.join(__dirname, 'nimbustrade-client-portal'));
 const vendorPortalStatic = express.static(path.join(__dirname, 'nimbustrade-vendor-portal'));
+const staffPortalStatic  = express.static(path.join(__dirname, 'nimbustrade-staff-portal'));
 
 app.use((req, res, next) => {
   if (NIMBUSTRADE_HOSTS.includes(req.hostname)) return nimbustradeStatic(req, res, next);
   if (CLIENT_ACCESS_HOSTS.includes(req.hostname)) return clientPortalStatic(req, res, next);
   if (VENDOR_ACCESS_HOSTS.includes(req.hostname)) return vendorPortalStatic(req, res, next);
+  if (STAFF_ACCESS_HOSTS.includes(req.hostname)) return staffPortalStatic(req, res, next);
   next();
 });
 
@@ -90,6 +97,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/nimbustrade', nimbustradeStatic);
 app.use('/client-access', clientPortalStatic);
 app.use('/vendor-access', vendorPortalStatic);
+app.use('/staff-access', staffPortalStatic);
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
 
@@ -1252,6 +1260,140 @@ app.patch('/vendor-access/api/orders/:id/status', withVendorAuth, (req, res) => 
   }
 });
 
+// ── NimbusTrade Staff Access (master panel) ───────────────────────────────────
+// Unrestricted view across every client and vendor — this is what we build
+// out further as client needs reshape what ops actually needs day to day.
+
+function withStaffAuth(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = ntStaffAuth.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+  req.staffId = session.staffId;
+  next();
+}
+
+app.post('/staff-access/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const staff = ntStaffAuth.checkPassword(username, password);
+  if (!staff) return res.status(401).json({ error: 'Invalid username or password' });
+  res.json({ token: ntStaffAuth.generateToken(staff), name: staff.name });
+});
+
+app.post('/staff-access/api/logout', withStaffAuth, (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  ntStaffAuth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+app.get('/staff-access/api/dashboard', withStaffAuth, (req, res) => {
+  res.json(ntStore.getGlobalDashboard());
+});
+
+// Clients
+app.get('/staff-access/api/clients', withStaffAuth, (req, res) => {
+  res.json(ntStore.listAllClients());
+});
+
+app.post('/staff-access/api/clients', withStaffAuth, (req, res) => {
+  const { name } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  res.status(201).json(ntStore.createClient(name));
+});
+
+app.get('/staff-access/api/clients/:id/users', withStaffAuth, (req, res) => {
+  res.json(ntStore.listClientUsers(req.params.id));
+});
+
+app.post('/staff-access/api/clients/:id/users', withStaffAuth, (req, res) => {
+  const { name, username, password } = req.body || {};
+  if (!name || !username || !password) return res.status(400).json({ error: 'name, username, and password are required' });
+  try {
+    res.status(201).json(ntStore.createClientUser(req.params.id, name, username, password));
+  } catch (e) {
+    res.status(400).json({ error: e.message.includes('UNIQUE') ? 'Username already taken' : e.message });
+  }
+});
+
+app.patch('/staff-access/api/users/:id/active', withStaffAuth, (req, res) => {
+  const { active } = req.body || {};
+  ntStore.setClientUserActive(req.params.id, !!active);
+  res.json({ ok: true });
+});
+
+app.post('/staff-access/api/clients/:id/locations', withStaffAuth, (req, res) => {
+  const { country, countryName, city, lat, lng } = req.body || {};
+  if (!country || !countryName || !city || typeof lat !== 'number' || typeof lng !== 'number') {
+    return res.status(400).json({ error: 'country, countryName, city, lat, and lng are required' });
+  }
+  res.status(201).json(ntStore.createLocation(req.params.id, { country, countryName, city, lat, lng }));
+});
+
+// Vendors
+app.get('/staff-access/api/vendors', withStaffAuth, (req, res) => {
+  res.json(ntStore.listAllVendors());
+});
+
+app.post('/staff-access/api/vendors', withStaffAuth, (req, res) => {
+  const { country, name, username, password } = req.body || {};
+  if (!country || !name || !username || !password) {
+    return res.status(400).json({ error: 'country, name, username, and password are required' });
+  }
+  try {
+    res.status(201).json(ntStore.createVendor(country, name, username, password));
+  } catch (e) {
+    res.status(400).json({ error: e.message.includes('UNIQUE') ? 'Username already taken' : e.message });
+  }
+});
+
+app.patch('/staff-access/api/vendors/:id/active', withStaffAuth, (req, res) => {
+  const { active } = req.body || {};
+  ntStore.setVendorActive(req.params.id, !!active);
+  res.json({ ok: true });
+});
+
+// Locations
+app.get('/staff-access/api/locations', withStaffAuth, (req, res) => {
+  res.json(ntStore.listAllLocations());
+});
+
+// Inventory
+app.get('/staff-access/api/inventory', withStaffAuth, (req, res) => {
+  res.json(ntStore.listAllInventory());
+});
+
+app.patch('/staff-access/api/inventory/:id', withStaffAuth, (req, res) => {
+  const { qty, threshold } = req.body || {};
+  try {
+    res.json(ntStore.updateInventoryByStaff(req.params.id, { qty, threshold }));
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
+// Orders — every client, every vendor, full override
+app.get('/staff-access/api/orders', withStaffAuth, (req, res) => {
+  const { clientId, country, status, vendorId, search, page, pageSize } = req.query;
+  res.json(ntStore.listAllOrders({
+    clientId: clientId || undefined,
+    country: country || undefined,
+    status: status || undefined,
+    vendorId: vendorId || undefined,
+    search: search || undefined,
+    page: parseInt(page) || 1,
+    pageSize: Math.min(parseInt(pageSize) || 25, 100),
+  }));
+});
+
+app.patch('/staff-access/api/orders/:id', withStaffAuth, (req, res) => {
+  const { status, issueNote, vendorId } = req.body || {};
+  try {
+    res.json(ntStore.updateOrderByStaff(req.params.id, { status, issueNote, vendorId }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ── Auto-sync ─────────────────────────────────────────────────────────────────
 
 const SYNC_INTERVAL_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES) || 15) * 60 * 1000;
@@ -1285,6 +1427,7 @@ async function autoSyncAll() {
   } catch (e) {
     console.warn('  NimbusTrade Client Access seed skipped:', e.message);
   }
+  ntStaffAuth.seedDefaultStaff();
 })();
 
 app.listen(PORT, () => {
