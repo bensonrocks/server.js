@@ -28,6 +28,7 @@ const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
 const createOrderSync = require('./lib/order-sync');
 const createOrderApproval = require('./lib/order-approval');
+const createBOMApproval = require('./lib/bom-approval');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -129,7 +130,8 @@ function getCtx(tenantId) {
     const picking        = createPicking({ db, store });
     const clientConfig   = createClientConfig(db);
     const orderApproval  = createOrderApproval(db, clientConfig);
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval });
+    const bomApproval    = createBOMApproval(db);
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval });
   }
   return tenantCtx.get(tenantId);
 }
@@ -2091,6 +2093,156 @@ app.post('/api/staff/pending-orders/bulk/approve', withStaffTenant, (req, res) =
 
   const result = req.ctx.orderApproval.bulkApprovePendingOrders(pendingIds, req.user?.username || 'staff');
   res.json({ ok: true, ...result });
+});
+
+// ── BOM (Bundle/Virtual SKU) Approval Workflow ───────────────────────────────
+
+// CLIENT: Submit bundle for approval
+app.post('/api/client/bundles/submit', withClientAuth, (req, res) => {
+  const { bundleSku, bundleName, components, description } = req.body || {};
+  if (!bundleSku || !bundleName || !Array.isArray(components)) {
+    return res.status(400).json({ error: 'bundleSku, bundleName, and components[] are required' });
+  }
+
+  // Validate components
+  const validation = req.ctx.bomApproval.validateBundleComponents(req.clientId, components);
+  if (!validation.valid) {
+    return res.status(400).json({ error: 'Invalid bundle components', errors: validation.errors });
+  }
+
+  try {
+    const result = req.ctx.bomApproval.submitBundleForApproval(
+      req.clientId,
+      bundleSku,
+      bundleName,
+      components,
+      description,
+      req.clientAuth?.username || 'client'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// CLIENT: Get pending bundles
+app.get('/api/client/bundles/pending', withClientAuth, (req, res) => {
+  const bundles = req.ctx.bomApproval.getClientPendingBundles(req.clientId);
+  res.json({ bundles });
+});
+
+// CLIENT: Submit virtual SKU for approval
+app.post('/api/client/virtual-skus/submit', withClientAuth, (req, res) => {
+  const { sku, warehouseName, fulfillmentMethod, supplierInfo } = req.body || {};
+  if (!sku) return res.status(400).json({ error: 'sku is required' });
+
+  try {
+    const result = req.ctx.bomApproval.submitVirtualSKUForApproval(
+      req.clientId,
+      sku,
+      warehouseName || 'Virtual',
+      fulfillmentMethod || 'dropship',
+      supplierInfo || '',
+      req.clientAuth?.username || 'client'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// CLIENT: Get pending virtual SKUs
+app.get('/api/client/virtual-skus/pending', withClientAuth, (req, res) => {
+  const skus = req.ctx.bomApproval.getClientPendingVirtualSkus(req.clientId);
+  res.json({ skus });
+});
+
+// ── STAFF: BOM Approval ───────────────────────────────────────────────────────
+
+// Staff: Get all pending bundles
+app.get('/api/staff/pending-bundles', withStaffTenant, (req, res) => {
+  const { clientId, status = 'pending', limit = 50, offset = 0 } = req.query;
+  const bundles = req.ctx.bomApproval.getAllPendingBundles({
+    clientId,
+    status,
+    limit: parseInt(limit),
+    offset: parseInt(offset)
+  });
+
+  res.json({ bundles, count: bundles.length });
+});
+
+// Staff: Approve bundle
+app.post('/api/staff/pending-bundles/:bundleId/approve', withStaffTenant, (req, res) => {
+  try {
+    const result = req.ctx.bomApproval.approveBundleSubmission(
+      req.params.bundleId,
+      req.user?.username || 'staff'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Staff: Reject bundle
+app.post('/api/staff/pending-bundles/:bundleId/reject', withStaffTenant, (req, res) => {
+  const { reason } = req.body || {};
+  if (!reason) return res.status(400).json({ error: 'Rejection reason is required' });
+
+  try {
+    const result = req.ctx.bomApproval.rejectBundleSubmission(
+      req.params.bundleId,
+      reason,
+      req.user?.username || 'staff'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Staff: Get all pending virtual SKUs
+app.get('/api/staff/pending-virtual-skus', withStaffTenant, (req, res) => {
+  const { clientId, status = 'pending', limit = 50, offset = 0 } = req.query;
+  const skus = req.ctx.bomApproval.getAllPendingVirtualSkus({
+    clientId,
+    status,
+    limit: parseInt(limit),
+    offset: parseInt(offset)
+  });
+
+  res.json({ skus, count: skus.length });
+});
+
+// Staff: Approve virtual SKU
+app.post('/api/staff/pending-virtual-skus/:skuId/approve', withStaffTenant, (req, res) => {
+  try {
+    const result = req.ctx.bomApproval.approveVirtualSKUSubmission(
+      req.params.skuId,
+      req.user?.username || 'staff'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Staff: Reject virtual SKU
+app.post('/api/staff/pending-virtual-skus/:skuId/reject', withStaffTenant, (req, res) => {
+  const { reason } = req.body || {};
+  if (!reason) return res.status(400).json({ error: 'Rejection reason is required' });
+
+  try {
+    const result = req.ctx.bomApproval.rejectVirtualSKUSubmission(
+      req.params.skuId,
+      reason,
+      req.user?.username || 'staff'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ── API key ingest endpoint ───────────────────────────────────────────────────
