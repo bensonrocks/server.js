@@ -31,6 +31,7 @@ const createOrderApproval = require('./lib/order-approval');
 const createBOMApproval = require('./lib/bom-approval');
 const createClientAnalytics = require('./lib/client-analytics');
 const createVirtualFulfillment = require('./lib/virtual-fulfillment');
+const createVirtualFulfillmentNotifications = require('./lib/virtual-fulfillment-notifications');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -127,15 +128,16 @@ function getCtx(tenantId) {
     const store           = createStore(db);
     const creds           = createCreds(tenantId);
     const syncLog         = createSyncLog(db);
-    const inventory         = createInventory(db);
-    const fulfillment       = createFulfillment({ store, creds, inventory, db });
-    const clientConfig      = createClientConfig(db);
-    const picking           = createPicking({ db, store, clientConfig });
-    const virtualFulfillment = createVirtualFulfillment(db, clientConfig);
-    const orderApproval     = createOrderApproval(db, clientConfig, virtualFulfillment);
-    const bomApproval       = createBOMApproval(db);
-    const clientAnalytics   = createClientAnalytics(db);
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval, clientAnalytics, virtualFulfillment });
+    const inventory              = createInventory(db);
+    const fulfillment            = createFulfillment({ store, creds, inventory, db });
+    const clientConfig           = createClientConfig(db);
+    const picking                = createPicking({ db, store, clientConfig });
+    const virtualFulfillment     = createVirtualFulfillment(db, clientConfig);
+    const notifications          = createVirtualFulfillmentNotifications(db);
+    const orderApproval          = createOrderApproval(db, clientConfig, virtualFulfillment, notifications);
+    const bomApproval            = createBOMApproval(db);
+    const clientAnalytics        = createClientAnalytics(db);
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval, clientAnalytics, virtualFulfillment, notifications });
   }
   return tenantCtx.get(tenantId);
 }
@@ -2402,6 +2404,88 @@ app.post('/api/client/orders/:orderId/virtual-items/fulfill-all', withClientAuth
     res.json({
       ok: true,
       result
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+app.get('/api/client/notifications/history', withClientAuth, (req, res) => {
+  const { limit = 50, offset = 0 } = req.query;
+
+  try {
+    const history = req.ctx.notifications.getNotificationHistory(req.clientId, {
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.json({
+      notifications: history,
+      count: history.length
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Staff Virtual Fulfillment Management ────────────────────────────────────
+
+app.post('/api/staff/virtual-items/:clientId/send-reminder', withStaff, withStaffTenant, (req, res) => {
+  const { clientId } = req.params;
+
+  try {
+    const result = req.ctx.notifications.sendDailyPendingReminder(clientId);
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/staff/virtual-items/:clientId/send-past-due-alert', withStaff, withStaffTenant, (req, res) => {
+  const { clientId } = req.params;
+
+  try {
+    const result = req.ctx.notifications.sendPastDueAlert(clientId);
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/staff/virtual-fulfillment-status', withStaff, withStaffTenant, (req, res) => {
+  const { clientId, limit = 20 } = req.query;
+
+  try {
+    let orders;
+    if (clientId) {
+      orders = req.ctx.virtualFulfillment.getClientOrdersWithVirtualItems(clientId, { limit: parseInt(limit) });
+    } else {
+      // Get sample of orders across all clients
+      const sql = `
+        SELECT DISTINCT o.id, o.client_id, o.created_at, o.total,
+               COUNT(vf.id) as virtualItemCount,
+               SUM(CASE WHEN vf.status = 'fulfilled' THEN 1 ELSE 0 END) as fulfilledCount
+        FROM orders o
+        LEFT JOIN virtual_item_fulfillment vf ON o.id = vf.order_id
+        WHERE vf.id IS NOT NULL
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+        LIMIT ?
+      `;
+      orders = req.db.prepare(sql).all(parseInt(limit));
+    }
+
+    res.json({
+      orders,
+      count: orders.length
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
