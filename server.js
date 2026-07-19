@@ -3136,7 +3136,7 @@ app.get('/api/admin/client-connections', withStaffTenant, (req, res) => {
 app.post('/api/wms/allocate/order/:orderId', withStaffTenant, (req, res) => {
   try {
     const ctx = getCtx(req.tenantId);
-    const allocator = createAutoAllocator(ctx.db, ctx.inventory, ctx.store);
+    const allocator = createAutoAllocator(ctx.db, ctx.inventory, ctx.store, ctx.clientConfig);
     const result = allocator.allocateOrder(req.params.orderId, req.body);
     res.json(result);
   } catch (err) {
@@ -3147,7 +3147,7 @@ app.post('/api/wms/allocate/order/:orderId', withStaffTenant, (req, res) => {
 app.post('/api/wms/allocate/batch', withStaffTenant, (req, res) => {
   try {
     const ctx = getCtx(req.tenantId);
-    const allocator = createAutoAllocator(ctx.db, ctx.inventory, ctx.store);
+    const allocator = createAutoAllocator(ctx.db, ctx.inventory, ctx.store, ctx.clientConfig);
     const result = allocator.allocateBatch(req.body.orderIds || [], req.body);
     res.json(result);
   } catch (err) {
