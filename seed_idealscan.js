@@ -2,7 +2,14 @@
 const { getTenantDb } = require('./lib/db/tenant');
 const db = getTenantDb('default');
 
-// ── Clear existing orders ─────────────────────────────────────────────────────
+// ── Clear existing orders (delete dependent data first) ───────────────────────
+// Delete in order of dependencies to avoid foreign key constraint violations
+db.prepare('DELETE FROM carton_lines').run();
+db.prepare('DELETE FROM cartons').run();
+db.prepare('DELETE FROM wave_orders').run();
+db.prepare('DELETE FROM picking_waves').run();
+db.prepare('DELETE FROM order_lines').run();
+db.prepare('DELETE FROM allocation_log').run();
 db.prepare('DELETE FROM orders').run();
 
 // ── Data ──────────────────────────────────────────────────────────────────────
