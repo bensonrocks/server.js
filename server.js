@@ -27,6 +27,7 @@ const createStore     = require('./lib/store');
 const createCreds     = require('./lib/credentials');
 const createSyncLog   = require('./lib/sync-log');
 const createOrderSync = require('./lib/order-sync');
+const createOrderApproval = require('./lib/order-approval');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -119,15 +120,16 @@ const tenantCtx = new Map();
 
 function getCtx(tenantId) {
   if (!tenantCtx.has(tenantId)) {
-    const db           = getTenantDb(tenantId);
-    const store        = createStore(db);
-    const creds        = createCreds(tenantId);
-    const syncLog      = createSyncLog(db);
-    const inventory    = createInventory(db);
-    const fulfillment  = createFulfillment({ store, creds, inventory, db });
-    const picking      = createPicking({ db, store });
-    const clientConfig = createClientConfig(db);
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig });
+    const db             = getTenantDb(tenantId);
+    const store          = createStore(db);
+    const creds          = createCreds(tenantId);
+    const syncLog        = createSyncLog(db);
+    const inventory      = createInventory(db);
+    const fulfillment    = createFulfillment({ store, creds, inventory, db });
+    const picking        = createPicking({ db, store });
+    const clientConfig   = createClientConfig(db);
+    const orderApproval  = createOrderApproval(db, clientConfig);
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval });
   }
   return tenantCtx.get(tenantId);
 }
@@ -1938,6 +1940,157 @@ app.post('/api/client/orders/upload', withClientAuth, upload.single('file'), (re
   } finally {
     try { fs.unlinkSync(filePath); } catch {}
   }
+});
+
+// ── Order approval workflow (client submits for staff approval) ────────────────
+
+app.post('/api/client/orders/submit', withClientAuth, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { path: filePath, originalname } = req.file;
+  const ext = (originalname.split('.').pop() || '').toLowerCase();
+  if (!['csv', 'xlsx', 'xls', 'json'].includes(ext)) {
+    try { fs.unlinkSync(filePath); } catch {}
+    return res.status(400).json({ error: 'Only CSV, XLSX, XLS, or JSON files are supported' });
+  }
+
+  try {
+    let extracted = [];
+    if (ext === 'json') {
+      extracted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      extracted = Array.isArray(extracted) ? extracted : [extracted];
+    } else {
+      extracted = importer.extractFromSpreadsheet(filePath);
+    }
+
+    const now = new Date().toISOString();
+    const orders = extracted.map((data, i) => {
+      const refNo = data.trackingNumber || data.orderNumber || data.id;
+      const orderId = refNo
+        ? 'ORD-' + refNo.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 20)
+        : 'ORD-' + Date.now().toString(36).toUpperCase() + '-' + String(i).padStart(3, '0');
+      const items = Array.isArray(data.items) && data.items.length
+        ? data.items.map(it => ({ sku: String(it.sku || 'ITEM'), name: String(it.name || 'Item'), qty: parseInt(it.qty) || 1, unitPrice: parseFloat(it.unitPrice) || 0 }))
+        : [{ sku: 'ITEM', name: 'Order Item', qty: parseInt(data.qty) || 1, unitPrice: parseFloat(data.unitPrice) || 0 }];
+      const subtotal = items.reduce((s, it) => s + it.qty * it.unitPrice, 0);
+      const tax = parseFloat(data.tax) || Math.round(subtotal * 0.09 * 100) / 100;
+
+      return {
+        id: orderId,
+        clientId: req.clientId,
+        clientName: req.clientName,
+        channel: data.channel || 'portal-upload',
+        orderDate: data.orderDate || now,
+        status: 'pending',
+        currency: data.currency || 'SGD',
+        notes: data.notes || '',
+        items,
+        shipping: {
+          recipient: data.recipientName || data.shipping?.recipient || '',
+          addressLine1: data.addressLine1 || data.shipping?.addressLine1 || data.address || '',
+          addressLine2: data.addressLine2 || data.shipping?.addressLine2 || '',
+          city: data.city || data.shipping?.city || 'Singapore',
+          state: data.state || data.shipping?.state || '',
+          zip: data.zip || data.shipping?.zip || '',
+          country: data.country || data.shipping?.country || 'SG'
+        },
+        subtotal,
+        shippingCost: parseFloat(data.shippingCost || data.shipping_cost) || 0,
+        tax,
+        total: parseFloat(data.total) || subtotal + tax + (parseFloat(data.shippingCost || data.shipping_cost) || 0)
+      };
+    });
+
+    const result = req.ctx.orderApproval.submitOrdersForApproval(
+      req.tenantId,
+      req.clientId,
+      req.clientName,
+      orders,
+      originalname
+    );
+
+    res.json({
+      ok: true,
+      submitted: result.submitted,
+      errors: result.errors,
+      message: `${result.submitted} order(s) submitted for approval`,
+      submissionId: result.submissionId
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    try { fs.unlinkSync(filePath); } catch {}
+  }
+});
+
+// Get client's pending orders
+app.get('/api/client/orders/pending', withClientAuth, (req, res) => {
+  const orders = req.ctx.orderApproval.getClientPendingOrders(req.clientId);
+  const pendingCount = req.ctx.orderApproval.getPendingOrderCount(req.clientId, 'pending');
+  const approvedCount = req.ctx.orderApproval.getPendingOrderCount(req.clientId, 'approved');
+  const rejectedCount = req.ctx.orderApproval.getPendingOrderCount(req.clientId, 'rejected');
+
+  res.json({
+    orders,
+    stats: { pendingCount, approvedCount, rejectedCount }
+  });
+});
+
+// ── Staff approval endpoints ──────────────────────────────────────────────────
+
+// Get all pending orders for staff review
+app.get('/api/staff/pending-orders', withStaffTenant, (req, res) => {
+  const { clientId, status = 'pending', limit = 50, offset = 0 } = req.query;
+  const orders = req.ctx.orderApproval.getAllPendingOrders(req.tenantId, {
+    clientId,
+    status,
+    limit: parseInt(limit),
+    offset: parseInt(offset)
+  });
+
+  res.json({
+    orders,
+    count: orders.length,
+    limit: parseInt(limit),
+    offset: parseInt(offset)
+  });
+});
+
+// Approve pending order
+app.post('/api/staff/pending-orders/:pendingId/approve', withStaffTenant, (req, res) => {
+  try {
+    const result = req.ctx.orderApproval.approvePendingOrder(req.params.pendingId, req.user?.username || 'staff');
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Reject pending order
+app.post('/api/staff/pending-orders/:pendingId/reject', withStaffTenant, (req, res) => {
+  const { reason } = req.body || {};
+  if (!reason) return res.status(400).json({ error: 'Rejection reason is required' });
+
+  try {
+    const result = req.ctx.orderApproval.rejectPendingOrder(
+      req.params.pendingId,
+      reason,
+      req.user?.username || 'staff'
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Bulk approve pending orders
+app.post('/api/staff/pending-orders/bulk/approve', withStaffTenant, (req, res) => {
+  const { pendingIds } = req.body || {};
+  if (!Array.isArray(pendingIds) || pendingIds.length === 0) {
+    return res.status(400).json({ error: 'pendingIds array is required' });
+  }
+
+  const result = req.ctx.orderApproval.bulkApprovePendingOrders(pendingIds, req.user?.username || 'staff');
+  res.json({ ok: true, ...result });
 });
 
 // ── API key ingest endpoint ───────────────────────────────────────────────────
