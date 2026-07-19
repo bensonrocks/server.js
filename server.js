@@ -375,7 +375,9 @@ function withApiKey(req, res, next) {
   req.tenantId   = tenantId;
   req.clientId   = session.clientId;
   req.clientName = session.clientName;
+  req.ctx        = ctx;
   req.store      = ctx.store;
+  req.db         = ctx.db;
   next();
 }
 
@@ -586,7 +588,10 @@ app.post('/api/orders/bulk-import', withTenant, (req, res) => {
 
   raw.forEach((data, i) => {
     try {
-      req.store.addOrder(extractedToOrder(data, i));
+      const order = extractedToOrder(data, i);
+      // Expand bundles for this client if bundling is enabled
+      order.items = req.ctx.clientConfig.expandOrderItems(order.clientId, order.items);
+      req.store.addOrder(order);
       imported++;
     } catch (err) {
       if (err.message.includes('already exists')) skipped++;
@@ -1127,11 +1132,12 @@ app.post('/api/sync/:source/orders', withTenant, async (req, res) => {
     // Sync orders
     const orderSync = createOrderSync(db);
     const result = await orderSync.syncOrders({
-      tenantId: tenantId,
+      tenantId: req.tenantId,
       source: source,
       platform: req.body.platform || source,
       orders: orders,
       userId: req.user?.id || 'system',
+      clientConfig: req.ctx.clientConfig,
     });
 
     // Optionally auto-allocate (transition to ALLOCATED)
@@ -1200,11 +1206,12 @@ app.post('/api/sync/zort/orders', withTenant, async (req, res) => {
     const { db } = req.ctx;
     const orderSync = createOrderSync(db);
     const result = await orderSync.syncOrders({
-      tenantId: tenantId,
+      tenantId: req.tenantId,
       source: 'zort',
       platform: 'zort',
       orders: orders,
       userId: req.user?.id || 'system',
+      clientConfig: req.ctx.clientConfig,
     });
 
     // Optionally auto-allocate
@@ -1246,7 +1253,7 @@ app.get('/api/sync/:source/orders/status', withTenant, (req, res) => {
       FROM sync_log
       WHERE tenant_id = ? AND source_system = ?
       GROUP BY source_system
-    `).get(tenantId, source);
+    `).get(req.tenantId, source);
 
     if (!stats) {
       return res.json({
@@ -1945,9 +1952,11 @@ app.post('/api/ingest/orders', withApiKey, (req, res) => {
       const id = data.id
         ? String(data.id).replace(/[^A-Z0-9\-_]/gi, '').slice(0, 40)
         : 'API-' + Date.now().toString(36).toUpperCase() + '-' + String(i).padStart(3, '0');
-      const items = Array.isArray(data.items) && data.items.length
+      let items = Array.isArray(data.items) && data.items.length
         ? data.items.map(it => ({ sku: String(it.sku || 'ITEM'), name: String(it.name || 'Item'), qty: parseInt(it.qty) || 1, unitPrice: parseFloat(it.unitPrice || it.unit_price) || 0 }))
         : [{ sku: 'ITEM', name: 'Order Item', qty: parseInt(data.qty) || 1, unitPrice: parseFloat(data.unitPrice || data.unit_price) || 0 }];
+      // Expand bundles for this client if bundling is enabled
+      items = req.ctx.clientConfig.expandOrderItems(req.clientId, items);
       const subtotal = items.reduce((s, it) => s + it.qty * it.unitPrice, 0);
       const tax = parseFloat(data.tax) || 0;
       const shippingCost = parseFloat(data.shippingCost || data.shipping_cost) || 0;
