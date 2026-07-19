@@ -264,15 +264,20 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   lastResult}`. SECRETS NEVER GO TO GIT — they live only in db.json;
   the API returns masked keys, and blank key/secret on edit keeps the
   stored value.
-- UI: the 🔌 CONNECTIONS sidebar tab (`data-tab="connections"`,
-  admin-role only — hidden for warehouse both in the sidebar and in
-  switchTab). Platform cards (ZORT = ACTIVE; Lazada/Shopee/TikTok/
-  Shopify = COMING SOON placeholders matching the
-  packages/platform-gateway scaffolds) above the ZORT store manager
-  (`#connZortPanel`, moved here from the former Administrator → ZORT
-  admin tab). Endpoints stay master-key guarded:
-  `/api/master/zort/stores` (GET/POST/DELETE), `/:id/test`
-  (Merchant/ValidateApi), `/:id/pull`.
+- UI: the 🔌 CONNECTIONS sidebar tab (`data-tab="connections"`) —
+  hidden for warehouse AND gated behind the ADMINISTRATOR password:
+  switchTab intercepts it via `_pendingUnlockTab` + the same
+  `logPasswordOverlay`/`logUnlocked` gate the Administrator panel uses
+  (unlock once per session; cancel clears the pending tab). Platform
+  cards: ZORT = ACTIVE; Lazada/Shopee/TikTok/Shopify = "VIA ZORT" —
+  marketplace credentials are keyed into the MERCHANT'S OWN ZORT
+  dashboard (ZORT → Settings → Sales Channels), never into IDEALONE;
+  the per-store "Channels" button (`/api/master/zort/stores/:id/channels`
+  → Merchant/GetSalesChannels) READS what the client has linked. Below
+  the cards: the ZORT store manager (`#connZortPanel`, moved here from
+  the former Administrator → ZORT admin tab). Endpoints stay master-key
+  guarded: `/api/master/zort/stores` (GET/POST/DELETE), `/:id/test`
+  (Merchant/ValidateApi), `/:id/pull`, `/:id/channels`.
 - PULL (`pullZortStore`): Order/GetOrders paged (limit 100, ≤20 pages),
   `updatedafter` = lastPullAt − 1 day (first run: 7 days back). Zort
   status 2 = void → skipped; orders whose number already exists anywhere
