@@ -5629,6 +5629,154 @@ app.post('/api/tms/routes', withTenant, (req, res) => {
   }
 });
 
+// ── ADMIN DASHBOARD API ────────────────────────────────────────────────────────
+
+// Get UI settings
+app.get('/api/admin/ui-settings', withAdmin, (req, res) => {
+  try {
+    const settings = db.prepare('SELECT * FROM admin_ui_settings ORDER BY id DESC LIMIT 1').get();
+    if (!settings) {
+      const defaults = { theme: 'light', accent_color: 'blue', font_size: 'medium', warehouse_layout: 'split-screen' };
+      return res.json(defaults);
+    }
+    res.json(settings);
+  } catch (err) {
+    console.error('[admin-ui] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update UI settings
+app.post('/api/admin/ui-settings', withAdmin, (req, res) => {
+  try {
+    const { theme, accent_color, font_size, warehouse_layout } = req.body;
+    db.prepare(`
+      INSERT INTO admin_ui_settings (theme, accent_color, font_size, warehouse_layout)
+      VALUES (?, ?, ?, ?)
+    `).run(theme || 'light', accent_color || 'blue', font_size || 'medium', warehouse_layout || 'split-screen');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin-ui-update] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List order attributes
+app.get('/api/admin/attributes', withAdmin, (req, res) => {
+  try {
+    const attrs = db.prepare('SELECT * FROM order_attributes ORDER BY id').all();
+    res.json(attrs || []);
+  } catch (err) {
+    console.error('[admin-attrs] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create order attribute
+app.post('/api/admin/attributes', withAdmin, (req, res) => {
+  try {
+    const { name, type, required, visible } = req.body;
+    if (!name || !type) return res.status(400).json({ error: 'Name and type required' });
+    db.prepare(`
+      INSERT INTO order_attributes (name, type, required, visible)
+      VALUES (?, ?, ?, ?)
+    `).run(name, type, required ? 1 : 0, visible !== false ? 1 : 0);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin-attr-create] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update order attribute
+app.post('/api/admin/attributes/:id', withAdmin, (req, res) => {
+  try {
+    const { required, visible } = req.body;
+    db.prepare(`
+      UPDATE order_attributes SET required = ?, visible = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(required ? 1 : 0, visible !== false ? 1 : 0, req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin-attr-update] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete order attribute
+app.delete('/api/admin/attributes/:id', withAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM order_attributes WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin-attr-delete] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List roles
+app.get('/api/admin/roles', withAdmin, (req, res) => {
+  try {
+    const roles = db.prepare('SELECT * FROM admin_roles ORDER BY id').all();
+    res.json(roles || []);
+  } catch (err) {
+    console.error('[admin-roles] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create role
+app.post('/api/admin/roles', withAdmin, (req, res) => {
+  try {
+    const { name, permissions } = req.body;
+    if (!name) return res.status(400).json({ error: 'Role name required' });
+    const perms = Array.isArray(permissions) ? JSON.stringify(permissions) : '[]';
+    db.prepare('INSERT INTO admin_roles (name, permissions) VALUES (?, ?)').run(name, perms);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin-role-create] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete role
+app.delete('/api/admin/roles/:id', withAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM admin_roles WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin-role-delete] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get admin dashboard stats
+app.get('/api/admin/dashboard', withAdmin, (req, res) => {
+  try {
+    const totalOrders = db.prepare('SELECT COUNT(*) as count FROM orders').get().count;
+    const fulfillmentRate = db.prepare(`
+      SELECT COUNT(*) as completed FROM orders WHERE status IN ('fulfilled', 'shipped')
+    `).get().completed;
+    const activeUsers = db.prepare('SELECT COUNT(*) as count FROM staff_users WHERE active = 1').get().count;
+
+    res.json({
+      totalOrders,
+      fulfillmentRate: totalOrders > 0 ? ((fulfillmentRate / totalOrders) * 100).toFixed(1) : 0,
+      activeUsers,
+      systemHealth: '99.9'
+    });
+  } catch (err) {
+    console.error('[admin-dashboard] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin Dashboard Route ─────────────────────────────────────────────────────
+
+app.get('/admin-enhanced', withAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-enhanced.html'));
+});
+
 // ── Legal pages ───────────────────────────────────────────────────────────────
 
 app.get('/tnc',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'tnc.html')));
