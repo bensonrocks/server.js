@@ -744,6 +744,67 @@ a:hover{text-decoration:underline}
 .sess-count{font-size:12px;font-weight:600;color:#475569}
 .sess-body{max-height:340px;overflow-y:auto}
 @media(max-width:900px){.scan-wrap{grid-template-columns:1fr}.scan-panel{position:static}.sess-body{max-height:200px}}
+/* ── SCAN & CHECK OVERLAY (item pack-verification) ── */
+.sc-overlay{position:fixed;inset:0;z-index:9999;background:#f8fafc;display:none;flex-direction:column;overflow:hidden}
+.sc-overlay.show{display:flex}
+body.sc-open{overflow:hidden}
+.sc-header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.sc-back{background:none;border:1px solid #e2e8f0;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:#475569;white-space:nowrap}
+.sc-back:hover{background:#f1f5f9}
+.sc-title{display:flex;align-items:center;gap:11px;min-width:0;flex:1}
+.sc-order-no{font-weight:800;font-size:16px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-progress{background:#f1f5f9;border:1px solid #e2e8f0;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;white-space:nowrap;color:#475569;flex-shrink:0}
+.sc-progress.all-done{background:#f0fdf4;border-color:#bbf7d0;color:#16a34a}
+.sc-header-right{display:flex;align-items:center;gap:10px;margin-left:auto;flex-shrink:0}
+.sc-timer{font-size:13px;font-weight:700;font-family:monospace;background:#f8fafc;border:1px solid #e2e8f0;padding:3px 9px;border-radius:8px;color:#64748b;min-width:52px;text-align:center}
+.sc-pcs{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:56px;background:#0d9488;color:#fff;border-radius:8px;padding:3px 11px 4px;transition:background .18s}
+.sc-pcs #sc-pcs-num{font-size:30px;font-weight:800;line-height:1}
+.sc-pcs-lbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.9}
+.sc-pcs.sc-over{background:#dc2626}
+.sc-pcs.sc-done{background:#16a34a}
+.sc-meta{display:flex;gap:6px 22px;flex-wrap:wrap;padding:8px 16px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:12.5px;color:#475569;flex-shrink:0}
+.sc-meta b{color:#0f172a;font-weight:600}
+.sc-progressbar{height:4px;background:#e2e8f0;flex-shrink:0}
+.sc-progressbar i{display:block;height:100%;width:0;background:#0d9488;transition:width .25s}
+.sc-cam-panel{display:none;position:relative;background:#000;flex-shrink:0}
+.sc-cam-panel.show{display:block}
+.sc-cam-panel video{width:100%;max-height:38vh;object-fit:cover;display:block}
+.sc-cam-close{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px}
+.sc-items-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.sc-items-table{width:100%;border-collapse:collapse}
+.sc-items-table th{position:sticky;top:0;background:#f1f5f9;padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;border-bottom:2px solid #e2e8f0}
+.sc-items-table td{padding:12px 14px;border-bottom:1px solid #eef2f6;font-size:15px;color:#0f172a;vertical-align:middle}
+.sc-qty-col{text-align:center;width:110px}
+.sc-st-col{width:44px;text-align:center}
+.sc-sku{font-size:22px;font-weight:800;letter-spacing:.02em;color:#0f172a}
+.sc-desc{font-size:14px;color:#475569}
+.sc-items-table td.sc-qty-col{font-size:19px;font-weight:700}
+.sc-row-ok{background:#f0fdf4}.sc-row-ok td{border-bottom-color:#bbf7d0}
+.sc-row-over{background:#fef2f2}.sc-row-over td{border-bottom-color:#fecaca}
+.sc-row-partial{background:#fffbeb}
+.sc-st-ok{color:#16a34a;font-size:18px;font-weight:800}
+.sc-st-over{color:#dc2626;font-size:18px;font-weight:800}
+@keyframes scFlash{0%{background:#a7f3d0}100%{background:inherit}}
+.sc-flash{animation:scFlash .45s ease-out}
+.sc-dock{flex-shrink:0;background:#fff;border-top:2px solid #e2e8f0;padding:12px 16px 14px}
+.sc-input-wrap{display:flex;align-items:stretch;gap:8px;margin-bottom:10px;background:#f8fafc;border:2px solid #0d9488;border-radius:10px;overflow:hidden;box-shadow:0 0 0 3px rgba(13,148,136,.08)}
+.sc-input-icon{padding:0 12px;font-size:20px;color:#0d9488;display:flex;align-items:center;user-select:none}
+.sc-input{flex:1;min-width:0;border:none;outline:none;padding:14px 6px;font-size:17px;color:#0f172a;background:transparent}
+.sc-input::placeholder{color:#94a3b8}
+.sc-cam-btn{flex-shrink:0;background:#0d9488;color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer;padding:0 18px;min-width:80px;display:flex;align-items:center;justify-content:center;gap:6px}
+.sc-cam-btn:hover{background:#0f766e}
+.sc-feedback{padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;margin-bottom:10px}
+.sc-feedback.sc-fb-ok{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.sc-feedback.sc-fb-err{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.sc-actions{display:flex;gap:8px}
+.sc-btn{border:none;border-radius:8px;cursor:pointer;font-weight:700;padding:13px 8px;font-size:14px}
+.sc-btn-danger{flex:1;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.sc-btn-danger:hover{background:#fee2e2}
+.sc-btn-pause{flex:1;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd}
+.sc-btn-pause:hover{background:#e0f2fe}
+.sc-btn-success{flex:2;background:#0d9488;color:#fff}
+.sc-btn-success:hover{background:#0f766e}
+@media(max-width:640px){.sc-items-table th:nth-child(2),.sc-items-table td:nth-child(2){display:none}.sc-sku{font-size:19px}.sc-desc{display:block;font-size:12px;margin-top:2px}}
 /* ── IDEALINVENTORY ── */
 .inv-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .inv-stat{background:#fff;border-radius:10px;padding:13px 15px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
@@ -1439,6 +1500,47 @@ a:hover{text-decoration:underline}
           </div>
         </div>
       </div><!-- /scan -->
+
+      <!-- ═══ SCAN & CHECK OVERLAY (item pack-verification) ═══ -->
+      <div id="scanCheckOverlay" class="sc-overlay">
+        <div class="sc-header">
+          <button class="sc-back" onclick="scClose()">&#8592; Close</button>
+          <div class="sc-title">
+            <span class="sc-order-no" id="sc-order-no"></span>
+            <span class="sc-progress" id="sc-progress"></span>
+          </div>
+          <div class="sc-header-right">
+            <span class="sc-timer" id="sc-timer">00:00</span>
+            <div class="sc-pcs" id="sc-pcs"><span id="sc-pcs-num">&mdash;</span><span class="sc-pcs-lbl">pcs left</span></div>
+          </div>
+        </div>
+        <div class="sc-meta" id="sc-meta"></div>
+        <div class="sc-progressbar"><i id="sc-bar-fill"></i></div>
+        <div class="sc-cam-panel" id="sc-cam-panel">
+          <video id="sc-video" playsinline muted></video>
+          <button class="sc-cam-close" onclick="scStopCamera()">&#10005; Close camera</button>
+        </div>
+        <div class="sc-items-scroll">
+          <table class="sc-items-table">
+            <thead><tr><th>SKU</th><th>Description</th><th class="sc-qty-col">Ordered</th><th class="sc-qty-col">Scanned</th><th class="sc-st-col"></th></tr></thead>
+            <tbody id="sc-items-tbody"></tbody>
+          </table>
+        </div>
+        <div class="sc-dock">
+          <div class="sc-input-wrap">
+            <span class="sc-input-icon">&#9524;</span>
+            <input type="text" id="sc-input" class="sc-input" placeholder="Scan item barcode / SKU&#8230;" autocomplete="off" autocorrect="off" spellcheck="false"
+              onkeydown="if(event.key==='Enter'){scHandleCode(this.value);this.value='';}">
+            <button class="sc-cam-btn" onclick="scToggleCamera()">&#128247; Scan</button>
+          </div>
+          <div id="sc-feedback" class="sc-feedback" style="display:none"></div>
+          <div class="sc-actions">
+            <button class="sc-btn sc-btn-danger" onclick="scCancel()">&#10005; Cancel</button>
+            <button class="sc-btn sc-btn-pause" onclick="scClose()">&#9646;&#9646; Pause</button>
+            <button class="sc-btn sc-btn-success" onclick="scComplete()">&#10003; Complete</button>
+          </div>
+        </div>
+      </div><!-- /scanCheckOverlay -->
 
       <!-- ═══════════════════════════════════════
            IDEALINVENTORY PAGE
@@ -5605,6 +5707,7 @@ function _scanShowOrder(o, meta = {}) {
       <div class="src-row"><span class="src-k">Address</span><span class="src-v">${_esc(addr||'—')}</span></div>
     </div>
     <div class="src-actions">
+      <button class="btn btn-sm" style="background:#0d9488;color:#fff;border-color:#0d9488;width:100%;margin-bottom:8px;font-size:13px;padding:11px;font-weight:700" onclick="openScanCheck('${_esc(o.id)}')">&#9654; Scan &amp; Check Items</button>
       ${meta.waybillReady||o.status==='packed'?`<button class="btn btn-p btn-sm" style="background:#0d9488;border-color:#0d9488;width:100%;margin-bottom:8px;font-size:13px;padding:10px" onclick="scanPrintWaybill('${_esc(o.id)}')">&#128230; Print Waybill</button>`:''}
       <select id="scan-status-sel" class="src-status-sel" onchange="scanUpdateStatus('${_esc(o.id)}')">
         <option value="">Update status…</option>
@@ -5750,6 +5853,149 @@ function _scanFlash(msg, ok) {
 function _beep() {
   try{const ctx=new(window.AudioContext||window.webkitAudioContext)(),osc=ctx.createOscillator(),g=ctx.createGain();osc.connect(g);g.connect(ctx.destination);osc.frequency.value=880;g.gain.setValueAtTime(.1,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.1);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+.1);}catch{}
 }
+
+// ── SCAN & CHECK OVERLAY ────────────────────────────────────────────────────────
+// Item-level pack verification. UX ported from the order-processing-wms-fulfillment
+// branch, adapted to this app's order model (orders[]/items[{sku,name,qty}]) and
+// existing PATCH /api/orders/:id/status endpoint — no backend changes required.
+let _sc = null;
+
+function openScanCheck(orderId) {
+  const o = orders.find(x => x.id === orderId);
+  if (!o) { alert('Order not found — sync orders first.'); return; }
+  _sc = { order: o, scanned: {}, reader: null, camRunning: false, secs: 0, timer: null, last: null };
+  document.body.classList.add('sc-open');
+  $('scanCheckOverlay').classList.add('show');
+  scRender();
+  _scTimerStart();
+  setTimeout(() => { const i = $('sc-input'); if (i) i.focus(); }, 60);
+}
+
+function scClose() {
+  scStopCamera();
+  _scTimerStop();
+  document.body.classList.remove('sc-open');
+  const ov = $('scanCheckOverlay'); if (ov) ov.classList.remove('show');
+  _sc = null;
+}
+
+function scCancel() {
+  if (!_sc) return;
+  if (confirm('Cancel this scan check? Scanned progress will be discarded.')) scClose();
+}
+
+function _scCounts() {
+  let ordered = 0, done = 0, over = false, allDone = true;
+  _sc.order.items.forEach(i => {
+    const s = _sc.scanned[i.sku] || 0;
+    ordered += i.qty; done += Math.min(s, i.qty);
+    if (s > i.qty) over = true;
+    if (s < i.qty) allDone = false;
+  });
+  return { ordered, done, left: Math.max(0, ordered - done), over, allDone };
+}
+
+function scRender() {
+  if (!_sc) return;
+  const o = _sc.order;
+  $('sc-order-no').textContent = o.id;
+  const addr = [o.shipping && o.shipping.recipient, o.shipping && o.shipping.city, o.shipping && o.shipping.country].filter(Boolean).join(' · ');
+  $('sc-meta').innerHTML = `<span>Client <b>${_esc(o.clientName)}</b></span><span>Items <b>${o.items.length}</b></span>` + (addr ? `<span>Ship to <b>${_esc(addr)}</b></span>` : '');
+  const c = _scCounts();
+  const pill = $('sc-progress'), pcs = $('sc-pcs'), pnum = $('sc-pcs-num'), bar = $('sc-bar-fill');
+  pill.textContent = `${c.done} / ${c.ordered} scanned`;
+  pill.className = 'sc-progress' + (c.allDone ? ' all-done' : '');
+  pnum.textContent = c.over ? '!' : c.left;
+  pcs.className = 'sc-pcs' + (c.over ? ' sc-over' : c.allDone ? ' sc-done' : '');
+  bar.style.width = (c.ordered ? Math.min(100, c.done / c.ordered * 100) : 0) + '%';
+  $('sc-items-tbody').innerHTML = o.items.map(i => {
+    const s = _sc.scanned[i.sku] || 0;
+    const cls = s > i.qty ? 'sc-row-over' : (s >= i.qty && s > 0) ? 'sc-row-ok' : s > 0 ? 'sc-row-partial' : '';
+    const icon = s > i.qty ? '<span class="sc-st-over">!</span>' : s >= i.qty ? '<span class="sc-st-ok">&#10003;</span>' : '';
+    return `<tr data-sku="${_esc(i.sku)}" class="${cls}"><td><div class="sc-sku">${_esc(i.sku)}</div></td><td class="sc-desc">${_esc(i.name)}</td><td class="sc-qty-col">${i.qty}</td><td class="sc-qty-col">${s}</td><td class="sc-st-col">${icon}</td></tr>`;
+  }).join('');
+}
+
+function scHandleCode(raw) {
+  if (!_sc) return;
+  const code = String(raw || '').trim();
+  if (!code) return;
+  const q = code.toLowerCase();
+  let item = _sc.order.items.find(i => i.sku.toLowerCase() === q)
+          || _sc.order.items.find(i => i.sku.toLowerCase().includes(q) || q.includes(i.sku.toLowerCase()));
+  if (!item) { _scFeedback('Not on this order: ' + _esc(code), false); return; }
+  _sc.scanned[item.sku] = (_sc.scanned[item.sku] || 0) + 1;
+  _beep();
+  scRender();
+  let row = null;
+  try { row = document.querySelector(`#sc-items-tbody tr[data-sku="${(window.CSS && CSS.escape) ? CSS.escape(item.sku) : item.sku}"]`); } catch (e) {}
+  if (row) { row.classList.add('sc-flash'); setTimeout(() => { row && row.classList.remove('sc-flash'); }, 450); if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' }); }
+  const s = _sc.scanned[item.sku], c = _scCounts();
+  if (c.allDone) _scFeedback('&#10003; All items scanned — ready to Complete', true);
+  else if (s > item.qty) _scFeedback('&#9888; ' + _esc(item.sku) + ' over-scanned (' + s + '/' + item.qty + ')', false);
+  else _scFeedback('&#10003; ' + _esc(item.sku) + ' — ' + s + '/' + item.qty, true);
+}
+
+function _scFeedback(html, ok) {
+  const el = $('sc-feedback'); if (!el) return;
+  el.innerHTML = html; el.style.display = 'block';
+  el.className = 'sc-feedback ' + (ok ? 'sc-fb-ok' : 'sc-fb-err');
+  clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = 'none'; }, 2600);
+}
+
+async function scComplete() {
+  if (!_sc) return;
+  const c = _scCounts();
+  if (!c.allDone && !confirm(c.left + ' piece(s) not yet scanned. Complete anyway?')) return;
+  if (c.over && !confirm('Some items were over-scanned. Complete anyway?')) return;
+  const id = _sc.order.id;
+  if (serverAvailable) {
+    try {
+      const r = await fetch(`${SERVER}/api/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'packed' }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert('Could not complete: ' + (j.error || r.status)); return; }
+      await loadOrdersFromServer();
+    } catch (e) { alert('Network error completing order.'); return; }
+  } else {
+    const o = orders.find(x => x.id === id); if (o) { o.status = 'packed'; save(); }
+  }
+  scClose();
+  if (typeof render === 'function') render();
+  alert('Order ' + id + ' checked & marked Packed.');
+}
+
+function scToggleCamera() { if (_sc) { _sc.camRunning ? scStopCamera() : scStartCamera(); } }
+
+function scStartCamera() {
+  if (!_sc) return;
+  if (!window.ZXingBrowser) { _scFeedback('Camera library not loaded', false); return; }
+  try { if (typeof _scanRunning !== 'undefined' && _scanRunning && typeof scanStop === 'function') scanStop(); } catch (e) {}
+  $('sc-cam-panel').classList.add('show');
+  try {
+    _sc.reader = new window.ZXingBrowser.BrowserMultiFormatReader();
+    _sc.reader.decodeFromVideoDevice(null, 'sc-video', (res) => {
+      if (res) { const t = res.getText(); if (t && t !== _sc.last) { _sc.last = t; setTimeout(() => { if (_sc) _sc.last = null; }, 1400); scHandleCode(t); } }
+    }).catch(() => _scFeedback('Camera unavailable', false));
+    _sc.camRunning = true;
+  } catch (e) { _scFeedback('Camera unavailable', false); }
+}
+
+function scStopCamera() {
+  if (!_sc) return;
+  try { _sc.reader && _sc.reader.reset(); } catch (e) {}
+  _sc.reader = null; _sc.camRunning = false;
+  const panel = $('sc-cam-panel'); if (panel) panel.classList.remove('show');
+}
+
+function _scTimerStart() {
+  _sc.secs = 0; const t0 = $('sc-timer'); if (t0) t0.textContent = '00:00';
+  _sc.timer = setInterval(() => {
+    if (!_sc) return;
+    _sc.secs++;
+    const m = String(Math.floor(_sc.secs / 60)).padStart(2, '0'), s = String(_sc.secs % 60).padStart(2, '0');
+    const t = $('sc-timer'); if (t) t.textContent = m + ':' + s;
+  }, 1000);
+}
+function _scTimerStop() { if (_sc && _sc.timer) { clearInterval(_sc.timer); _sc.timer = null; } }
 
 // ── LANGUAGE TOGGLE ───────────────────────────────────────────────────────────
 const I18N={
