@@ -33,8 +33,9 @@ const staffAuth = require('./lib/staff-auth');
 
 // NimbusTrade Client Access portal — fully isolated from the OMS product above:
 // its own SQLite file (lib/nimbustrade-portal/db.js), its own auth, own routes.
-const ntAuth  = require('./lib/nimbustrade-portal/auth');
-const ntStore = require('./lib/nimbustrade-portal/store');
+const ntAuth       = require('./lib/nimbustrade-portal/auth');
+const ntVendorAuth = require('./lib/nimbustrade-portal/vendor-auth');
+const ntStore      = require('./lib/nimbustrade-portal/store');
 const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
@@ -66,16 +67,29 @@ const NIMBUSTRADE_HOSTS = (process.env.NIMBUSTRADE_HOSTS || 'nimbustrade.up.rail
   .split(',')
   .map((h) => h.trim())
   .filter(Boolean);
-const nimbustradeStatic = express.static(path.join(__dirname, 'nimbustrade-site'));
+const CLIENT_ACCESS_HOSTS = (process.env.CLIENT_ACCESS_HOSTS || 'nimbustrade-portal.up.railway.app')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+const VENDOR_ACCESS_HOSTS = (process.env.VENDOR_ACCESS_HOSTS || 'nimbustrade-vendors.up.railway.app')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+const nimbustradeStatic  = express.static(path.join(__dirname, 'nimbustrade-site'));
+const clientPortalStatic = express.static(path.join(__dirname, 'nimbustrade-client-portal'));
+const vendorPortalStatic = express.static(path.join(__dirname, 'nimbustrade-vendor-portal'));
 
 app.use((req, res, next) => {
   if (NIMBUSTRADE_HOSTS.includes(req.hostname)) return nimbustradeStatic(req, res, next);
+  if (CLIENT_ACCESS_HOSTS.includes(req.hostname)) return clientPortalStatic(req, res, next);
+  if (VENDOR_ACCESS_HOSTS.includes(req.hostname)) return vendorPortalStatic(req, res, next);
   next();
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/nimbustrade', nimbustradeStatic);
-app.use('/client-access', express.static(path.join(__dirname, 'nimbustrade-client-portal')));
+app.use('/client-access', clientPortalStatic);
+app.use('/vendor-access', vendorPortalStatic);
 
 // ── Tenant context cache ──────────────────────────────────────────────────────
 
@@ -1185,6 +1199,56 @@ app.patch('/client-access/api/inventory/:id/qty', withNTAuth, (req, res) => {
     res.json(ntStore.updateInventoryQty(req.ntClientId, req.params.id, qty));
   } catch (e) {
     res.status(404).json({ error: e.message });
+  }
+});
+
+// ── NimbusTrade Vendor Access portal ──────────────────────────────────────────
+// Where a fulfillment vendor sees only the orders NimbusTrade routed to them
+// and updates status — which flows straight back into the client's dashboard
+// since it's the same nt_orders row. The client never sees the vendor.
+
+function withVendorAuth(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const session = ntVendorAuth.validateToken(token);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+  req.vendorId = session.vendorId;
+  next();
+}
+
+app.post('/vendor-access/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const vendor = ntVendorAuth.checkPassword(username, password);
+  if (!vendor) return res.status(401).json({ error: 'Invalid username or password' });
+  res.json({ token: ntVendorAuth.generateToken(vendor), name: vendor.name, country: vendor.country });
+});
+
+app.post('/vendor-access/api/logout', withVendorAuth, (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  ntVendorAuth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+app.get('/vendor-access/api/dashboard', withVendorAuth, (req, res) => {
+  res.json(ntStore.getVendorDashboard(req.vendorId));
+});
+
+app.get('/vendor-access/api/orders', withVendorAuth, (req, res) => {
+  const { status, search, page, pageSize } = req.query;
+  res.json(ntStore.listVendorOrders(req.vendorId, {
+    status: status || undefined,
+    search: search || undefined,
+    page: parseInt(page) || 1,
+    pageSize: Math.min(parseInt(pageSize) || 25, 100),
+  }));
+});
+
+app.patch('/vendor-access/api/orders/:id/status', withVendorAuth, (req, res) => {
+  const { status, issueNote } = req.body || {};
+  try {
+    res.json(ntStore.updateOrderStatusByVendor(req.vendorId, req.params.id, status, issueNote));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 

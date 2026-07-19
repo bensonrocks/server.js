@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vendor Access | NimbusTrade Solutions</title>
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ---------- Login screen ---------- -->
+<div class="login-screen" id="login-screen">
+  <form class="login-card" id="login-form">
+    <div class="login-brand">
+      <span class="brand-cn">云腾贸易方案私人有限公司</span>
+      <span class="brand-en">Nimbus<span>Trade</span></span>
+    </div>
+    <p class="login-eyebrow">Vendor Access</p>
+    <h1>Sign in to your fulfillment queue</h1>
+    <p class="login-sub">Orders NimbusTrade has routed to you. Update status as you process them.</p>
+
+    <label class="field">
+      <span>Username</span>
+      <input type="text" id="login-username" autocomplete="username" required />
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" id="login-password" autocomplete="current-password" required />
+    </label>
+
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    <p class="login-error" id="login-error" hidden></p>
+    <p class="login-hint">Demo vendors — <code>vendor-ae</code>/<code>VendorAE@2026</code>, <code>vendor-gb</code>/<code>VendorGB@2026</code>, <code>vendor-mx</code>/<code>VendorMX@2026</code>, <code>vendor-us</code>/<code>VendorUS@2026</code></p>
+  </form>
+</div>
+
+<!-- ---------- App ---------- -->
+<div class="app" id="app" hidden>
+  <header class="app-header">
+    <div class="app-brand">
+      <span class="brand-cn">云腾贸易方案私人有限公司</span>
+      <span class="brand-en">Nimbus<span>Trade</span> <em>Vendor Access</em></span>
+    </div>
+    <div class="app-header-right">
+      <span class="client-name" id="vendor-name">—</span>
+      <button class="btn btn-ghost-sm" id="logout-btn">Log out</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <div class="app-toolbar">
+      <div>
+        <p class="eyebrow">Fulfillment Queue</p>
+        <h2>Orders routed to you</h2>
+      </div>
+    </div>
+
+    <section class="stat-grid stat-grid-4" id="stat-grid">
+      <div class="stat-tile stat-dropped" data-status="dropped">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Dropped</span>
+        <span class="stat-value" id="stat-dropped">—</span>
+      </div>
+      <div class="stat-tile stat-processing" data-status="processing">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Processing</span>
+        <span class="stat-value" id="stat-processing">—</span>
+      </div>
+      <div class="stat-tile stat-completed" data-status="completed">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Completed</span>
+        <span class="stat-value" id="stat-completed">—</span>
+      </div>
+      <div class="stat-tile stat-issue" data-status="issue">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Issues</span>
+        <span class="stat-value" id="stat-issue">—</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Assigned orders</h3>
+        <div class="table-controls">
+          <input type="search" id="order-search" placeholder="Search ref, customer, SKU…" />
+          <select id="status-filter">
+            <option value="">All statuses</option>
+            <option value="dropped">Dropped</option>
+            <option value="processing">Processing</option>
+            <option value="completed">Completed</option>
+            <option value="issue">Issue</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>Order Ref</th>
+              <th>Client</th>
+              <th>Market</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Date</th>
+              <th>Update status</th>
+            </tr>
+          </thead>
+          <tbody id="orders-tbody">
+            <tr><td colspan="7" class="table-loading">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
