@@ -30,6 +30,7 @@ const createOrderSync = require('./lib/order-sync');
 const createOrderApproval = require('./lib/order-approval');
 const createBOMApproval = require('./lib/bom-approval');
 const createClientAnalytics = require('./lib/client-analytics');
+const createVirtualFulfillment = require('./lib/virtual-fulfillment');
 const emailP          = require('./lib/email-parser');
 const registry        = require('./lib/connector-registry');
 const auth            = require('./lib/auth');
@@ -126,14 +127,15 @@ function getCtx(tenantId) {
     const store           = createStore(db);
     const creds           = createCreds(tenantId);
     const syncLog         = createSyncLog(db);
-    const inventory       = createInventory(db);
-    const fulfillment     = createFulfillment({ store, creds, inventory, db });
-    const clientConfig    = createClientConfig(db);
-    const picking         = createPicking({ db, store, clientConfig });
-    const orderApproval   = createOrderApproval(db, clientConfig);
-    const bomApproval     = createBOMApproval(db);
-    const clientAnalytics = createClientAnalytics(db);
-    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval, clientAnalytics });
+    const inventory         = createInventory(db);
+    const fulfillment       = createFulfillment({ store, creds, inventory, db });
+    const clientConfig      = createClientConfig(db);
+    const picking           = createPicking({ db, store, clientConfig });
+    const virtualFulfillment = createVirtualFulfillment(db, clientConfig);
+    const orderApproval     = createOrderApproval(db, clientConfig, virtualFulfillment);
+    const bomApproval       = createBOMApproval(db);
+    const clientAnalytics   = createClientAnalytics(db);
+    tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking, clientConfig, orderApproval, bomApproval, clientAnalytics, virtualFulfillment });
   }
   return tenantCtx.get(tenantId);
 }
@@ -2316,6 +2318,94 @@ app.get('/api/client/analytics/channel-performance', withClientAuth, (req, res) 
     channels,
     period: { days: parseInt(days) }
   });
+});
+
+// ── Virtual Item Fulfillment ──────────────────────────────────────────────────
+
+app.get('/api/client/virtual-items/pending', withClientAuth, (req, res) => {
+  const { status = 'pending', limit = 50, offset = 0 } = req.query;
+
+  try {
+    const items = req.ctx.virtualFulfillment.getClientPendingVirtualItems(req.clientId, {
+      status,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.json({
+      items,
+      count: items.length
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/client/orders/with-virtual-items', withClientAuth, (req, res) => {
+  const { limit = 50, offset = 0 } = req.query;
+
+  try {
+    const orders = req.ctx.virtualFulfillment.getClientOrdersWithVirtualItems(req.clientId, {
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.json({
+      orders,
+      count: orders.length
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/client/dashboard-summary', withClientAuth, (req, res) => {
+  try {
+    const summary = req.ctx.virtualFulfillment.getClientDashboardSummary(req.clientId);
+    res.json(summary);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/client/virtual-items/:fulfillmentId/status', withClientAuth, (req, res) => {
+  const { fulfillmentId } = req.params;
+  const { status, qtyFulfilled, notes } = req.body || {};
+
+  try {
+    if (!status) return res.status(400).json({ error: 'status is required' });
+    if (!['pending', 'in_progress', 'fulfilled', 'failed'].includes(status)) {
+      return res.status(400).json({ error: 'status must be one of: pending, in_progress, fulfilled, failed' });
+    }
+
+    const result = req.ctx.virtualFulfillment.updateVirtualItemFulfillment(fulfillmentId, {
+      status,
+      qtyFulfilled: qtyFulfilled !== undefined ? parseInt(qtyFulfilled) : undefined,
+      notes
+    });
+
+    res.json({
+      ok: true,
+      fulfillment: result
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/client/orders/:orderId/virtual-items/fulfill-all', withClientAuth, (req, res) => {
+  const { orderId } = req.params;
+  const { notes = '' } = req.body || {};
+
+  try {
+    const result = req.ctx.virtualFulfillment.fulfillAllOrderItems(orderId, req.clientId, notes);
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ── API key ingest endpoint ───────────────────────────────────────────────────
