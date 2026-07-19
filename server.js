@@ -78,7 +78,8 @@ const createClientConfig = require('./lib/client-config');
 
 // ── Presentation seed ─────────────────────────────────────────────────────────
 // Always seed fresh demo orders on startup so the dashboard looks right.
-require('./seed_idealscan.js');
+// Temporarily disabled - FK constraint issue to fix
+// require('./seed_idealscan.js');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 

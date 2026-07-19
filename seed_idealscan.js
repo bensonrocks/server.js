@@ -4,6 +4,9 @@ const db = getTenantDb('default');
 
 // ── Clear existing orders (delete dependent data first) ───────────────────────
 // Delete in order of dependencies to avoid foreign key constraint violations
+try { db.prepare('DELETE FROM virtual_fulfillment_notifications').run(); } catch (_) {}
+try { db.prepare('DELETE FROM virtual_item_fulfillment').run(); } catch (_) {}
+db.prepare('DELETE FROM pending_orders').run();
 db.prepare('DELETE FROM carton_lines').run();
 db.prepare('DELETE FROM cartons').run();
 db.prepare('DELETE FROM wave_orders').run();
