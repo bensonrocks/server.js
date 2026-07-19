@@ -67,6 +67,14 @@ a:hover{text-decoration:underline}
 .nav-li:hover{background:#1e293b;color:#e2e8f0}
 .nav-li.on{background:#1d4ed8;color:#fff;font-weight:600}
 .nav-li.on .nbadge{background:rgba(255,255,255,.2);color:#fff}
+.nav-li-parent{display:flex;align-items:center;justify-content:space-between}
+.nav-li-arrow{transition:transform .2s;font-size:11px;flex-shrink:0}
+.nav-li-arrow.expanded{transform:rotate(180deg)}
+.nav-sub{display:none;flex-direction:column;gap:2px;padding-left:20px;margin-top:2px}
+.nav-sub.expanded{display:flex}
+.nav-li-sub{display:flex;align-items:center;gap:6px;padding:5px 10px;margin:0 5px;border-radius:6px;cursor:pointer;color:#64748b;font-size:12px;transition:background .12s;white-space:nowrap}
+.nav-li-sub:hover{background:#1e293b;color:#cbd5e1}
+.nav-li-sub.on{background:#1d4ed8;color:#fff;font-weight:600}
 .nav-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nbadge{font-size:11px;font-weight:600;background:rgba(255,255,255,.1);color:#94a3b8;padding:1px 6px;border-radius:10px}
 .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
@@ -836,12 +844,22 @@ a:hover{text-decoration:underline}
 
       <div class="sb-label" style="margin-top:12px">ORDER MANAGEMENT</div>
       <ul>
-        <li class="nav-li" id="nav-b2c-orders" onclick="switchPage('b2c-orders')">
-          <span>🛍️</span><span class="nav-name">B2C Orders</span><span id="b2c-badge" class="nbadge" style="display:none"></span>
+        <li class="nav-li" onclick="toggleSubmenu('order-mgmt')">
+          <div class="nav-li-parent">
+            <div style="display:flex;align-items:center;gap:6px;flex:1">
+              <span>📦</span><span class="nav-name">Orders</span>
+            </div>
+            <span class="nav-li-arrow" id="order-mgmt-arrow">▼</span>
+          </div>
         </li>
-        <li class="nav-li" id="nav-b2b-orders" onclick="switchPage('b2b-orders')">
-          <span>📦</span><span class="nav-name">B2B Orders (PO)</span><span id="b2b-badge" class="nbadge" style="display:none"></span>
-        </li>
+        <ul class="nav-sub" id="order-mgmt">
+          <li class="nav-li-sub" onclick="switchPage('b2c-orders')">
+            <span>🛍️</span><span>B2C Orders</span><span id="b2c-badge" class="nbadge" style="display:none"></span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('b2b-orders')">
+            <span>📋</span><span>B2B Orders (PO)</span><span id="b2b-badge" class="nbadge" style="display:none"></span>
+          </li>
+        </ul>
         <li class="nav-li" id="nav-client-dash" onclick="switchPage('client-dash')">
           <span>📋</span><span class="nav-name" data-i18n="navClientDash">Client Report</span>
         </li>
@@ -849,18 +867,54 @@ a:hover{text-decoration:underline}
 
       <div class="sb-label" style="margin-top:12px">FULFILLMENT</div>
       <ul>
-        <li class="nav-li" id="nav-fulfillment" onclick="switchPage('fulfillment')">
-          <span>📦</span><span class="nav-name" data-i18n="navFulfillment">Wave Management</span>
+        <li class="nav-li" onclick="toggleSubmenu('fulfillment')">
+          <div class="nav-li-parent">
+            <div style="display:flex;align-items:center;gap:6px;flex:1">
+              <span>📦</span><span class="nav-name">Fulfillment Ops</span>
+            </div>
+            <span class="nav-li-arrow" id="fulfillment-arrow">▼</span>
+          </div>
         </li>
-        <li class="nav-li" id="nav-packing" onclick="switchPage('packing')">
-          <span>📮</span><span class="nav-name">Packing Station</span><span id="packing-badge" class="nbadge" style="display:none;background:#1d4ed8"></span>
+        <ul class="nav-sub" id="fulfillment">
+          <li class="nav-li-sub" onclick="switchPage('fulfillment')">
+            <span>🌊</span><span>Wave Management</span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('packing')">
+            <span>📮</span><span>Packing Station</span><span id="packing-badge" class="nbadge" style="display:none;background:#1d4ed8"></span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('scan')">
+            <span>📸</span><span>IDEALSCAN</span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('staging')">
+            <span>📍</span><span>Staging Area</span><span id="staging-badge" class="nbadge" style="display:none"></span>
+          </li>
+        </ul>
+      </ul>
+
+      <div class="sb-label" style="margin-top:12px">TRANSPORT & DELIVERY</div>
+      <ul>
+        <li class="nav-li" onclick="toggleSubmenu('transport')">
+          <div class="nav-li-parent">
+            <div style="display:flex;align-items:center;gap:6px;flex:1">
+              <span>🚚</span><span class="nav-name">Transport Mgmt</span>
+            </div>
+            <span class="nav-li-arrow" id="transport-arrow">▼</span>
+          </div>
         </li>
-        <li class="nav-li" id="nav-scan" onclick="switchPage('scan')">
-          <span>📸</span><span class="nav-name" data-i18n="navScan">IDEALSCAN</span>
-        </li>
-        <li class="nav-li" id="nav-staging" onclick="switchPage('staging')">
-          <span>📍</span><span class="nav-name">Staging Area</span><span id="staging-badge" class="nbadge" style="display:none"></span>
-        </li>
+        <ul class="nav-sub" id="transport">
+          <li class="nav-li-sub" onclick="alert('Address Book - Coming Soon')">
+            <span>📍</span><span>Address Book</span>
+          </li>
+          <li class="nav-li-sub" onclick="alert('Delivery Jobs - Coming Soon')">
+            <span>📦</span><span>Delivery Jobs</span>
+          </li>
+          <li class="nav-li-sub" onclick="alert('Routes & Planning - Coming Soon')">
+            <span>🗺️</span><span>Routes</span>
+          </li>
+          <li class="nav-li-sub" onclick="alert('Delivery History - Coming Soon')">
+            <span>📋</span><span>History</span>
+          </li>
+        </ul>
       </ul>
 
       <div class="sb-label" style="margin-top:12px">INVENTORY & ANALYTICS</div>
@@ -872,23 +926,33 @@ a:hover{text-decoration:underline}
 
       <div class="sb-label" style="margin-top:12px">ADMINISTRATION</div>
       <ul>
-        <li class="nav-li" id="nav-connections" onclick="switchPage('connections')">
-          <span>🔗</span><span class="nav-name" data-i18n="navConnections">Connections</span>
+        <li class="nav-li" onclick="toggleSubmenu('admin-ops')">
+          <div class="nav-li-parent">
+            <div style="display:flex;align-items:center;gap:6px;flex:1">
+              <span>⚙️</span><span class="nav-name">Settings</span>
+            </div>
+            <span class="nav-li-arrow" id="admin-ops-arrow">▼</span>
+          </div>
         </li>
-        <li class="nav-li" id="nav-synclog" onclick="switchPage('synclog')">
-          <span>🔄</span><span class="nav-name" data-i18n="navSynclog">Sync Log</span>
-        </li>
-        <li class="nav-li" id="nav-admin" onclick="switchPage('admin')">
-          <span>⚙️</span><span class="nav-name" data-i18n="navAdmin">Administrator</span>
-        </li>
-        <li class="nav-li" id="nav-client-profile" onclick="switchPage('client-profile')">
-          <span>👥</span><span class="nav-name">Client Profiles</span>
-        </li>
+        <ul class="nav-sub" id="admin-ops">
+          <li class="nav-li-sub" onclick="switchPage('connections')">
+            <span>🔗</span><span>Connections</span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('synclog')">
+            <span>🔄</span><span>Sync Log</span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('admin')">
+            <span>🎛️</span><span>System Admin</span>
+          </li>
+          <li class="nav-li-sub" onclick="switchPage('client-profile')">
+            <span>👥</span><span>Client Profiles</span>
+          </li>
+        </ul>
         <li class="nav-li" onclick="window.open('/tutorial.html','_blank')">
           <span>📖</span><span class="nav-name" data-i18n="navTutorial">User Guide</span>
         </li>
         <li class="nav-li" onclick="window.open('/about.html','_blank')">
-          <span>&#127760;</span><span class="nav-name" data-i18n="navAbout">About IdealOne OMS</span>
+          <span>ℹ️</span><span class="nav-name" data-i18n="navAbout">About</span>
         </li>
       </ul>
       <div class="sb-label" style="margin-top:8px">Clients</div>
@@ -3104,6 +3168,16 @@ function buildWaybillHTML(o){
 </div>
 <p class="no-print"><a href="javascript:window.print()" style="color:#2563eb;font-weight:600">&#128438; Click here to print</a></p>
 </body></html>`;
+}
+
+// ── SIDEBAR NAVIGATION ────────────────────────────────────────────────────────
+function toggleSubmenu(id){
+  const submenu=$(id);
+  const arrow=$(id+'-arrow');
+  if(submenu){
+    submenu.classList.toggle('expanded');
+    if(arrow)arrow.classList.toggle('expanded');
+  }
 }
 
 // ── PAGE ROUTING ──────────────────────────────────────────────────────────────
