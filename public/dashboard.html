@@ -46,8 +46,10 @@
     .perf-tile{padding:12px 12px}
     .ptv{font-size:1.25rem}
     .signal-banner{padding:14px 14px}
+    .signal-label{font-size:1.2rem}
     .signal-levels{grid-template-columns:repeat(3,1fr)}
-    .card-head{padding:12px 14px 10px}
+    .card-head{padding:12px 14px 10px;overflow:hidden}
+    .price{font-size:1.65rem}
     .section{padding:10px 14px}
     .ladder-wrap{padding:12px 14px}
   }
@@ -62,9 +64,10 @@
   .dot.ok{background:var(--bull)}.dot.err{background:var(--bear)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)}
-  @media(max-width:800px){.grid{grid-template-columns:1fr}}
-  .card{background:var(--surface)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);min-height:320px}
+  @media(max-width:800px){.grid{grid-template-columns:1fr;min-height:520px}}
+  .card{background:var(--surface);overflow:hidden}
+  #perf-tiles:empty{min-height:78px}
 
   /* ── SIGNAL BANNER ── */
   .signal-banner{padding:18px 20px;border-bottom:1px solid var(--border);position:relative;overflow:hidden}
@@ -88,6 +91,7 @@
   .sl-cell{display:flex;flex-direction:column}
   .sl-key{font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-family:var(--mono);margin-bottom:1px}
   .sl-val{font-family:var(--mono);font-size:.96rem;font-variant-numeric:tabular-nums;font-weight:bold}
+  .sl-rr{font-family:var(--mono);font-size:.6rem;color:var(--text-3);letter-spacing:.04em;line-height:1.4}
   .sl-val.entry{color:var(--entry)}
   .sl-val.sl   {color:var(--bear)}
   .sl-val.tp   {color:var(--bull)}
@@ -330,7 +334,6 @@
 // Auth guard — server handles the real check, this is a fast UX redirect
 fetch('/api/auth/me').then(r=>r.json()).then(d=>{
   if(!d.user) location.href='/login';
-  else if(d.user.subscriptionStatus!=='active') location.href='/signup?reason=payment';
   else {
     const n=document.getElementById('user-name');
     if(n) n.textContent = d.user.isAdmin ? 'STAFF' : d.user.name.split(' ')[0];
@@ -428,9 +431,9 @@ function buildSignalBanner(d) {
     <div class="signal-levels">
       <div class="sl-cell"><span class="sl-key">Entry</span><span class="sl-val entry">${fmt(tp.entry)}</span></div>
       <div class="sl-cell"><span class="sl-key">Stop Loss</span><span class="sl-val sl">${fmt(tp.stopLoss)}</span></div>
-      <div class="sl-cell"><span class="sl-key">TP 1</span><span class="sl-val tp">${fmt(tp.takeProfits[0].price)} <small style="color:var(--text-3)">${fmt(tp.takeProfits[0].riskReward)}R</small></span></div>
-      <div class="sl-cell"><span class="sl-key">TP 2</span><span class="sl-val tp">${fmt(tp.takeProfits[1].price)} <small style="color:var(--text-3)">${fmt(tp.takeProfits[1].riskReward)}R</small></span></div>
-      <div class="sl-cell"><span class="sl-key">TP 3</span><span class="sl-val tp">${fmt(tp.takeProfits[2].price)} <small style="color:var(--text-3)">${fmt(tp.takeProfits[2].riskReward)}R</small></span></div>
+      <div class="sl-cell"><span class="sl-key">TP 1</span><span class="sl-val tp">${fmt(tp.takeProfits[0].price)}</span><span class="sl-rr">${fmt(tp.takeProfits[0].riskReward)}R</span></div>
+      <div class="sl-cell"><span class="sl-key">TP 2</span><span class="sl-val tp">${fmt(tp.takeProfits[1].price)}</span><span class="sl-rr">${fmt(tp.takeProfits[1].riskReward)}R</span></div>
+      <div class="sl-cell"><span class="sl-key">TP 3</span><span class="sl-val tp">${fmt(tp.takeProfits[2].price)}</span><span class="sl-rr">${fmt(tp.takeProfits[2].riskReward)}R</span></div>
     </div>` : `<div class="signal-levels"><div class="sl-cell"><span class="sl-key">Signal</span><span class="sl-val wait">No active setup</span></div></div>`}
     ${sig.note ? `<div class="signal-note">${sig.note}</div>` : ''}
   </div>`;
@@ -604,7 +607,6 @@ function renderHistory(sigs) {
 
 async function refresh(){
   setStatus('loading','Fetching live analysis…');
-  document.getElementById('grid').innerHTML='';
   try{
     const res=await fetch('/api/analysis');
     const json=await res.json();
@@ -635,8 +637,10 @@ function renderMt(data) {
     return;
   }
 
-  if (wrap.style.display !== 'block') wrap.style.display = 'block';
   const online = data.connected;
+  const targetDisplay = online ? 'block' : 'none';
+  if (wrap.style.display !== targetDisplay) wrap.style.display = targetDisplay;
+  if (!online) return;
   if (_mtOnline !== online) {
     _mtOnline = online;
     badge.className = 'mt-badge ' + (online ? 'online' : 'offline');
