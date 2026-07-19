@@ -8,7 +8,7 @@
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -53,8 +53,27 @@
     </div>
   </header>
 
+  <div class="app-shell">
+  <nav class="side-rail" aria-label="Dashboard sections">
+    <a href="#panel-overview" class="rail-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
+      <span>Overview</span>
+    </a>
+    <a href="#panel-map" class="rail-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="7"/><path d="M12 21c3-3.5 5-6.3 5-9.5"/><path d="M12 21c-3-3.5-5-6.3-5-9.5"/><circle cx="12" cy="10" r="2.2"/></svg>
+      <span>Map</span>
+    </a>
+    <a href="#panel-orders" class="rail-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+      <span>Orders</span>
+    </a>
+    <a href="#panel-inventory" class="rail-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>
+      <span>Inventory</span>
+    </a>
+  </nav>
   <main class="app-main">
-    <div class="app-toolbar">
+    <div class="app-toolbar" id="panel-overview">
       <div>
         <p class="eyebrow">Operations Dashboard</p>
         <h2>June order flow across your markets</h2>
@@ -91,7 +110,7 @@
     </section>
 
     <!-- World map -->
-    <section class="panel">
+    <section class="panel" id="panel-map">
       <div class="panel-head">
         <h3>Order status by market</h3>
         <div class="legend">
@@ -108,7 +127,7 @@
     </section>
 
     <!-- Orders table -->
-    <section class="panel">
+    <section class="panel" id="panel-orders">
       <div class="panel-head">
         <h3>Orders — quick reference</h3>
         <div class="table-controls">
@@ -144,7 +163,7 @@
     </section>
 
     <!-- Inventory -->
-    <section class="panel">
+    <section class="panel" id="panel-inventory">
       <div class="panel-head">
         <h3>Inventory balance by location</h3>
         <p class="panel-sub">Set a replenishment threshold — locations below it are flagged automatically.</p>
@@ -154,6 +173,7 @@
       </div>
     </section>
   </main>
+  </div>
 </div>
 
 <!-- ---------- Drop order modal ---------- -->
