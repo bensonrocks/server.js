@@ -123,7 +123,7 @@ function getCtx(tenantId) {
     const creds      = createCreds(tenantId);
     const syncLog    = createSyncLog(db);
     const inventory   = createInventory(db);
-    const fulfillment = createFulfillment({ store, creds, inventory });
+    const fulfillment = createFulfillment({ store, creds, inventory, db });
     const picking     = createPicking({ db, store });
     tenantCtx.set(tenantId, { db, store, creds, syncLog, inventory, fulfillment, picking });
   }
@@ -2114,6 +2114,49 @@ app.patch('/api/orders/:id/status', withTenant, async (req, res) => {
     const order = req.store.updateStatusAndSource(req.params.id, status, { manuallySetAt: new Date().toISOString() });
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Request order cancellation (requires approval before taking effect)
+app.post('/api/orders/:id/cancel-request', withTenant, async (req, res) => {
+  try {
+    const { reason = '' } = req.body || {};
+    const requestedBy = req.body?.requestedBy || 'user';
+    const result = await req.ctx.fulfillment.requestCancellation(req.params.id, reason, requestedBy);
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Get pending cancellation requests
+app.get('/api/cancellations/pending', withTenant, (req, res) => {
+  try {
+    const pending = req.db.prepare(`
+      SELECT cr.*, o.client_name, o.status as order_status
+      FROM cancellation_requests cr
+      JOIN orders o ON cr.order_id = o.id
+      WHERE cr.status = 'pending'
+      ORDER BY cr.requested_at DESC
+    `).all();
+    res.json(pending);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Approve cancellation request
+app.post('/api/cancellations/:requestId/approve', withTenant, async (req, res) => {
+  try {
+    const approvedBy = req.body?.approvedBy || 'admin';
+    const result = await req.ctx.fulfillment.approveCancellation(req.params.requestId, approvedBy);
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// Reject cancellation request
+app.post('/api/cancellations/:requestId/reject', withTenant, async (req, res) => {
+  try {
+    const { reason = '' } = req.body || {};
+    const rejectedBy = req.body?.rejectedBy || 'admin';
+    const result = await req.ctx.fulfillment.rejectCancellation(req.params.requestId, reason, rejectedBy);
+    res.json(result);
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
