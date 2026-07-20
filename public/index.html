@@ -1999,6 +1999,10 @@
               <input type="number" id="driverCapacityM3Input" placeholder="e.g. 6.5" min="0" step="0.1" />
             </div>
           </div>
+          <div class="form-group">
+            <label>Driver App PIN <span id="driverPinHint" class="hint" style="font-weight:400"></span></label>
+            <input type="text" id="driverPinInput" inputmode="numeric" placeholder="4-8 digits — leave blank to keep current" autocomplete="off" />
+          </div>
           <div style="display:flex;gap:0.6rem">
             <button class="btn-secondary" id="addEditDriverCancelBtn">Cancel</button>
             <button class="btn-primary" id="addEditDriverSaveBtn" style="flex:1">Save Driver</button>

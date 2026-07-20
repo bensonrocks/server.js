@@ -4432,7 +4432,7 @@
         <td>${esc(d.vehicle)}</td>
         <td>${d.plate ? `<code>${esc(d.plate)}</code>` : '—'}</td>
         <td>${[d.capacity ? d.capacity + ' kg' : '', d.capacityM3 ? d.capacityM3 + ' m³' : ''].filter(Boolean).join(' / ') || '—'}</td>
-        <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span></td>
+        <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span> ${d.hasPin ? '<span title="Can log into the Driver App" style="margin-left:.3rem">&#128241;</span>' : ''}</td>
         <td style="text-align:center"><strong>${jobsForDriver(d.id).filter(j => j.status !== 'delivered').length}</strong></td>
         <td>
           <button class="btn-scan-now btn-sm" data-driver-edit="${esc(d.id)}" style="margin-right:0.3rem">Edit</button>
@@ -4461,6 +4461,8 @@
     document.getElementById('driverPlateInput').value = '';
     document.getElementById('driverCapacityInput').value = '';
     document.getElementById('driverCapacityM3Input').value = '';
+    document.getElementById('driverPinInput').value = '';
+    document.getElementById('driverPinHint').textContent = '(sets the Driver App login PIN)';
     document.getElementById('addEditDriverModal').classList.remove('hidden');
   });
 
@@ -4475,6 +4477,8 @@
     document.getElementById('driverPlateInput').value = driver.plate || '';
     document.getElementById('driverCapacityInput').value = driver.capacity || '';
     document.getElementById('driverCapacityM3Input').value = driver.capacityM3 || '';
+    document.getElementById('driverPinInput').value = '';
+    document.getElementById('driverPinHint').textContent = driver.hasPin ? '(PIN is set — leave blank to keep it)' : '(no PIN set — driver cannot log into the Driver App yet)';
     document.getElementById('addEditDriverModal').classList.remove('hidden');
   }
 
@@ -4498,9 +4502,14 @@
     const plate = document.getElementById('driverPlateInput').value.trim().toUpperCase();
     const capacity = parseInt(document.getElementById('driverCapacityInput').value) || 0;
     const capacityM3 = parseFloat(document.getElementById('driverCapacityM3Input').value) || 0;
+    const pin = document.getElementById('driverPinInput').value.trim();
 
     if (!name) {
       alert('Please enter driver name');
+      return;
+    }
+    if (pin && !/^\d{4,8}$/.test(pin)) {
+      alert('PIN must be 4-8 digits');
       return;
     }
 
@@ -4508,7 +4517,7 @@
       const resp = await fetch('/api/drivers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
-        body: JSON.stringify({ id: editingDriverId || undefined, name, phone, vehicle, plate, capacity, capacityM3 }),
+        body: JSON.stringify({ id: editingDriverId || undefined, name, phone, vehicle, plate, capacity, capacityM3, pin: pin || undefined }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Save failed');

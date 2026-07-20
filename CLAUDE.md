@@ -784,6 +784,79 @@ breaking the default.
     everywhere. Any FUTURE `logAudit()` call anywhere in this file must
     avoid a bare `type` key in its data object for the same reason.
 
+## Driver App — real mobile PWA at /driver (public/driver.html + driver.js)
+
+Replaces an entire non-functional predecessor: the old `/api/driver/*`
+endpoints authenticated against `users[role==='driver']`, a store NOTHING
+could ever create a record in (the user-creation form only offers
+admin/warehouse) — and even a manually-inserted one would never match
+`transport.assignedDriver`, which the route planner populates from
+`db.drivers[]` ids, a COMPLETELY SEPARATE store. So no job could ever have
+appeared for a logged-in driver; the feature was dead on arrival. The old
+`public/driver.html` also had a live Google Maps API key hardcoded directly
+in a `<script>` tag — publicly readable via view-source on a deployed page.
+Both are fixed:
+
+- **One driver identity.** `db.drivers[]` (already the Transport route
+  planner's roster, `/api/drivers`) gains an optional PIN:
+  `pinHash`/`pinSalt` (hashed like any password), set via a new "Driver App
+  PIN" field on the existing Transport → Driver Details add/edit form
+  (blank on edit = keep current, same rule as every other secret field in
+  this app). `GET /api/drivers` never returns the hash — `hasPin: true/false`
+  only; the driver list row shows a 📱 badge when a driver can log in.
+- **Real sessions, not a parallel auth scheme.** `POST /api/driver/login`
+  `{id, pin}` verifies against `db.drivers`, then issues a token through
+  the SAME `activeSessions` map every other login uses — namespaced
+  `driver:<id>` so it can never collide with an admin/warehouse user id.
+  One active device per driver (a new login replaces the old session,
+  same rule as `/api/auth/login`). `requireDriverAuth()` in server.js does
+  the token→driver lookup for the other endpoints — the `/api/driver/`
+  path prefix is exempt from the global `requireAuth` middleware (so login
+  itself doesn't loop), and each handler checks its own token instead.
+- **Jobs come straight from `db.transport`** — no separate job store.
+  `GET /api/driver/jobs` filters to `assignedDriver === <this driver>` and
+  `status !== 'cancelled'`, keeps today's delivered stops visible for
+  reference, sorts by `routeNum`/`stopSeq` (the planner's route order), and
+  returns the SAME status wording/colors as the office UI
+  (`driverStatusLabel()` mirrors `tmsStatusLabel()` in app.js — Staging/
+  On the road/Delivered/Delivered w/ Remarks — keep both in sync if the
+  lifecycle ever changes).
+- **Two actions, ownership-checked server-side** (a driver can only move
+  their OWN assigned jobs — 403 otherwise): `POST
+  /api/driver/jobs/:id/pickup` (confirmed→in-transit, mirrors the office
+  map popup's "Picked Up" button) and `POST /api/driver/jobs/:id/deliver`
+  `{remarks}` (→delivered; non-empty remarks = "Delivered w/ Remarks", same
+  rule as office Mark Delivered). Both refuse to regress an already-
+  delivered/cancelled job.
+- **No embedded map.** `driver.html` has no map SDK at all — the detail
+  sheet's "Navigate" button is a plain `https://www.google.com/maps/
+  search/?api=1&query=` deep link (opens the phone's own installed maps
+  app; needs no API key and is not a "keyed map service" in the sense the
+  no-Google-Maps rule means) and "Call Consignee" is a `tel:` link.
+- **Portable**: the feature is three self-contained pieces — the
+  `db.drivers` PIN field + `/api/driver/*` block in server.js, and
+  `public/driver.html`/`driver.js` — touching nothing else. Any branch
+  already carrying the Transport/route-planner feature (which owns
+  `db.transport`/`db.drivers`) can take this as a clean, isolated diff; see
+  the `/upgrade-pack` skill.
+- **Known pre-existing, NOT touched**: `/api/master/drivers*` (Administrator
+  → Drivers tab backend) and the TMS Management → Drivers section are a
+  SEPARATE, older driver store (`users[role==='driver']`) disconnected from
+  `db.drivers` — drivers created there are invisible to route planning and
+  now to the Driver App too. Left alone deliberately (out of scope for this
+  fix); flagged here so a future cleanup unifies all driver management onto
+  `db.drivers`/`/api/drivers` rather than rediscovering this split from
+  scratch.
+
+Verified end-to-end (Playwright + curl): PIN-not-set login blocked with a
+clear message; wrong PIN rejected; correct PIN issues a session; job
+assigned+confirmed via the real `/api/transport/:id/update` API appears in
+the driver's list with matching status wording; Picked Up moves it to
+in-transit; Deliver-with-remarks closes it out as "Delivered w/ Remarks"
+and blocks a second delivery attempt; a second driver gets a 403 trying to
+touch the first driver's job; session survives a page reload; logout
+returns to the PIN screen. No Google Maps key anywhere in `public/`.
+
 ## PWA install — iOS has no prompt; the app guides instead (installHintBar)
 
 The PWA plumbing (manifest.json, /icons/*, apple-touch-icon + apple-mobile
