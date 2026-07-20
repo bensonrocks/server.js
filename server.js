@@ -5194,6 +5194,27 @@ app.delete('/api/drivers/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// Portable roster export — the full db.drivers list as an Excel sheet, e.g.
+// to hand off to (or import into) another system such as IDEALOMS. Secrets
+// (pinHash/pinSalt) are NEVER included — only whether a PIN is set.
+app.get('/api/drivers/export', (req, res) => {
+  const db = readDb();
+  const rows = (db.drivers || []).map(d => [
+    d.id, d.name || '', d.phone || '', d.vehicle || '', d.plate || '',
+    d.capacity || 0, d.capacityM3 || 0, d.status || 'active', d.pinHash ? 'Yes' : 'No',
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Driver ID', 'Name', 'Phone', 'Vehicle', 'Plate', 'Capacity (kg)', 'Capacity (m3)', 'Status', 'Driver App PIN Set'],
+    ...rows,
+  ]), 'Drivers');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="IDEALONE_Drivers_${sgDateStr()}.xlsx"`);
+  logAudit('driver_roster_exported', { count: rows.length, by: req.userId || '' });
+  res.send(buf);
+});
+
 // ── Address Book endpoints — maintain the store→address cross-reference ─────
 app.get('/api/address-book', (req, res) => {
   const db = readDb();
@@ -8373,111 +8394,10 @@ app.post('/api/driver/jobs/:id/deliver', express.json(), (req, res) => {
   res.json({ ok: true, job });
 });
 
-// GET /api/master/drivers — List all drivers (admin only)
-app.get('/api/master/drivers', (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const users = readUsers();
-  const drivers = users.filter(u => u.role === 'driver').map(d => ({
-    id: d.id,
-    name: d.name || d.id,
-    phone: d.phone || '',
-    vehicle: d.vehicle || '',
-    capacity: d.capacity || 0,
-    createdAt: d.createdAt
-  }));
-  res.json(drivers);
-});
-
-// POST /api/master/drivers — Create new driver (admin only)
-app.post('/api/master/drivers', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { id, name, pin, phone, vehicle, capacity } = req.body;
-
-  if (!id || !pin) {
-    return res.status(400).json({ error: 'Driver ID and PIN required' });
-  }
-
-  if (pin.length < 4) {
-    return res.status(400).json({ error: 'PIN must be at least 4 characters' });
-  }
-
-  const users = readUsers();
-  if (users.find(u => u.id.toLowerCase() === id.toLowerCase())) {
-    return res.status(409).json({ error: 'Driver ID already exists' });
-  }
-
-  // Create driver user
-  const salt = crypto.randomBytes(16).toString('hex');
-  const newDriver = {
-    id,
-    name: name || id,
-    role: 'driver',
-    phone: phone || '',
-    vehicle: vehicle || 'Van',
-    capacity: capacity || 1000,
-    salt,
-    passwordHash: hashPass(pin, salt),
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(newDriver);
-  writeUsers(users);
-
-  logAudit('driver_created', { driver: id, name: name || id });
-  res.json({ ...newDriver, pin: 'hidden' });
-});
-
-// DELETE /api/master/drivers/:id — Delete driver (admin only)
-app.delete('/api/master/drivers/:id', (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { id } = req.params;
-  const users = readUsers();
-  const driver = users.find(u => u.id === id && u.role === 'driver');
-
-  if (!driver) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
-
-  const filtered = users.filter(u => u.id !== id);
-  writeUsers(filtered);
-
-  logAudit('driver_deleted', { driver: id });
-  res.json({ success: true, message: `Driver ${id} deleted` });
-});
-
-// PUT /api/master/drivers/:id — Update driver (admin only)
-app.put('/api/master/drivers/:id', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { id } = req.params;
-  const { name, phone, vehicle, capacity, pin } = req.body;
-
-  const users = readUsers();
-  const driverIdx = users.findIndex(u => u.id === id && u.role === 'driver');
-
-  if (driverIdx === -1) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
-
-  const driver = users[driverIdx];
-  if (name) driver.name = name;
-  if (phone) driver.phone = phone;
-  if (vehicle) driver.vehicle = vehicle;
-  if (capacity !== undefined) driver.capacity = capacity;
-
-  // Update PIN if provided
-  if (pin) {
-    if (pin.length < 4) {
-      return res.status(400).json({ error: 'PIN must be at least 4 characters' });
-    }
-    const salt = crypto.randomBytes(16).toString('hex');
-    driver.salt = salt;
-    driver.passwordHash = hashPass(pin, salt);
-  }
-
-  writeUsers(users);
-  logAudit('driver_updated', { driver: id });
-  res.json(driver);
-});
+// NOTE: the old /api/master/drivers* CRUD (a separate users[role=='driver']
+// store, disconnected from db.drivers/route planning) was removed here —
+// Administrator → Drivers now reads/writes the same /api/drivers roster as
+// Transport → Driver Details and the Driver App. See CLAUDE.md "Driver App".
 
 // GET /driver — Serve the driver portal
 app.get('/driver', (req, res) => {

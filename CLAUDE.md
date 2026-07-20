@@ -839,14 +839,32 @@ Both are fixed:
   already carrying the Transport/route-planner feature (which owns
   `db.transport`/`db.drivers`) can take this as a clean, isolated diff; see
   the `/upgrade-pack` skill.
-- **Known pre-existing, NOT touched**: `/api/master/drivers*` (Administrator
-  → Drivers tab backend) and the TMS Management → Drivers section are a
-  SEPARATE, older driver store (`users[role==='driver']`) disconnected from
-  `db.drivers` — drivers created there are invisible to route planning and
-  now to the Driver App too. Left alone deliberately (out of scope for this
-  fix); flagged here so a future cleanup unifies all driver management onto
-  `db.drivers`/`/api/drivers` rather than rediscovering this split from
-  scratch.
+- **Administrator → Drivers is now unified onto `db.drivers` too.** The old
+  Admin-only "Add Driver" form posted to `/api/master/drivers` — the
+  `users[role==='driver']` store above, now REMOVED entirely (nothing else
+  ever read it). The tab's "+ Add Driver" button opens the SAME shared
+  `#addEditDriverModal` Transport → Driver Details uses (triggered via
+  `transportAddDriverBtn.click()`); its list re-fetches `/api/drivers`
+  (`loadDrivers()`) and shows the 📱 hasPin badge. Any driver added from
+  Administrator can immediately log into the Driver App and gets picked up
+  by route planning — one identity, reachable from three places (Admin tab,
+  Transport → Driver Details, and now the same modal both share).
+  **Gotcha fixed along the way**: `#addEditDriverModal` used to be nested
+  INSIDE `#tab-transport` — invisible (ancestor `display:none`) whenever the
+  Administrator overlay was opened from any tab other than Transport, even
+  after its own `.hidden` class was removed. Moved to body level (like every
+  other global modal — `.modal-overlay`'s `z-index` already sits above the
+  Administrator overlay's) so "+ Add Driver" works from Administrator
+  regardless of which tab is active underneath.
+- **`GET /api/drivers/export`** — the full roster as an XLSX (Driver ID,
+  Name, Phone, Vehicle, Plate, both capacities, Status, "Driver App PIN
+  Set" Yes/No) for handing off to or importing into another system.
+  `pinHash`/`pinSalt` are NEVER included. Button lives next to "+ Add
+  Driver" in the Administrator tab.
+- **Still separate, NOT touched**: the TMS Management → Drivers section
+  (`tmsDriversList`/`tmsAddDriverBtn`) — a third driver-management surface
+  whose backend hasn't been audited; flagged here so a future pass folds it
+  into the same `/api/drivers` roster rather than rediscovering the split.
 
 Verified end-to-end (Playwright + curl): PIN-not-set login blocked with a
 clear message; wrong PIN rejected; correct PIN issues a session; job

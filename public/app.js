@@ -8146,12 +8146,19 @@
     setTimeout(() => el.classList.add('hidden'), 4000);
   }
 
-  // ── Driver Management ────────────────────────────────────────────────────────
+  // ── Driver Management (Administrator → Drivers) ─────────────────────────────
+  // Reads/writes the SAME db.drivers roster Transport → Driver Details and
+  // the Driver App use — there is only one driver identity in the system.
+  // The old Admin-only "Add Driver" form here used to post to
+  // /api/master/drivers (a separate users[role=='driver'] store nothing else
+  // ever read), so drivers created here were invisible to route planning and
+  // couldn't log into the Driver App. Now this tab just opens the same
+  // Add/Edit modal Transport uses, and lists the same /api/drivers data.
   async function loadDriverList() {
     const listEl = document.getElementById('driversList');
     try {
-      const resp = await fetch('/api/master/drivers', { headers: { 'x-master-key': LOG_PASSWORD } });
-      const drivers = await resp.json();
+      await loadDrivers(); // repopulates window.drivers from /api/drivers
+      const drivers = window.drivers || [];
       if (!drivers.length) {
         listEl.innerHTML = '<div class="empty-state">No drivers created yet.</div>';
         return;
@@ -8159,35 +8166,31 @@
       listEl.innerHTML = drivers.map(d => `
         <div class="driver-row" data-id="${esc(d.id)}">
           <div class="driver-info">
-            <span class="driver-name">${esc(d.name || d.id)}</span>
+            <span class="driver-name">${esc(d.name || d.id)} ${d.hasPin ? '<span title="Can log into the Driver App">&#128241;</span>' : ''}</span>
             <span class="driver-phone">${d.phone ? esc(d.phone) : '—'}</span>
-            <span class="driver-vehicle">${d.vehicle || '—'}</span>
-            <span class="driver-capacity">${d.capacity} kg</span>
-            <span class="driver-created">${new Date(d.createdAt).toLocaleDateString()}</span>
+            <span class="driver-vehicle">${esc(d.vehicle || '—')}${d.plate ? ' · ' + esc(d.plate) : ''}</span>
+            <span class="driver-capacity">${[d.capacity ? d.capacity + ' kg' : '', d.capacityM3 ? d.capacityM3 + ' m³' : ''].filter(Boolean).join(' / ') || '—'}</span>
           </div>
           <div class="driver-row-actions">
-            <button class="btn-edit-driver" data-id="${esc(d.id)}" title="Edit driver">&#9999;</button>
+            <button class="btn-edit-driver" data-id="${esc(d.id)}" title="Edit driver / set PIN">&#9999;</button>
             <button class="btn-del-driver" data-id="${esc(d.id)}" title="Delete driver">&#128465;</button>
           </div>
         </div>`).join('');
 
       listEl.querySelectorAll('.btn-edit-driver').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const driver = drivers.find(d => d.id === btn.dataset.id);
-          editDriver(driver);
-        });
+        btn.addEventListener('click', () => openEditDriver(btn.dataset.id));
       });
-
       listEl.querySelectorAll('.btn-del-driver').forEach(btn => {
         btn.addEventListener('click', async () => {
-          if (!confirm(`Delete driver "${btn.dataset.id}"? They will no longer be able to log in.`)) return;
-          const r = await fetch(`/api/master/drivers/${encodeURIComponent(btn.dataset.id)}`, {
-            method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD },
-          });
-          const d = await r.json();
-          if (!r.ok) { alert(d.error); return; }
-          showDriverStatus(`Driver "${btn.dataset.id}" deleted.`, 'success');
-          loadDriverList();
+          if (!confirm(`Delete driver "${btn.dataset.id}"? They will no longer be able to log in or be assigned jobs.`)) return;
+          try {
+            const r = await fetch(`/api/drivers/${encodeURIComponent(btn.dataset.id)}`, {
+              method: 'DELETE', headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' },
+            });
+            if (!r.ok) throw new Error((await r.json()).error || 'Delete failed');
+            showDriverStatus(`Driver "${btn.dataset.id}" deleted.`, 'success');
+            loadDriverList();
+          } catch (err) { showDriverStatus(err.message, 'error'); }
         });
       });
     } catch (err) {
@@ -8195,54 +8198,18 @@
     }
   }
 
-  function editDriver(driver) {
-    const newPin = prompt(`Enter new PIN for "${driver.id}" (leave blank to keep current):`);
-    if (newPin === null) return;
-    const payload = {};
-    if (newPin.trim()) payload.pin = newPin.trim();
-    if (Object.keys(payload).length === 0) {
-      alert('No changes made.');
-      return;
-    }
-    fetch(`/api/master/drivers/${encodeURIComponent(driver.id)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
-      body: JSON.stringify(payload),
-    }).then(r => r.json()).then(d => {
-      if (!d.id) { alert(d.error); return; }
-      showDriverStatus(`Driver "${driver.id}" updated.`, 'success');
-      loadDriverList();
-    }).catch(err => showDriverStatus(err.message, 'error'));
-  }
-
-  document.getElementById('addDriverBtn').addEventListener('click', async () => {
-    const id       = document.getElementById('newDriverId').value.trim();
-    const name     = document.getElementById('newDriverName').value.trim();
-    const pin      = document.getElementById('newDriverPin').value.trim();
-    const phone    = document.getElementById('newDriverPhone').value.trim();
-    const vehicle  = document.getElementById('newDriverVehicle').value.trim();
-    const capacity = parseInt(document.getElementById('newDriverCapacity').value) || 1000;
-
-    if (!id || !pin) { showDriverStatus('Driver ID and PIN are required.', 'error'); return; }
-    if (pin.length < 4) { showDriverStatus('PIN must be at least 4 characters.', 'error'); return; }
-
-    try {
-      const r = await fetch('/api/master/drivers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
-        body: JSON.stringify({ id, name, pin, phone, vehicle, capacity }),
-      });
-      const d = await r.json();
-      if (!r.ok) { showDriverStatus(d.error || 'Failed', 'error'); return; }
-      document.getElementById('newDriverId').value       = '';
-      document.getElementById('newDriverName').value     = '';
-      document.getElementById('newDriverPin').value      = '';
-      document.getElementById('newDriverPhone').value    = '';
-      document.getElementById('newDriverVehicle').value  = '';
-      document.getElementById('newDriverCapacity').value = '1000';
-      showDriverStatus(`Driver "${id}" added successfully.`, 'success');
-      loadDriverList();
-    } catch (err) { showDriverStatus(err.message, 'error'); }
+  // Opens the SAME Add/Edit Driver modal Transport → Driver Details uses
+  // (modal z-index already layers above the Administrator overlay).
+  document.getElementById('adminAddDriverBtn')?.addEventListener('click', () => {
+    document.getElementById('transportAddDriverBtn')?.click();
+  });
+  document.getElementById('adminExportDriversBtn')?.addEventListener('click', () =>
+    authDownload('/api/drivers/export', `IDEALONE_Drivers_${new Date().toISOString().slice(0,10)}.xlsx`));
+  // After a save/delete from that shared modal, keep the Administrator list
+  // in sync too (harmless no-op if this tab isn't the one currently open).
+  const _origAddEditDriverSave = document.getElementById('addEditDriverSaveBtn');
+  _origAddEditDriverSave?.addEventListener('click', () => {
+    setTimeout(() => { if (document.getElementById('driversList')) loadDriverList(); }, 400);
   });
 
   function showDriverStatus(msg, type) {
