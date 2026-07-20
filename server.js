@@ -1689,6 +1689,7 @@ function globalOrdersWithState() {
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
+        wave_id:           state.wave_id           || null,
         cartons:           state.cartons           || [],
         active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
       });
@@ -6040,6 +6041,11 @@ app.post('/api/waves/:id/complete', (req, res) => {
     const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
     state.scanned[sku] = (state.scanned[sku] || 0) + qty;
     if (state.status === 'pending') state.status = 'processing';
+    // Tags this order as wave-fulfilled — surfaced as a pill on the Orders
+    // list telling whoever's working the floor that the pieces are in, but
+    // THIS specific order still needs to be individually opened, its
+    // cartons verified, and Completed — a wave never does that part.
+    state.wave_id = wave.id;
     addToActiveCarton(state, sku, qty);
     appendScanLog(state, { kind: 'wave_pick', sku, qty, location: location || '', waveId: wave.id, by: req.userId || '' });
     batch.orderStates[orderNumber] = state;

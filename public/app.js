@@ -1813,6 +1813,7 @@
       // Chips under order number
       const cartonCount = (ord.cartons || []).length;
       const chips = [
+        (ord.wave_id && !isDone) ? `<span class="chip chip-wave-pending" title="Wave ${esc(ord.wave_id)} put the pieces in — this order still needs to be opened, cartons verified, and Completed individually">&#127754; Wave Picked — Needs Closing</span>` : '',
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',

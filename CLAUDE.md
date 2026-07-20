@@ -1611,6 +1611,20 @@ whenever the Active view has at least one selectable order, growing to show
   `focusWaybillInput()` so the packer lands straight back on that bar, and
   the post-complete confirmation explicitly tells them to scan each order's
   GI/waybill to open and complete it next.
+- **"WAVE PICKED — NEEDS CLOSING" PILL** — completing a wave stamps
+  `state.wave_id = wave.id` on every affected order's state (in the same
+  `/api/waves/:id/complete` callback that writes `scanned`), exposed as
+  `wave_id` on every order object from `globalOrdersWithState()` (the
+  function behind `/api/orders`). `renderOrdersList()` shows a blue
+  `🌊 Wave Picked — Needs Closing` chip (`.chip-wave-pending`) on any order
+  where `wave_id` is set and `scan_status !== 'done'` — a visible flag that
+  the pieces are in but THIS specific order still has to be individually
+  opened, verified, and Completed; a wave never does that part. The chip is
+  purely a status read of existing state, not a new gate — the actual
+  enforcement (wave completion never marks an order `done`) already existed
+  before this chip did. Once the order is Completed normally the chip
+  disappears (gated on `scan_status`), though `wave_id` itself is left on
+  the record afterward as harmless history.
 - **GROUPED BY LOCATION + SKU, not SKU alone** — a packer physically stands
   at one bin and picks everything from it, so `buildWavePickList` keys each
   pick-list entry on `(location, sku)`, not just `sku`. The SAME SKU stocked
