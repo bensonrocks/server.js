@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IDEALONE Driver — Delivery Management</title>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0ea5e9" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&libraries=marker,routes" defer></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; }
+    .driver-container { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── PIN Login Screen ── */
+    .pin-login-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 9999; padding: 2rem;
+    }
+    .pin-login-overlay.hidden { display: none; }
+    .pin-login-box {
+      background: white; border-radius: 12px; padding: 2rem; width: 100%; max-width: 320px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+    .pin-login-header {
+      text-align: center; margin-bottom: 2rem;
+    }
+    .pin-driver-icon {
+      font-size: 48px; margin-bottom: 1rem;
+    }
+    .pin-login-header h1 {
+      font-size: 24px; font-weight: 600; color: #1e293b; margin-bottom: 0.3rem;
+    }
+    .pin-login-header p {
+      font-size: 13px; color: #64748b;
+    }
+    .pin-input-wrap {
+      margin-bottom: 1.5rem;
+    }
+    .pin-input-label {
+      display: block; font-size: 13px; font-weight: 500; color: #64748b; margin-bottom: 0.6rem;
+    }
+    .pin-input-field {
+      width: 100%; padding: 0.8rem; border: 2px solid #e2e8f0; border-radius: 8px;
+      font-size: 16px; letter-spacing: 2px; text-align: center; font-weight: 600;
+    }
+    .pin-input-field:focus {
+      outline: none; border-color: #0ea5e9; background: #f0f9ff;
+    }
+    .pin-keypad {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1rem;
+    }
+    .pin-key {
+      padding: 1rem; border: 1px solid #e2e8f0; border-radius: 8px;
+      font-size: 18px; font-weight: 600; background: #f8fafc;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .pin-key:active {
+      background: #0ea5e9; color: white; transform: scale(0.95);
+    }
+    .pin-key.delete {
+      grid-column: 3; font-size: 14px;
+    }
+    .pin-key.clear {
+      grid-column: 1 / 3; font-size: 13px;
+    }
+    .pin-submit-btn {
+      width: 100%; padding: 0.8rem; background: #0ea5e9; color: white;
+      border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: all 0.3s;
+    }
+    .pin-submit-btn:disabled {
+      background: #cbd5e1; cursor: not-allowed;
+    }
+    .pin-submit-btn:active:not(:disabled) {
+      background: #0284c7; transform: scale(0.98);
+    }
+    .pin-error {
+      color: #ef4444; font-size: 12px; margin-top: 0.5rem; text-align: center;
+    }
+
+    /* ── Driver Dashboard ── */
+    .driver-dashboard { display: flex; flex-direction: column; height: 100%; }
+    .driver-header {
+      padding: 1rem; background: #0ea5e9; color: white; display: flex;
+      justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    .driver-name { font-size: 16px; font-weight: 600; }
+    .driver-time { font-size: 12px; opacity: 0.9; }
+    .driver-badge { background: rgba(255, 255, 255, 0.3); padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 12px; }
+    .driver-logout-btn {
+      background: rgba(255, 255, 255, 0.2); border: 1px solid rgba(255, 255, 255, 0.4);
+      color: white; padding: 0.4rem 0.8rem; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+
+    /* ── Stats Bar ── */
+    .driver-stats-bar {
+      padding: 1rem; background: #f0f9ff; border-bottom: 1px solid #cbd5e1;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem;
+    }
+    .stat-card {
+      text-align: center; padding: 0.6rem; background: white; border-radius: 6px;
+      border: 1px solid #e2e8f0;
+    }
+    .stat-value { font-size: 18px; font-weight: 600; color: #0ea5e9; }
+    .stat-label { font-size: 11px; color: #64748b; margin-top: 0.2rem; }
+
+    /* ── Main Content ── */
+    .driver-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Map View ── */
+    .driver-map-wrap {
+      flex: 1; position: relative; background: #e2e8f0; min-height: 300px;
+    }
+    #driverMap { width: 100%; height: 100%; }
+    .map-controls {
+      position: absolute; top: 1rem; right: 1rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 10;
+    }
+    .map-btn {
+      background: white; border: 1px solid #cbd5e1; padding: 0.6rem; border-radius: 6px;
+      cursor: pointer; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); font-size: 20px;
+    }
+    .current-location-indicator {
+      position: absolute; bottom: 1rem; left: 1rem; background: white; padding: 0.8rem;
+      border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); font-size: 13px; z-index: 10;
+    }
+
+    /* ── Jobs Panel ── */
+    .driver-jobs-panel {
+      max-height: 40%; overflow-y: auto; background: white; border-top: 1px solid #e2e8f0;
+    }
+    .jobs-header {
+      padding: 1rem; border-bottom: 1px solid #e2e8f0; font-weight: 600; font-size: 14px;
+      display: flex; justify-content: space-between; align-items: center; background: #f8fafc;
+    }
+    .jobs-list { padding: 0.5rem; }
+    .job-card {
+      padding: 1rem; margin-bottom: 0.5rem; background: #f8fafc; border: 1px solid #e2e8f0;
+      border-radius: 6px; cursor: pointer; transition: all 0.2s;
+    }
+    .job-card:active {
+      background: #f0f9ff; border-color: #0ea5e9;
+    }
+    .job-card.active {
+      background: #f0f9ff; border-left: 4px solid #0ea5e9; border-color: #0ea5e9;
+    }
+    .job-number { font-size: 13px; color: #64748b; margin-bottom: 0.2rem; }
+    .job-customer { font-size: 15px; font-weight: 600; color: #1e293b; margin-bottom: 0.3rem; }
+    .job-address { font-size: 12px; color: #64748b; margin-bottom: 0.3rem; }
+    .job-distance { font-size: 12px; color: #0ea5e9; font-weight: 500; }
+    .job-status {
+      display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 11px;
+      font-weight: 500; margin-top: 0.3rem;
+    }
+    .job-status.pending { background: #fef3c7; color: #92400e; }
+    .job-status.in-progress { background: #dbeafe; color: #075985; }
+    .job-status.completed { background: #d1fae5; color: #065f46; }
+
+    /* ── Job Detail Modal ── */
+    .job-detail-modal {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-end; z-index: 1000;
+    }
+    .job-detail-modal.hidden { display: none; }
+    .job-detail-sheet {
+      background: white; width: 100%; max-height: 85vh; border-radius: 12px 12px 0 0;
+      padding: 1.5rem; overflow-y: auto;
+    }
+    .job-detail-header {
+      display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.5rem;
+    }
+    .job-detail-title { font-size: 18px; font-weight: 600; color: #1e293b; }
+    .job-detail-close {
+      background: none; border: none; font-size: 24px; cursor: pointer; color: #64748b;
+    }
+    .job-detail-section {
+      padding: 1rem; background: #f8fafc; border-radius: 8px; margin-bottom: 1rem;
+    }
+    .detail-row {
+      display: flex; justify-content: space-between; padding: 0.5rem 0; font-size: 13px;
+    }
+    .detail-label { color: #64748b; font-weight: 500; }
+    .detail-value { color: #1e293b; font-weight: 600; }
+    .detail-items-list {
+      display: grid; gap: 0.5rem;
+    }
+    .detail-item {
+      padding: 0.6rem; background: white; border-radius: 6px; font-size: 12px;
+      border: 1px solid #e2e8f0;
+    }
+    .item-sku { font-weight: 600; color: #0ea5e9; }
+    .item-qty { color: #64748b; }
+
+    /* ── Action Buttons ── */
+    .job-actions {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-top: 1.5rem;
+    }
+    .action-btn {
+      padding: 0.8rem; border: none; border-radius: 8px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-start { background: #0ea5e9; color: white; }
+    .btn-start:active { background: #0284c7; }
+    .btn-complete {
+      background: #22c55e; color: white; grid-column: 1 / 3;
+    }
+    .btn-complete:active { background: #16a34a; }
+    .btn-failed { background: #ef4444; color: white; }
+    .btn-failed:active { background: #dc2626; }
+
+    /* ── Offline Badge ── */
+    .offline-badge {
+      position: fixed; bottom: 1rem; right: 1rem; background: #ef4444; color: white;
+      padding: 0.5rem 1rem; border-radius: 20px; font-size: 12px; z-index: 500;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    /* ── Mobile responsive ── */
+    @media (max-width: 600px) {
+      .driver-stats-bar { grid-template-columns: repeat(2, 1fr); gap: 0.4rem; padding: 0.8rem; }
+      .stat-value { font-size: 16px; }
+      .stat-label { font-size: 10px; }
+      .driver-jobs-panel { max-height: 45%; }
+      .job-actions { grid-template-columns: 1fr; }
+      .btn-complete { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="driver-container">
+
+    <!-- ── PIN Login Screen ── -->
+    <div id="pinLoginOverlay" class="pin-login-overlay">
+      <div class="pin-login-box">
+        <div class="pin-login-header">
+          <div class="pin-driver-icon">👤</div>
+          <h1>Driver Login</h1>
+          <p>Enter your 4-digit PIN</p>
+        </div>
+
+        <div class="pin-input-wrap">
+          <label class="pin-input-label">PIN Code</label>
+          <input type="password" id="pinInput" class="pin-input-field" placeholder="••••" maxlength="4" />
+        </div>
+
+        <div class="pin-keypad">
+          <button class="pin-key" data-key="1">1</button>
+          <button class="pin-key" data-key="2">2</button>
+          <button class="pin-key" data-key="3">3</button>
+          <button class="pin-key" data-key="4">4</button>
+          <button class="pin-key" data-key="5">5</button>
+          <button class="pin-key" data-key="6">6</button>
+          <button class="pin-key" data-key="7">7</button>
+          <button class="pin-key" data-key="8">8</button>
+          <button class="pin-key" data-key="9">9</button>
+          <button class="pin-key clear">Clear</button>
+          <button class="pin-key" data-key="0">0</button>
+          <button class="pin-key delete">← Del</button>
+        </div>
+
+        <button id="pinSubmitBtn" class="pin-submit-btn" disabled>Login</button>
+        <div id="pinError" class="pin-error"></div>
+      </div>
+    </div>
+
+    <!-- ── Driver Dashboard ── -->
+    <div id="driverDashboard" class="driver-dashboard hidden">
+
+      <!-- Header -->
+      <div class="driver-header">
+        <div>
+          <div class="driver-name" id="driverHeaderName">—</div>
+          <div class="driver-time" id="driverHeaderTime">—</div>
+        </div>
+        <div style="display: flex; gap: 0.8rem; align-items: center;">
+          <div class="driver-badge" id="driverStatusBadge">Ready</div>
+          <button class="driver-logout-btn" id="logoutBtn">Logout</button>
+        </div>
+      </div>
+
+      <!-- Stats Bar -->
+      <div class="driver-stats-bar">
+        <div class="stat-card">
+          <div class="stat-value" id="statJobsRemaining">—</div>
+          <div class="stat-label">Remaining</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statJobsCompleted">—</div>
+          <div class="stat-label">Completed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statDistance">—</div>
+          <div class="stat-label">km</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statTime">—</div>
+          <div class="stat-label">hrs</div>
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div class="driver-main">
+
+        <!-- Map -->
+        <div class="driver-map-wrap">
+          <div id="driverMap"></div>
+          <div class="map-controls">
+            <button class="map-btn" id="centerMapBtn" title="Center on my location">📍</button>
+            <button class="map-btn" id="toggleMapBtn" title="Toggle map/list">🗺️</button>
+          </div>
+          <div class="current-location-indicator">
+            <span id="currentLocationText">🔴 Locating...</span>
+          </div>
+        </div>
+
+        <!-- Jobs List Panel -->
+        <div class="driver-jobs-panel">
+          <div class="jobs-header">
+            <span>Today's Deliveries</span>
+            <span id="jobsCount">0</span>
+          </div>
+          <div class="jobs-list" id="jobsList"></div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Job Detail Modal -->
+  <div id="jobDetailModal" class="job-detail-modal hidden">
+    <div class="job-detail-sheet">
+      <div class="job-detail-header">
+        <div>
+          <div class="job-detail-title" id="detailJobTitle">—</div>
+          <div style="font-size: 12px; color: #64748b; margin-top: 0.3rem;" id="detailJobRef">—</div>
+        </div>
+        <button class="job-detail-close" id="closeDetailBtn">✕</button>
+      </div>
+
+      <!-- Customer Info -->
+      <div class="job-detail-section">
+        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.8rem; color: #0ea5e9;">📍 Delivery Address</div>
+        <div class="detail-row">
+          <span class="detail-label">Customer</span>
+          <span class="detail-value" id="detailCustomer">—</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Address</span>
+          <span class="detail-value" id="detailAddress">—</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Postal Code</span>
+          <span class="detail-value" id="detailPostal">—</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Phone</span>
+          <span class="detail-value" id="detailPhone">—</span>
+        </div>
+      </div>
+
+      <!-- Items -->
+      <div class="job-detail-section">
+        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.8rem; color: #22c55e;">📦 Items to Deliver</div>
+        <div class="detail-items-list" id="detailItemsList"></div>
+      </div>
+
+      <!-- Navigation -->
+      <div class="job-detail-section">
+        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.8rem; color: #a855f7;">🧭 Navigation</div>
+        <div class="detail-row">
+          <span class="detail-label">Distance</span>
+          <span class="detail-value" id="detailDistance">—</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">ETA</span>
+          <span class="detail-value" id="detailETA">—</span>
+        </div>
+        <button style="width: 100%; padding: 0.6rem; margin-top: 0.8rem; background: #a855f7; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 13px;">
+          📱 Open Navigation
+        </button>
+      </div>
+
+      <!-- Actions -->
+      <div class="job-actions">
+        <button class="action-btn btn-start" id="startDeliveryBtn">▶ Start</button>
+        <button class="action-btn btn-failed" id="markFailedBtn">✗ Failed</button>
+        <button class="action-btn btn-complete" id="markCompleteBtn">✓ Complete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Offline Badge -->
+  <div id="offlineBadge" class="offline-badge hidden">📡 Offline Mode</div>
+
+  <script src="driver.js" defer></script>
+</body>
+</html>

@@ -1,10 +1,5 @@
 node_modules/
-data/credentials.json
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/tenants/
 .env
-coverage/
-dist/
-db.sqlite
+*.log
+data/
+eng.traineddata

@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>IDEALONE — System Overview</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  :root {
+    --brand: #1e3a5f;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --success: #16a34a;
+    --text: #0f172a;
+    --text-light: #64748b;
+    --border: #e2e8f0;
+    --bg: #f8fafc;
+    --white: #ffffff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', Arial, sans-serif;
+    font-size: 10pt;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.6;
+  }
+
+  /* ── Print button — hidden on print ── */
+  .print-bar {
+    background: var(--brand);
+    color: #fff;
+    padding: .75rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .print-bar span { font-size: .82rem; opacity: .8; }
+  .print-btn {
+    background: #fff;
+    color: var(--brand);
+    border: none;
+    padding: .45rem 1.2rem;
+    border-radius: 6px;
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .print-btn:hover { background: #e0e9f5; }
+
+  /* ── Page wrapper ── */
+  .page {
+    max-width: 800px;
+    margin: 2rem auto;
+    background: var(--white);
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.08);
+    overflow: hidden;
+  }
+
+  /* ── Cover ── */
+  .cover {
+    background: var(--brand);
+    color: #fff;
+    padding: 3rem 3rem 2.5rem;
+  }
+  .cover-logo {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: 2rem;
+  }
+  .cover-logo-mark {
+    width: 44px; height: 44px;
+    background: rgba(255,255,255,.15);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem;
+  }
+  .cover-logo-name {
+    font-size: 1.3rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+  }
+  .cover-logo-sub {
+    font-size: .72rem;
+    opacity: .65;
+    letter-spacing: .5px;
+    margin-top: .1rem;
+  }
+  .cover h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: .75rem;
+  }
+  .cover p {
+    font-size: .95rem;
+    opacity: .8;
+    max-width: 520px;
+    line-height: 1.6;
+  }
+  .cover-meta {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(255,255,255,.2);
+    display: flex;
+    gap: 2.5rem;
+    font-size: .78rem;
+    opacity: .65;
+  }
+
+  /* ── Body ── */
+  .body { padding: 2.5rem 3rem; }
+
+  /* ── Section ── */
+  .section { margin-bottom: 2.5rem; }
+  .section-title {
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1rem;
+    padding-bottom: .5rem;
+    border-bottom: 2px solid var(--accent-light);
+  }
+  h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--brand);
+    margin-bottom: .5rem;
+  }
+  p { color: var(--text-light); margin-bottom: .75rem; line-height: 1.65; }
+
+  /* ── Problem banner ── */
+  .problem-banner {
+    background: #fff7ed;
+    border-left: 4px solid #f97316;
+    border-radius: 0 8px 8px 0;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    font-size: .88rem;
+    color: #7c3503;
+    line-height: 1.55;
+  }
+
+  /* ── Feature cards ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .feature-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+  }
+  .feature-card-header {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    margin-bottom: .5rem;
+  }
+  .feature-icon {
+    font-size: 1.1rem;
+    width: 30px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .feature-name {
+    font-size: .88rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .feature-desc {
+    font-size: .8rem;
+    color: var(--text-light);
+    line-height: 1.5;
+    margin-bottom: .5rem;
+  }
+  .feature-saves {
+    font-size: .75rem;
+    color: var(--success);
+    font-weight: 600;
+  }
+  .feature-saves::before { content: "✓ Saves: "; }
+
+  /* ── Impact table ── */
+  table.impact {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .84rem;
+  }
+  table.impact th {
+    background: var(--brand);
+    color: #fff;
+    padding: .6rem .85rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: .78rem;
+  }
+  table.impact td {
+    padding: .6rem .85rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--text-light);
+  }
+  table.impact tr:last-child td { border-bottom: none; }
+  table.impact tr:nth-child(even) td { background: var(--bg); }
+  .td-before { color: #dc2626; }
+  .td-after  { color: var(--success); font-weight: 500; }
+
+  /* ── Roles ── */
+  .roles-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .role-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+  }
+  .role-badge {
+    display: inline-block;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    padding: .2em .65em;
+    border-radius: 4px;
+    margin-bottom: .5rem;
+  }
+  .role-admin   { background: #eff6ff; color: #1e40af; }
+  .role-warehouse { background: #f0fdf4; color: #166534; }
+  .role-card h3 { font-size: .88rem; font-weight: 700; margin-bottom: .4rem; }
+  .role-card ul { padding-left: 1.1rem; font-size: .8rem; color: var(--text-light); }
+  .role-card ul li { margin-bottom: .2rem; }
+
+  /* ── Why section ── */
+  .why-points {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+  }
+  .why-point {
+    display: flex;
+    gap: .75rem;
+    align-items: flex-start;
+  }
+  .why-num {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--brand);
+    color: #fff;
+    font-size: .72rem;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: .05rem;
+  }
+  .why-point p { margin: 0; font-size: .86rem; }
+  .why-point strong { color: var(--text); }
+
+  /* ── Footer ── */
+  .doc-footer {
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    padding: 1.25rem 3rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: .76rem;
+    color: var(--text-light);
+  }
+
+  /* ── Print styles ── */
+  @media print {
+    body { background: #fff; font-size: 9pt; }
+    .print-bar { display: none !important; }
+    .page { margin: 0; box-shadow: none; border-radius: 0; max-width: none; }
+    .cover { padding: 2.5rem 2.5rem 2rem; }
+    .body { padding: 2rem 2.5rem; }
+    .feature-card, .role-card { break-inside: avoid; }
+    .section { break-inside: avoid; }
+    @page { margin: 0; size: A4; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Print bar (hidden on print) -->
+<div class="print-bar">
+  <span>IDEALONE — System Overview Document</span>
+  <button class="print-btn" onclick="window.print()">&#128438; Save / Print as PDF</button>
+</div>
+
+<div class="page">
+
+  <!-- Cover -->
+  <div class="cover">
+    <div class="cover-logo">
+      <div class="cover-logo-mark">&#128269;</div>
+      <div>
+        <div class="cover-logo-name">IDEALONE</div>
+        <div class="cover-logo-sub">FULFILLMENT SCANNING SYSTEM</div>
+      </div>
+    </div>
+    <h1>System Overview &amp;<br>Capability Summary</h1>
+    <p>A web-based warehouse fulfillment scanning platform that replaces manual pick-and-verify workflows with a live, real-time scan system — from order upload to printed shipping label.</p>
+    <div class="cover-meta">
+      <span>United Logistics &amp; Distribution</span>
+      <span>Built by Benson</span>
+      <span>Confidential</span>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <!-- Why -->
+    <div class="section">
+      <div class="section-title">Why IDEALONE Exists</div>
+      <h2>The Problem We Solve</h2>
+      <div class="problem-banner">
+        Warehouses receiving orders from multiple e-commerce platforms face a fragmented workflow: reformatting client files, printing picklists, manually counting items, ticking tally sheets, and printing labels — all separately, all prone to human error, all leaving no audit trail.
+      </div>
+      <div class="why-points">
+        <div class="why-point">
+          <div class="why-num">1</div>
+          <p><strong>No single source of truth.</strong> Order data lives in email attachments, spreadsheets, and WhatsApp messages — not in one system staff can act on.</p>
+        </div>
+        <div class="why-point">
+          <div class="why-num">2</div>
+          <p><strong>Manual verification fails at scale.</strong> Counting items by hand and ticking paper sheets is slow, inconsistent, and doesn't scale beyond a handful of orders per hour.</p>
+        </div>
+        <div class="why-point">
+          <div class="why-num">3</div>
+          <p><strong>No audit trail.</strong> When a wrong item ships or a quantity mismatch is disputed, there is no record of who scanned what, when, and whether it was correct.</p>
+        </div>
+        <div class="why-point">
+          <div class="why-num">4</div>
+          <p><strong>Label printing is a separate step.</strong> Producing waybill labels requires switching to another system, copying order details manually, and hoping nothing is copied wrong.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- What it does -->
+    <div class="section">
+      <div class="section-title">What IDEALONE Does</div>
+      <h2>Core Capabilities</h2>
+      <div class="feature-grid">
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">📤</div>
+            <div class="feature-name">Order Upload &amp; Auto-Mapping</div>
+          </div>
+          <p class="feature-desc">Upload any client order file (CSV or XLSX). The system auto-detects column headers regardless of naming convention and converts the data into WMS-format output in seconds.</p>
+          <div class="feature-saves">manual reformatting per batch</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">🔍</div>
+            <div class="feature-name">Live Scan Verification</div>
+          </div>
+          <p class="feature-desc">Staff scan each item barcode on screen. Quantities are tracked in real time with an instant verdict — READY TO SHIP or NEEDS REVIEW — so errors are caught before the parcel leaves.</p>
+          <div class="feature-saves">paper tally sheets and counting errors</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">📦</div>
+            <div class="feature-name">Waybill Scan Jump</div>
+          </div>
+          <p class="feature-desc">Point a barcode gun at the shipping label on any parcel and the system jumps directly to that order's scan screen. No scrolling, no searching.</p>
+          <div class="feature-saves">30–60 seconds per order × hundreds of orders per day</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">📍</div>
+            <div class="feature-name">Full Delivery Info On-Screen</div>
+          </div>
+          <p class="feature-desc">Buyer name, complete delivery address, phone number, and platform channel are shown during scanning so staff can verify the right parcel goes to the right person.</p>
+          <div class="feature-saves">wrong-address shipments and customer complaints</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">🖨</div>
+            <div class="feature-name">Waybill Label Printing</div>
+          </div>
+          <p class="feature-desc">After a verified order, print a shipping label with carrier header, buyer details, item list, quantities, platform badge, and a CODE128 barcode of the waybill number — sized for any label printer.</p>
+          <div class="feature-saves">manual label design and cross-system switching</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">🖨</div>
+            <div class="feature-name">Per-User Printer Profiles</div>
+          </div>
+          <p class="feature-desc">Each staff member configures their own printer name and label size (100×160 mm, 100×150 mm, 4"×6"). Print jobs route to the correct printer for each workstation automatically.</p>
+          <div class="feature-saves">mis-routed print jobs and reprinting waste</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">📊</div>
+            <div class="feature-name">Audit Trail &amp; Reporting</div>
+          </div>
+          <p class="feature-desc">Every scan session is recorded: who scanned, which order, how long it took, scan start and end times, and whether the result was correct. Exportable as XLSX at any time.</p>
+          <div class="feature-saves">manual logging and compliance preparation</div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-header">
+            <div class="feature-icon">⚙️</div>
+            <div class="feature-name">Admin &amp; User Management</div>
+          </div>
+          <p class="feature-desc">Admins manage users, configure WMS output templates, set up email notifications, view upload history, and export reports — all from a password-protected admin panel.</p>
+          <div class="feature-saves">ad-hoc admin tasks and training errors</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Impact table -->
+    <div class="section">
+      <div class="section-title">Before &amp; After</div>
+      <h2>Real-World Impact</h2>
+      <table class="impact">
+        <thead>
+          <tr>
+            <th style="width:30%">Area</th>
+            <th style="width:35%">Before IDEALONE</th>
+            <th style="width:35%">After IDEALONE</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Order file preparation</td>
+            <td class="td-before">Manual reformatting per client file</td>
+            <td class="td-after">Auto-mapped in seconds on upload</td>
+          </tr>
+          <tr>
+            <td>Pick verification</td>
+            <td class="td-before">Paper tally sheets, manual counting</td>
+            <td class="td-after">Live scan with instant pass/fail verdict</td>
+          </tr>
+          <tr>
+            <td>Finding an order</td>
+            <td class="td-before">Scroll through a long list</td>
+            <td class="td-after">Scan the waybill barcode — instant jump</td>
+          </tr>
+          <tr>
+            <td>Delivery info visibility</td>
+            <td class="td-before">Not visible during packing</td>
+            <td class="td-after">Full address and phone shown on screen</td>
+          </tr>
+          <tr>
+            <td>Label printing</td>
+            <td class="td-before">Manual entry in a separate system</td>
+            <td class="td-after">One click after order is verified correct</td>
+          </tr>
+          <tr>
+            <td>Audit trail</td>
+            <td class="td-before">None, or maintained manually</td>
+            <td class="td-after">Auto-captured, exportable XLSX</td>
+          </tr>
+          <tr>
+            <td>Multi-station printing</td>
+            <td class="td-before">Common mis-routing between printers</td>
+            <td class="td-after">Per-user printer profile, correct every time</td>
+          </tr>
+          <tr>
+            <td>Data after server update</td>
+            <td class="td-before">Lost on every redeploy</td>
+            <td class="td-after">Persisted to dedicated storage volume</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Roles -->
+    <div class="section">
+      <div class="section-title">Access Control</div>
+      <h2>User Roles</h2>
+      <div class="roles-grid">
+        <div class="role-card">
+          <span class="role-badge role-admin">Admin</span>
+          <h3>Administrator</h3>
+          <ul>
+            <li>Upload and manage order batches</li>
+            <li>View upload history and operator logs</li>
+            <li>Create, edit, and delete user accounts</li>
+            <li>Configure WMS output template</li>
+            <li>Configure email notifications</li>
+            <li>Export full audit trail</li>
+            <li>Reset system data</li>
+          </ul>
+        </div>
+        <div class="role-card">
+          <span class="role-badge role-warehouse">Warehouse</span>
+          <h3>Warehouse Staff</h3>
+          <ul>
+            <li>Scan orders from the orders list</li>
+            <li>Use waybill barcode to jump to an order</li>
+            <li>View full delivery info during scanning</li>
+            <li>Print waybill labels after completion</li>
+            <li>Configure personal printer settings</li>
+            <li>Reprint labels for completed orders</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /body -->
+
+  <!-- Doc footer -->
+  <div class="doc-footer">
+    <span>IDEALONE — Fulfillment Scanning System</span>
+    <span>United Logistics &amp; Distribution &nbsp;·&nbsp; Confidential</span>
+  </div>
+
+</div><!-- /page -->
+
+</body>
+</html>

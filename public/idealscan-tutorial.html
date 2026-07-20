@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IDEALONE — User Tutorial</title>
+  <style>
+    :root {
+      --blue: #1e40af;
+      --blue-light: #3b82f6;
+      --green: #16a34a;
+      --red: #dc2626;
+      --gray-50: #f8fafc;
+      --gray-100: #f1f5f9;
+      --gray-200: #e2e8f0;
+      --gray-400: #94a3b8;
+      --gray-600: #475569;
+      --gray-800: #1e293b;
+      --radius: 10px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-50);
+      color: var(--gray-800);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    /* ── Cover ── */
+    .cover {
+      background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 60%, #2563eb 100%);
+      color: white;
+      padding: 64px 40px 56px;
+      text-align: center;
+    }
+    .cover-logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    .cover-icon {
+      width: 56px; height: 56px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .cover-icon svg { width: 34px; height: 34px; }
+    .cover-brand { text-align: left; }
+    .cover-name { font-size: 28px; font-weight: 800; letter-spacing: 2px; }
+    .cover-sub { font-size: 13px; opacity: 0.75; letter-spacing: 0.5px; }
+    .cover h1 { font-size: 38px; font-weight: 800; margin-bottom: 12px; }
+    .cover p { font-size: 17px; opacity: 0.85; max-width: 520px; margin: 0 auto 28px; }
+    .cover-meta { font-size: 12px; opacity: 0.55; }
+
+    /* ── TOC ── */
+    .toc-wrap {
+      max-width: 860px; margin: 0 auto;
+      padding: 40px 24px;
+    }
+    .toc {
+      background: white;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      padding: 28px 32px;
+    }
+    .toc h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--blue); margin-bottom: 14px; }
+    .toc ol { padding-left: 20px; }
+    .toc li { padding: 4px 0; }
+    .toc a { color: var(--blue-light); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+
+    /* ── Sections ── */
+    .page { max-width: 860px; margin: 0 auto; padding: 0 24px 60px; }
+
+    .section {
+      background: white;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      margin-bottom: 32px;
+      overflow: hidden;
+    }
+
+    .section-header {
+      background: var(--gray-100);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .section-num {
+      width: 36px; height: 36px;
+      background: var(--blue);
+      color: white;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; font-weight: 700;
+      flex-shrink: 0;
+    }
+    .section-header h2 { font-size: 20px; font-weight: 700; color: var(--gray-800); }
+    .section-header .role-badge {
+      margin-left: auto;
+      font-size: 11px; font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+    .badge-admin { background: #dbeafe; color: #1e40af; }
+    .badge-all { background: #dcfce7; color: #15803d; }
+
+    .section-body { padding: 28px; }
+
+    /* ── Steps ── */
+    .steps { list-style: none; padding: 0; }
+    .steps li {
+      display: flex;
+      gap: 16px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--gray-100);
+    }
+    .steps li:last-child { border-bottom: none; }
+    .step-num {
+      width: 26px; height: 26px;
+      background: var(--blue);
+      color: white;
+      border-radius: 50%;
+      font-size: 12px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .steps p { font-size: 14.5px; color: var(--gray-600); }
+    .steps strong { color: var(--gray-800); }
+
+    /* ── Screenshots ── */
+    .screenshot-wrap {
+      margin: 20px 0;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .screenshot-caption {
+      background: var(--gray-100);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 7px 14px;
+      font-size: 12px;
+      color: var(--gray-600);
+      font-style: italic;
+    }
+    .screenshot-wrap img {
+      width: 100%;
+      display: block;
+    }
+
+    /* ── Tip / warning boxes ── */
+    .tip, .warn, .note {
+      border-radius: 8px;
+      padding: 13px 16px;
+      font-size: 13.5px;
+      margin: 14px 0;
+      display: flex;
+      gap: 10px;
+    }
+    .tip { background: #f0fdf4; border-left: 4px solid #22c55e; color: #15803d; }
+    .warn { background: #fff7ed; border-left: 4px solid #f97316; color: #9a3412; }
+    .note { background: #eff6ff; border-left: 4px solid #3b82f6; color: #1e40af; }
+    .tip-icon, .warn-icon, .note-icon { font-size: 16px; flex-shrink: 0; }
+
+    /* ── kbd ── */
+    kbd {
+      display: inline-block;
+      background: var(--gray-100);
+      border: 1px solid var(--gray-200);
+      border-bottom: 2px solid var(--gray-400);
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* ── Two-col grid ── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+    @media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } }
+
+    .info-card {
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .info-card h4 { font-size: 13px; font-weight: 700; color: var(--blue); margin-bottom: 6px; }
+    .info-card p { font-size: 13px; color: var(--gray-600); }
+
+    /* ── Divider ── */
+    hr { border: none; border-top: 1px solid var(--gray-200); margin: 20px 0; }
+
+    /* ── Print ── */
+    @media print {
+      body { background: white; font-size: 12px; }
+      .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .section { break-inside: avoid; }
+      .no-print { display: none; }
+    }
+
+    /* ── Print button ── */
+    .print-bar {
+      background: white;
+      border-bottom: 1px solid var(--gray-200);
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .print-bar span { font-size: 13px; color: var(--gray-600); }
+    .btn-print {
+      background: var(--blue);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-print:hover { background: #1d3a9a; }
+  </style>
+</head>
+<body>
+
+<!-- ── Sticky print bar ── -->
+<div class="print-bar no-print">
+  <span>IDEALONE User Tutorial</span>
+  <button class="btn-print" onclick="window.print()">⎙ Save / Print as PDF</button>
+  <a href="/" style="margin-left:auto;font-size:13px;color:#3b82f6;text-decoration:none;">← Back to App</a>
+</div>
+
+<!-- ── Cover ── -->
+<div class="cover">
+  <div class="cover-logo">
+    <div class="cover-icon">
+      <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="6" y="10" width="2.5" height="24" rx="1" fill="white"/>
+        <rect x="11" y="10" width="4" height="24" rx="1" fill="white"/>
+        <rect x="17" y="10" width="2" height="24" rx="1" fill="white"/>
+        <rect x="21" y="10" width="3" height="24" rx="1" fill="white"/>
+        <rect x="26" y="10" width="1.5" height="24" rx="1" fill="white"/>
+        <rect x="30" y="10" width="4" height="24" rx="1" fill="white"/>
+        <rect x="36" y="10" width="2" height="24" rx="1" fill="white"/>
+        <rect x="4" y="20.5" width="36" height="3" rx="1.5" fill="#22c55e"/>
+      </svg>
+    </div>
+    <div class="cover-brand">
+      <div class="cover-name">IDEALONE</div>
+      <div class="cover-sub">United Logistics &amp; Distribution</div>
+    </div>
+  </div>
+  <h1>User Tutorial</h1>
+  <p>Step-by-step guide for warehouse operators and administrators — from first login to scanning complete.</p>
+  <div class="cover-meta">United Logistics &amp; Distribution · Internal Use Only</div>
+</div>
+
+<!-- ── Table of Contents ── -->
+<div class="toc-wrap">
+  <div class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#s1">Signing In</a></li>
+      <li><a href="#s2">The Upload Tab — Loading a Picklist</a></li>
+      <li><a href="#s3">The Orders Tab — Scanning Orders</a></li>
+      <li><a href="#s4">Scanning an Order (Scan Overlay)</a></li>
+      <li><a href="#s5">Waybill PDFs — Upload &amp; Download</a></li>
+      <li><a href="#s6">Printer Settings</a></li>
+      <li><a href="#s7">Administrator Panel — Overview</a></li>
+      <li><a href="#s8">Administrator — Managing Users</a></li>
+      <li><a href="#s9">Administrator — WMS Template</a></li>
+      <li><a href="#s10">Administrator — Email Alerts</a></li>
+      <li><a href="#s11">Administrator — System Reset</a></li>
+      <li><a href="#s12">About &amp; Quick Reference</a></li>
+    </ol>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- ── 1. Signing In ── -->
+  <div class="section" id="s1">
+    <div class="section-header">
+      <div class="section-num">1</div>
+      <h2>Signing In</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Login screen — enter your User ID and Password then click Sign In</div>
+        <img src="tutorial-screenshots/01-login.png" alt="IDEALONE login screen" />
+      </div>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Open IDEALONE in your browser. The <strong>Sign In</strong> screen appears automatically.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Type your <strong>User ID</strong> in the first field (e.g. <code>Whse1</code>).</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Type your <strong>Password</strong> in the second field, then click <strong>Sign In →</strong> or press <kbd>Enter</kbd>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>The app loads and lands on the <strong>Upload</strong> tab. Your name appears in the top-right corner.</p></div>
+        </li>
+      </ol>
+
+      <div class="tip">
+        <span class="tip-icon">✓</span>
+        <span>Only one session is allowed per account. If you sign in from a second device, the first session is automatically ended.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 2. Upload Tab ── -->
+  <div class="section" id="s2">
+    <div class="section-header">
+      <div class="section-num">2</div>
+      <h2>The Upload Tab — Loading a Picklist</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Upload tab — dashboard statistics on the left, picklist upload panel on the right</div>
+        <img src="tutorial-screenshots/02-upload-tab.png" alt="Upload tab" />
+      </div>
+
+      <p style="margin-bottom:14px">Every shift starts here. You upload the client's order picklist so warehouse staff can begin scanning.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Click the <strong>Upload</strong> tab in the top navigation bar.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Type the <strong>Client Name</strong> in the text field (e.g. <em>Glowverse</em>). This labels the batch for audit trail purposes.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Drag and drop your <strong>XLSX, XLS, or CSV</strong> picklist file onto the upload area, or click <strong>browse</strong> to select it.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p><em>(Optional)</em> Click <strong>Attach PDF</strong> to upload the carrier's multi-page waybill PDF. IDEALONE will automatically split and match each page to the correct order by waybill number or order number.</p></div>
+        </li>
+        <li>
+          <div class="step-num">5</div>
+          <div><p>Click <strong>Upload</strong>. The system parses the file, maps columns automatically, and creates the order batch. You are taken to the <strong>Orders</strong> tab.</p></div>
+        </li>
+      </ol>
+
+      <div class="two-col">
+        <div class="info-card">
+          <h4>Supported formats</h4>
+          <p>XLSX · XLS · CSV — up to 10 MB and 5,000 rows per file. Column names are detected automatically regardless of layout.</p>
+        </div>
+        <div class="info-card">
+          <h4>Dashboard counters</h4>
+          <p>The left panel shows <em>Pending Today</em>, <em>Done Yesterday</em>, <em>Total Orders</em>, <em>Total Lines</em>, and the average scan time across all batches.</p>
+        </div>
+      </div>
+
+      <div class="note">
+        <span class="note-icon">ℹ</span>
+        <span>You can also upload a waybill PDF later from the Administrator → Upload History panel without re-uploading the picklist.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 3. Orders Tab ── -->
+  <div class="section" id="s3">
+    <div class="section-header">
+      <div class="section-num">3</div>
+      <h2>The Orders Tab — Managing Orders</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Orders tab — shows all pending and completed orders for the active batch</div>
+        <img src="tutorial-screenshots/03-orders-tab.png" alt="Orders tab" />
+      </div>
+
+      <p style="margin-bottom:14px">After uploading, the Orders tab lists every order in the batch. Each card shows the order number, customer name, carrier, total quantity, and current status.</p>
+
+      <div class="two-col">
+        <div class="info-card">
+          <h4>Status colours</h4>
+          <p><strong style="color:#f97316">Pending</strong> — not yet started<br>
+          <strong style="color:#3b82f6">In Progress</strong> — scanning underway<br>
+          <strong style="color:#16a34a">Done</strong> — all items scanned &amp; completed</p>
+        </div>
+        <div class="info-card">
+          <h4>Card actions</h4>
+          <p>On a <em>Done</em> card: <strong>↓ Waybill</strong> downloads the matched waybill PDF page; <strong>🖶 Label</strong> prints the IDEALONE barcode label (only shown when no waybill PDF was matched).</p>
+        </div>
+      </div>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Tap any order card to open the <strong>Scan Overlay</strong> for that order.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Use the search bar at the top to filter by order number or customer name.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Completed orders move to the bottom of the list automatically. Pending orders stay at the top.</p></div>
+        </li>
+      </ol>
+
+      <div class="tip">
+        <span class="tip-icon">✓</span>
+        <span>Once all orders in a batch are marked Done, the batch is complete. It appears in Upload History in the Administrator panel.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 4. Scan Overlay ── -->
+  <div class="section" id="s4">
+    <div class="section-header">
+      <div class="section-num">4</div>
+      <h2>Scanning an Order (Scan Overlay)</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <p style="margin-bottom:16px">The Scan Overlay is the core workflow screen. It opens when you tap an order card and guides the operator through verifying each item in the order.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Tap an order card on the <strong>Orders</strong> tab. The overlay slides in, showing order details and a barcode scan field at the top.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Scan or type a barcode in the <strong>scan input box</strong>. Press <kbd>Enter</kbd> to register. The matching item line increments its scanned count.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Alternatively, tap the <strong>📷 Camera</strong> button to use your device's camera as a barcode scanner.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>Each item row shows <em>scanned / required</em> quantity. A green checkmark appears when the item is fully scanned.</p></div>
+        </li>
+        <li>
+          <div class="step-num">5</div>
+          <div><p>When all items are complete, tap <strong>✓ Complete</strong>. A confirmation prompt appears.</p></div>
+        </li>
+        <li>
+          <div class="step-num">6</div>
+          <div><p>If a matched waybill PDF exists, a <strong>Download Waybill</strong> modal appears with a 3-second countdown. Click <strong>↓ Download Waybill</strong> to save it, or <strong>Skip</strong> to close.</p></div>
+        </li>
+        <li>
+          <div class="step-num">7</div>
+          <div><p>The order status changes to <strong>Done</strong> and you return to the Orders list.</p></div>
+        </li>
+      </ol>
+
+      <hr />
+
+      <div class="two-col">
+        <div class="info-card">
+          <h4>⏸ Pause scanning</h4>
+          <p>Tap <strong>▮▮ Pause</strong> to temporarily lock the overlay without losing scanned counts. Resume by tapping again.</p>
+        </div>
+        <div class="info-card">
+          <h4>↩ Restart order</h4>
+          <p>Tap <strong>↻ Clear &amp; restart from zero</strong> to reset all scanned counts for this order back to zero.</p>
+        </div>
+      </div>
+
+      <div class="warn">
+        <span class="warn-icon">⚠</span>
+        <span>Tapping <strong>Complete</strong> when the scanned quantity does not match the required quantity will show a warning. You can still confirm to force-complete if needed.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 5. Waybill PDFs ── -->
+  <div class="section" id="s5">
+    <div class="section-header">
+      <div class="section-num">5</div>
+      <h2>Waybill PDFs — Upload &amp; Download</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <p style="margin-bottom:16px">Carriers often provide a multi-page waybill PDF — one page per order. IDEALONE can split this PDF and attach the correct page to each order so warehouse staff can download it after scanning.</p>
+
+      <h3 style="font-size:15px;margin-bottom:10px;">Uploading at batch creation time</h3>
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>On the <strong>Upload</strong> tab, after choosing your picklist file, click <strong>Attach PDF</strong>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Select the carrier's multi-page waybill PDF. IDEALONE reads every page, extracts waybill and order numbers, and matches them to orders in your picklist.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>After upload, orders with a matched page show a <strong>↓ Waybill</strong> button on their card.</p></div>
+        </li>
+      </ol>
+
+      <h3 style="font-size:15px;margin:18px 0 10px;">Uploading to an existing batch</h3>
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Open <strong>Administrator</strong> → <strong>Upload History</strong>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Find the batch card and click <strong>📎 Waybill PDF</strong> next to it.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Select the PDF. The system matches pages and shows how many orders were matched.</p></div>
+        </li>
+      </ol>
+
+      <h3 style="font-size:15px;margin:18px 0 10px;">Downloading a waybill</h3>
+      <div class="note">
+        <span class="note-icon">ℹ</span>
+        <span>Only the <strong>single matched page</strong> for that order is downloaded — not the entire uploaded PDF.</span>
+      </div>
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>On a completed order card, click <strong>↓ Waybill</strong> to download the matched waybill page immediately.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Alternatively, inside the Scan Overlay, click the <strong>↓ Waybill</strong> button in the top-right of the header to download at any time.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>When scanning is completed, a <strong>Download Waybill</strong> modal automatically appears if a matched page exists.</p></div>
+        </li>
+      </ol>
+
+      <div class="tip">
+        <span class="tip-icon">✓</span>
+        <span>When a waybill PDF is matched, the IDEALONE-generated label button is hidden — the carrier waybill takes precedence as the shipment document.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 6. Printer Settings ── -->
+  <div class="section" id="s6">
+    <div class="section-header">
+      <div class="section-num">6</div>
+      <h2>Printer Settings</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Printer Settings modal — each user saves their own printer name and label size</div>
+        <img src="tutorial-screenshots/05-printer-settings.png" alt="Printer Settings modal" />
+      </div>
+
+      <p style="margin-bottom:14px">Each user account stores its own printer name and label size. This means Workstation A and Workstation B can have different printers without any conflict.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Click the <strong>🖨 printer icon</strong> in the top-right header (next to your name).</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Enter your <strong>Printer Name</strong> — e.g. <em>ZEBRA ZD420</em> or <em>DYMO 4XL</em>. This is shown as a reminder in the print window so you know which printer to select from the browser dialog.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Select your <strong>Label Size</strong> from the dropdown:</p>
+            <ul style="margin:6px 0 0 18px;font-size:13.5px;color:#475569;">
+              <li><strong>100 × 160 mm</strong> (default) — standard logistics label</li>
+              <li><strong>100 × 150 mm</strong> — slightly shorter variant</li>
+              <li><strong>4 × 6 in</strong> — US shipping label</li>
+            </ul>
+          </div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>Click <strong>Save</strong>. Settings are stored on your account and persist across sessions.</p></div>
+        </li>
+      </ol>
+
+      <div class="note">
+        <span class="note-icon">ℹ</span>
+        <span>The label size setting changes the actual <code>@page</code> dimensions sent to the printer — not just a visual preview. Select it carefully for your label stock.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 7. Admin Panel Overview ── -->
+  <div class="section" id="s7">
+    <div class="section-header">
+      <div class="section-num">7</div>
+      <h2>Administrator Panel — Overview</h2>
+      <span class="role-badge badge-admin">Admin Only</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Administrator panel — unlocked and showing Upload History</div>
+        <img src="tutorial-screenshots/06-admin-upload-history.png" alt="Administrator panel - Upload History" />
+      </div>
+
+      <p style="margin-bottom:14px">The Administrator panel gives full control over the system. It is password-protected separately from the regular login.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Click <strong>⚙ Administrator</strong> at the bottom of the page (or in the footer).</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Enter the <strong>Administrator Key</strong> (master password) when prompted and press <kbd>Enter</kbd>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>The panel opens with five tabs: <strong>Upload History · Users · WMS Template · Email · System</strong>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>Click <strong>× Close</strong> in the top-right to return to the main app.</p></div>
+        </li>
+      </ol>
+
+      <hr />
+
+      <p style="font-size:13.5px;color:#475569;">The <strong>Upload History</strong> tab lists every picklist uploaded, who uploaded it, when, and how many orders it contained. Use the <strong>↓ Export Audit Trail</strong> button to download a full XLSX report of all batches and order scan times.</p>
+
+      <div class="warn">
+        <span class="warn-icon">⚠</span>
+        <span>Keep the Administrator Key confidential. Anyone with it has full control including the ability to reset all data.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 8. Admin Users ── -->
+  <div class="section" id="s8">
+    <div class="section-header">
+      <div class="section-num">8</div>
+      <h2>Administrator — Managing Users</h2>
+      <span class="role-badge badge-admin">Admin Only</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Users tab — add, promote, change passwords, or remove accounts</div>
+        <img src="tutorial-screenshots/07-admin-users.png" alt="Administrator Users tab" />
+      </div>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Open <strong>Administrator</strong> → <strong>Users</strong> tab.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>The user list shows each account's ID, display name, and role (<strong>ADMIN</strong> or <strong>WAREHOUSE</strong>).</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>To <strong>add a user</strong>: fill in User ID, Display Name, Password, select Warehouse or Admin, then click <strong>+ Add User</strong>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>To <strong>change a password</strong>: click the <strong>🔑 Password</strong> button on any user row and enter the new password.</p></div>
+        </li>
+        <li>
+          <div class="step-num">5</div>
+          <div><p>To <strong>promote / demote</strong>: click <strong>↑ Make Admin</strong> or <strong>↓ Warehouse</strong> to toggle the user's role.</p></div>
+        </li>
+        <li>
+          <div class="step-num">6</div>
+          <div><p>To <strong>delete a user</strong>: click the red 🗑 trash icon. This cannot be undone.</p></div>
+        </li>
+      </ol>
+
+      <div class="two-col">
+        <div class="info-card">
+          <h4>Admin role</h4>
+          <p>Can upload picklists, scan, view Upload History, and access the Administrator panel.</p>
+        </div>
+        <div class="info-card">
+          <h4>Warehouse role</h4>
+          <p>Can upload picklists and scan orders. Cannot access the Administrator panel.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 9. WMS Template ── -->
+  <div class="section" id="s9">
+    <div class="section-header">
+      <div class="section-num">9</div>
+      <h2>Administrator — WMS Template</h2>
+      <span class="role-badge badge-admin">Admin Only</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">WMS Template tab — download, replace, or reset the output column format</div>
+        <img src="tutorial-screenshots/08-admin-wms.png" alt="WMS Template tab" />
+      </div>
+
+      <p style="margin-bottom:14px">Every uploaded picklist is converted to a WMS-format XLSX file that matches your warehouse management system's import requirements. The column names in this output file are controlled by the WMS Template.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Click <strong>↓ Download current template</strong> to get the active output column layout as an XLSX file.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Edit the file — row 1 must contain the column header names your WMS expects. Do not change the number of columns.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Drag and drop or browse to upload the modified file. IDEALONE uses the new headers for all future conversions.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>Click <strong>↺ Reset to default</strong> at any time to restore the original column layout.</p></div>
+        </li>
+      </ol>
+
+      <div class="note">
+        <span class="note-icon">ℹ</span>
+        <span>The <strong>Upload New Picklist</strong> section on this tab lets you add another client picklist to an existing batch without leaving the Administrator panel.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 10. Email Alerts ── -->
+  <div class="section" id="s10">
+    <div class="section-header">
+      <div class="section-num">10</div>
+      <h2>Administrator — Email Alerts</h2>
+      <span class="role-badge badge-admin">Admin Only</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">Email Settings — configure SMTP so completion alerts are sent automatically</div>
+        <img src="tutorial-screenshots/09-admin-email.png" alt="Email Settings tab" />
+      </div>
+
+      <p style="margin-bottom:14px">IDEALONE can send an automatic email notification every time a warehouse operator marks an order as Done. Configure the SMTP sender here.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Enter the <strong>From Email</strong> address (e.g. your Gmail or business address).</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Enter the <strong>App Password</strong>. For Gmail, generate a 16-character App Password from Google Account → Security → 2-Step Verification → App Passwords.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Set <strong>SMTP Host</strong> and <strong>SMTP Port</strong>. Gmail defaults: <code>smtp.gmail.com</code> / <code>587</code>.</p></div>
+        </li>
+        <li>
+          <div class="step-num">4</div>
+          <div><p>Enter the <strong>Default Alert Recipient</strong> — the email address that receives order completion alerts.</p></div>
+        </li>
+        <li>
+          <div class="step-num">5</div>
+          <div><p>Click <strong>✓ Save Settings</strong>, then click <strong>✉ Send Test Email</strong> to verify the connection.</p></div>
+        </li>
+      </ol>
+
+      <div class="tip">
+        <span class="tip-icon">✓</span>
+        <span>Leave the App Password field blank and click Save to keep the existing password — it is never displayed after saving.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 11. System Reset ── -->
+  <div class="section" id="s11">
+    <div class="section-header">
+      <div class="section-num">11</div>
+      <h2>Administrator — System Reset</h2>
+      <span class="role-badge badge-admin">Admin Only</span>
+    </div>
+    <div class="section-body">
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-caption">System tab — Master Reset clears all batch data. Users and email settings are preserved.</div>
+        <img src="tutorial-screenshots/10-admin-system.png" alt="System tab" />
+      </div>
+
+      <p style="margin-bottom:14px">The System tab contains destructive actions that permanently remove data. Use with caution.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="step-num">1</div>
+          <div><p>Open <strong>Administrator</strong> → <strong>System</strong> tab.</p></div>
+        </li>
+        <li>
+          <div class="step-num">2</div>
+          <div><p>Click <strong>Reset All Data</strong> to permanently delete all uploaded batches, order scan states, and WMS output files.</p></div>
+        </li>
+        <li>
+          <div class="step-num">3</div>
+          <div><p>Confirm the prompt. The operation is instant and <strong>cannot be undone</strong>.</p></div>
+        </li>
+      </ol>
+
+      <div class="warn">
+        <span class="warn-icon">⚠</span>
+        <span><strong>Master Reset does NOT delete users or email settings.</strong> Only batch and order data is removed. If you need to clear a specific client's data only, contact your system administrator.</span>
+      </div>
+
+      <div class="note">
+        <span class="note-icon">ℹ</span>
+        <span>Use Master Reset at the start of a new operational period (e.g. new month, new client rotation) to keep the system clean and performance fast.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 12. Quick Reference ── -->
+  <div class="section" id="s12">
+    <div class="section-header">
+      <div class="section-num">12</div>
+      <h2>Quick Reference</h2>
+      <span class="role-badge badge-all">All Users</span>
+    </div>
+    <div class="section-body">
+
+      <h3 style="font-size:14px;font-weight:700;color:#1e40af;margin-bottom:12px;">Daily Workflow (Warehouse Operator)</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="text-align:left;padding:8px 12px;border:1px solid #e2e8f0;">Step</th>
+            <th style="text-align:left;padding:8px 12px;border:1px solid #e2e8f0;">Action</th>
+            <th style="text-align:left;padding:8px 12px;border:1px solid #e2e8f0;">Tab / Location</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">1</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Sign in with User ID + Password</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Login screen</td>
+          </tr>
+          <tr style="background:#f8fafc;">
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">2</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Upload client picklist (+ optional waybill PDF)</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Upload tab</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">3</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Select an order and scan items</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Orders tab → Scan Overlay</td>
+          </tr>
+          <tr style="background:#f8fafc;">
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">4</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Mark Complete → download waybill (if available)</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Scan Overlay</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">5</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Repeat for all orders in the batch</td>
+            <td style="padding:8px 12px;border:1px solid #e2e8f0;">Orders tab</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <hr />
+
+      <h3 style="font-size:14px;font-weight:700;color:#1e40af;margin:18px 0 12px;">Keyboard Shortcuts</h3>
+      <div class="two-col">
+        <div class="info-card">
+          <h4>In login / scan input</h4>
+          <p><kbd>Enter</kbd> — submit / scan barcode<br>
+          <kbd>Tab</kbd> — move to next field</p>
+        </div>
+        <div class="info-card">
+          <h4>Scan Overlay</h4>
+          <p>Any barcode scanner keystroke goes directly into the scan input — no need to click it first once the overlay is open.</p>
+        </div>
+      </div>
+
+      <hr />
+
+      <h3 style="font-size:14px;font-weight:700;color:#1e40af;margin:18px 0 12px;">Where to get help</h3>
+      <p style="font-size:13.5px;color:#475569;">
+        For system issues, contact your Administrator. For a full overview of what IDEALONE does and the business value it delivers, open the <strong>About</strong> tab in the app or download the <a href="/idealscan-overview.html" style="color:#3b82f6;">IDEALONE Overview document</a>.
+      </p>
+
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<div style="text-align:center;padding:32px 0 48px;font-size:12px;color:#94a3b8;">
+  IDEALONE — United Logistics &amp; Distribution · Internal Use Only
+</div>
+
+</body>
+</html>

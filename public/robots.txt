@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /home
+Allow: /og-image.png
+Allow: /icons/
+Disallow: /home.html
+Disallow: /
+
+Sitemap: https://idealscan.up.railway.app/sitemap.xml
