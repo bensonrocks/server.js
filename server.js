@@ -126,7 +126,7 @@ async function initMysqlPool() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      connectionTimeout: 5000,
+      connectTimeout: 5000, // mysql2's real option name — "connectionTimeout" is silently ignored
       enableKeepAlive: true,
     });
 
