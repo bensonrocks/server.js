@@ -1186,6 +1186,35 @@
         data = await resp.json();
       }
 
+      // Inventory check: SKUs in this upload that Inventory doesn't know
+      // about. Two types of orders exist — inventory-tracked (reserves real
+      // stock) or non-inventory (processed/scanned for activity/billing only,
+      // never touches stock). Ask which this upload should be.
+      if (resp.status === 409 && data.needsInventoryConfirm) {
+        const lines = (data.missingSkus || []).slice(0, 15).map(s => `• ${s}`).join('\n');
+        const more = data.missingCount > 15 ? `\n…and ${data.missingCount - 15} more` : '';
+        const track = confirm(
+          `⚠ SKUs NOT FOUND IN INVENTORY\n\n${data.message}\n\n${lines}${more}` +
+          `\n\nOK = add these SKUs to Inventory (at 0 stock) and reserve stock for this upload` +
+          `\nCancel = continue without inventory tracking`);
+        if (track) {
+          form.append('inventory_decision', 'track');
+        } else {
+          const carryOn = confirm(
+            `Continue this upload WITHOUT inventory tracking?\n\n` +
+            `OK = continue — this upload is only processed/tracked for activity (e.g. billing); no stock is reserved or deducted\n` +
+            `Cancel = abort the whole upload`);
+          if (!carryOn) {
+            document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+            setUploadStatus('error', 'Upload cancelled — inventory tracking not confirmed.');
+            return;
+          }
+          form.append('inventory_decision', 'skip');
+        }
+        resp = await sendUpload();
+        data = await resp.json();
+      }
+
       document.getElementById('uploadConfirmOverlay').classList.add('hidden');
 
       if (!resp.ok) {
@@ -1205,6 +1234,9 @@
       if (data.transportJobsCreated > 0) {
         successMsg += ` 🚚 ${data.transportJobsCreated} delivery job(s) added to Transport.`;
       }
+      successMsg += data.inventoryTracked
+        ? ` 📦 Stock reserved in Inventory.`
+        : ` (not tracked in Inventory — activity/billing only.)`;
       setUploadStatus('success', successMsg);
 
       // Show download button immediately and lock tabs until downloaded

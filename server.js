@@ -3634,6 +3634,39 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     }
     // ── Validation passed — proceed ─────────────────────────────────────────
 
+    // ── Inventory check — two types of orders exist: INVENTORY-TRACKED
+    // (reserves real stock, requires every SKU to exist in Inventory) and
+    // NON-INVENTORY (purely processed/scanned for activity — e.g. billing —
+    // never touches stock). If any SKU in this upload isn't in Inventory,
+    // the uploader decides: add the missing SKUs (at zero stock) and track
+    // this upload against Inventory, or continue without tracking, or abort.
+    // Skipped entirely if the inventory store itself is unavailable.
+    let inventoryTracked = false;
+    if (inventory.available()) {
+      const uniqueSkus = [...new Set(mapped.map(r => r.sku).filter(Boolean))];
+      const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku));
+      if (missingSkus.length) {
+        const decision = String(req.body?.inventory_decision || '').toLowerCase();
+        if (decision === 'track') {
+          for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku }); } catch (_) {} }
+          inventoryTracked = true;
+          logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), ...clientInfo(req) });
+        } else if (decision === 'skip') {
+          inventoryTracked = false;
+          logAudit('upload_inventory_tracking_skipped', { missingCount: missingSkus.length, skus: missingSkus.slice(0, 20), ...clientInfo(req) });
+        } else {
+          return res.status(409).json({
+            needsInventoryConfirm: true,
+            missingSkus: missingSkus.slice(0, 50),
+            missingCount: missingSkus.length,
+            message: `${missingSkus.length} SKU(s) in this upload were not found in Inventory. Add them and reserve stock for this upload, or continue without inventory tracking (this upload will only be processed/tracked for activity — e.g. billing — with no stock reserved or deducted)?`,
+          });
+        }
+      } else {
+        inventoryTracked = true; // every SKU already known — track automatically, no prompt
+      }
+    }
+
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
     const batchId    = uuidv4();
     const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
@@ -3650,7 +3683,22 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       order_count: orders.length, row_count: mapped.length,
       orderStates: {},
       orders,
+      inventory_tracked: inventoryTracked,
     };
+
+    // Reserve stock for every line — moves qty from available into reserved
+    // so a second order can't be promised the same units before this one
+    // ships. Never blocks the upload: a reservation failure (e.g. a SKU
+    // slipped through unresolved) is logged, not fatal.
+    let inventorySkusReserved = 0;
+    if (inventoryTracked && inventory.available()) {
+      for (const order of orders) {
+        try {
+          inventory.reserveOrder({ id: order.order_number, items: order.lines.map(l => ({ sku: l.sku, qty: l.qty })) });
+          inventorySkusReserved++;
+        } catch (e) { console.warn('[upload] inventory reserve failed for', order.order_number, e.message); }
+      }
+    }
 
     db.batches.unshift(batch);
     // "Delivery arrangement needed?" — the user answers yes/no in the
@@ -3712,7 +3760,9 @@ app.post('/api/upload', uploadFields, async (req, res) => {
       rowCount: mapped.length,
       orderCount: orders.length,
       orders: ordersWithState,
-      transportJobsCreated
+      transportJobsCreated,
+      inventoryTracked,
+      inventorySkusReserved
     });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);
