@@ -590,7 +590,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', inventory: 'Inventory', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -630,6 +630,7 @@
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'inbound') { renderInboundTab(); }
+    if (name === 'inventory') { renderInventory(); }
     if (name === 'transport') {
       document.getElementById('transportSubMenu').style.display = 'block';
       renderTransportTab();
@@ -9764,6 +9765,113 @@
     });
     window.addEventListener('appinstalled', () => bar.classList.add('hidden'));
   })();
+
+  // ── INVENTORY (System A) UI — ported, additive; talks to /api/inventory/* ────
+  function renderInventory() { invUI.load(); }
+  const invUI = (function () {
+    let items = [];
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+    function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+    function money(n) { return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+    async function load() {
+      try {
+        const [listR, statsR] = await Promise.all([fetch('/api/inventory'), fetch('/api/inventory/stats')]);
+        items = listR.ok ? await listR.json() : [];
+        const stats = statsR.ok ? await statsR.json() : {};
+        setText('inv-s-total', stats.totalSKUs || 0);
+        setText('inv-s-low', stats.lowStock || 0);
+        setText('inv-s-out', stats.outOfStock || 0);
+        setText('inv-s-val', money(stats.totalValue || 0));
+        const sel = document.getElementById('inv-cat');
+        if (sel && Array.isArray(stats.categories)) {
+          const cur = sel.value;
+          sel.innerHTML = '<option value="">All categories</option>' + stats.categories.map(c => `<option>${esc(c)}</option>`).join('');
+          sel.value = cur;
+        }
+        render();
+      } catch (e) { /* leave prior view intact */ }
+    }
+    function filtered() {
+      const q = (document.getElementById('inv-search')?.value || '').toLowerCase();
+      const cat = document.getElementById('inv-cat')?.value || '';
+      const low = document.getElementById('inv-low-only')?.checked;
+      return items.filter(r =>
+        (!q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)) &&
+        (!cat || r.category === cat) &&
+        (!low || r.available_qty <= r.reorder_point));
+    }
+    function render() {
+      const tb = document.getElementById('inv-tbody'); if (!tb) return;
+      const rows = filtered();
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">No items.</td></tr>'; return; }
+      tb.innerHTML = rows.map(r => {
+        const low = r.available_qty <= r.reorder_point;
+        const style = r.available_qty === 0 ? 'color:#dc2626;font-weight:700' : low ? 'color:#d97706;font-weight:600' : '';
+        return `<tr>
+          <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
+          <td>${esc(r.name)}</td>
+          <td>${esc(r.category || '')}</td>
+          <td style="text-align:right">${r.stock_qty}</td>
+          <td style="text-align:right">${r.reserved_qty}</td>
+          <td style="text-align:right;${style}">${r.available_qty}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn-secondary" style="padding:.2rem .55rem" onclick="invUI.adjust('${esc(r.sku)}')">&#177; Adjust</button>
+            <button class="btn-secondary" style="padding:.2rem .55rem" onclick="invUI.moves('${esc(r.sku)}')">History</button>
+          </td></tr>`;
+      }).join('');
+    }
+    async function adjust(sku) {
+      const v = prompt('Adjust quantity for ' + sku + '\n(positive to receive, negative to remove):');
+      if (v === null) return;
+      const qty = Number(v);
+      if (Number.isNaN(qty)) { alert('Please enter a number.'); return; }
+      const reason = prompt('Reason (optional):') || '';
+      const r = await fetch('/api/inventory/' + encodeURIComponent(sku) + '/adjust', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qty, reason }) });
+      if (r.ok) load(); else alert('Adjustment failed.');
+    }
+    async function moves(sku) {
+      const r = await fetch('/api/inventory/' + encodeURIComponent(sku) + '/movements');
+      const m = r.ok ? await r.json() : [];
+      alert(sku + ' — recent movements:\n\n' + (m.length ? m.map(x => `${x.at}   ${x.type}   ${x.qty > 0 ? '+' : ''}${x.qty}   ${x.reason || ''}`).join('\n') : 'No movements yet.'));
+    }
+    async function addItem() {
+      const sku = prompt('New SKU code:'); if (!sku) return;
+      const name = prompt('Item name:'); if (!name) return;
+      const r = await fetch('/api/inventory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku, name }) });
+      if (r.ok) load(); else alert('Add failed (SKU may already exist).');
+    }
+    async function reseed() {
+      if (!confirm('Seed inventory items from the SKU catalog?\nExisting items are kept; only missing SKUs are added at zero stock.')) return;
+      const r = await fetch('/api/inventory/seed', { method: 'POST' });
+      const j = r.ok ? await r.json() : {};
+      alert('Seeded ' + (j.seeded || 0) + ' new item(s). Total: ' + (j.total || 0) + '.');
+      load();
+    }
+    function importCsv() {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = '.csv,text/csv';
+      inp.onchange = async () => {
+        const file = inp.files && inp.files[0]; if (!file) return;
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (!lines.length) return alert('Empty file.');
+        const cols = lines[0].split(',').map(c => c.trim().toLowerCase());
+        const items = lines.slice(1).map(line => {
+          const cells = line.split(','); const o = {};
+          cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
+          return o;
+        }).filter(o => o.sku && o.name);
+        if (!items.length) return alert('No rows with sku + name found. Header must include: sku,name (and optionally category,stock_qty,reorder_point,cost_price,sell_price,location).');
+        const r = await fetch('/api/inventory/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items, mode: 'upsert' }) });
+        const j = r.ok ? await r.json() : {};
+        alert('Imported ' + (j.imported || 0) + ', skipped ' + (j.skipped || 0) + '.');
+        load();
+      };
+      inp.click();
+    }
+    return { load, filter: render, adjust, moves, addItem, reseed, importCsv };
+  })();
+  window.invUI = invUI;
 
   // ── Init ───────────────────────────────────────────────────────────────────
   initLogin();

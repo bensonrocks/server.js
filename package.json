@@ -8,6 +8,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "bwip-js": "^4.11.1",
     "csv-parse": "^5.5.3",
     "csv-stringify": "^6.4.4",

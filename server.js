@@ -8459,6 +8459,71 @@ app.get('/driver', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'driver.html'));
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  INVENTORY (System A) — additive module, own SQLite DB (data/inventory.db).
+//  Ported from the previous IdealOne app; does not touch db.json. All routes
+//  are guarded by requireAuth (same as the rest of the API). If better-sqlite3
+//  is unavailable the store degrades to no-ops and these endpoints return empty.
+// ─────────────────────────────────────────────────────────────────────────────
+const inventory = require('./lib/inventory-store');
+inventory.init();
+function _invSeed() { try { inventory.seedFromSkuMap(_skuDescMap); } catch (_) {} }
+
+app.get('/api/inventory', requireAuth, (req, res) => {
+  _invSeed();
+  const { category, search, lowStock, clientId } = req.query;
+  res.json(inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId }));
+});
+app.get('/api/inventory/stats', requireAuth, (req, res) => {
+  _invSeed();
+  res.json(inventory.getStats({ clientId: req.query.clientId }));
+});
+app.get('/api/inventory/velocity', requireAuth, (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 20, 50);
+  res.json(inventory.velocity(limit, req.query.clientId || null));
+});
+app.post('/api/inventory/import', requireAuth, express.json(), (req, res) => {
+  const { items = [], mode = 'upsert' } = req.body || {};
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+  let imported = 0, skipped = 0; const errors = [];
+  if (mode === 'replace') { try { inventory.getAll().forEach(r => inventory.remove(r.sku)); } catch (_) {} }
+  for (const it of items) {
+    try { inventory.upsert(it); imported++; }
+    catch (e) { skipped++; errors.push({ sku: it && it.sku, error: e.message }); }
+  }
+  res.json({ imported, skipped, errors });
+});
+app.post('/api/inventory/seed', requireAuth, (req, res) => {
+  const n = inventory.seedFromSkuMap(_skuDescMap);
+  res.json({ seeded: n, total: inventory.getAll().length });
+});
+app.post('/api/inventory', requireAuth, express.json(), (req, res) => {
+  try { res.status(201).json(inventory.upsert(req.body || {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/:sku/movements', requireAuth, (req, res) => {
+  res.json(inventory.movements(req.params.sku, Number(req.query.limit) || 50));
+});
+app.post('/api/inventory/:sku/adjust', requireAuth, express.json(), (req, res) => {
+  const { qty, type = 'adjustment', reason = '' } = req.body || {};
+  if (qty === undefined || Number.isNaN(Number(qty))) return res.status(400).json({ error: 'qty (number) is required' });
+  try { res.json(inventory.adjust(req.params.sku, Number(qty), type, reason)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/:sku', requireAuth, (req, res) => {
+  const item = inventory.get(req.params.sku);
+  if (!item) return res.status(404).json({ error: 'SKU not found' });
+  res.json(item);
+});
+app.put('/api/inventory/:sku', requireAuth, express.json(), (req, res) => {
+  try { res.json(inventory.upsert({ ...(req.body || {}), sku: req.params.sku })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
+  inventory.remove(req.params.sku);
+  res.json({ ok: true });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`))
   .on('error', err => {
