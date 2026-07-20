@@ -2354,26 +2354,26 @@
       <div class="modal-title" id="waveModalTitle">Wave Pick</div>
       <p class="modal-desc" id="waveModalDesc"></p>
 
-      <!-- Phase 1: consolidated picking -->
+      <!-- Phase 1: consolidated pick list — paper-driven, not scan-driven. Every
+           line defaults to its full needed qty; a packer takes the printed list
+           onto the floor and only edits a line here if it came up short. -->
       <div id="wavePickingPhase">
         <div class="dash-stats-grid" id="waveSanityStats" style="grid-template-columns:repeat(4,1fr);margin-bottom:.9rem"></div>
-        <button class="btn-secondary btn-sm" id="waveOrdersBreakdownToggle" style="margin-bottom:.6rem">&#128203; Orders in this Wave &amp; what they need</button>
+        <div style="display:flex;gap:.5rem;margin-bottom:.6rem;flex-wrap:wrap">
+          <button class="btn-secondary btn-sm" id="waveOrdersBreakdownToggle">&#128203; Orders in this Wave &amp; what they need</button>
+          <button class="btn-primary btn-sm" id="wavePrintListBtn">&#128424; Print Pick List (PDF)</button>
+        </div>
         <div class="dcs-wrap hidden" id="waveOrdersBreakdownWrap" style="margin-bottom:.9rem">
           <table class="dcs-table">
             <thead><tr><th>Order</th><th>GI / Waybill</th><th>Items</th><th>Qty Needed</th></tr></thead>
             <tbody id="waveOrdersBreakdownBody"></tbody>
           </table>
         </div>
-        <div class="wave-scan-row">
-          <input type="text" id="waveScanInput" placeholder="Scan or type SKU…" autocomplete="off" />
-          <input type="number" id="waveScanQty" min="1" value="1" style="width:70px" />
-          <button class="btn-primary btn-sm" id="waveScanAddBtn">Add</button>
-        </div>
+        <p class="modal-desc" style="margin:.2rem 0 .6rem">Every line below already assumes the FULL quantity was picked. Only change a number if that bin came up short.</p>
         <div id="waveScanError" class="scan-error hidden"></div>
-        <div id="waveLocationChoices" class="hidden"></div>
         <div class="dcs-wrap">
           <table class="dcs-table">
-            <thead><tr><th>Location</th><th>SKU</th><th>Description</th><th>Needed</th><th>Scanned</th><th>Quick Add</th></tr></thead>
+            <thead><tr><th>Location</th><th>SKU</th><th>Description</th><th>Needed</th><th>Picked</th></tr></thead>
             <tbody id="wavePickListBody"></tbody>
           </table>
         </div>

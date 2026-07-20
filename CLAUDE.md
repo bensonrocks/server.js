@@ -1516,10 +1516,19 @@ When porting to IdealScan or other codebases:
 ## Wave Picking — "consolidated pick, then sort" (lib/wave-pick.js)
 
 Lets a packer select 2+ already-uploaded pending orders and pick every SKU's
-TOTAL quantity across the whole wave in ONE pass (scan SKU-123 x 47 instead
-of scanning it separately for 12 orders), then a sort/allocate step divides
-the scanned pile back into each order's required quantity before the packer
-opens each order individually to verify cartons and complete it. Selecting
+TOTAL quantity across the whole wave in ONE pass (one bin visit for SKU-123
+covers all 12 orders that need it, instead of picking it separately per
+order), then a sort/allocate step divides the picked pile back into each
+order's required quantity before the packer opens each order individually
+to verify cartons and complete it. PICKING IS PAPER-DRIVEN, NOT SCAN-DRIVEN
+— every pick-list line defaults to its full needed quantity the instant the
+wave is created; a packer prints the list (`🖨 Print Pick List (PDF)`) and
+walks the floor with it, only coming back to the on-screen list to correct
+a line DOWN if a bin came up short. There is no "scan each SKU to build up
+a running total" step — that on-screen scan-and-add flow was tried and
+explicitly dropped as impractical (packers don't stand at a keyboard while
+picking); the review screen is just an editable "Picked" number per line.
+Selecting
 exactly 1 order never triggers wave mode — it opens the normal single-order
 scan overlay exactly as before; the wave bar only offers "Start Wave Pick"
 at 2+ selections (Orders tab, checkbox column on `.wave-select-check`,
@@ -1538,9 +1547,13 @@ whenever the Active view has at least one selectable order, growing to show
 
 - **PORTABLE CORE — `lib/wave-pick.js`**: zero dependencies on IDEALONE's db
   shape, Express, or order/state schema — every function takes plain data in,
-  returns plain data out (`buildWavePickList`, `createWave`, `recordPickScan`,
+  returns plain data out (`buildWavePickList`, `createWave`, `setPickQty`,
   `autoAllocate`, `adjustAllocation`, `allocationSummary`,
-  `isFullyScanned`/`isFullyAllocated`). Copy this file verbatim into IDEALOMS
+  `isFullyScanned`/`isFullyAllocated`). `setPickQty` SETS a line's picked
+  quantity directly — it is not an accumulator — matching the paper-driven
+  workflow above; a host that still wants a scan-and-accumulate flow can
+  layer that on top by reading the current value and adding to it before
+  calling `setPickQty`. Copy this file verbatim into IDEALOMS
   or any other codebase, same convention as `lib/zort.js`/`lib/tms-importer.js`.
   The ONE seam into a host's real order records is `applyWaveToOrderStates(wave,
   applyFn)` — it never touches any host object directly, only calls
@@ -1559,22 +1572,28 @@ whenever the Active view has at least one selectable order, growing to show
   existing carton/mismatch/waybill logic with zero duplication. This also
   makes cancelling a wave trivial (`POST /api/waves/:id/cancel`) — nothing
   was ever written to a real order, so there's nothing to roll back.
-- **AUTO-ALLOCATE, then manual override**: every `/scan` call re-runs
-  `autoAllocate()`, which fills each order's need in wave order (first
-  selected order first) from whatever's been scanned so far — deterministic
-  and idempotent, so the sort screen is never empty when the packer gets
-  there. `POST /api/waves/:id/allocate {sku, orderNumber, qty}` (the sort
-  screen's +/- steppers) lets the packer manually correct it (e.g. a
-  physical miscount); `adjustAllocation` clamps to `[0, scannedQty −
-  everyone else's allocation]` so one order's line can never claim more than
-  what's physically been scanned for that SKU.
+- **FULL PICK BY DEFAULT, AUTO-ALLOCATE, then manual override**: `POST
+  /api/waves` sets every line's `scannedQty = totalQty` right after
+  `wavePick.createWave(...)` (before the response is even sent) and calls
+  `autoAllocate()` once, so the sort screen already looks correct the moment
+  the wave exists — the common case (nothing short) needs ZERO interaction
+  before Finish Picking → Sort → Complete. `autoAllocate()` fills each
+  order's need in wave order (first selected order first) from whatever the
+  "Picked" quantity currently is, deterministic and idempotent, re-run after
+  every `set-qty` call. `POST /api/waves/:id/allocate {sku, orderNumber,
+  qty}` (the sort screen's +/- steppers) lets the packer manually correct
+  the split between orders (e.g. a physical miscount); `adjustAllocation`
+  clamps to `[0, scannedQty − everyone else's allocation]` so one order's
+  line can never claim more than what was actually picked for that SKU.
 - **ENDPOINTS**: `POST /api/waves` (creates from `{orderNumbers}`, refuses
   <2 orders, refuses an order already `done` or already in another
   non-terminal wave), `GET /api/waves` (list summaries), `GET /api/waves/:id`,
-  `POST /api/waves/:id/scan {sku, qty}` (resolves through
-  `resolveBeTimeCode2` first, same as normal scanning), `POST
-  /api/waves/:id/finish-picking` (→ `sorting` status), `POST
-  /api/waves/:id/allocate`, `POST /api/waves/:id/complete`, `POST
+  `POST /api/waves/:id/set-qty {sku, qty, location?}` (SETS one line's
+  picked quantity directly — the only way picked quantities change; resolves
+  the sku through `resolveBeTimeCode2` first for consistency with normal
+  scanning, though in practice it's called with the exact SKU already shown
+  on that row), `POST /api/waves/:id/finish-picking` (→ `sorting` status),
+  `POST /api/waves/:id/allocate`, `POST /api/waves/:id/complete`, `POST
   /api/waves/:id/cancel`.
 - **SANITY CHECKS ON THE PICK SCREEN**: a stats strip (Orders / SKU Lines /
   Total Qty Needed / Scanned So Far) makes an upload or selection mistake
@@ -1606,17 +1625,26 @@ whenever the Active view has at least one selectable order, growing to show
   `uniqueSkuLines`, which pools by SKU alone and must not change behaviour).
   Orders/items with no location data fall back to grouping by SKU alone —
   fully backward compatible with hosts that don't track locations.
-- **AMBIGUOUS-LOCATION SCANS ASK, NEVER GUESS** — if a SKU exists at 2+
-  locations in the wave, `POST /api/waves/:id/scan` without a `location`
-  returns 409 `{ambiguousLocation:true, sku, options:[{location, needed,
-  scanned}]}` instead of guessing which bin was picked from. The client
-  (`waveScan()` in app.js) shows an inline amber location picker
-  (`#waveLocationChoices`) — clicking an option resubmits the same scan with
-  that location. Each pick-list row ALSO has its own "Quick Add" qty+button
-  (`.wave-row-add-btn`, `data-sku`/`data-loc`) that scans that EXACT
-  location/SKU directly, so ambiguity can never arise from that path at all.
-  `adjustAllocation`/`findPickEntries` in lib/wave-pick.js take the same
-  optional `location` param throughout for this reason.
+- **AMBIGUITY CAN'T ARISE ON THE REVIEW SCREEN** — every pick-list row IS one
+  exact (location, sku) pair with its own "Picked" input
+  (`.wave-picked-input`, `data-sku`/`data-loc`), so `waveSetPickedQty()` in
+  app.js always knows exactly which line it's editing — no lookup-by-SKU
+  ambiguity like a scan-driven flow would have. `POST /api/waves/:id/set-qty`
+  still accepts an optional `location` and still returns 409
+  `{ambiguousLocation:true, sku, options:[{location, needed, scanned}]}` if
+  a caller omits it for a SKU stocked at 2+ locations — kept for API safety
+  and for a future host that scripts against this endpoint directly — but
+  the shipped UI never triggers it, since it always sends the row's own
+  location. `adjustAllocation`/`findPickEntries` in lib/wave-pick.js take
+  the same optional `location` param throughout for this reason.
+- **PRINTABLE PICK LIST IS THE ACTUAL PICKING TOOL** — `🖨 Print Pick List
+  (PDF)` (`printWavePickList()` in app.js) opens a new window with the
+  consolidated list (Location / SKU / Description / Qty, plus a blank
+  checkbox column for hand-ticking) and calls `window.print()` — same
+  window.open+print pattern as the carton slip and driver run sheets
+  elsewhere in this app (the browser's own print dialog offers "Save as
+  PDF"). This is the document a packer actually carries onto the floor; the
+  on-screen list is only for reviewing/correcting after the fact.
 - **ULD FLOOR-LOCATION PRIORITY (server.js only, NOT in the portable lib)**
   — ULD's bin naming is Row-Bay-Location (`AA-BB-CC`, e.g. `99-001-011`);
   Row `99` is FLOOR level — no ladder/reach truck needed, the fastest pick

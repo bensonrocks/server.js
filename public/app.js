@@ -5901,13 +5901,11 @@
     document.getElementById('waveSortingPhase').classList.add('hidden');
     document.getElementById('waveModalTitle').textContent = `Wave Pick — ${activeWave.id}`;
     document.getElementById('waveModalDesc').textContent =
-      `${activeWave.orderNumbers.length} orders · scan each SKU's TOTAL quantity for the whole wave once.`;
+      `${activeWave.orderNumbers.length} orders · print the pick list and walk the floor — every line already assumes a full pick.`;
     document.getElementById('waveScanError').classList.add('hidden');
-    renderWaveLocationChoices(null, null, null);
     renderWaveSanityStats();
     renderWaveOrdersBreakdown();
     renderWavePickList();
-    setTimeout(() => document.getElementById('waveScanInput')?.focus(), 60);
   }
 
   // Sanity-check summary: what's actually loaded into this wave vs what's
@@ -5959,88 +5957,85 @@
     document.getElementById('waveOrdersBreakdownWrap').classList.toggle('hidden');
   });
 
+  // Every line already defaults to its full needed qty (set server-side the
+  // moment the wave is created) — this table is a REVIEW screen, not a scan
+  // console. The "Picked" number is directly editable; it only needs to be
+  // touched when a bin came up short. No scan-and-add step, no ambiguous-
+  // location prompt — each row already IS one exact (location, sku) pair.
   function renderWavePickList() {
     const body = document.getElementById('wavePickListBody');
-    body.innerHTML = activeWave.pickList.map(e => {
-      const done = e.scannedQty >= e.totalQty;
-      const quickAdd = done ? '&#10003;' : `
-        <div class="wave-row-add">
-          <input type="number" class="wave-row-qty" min="1" value="1" />
-          <button class="wave-row-add-btn" data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}">Add</button>
-        </div>`;
-      return `<tr class="${done ? 'wave-pick-done' : ''}">
+    body.innerHTML = activeWave.pickList.map((e, i) => {
+      const short = e.scannedQty < e.totalQty;
+      return `<tr class="${short ? '' : 'wave-pick-done'}">
         <td>${e.location ? `<code>${esc(e.location)}</code>` : '&mdash;'}</td>
         <td><code>${esc(e.sku)}</code></td>
         <td>${esc(e.description || '')}</td>
         <td>${e.totalQty}</td>
-        <td>${e.scannedQty}</td>
-        <td>${quickAdd}</td>
+        <td><input type="number" class="wave-picked-input" min="0" value="${e.scannedQty}" data-idx="${i}" data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}" /></td>
       </tr>`;
     }).join('');
     renderWaveSanityStats();
-    // Quick-add is tied to one exact (location, sku) row, so it can never be
-    // ambiguous — the fastest path for a packer standing at a bin with 2+
-    // SKUs sharing a code, or the location column just being handy to see.
-    body.querySelectorAll('.wave-row-add-btn').forEach(btn =>
-      btn.addEventListener('click', () => {
-        const qtyEl = btn.closest('.wave-row-add').querySelector('.wave-row-qty');
-        const qty = Math.max(1, parseInt(qtyEl.value, 10) || 1);
-        waveScan(btn.dataset.sku, qty, btn.dataset.loc);
-      })
-    );
+    body.querySelectorAll('.wave-picked-input').forEach(inp => {
+      inp.addEventListener('change', () => waveSetPickedQty(inp));
+    });
   }
 
-  // Renders (or clears) the amber location-disambiguation strip under the
-  // scan bar — shown when a SKU is stocked at 2+ locations in this wave and
-  // the free-text scan can't tell which one was just picked from.
-  function renderWaveLocationChoices(sku, qty, options) {
-    const wrap = document.getElementById('waveLocationChoices');
-    if (!options) { wrap.classList.add('hidden'); wrap.innerHTML = ''; return; }
-    wrap.classList.remove('hidden');
-    wrap.innerHTML = `<div class="wlc-label">Which location for <code>${esc(sku)}</code>?</div>` +
-      options.map(o => `<button data-loc="${esc(o.location || '')}">${esc(o.location || '(no location)')} — needs ${o.needed}, scanned ${o.scanned}</button>`).join('');
-    wrap.querySelectorAll('button').forEach(btn =>
-      btn.addEventListener('click', () => { renderWaveLocationChoices(null, null, null); waveScan(sku, qty, btn.dataset.loc); })
-    );
-  }
-
-  // Core scan call, shared by the free-text bar and each row's Quick Add —
-  // `location` is optional and only required to disambiguate a SKU stocked
-  // at 2+ locations in this wave.
-  async function waveScan(sku, qty, location) {
-    if (!sku || !activeWave) return;
+  async function waveSetPickedQty(inp) {
+    const qty = Math.max(0, parseInt(inp.value, 10) || 0);
     const errEl = document.getElementById('waveScanError');
     errEl.classList.add('hidden');
     try {
-      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/scan`, {
-        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, qty, location: location || undefined }),
+      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/set-qty`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku: inp.dataset.sku, qty, location: inp.dataset.loc || undefined }),
       });
       const d = await r.json();
-      if (!r.ok) {
-        if (d.ambiguousLocation) { renderWaveLocationChoices(sku, qty, d.options); return; }
-        errEl.textContent = d.error || 'Scan failed'; errEl.classList.remove('hidden');
-        return;
-      }
-      renderWaveLocationChoices(null, null, null);
+      if (!r.ok) { errEl.textContent = d.error || 'Could not update quantity'; errEl.classList.remove('hidden'); return; }
       activeWave = d.wave;
       renderWavePickList();
     } catch (err) { errEl.textContent = 'Network error: ' + err.message; errEl.classList.remove('hidden'); }
   }
 
-  async function waveSubmitScan() {
-    const input = document.getElementById('waveScanInput');
-    const qtyEl = document.getElementById('waveScanQty');
-    const sku = input.value.trim();
-    const qty = Math.max(1, parseInt(qtyEl.value, 10) || 1);
-    if (!sku) return;
-    await waveScan(sku, qty, null);
-    input.value = '';
-    qtyEl.value = '1';
-    input.focus();
+  // Printable pick list — the actual picking tool: a packer takes this
+  // sheet onto the floor (grouped floor-locations-first server-side) rather
+  // than interacting with the on-screen list SKU by SKU.
+  function printWavePickList() {
+    if (!activeWave) return;
+    const w = window.open('', '_blank', 'width=480,height=700');
+    if (!w) { alert('Please allow pop-ups to print the pick list.'); return; }
+    const rows = activeWave.pickList.map(e => `
+      <tr>
+        <td class="chk">&#9744;</td>
+        <td>${esc(e.location || '—')}</td>
+        <td>${esc(e.sku)}</td>
+        <td>${esc(e.description || '')}</td>
+        <td class="qty">${e.totalQty}</td>
+      </tr>`).join('');
+    const totalQty = activeWave.pickList.reduce((s, e) => s + e.totalQty, 0);
+    w.document.write(`
+      <html><head><title>Wave Pick List — ${esc(activeWave.id)}</title>
+      <style>
+        body { font-family: -apple-system, Arial, sans-serif; padding: 1.2rem; }
+        h1 { font-size: 1.4rem; margin: 0 0 .1rem; }
+        .meta { font-size: .85rem; color: #555; margin-bottom: .8rem; }
+        table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+        th, td { border: 1px solid #999; padding: .4rem .5rem; text-align: left; }
+        th { background: #f3f4f6; }
+        td.chk { width: 30px; text-align: center; font-size: 1.1rem; }
+        td.qty { text-align: center; font-weight: 800; }
+        @media print { body { padding: 0; } }
+      </style></head>
+      <body>
+        <h1>&#127754; Wave Pick List — ${esc(activeWave.id)}</h1>
+        <div class="meta">${activeWave.orderNumbers.length} orders &middot; ${activeWave.pickList.length} SKU lines &middot; ${totalQty} pieces total &middot; ${esc(new Date().toLocaleString('en-SG'))}</div>
+        <table>
+          <thead><tr><th></th><th>Location</th><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+      </body></html>`);
+    w.document.close();
   }
-  document.getElementById('waveScanAddBtn')?.addEventListener('click', waveSubmitScan);
-  document.getElementById('waveScanInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); waveSubmitScan(); } });
-  document.getElementById('waveScanQty')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); waveSubmitScan(); } });
+  document.getElementById('wavePrintListBtn')?.addEventListener('click', printWavePickList);
 
   document.getElementById('waveCancelBtn')?.addEventListener('click', async () => {
     if (!activeWave) return;
@@ -6052,7 +6047,7 @@
   document.getElementById('waveFinishPickingBtn')?.addEventListener('click', async () => {
     if (!activeWave) return;
     const short = activeWave.pickList.filter(e => e.scannedQty < e.totalQty);
-    if (short.length && !confirm(`${short.length} SKU(s) haven't been fully scanned yet. Continue to Sort anyway with what's been scanned so far?`)) return;
+    if (short.length && !confirm(`${short.length} line(s) are marked short of the full needed quantity. Continue to Sort with the picked quantities as entered?`)) return;
     try {
       const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/finish-picking`, { method: 'POST', headers: hdrs() });
       const d = await r.json();

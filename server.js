@@ -5951,6 +5951,12 @@ app.post('/api/waves', (req, res) => {
   }
   const wave = wavePick.createWave({ id: nextWaveCode(db), orderNumbers, orders, createdBy: req.userId || '' });
   wave.pickList = sortPickListUldFloorFirst(wave.pickList);
+  // Picking is paper-driven, not scan-driven: every line defaults to its
+  // full needed quantity the moment the wave is created — a packer takes
+  // the printed pick list onto the floor and only comes back to the screen
+  // to correct a line DOWN if something was actually short.
+  for (const entry of wave.pickList) entry.scannedQty = entry.totalQty;
+  wavePick.autoAllocate(wave);
   db.waves.unshift(wave);
   writeDb(db);
   logAudit('wave_created', { waveId: wave.id, orders: orderNumbers, by: req.userId || '' });
@@ -5974,20 +5980,23 @@ app.get('/api/waves/:id', (req, res) => {
   res.json({ wave, allocationSummary: wavePick.allocationSummary(wave) });
 });
 
-app.post('/api/waves/:id/scan', (req, res) => {
+// Sets one pick-list line's picked quantity directly (not additive) — the
+// packer/supervisor reviewing the printed list only touches this to correct
+// a line DOWN from its full-needed default (e.g. a bin came up short).
+app.post('/api/waves/:id/set-qty', (req, res) => {
   const db = readDb();
   const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
   if (wave.status === 'done' || wave.status === 'cancelled') return res.status(409).json({ error: `Wave is ${wave.status}` });
   const sku = resolveBeTimeCode2(req.body.sku);
-  const qty = Number(req.body.qty) || 1;
+  const qty = Number(req.body.qty) || 0;
   const location = req.body.location ? String(req.body.location).trim() : '';
   if (!sku) return res.status(400).json({ error: 'sku required' });
-  const result = wavePick.recordPickScan(wave, sku, qty, { by: req.userId || '', eventId: req.body.eventId || null, location });
+  const result = wavePick.setPickQty(wave, sku, qty, { by: req.userId || '', location });
   if (!result.ok) {
     if (result.reason === 'ambiguous_location') {
       return res.status(409).json({
-        error: `SKU "${sku}" is stocked at ${result.options.length} different locations in this wave — pick which one you're at.`,
+        error: `SKU "${sku}" is stocked at ${result.options.length} different locations in this wave — specify one.`,
         ambiguousLocation: true, sku, options: result.options,
       });
     }
