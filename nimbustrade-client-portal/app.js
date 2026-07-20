@@ -24,6 +24,22 @@
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }
 
+  // ---------- Theme ----------
+  const root = document.documentElement;
+  const storedTheme = localStorage.getItem('nimbustrade-portal-theme');
+  root.dataset.theme = storedTheme || 'dark';
+
+  function setTheme(next) {
+    root.dataset.theme = next;
+    localStorage.setItem('nimbustrade-portal-theme', next);
+    if (tileLayer) tileLayer.setUrl(tileUrlForTheme());
+  }
+
+  [$('#theme-toggle'), $('#login-theme-toggle')].forEach((btn) => {
+    if (!btn) return;
+    btn.addEventListener('click', () => setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+  });
+
   async function api(path, opts = {}) {
     const res = await fetch(API + path, { ...opts, headers: authHeaders() });
     if (res.status === 401) { doLogout(); throw new Error('Session expired'); }
@@ -108,8 +124,14 @@
   // markers stay fully interactive.
   let leafletMap = null;
   let markerLayer = null;
+  let tileLayer = null;
   let lastCountries = [];
   let boundsSet = false;
+
+  function tileUrlForTheme() {
+    const variant = root.dataset.theme === 'light' ? 'light_all' : 'dark_all';
+    return `https://{s}.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}{r}.png`;
+  }
 
   function initMap() {
     leafletMap = L.map('world-map', {
@@ -123,7 +145,7 @@
       attributionControl: true,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    tileLayer = L.tileLayer(tileUrlForTheme(), {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 19,

@@ -1,11 +1,13 @@
 /* ============================================================
    NimbusTrade Staff Access — "Control Tower"
-   Same dark operational console system as Client Access. Staff
-   get the same left icon rail, now driving five destinations
-   (Overview/Orders/Clients/Vendors/Inventory) instead of anchors.
+   Same operational console system as Client Access: dark by
+   default with a light "day" mode toggle. Staff get the same left
+   icon rail, now driving five destinations (Overview/Orders/
+   Clients/Vendors/Inventory) instead of anchors.
    ============================================================ */
 
-:root {
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #15171b;
   --bg-alt: #1a1d22;
   --surface: #1d2025;
@@ -21,6 +23,8 @@
   --chrome-bg-2: #16191d;
   --chrome-fg: #e7e5dc;
   --chrome-muted: #7d8590;
+  --chrome-border: rgba(231, 229, 220, 0.1);
+  --chrome-hover: rgba(231, 229, 220, 0.07);
 
   --green: #3fa66b;
   --green-tint: rgba(63, 166, 107, 0.14);
@@ -30,7 +34,39 @@
   --red-tint: rgba(217, 105, 90, 0.14);
   --grey: #7d8590;
   --grey-tint: rgba(125, 133, 144, 0.16);
+}
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #d7d9da;
+  --bg-alt: #cbcdcf;
+  --surface: #f0f1f0;
+  --fg: #14171b;
+  --fg-muted: #52585f;
+  --accent: #a8620e;
+  --accent-strong: #c97710;
+  --accent-tint: rgba(168, 98, 14, 0.12);
+  --border: rgba(20, 23, 27, 0.2);
+  --border-soft: rgba(20, 23, 27, 0.1);
+
+  --chrome-bg: #eceeed;
+  --chrome-bg-2: #e2e4e3;
+  --chrome-fg: #14171b;
+  --chrome-muted: #5c636a;
+  --chrome-border: rgba(20, 23, 27, 0.14);
+  --chrome-hover: rgba(20, 23, 27, 0.06);
+
+  --green: #1f7a4d;
+  --green-tint: rgba(31, 122, 77, 0.12);
+  --amber: #2b6f8c;
+  --amber-tint: rgba(43, 111, 140, 0.12);
+  --red: #9c3223;
+  --red-tint: rgba(156, 50, 35, 0.1);
+  --grey: #5c636a;
+  --grey-tint: rgba(92, 99, 106, 0.12);
+}
+
+:root {
   --radius: 2px;
   --radius-lg: 3px;
 
@@ -108,12 +144,20 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 /* ---------- Login ---------- */
 .login-screen {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--chrome-bg);
   padding: 24px;
+}
+
+.login-theme-toggle {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  border-color: var(--chrome-border);
 }
 
 .login-card {
@@ -174,14 +218,34 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   height: 52px;
   background: var(--chrome-bg);
   color: var(--chrome-fg);
-  border-bottom: 1px solid rgba(231, 229, 220, 0.1);
+  border-bottom: 1px solid var(--chrome-border);
 }
 .app-brand { display: flex; flex-direction: column; line-height: 1.1; }
 .app-brand .brand-cn { color: var(--chrome-muted); }
 .app-brand .brand-en { color: var(--chrome-fg); font-size: 17px; }
 .app-header-right { display: flex; align-items: center; gap: 14px; }
-.client-name { font-family: var(--font-mono); font-size: 12.5px; color: #b7bfc9; }
-.app-header .btn-ghost-sm { color: var(--chrome-fg); border-color: rgba(231,229,220,0.22); }
+.client-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--chrome-muted); }
+.app-header .btn-ghost-sm { color: var(--chrome-fg); border-color: var(--chrome-border); }
+
+.theme-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  border: 1px solid var(--chrome-border);
+  background: transparent;
+  color: var(--chrome-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+.theme-toggle:hover { border-color: var(--accent-strong); color: var(--accent-strong); }
+.theme-toggle svg { width: 16px; height: 16px; }
+.theme-toggle .icon-moon { display: block; }
+.theme-toggle .icon-sun { display: none; }
+:root[data-theme="light"] .theme-toggle .icon-moon { display: none; }
+:root[data-theme="light"] .theme-toggle .icon-sun { display: block; }
 
 .app-shell { display: flex; align-items: flex-start; }
 
@@ -195,7 +259,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   gap: 2px;
   padding: 14px 8px;
   background: var(--chrome-bg);
-  border-right: 1px solid rgba(231, 229, 220, 0.1);
+  border-right: 1px solid var(--chrome-border);
   border-bottom: none;
   position: sticky;
   top: 52px;
@@ -222,7 +286,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   text-align: center;
 }
 .tab-btn svg { width: 18px; height: 18px; }
-.tab-btn:hover { color: var(--chrome-fg); background: rgba(231, 229, 220, 0.07); }
+.tab-btn:hover { color: var(--chrome-fg); background: var(--chrome-hover); }
 .tab-btn.active { color: var(--accent-strong); background: rgba(240, 168, 56, 0.08); }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
@@ -481,7 +545,7 @@ table.orders-table tbody tr:hover { background: var(--bg-alt); }
     flex-direction: row;
     overflow-x: auto;
     border-right: none;
-    border-bottom: 1px solid rgba(231, 229, 220, 0.1);
+    border-bottom: 1px solid var(--chrome-border);
     padding: 6px 10px;
     z-index: 10;
   }

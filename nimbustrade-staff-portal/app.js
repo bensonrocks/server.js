@@ -33,6 +33,20 @@
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }
 
+  // ---------- Theme ----------
+  const root = document.documentElement;
+  const storedTheme = localStorage.getItem('nimbustrade-portal-theme');
+  root.dataset.theme = storedTheme || 'dark';
+
+  [$('#theme-toggle'), $('#login-theme-toggle')].forEach((btn) => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      localStorage.setItem('nimbustrade-portal-theme', next);
+    });
+  });
+
   async function api(path, opts = {}) {
     const res = await fetch(API + path, { ...opts, headers: authHeaders() });
     if (res.status === 401) { doLogout(); throw new Error('Session expired'); }
