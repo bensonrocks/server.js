@@ -27,7 +27,7 @@
   // ---------- Theme ----------
   const root = document.documentElement;
   const storedTheme = localStorage.getItem('nimbustrade-portal-theme');
-  root.dataset.theme = storedTheme || 'dark';
+  root.dataset.theme = storedTheme || 'light';
 
   function setTheme(next) {
     root.dataset.theme = next;

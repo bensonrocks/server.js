@@ -38,25 +38,6 @@
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --bg: #15171b;
-    --bg-alt: #1a1d22;
-    --surface: #1d2025;
-    --fg: #e7e5dc;
-    --fg-muted: #8b93a0;
-    --accent: #e0932c;
-    --accent-strong: #f0a838;
-    --accent-tint: rgba(240, 168, 56, 0.14);
-    --critical: #d9695a;
-    --critical-tint: rgba(217, 105, 90, 0.14);
-    --border: rgba(231, 229, 220, 0.16);
-    --border-soft: rgba(231, 229, 220, 0.09);
-    --header-bg: #15171b;
-  }
-}
-
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #15171b;

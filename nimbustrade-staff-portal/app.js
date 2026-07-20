@@ -36,7 +36,7 @@
   // ---------- Theme ----------
   const root = document.documentElement;
   const storedTheme = localStorage.getItem('nimbustrade-portal-theme');
-  root.dataset.theme = storedTheme || 'dark';
+  root.dataset.theme = storedTheme || 'light';
 
   [$('#theme-toggle'), $('#login-theme-toggle')].forEach((btn) => {
     if (!btn) return;

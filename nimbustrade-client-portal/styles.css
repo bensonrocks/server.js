@@ -1,6 +1,6 @@
 /* ============================================================
    NimbusTrade Client Access — "Control Tower"
-   Operational console, dark by default with a light "day" mode
+   Operational console, light by default with a dark "night" mode
    toggle. One amber brand accent; status state (dropped/processing/
    completed/issue) uses its own semantic palette — grey / steel-blue
    / green / red — kept apart from the accent hue so "needs action"
@@ -9,37 +9,7 @@
    ground to keep contrast, same method as the marketing site.
    ============================================================ */
 
-:root, :root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #15171b;
-  --bg-alt: #1a1d22;
-  --surface: #1d2025;
-  --fg: #e7e5dc;
-  --fg-muted: #8b93a0;
-  --accent: #e0932c;
-  --accent-strong: #f0a838;
-  --accent-tint: rgba(240, 168, 56, 0.14);
-  --border: rgba(231, 229, 220, 0.14);
-  --border-soft: rgba(231, 229, 220, 0.08);
-
-  --chrome-bg: #101215;
-  --chrome-bg-2: #16191d;
-  --chrome-fg: #e7e5dc;
-  --chrome-muted: #7d8590;
-  --chrome-border: rgba(231, 229, 220, 0.1);
-  --chrome-hover: rgba(231, 229, 220, 0.07);
-
-  --green: #3fa66b;
-  --green-tint: rgba(63, 166, 107, 0.14);
-  --amber: #3e8fb0;
-  --amber-tint: rgba(62, 143, 176, 0.16);
-  --red: #d9695a;
-  --red-tint: rgba(217, 105, 90, 0.14);
-  --grey: #7d8590;
-  --grey-tint: rgba(125, 133, 144, 0.16);
-}
-
-:root[data-theme="light"] {
+:root, :root[data-theme="light"] {
   color-scheme: light;
   --bg: #d7d9da;
   --bg-alt: #cbcdcf;
@@ -67,6 +37,36 @@
   --red-tint: rgba(156, 50, 35, 0.1);
   --grey: #5c636a;
   --grey-tint: rgba(92, 99, 106, 0.12);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #15171b;
+  --bg-alt: #1a1d22;
+  --surface: #1d2025;
+  --fg: #e7e5dc;
+  --fg-muted: #8b93a0;
+  --accent: #e0932c;
+  --accent-strong: #f0a838;
+  --accent-tint: rgba(240, 168, 56, 0.14);
+  --border: rgba(231, 229, 220, 0.14);
+  --border-soft: rgba(231, 229, 220, 0.08);
+
+  --chrome-bg: #101215;
+  --chrome-bg-2: #16191d;
+  --chrome-fg: #e7e5dc;
+  --chrome-muted: #7d8590;
+  --chrome-border: rgba(231, 229, 220, 0.1);
+  --chrome-hover: rgba(231, 229, 220, 0.07);
+
+  --green: #3fa66b;
+  --green-tint: rgba(63, 166, 107, 0.14);
+  --amber: #3e8fb0;
+  --amber-tint: rgba(62, 143, 176, 0.16);
+  --red: #d9695a;
+  --red-tint: rgba(217, 105, 90, 0.14);
+  --grey: #7d8590;
+  --grey-tint: rgba(125, 133, 144, 0.16);
 }
 
 :root {

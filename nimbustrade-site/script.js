@@ -4,8 +4,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
 const root = document.documentElement;
 const themeToggle = document.getElementById('theme-toggle');
 const storedTheme = localStorage.getItem('nimbustrade-theme');
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-root.dataset.theme = storedTheme || (prefersDark ? 'dark' : 'light');
+root.dataset.theme = storedTheme || 'light';
 
 themeToggle.addEventListener('click', () => {
   const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
