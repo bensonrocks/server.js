@@ -6150,6 +6150,18 @@ app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
     journalOrderState(orderNumber, state);
     reversedOrders.add(orderNumber);
   });
+  // applyWaveToOrderStates calls back once PER LINE, so an order with
+  // multiple SKUs gets its status checked only after every line is back
+  // out — an order left at zero scanned pieces (nothing else touched it
+  // since the wave) goes back to 'pending' instead of getting stuck showing
+  // "In Progress" with nothing scanned and no pill to explain why.
+  for (const orderNumber of reversedOrders) {
+    const batch = findBatchForOrder(db, orderNumber);
+    const state = batch && (batch.orderStates || {})[orderNumber];
+    if (!state) continue;
+    const totalScanned = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+    if (state.status === 'processing' && totalScanned === 0) state.status = 'pending';
+  }
   wave.status      = 'cancelled';
   wave.cancelledAt = new Date().toISOString();
   delete wave.pending_cancellation;
