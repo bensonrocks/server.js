@@ -3,3 +3,8 @@ node_modules/
 *.log
 data/
 eng.traineddata
+
+# runtime artifacts
+db.sqlite
+db.sqlite-*
+coverage/
