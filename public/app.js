@@ -8031,15 +8031,17 @@
     try {
       const resp  = await fetch('/api/master/users', { headers: { 'x-master-key': LOG_PASSWORD } });
       const users = await resp.json();
+      const roleLabel = { warehouse: 'Warehouse', driver: 'Driver' };
       listEl.innerHTML = users.map(u => `
         <div class="user-row" data-id="${esc(u.id)}">
           <span class="user-id">${esc(u.id)}</span>
           <span class="user-name">${esc(u.name || u.id)}</span>
-          <span class="role-badge ${esc(u.role || 'admin')}">${u.role === 'warehouse' ? 'Warehouse' : 'Admin'}</span>
+          <span class="role-badge ${esc(u.role || 'admin')}">${roleLabel[u.role] || 'Admin'}</span>
           <div class="user-row-actions">
+            ${u.role === 'driver' ? '' : `
             <button class="btn-role-toggle" data-id="${esc(u.id)}" data-role="${esc(u.role || 'admin')}" title="Toggle role">
               ${u.role === 'warehouse' ? '&#8593; Make Admin' : '&#8595; Warehouse'}
-            </button>
+            </button>`}
             <button class="btn-chpass" data-id="${esc(u.id)}" title="Change password">&#128273; Password</button>
             <button class="btn-user-features" data-id="${esc(u.id)}" title="Toggle which functions this user sees">&#9881; Features</button>
             <button class="btn-del-user" data-id="${esc(u.id)}" title="Delete user">&#128465;</button>
@@ -8172,6 +8174,52 @@
       showUserStatus(`User "${id}" added as ${role}.`, 'success');
       loadUserList();
     } catch (err) { showUserStatus(err.message, 'error'); }
+  });
+
+  // ── Bulk user/driver CSV import ─────────────────────────────────────────────
+  document.getElementById('userImportTemplateBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    const csv = 'id,name,password,role,phone,vehicle,capacity\n' +
+      'wm-5,Warehouse Five,changeme1,warehouse,,,\n' +
+      'driver-5,Driver Five,changeme1,driver,+65 9123 4567,Van,1000\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'users_import_template.csv'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('userImportBrowseBtn').addEventListener('click', () => document.getElementById('userImportFileInput').click());
+  document.getElementById('userImportFileInput').addEventListener('change', async () => {
+    const inp = document.getElementById('userImportFileInput');
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) { showUserStatus('Empty file.', 'error'); return; }
+      const cols = lines[0].split(',').map(c => c.trim().toLowerCase());
+      const items = lines.slice(1).map(line => {
+        const cells = line.split(','); const o = {};
+        cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
+        return o;
+      }).filter(o => o.id && o.password);
+      if (!items.length) { showUserStatus('No rows with id + password found. Header must include: id,password (and optionally name,role,phone,vehicle,capacity).', 'error'); return; }
+      const r = await fetch('/api/master/users/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ items }),
+      });
+      const d = await r.json();
+      if (!r.ok) { showUserStatus(d.error || 'Import failed', 'error'); return; }
+      let msg = `Imported ${d.imported} user(s)`;
+      if (d.driverProfiles) msg += ` (${d.driverProfiles} with a driver route-planning profile)`;
+      msg += `, skipped ${d.skipped}.`;
+      if (d.errors && d.errors.length) msg += ' First issue: row ' + d.errors[0].row + ' (' + d.errors[0].id + ') — ' + d.errors[0].error;
+      showUserStatus(msg, d.imported > 0 ? 'success' : 'error');
+      loadUserList();
+    } catch (err) { showUserStatus(err.message, 'error'); }
+    inp.value = '';
   });
 
   function showUserStatus(msg, type) {

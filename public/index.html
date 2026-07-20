@@ -632,6 +632,15 @@
             <button class="btn-primary" id="addUserBtn">+ Add User</button>
           </div>
         </div>
+        <div class="admin-add-card">
+          <div class="admin-add-title">Import Users / Drivers from CSV</div>
+          <div class="admin-section-sub" style="margin-bottom:.5rem">Columns: id, name, password, role (admin / warehouse / driver), and for driver rows optionally phone, vehicle, capacity. A driver row also gets a route-planning profile automatically — imported drivers are immediately usable for both login and route assignment.</div>
+          <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+            <input type="file" id="userImportFileInput" accept=".csv" hidden />
+            <button class="btn-secondary btn-sm" id="userImportBrowseBtn">&#8679; Choose CSV</button>
+            <a class="admin-action-link" id="userImportTemplateBtn">&#8681; Download template</a>
+          </div>
+        </div>
         <div id="userMgmtStatus" class="status-bar hidden"></div>
       </div>
 

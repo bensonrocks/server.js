@@ -7363,6 +7363,61 @@ app.post('/api/master/users', (req, res) => {
   res.json({ ok: true });
 });
 
+// Bulk user/driver import — CSV columns: id,name,password,role[,phone,vehicle,capacity].
+// role is admin|warehouse|driver (unlike the single-create endpoint above, all
+// three are honoured here, not just admin/warehouse). A driver row also gets a
+// route-planning profile in db.drivers[] (tenant-scoped) — a driver imported
+// this way is immediately usable both for login AND for route assignment,
+// unlike the single "Add Driver" form which only creates the login account.
+// Tolerant like /api/inventory/import: bad/duplicate rows are skipped and
+// reported, never aborting the whole batch.
+app.post('/api/master/users/import', express.json({ limit: '2mb' }), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { items = [] } = req.body || {};
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+
+  const users = readUsers();
+  const existingIds = new Set(users.map(u => u.id));
+  let imported = 0, driverProfiles = 0, skipped = 0;
+  const errors = [];
+  const db = readDb();
+  if (!db.drivers) db.drivers = [];
+
+  items.forEach((row, i) => {
+    const id = String(row.id || '').trim();
+    const password = String(row.password || '');
+    if (!id || !password) { skipped++; errors.push({ row: i + 1, id, error: 'id and password are required' }); return; }
+    if (password.length < 5) { skipped++; errors.push({ row: i + 1, id, error: 'Password must be at least 5 characters' }); return; }
+    if (existingIds.has(id)) { skipped++; errors.push({ row: i + 1, id, error: 'User already exists' }); return; }
+    const role = ['admin', 'warehouse', 'driver'].includes(row.role) ? row.role : 'warehouse';
+    const tenantId = String(row.tenant_id || tenantStore.DEFAULT_TENANT_ID).trim();
+    if (!tenantStore.tenantExists(tenantId)) { skipped++; errors.push({ row: i + 1, id, error: `Tenant "${tenantId}" does not exist` }); return; }
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    users.push({ id, name: String(row.name || id).trim(), role, tenant_id: tenantId, salt, passwordHash: hashPass(password, salt) });
+    existingIds.add(id);
+    imported++;
+
+    if (role === 'driver') {
+      const drv = {
+        id, name: String(row.name || id).trim(),
+        phone: String(row.phone || '').trim(),
+        vehicle: String(row.vehicle || 'Van'),
+        plate: '', capacity: Number(row.capacity) || 1000, capacityM3: 0,
+        status: 'active',
+      };
+      const di = db.drivers.findIndex(d => d.id === id);
+      if (di >= 0) db.drivers[di] = { ...db.drivers[di], ...drv }; else db.drivers.push(drv);
+      driverProfiles++;
+    }
+  });
+
+  writeUsers(users);
+  if (driverProfiles) writeDb(db);
+  logAudit('users_bulk_imported', { imported, driverProfiles, skipped, by: req.userId || '' });
+  res.json({ imported, driverProfiles, skipped, errors });
+});
+
 // ── Tenant management (master-key only) ───────────────────────────────────────
 // One shared deployment, isolated data per tenant. A tenant is just an id +
 // display name; its data directory (and inventory.db) is created on first use.
