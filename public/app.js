@@ -43,6 +43,10 @@
   let _pendingUnlockTab   = null;   // tab waiting behind the Administrator password gate
   let pendingDownload     = false;
 
+  // ── Wave picking — order checkboxes on the Orders tab ───────────────────────
+  let waveSelected = new Set();   // order_number set, Active view only
+  let activeWave    = null;       // the wave record while #wavePickOverlay is open
+
   // ── IdealInbound — receiving (POs/ASNs and returns) ─────────────────────────
   let inboundJobs  = [];
   let activeInbound = null;
@@ -56,9 +60,9 @@
   function hdrs() {
     return { 'x-session-id': SESSION_ID, 'Content-Type': 'application/json' };
   }
-  async function authDownload(url, filename) {
+  async function authDownload(url, filename, extraHeaders) {
     try {
-      const resp = await fetch(url);
+      const resp = await fetch(url, extraHeaders ? { headers: extraHeaders } : undefined);
       if (!resp.ok) { alert('Download failed: ' + (await resp.text())); return; }
       const blob = await resp.blob();
       const a    = document.createElement('a');
@@ -1598,6 +1602,13 @@
   }
 
   function renderOrdersList() {
+    // Drop any wave-selected order that's no longer active/scannable (e.g.
+    // it was just completed or deleted elsewhere) — stale checkboxes would
+    // otherwise silently carry into the next wave.
+    if (waveSelected.size) {
+      const stillScannable = new Set(loadedOrders.filter(o => o.scan_status !== 'done' && !o.pending_deletion).map(o => o.order_number));
+      for (const on of [...waveSelected]) if (!stillScannable.has(on)) waveSelected.delete(on);
+    }
     let orders = loadedOrders;
     if (activeClientFilter  !== 'all') orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
@@ -1650,7 +1661,15 @@
         <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
         ${ordersView === 'completed' ? `<input type="search" id="completedSearchInput" class="completed-search" placeholder="Search waybill, GI / order no, pick ticket, customer&hellip;" value="${esc(completedSearch)}" autocomplete="off" />` : ''}
-      </div>`;
+      </div>
+      ${ordersView === 'active' && waveSelected.size > 0 ? `
+      <div class="wave-select-bar">
+        <span>${waveSelected.size} order${waveSelected.size === 1 ? '' : 's'} selected</span>
+        <button class="btn-secondary btn-sm" id="waveClearSelBtn">Clear</button>
+        ${waveSelected.size >= 2
+          ? `<button class="btn-primary btn-sm" id="waveStartBtn">&#127754; Start Wave Pick (${waveSelected.size})</button>`
+          : `<button class="btn-primary btn-sm" id="waveScanSingleBtn">Scan This Order &#8594;</button>`}
+      </div>` : ''}`;
 
     if (ordersView === 'completed') {
       orders = doneOrders;
@@ -1776,8 +1795,12 @@
       // Date
       const dateStr = ord.uploadedAt ? new Date(ord.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—';
 
+      const waveCheckCell = ordersView === 'active'
+        ? `<td class="col-wave-check" onclick="event.stopPropagation()">${canScan ? `<input type="checkbox" class="wave-select-check" data-order="${esc(ord.order_number)}" ${waveSelected.has(ord.order_number) ? 'checked' : ''} />` : ''}</td>`
+        : '';
       return `<tr class="orders-tr status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
         <td class="ord-stripe-cell"></td>
+        ${waveCheckCell}
         <td class="col-order">
           <span class="ord-no-link">${esc(ord.order_number)}</span>
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
@@ -1814,6 +1837,7 @@
           <thead>
             <tr>
               <th style="width:4px;padding:0"></th>
+              ${ordersView === 'active' ? '<th style="width:28px;padding:0"></th>' : ''}
               <th data-col="orderno">ORDER NO${rz('orderno')}</th>
               <th class="col-client" data-col="client">CLIENT${rz('client')}</th>
               <th class="col-customer" data-col="customer">CUSTOMER${rz('customer')}</th>
@@ -1835,6 +1859,23 @@
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
     );
+    document.querySelectorAll('.wave-select-check').forEach(cb =>
+      cb.addEventListener('change', () => {
+        if (cb.checked) waveSelected.add(cb.dataset.order);
+        else waveSelected.delete(cb.dataset.order);
+        renderOrdersList();
+      })
+    );
+    document.getElementById('waveClearSelBtn')?.addEventListener('click', () => {
+      waveSelected.clear();
+      renderOrdersList();
+    });
+    document.getElementById('waveScanSingleBtn')?.addEventListener('click', () => {
+      const only = [...waveSelected][0];
+      waveSelected.clear();
+      if (only) openScanOverlay(only);
+    });
+    document.getElementById('waveStartBtn')?.addEventListener('click', () => startWavePick([...waveSelected]));
     document.querySelectorAll('.btn-reprint-label').forEach(btn =>
       btn.addEventListener('click', e => {
         e.stopPropagation();
@@ -5797,6 +5838,219 @@
     focusWaybillInput();
   }
 
+  // ── Wave picking — "consolidated pick, then sort" ───────────────────────────
+  // Uses server-side lib/wave-pick.js (db.waves[]) via /api/waves/*. Selecting
+  // orders on the Orders tab and choosing "Start Wave Pick" opens this modal;
+  // the underlying per-order scanned totals are only written into the real
+  // order records when the wave is completed — packers still open each order
+  // through the normal scan overlay afterward to verify cartons and Complete.
+  async function startWavePick(orderNumbers) {
+    if (orderNumbers.length < 2) return;
+    try {
+      const r = await fetch('/api/waves', { method: 'POST', headers: hdrs(), body: JSON.stringify({ orderNumbers }) });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || 'Could not start wave'); return; }
+      activeWave = d.wave;
+      waveSelected.clear();
+      document.getElementById('wavePickOverlay').classList.remove('hidden');
+      showWavePickingPhase();
+    } catch (err) { alert('Wave start error: ' + err.message); }
+  }
+
+  function showWavePickingPhase() {
+    document.getElementById('wavePickingPhase').classList.remove('hidden');
+    document.getElementById('waveSortingPhase').classList.add('hidden');
+    document.getElementById('waveModalTitle').textContent = `Wave Pick — ${activeWave.id}`;
+    document.getElementById('waveModalDesc').textContent =
+      `${activeWave.orderNumbers.length} orders · scan each SKU's TOTAL quantity for the whole wave once.`;
+    renderWaveSanityStats();
+    renderWaveOrdersBreakdown();
+    renderWavePickList();
+    setTimeout(() => document.getElementById('waveScanInput')?.focus(), 60);
+  }
+
+  // Sanity-check summary: what's actually loaded into this wave vs what's
+  // been scanned so far — catches an upload/selection problem before the
+  // packer is halfway through picking.
+  function renderWaveSanityStats() {
+    const totalQtyNeeded = activeWave.pickList.reduce((s, e) => s + e.totalQty, 0);
+    const totalScanned   = activeWave.pickList.reduce((s, e) => s + e.scannedQty, 0);
+    const stats = [
+      [activeWave.orderNumbers.length, 'Orders'],
+      [activeWave.pickList.length, 'SKU Lines'],
+      [totalQtyNeeded, 'Total Qty Needed'],
+      [`${totalScanned} / ${totalQtyNeeded}`, 'Scanned So Far'],
+    ];
+    document.getElementById('waveSanityStats').innerHTML = stats.map(([val, lbl]) =>
+      `<div class="dstat"><div class="dstat-val">${val}</div><div class="dstat-lbl">${lbl}</div></div>`).join('');
+  }
+
+  // Reverse view of the consolidated pick list: which orders are IN this
+  // wave and exactly what each one needs, with its GI/Waybill for the
+  // scan-to-complete bar once the wave is done.
+  function waveOrdersBreakdown() {
+    const perOrder = new Map(activeWave.orderNumbers.map(n => [n, { order_number: n, lines: [], qty: 0 }]));
+    for (const e of activeWave.pickList) {
+      for (const l of e.lines) {
+        const o = perOrder.get(l.order_number);
+        if (!o) continue;
+        o.lines.push({ sku: e.sku, description: e.description, needed: l.needed });
+        o.qty += l.needed;
+      }
+    }
+    return [...perOrder.values()];
+  }
+
+  function renderWaveOrdersBreakdown() {
+    const body = document.getElementById('waveOrdersBreakdownBody');
+    body.innerHTML = waveOrdersBreakdown().map(o => {
+      const ord = loadedOrders.find(x => x.order_number === o.order_number);
+      const giOrWaybill = ord?.issue_no || ord?.waybill_number || '—';
+      return `<tr>
+        <td>${esc(o.order_number)}</td>
+        <td>${esc(giOrWaybill)}</td>
+        <td>${o.lines.length}</td>
+        <td>${o.qty}</td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('waveOrdersBreakdownToggle')?.addEventListener('click', () => {
+    document.getElementById('waveOrdersBreakdownWrap').classList.toggle('hidden');
+  });
+
+  function renderWavePickList() {
+    const body = document.getElementById('wavePickListBody');
+    body.innerHTML = activeWave.pickList.map(e => {
+      const done = e.scannedQty >= e.totalQty;
+      return `<tr class="${done ? 'wave-pick-done' : ''}">
+        <td><code>${esc(e.sku)}</code></td>
+        <td>${esc(e.description || '')}</td>
+        <td>${e.totalQty}</td>
+        <td>${e.scannedQty}</td>
+        <td>${done ? '&#10003;' : ''}</td>
+      </tr>`;
+    }).join('');
+    renderWaveSanityStats();
+  }
+
+  async function waveSubmitScan() {
+    const input = document.getElementById('waveScanInput');
+    const qtyEl = document.getElementById('waveScanQty');
+    const sku = input.value.trim();
+    const qty = Math.max(1, parseInt(qtyEl.value, 10) || 1);
+    if (!sku || !activeWave) return;
+    const errEl = document.getElementById('waveScanError');
+    errEl.classList.add('hidden');
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/scan`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, qty }),
+      });
+      const d = await r.json();
+      if (!r.ok) { errEl.textContent = d.error || 'Scan failed'; errEl.classList.remove('hidden'); input.select(); return; }
+      activeWave = d.wave;
+      renderWavePickList();
+      input.value = '';
+      qtyEl.value = '1';
+      input.focus();
+    } catch (err) { errEl.textContent = 'Network error: ' + err.message; errEl.classList.remove('hidden'); }
+  }
+  document.getElementById('waveScanAddBtn')?.addEventListener('click', waveSubmitScan);
+  document.getElementById('waveScanInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); waveSubmitScan(); } });
+  document.getElementById('waveScanQty')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); waveSubmitScan(); } });
+
+  document.getElementById('waveCancelBtn')?.addEventListener('click', async () => {
+    if (!activeWave) return;
+    if (!confirm(`Cancel wave ${activeWave.id}? Nothing scanned so far has been applied to the orders yet, so this is safe.`)) return;
+    try { await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/cancel`, { method: 'POST', headers: hdrs() }); } catch {}
+    closeWavePickOverlay();
+  });
+
+  document.getElementById('waveFinishPickingBtn')?.addEventListener('click', async () => {
+    if (!activeWave) return;
+    const short = activeWave.pickList.filter(e => e.scannedQty < e.totalQty);
+    if (short.length && !confirm(`${short.length} SKU(s) haven't been fully scanned yet. Continue to Sort anyway with what's been scanned so far?`)) return;
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/finish-picking`, { method: 'POST', headers: hdrs() });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || 'Could not finish picking'); return; }
+      activeWave = d.wave;
+      showWaveSortingPhase(d.allocationSummary);
+    } catch (err) { alert('Error: ' + err.message); }
+  });
+
+  function showWaveSortingPhase(allocationSummary) {
+    document.getElementById('wavePickingPhase').classList.add('hidden');
+    document.getElementById('waveSortingPhase').classList.remove('hidden');
+    document.getElementById('waveModalDesc').textContent =
+      'Divide each scanned SKU back into the orders that need it. Adjust with +/- if a physical count differs.';
+    renderWaveSortPanels(allocationSummary);
+  }
+
+  function renderWaveSortPanels() {
+    const wrap = document.getElementById('waveSortPanels');
+    wrap.innerHTML = activeWave.pickList.map(e => {
+      const allocatedTotal = e.lines.reduce((s, l) => s + l.allocated, 0);
+      const unalloc = e.scannedQty - allocatedTotal;
+      const rows = e.lines.map(l => `
+        <div class="wave-sort-order-row">
+          <span>${esc(l.order_number)} <span style="color:var(--text-light,#64748b)">(needs ${l.needed})</span></span>
+          <div class="wave-alloc-controls">
+            <button data-sku="${esc(e.sku)}" data-order="${esc(l.order_number)}" data-delta="-1">&minus;</button>
+            <span class="wave-alloc-val">${l.allocated}</span>
+            <button data-sku="${esc(e.sku)}" data-order="${esc(l.order_number)}" data-delta="1">+</button>
+          </div>
+        </div>`).join('');
+      return `<div class="wave-sort-panel">
+        <div class="wave-sort-panel-title">
+          <span><code>${esc(e.sku)}</code> ${esc(e.description || '')} — scanned ${e.scannedQty}</span>
+          ${unalloc > 0 ? `<span class="wave-sort-unalloc">${unalloc} unallocated</span>` : ''}
+        </div>
+        ${rows}
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('.wave-alloc-controls button').forEach(btn =>
+      btn.addEventListener('click', () => waveAdjustAllocation(btn.dataset.sku, btn.dataset.order, parseInt(btn.dataset.delta, 10)))
+    );
+  }
+
+  async function waveAdjustAllocation(sku, orderNumber, delta) {
+    const entry = activeWave.pickList.find(e => e.sku === sku);
+    const line  = entry?.lines.find(l => l.order_number === orderNumber);
+    if (!line) return;
+    const newQty = Math.max(0, line.allocated + delta);
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/allocate`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, orderNumber, qty: newQty }),
+      });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || 'Could not adjust allocation'); return; }
+      activeWave = d.wave;
+      renderWaveSortPanels();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  document.getElementById('waveBackToPickingBtn')?.addEventListener('click', () => showWavePickingPhase());
+
+  document.getElementById('waveCompleteBtn')?.addEventListener('click', async () => {
+    if (!activeWave) return;
+    if (!confirm(`Complete wave ${activeWave.id}? Allocated quantities will be applied to each order's scanned totals. You'll still need to open each order to verify cartons and hit Complete.`)) return;
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/complete`, { method: 'POST', headers: hdrs() });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || 'Could not complete wave'); return; }
+      const waveId = activeWave.id;
+      closeWavePickOverlay();
+      alert(`Wave ${waveId} applied to ${d.allocationSummary.length} order(s).\n\nNow scan each order's GI/Waybill barcode in the bar above the list to open and complete it — or find it in the list below.`);
+    } catch (err) { alert('Error: ' + err.message); }
+  });
+
+  function closeWavePickOverlay() {
+    document.getElementById('wavePickOverlay').classList.add('hidden');
+    activeWave = null;
+    refreshOrders().then(renderOrdersList);
+    focusWaybillInput(); // land the packer straight on the scan-to-complete bar
+  }
+
   // ── Warehouse-mobile scan layout: inline live camera above the item list ──
   // Mirrors the courier pickup-scan pattern: viewfinder always on at the top,
   // Camera / Scanner tabs, manual entry + ADD below. Enabled for
@@ -8209,6 +8463,8 @@
   });
   document.getElementById('adminExportDriversBtn')?.addEventListener('click', () =>
     authDownload('/api/drivers/export', `IDEALONE_Drivers_${new Date().toISOString().slice(0,10)}.xlsx`));
+  document.getElementById('adminExportUsersBtn')?.addEventListener('click', () =>
+    authDownload('/api/master/users/export', `IDEALONE_Users_${new Date().toISOString().slice(0,10)}.xlsx`, { 'x-master-key': LOG_PASSWORD }));
   // After a save/delete from that shared modal, keep the Administrator list
   // in sync too (harmless no-op if this tab isn't the one currently open).
   const _origAddEditDriverSave = document.getElementById('addEditDriverSaveBtn');

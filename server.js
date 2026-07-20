@@ -43,6 +43,9 @@ const { validateRows } = require('./lib/validation');
 
 // OCR parser for photo-based picklist upload
 const { parseOcrPicklist } = require('./lib/ocr-parse');
+
+// Wave picking — portable core module (see lib/wave-pick.js header)
+const wavePick = require('./lib/wave-pick.js');
 let Tesseract;
 try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
 let sharp;
@@ -705,6 +708,7 @@ function readDb() {
   if (!_dbCache.batches) _dbCache.batches = [];
   if (!_dbCache.inbound) _dbCache.inbound = [];
   if (!_dbCache.transport) _dbCache.transport = [];
+  if (!_dbCache.waves) _dbCache.waves = [];
   if (!_dbCache.fixSchedules) _dbCache.fixSchedules = {};
   if (!_dbCache.drivers) {
     // Initialize with sample drivers
@@ -1725,6 +1729,16 @@ function nextInboundCode(db) {
   db.inboundCodeSeq[day] = (db.inboundCodeSeq[day] || 0) + 1;
   for (const k of Object.keys(db.inboundCodeSeq)) if (k !== day) delete db.inboundCodeSeq[k];
   return `IB-${day}-${String(db.inboundCodeSeq[day]).padStart(2, '0')}`;
+}
+
+// Mirrors nextIdealscanCode()/nextInboundCode() for wave picking — its own
+// per-day sequence (separate counter key, WV- prefix).
+function nextWaveCode(db) {
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+  if (!db.waveCodeSeq) db.waveCodeSeq = {};
+  db.waveCodeSeq[day] = (db.waveCodeSeq[day] || 0) + 1;
+  for (const k of Object.keys(db.waveCodeSeq)) if (k !== day) delete db.waveCodeSeq[k];
+  return `WV-${day}-${String(db.waveCodeSeq[day]).padStart(2, '0')}`;
 }
 
 // One-time backfill: give pre-existing inbound records a serial based on their upload date
@@ -5863,6 +5877,129 @@ app.post('/api/scan/reset', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Wave Picking ─────────────────────────────────────────────────────────────
+// "Consolidated pick, then sort": a packer selects 2+ pending orders, picks
+// every SKU's TOTAL quantity across the whole wave once, then divides the
+// scanned pile back into each order's required quantity on a sort screen.
+// Wave progress (db.waves[]) is entirely separate from the real per-order
+// orderStates until /complete — only then does allocated quantity land in
+// each order's actual scanned totals (as if scanned individually), via the
+// portable lib/wave-pick.js core. Completing a wave does NOT auto-complete
+// orders — the packer still opens each one through the normal scan overlay
+// to verify cartons and hit Complete, reusing all existing carton/mismatch/
+// waybill logic with zero duplication.
+function findWave(db, id) { return (db.waves || []).find(w => w.id === id); }
+
+app.post('/api/waves', (req, res) => {
+  const orderNumbers = [...new Set((req.body.orderNumbers || []).map(String))];
+  if (orderNumbers.length < 2) return res.status(400).json({ error: 'Select at least 2 orders to start a wave (1 order scans normally).' });
+  const db = readDb();
+  const orders = [];
+  for (const orderNumber of orderNumbers) {
+    const batch = findBatchForOrder(db, orderNumber);
+    if (!batch) return res.status(404).json({ error: `Order "${orderNumber}" not found` });
+    const state = (batch.orderStates || {})[orderNumber];
+    if (state?.status === 'done') return res.status(409).json({ error: `Order ${orderNumber} is already completed` });
+    const activeWave = (db.waves || []).find(w => w.status !== 'done' && w.status !== 'cancelled' && w.orderNumbers.includes(orderNumber));
+    if (activeWave) return res.status(409).json({ error: `Order ${orderNumber} is already in wave ${activeWave.id}` });
+    const ord = batch.orders.find(o => o.order_number === orderNumber);
+    orders.push({ order_number: orderNumber, items: uniqueSkuLines(ord).map(l => ({ sku: l.sku, description: l.description || '', qty: l.qty })) });
+  }
+  const wave = wavePick.createWave({ id: nextWaveCode(db), orderNumbers, orders, createdBy: req.userId || '' });
+  db.waves.unshift(wave);
+  writeDb(db);
+  logAudit('wave_created', { waveId: wave.id, orders: orderNumbers, by: req.userId || '' });
+  res.json({ wave });
+});
+
+app.get('/api/waves', (req, res) => {
+  const db = readDb();
+  res.json((db.waves || []).map(w => ({
+    id: w.id, createdAt: w.createdAt, createdBy: w.createdBy, status: w.status,
+    orderNumbers: w.orderNumbers, skuCount: w.pickList.length,
+    totalQty: w.pickList.reduce((s, e) => s + e.totalQty, 0),
+    scannedQty: w.pickList.reduce((s, e) => s + e.scannedQty, 0),
+  })));
+});
+
+app.get('/api/waves/:id', (req, res) => {
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  res.json({ wave, allocationSummary: wavePick.allocationSummary(wave) });
+});
+
+app.post('/api/waves/:id/scan', (req, res) => {
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  if (wave.status === 'done' || wave.status === 'cancelled') return res.status(409).json({ error: `Wave is ${wave.status}` });
+  const sku = resolveBeTimeCode2(req.body.sku);
+  const qty = Number(req.body.qty) || 1;
+  if (!sku) return res.status(400).json({ error: 'sku required' });
+  const result = wavePick.recordPickScan(wave, sku, qty, { by: req.userId || '', eventId: req.body.eventId || null });
+  if (!result) return res.status(404).json({ error: `SKU "${sku}" is not part of this wave` });
+  wavePick.autoAllocate(wave);
+  writeDb(db);
+  res.json({ wave, entry: result.entry });
+});
+
+app.post('/api/waves/:id/finish-picking', (req, res) => {
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  wave.status = 'sorting';
+  wavePick.autoAllocate(wave);
+  writeDb(db);
+  res.json({ wave, allocationSummary: wavePick.allocationSummary(wave) });
+});
+
+app.post('/api/waves/:id/allocate', (req, res) => {
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  const { sku, orderNumber, qty } = req.body;
+  const ok = wavePick.adjustAllocation(wave, sku, orderNumber, Number(qty) || 0);
+  if (!ok) return res.status(404).json({ error: 'SKU/order not found in this wave' });
+  writeDb(db);
+  res.json({ wave, allocationSummary: wavePick.allocationSummary(wave) });
+});
+
+app.post('/api/waves/:id/complete', (req, res) => {
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  if (wave.status === 'done') return res.status(409).json({ error: 'Wave already completed' });
+  const applied = wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty) => {
+    const batch = findBatchForOrder(db, orderNumber);
+    if (!batch) return;
+    if (!batch.orderStates) batch.orderStates = {};
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    state.scanned[sku] = (state.scanned[sku] || 0) + qty;
+    if (state.status === 'pending') state.status = 'processing';
+    addToActiveCarton(state, sku, qty);
+    appendScanLog(state, { kind: 'wave_pick', sku, qty, waveId: wave.id, by: req.userId || '' });
+    batch.orderStates[orderNumber] = state;
+    journalOrderState(orderNumber, state);
+  });
+  wave.status = 'done';
+  wave.completedAt = new Date().toISOString();
+  writeDb(db);
+  logAudit('wave_completed', { waveId: wave.id, orders: wave.orderNumbers, linesApplied: applied, by: req.userId || '' });
+  res.json({ ok: true, wave, allocationSummary: wavePick.allocationSummary(wave) });
+});
+
+app.post('/api/waves/:id/cancel', (req, res) => {
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  if (wave.status === 'done') return res.status(409).json({ error: 'Cannot cancel a completed wave' });
+  wave.status = 'cancelled';
+  writeDb(db);
+  logAudit('wave_cancelled', { waveId: wave.id, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
 app.post('/api/scan/resend-completion-alert', async (req, res) => {
   const { orderNumber } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
@@ -7273,6 +7410,26 @@ app.delete('/api/master/users/:id', (req, res) => {
   if (users.length <= 1) return res.status(400).json({ error: 'Cannot delete the only user' });
   writeUsers(users.filter(u => u.id !== req.params.id));
   res.json({ ok: true });
+});
+
+// Full user roster as XLSX — same shape as the drivers export (no
+// passwordHash/salt ever leave the server).
+app.get('/api/master/users/export', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const rows = readUsers().map(u => [
+    u.id, u.name || u.id, u.role || 'admin',
+    u.features ? USER_FEATURE_KEYS.filter(k => u.features[k] !== false).join(', ') : 'All',
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['User ID', 'Name', 'Role', 'Enabled Features'],
+    ...rows,
+  ]), 'Users');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="IDEALONE_Users_${sgDateStr()}.xlsx"`);
+  logAudit('user_roster_exported', { count: rows.length, by: req.userId || '' });
+  res.send(buf);
 });
 
 // Per-user FEATURE TOGGLES — which main functions this user sees.

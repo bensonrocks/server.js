@@ -669,6 +669,7 @@
             <div class="admin-section-title">System Users</div>
             <div class="admin-section-sub">Manage who can access IdealScan and their role.</div>
           </div>
+          <button class="btn-secondary btn-sm" id="adminExportUsersBtn">&#11015; Export (Excel)</button>
         </div>
         <div id="userList" class="user-list-wrap"></div>
         <div class="admin-add-card">
@@ -2342,6 +2343,51 @@
       <div id="stpEmpty" class="empty-state hidden">No completed orders in the last 3 days.</div>
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="stpCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wave Pick Overlay — "consolidated pick, then sort" -->
+  <div id="wavePickOverlay" class="modal-overlay hidden">
+    <div class="modal" style="max-width:760px">
+      <div class="modal-title" id="waveModalTitle">Wave Pick</div>
+      <p class="modal-desc" id="waveModalDesc"></p>
+
+      <!-- Phase 1: consolidated picking -->
+      <div id="wavePickingPhase">
+        <div class="dash-stats-grid" id="waveSanityStats" style="grid-template-columns:repeat(4,1fr);margin-bottom:.9rem"></div>
+        <button class="btn-secondary btn-sm" id="waveOrdersBreakdownToggle" style="margin-bottom:.6rem">&#128203; Orders in this Wave &amp; what they need</button>
+        <div class="dcs-wrap hidden" id="waveOrdersBreakdownWrap" style="margin-bottom:.9rem">
+          <table class="dcs-table">
+            <thead><tr><th>Order</th><th>GI / Waybill</th><th>Items</th><th>Qty Needed</th></tr></thead>
+            <tbody id="waveOrdersBreakdownBody"></tbody>
+          </table>
+        </div>
+        <div class="wave-scan-row">
+          <input type="text" id="waveScanInput" placeholder="Scan or type SKU…" autocomplete="off" />
+          <input type="number" id="waveScanQty" min="1" value="1" style="width:70px" />
+          <button class="btn-primary btn-sm" id="waveScanAddBtn">Add</button>
+        </div>
+        <div id="waveScanError" class="scan-error hidden"></div>
+        <div class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>SKU</th><th>Description</th><th>Needed</th><th>Scanned</th><th></th></tr></thead>
+            <tbody id="wavePickListBody"></tbody>
+          </table>
+        </div>
+        <div class="modal-actions" style="margin-top:1rem">
+          <button class="btn-secondary" id="waveCancelBtn">Cancel Wave</button>
+          <button class="btn-primary" id="waveFinishPickingBtn">Finish Picking → Sort</button>
+        </div>
+      </div>
+
+      <!-- Phase 2: sort / allocate -->
+      <div id="waveSortingPhase" class="hidden">
+        <div id="waveSortPanels"></div>
+        <div class="modal-actions" style="margin-top:1rem">
+          <button class="btn-secondary" id="waveBackToPickingBtn">&larr; Back to Picking</button>
+          <button class="btn-primary" id="waveCompleteBtn">&#10003; Complete Wave</button>
+        </div>
       </div>
     </div>
   </div>

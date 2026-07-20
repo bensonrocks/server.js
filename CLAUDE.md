@@ -1477,6 +1477,86 @@ When porting to IdealScan or other codebases:
 5. Update CLAUDE.md in target with same Transport section
 6. Link both commits in PR/commit messages for sync tracking
 
+## Wave Picking — "consolidated pick, then sort" (lib/wave-pick.js)
+
+Lets a packer select 2+ already-uploaded pending orders and pick every SKU's
+TOTAL quantity across the whole wave in ONE pass (scan SKU-123 x 47 instead
+of scanning it separately for 12 orders), then a sort/allocate step divides
+the scanned pile back into each order's required quantity before the packer
+opens each order individually to verify cartons and complete it. Selecting
+exactly 1 order never triggers wave mode — it opens the normal single-order
+scan overlay exactly as before; the wave bar only offers "Start Wave Pick"
+at 2+ selections (Orders tab, checkbox column on `.wave-select-check`,
+`waveSelected` Set in app.js).
+
+- **PORTABLE CORE — `lib/wave-pick.js`**: zero dependencies on IDEALONE's db
+  shape, Express, or order/state schema — every function takes plain data in,
+  returns plain data out (`buildWavePickList`, `createWave`, `recordPickScan`,
+  `autoAllocate`, `adjustAllocation`, `allocationSummary`,
+  `isFullyScanned`/`isFullyAllocated`). Copy this file verbatim into IDEALOMS
+  or any other codebase, same convention as `lib/zort.js`/`lib/tms-importer.js`.
+  The ONE seam into a host's real order records is `applyWaveToOrderStates(wave,
+  applyFn)` — it never touches any host object directly, only calls
+  `applyFn(order_number, sku, qty)` per allocated line, so wiring it to a new
+  host's order store is a one-function job.
+- **WAVE STATE IS ISOLATED UNTIL COMPLETE** — `db.waves[]` (own `WV-YYMMDD-NN`
+  serial, `nextWaveCode()`, mirrors `nextIdealscanCode()`/`nextInboundCode()`)
+  tracks its own `pickList`/`scannedQty`/`allocated` totals completely
+  separately from the real per-order `orderStates`. Only `POST
+  /api/waves/:id/complete` writes allocated quantities into each order's
+  actual `scanned` totals (as if scanned individually — via `addToActiveCarton`
+  + `appendScanLog({kind:'wave_pick', waveId})`, same primitives every other
+  scan path uses) and flips `pending` → `processing`. It does **NOT**
+  auto-complete orders — the packer still opens each one through the existing
+  normal scan overlay to verify cartons and hit Complete, reusing all
+  existing carton/mismatch/waybill logic with zero duplication. This also
+  makes cancelling a wave trivial (`POST /api/waves/:id/cancel`) — nothing
+  was ever written to a real order, so there's nothing to roll back.
+- **AUTO-ALLOCATE, then manual override**: every `/scan` call re-runs
+  `autoAllocate()`, which fills each order's need in wave order (first
+  selected order first) from whatever's been scanned so far — deterministic
+  and idempotent, so the sort screen is never empty when the packer gets
+  there. `POST /api/waves/:id/allocate {sku, orderNumber, qty}` (the sort
+  screen's +/- steppers) lets the packer manually correct it (e.g. a
+  physical miscount); `adjustAllocation` clamps to `[0, scannedQty −
+  everyone else's allocation]` so one order's line can never claim more than
+  what's physically been scanned for that SKU.
+- **ENDPOINTS**: `POST /api/waves` (creates from `{orderNumbers}`, refuses
+  <2 orders, refuses an order already `done` or already in another
+  non-terminal wave), `GET /api/waves` (list summaries), `GET /api/waves/:id`,
+  `POST /api/waves/:id/scan {sku, qty}` (resolves through
+  `resolveBeTimeCode2` first, same as normal scanning), `POST
+  /api/waves/:id/finish-picking` (→ `sorting` status), `POST
+  /api/waves/:id/allocate`, `POST /api/waves/:id/complete`, `POST
+  /api/waves/:id/cancel`.
+- **SANITY CHECKS ON THE PICK SCREEN**: a stats strip (Orders / SKU Lines /
+  Total Qty Needed / Scanned So Far) makes an upload or selection mistake
+  visible before the packer is halfway through picking, and a collapsible
+  "Orders in this Wave & what they need" table (`waveOrdersBreakdown()` in
+  app.js — reverse-indexes the pick list back to per-order line lists) shows
+  each order's GI/waybill number and what it's owed, so nothing is picked
+  blind.
+- **SCAN-TO-COMPLETE AFTER A WAVE**: no new scanning code was needed — the
+  existing "Scan waybill number or order number to find order" bar
+  (`waybillScanInput`/`waybillLookupGo`, already matches `issue_no` per the
+  Scan-to-find-order section above) works on wave-completed orders exactly
+  like any other order, since wave completion writes into the same real
+  `orderStates`. Closing the wave modal (`closeWavePickOverlay`) calls
+  `focusWaybillInput()` so the packer lands straight back on that bar, and
+  the post-complete confirmation explicitly tells them to scan each order's
+  GI/waybill to open and complete it next.
+
+## Admin: full roster exports (Users + Drivers)
+
+`GET /api/master/users/export` (checkMaster-gated, same convention as `GET
+/api/drivers/export`) returns the full user roster as XLSX — User ID, Name,
+Role, Enabled Features — for handing off to another system or an audit.
+Never includes `passwordHash`/`salt`. Button lives next to "System Users" in
+Administrator → Users (`#adminExportUsersBtn`, wired with the `x-master-key`
+header via `authDownload`'s optional third `extraHeaders` argument, since
+this endpoint is master-gated like the rest of that panel rather than
+session-gated like `/api/drivers/export`).
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
