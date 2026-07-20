@@ -1663,6 +1663,7 @@ function summarizeOrders(lines) {
       description:    line.description || '',
       qty:            line.qty,
       uom:            'EACH',
+      location:       line.location       || '',
       batch_number:   line.batch_number   || '',
       serial_number:  line.serial_number  || '',
       expiry_date:    line.expiry_date    || '',
@@ -8730,6 +8731,104 @@ app.put('/api/inventory/:sku', requireAuth, express.json(), (req, res) => {
 app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
   inventory.remove(req.params.sku);
   res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  WAVE PICKING — consolidate multiple pending orders into one location-sorted
+//  pick list (lib/wave-pick.js). Waves live in db.waves (same readDb()/
+//  writeDb() every other business record uses), so they're automatically
+//  tenant-isolated. Additive: does not touch the existing Scan & Check
+//  pack-verification flow — a wave answers "what do I walk and grab, in what
+//  order, across N orders" (the picking phase); Scan & Check remains the
+//  per-order pack/verify phase that happens afterwards.
+// ─────────────────────────────────────────────────────────────────────────────
+const { buildWave } = require('./lib/wave-pick');
+
+function _findOrder(db, orderNumber) {
+  for (const b of db.batches || []) {
+    const o = (b.orders || []).find(x => x.order_number === orderNumber);
+    if (o) return o;
+  }
+  return null;
+}
+
+app.get('/api/waves', requireAuth, (req, res) => {
+  const db = readDb();
+  res.json((db.waves || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at)));
+});
+
+app.get('/api/waves/:id', requireAuth, (req, res) => {
+  const db = readDb();
+  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  res.json(wave);
+});
+
+app.post('/api/waves', requireAuth, express.json(), (req, res) => {
+  const { name, order_numbers } = req.body || {};
+  if (!Array.isArray(order_numbers) || !order_numbers.length) {
+    return res.status(400).json({ error: 'order_numbers (non-empty array) is required' });
+  }
+  const db = readDb();
+  const orders = [];
+  const notFound = [];
+  for (const num of order_numbers) {
+    const o = _findOrder(db, num);
+    if (o) orders.push(o); else notFound.push(num);
+  }
+  if (!orders.length) return res.status(404).json({ error: 'None of the given orders were found', notFound });
+
+  const { picks, stats } = buildWave(orders);
+  const wave = {
+    id: uuidv4(),
+    name: String(name || `Wave-${new Date().toISOString().slice(0, 16).replace('T', ' ')}`).trim(),
+    status: 'created',
+    created_at: new Date().toISOString(),
+    created_by: req.userId || '',
+    order_numbers: orders.map(o => o.order_number),
+    picks,
+    stats,
+  };
+  db.waves = db.waves || [];
+  db.waves.unshift(wave);
+  writeDb(db);
+  logAudit('wave_created', { id: wave.id, orders: wave.order_numbers, lineCount: stats.lineCount, by: req.userId || '' });
+  res.status(201).json({ ...wave, notFound: notFound.length ? notFound : undefined });
+});
+
+// Mark qty picked for one (location, sku) line — additive: qty accumulates,
+// so a hardware scanner incrementing by 1 per scan works the same as a
+// packer typing the full quantity at once.
+app.post('/api/waves/:id/pick', requireAuth, express.json(), (req, res) => {
+  const { sku, location, qty } = req.body || {};
+  const pickedQty = Number(qty);
+  if (!sku || !Number.isFinite(pickedQty) || pickedQty <= 0) {
+    return res.status(400).json({ error: 'sku and a positive qty are required' });
+  }
+  const db = readDb();
+  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  const row = wave.picks.find(p => p.sku === sku && (p.location || '') === (location || ''));
+  if (!row) return res.status(404).json({ error: 'No such (sku, location) line in this wave' });
+  row.picked_qty = Math.min(row.total_qty, row.picked_qty + pickedQty);
+  if (wave.status === 'created') wave.status = 'picking';
+  writeDb(db);
+  res.json(wave);
+});
+
+app.post('/api/waves/:id/complete', requireAuth, express.json(), (req, res) => {
+  const db = readDb();
+  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  const incomplete = wave.picks.filter(p => p.picked_qty < p.total_qty).length;
+  if (incomplete && req.body?.force !== true) {
+    return res.status(409).json({ needsForceComplete: true, incomplete, message: `${incomplete} pick line(s) are not fully picked yet. Complete anyway?` });
+  }
+  wave.status = 'completed';
+  wave.completed_at = new Date().toISOString();
+  writeDb(db);
+  logAudit('wave_completed', { id: wave.id, forced: !!incomplete, by: req.userId || '' });
+  res.json(wave);
 });
 
 const PORT = process.env.PORT || 3000;

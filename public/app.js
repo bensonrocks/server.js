@@ -590,7 +590,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', inbound: 'Inbound', inventory: 'Inventory', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', waves: 'Wave Pick', inbound: 'Inbound', inventory: 'Inventory', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -631,6 +631,7 @@
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
     if (name === 'inbound') { renderInboundTab(); }
     if (name === 'inventory') { renderInventory(); }
+    if (name === 'waves') { waveUI.load(); }
     if (name === 'transport') {
       document.getElementById('transportSubMenu').style.display = 'block';
       renderTransportTab();
@@ -9905,6 +9906,167 @@
     return { load, filter: render, adjust, moves, addItem, reseed, importCsv };
   })();
   window.invUI = invUI;
+
+  // ── WAVE PICK UI — consolidate multiple orders into one location-sorted ────
+  // pick list (/api/waves/*). Additive: reads the same order list Orders/
+  // Upload already use, doesn't alter Scan & Check.
+  const waveUI = (function () {
+    let waves = [];
+    let pendingOrders = [];
+    let currentWave = null;
+
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+    async function load() {
+      document.getElementById('waveDetailWrap').classList.add('hidden');
+      document.getElementById('waveListWrap').classList.remove('hidden');
+      try {
+        const r = await fetch('/api/waves');
+        waves = r.ok ? await r.json() : [];
+      } catch (e) { waves = []; }
+      renderList();
+    }
+
+    function renderList() {
+      const tb = document.getElementById('wave-list-tbody');
+      if (!waves.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">No waves yet. Click "+ New Wave" to combine pending orders into one pick run.</td></tr>'; return; }
+      tb.innerHTML = waves.map(w => `
+        <tr style="cursor:pointer" onclick="waveUI.openWave('${esc(w.id)}')">
+          <td style="font-weight:600">${esc(w.name)}</td>
+          <td>${w.order_numbers.length}</td>
+          <td>${w.stats.lineCount}</td>
+          <td>${w.stats.totalUnits}</td>
+          <td><span style="padding:.15em .6em;border-radius:99px;font-size:.75rem;font-weight:600;background:${w.status === 'completed' ? '#dcfce7' : w.status === 'picking' ? '#fef3c7' : '#e2e8f0'};color:${w.status === 'completed' ? '#166534' : w.status === 'picking' ? '#92400e' : '#475569'}">${esc(w.status)}</span></td>
+          <td>${esc((w.created_at || '').replace('T', ' ').slice(0, 16))}</td>
+          <td><button class="btn-secondary" style="padding:.2rem .55rem" onclick="event.stopPropagation();waveUI.openWave('${esc(w.id)}')">Open</button></td>
+        </tr>`).join('');
+    }
+
+    async function newWave() {
+      document.getElementById('waveOrderPicker').classList.remove('hidden');
+      document.getElementById('waveOrderList').innerHTML = '<div style="padding:1rem;color:#94a3b8">Loading pending orders&#8230;</div>';
+      try {
+        const r = await fetch('/api/orders?range=all');
+        const all = r.ok ? await r.json() : [];
+        // Only orders not yet fully scanned/shipped make sense to wave-pick
+        pendingOrders = all.filter(o => !o.scan_status || o.scan_status === 'pending' || o.scan_status === 'processing');
+      } catch (e) { pendingOrders = []; }
+      renderPicker(pendingOrders);
+    }
+
+    function renderPicker(list) {
+      const el = document.getElementById('waveOrderList');
+      if (!list.length) { el.innerHTML = '<div style="padding:1rem;color:#94a3b8">No pending orders found.</div>'; return; }
+      el.innerHTML = list.map(o => `
+        <label style="display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;border-bottom:1px solid #f1f5f9;cursor:pointer">
+          <input type="checkbox" class="wave-order-cb" value="${esc(o.order_number)}">
+          <span style="font-weight:600">${esc(o.order_number)}</span>
+          <span style="color:#94a3b8;font-size:.85rem">${(o.items || o.lines || []).length} line(s)</span>
+        </label>`).join('');
+    }
+
+    function filterPicker() {
+      const q = (document.getElementById('waveOrderSearch').value || '').toLowerCase();
+      renderPicker(pendingOrders.filter(o => !q || o.order_number.toLowerCase().includes(q)));
+    }
+
+    function cancelPicker() {
+      document.getElementById('waveOrderPicker').classList.add('hidden');
+    }
+
+    async function buildWave() {
+      const orderNumbers = [...document.querySelectorAll('.wave-order-cb:checked')].map(cb => cb.value);
+      if (!orderNumbers.length) { alert('Select at least one order.'); return; }
+      const name = prompt('Name this wave (optional):', '') || undefined;
+      const r = await fetch('/api/waves', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, order_numbers: orderNumbers }) });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || 'Could not create wave.'); return; }
+      cancelPicker();
+      if (j.notFound && j.notFound.length) alert('Note: ' + j.notFound.length + ' order(s) could not be found and were skipped: ' + j.notFound.join(', '));
+      openWave(j.id);
+    }
+
+    async function openWave(id) {
+      const r = await fetch('/api/waves/' + encodeURIComponent(id));
+      if (!r.ok) { alert('Wave not found.'); return; }
+      currentWave = await r.json();
+      document.getElementById('waveListWrap').classList.add('hidden');
+      document.getElementById('waveDetailWrap').classList.remove('hidden');
+      renderDetail();
+    }
+
+    function renderDetail() {
+      const w = currentWave;
+      document.getElementById('waveDetailTitle').textContent = w.name;
+      document.getElementById('waveDetailMeta').innerHTML =
+        `<span>${w.order_numbers.length} order(s)</span>` +
+        `<span>${w.stats.lineCount} pick line(s)</span>` +
+        `<span>${w.stats.totalUnits} unit(s)</span>` +
+        (w.stats.unlocatedLines ? `<span style="color:#d97706">${w.stats.unlocatedLines} line(s) have no location</span>` : '') +
+        `<span>Status: <b>${esc(w.status)}</b></span>`;
+      document.getElementById('wave-picks-tbody').innerHTML = w.picks.map(p => {
+        const done = p.picked_qty >= p.total_qty;
+        return `<tr style="${done ? 'background:#f0fdf4' : ''}">
+          <td style="font-family:monospace;font-weight:700">${esc(p.location || '—')}</td>
+          <td style="font-weight:600">${esc(p.sku)}</td>
+          <td>${esc(p.description)}</td>
+          <td style="text-align:right">${p.total_qty}</td>
+          <td style="text-align:right;${done ? 'color:#16a34a;font-weight:700' : ''}">${p.picked_qty}</td>
+          <td style="font-size:.78rem;color:#64748b">${p.orders.map(o => esc(o.order_number) + ' (' + o.qty + ')').join(', ')}</td>
+          <td>${done ? '&#10003;' : `<button class="btn-secondary" style="padding:.2rem .5rem" onclick="waveUI.pick('${esc(p.sku)}','${esc(p.location)}')">Pick</button>`}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function pick(sku, location) {
+      const v = prompt('Quantity picked for ' + sku + (location ? ' at ' + location : '') + ':', '1');
+      if (v === null) return;
+      const qty = Number(v);
+      if (!Number.isFinite(qty) || qty <= 0) { alert('Enter a positive number.'); return; }
+      const r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/pick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku, location, qty }) });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || 'Could not record pick.'); return; }
+      currentWave = j;
+      renderDetail();
+    }
+
+    async function complete() {
+      let r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      let j = await r.json();
+      if (r.status === 409 && j.needsForceComplete) {
+        if (!confirm(j.message + '\n\nOK = complete anyway\nCancel = keep picking')) return;
+        r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) });
+        j = await r.json();
+      }
+      if (!r.ok) { alert(j.error || 'Could not complete wave.'); return; }
+      currentWave = j;
+      renderDetail();
+      load();
+    }
+
+    function print() {
+      const w = currentWave;
+      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.1rem">${esc(p.location || '—')}</td><td style="font-weight:600">${esc(p.sku)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.1rem">${p.total_qty}</td><td>${p.orders.map(o => esc(o.order_number) + ' (' + o.qty + ')').join(', ')}</td><td style="width:2rem;border:1px solid #999"></td></tr>`).join('');
+      const win = window.open('', '_blank');
+      win.document.write(`<html><head><title>Wave Pick — ${esc(w.name)}</title><style>
+        body{font-family:sans-serif;padding:20px} h1{font-size:1.3rem}
+        table{width:100%;border-collapse:collapse;margin-top:1rem} th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:.9rem}
+        th{background:#f1f5f9}
+      </style></head><body>
+        <h1>Wave Pick Sheet — ${esc(w.name)}</h1>
+        <div>${w.order_numbers.length} order(s) &middot; ${w.stats.lineCount} line(s) &middot; ${w.stats.totalUnits} unit(s)</div>
+        <table><thead><tr><th>Location</th><th>SKU</th><th>Description</th><th>Qty</th><th>Order(s)</th><th>&#10003;</th></tr></thead><tbody>${rows}</tbody></table>
+      </body></html>`);
+      win.document.close();
+      win.onload = () => setTimeout(() => win.print(), 300);
+    }
+
+    function backToList() { load(); }
+
+    return { load, newWave, filterPicker, cancelPicker, buildWave, openWave, pick, complete, print, backToList };
+  })();
+  window.waveUI = waveUI;
+  document.getElementById('waveNewBtn')?.addEventListener('click', () => waveUI.newWave());
 
   // ── Init ───────────────────────────────────────────────────────────────────
   initLogin();

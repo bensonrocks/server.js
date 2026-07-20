@@ -1220,6 +1220,7 @@
     <nav class="sb-nav">
       <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
       <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
+      <button class="tab-btn" data-tab="waves"><span class="tab-icon">&#128737;</span>Wave Pick</button>
       <button class="tab-btn" data-tab="inbound"><span class="tab-icon">&#128230;</span>Inbound</button>
       <button class="tab-btn" data-tab="inventory"><span class="tab-icon">&#128451;</span>Inventory</button>
       <button class="tab-btn" data-tab="transport"><span class="tab-icon">&#128666;</span>Transport</button>
@@ -1357,6 +1358,53 @@
         <div class="filter-row" id="clientFilterRow"></div>
         <div class="filter-row" id="carrierFilterRow"></div>
         <div id="ordersDashList"></div>
+      </div>
+    </section>
+
+    <!-- ── TAB: Wave Pick — consolidate multiple orders into one -->
+    <!-- location-sorted pick list (lib/wave-pick.js) ── -->
+    <section id="tab-waves" class="tab">
+      <div class="section-header">
+        <h2>Wave Pick</h2>
+        <button class="btn-primary" id="waveNewBtn">+ New Wave</button>
+      </div>
+
+      <!-- Order picker (shown when creating a new wave) -->
+      <div id="waveOrderPicker" class="hidden" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem;margin-bottom:1rem">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+          <div style="font-weight:700">Select pending orders to combine into a wave</div>
+          <div style="display:flex;gap:.5rem">
+            <button class="btn-secondary" onclick="waveUI.buildWave()">Build Wave &#8594;</button>
+            <button class="btn-secondary" onclick="waveUI.cancelPicker()">Cancel</button>
+          </div>
+        </div>
+        <input id="waveOrderSearch" placeholder="Search order number&#8230;" oninput="waveUI.filterPicker()" style="width:100%;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.6rem">
+        <div id="waveOrderList" style="max-height:320px;overflow-y:auto;border:1px solid #eef2f6;border-radius:8px"></div>
+      </div>
+
+      <!-- Wave list -->
+      <div id="waveListWrap">
+        <table class="tbl" style="width:100%;border-collapse:collapse">
+          <thead><tr><th>Wave</th><th>Orders</th><th>Lines</th><th>Units</th><th>Status</th><th>Created</th><th></th></tr></thead>
+          <tbody id="wave-list-tbody"><tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">Loading&#8230;</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Wave detail: consolidated, location-sorted pick list -->
+      <div id="waveDetailWrap" class="hidden">
+        <div class="section-header">
+          <h2 id="waveDetailTitle">Wave</h2>
+          <div style="display:flex;gap:.5rem">
+            <button class="btn-secondary" onclick="waveUI.print()">&#128424; Print Pick Sheet</button>
+            <button class="btn-primary" onclick="waveUI.complete()">&#10003; Complete Wave</button>
+            <button class="btn-secondary" onclick="waveUI.backToList()">&#8592; Back</button>
+          </div>
+        </div>
+        <div id="waveDetailMeta" style="display:flex;gap:1.5rem;color:#475569;font-size:.85rem;margin-bottom:.75rem"></div>
+        <table class="tbl" style="width:100%;border-collapse:collapse">
+          <thead><tr><th>Location</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Picked</th><th>Orders</th><th></th></tr></thead>
+          <tbody id="wave-picks-tbody"></tbody>
+        </table>
       </div>
     </section>
 
