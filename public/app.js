@@ -1752,6 +1752,12 @@
       return;
     }
 
+    // Every order currently rendered that's eligible for a wave — feeds the
+    // header "select all" checkbox so a whole uploaded batch (or whatever's
+    // currently filtered/visible) can be grabbed in one click instead of
+    // checking each order one by one.
+    const waveCheckableNow = orders.filter(o => o.scan_status !== 'done' && !o.pending_deletion).map(o => o.order_number);
+
     const rows = orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
       const canScan  = ord.scan_status !== 'done' && !ord.pending_deletion;
@@ -1837,7 +1843,7 @@
           <thead>
             <tr>
               <th style="width:4px;padding:0"></th>
-              ${ordersView === 'active' ? '<th style="width:28px;padding:0"></th>' : ''}
+              ${ordersView === 'active' ? '<th class="col-wave-check" title="Select all"><input type="checkbox" id="waveSelectAllCheck" /></th>' : ''}
               <th data-col="orderno">ORDER NO${rz('orderno')}</th>
               <th class="col-client" data-col="client">CLIENT${rz('client')}</th>
               <th class="col-customer" data-col="customer">CUSTOMER${rz('customer')}</th>
@@ -1866,6 +1872,20 @@
         renderOrdersList();
       })
     );
+    // Header "select all" — grabs every eligible order currently shown
+    // (respects the client/carrier/date filters already applied above), so
+    // an entire uploaded batch can be selected in one click.
+    const selectAllCb = document.getElementById('waveSelectAllCheck');
+    if (selectAllCb && waveCheckableNow.length) {
+      const allSelected = waveCheckableNow.every(on => waveSelected.has(on));
+      selectAllCb.checked = allSelected;
+      selectAllCb.indeterminate = !allSelected && waveCheckableNow.some(on => waveSelected.has(on));
+      selectAllCb.addEventListener('change', () => {
+        if (selectAllCb.checked) waveCheckableNow.forEach(on => waveSelected.add(on));
+        else waveCheckableNow.forEach(on => waveSelected.delete(on));
+        renderOrdersList();
+      });
+    }
     document.getElementById('waveClearSelBtn')?.addEventListener('click', () => {
       waveSelected.clear();
       renderOrdersList();

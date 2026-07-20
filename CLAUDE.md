@@ -1487,7 +1487,13 @@ opens each order individually to verify cartons and complete it. Selecting
 exactly 1 order never triggers wave mode — it opens the normal single-order
 scan overlay exactly as before; the wave bar only offers "Start Wave Pick"
 at 2+ selections (Orders tab, checkbox column on `.wave-select-check`,
-`waveSelected` Set in app.js).
+`waveSelected` Set in app.js). A header checkbox (`#waveSelectAllCheck`)
+selects/clears every eligible order currently shown in one click — combined
+with the existing client filter, this is how a whole uploaded batch gets
+into a wave without checking each order one by one. `waveCheckableNow` is
+recomputed from whatever's actually rendered (respecting the client/carrier/
+date filters already applied), so "select all" only ever grabs what's
+visible, never hidden rows.
 
 - **PORTABLE CORE — `lib/wave-pick.js`**: zero dependencies on IDEALONE's db
   shape, Express, or order/state schema — every function takes plain data in,
