@@ -222,6 +222,42 @@ Keyfields IssueDetail file whose THT-64-427-3 line vanished. Now:
   separates location and SKU columns explicitly (lib/ocr-parse.js
   `LOCATION_CODE_PAT`), and its rows carry no `_skuSource`.
 
+## GINo column — "Good Issue Analysis" export order detection (lib/keyfields.js mapRow)
+
+An iWMS "Good Issue Analysis" export (header row: `Account, GINo, CustRef,
+Type, Priority, PONumber, SiteCode, ShippedOn, CreatedOn, ExpectedDate,
+ShipToCode, ShipToName, ShipReference, SKUCode, SKUDescr, …`) has NO
+"Reference"/"Order No"/"Issue No"-named column at all — `GINo` (e.g.
+`GI-129798`) IS the order identifier, one goods-issue transaction per GI,
+same as the `GI-\d{4,}` barcode the PDF picking-list path already turns
+into `order_number` directly. A real file with 1006 SKU lines across 270
+distinct GIs uploaded as **2 orders** — `detectColumnMap`'s AI fallback
+picked `ExpectedDate` as `order_key` instead, because its scoring rewards
+LOW cardinality for an order column (+20 when ≤15% of rows have a unique
+value — right for a picking list where many lines share one order number)
+and PENALIZES high cardinality (-12 above 60%) — but `GINo` is
+near-unique per row in this report shape (correct for a transaction-log
+export), so it scored worse than a repeating date column that just
+happened to have few distinct values. `GINo` also didn't match any name
+keyword in `scoreOrder` (`order|ref|invoice|…`) so it got no help there
+either. The 2-orders result cascaded into ~1000 bogus "duplicate line"
+warnings at `/api/preview` (`findDuplicateLineWarnings`), since every real
+GI's lines looked like 40+ repeats of the same 2 fake orders.
+
+Fixed the same way the file's own header instructs ("add their column name
+to the right-hand side of the relevant `??` chain, do NOT remove existing
+aliases") — added `n.gino ?? n.gi_no ?? n.gi_number` to the KNOWN alias
+chain for `order_number` in `mapRow` (right after `d_exref2`, before
+`issue_no`), so a bare `GINo` header now resolves without ever reaching the
+AI heuristic. Deliberately narrow: does NOT touch `scoreOrder`'s general
+cardinality scoring (retuning that risks regressing picking-list detection
+for other clients where low cardinality IS the right signal) and does NOT
+touch the separate, already-documented `n.iwms_gino → issue_no` alias
+(a DIFFERENT header spelling — `"iWMS GINo"` normalizes to `iwms_gino`,
+not `gino` — used by a format that has its own separate order-number
+column and intentionally keeps the GI as a secondary/scan-only field; see
+the Scan-to-find-order section above).
+
 ## Duplicate order numbers — locked vs overwritable vs confirmable (server.js /api/upload)
 
 Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the
@@ -1487,13 +1523,18 @@ opens each order individually to verify cartons and complete it. Selecting
 exactly 1 order never triggers wave mode — it opens the normal single-order
 scan overlay exactly as before; the wave bar only offers "Start Wave Pick"
 at 2+ selections (Orders tab, checkbox column on `.wave-select-check`,
-`waveSelected` Set in app.js). A header checkbox (`#waveSelectAllCheck`)
-selects/clears every eligible order currently shown in one click — combined
-with the existing client filter, this is how a whole uploaded batch gets
-into a wave without checking each order one by one. `waveCheckableNow` is
-recomputed from whatever's actually rendered (respecting the client/carrier/
-date filters already applied), so "select all" only ever grabs what's
-visible, never hidden rows.
+`waveSelected` Set in app.js). A persistent "☐ Select All" button
+(`#waveSelectAllBtn`) sits at the TOP of the Active list — right below the
+Active/Completed subtabs, above the table — not in a header checkbox easily
+missed while scrolling; it toggles to "☑ Deselect All" once every eligible
+order is selected. Combined with the existing client filter, this is how a
+whole uploaded batch gets into a wave without checking each order one by
+one. `waveCheckableNow` is computed from `activeOrders` right where the
+Active/Completed split happens (before date/client filters are re-applied
+below), so "select all" only ever grabs what's actually visible in the
+current filtered view, never hidden rows. The bar itself is always visible
+whenever the Active view has at least one selectable order, growing to show
+"N selected / Clear / Start Wave Pick" once something's checked.
 
 - **PORTABLE CORE — `lib/wave-pick.js`**: zero dependencies on IDEALONE's db
   shape, Express, or order/state schema — every function takes plain data in,

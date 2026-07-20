@@ -1644,6 +1644,11 @@
     // live in their own searchable view for reference and label reprinting
     const doneOrders   = orders.filter(o => o.scan_status === 'done');
     const activeOrders = orders.filter(o => o.scan_status !== 'done');
+    // Every order currently in the Active view that's eligible for a wave —
+    // computed here (before the client/carrier/date-filtered list is finalized
+    // below) so the persistent batch-actions bar can offer "Select All" up
+    // top, not buried in a header checkbox nobody notices.
+    const waveCheckableNow = activeOrders.filter(o => !o.pending_deletion).map(o => o.order_number);
     const dateChips = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Last 7 Days'], ['all', 'All'], ['range', 'Date Range&hellip;']]
       .map(([k, lbl]) => `<button class="filter-chip ${ordersDateFilter === k ? 'active' : ''}" data-odate="${k}">${lbl}</button>`).join('');
     const dateFilterHTML = `
@@ -1655,6 +1660,7 @@
           <span class="odr-to">to</span>
           <input type="date" id="ordersDateTo" value="${esc(ordersDateTo)}" />` : ''}
       </div>`;
+    const allCheckedNow = waveCheckableNow.length > 0 && waveCheckableNow.every(on => waveSelected.has(on));
     const subTabsHTML = `
       ${dateFilterHTML}
       <div class="orders-subtabs">
@@ -1662,13 +1668,15 @@
         <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
         ${ordersView === 'completed' ? `<input type="search" id="completedSearchInput" class="completed-search" placeholder="Search waybill, GI / order no, pick ticket, customer&hellip;" value="${esc(completedSearch)}" autocomplete="off" />` : ''}
       </div>
-      ${ordersView === 'active' && waveSelected.size > 0 ? `
+      ${ordersView === 'active' && waveCheckableNow.length > 0 ? `
       <div class="wave-select-bar">
+        <button class="btn-secondary btn-sm" id="waveSelectAllBtn">${allCheckedNow ? '&#9745; Deselect All' : '&#9744; Select All'}</button>
+        ${waveSelected.size > 0 ? `
         <span>${waveSelected.size} order${waveSelected.size === 1 ? '' : 's'} selected</span>
         <button class="btn-secondary btn-sm" id="waveClearSelBtn">Clear</button>
         ${waveSelected.size >= 2
           ? `<button class="btn-primary btn-sm" id="waveStartBtn">&#127754; Start Wave Pick (${waveSelected.size})</button>`
-          : `<button class="btn-primary btn-sm" id="waveScanSingleBtn">Scan This Order &#8594;</button>`}
+          : `<button class="btn-primary btn-sm" id="waveScanSingleBtn">Scan This Order &#8594;</button>`}` : ''}
       </div>` : ''}`;
 
     if (ordersView === 'completed') {
@@ -1751,12 +1759,6 @@
       wireOrdersSubtabs();
       return;
     }
-
-    // Every order currently rendered that's eligible for a wave — feeds the
-    // header "select all" checkbox so a whole uploaded batch (or whatever's
-    // currently filtered/visible) can be grabbed in one click instead of
-    // checking each order one by one.
-    const waveCheckableNow = orders.filter(o => o.scan_status !== 'done' && !o.pending_deletion).map(o => o.order_number);
 
     const rows = orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
@@ -1843,7 +1845,7 @@
           <thead>
             <tr>
               <th style="width:4px;padding:0"></th>
-              ${ordersView === 'active' ? '<th class="col-wave-check" title="Select all"><input type="checkbox" id="waveSelectAllCheck" /></th>' : ''}
+              ${ordersView === 'active' ? '<th class="col-wave-check"></th>' : ''}
               <th data-col="orderno">ORDER NO${rz('orderno')}</th>
               <th class="col-client" data-col="client">CLIENT${rz('client')}</th>
               <th class="col-customer" data-col="customer">CUSTOMER${rz('customer')}</th>
@@ -1872,20 +1874,15 @@
         renderOrdersList();
       })
     );
-    // Header "select all" — grabs every eligible order currently shown
-    // (respects the client/carrier/date filters already applied above), so
-    // an entire uploaded batch can be selected in one click.
-    const selectAllCb = document.getElementById('waveSelectAllCheck');
-    if (selectAllCb && waveCheckableNow.length) {
-      const allSelected = waveCheckableNow.every(on => waveSelected.has(on));
-      selectAllCb.checked = allSelected;
-      selectAllCb.indeterminate = !allSelected && waveCheckableNow.some(on => waveSelected.has(on));
-      selectAllCb.addEventListener('change', () => {
-        if (selectAllCb.checked) waveCheckableNow.forEach(on => waveSelected.add(on));
-        else waveCheckableNow.forEach(on => waveSelected.delete(on));
-        renderOrdersList();
-      });
-    }
+    // Batch-actions bar, top of the list — grabs/clears every eligible order
+    // currently shown (respects the client/carrier/date filters already
+    // applied above), so a whole uploaded batch can be selected in one
+    // click without hunting for a checkbox in the table header.
+    document.getElementById('waveSelectAllBtn')?.addEventListener('click', () => {
+      if (allCheckedNow) waveCheckableNow.forEach(on => waveSelected.delete(on));
+      else waveCheckableNow.forEach(on => waveSelected.add(on));
+      renderOrdersList();
+    });
     document.getElementById('waveClearSelBtn')?.addEventListener('click', () => {
       waveSelected.clear();
       renderOrdersList();
