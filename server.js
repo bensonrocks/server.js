@@ -3155,6 +3155,7 @@ const AUTH_PUBLIC = new Set([
   '/api/public/orders',
   '/api/public/config',
   '/api/driver/login',
+  '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
 ]);
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
@@ -7220,6 +7221,30 @@ app.delete('/api/master/users/:id', (req, res) => {
 // Per-user FEATURE TOGGLES — which main functions this user sees.
 // Absent/never-set = everything visible (role rules still apply on top).
 const USER_FEATURE_KEYS = ['upload', 'orders', 'inbound', 'transport', 'labels', 'reports'];
+// ── Lazada Open Platform — push-mechanism callback ──────────────────────────
+// Lazada's console verifies this URL (expects a fast HTTP 200) and then
+// pushes JSON events (new orders, status changes) here. For now we ACK and
+// RECORD every push — nothing is processed into orders yet, since payloads
+// arrive unverified until the app is approved and signature checking is
+// wired. The stored log is exactly what we need to build the real Lazada
+// order import against actual payload shapes.
+app.all('/api/lazada/callback', express.json({ limit: '512kb' }), (req, res) => {
+  res.status(200).json({ code: '0', message: 'success' }); // ACK fast — Lazada retries slow endpoints
+  try {
+    const db = readDb();
+    if (!db.lazadaPushLog) db.lazadaPushLog = [];
+    db.lazadaPushLog.push({
+      at: new Date().toISOString(),
+      method: req.method,
+      query: req.query || {},
+      body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.body || '').slice(0, 2000) },
+    });
+    if (db.lazadaPushLog.length > 200) db.lazadaPushLog.splice(0, db.lazadaPushLog.length - 200);
+    writeDb(db);
+    logAudit('lazada_push_received', { method: req.method, msgType: req.body?.message_type ?? req.body?.type ?? '' });
+  } catch (e) { console.error('[lazada] push log error:', e.message); }
+});
+
 // ── ZORT integration — per-client merchant store connections ────────────────
 // Each fulfillment CLIENT connects their own Zort store (storename/apikey/
 // apisecret). Their paid sales orders pull into IDEALONE as normal batches
