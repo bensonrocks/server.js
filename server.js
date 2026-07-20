@@ -7174,6 +7174,7 @@ app.post('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
   const { id, name, password, role } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
+  if (String(password).length < 5) return res.status(400).json({ error: 'Password must be at least 5 characters' });
   const users = readUsers();
   if (users.find(u => u.id === id)) return res.status(409).json({ error: `User "${id}" already exists` });
   const salt     = crypto.randomBytes(16).toString('hex');
@@ -7190,6 +7191,7 @@ app.put('/api/master/users/:id/password', (req, res) => {
   if (idx < 0) return res.status(404).json({ error: 'User not found' });
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'New password required' });
+  if (String(password).length < 5) return res.status(400).json({ error: 'Password must be at least 5 characters' });
   const salt = crypto.randomBytes(16).toString('hex');
   users[idx].salt         = salt;
   users[idx].passwordHash = hashPass(password, salt);

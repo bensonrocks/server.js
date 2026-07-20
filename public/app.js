@@ -8114,6 +8114,7 @@
     const pass = document.getElementById('newUserPass').value.trim();
     const role = document.getElementById('newUserRole').value;
     if (!id || !pass) { showUserStatus('User ID and password are required.', 'error'); return; }
+    if (pass.length < 5) { showUserStatus('Password must be at least 5 characters.', 'error'); return; }
     try {
       const r = await fetch('/api/master/users', {
         method: 'POST',
