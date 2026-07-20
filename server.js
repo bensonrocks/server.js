@@ -4997,7 +4997,7 @@ app.post('/api/transport', (req, res) => {
   };
 
   db.transport.push(newRequest);
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_created', { id: newRequest.id, client: newRequest.clientName });
   res.json(newRequest);
 });
@@ -5027,7 +5027,7 @@ app.post('/api/transport/import', upload.single('file'), tenantMiddleware, (req,
       }
       const result = tmsImporter.createOrdersFromImport({ customers: orders }, db);
       applyAddressBookToTransport(db); // fill address/postal from the Address Book
-      _persistDb(db);
+      writeDb(db);
       logAudit('tms_import', {
         ordersCreated: result.created.length,
         ordersUpdated: result.updated.length,
@@ -5049,7 +5049,7 @@ app.post('/api/transport/import', upload.single('file'), tenantMiddleware, (req,
     // Process deliveries with attribute-based parsing
     const result = tmsImporter.createOrdersFromImport({ customers }, db);
     applyAddressBookToTransport(db); // fill address/postal from the Address Book
-    _persistDb(db);
+    writeDb(db);
     logAudit('tms_import', {
       ordersCreated: result.created.length,
       ordersUpdated: result.updated.length,
@@ -5105,7 +5105,7 @@ app.post('/api/transport/fix-schedule/:day', (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
-  _persistDb(db);
+  writeDb(db);
   logAudit('fix_schedule_updated', { day, enabled, areasCount: priorityAreas?.length || 0 });
 
   res.json(db.fixSchedules[day]);
@@ -5140,7 +5140,7 @@ app.post('/api/transport/plan/approve', (req, res) => {
     assigned++;
   }
 
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_plan_approved', {
     jobs: assigned,
     drivers: [...new Set(assignments.map(a => a.driverName).filter(Boolean))].length,
@@ -5274,7 +5274,7 @@ app.post('/api/transport/bulk-status', (req, res) => {
     rec.updatedAt = now;
     updated++;
   }
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_bulk_status', { jobs: updated, status, withRemarks: !!String(remarks || '').trim(), by: req.userId || '' });
   res.json({ success: true, updated });
 });
@@ -5309,7 +5309,7 @@ app.post('/api/transport/mark-delivered', (req, res) => {
     delivered++;
   }
 
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_marked_delivered', { jobs: delivered, mode: allConfirmed ? 'all-confirmed' : 'ids', by: req.userId || '' });
   res.json({ success: true, delivered });
 });
@@ -5339,7 +5339,7 @@ app.post('/api/drivers', (req, res) => {
   };
   const i = db.drivers.findIndex(d => d.id === drv.id);
   if (i >= 0) db.drivers[i] = { ...db.drivers[i], ...drv }; else db.drivers.push(drv);
-  _persistDb(db);
+  writeDb(db);
   logAudit('driver_upsert', { driverId: drv.id, name: drv.name, by: req.userId || '' });
   res.json(drv);
 });
@@ -5349,7 +5349,7 @@ app.delete('/api/drivers/:id', (req, res) => {
   const before = (db.drivers || []).length;
   db.drivers = (db.drivers || []).filter(d => d.id !== req.params.id);
   if (db.drivers.length === before) return res.status(404).json({ error: 'Driver not found' });
-  _persistDb(db);
+  writeDb(db);
   logAudit('driver_delete', { driverId: req.params.id, by: req.userId || '' });
   res.json({ success: true });
 });
@@ -5382,7 +5382,7 @@ app.post('/api/address-book', (req, res) => {
   };
   if (i >= 0) db.addressBook[i] = entry; else db.addressBook.push(entry);
   const jobsFixed = applyAddressBookToTransport(db);
-  _persistDb(db);
+  writeDb(db);
   logAudit('address_book_upsert', { name: entry.name, jobsFixed, by: req.userId || '' });
   res.json({ success: true, entries: db.addressBook.length, jobsFixed });
 });
@@ -5393,7 +5393,7 @@ app.delete('/api/address-book/:name', (req, res) => {
   const before = (db.addressBook || []).length;
   db.addressBook = (db.addressBook || []).filter(e => _abNorm(e.name) !== key && _abNorm(e.code) !== key);
   if (db.addressBook.length === before) return res.status(404).json({ error: 'Entry not found' });
-  _persistDb(db);
+  writeDb(db);
   logAudit('address_book_delete', { name: req.params.name, by: req.userId || '' });
   res.json({ success: true, entries: db.addressBook.length });
 });
@@ -5457,7 +5457,7 @@ app.post('/api/address-book/import', upload.single('file'), tenantMiddleware, (r
     const db = readDb();
     db.addressBook = entries;
     const jobsFixed = applyAddressBookToTransport(db);
-    _persistDb(db);
+    writeDb(db);
     logAudit('address_book_import', { entries: entries.length, skippedBadZip: badZips.length, jobsFixed, by: req.userId || '' });
     res.json({ success: true, entries: entries.length, jobsFixed,
       warnings: badZips.length ? [`${badZips.length} row(s) skipped — postal code not 6 digits: ${badZips.slice(0, 5).join('; ')}`] : [] });
@@ -5508,7 +5508,7 @@ app.post('/api/address-book/learn-alias', (req, res) => {
     });
   }
   const jobsFixed = applyAddressBookToTransport(db);
-  _persistDb(db);
+  writeDb(db);
   logAudit('address_book_alias_learned', { alias: aliasName, target: target.name, jobsFixed, by: req.userId || '' });
   res.json({ success: true, jobsFixed, target: { name: target.name, zip: target.zip } });
 });
@@ -5544,7 +5544,7 @@ app.post('/api/transport/bulk-delete', (req, res) => {
   }
 
   const deleted = before - db.transport.length;
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_deleted', { jobs: deleted, mode: all === true ? 'all' : 'ids', by: req.userId || '' });
   res.json({ success: true, deleted });
 });
@@ -5570,7 +5570,7 @@ app.post('/api/transport/depot', (req, res) => {
     address: String(address).trim(),
     zip: String(zip).trim(),
   };
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_depot_updated', { ...db.transportDepot, by: req.userId || '' });
   res.json(db.transportDepot);
 });
@@ -5587,7 +5587,7 @@ app.post('/api/transport/templates', (req, res) => {
   const db = readDb();
   if (!db.transportTemplates) db.transportTemplates = {};
   db.transportTemplates[String(name).trim()] = { ...(data || {}), savedAt: new Date().toISOString(), savedBy: req.userId || '' };
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_template_saved', { template: String(name).trim(), by: req.userId || '' });
   res.json({ success: true });
 });
@@ -5596,7 +5596,7 @@ app.delete('/api/transport/templates/:name', (req, res) => {
   const name = decodeURIComponent(req.params.name);
   if (!db.transportTemplates?.[name]) return res.status(404).json({ error: 'Template not found' });
   delete db.transportTemplates[name];
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_template_deleted', { template: name, by: req.userId || '' });
   res.json({ success: true });
 });
@@ -5615,7 +5615,7 @@ app.delete('/api/transport/:id', (req, res) => {
   const idx = (db.transport || []).findIndex(r => r.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Transport request not found' });
   const victim = db.transport.splice(idx, 1)[0];
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_deleted', { jobs: 1, mode: 'single', id: victim.id, client: victim.clientName || '', by: req.userId || '' });
   res.json({ success: true, deleted: 1 });
 });
@@ -5646,7 +5646,7 @@ app.post('/api/transport/:id/update', (req, res) => {
   }
 
   request.updatedAt = new Date().toISOString();
-  _persistDb(db);
+  writeDb(db);
   logAudit('transport_updated', { id: request.id, status: request.status, by: req.userId || '' });
   res.json(request);
 });
@@ -8540,7 +8540,7 @@ app.post('/api/driver/jobs/:id/complete', express.json(), (req, res) => {
   };
 
   // Persist to database
-  _persistDb();
+  writeDb(db);
 
   // Log audit event
   logAudit('driver_job_completed', {
