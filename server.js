@@ -3872,6 +3872,11 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
 
     logAudit('upload', { batchId, jobCode: batch.idealscan_code, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
 
+    // Visibility for wave picking: how many lines actually carry a warehouse
+    // location, since a wave built from a file with no/partial location data
+    // won't sequence well — surfaced now rather than discovered later.
+    const linesWithLocation = mapped.filter(r => (r.location || '').trim()).length;
+
     console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}${transportJobsCreated ? `, ${transportJobsCreated} transport job(s)` : ''}`);
     res.json({
       sessionId,
@@ -3882,7 +3887,8 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       orders: ordersWithState,
       transportJobsCreated,
       inventoryTracked,
-      inventorySkusReserved
+      inventorySkusReserved,
+      locationCoverage: { linesWithLocation, totalLines: mapped.length }
     });
   } catch (err) {
     console.error('[upload] ERROR:', err.message);

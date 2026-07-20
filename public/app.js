@@ -1238,6 +1238,16 @@
       successMsg += data.inventoryTracked
         ? ` 📦 Stock reserved in Inventory.`
         : ` (not tracked in Inventory — activity/billing only.)`;
+      const lc = data.locationCoverage;
+      if (lc && lc.totalLines > 0) {
+        if (lc.linesWithLocation === 0) {
+          successMsg += ` ⚠ No warehouse location data found — Wave Pick needs a location/bin column to sequence picks.`;
+        } else if (lc.linesWithLocation < lc.totalLines) {
+          successMsg += ` 📍 ${lc.linesWithLocation}/${lc.totalLines} line(s) have a location.`;
+        } else {
+          successMsg += ` 📍 All lines have a location — ready for Wave Pick.`;
+        }
+      }
       setUploadStatus('success', successMsg);
 
       // Show download button immediately and lock tabs until downloaded
@@ -9957,12 +9967,23 @@
     function renderPicker(list) {
       const el = document.getElementById('waveOrderList');
       if (!list.length) { el.innerHTML = '<div style="padding:1rem;color:#94a3b8">No pending orders found.</div>'; return; }
-      el.innerHTML = list.map(o => `
+      el.innerHTML = list.map(o => {
+        const lines = o.items || o.lines || [];
+        const withLoc = lines.filter(l => (l.location || '').trim()).length;
+        let locBadge = '';
+        if (lines.length > 0) {
+          if (withLoc === 0) locBadge = `<span style="color:#dc2626;font-size:.75rem">&#9888; no location</span>`;
+          else if (withLoc < lines.length) locBadge = `<span style="color:#d97706;font-size:.75rem">${withLoc}/${lines.length} located</span>`;
+          else locBadge = `<span style="color:#16a34a;font-size:.75rem">&#128205; located</span>`;
+        }
+        return `
         <label style="display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;border-bottom:1px solid #f1f5f9;cursor:pointer">
           <input type="checkbox" class="wave-order-cb" value="${esc(o.order_number)}">
           <span style="font-weight:600">${esc(o.order_number)}</span>
-          <span style="color:#94a3b8;font-size:.85rem">${(o.items || o.lines || []).length} line(s)</span>
-        </label>`).join('');
+          <span style="color:#94a3b8;font-size:.85rem">${lines.length} line(s)</span>
+          ${locBadge}
+        </label>`;
+      }).join('');
     }
 
     function filterPicker() {
