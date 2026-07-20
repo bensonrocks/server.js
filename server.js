@@ -567,6 +567,38 @@ const upload = multer({
 });
 
 app.use(express.json());
+// ── Tenant resolution ──────────────────────────────────────────────────────
+// Runs on every request, BEFORE any route. Resolves the caller's tenant from
+// their session token (same x-auth-token header every route already uses)
+// and makes it available to readDb()/writeDb()/inventory via tenantContext,
+// so route handlers never have to know or care which tenant they're serving —
+// existing requireAuth/requireAuthOrToken calls further down are unaffected
+// and still do their own enforcement independently. Unauthenticated requests
+// (public pages, login itself, etc.) proceed with no tenant context, which
+// readDb()/writeDb() fall back to treating as the "default" tenant.
+function _resolveTenantId(req) {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  if (!token) return null;
+  for (const [userId, t] of activeSessions) {
+    if (t === token) {
+      const user = readUsers().find(u => u.id === userId);
+      return user ? (user.tenant_id || tenantStore.DEFAULT_TENANT_ID) : null;
+    }
+  }
+  return null;
+}
+function tenantMiddleware(req, res, next) {
+  tenantContext.run(_resolveTenantId(req), () => next());
+}
+app.use(tenantMiddleware);
+// multer's multipart parsing does not reliably propagate AsyncLocalStorage
+// context through its internal (pre-AsyncResource) event-emitter machinery —
+// verified empirically: the tenant context set by tenantMiddleware above is
+// silently lost by the time a route handler runs AFTER a multer step,
+// falling back to the "default" tenant regardless of who actually uploaded.
+// Every multer-based route therefore re-applies tenantMiddleware immediately
+// after its multer middleware, to re-enter the correct context before doing
+// any tenant-scoped work.
 // no-cache (= revalidate every load) on HTML/JS/CSS so every deploy reaches
 // browsers on the next reload — stale cached app.js caused phantom bugs.
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -619,8 +651,20 @@ const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
 })();
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
-const DB_FILE     = path.join(DATA_DIR, 'db.json');
-let _dbCache = null;
+
+// ── Multi-tenant storage ──────────────────────────────────────────────────────
+// One shared deployment, isolated data per tenant. Business data (orders,
+// batches, inbound, transport, drivers, inventory, ...) lives under
+// DATA_DIR/tenants/<tenantId>/ — resolved per-request via tenantContext
+// (set right after auth, below). Users + sessions stay in one shared
+// DATA_DIR/global.json since login has no tenant yet at the point it runs.
+// Existing single-tenant installs are migrated automatically into a tenant
+// called "default" the first time this boots — see lib/tenant-store.js.
+const tenantContext = require('./lib/tenant-context');
+const tenantStore   = require('./lib/tenant-store').init(DATA_DIR);
+tenantStore.migrateLegacyIfNeeded();
+
+const _dbCacheByTenant = new Map(); // tenantId -> parsed db.json contents
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
 const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
@@ -641,17 +685,60 @@ fs.mkdirSync(LABEL_IMPORT_DIR,   { recursive: true });
 fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
 fs.mkdirSync(INBOUND_PHOTO_DIR,  { recursive: true });
 
+// ── Global store (users + sessions) ───────────────────────────────────────────
+// NOT tenant-scoped — login has no tenant context yet at the point it runs,
+// and a user's tenant_id is what tells us which tenant's readDb()/writeDb()
+// to use for the rest of that request. Lives in DATA_DIR/global.json,
+// separate from every tenant's own db.json.
+let _globalCache = null;
+function readGlobalDb() {
+  if (_globalCache) return _globalCache;
+  try { _globalCache = JSON.parse(fs.readFileSync(tenantStore.globalFile(), 'utf8')); }
+  catch { _globalCache = { users: [], sessions: {} }; }
+  if (!Array.isArray(_globalCache.users)) _globalCache.users = [];
+  if (!_globalCache.sessions) _globalCache.sessions = {};
+  return _globalCache;
+}
+let _globalWriting = false, _globalWritePending = false;
+function _persistGlobalDb() {
+  if (_globalWriting) { _globalWritePending = true; return; }
+  _globalWriting = true;
+  let json;
+  try { json = JSON.stringify(_globalCache); }
+  catch (e) { console.error('[writeGlobalDb] stringify error:', e.message); _globalWriting = false; return; }
+  const file = tenantStore.globalFile();
+  const tmp = file + '.tmp';
+  fs.writeFile(tmp, json, err => {
+    if (err) {
+      console.error('[writeGlobalDb] persist error:', err.message);
+      _globalWriting = false;
+      if (_globalWritePending) { _globalWritePending = false; setImmediate(_persistGlobalDb); }
+      return;
+    }
+    fs.rename(tmp, file, err2 => {
+      if (err2) console.error('[writeGlobalDb] rename error:', err2.message);
+      _globalWriting = false;
+      if (_globalWritePending) { _globalWritePending = false; setImmediate(_persistGlobalDb); }
+    });
+  });
+}
+function writeGlobalDb(data) {
+  _globalCache = data;
+  setImmediate(_persistGlobalDb);
+}
+
 // ── User credentials ─────────────────────────────────────────────────────────
-// Users are stored inside db.json under the "users" key so all app data lives
-// in one file. On first boot, existing users.json is migrated automatically.
+// Every user carries a tenant_id (defaults to the "default" tenant for
+// pre-existing / single-tenant accounts) telling the app which tenant's data
+// to scope the rest of their session to.
 function readUsers() {
-  const db = readDb();
+  const db = readGlobalDb();
   return Array.isArray(db.users) ? db.users : [];
 }
 function writeUsers(users) {
-  const db = readDb();
+  const db = readGlobalDb();
   db.users = users;
-  writeDb(db);
+  writeGlobalDb(db);
 }
 function hashPass(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
@@ -662,18 +749,18 @@ function hashPass(password, salt) {
 // admin-set passwords survive server restarts.
 // Format: [{"id":"Admin1","name":"Admin One","role":"admin","password":"secret"}, ...]
 ;(function initUsers() {
-  const db = readDb();
+  const db = readGlobalDb();
 
   // Migrate from legacy users.json if db.users doesn't exist yet
-  if (!Array.isArray(db.users)) {
+  if (!Array.isArray(db.users) || !db.users.length) {
     let users = [];
     try { users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch {}
     if (!users.length) {
       const salt = crypto.randomBytes(16).toString('hex');
-      users = [{ id: 'demo', name: 'Demo', role: 'admin', salt, passwordHash: hashPass('demo', salt) }];
+      users = [{ id: 'demo', name: 'Demo', role: 'admin', tenant_id: tenantStore.DEFAULT_TENANT_ID, salt, passwordHash: hashPass('demo', salt) }];
     }
     db.users = users;
-    writeDb(db);
+    writeGlobalDb(db);
   }
 
   // Apply SEED_USERS — add any missing accounts, never touch existing ones
@@ -719,57 +806,67 @@ function loadCustomHeaders() {
 }
 function invalidateCustomHeadersCache() { _customHeadersCache = undefined; }
 
+// Tenant-scoped. Resolves the CURRENT tenant from tenantContext (set per
+// request right after auth — see the app.use() below) so every one of this
+// function's ~200 existing call sites stays zero-argument and automatically
+// reads/writes the calling request's own tenant, never another tenant's data.
 function readDb() {
-  if (_dbCache) return _dbCache;
-  try { _dbCache = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { _dbCache = { batches: [], inbound: [], transport: [], drivers: [], fixSchedules: {} }; }
+  const tenantId = tenantContext.currentTenantId();
+  let cache = _dbCacheByTenant.get(tenantId);
+  if (cache) return cache;
+  try { cache = JSON.parse(fs.readFileSync(tenantStore.tenantDbFile(tenantId), 'utf8')); }
+  catch { cache = { batches: [], inbound: [], transport: [], drivers: [], fixSchedules: {} }; }
   // Ensure all required fields exist
-  if (!_dbCache.batches) _dbCache.batches = [];
-  if (!_dbCache.inbound) _dbCache.inbound = [];
-  if (!_dbCache.transport) _dbCache.transport = [];
-  if (!_dbCache.fixSchedules) _dbCache.fixSchedules = {};
-  if (!_dbCache.drivers) {
+  if (!cache.batches) cache.batches = [];
+  if (!cache.inbound) cache.inbound = [];
+  if (!cache.transport) cache.transport = [];
+  if (!cache.fixSchedules) cache.fixSchedules = {};
+  if (!cache.drivers) {
     // Initialize with sample drivers
-    _dbCache.drivers = [
+    cache.drivers = [
       { id: 'DRV-001', name: 'Ahmad Hassan', pin: '1234', phone: '6581234567', vehicle: 'Van', capacity: 1000, status: 'active' },
       { id: 'DRV-002', name: 'Sarah Chen', pin: '2345', phone: '6587654321', vehicle: 'Bike', capacity: 50, status: 'active' },
       { id: 'DRV-003', name: 'Rajesh Kumar', pin: '3456', phone: '6591112222', vehicle: 'Truck', capacity: 2000, status: 'active' }
     ];
   }
-  return _dbCache;
+  _dbCacheByTenant.set(tenantId, cache);
+  return cache;
 }
 // Persist is ATOMIC (tmp file + rename) so a crash mid-write can never leave
-// a corrupt half-written db.json, and writes are serialized so concurrent
-// writeDb calls coalesce instead of racing each other.
-let _dbWriting = false;
-let _dbWritePending = false;
-function _persistDb() {
-  if (_dbWriting) { _dbWritePending = true; return; }
-  _dbWriting = true;
+// a corrupt half-written db.json, and writes are serialized PER TENANT so
+// concurrent writeDb calls for the SAME tenant coalesce instead of racing —
+// but one tenant's write never blocks another's.
+const _dbWriting = new Map();        // tenantId -> bool
+const _dbWritePending = new Map();   // tenantId -> bool
+function _persistDb(tenantId) {
+  if (_dbWriting.get(tenantId)) { _dbWritePending.set(tenantId, true); return; }
+  _dbWriting.set(tenantId, true);
   let json;
-  try { json = JSON.stringify(_dbCache); }
-  catch (e) { console.error('[writeDb] stringify error:', e.message); _dbWriting = false; return; }
-  const tmp = DB_FILE + '.tmp';
+  try { json = JSON.stringify(_dbCacheByTenant.get(tenantId)); }
+  catch (e) { console.error('[writeDb] stringify error:', e.message); _dbWriting.set(tenantId, false); return; }
+  const dbFile = tenantStore.tenantDbFile(tenantId);
+  const tmp = dbFile + '.tmp';
   fs.writeFile(tmp, json, err => {
     if (err) {
       console.error('[writeDb] persist error:', err.message);
-      _dbWriting = false;
-      if (_dbWritePending) { _dbWritePending = false; setImmediate(_persistDb); }
+      _dbWriting.set(tenantId, false);
+      if (_dbWritePending.get(tenantId)) { _dbWritePending.set(tenantId, false); setImmediate(() => _persistDb(tenantId)); }
       return;
     }
-    fs.rename(tmp, DB_FILE, err2 => {
+    fs.rename(tmp, dbFile, err2 => {
       if (err2) console.error('[writeDb] rename error:', err2.message);
-      _dbWriting = false;
-      if (_dbWritePending) { _dbWritePending = false; setImmediate(_persistDb); }
+      _dbWriting.set(tenantId, false);
+      if (_dbWritePending.get(tenantId)) { _dbWritePending.set(tenantId, false); setImmediate(() => _persistDb(tenantId)); }
     });
   });
 }
 function writeDb(data) {
-  _dbCache = data;
+  const tenantId = tenantContext.currentTenantId();
+  _dbCacheByTenant.set(tenantId, data);
   // Defer JSON.stringify to the NEXT event loop tick so any pending res.json()
   // calls in the current tick are not blocked by a potentially-slow stringify.
   // (A large db.json with many batches was causing 30s+ event-loop stalls.)
-  setImmediate(_persistDb);
+  setImmediate(() => _persistDb(tenantId));
 }
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
@@ -2031,7 +2128,7 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
 
 // Upload waybill PDF for an existing batch (post-upload or re-match)
 const waybillPdfUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'), async (req, res) => {
+app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'), tenantMiddleware, async (req, res) => {
   const { batchId } = req.params;
   const db    = readDb();
   const batch = db.batches.find(b => b.id === batchId);
@@ -2230,7 +2327,7 @@ function matchLabelPage(rawText, extracted, index) {
   return null;
 }
 
-app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), async (req, res) => {
+app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), tenantMiddleware, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
     const importId  = uuidv4();
@@ -3188,7 +3285,7 @@ app.use((req, res, next) => {
 });
 
 // Parse-only preview — returns stats without saving anything
-app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
+app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -3309,7 +3406,7 @@ app.post('/api/preview', upload.single('orderFile'), async (req, res) => {
 
 // ── Delivery Job Planning — Group orders by postal code/zone ─────────────────
 // ── OCR preview — photo → text → order parse (no save) ──────────────────────
-app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
+app.post('/api/ocr/preview', upload.single('image'), tenantMiddleware, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
   if (!Tesseract) {
     return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
@@ -3409,7 +3506,7 @@ function parseLabelLines(text) {
   return { sku: sku || null, batch: batch || null, expiry: expiry || null, confidence, needs_review: !sku || confidence < 75 };
 }
 
-app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
+app.post('/api/ocr/label', upload.single('image'), tenantMiddleware, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
   if (!Tesseract) {
     return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
@@ -3431,7 +3528,7 @@ const uploadFields = upload.fields([
   { name: 'waybillPdf',  maxCount: 1 },
 ]);
 
-app.post('/api/upload', uploadFields, async (req, res) => {
+app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
   try {
     const orderFile  = req.files?.orderFile?.[0];
     const waybillPdf = req.files?.waybillPdf?.[0];
@@ -4444,7 +4541,7 @@ app.get('/api/inbound', (req, res) => {
 // for a general shot of the box/shipment. Bytes are written to disk
 // (INBOUND_PHOTO_DIR/<jobId>/<photoId>.<ext>) rather than into db.json,
 // same reasoning as WMS/waybill files — keeps the JSON blob small.
-app.post('/api/inbound/:id/photo', upload.single('photo'), (req, res) => {
+app.post('/api/inbound/:id/photo', upload.single('photo'), tenantMiddleware, (req, res) => {
   const { id } = req.params;
   if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
   const db  = readDb();
@@ -4472,7 +4569,7 @@ app.post('/api/inbound/:id/photo', upload.single('photo'), (req, res) => {
   res.json({ ok: true, photo: { id: photo.id, sku: photo.sku, caption: photo.caption, uploadedAt: photo.uploadedAt } });
 });
 
-app.post('/api/inbound/upload', upload.single('inboundFile'), async (req, res) => {
+app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const rows = await parseInboundFile(req.file.buffer, req.file.originalname);
@@ -4900,7 +4997,7 @@ app.post('/api/transport', (req, res) => {
 
 // TMS Import — Unified transport import (handles any file format via attribute-based detection)
 // Must come before :id route to prevent "import" from being treated as an ID
-app.post('/api/transport/import', upload.single('file'), (req, res) => {
+app.post('/api/transport/import', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
@@ -5313,7 +5410,7 @@ app.get('/api/address-book/export', (req, res) => {
 
 // Re-upload the (edited) list — REPLACES the whole book, then immediately
 // re-resolves every transport job still missing a postal code.
-app.post('/api/address-book/import', upload.single('file'), (req, res) => {
+app.post('/api/address-book/import', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -5876,10 +5973,11 @@ app.post('/api/scan/keyfields-close', (req, res) => {
 // survive server restarts and Railway redeploys.
 const activeSessions = new Map(); // userId → token
 
-// Restore sessions from DB on startup
+// Restore sessions from the GLOBAL db on startup (sessions are cross-tenant —
+// the token is what tells us which user, and hence which tenant, this is).
 (function restoreSessions() {
   try {
-    const db = readDb();
+    const db = readGlobalDb();
     for (const [userId, token] of Object.entries(db.sessions || {})) {
       activeSessions.set(userId, token);
     }
@@ -5888,9 +5986,9 @@ const activeSessions = new Map(); // userId → token
 })();
 
 function persistSessions() {
-  const db = readDb();
+  const db = readGlobalDb();
   db.sessions = Object.fromEntries(activeSessions);
-  writeDb(db);
+  writeGlobalDb(db);
 }
 
 // requireAuthOrToken: accepts token in header OR ?token= query param (for PDF iframes)
@@ -6945,7 +7043,7 @@ app.get('/api/master/keyfields-template', (req, res) => {
   res.end(buf);
 });
 
-app.post('/api/master/keyfields-template', upload.single('templateFile'), (req, res) => {
+app.post('/api/master/keyfields-template', upload.single('templateFile'), tenantMiddleware, (req, res) => {
   if (!checkMaster(req, res)) return;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
@@ -7022,7 +7120,7 @@ app.get('/api/master/label-templates/export', (req, res) => {
   res.end(buf);
 });
 
-app.post('/api/master/label-templates/upload', upload.single('templateFile'), (req, res) => {
+app.post('/api/master/label-templates/upload', upload.single('templateFile'), tenantMiddleware, (req, res) => {
   if (!checkMaster(req, res)) return;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
@@ -7171,7 +7269,7 @@ app.get('/api/master/label-doc-templates', (req, res) => {
   res.json(Object.entries(idx).map(([slug, carrier]) => ({ slug, carrier })));
 });
 
-app.post('/api/master/label-doc-templates', upload.single('docxFile'), (req, res) => {
+app.post('/api/master/label-doc-templates', upload.single('docxFile'), tenantMiddleware, (req, res) => {
   if (!checkMaster(req, res)) return;
   const carrier = String(req.body && req.body.carrier || '').trim();
   if (!carrier) return res.status(400).json({ error: 'carrier name is required' });
@@ -7244,16 +7342,43 @@ app.get('/api/master/users', (req, res) => {
 
 app.post('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
-  const { id, name, password, role } = req.body;
+  const { id, name, password, role, tenant_id } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
   if (String(password).length < 5) return res.status(400).json({ error: 'Password must be at least 5 characters' });
   const users = readUsers();
   if (users.find(u => u.id === id)) return res.status(409).json({ error: `User "${id}" already exists` });
+  const tenantId = String(tenant_id || tenantStore.DEFAULT_TENANT_ID).trim();
+  if (!tenantStore.tenantExists(tenantId)) return res.status(400).json({ error: `Tenant "${tenantId}" does not exist` });
   const salt     = crypto.randomBytes(16).toString('hex');
   const userRole = role === 'warehouse' ? 'warehouse' : 'admin';
-  users.push({ id: String(id).trim(), name: String(name || id).trim(), role: userRole, salt, passwordHash: hashPass(password, salt) });
+  users.push({ id: String(id).trim(), name: String(name || id).trim(), role: userRole, tenant_id: tenantId, salt, passwordHash: hashPass(password, salt) });
   writeUsers(users);
   res.json({ ok: true });
+});
+
+// ── Tenant management (master-key only) ───────────────────────────────────────
+// One shared deployment, isolated data per tenant. A tenant is just an id +
+// display name; its data directory (and inventory.db) is created on first use.
+app.get('/api/master/tenants', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const users = readUsers();
+  const tenants = tenantStore.listTenants().map(t => ({
+    ...t,
+    userCount: users.filter(u => (u.tenant_id || tenantStore.DEFAULT_TENANT_ID) === t.id).length,
+  }));
+  res.json(tenants);
+});
+
+app.post('/api/master/tenants', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id, name } = req.body || {};
+  try {
+    const tenant = tenantStore.createTenant({ id, name });
+    logAudit('tenant_created', { id: tenant.id, name: tenant.name, ...clientInfo(req) });
+    res.status(201).json(tenant);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.put('/api/master/users/:id/password', (req, res) => {
@@ -7785,7 +7910,7 @@ app.get('/api/master/betime-code2', (req, res) => {
 // POST — upload a barcode→SKU map. Accepts two formats:
 //   1. Keyfields WMS "List Of SKU Report": 3 title rows, row 3 = headers with "code"/"code2"
 //   2. Legacy Betime format: row 0 = headers with "Product Code"/"CODE 2"
-app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
+app.post('/api/master/betime-code2', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!checkMaster(req, res)) return;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
@@ -8541,7 +8666,16 @@ app.get('/driver', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const inventory = require('./lib/inventory-store');
 inventory.init();
-function _invSeed() { try { inventory.seedFromSkuMap(_skuDescMap); } catch (_) {} }
+// Auto-seed ONLY the original "default" tenant — _skuDescMap is that tenant's
+// specific product catalog (loaded from the BETIME CODE2 reference file), not
+// a shared master catalog. A brand-new tenant is a different business with
+// its own products, so it must start with a genuinely empty inventory, not
+// pre-populated with an unrelated tenant's SKUs. They can still call
+// POST /api/inventory/seed explicitly if they ever want this same catalog.
+function _invSeed() {
+  if (tenantContext.currentTenantId() !== tenantStore.DEFAULT_TENANT_ID) return;
+  try { inventory.seedFromSkuMap(_skuDescMap); } catch (_) {}
+}
 
 app.get('/api/inventory', requireAuth, (req, res) => {
   _invSeed();
