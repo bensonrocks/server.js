@@ -258,10 +258,19 @@ IDEALONE for fulfillment. Spec source: the ZORT_Api_v4.0 Postman collection
 (auth = three plain headers storename/apikey/apisecret on every request,
 base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
 
-- MULTI-STORE BY DESIGN: `db.zortStores[]` — one entry per client
-  `{id, clientName, storename, apikey, apisecret, endpoint?, enabled,
-  autoPullMinutes, completeAction, completeStatusCode, lastPullAt,
-  lastResult}`. SECRETS NEVER GO TO GIT — they live only in db.json;
+- THE MODEL (corrected per user): ONE ZORT account (the user's own) is
+  the hub; each CLIENT'S Lazada/Shopee/TikTok/Shopify shop is linked
+  into that account as a SALES CHANNEL (inside ZORT → Settings → Sales
+  Channels — marketplace credentials never enter IDEALONE). Client
+  attribution is per-ORDER via `store.channelClients` (saleschannel →
+  client name; the "Channels" button opens the mapping editor
+  `#zortChannelsModal`, fed by Merchant/GetSalesChannels). Pulls create
+  ONE BATCH PER CLIENT (batch.client_name = mapped client; unmapped
+  channels fall back to the store's clientName label). `db.zortStores[]`
+  still supports multiple accounts: `{id, clientName (account label /
+  default client), storename, apikey, apisecret, endpoint?, enabled,
+  channelClients{}, autoPullMinutes, completeAction, completeStatusCode,
+  lastPullAt, lastResult}`. SECRETS NEVER GO TO GIT — they live only in db.json;
   the API returns masked keys, and blank key/secret on edit keeps the
   stored value.
 - UI: the 🔌 CONNECTIONS sidebar tab (`data-tab="connections"`) —

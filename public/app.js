@@ -7800,13 +7800,8 @@
           try {
             const r2 = await fetch(`/api/master/zort/stores/${id}/channels`, { headers: { 'x-master-key': LOG_PASSWORD } });
             const d = await r2.json();
-            if (d.ok) {
-              const list = Array.isArray(d.channels) ? d.channels : [];
-              const names = list.map(c => c.name || c.channelname || c.saleschannel || c.type || JSON.stringify(c).slice(0, 30));
-              alert(`${store.clientName} — marketplaces linked in their ZORT account:\n\n` +
-                (names.length ? names.map(n => '• ' + n).join('\n') : '(none yet)') +
-                `\n\nTo add one (Lazada, Shopee, TikTok…): the merchant logs into ZORT → Settings → Sales Channels and authorises it there. Orders then flow to IDEALONE automatically through this connection.`);
-            } else zortStatus('error', d.error || 'Could not load channels');
+            if (d.ok) openZortChannelMapper(store, Array.isArray(d.channels) ? d.channels : []);
+            else zortStatus('error', d.error || 'Could not load channels');
           } catch (err) { zortStatus('error', 'Channels failed: ' + err.message); }
           e.target.disabled = false;
         });
@@ -7863,6 +7858,41 @@
   document.getElementById('zfCompleteAction')?.addEventListener('change', e => {
     document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', e.target.value !== 'status');
   });
+  // Channel → client mapping editor: every sales channel found in the ZORT
+  // account gets a client-name input. Saved into store.channelClients — the
+  // pull batches each order under its channel's client.
+  function openZortChannelMapper(store, channels) {
+    const listEl = document.getElementById('zortChannelsList');
+    const names = [...new Set(channels.map(c => (c.name || c.channelname || c.saleschannel || c.type || '').trim()).filter(Boolean))];
+    // Include channels that already have a mapping but weren't returned (paused shops etc.)
+    for (const k of Object.keys(store.channelClients || {})) if (!names.includes(k)) names.push(k);
+    listEl.innerHTML = names.length ? names.map(n => `
+      <div class="form-group" style="display:flex;align-items:center;gap:.7rem">
+        <label style="flex:1;margin:0;font-weight:600">${esc(n)}</label>
+        <input type="text" data-channel="${esc(n)}" placeholder="client name…" style="flex:1"
+          value="${esc((store.channelClients || {})[n] || '')}" />
+      </div>`).join('')
+      : '<p class="hint">No sales channels found in this ZORT account yet. Link the client\'s Lazada/Shopee/TikTok/Shopify inside ZORT → Settings → Sales Channels first, then reopen this.</p>';
+    document.getElementById('zortChannelsModal').classList.remove('hidden');
+    document.getElementById('zortChannelsSaveBtn').onclick = async () => {
+      const map = {};
+      listEl.querySelectorAll('input[data-channel]').forEach(inp => {
+        const v = inp.value.trim();
+        if (v) map[inp.dataset.channel] = v;
+      });
+      try {
+        const r = await fetch('/api/master/zort/stores', { method: 'POST', headers: zortHdrs(),
+          body: JSON.stringify({ id: store.id, channelClients: map }) });
+        if (!r.ok) { const d = await r.json(); return zortStatus('error', d.error || 'Save failed'); }
+        document.getElementById('zortChannelsModal').classList.add('hidden');
+        zortStatus('success', `✓ Channel mapping saved (${Object.keys(map).length} channel(s))`);
+        loadZortStores();
+      } catch (err) { zortStatus('error', 'Save failed: ' + err.message); }
+    };
+  }
+  document.getElementById('zortChannelsCancelBtn')?.addEventListener('click', () =>
+    document.getElementById('zortChannelsModal').classList.add('hidden'));
+
   document.getElementById('zortSaveStoreBtn')?.addEventListener('click', async () => {
     const body = {
       id: document.getElementById('zfId').value || undefined,

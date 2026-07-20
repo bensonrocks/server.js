@@ -113,6 +113,19 @@
     </div>
   </div>
 
+  <!-- ── ZORT channel → client mapping ── -->
+  <div id="zortChannelsModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-title">&#128268; Sales Channels &rarr; Clients</div>
+      <p class="modal-desc">Each sales channel in the ZORT account belongs to a client. Orders from a channel are batched under the client name you set here; unmapped channels fall back to the account label.</p>
+      <div id="zortChannelsList" style="max-height:50vh;overflow-y:auto"></div>
+      <div style="display:flex;gap:.6rem;margin-top:1rem;justify-content:flex-end">
+        <button class="btn-secondary btn-sm" id="zortChannelsCancelBtn">Cancel</button>
+        <button class="btn-primary btn-sm" id="zortChannelsSaveBtn">Save Mapping</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Scan Overlay ── -->
   <div id="scanOverlay" class="scan-overlay hidden">
 
@@ -1363,7 +1376,7 @@
     <section id="tab-connections" class="tab">
       <div class="conn-intro">
         <h2 style="margin:0 0 .2rem">&#128268; Connections</h2>
-        <p class="hint" style="margin:0 0 1rem">Connect each merchant client's ZORT store — ZORT aggregates their marketplaces, so ONE connection brings in orders from all their channels. Completed scans push status back to their store.</p>
+        <p class="hint" style="margin:0 0 1rem">Connect YOUR ZORT account once. Your clients' Lazada / Shopee / TikTok / Shopify shops are linked into it as sales channels (inside ZORT &rarr; Settings &rarr; Sales Channels); use the <b>Channels</b> button below to map each channel to its client &mdash; pulled orders are then batched per client automatically.</p>
       </div>
       <div class="conn-cards">
         <div class="conn-card conn-live">
@@ -1371,10 +1384,10 @@
           <div class="conn-card-desc">Thai/SEA order &amp; inventory OMS — pull client orders, push pack/ship status back.</div>
           <span class="conn-badge live">ACTIVE</span>
         </div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">Lazada</div><div class="conn-card-desc">Merchant links this channel INSIDE their ZORT account (ZORT &rarr; Settings &rarr; Sales Channels). Orders then flow here through the ZORT connection below.</div><span class="conn-badge via">VIA ZORT</span></div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">Shopee</div><div class="conn-card-desc">Merchant links this channel INSIDE their ZORT account (ZORT &rarr; Settings &rarr; Sales Channels). Orders then flow here through the ZORT connection below.</div><span class="conn-badge via">VIA ZORT</span></div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">TikTok Shop</div><div class="conn-card-desc">Merchant links this channel INSIDE their ZORT account (ZORT &rarr; Settings &rarr; Sales Channels). Orders then flow here through the ZORT connection below.</div><span class="conn-badge via">VIA ZORT</span></div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">Shopify</div><div class="conn-card-desc">Merchant links this channel INSIDE their ZORT account (ZORT &rarr; Settings &rarr; Sales Channels). Orders then flow here through the ZORT connection below.</div><span class="conn-badge via">VIA ZORT</span></div>
+        <div class="conn-card conn-soon"><div class="conn-card-name">Lazada</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
+        <div class="conn-card conn-soon"><div class="conn-card-name">Shopee</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
+        <div class="conn-card conn-soon"><div class="conn-card-name">TikTok Shop</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
+        <div class="conn-card conn-soon"><div class="conn-card-name">Shopify</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
       </div>
 
       <div id="connZortPanel">
@@ -1393,9 +1406,9 @@
           </table>
         </div>
         <div id="zortStoreForm" class="hidden" style="margin-top:1rem;max-width:520px">
-          <div class="admin-section-title" id="zortFormTitle" style="font-size:.95rem">Connect a ZORT store</div>
+          <div class="admin-section-title" id="zortFormTitle" style="font-size:.95rem">Connect ZORT account</div>
           <input type="hidden" id="zfId" />
-          <div class="form-group"><label>Client name (shown on orders/batches)</label><input type="text" id="zfClient" placeholder="e.g. Glowverse" autocomplete="off" /></div>
+          <div class="form-group"><label>Account label / default client (used when a sales channel has no client mapping yet)</label><input type="text" id="zfClient" placeholder="e.g. IDEALONE ZORT" autocomplete="off" /></div>
           <div class="form-group"><label>ZORT storename</label><input type="text" id="zfStorename" placeholder="store email / name from ZORT API settings" autocomplete="off" /></div>
           <div class="form-group"><label>API key</label><input type="text" id="zfApikey" placeholder="leave blank to keep current" autocomplete="off" /></div>
           <div class="form-group"><label>API secret</label><input type="text" id="zfApisecret" placeholder="leave blank to keep current" autocomplete="off" /></div>

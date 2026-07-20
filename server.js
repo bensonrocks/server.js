@@ -7235,6 +7235,7 @@ function zortStorePublic(s) {
     id: s.id, clientName: s.clientName, storename: s.storename,
     apikeyMasked: zortMask(s.apikey), apisecretMasked: zortMask(s.apisecret),
     endpoint: s.endpoint || '', enabled: !!s.enabled,
+    channelClients: s.channelClients || {},
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
     completeStatusCode: s.completeStatusCode ?? 1,
@@ -7267,12 +7268,17 @@ async function pullZortStore(db, store) {
       if (existing.has(number)) { skippedExisting++; continue; }
       const lines = o.list || o.orderlist || [];
       if (!lines.length) continue;
-      zortMeta[number] = { zort_id: o.id, zort_status: o.status };
+      // Which CLIENT does this order belong to? The sales channel it came
+      // from (the client's Lazada/Shopee/TikTok shop connected inside the
+      // ZORT account) decides — via the store's channel→client mapping.
+      const channel = String(o.saleschannel || o.channel || '').trim();
+      const clientForOrder = (store.channelClients || {})[channel] || store.clientName || channel || 'ZORT';
+      zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder };
       for (const l of lines) {
         rows.push({
           order_number:     number,
           customer_name:    String(o.customername || o.customer_name || o.shippingname || '').trim(),
-          client_name:      store.clientName || 'ZORT',
+          client_name:      clientForOrder,
           sku:              String(l.sku || '').trim(),
           qty:              Math.max(0, Math.round(Number(l.number) || 0)),
           description:      String(l.name || '').slice(0, 200),
@@ -7290,32 +7296,47 @@ async function pullZortStore(db, store) {
 
   const orders = summarizeOrders(rows.filter(r => r.sku && r.qty > 0));
   // summarizeOrders keeps only known fields — re-attach the Zort linkage the
-  // completion push needs
+  // completion push needs, and the client each order resolved to
   for (const o of orders) {
     const m = zortMeta[o.order_number] || {};
     o.zort_id = m.zort_id;
     o.zort_store_id = store.id;
+    o._client = m.client || store.clientName || 'ZORT';
   }
 
-  if (orders.length) {
+  // ONE ZORT account carries MANY clients' sales channels — group the pull
+  // into one batch PER CLIENT so the Orders tab, client filters and reports
+  // see each merchant separately (batch.client_name is the client identity
+  // everywhere else in the app).
+  const byClient = new Map();
+  for (const o of orders) {
+    const c = o._client;
+    delete o._client;
+    if (!byClient.has(c)) byClient.set(c, []);
+    byClient.get(c).push(o);
+  }
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '');
+  const batchClients = [];
+  for (const [clientName, clientOrders] of byClient) {
     const batch = {
       id: uuidv4(),
-      filename:    `zort-${(store.clientName || 'store').replace(/[^A-Za-z0-9_-]+/g, '_')}-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '')}`,
+      filename:    `zort-${clientName.replace(/[^A-Za-z0-9_-]+/g, '_')}-${stamp}`,
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: 'zort-sync',
-      client_name: store.clientName || 'ZORT',
-      order_count: orders.length,
-      row_count:   rows.length,
+      client_name: clientName,
+      order_count: clientOrders.length,
+      row_count:   clientOrders.reduce((n, o) => n + o.lines.length, 0),
       orderStates: {},
-      orders,
+      orders: clientOrders,
     };
     db.batches.unshift(batch);
+    batchClients.push(`${clientName} (${clientOrders.length})`);
   }
   store.lastPullAt = new Date().toISOString();
-  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid };
+  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients };
   writeDb(db);
-  logAudit('zort_pull', { client: store.clientName || '', storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid });
+  logAudit('zort_pull', { storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients.slice(0, 20) });
   return store.lastResult;
 }
 
@@ -7366,6 +7387,16 @@ app.post('/api/master/zort/stores', (req, res) => {
   if (b.apisecret) store.apisecret = String(b.apisecret).trim();
   if (b.endpoint !== undefined) store.endpoint = String(b.endpoint || '').trim();
   store.enabled = b.enabled !== undefined ? !!b.enabled : (store.enabled ?? true);
+  // Sales-channel → client mapping: orders from the channel named e.g.
+  // "Lazada - ClientX" tag as ClientX. Plain short strings both sides.
+  if (b.channelClients && typeof b.channelClients === 'object') {
+    const map = {};
+    for (const [k, v] of Object.entries(b.channelClients).slice(0, 100)) {
+      const key = String(k).slice(0, 80).trim(), val = String(v || '').slice(0, 80).trim();
+      if (key && val) map[key] = val;
+    }
+    store.channelClients = map;
+  }
   store.autoPullMinutes = Math.max(0, Math.min(1440, parseInt(b.autoPullMinutes, 10) || 0));
   if (['none', 'status', 'pack', 'readytoship'].includes(b.completeAction)) store.completeAction = b.completeAction;
   if (b.completeStatusCode !== undefined) store.completeStatusCode = parseInt(b.completeStatusCode, 10) || 1;
