@@ -1810,10 +1810,22 @@
       // Carrier badge
       const carrierBadge = ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : '';
 
-      // Chips under order number
+      // Chips under order number. The wave-pending pill is clickable for
+      // admins only (mirrors the deletion-request trash icon below) — it
+      // opens the "Request Wave Cancellation" modal; everyone else just
+      // sees it as a status. Once a cancellation request is in flight
+      // (wave_cancel_pending) it switches to amber and says so, but stays
+      // exactly where it was — nothing changes on the order until Master
+      // approves or rejects it.
       const cartonCount = (ord.cartons || []).length;
+      const canRequestWaveCancel = currentUser?.role === 'admin';
+      const wavePendingChip = (ord.wave_id && !isDone)
+        ? (ord.wave_cancel_pending
+            ? `<span class="chip chip-wave-pending chip-wave-cancel-pending" title="Cancellation requested for wave ${esc(ord.wave_id)} — awaiting Master approval">&#9203; Wave Cancellation Requested</span>`
+            : `<span class="chip chip-wave-pending${canRequestWaveCancel ? ' chip-wave-pending-clickable' : ''}" ${canRequestWaveCancel ? `data-wave-cancel="${esc(ord.wave_id)}" data-wave-order-count="${(loadedOrders.filter(o => o.wave_id === ord.wave_id)).length}"` : ''} title="Wave ${esc(ord.wave_id)} put the pieces in — this order still needs to be opened, cartons verified, and Completed individually${canRequestWaveCancel ? '. Click to request cancelling the wave.' : ''}">&#127754; Wave Picked — Needs Closing</span>`)
+        : '';
       const chips = [
-        (ord.wave_id && !isDone) ? `<span class="chip chip-wave-pending" title="Wave ${esc(ord.wave_id)} put the pieces in — this order still needs to be opened, cartons verified, and Completed individually">&#127754; Wave Picked — Needs Closing</span>` : '',
+        wavePendingChip,
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
@@ -1954,6 +1966,12 @@
       btn.addEventListener('click', e => {
         e.stopPropagation();
         openDeleteOrderModal(btn.dataset.order, btn.dataset.batchid);
+      });
+    });
+    document.querySelectorAll('.chip-wave-pending-clickable').forEach(chip => {
+      chip.addEventListener('click', e => {
+        e.stopPropagation();
+        openWaveCancelRequestModal(chip.dataset.waveCancel, chip.dataset.waveOrderCount);
       });
     });
 
@@ -5757,6 +5775,67 @@
     }
   });
 
+  // ── Request Wave Cancellation (admin: reason + own password; Master
+  // approves) — same shape as Request Order Deletion above. Reached by
+  // clicking a "Wave Picked" pill; only offered once the wave is `done`
+  // (still-picking waves cancel instantly with no approval, since nothing
+  // real has been touched yet).
+  let _waveCancelTarget = null; // wave id
+  function openWaveCancelRequestModal(waveId, orderCount) {
+    _waveCancelTarget = waveId;
+    document.getElementById('waveCancelWaveId').textContent = waveId;
+    document.getElementById('waveCancelOrderCount').textContent = orderCount || '?';
+    const reasonEl = document.getElementById('waveCancelReason');
+    const passEl   = document.getElementById('waveCancelPassword');
+    reasonEl.value = '';
+    passEl.value   = '';
+    document.getElementById('waveCancelError').classList.add('hidden');
+    document.getElementById('waveCancelConfirmBtn').disabled = true;
+    document.getElementById('waveCancelRequestOverlay').classList.remove('hidden');
+    setTimeout(() => reasonEl.focus(), 100);
+  }
+  function _waveCancelFormReady() {
+    return document.getElementById('waveCancelReason').value.trim() !== '' &&
+           document.getElementById('waveCancelPassword').value !== '';
+  }
+  ['waveCancelReason', 'waveCancelPassword'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      const ready = _waveCancelFormReady();
+      document.getElementById('waveCancelConfirmBtn').disabled = !ready;
+      if (ready) document.getElementById('waveCancelError').classList.add('hidden');
+    });
+  });
+  document.getElementById('waveCancelDismissBtn').addEventListener('click', () => {
+    document.getElementById('waveCancelRequestOverlay').classList.add('hidden');
+    _waveCancelTarget = null;
+  });
+  document.getElementById('waveCancelConfirmBtn').addEventListener('click', async () => {
+    const reason   = document.getElementById('waveCancelReason').value.trim();
+    const password = document.getElementById('waveCancelPassword').value;
+    if (!_waveCancelFormReady() || !_waveCancelTarget) {
+      document.getElementById('waveCancelError').classList.remove('hidden');
+      return;
+    }
+    const waveId = _waveCancelTarget;
+    const btn = document.getElementById('waveCancelConfirmBtn');
+    btn.disabled = true; btn.textContent = 'Requesting…';
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(waveId)}/cancel-request`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ reason, password }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Request failed');
+      document.getElementById('waveCancelRequestOverlay').classList.add('hidden');
+      _waveCancelTarget = null;
+      await refreshOrders(); renderOrdersList();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.textContent = '\u{1F5D1} Request Cancellation';
+      btn.disabled = !_waveCancelFormReady();
+    }
+  });
+
   // ── Request Inbound Record Deletion (same admin-request/Master-approve
   // flow as Orders — IdealInbound has no separate batch/record split, so
   // one deletion path covers the whole job) ──────────────────────────────
@@ -7908,9 +7987,10 @@
   let _pendingDelTimer = null;
   let _pendingOrderDelCount = 0;
   let _pendingInboundDelCount = 0;
+  let _pendingWaveCancelCount = 0;
   function updatePendingDelBadge() {
     const badge = document.getElementById('pendingDelBadge');
-    const total = _pendingOrderDelCount + _pendingInboundDelCount;
+    const total = _pendingOrderDelCount + _pendingInboundDelCount + _pendingWaveCancelCount;
     badge.textContent = total;
     badge.classList.toggle('hidden', total === 0);
   }
@@ -7918,7 +7998,8 @@
     stopPendingDelPolling();
     loadPendingDeletions();
     loadInboundPendingDeletions();
-    _pendingDelTimer = setInterval(() => { loadPendingDeletions(); loadInboundPendingDeletions(); }, 15000);
+    loadWavePendingCancellations();
+    _pendingDelTimer = setInterval(() => { loadPendingDeletions(); loadInboundPendingDeletions(); loadWavePendingCancellations(); }, 15000);
   }
   function stopPendingDelPolling() {
     if (_pendingDelTimer) { clearInterval(_pendingDelTimer); _pendingDelTimer = null; }
@@ -8036,6 +8117,67 @@
           if (!r.ok) throw new Error(d.error || 'Reject failed');
           loadInboundPendingDeletions();
           renderInboundTab();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+  }
+
+  async function loadWavePendingCancellations() {
+    try {
+      const r = await fetch('/api/master/wave-pending-cancellations', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      renderWavePendingCancellations(await r.json());
+    } catch { /* silent — next poll retries */ }
+  }
+  function renderWavePendingCancellations(list) {
+    _pendingWaveCancelCount = list.length;
+    updatePendingDelBadge();
+
+    document.getElementById('pendingWaveCancelBody').innerHTML = list.map(p => `
+      <tr>
+        <td class="dcs-name">${esc(p.id)}</td>
+        <td>${p.orderNumbers.length} order${p.orderNumbers.length === 1 ? '' : 's'} <span style="color:var(--text-light,#64748b);font-size:.8em">(${esc(p.orderNumbers.slice(0, 4).join(', '))}${p.orderNumbers.length > 4 ? '…' : ''})</span></td>
+        <td>${esc(p.reason)}</td>
+        <td>${esc(p.requestedByName)}</td>
+        <td>
+          <button class="btn-sm btn-primary pwc-approve-btn" data-id="${esc(p.id)}">&#10003; Approve</button>
+          <button class="btn-sm btn-danger-sm pwc-reject-btn" data-id="${esc(p.id)}">&#215; Reject</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('pendingWaveCancelEmpty').classList.toggle('hidden', list.length > 0);
+
+    document.querySelectorAll('.pwc-approve-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Approve cancellation of wave ${btn.dataset.id}? This reverses the picked quantities out of every affected order (any already Completed are left untouched) and cannot be undone.`)) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/wave-pending-cancellations/${encodeURIComponent(btn.dataset.id)}/approve`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Approve failed');
+          let msg = `Wave ${btn.dataset.id} cancelled.`;
+          if (d.skippedDone?.length) msg += ` ${d.skippedDone.length} order(s) were already Completed and left untouched: ${d.skippedDone.join(', ')}.`;
+          alert(msg);
+          loadWavePendingCancellations();
+          await refreshOrders(); renderOrdersList();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+    document.querySelectorAll('.pwc-reject-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const note = prompt(`Reject cancellation of wave ${btn.dataset.id}? Optional note for the requester:`, '');
+        if (note === null) return; // cancelled
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/wave-pending-cancellations/${encodeURIComponent(btn.dataset.id)}/reject`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Reject failed');
+          loadWavePendingCancellations();
+          await refreshOrders(); renderOrdersList();
         } catch (err) { alert(err.message); btn.disabled = false; }
       });
     });

@@ -1625,6 +1625,41 @@ whenever the Active view has at least one selectable order, growing to show
   before this chip did. Once the order is Completed normally the chip
   disappears (gated on `scan_status`), though `wave_id` itself is left on
   the record afterward as harmless history.
+- **CANCELLING A COMPLETED WAVE NEEDS MASTER APPROVAL** — `POST
+  /api/waves/:id/cancel` (instant, no approval) only works on a wave still
+  `picking`/`sorting`, since nothing real has been touched yet; it already
+  refused `done` waves before this. Once a wave IS `done` it has written
+  real picked quantities into orders, so cancelling it follows the SAME
+  admin-request/Master-approve pattern as order/inbound deletion:
+  - `POST /api/waves/:id/cancel-request {reason, password}` — admin-role
+    only, re-enters their OWN password as confirmation (403 not 401 on a
+    wrong password, so the client's global session-expired handler doesn't
+    fire). Sets `wave.pending_cancellation = {reason, requestedBy,
+    requestedAt}`. The client reaches this by clicking the (blue, admin-only
+    clickable) "Wave Picked" pill itself — `#waveCancelRequestOverlay`,
+    same shape as `#deleteOrderOverlay`. The pill turns amber and reads
+    "⏳ Wave Cancellation Requested" (`wave_cancel_pending` on the order,
+    cross-referenced from `state.wave_id` against `db.waves` in
+    `globalOrdersWithState()`) but otherwise nothing changes — the order is
+    exactly as untouched as before the request.
+  - `GET /api/master/wave-pending-cancellations` / `.../:id/approve` /
+    `.../:id/reject` (checkMaster) — a THIRD table ("Wave Cancellation
+    Requests") in Administrator → Pending Deletions, below the existing
+    Orders and Inbound tables; the nav badge count sums all three.
+  - APPROVE REVERSES, IT DOESN'T DELETE THE WAVE RECORD: walks
+    `wavePick.applyWaveToOrderStates(wave, ...)` again (the SAME function
+    used at completion time — direction is just "subtract" instead of
+    "add") to undo exactly the qty/location lines this wave applied, clamps
+    each `scanned[sku]` at 0, reverses the carton delta, clears
+    `state.wave_id` (removing the pill), and sets `wave.status =
+    'cancelled'`. Any order that's since been Completed is SKIPPED
+    entirely — same "never touch a done order's record" rule deletion
+    follows — and reported back separately (`skippedDone[]`) so Master
+    knows which orders still carry the wave's contribution and must be
+    handled some other way (e.g. a manual correction) if that's wrong.
+  - REJECT just clears `pending_cancellation`; the wave stays `done`, the
+    pill goes back to its plain blue "Needs Closing" state, nothing about
+    the order changes — the packer's request was simply denied.
 - **GROUPED BY LOCATION + SKU, not SKU alone** — a packer physically stands
   at one bin and picks everything from it, so `buildWavePickList` keys each
   pick-list entry on `(location, sku)`, not just `sku`. The SAME SKU stocked
@@ -1693,13 +1728,19 @@ lifted into IDEALOMS or another codebase as one unit:
    target's order/scan handler, PLUS `uniqueSkuLocationLines` (sits right
    after `uniqueSkuLines`) and `uldLocationSortKey`/`sortPickListUldFloorFirst`
    (only if the target warehouse actually uses ULD's Row-Bay-Location naming
-   — skip these two for any other convention, or write an equivalent). The
-   endpoint block calls host functions that must already exist there:
-   `findBatchForOrder`, `uniqueSkuLines`, `resolveBeTimeCode2`,
-   `addToActiveCarton`, `appendScanLog`, `journalOrderState`, `logAudit`,
-   `readDb`/`writeDb`, and `req.userId` from the host's own auth middleware.
-   If any are named differently, only this endpoint block needs adapting —
-   `lib/wave-pick.js` itself never changes.
+   — skip these two for any other convention, or write an equivalent) AND
+   the `cancel-request`/`wave-pending-cancellations` block (sits right after
+   the plain `/cancel` endpoint) — this second block calls
+   `wavePick.applyWaveToOrderStates` a SECOND time (with a subtracting
+   callback) to reverse an already-applied wave, so it depends on the same
+   host functions as the completion endpoint. The endpoint block(s) call
+   host functions that must already exist there: `findBatchForOrder`,
+   `uniqueSkuLines`, `resolveBeTimeCode2`, `addToActiveCarton`,
+   `appendScanLog`, `journalOrderState`, `logAudit`, `readDb`/`writeDb`,
+   `readUsers`/`hashPass` (for the password re-confirmation step), and
+   `req.userId` from the host's own auth middleware. If any are named
+   differently, only this endpoint block needs adapting — `lib/wave-pick.js`
+   itself never changes.
 3. Add `require('./lib/wave-pick.js')`, `if (!_dbCache.waves)
    _dbCache.waves = [];` to the target's db init, and `nextWaveCode(db)`
    (mirrors `nextIdealscanCode`/`nextInboundCode` — copy verbatim, only the
@@ -1711,12 +1752,17 @@ lifted into IDEALOMS or another codebase as one unit:
 5. Copy the `waveSelected`/`activeWave` state vars and every `wave*`-
    prefixed function from public/app.js, plus the wave-select-bar/checkbox
    additions inside `renderOrdersList()` (checkbox column, `waveCheckableNow`,
-   select-all wiring in the table header) and the `#uploadStartWaveBtn`
-   wiring right after the upload-success download-button setup.
-6. Copy the `#wavePickOverlay` modal block from public/index.html (plus the
-   `#uploadStartWaveBtn` button next to the WMS download link) — the modal
-   must stay at BODY level, not nested inside a `.tab` section (see the
-   modal-nesting visibility bug fixed for the Driver modal, above).
+   select-all wiring in the table header), the `wavePendingChip`/
+   `.chip-wave-pending-clickable` logic in the same function, the
+   `#uploadStartWaveBtn` wiring right after the upload-success download-
+   button setup, and the `openWaveCancelRequestModal`/`_waveCancel*`
+   block (mirrors `openDeleteOrderModal` exactly).
+6. Copy the `#wavePickOverlay` and `#waveCancelRequestOverlay` modal blocks
+   from public/index.html (plus the `#uploadStartWaveBtn` button next to the
+   WMS download link, and the "Wave Cancellation Requests" table inside
+   whatever the target calls its Pending Deletions tab) — modals must stay
+   at BODY level, not nested inside a `.tab` section (see the modal-nesting
+   visibility bug fixed for the Driver modal, above).
 7. Copy the `/* ── Wave picking ── */` CSS block from public/styles.css.
 8. Update the target's CLAUDE.md with this same Wave Picking section.
 9. Link both commits in PR/commit messages for sync tracking.

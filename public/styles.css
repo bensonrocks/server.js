@@ -2603,6 +2603,9 @@ body.ls-open { overflow: hidden; }
 .chip-pending-delete { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); font-weight: 700; }
 .chip-cartons { background: #eef2f7; color: #475569; border: 1px solid #cbd5e1; font-weight: 700; }
 .chip-wave-pending { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; font-weight: 700; }
+.chip-wave-pending-clickable { cursor: pointer; }
+.chip-wave-pending-clickable:hover { background: #bfdbfe; }
+.chip-wave-cancel-pending { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
 
 /* ── Official IdealOne mark (bitmap) — keep aspect inside the old square slots ── */
 img.is-icon-xs, img.is-icon-sm, img.is-icon-hdr, img.is-icon-lg { object-fit: contain; }

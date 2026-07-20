@@ -647,6 +647,19 @@
           </table>
           <div id="pendingInboundDelEmpty" class="empty-state hidden">No pending inbound deletion requests.</div>
         </div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.8rem">Wave Cancellation Requests</div>
+          <div class="admin-section-sub">Approving reverses the picked quantities out of every order the wave touched (skipping any that are already Done) and removes the "Wave Picked" pill.</div>
+        </div>
+        <div id="pendingWaveCancelWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Wave</th><th>Orders</th><th>Reason</th><th>Requested By</th><th>Actions</th></tr></thead>
+            <tbody id="pendingWaveCancelBody"></tbody>
+          </table>
+          <div id="pendingWaveCancelEmpty" class="empty-state hidden">No pending wave cancellation requests.</div>
+        </div>
       </div>
 
       <!-- Tab: Upload History -->
@@ -2434,6 +2447,29 @@
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="delInboundCancelBtn">Cancel</button>
         <button class="btn-danger" id="delInboundConfirmBtn" disabled>&#128465; Request Deletion</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Wave Cancellation Modal — same admin-request/Master-approve flow as
+       Order/Inbound deletion. Reached by clicking a "Wave Picked" pill. -->
+  <div id="waveCancelRequestOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#9888;</div>
+      <div class="modal-title">Request Wave Cancellation</div>
+      <p class="modal-desc">Cancelling <strong id="waveCancelWaveId">—</strong> requires Master's approval — it already put pieces into <strong id="waveCancelOrderCount">—</strong> order(s). Until approved, the "Wave Picked" pill stays on those orders exactly as it is now.</p>
+      <div class="form-group">
+        <label>Reason <span class="cfg-req">*</span></label>
+        <textarea id="waveCancelReason" rows="3" placeholder="Why should this wave be cancelled?" autocomplete="off"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Your Password <span class="cfg-req">*</span></label>
+        <input type="password" id="waveCancelPassword" placeholder="Confirm it's you" autocomplete="off" />
+      </div>
+      <div id="waveCancelError" class="login-error hidden">A reason and your password are required.</div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="waveCancelDismissBtn">Cancel</button>
+        <button class="btn-danger" id="waveCancelConfirmBtn" disabled>&#128465; Request Cancellation</button>
       </div>
     </div>
   </div>
