@@ -473,7 +473,7 @@ main {
 }
 
 /* ── WMS download button ── */
-.upload-download-wrap { margin-top: .75rem; display: flex; flex-direction: column; gap: .4rem; }
+.upload-download-wrap { margin-top: .75rem; display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; }
 .btn-download-wms {
   display: inline-flex; align-items: center; gap: .45rem;
   background: var(--accent); color: #fff !important; border: none;
@@ -2452,6 +2452,23 @@ body.ls-open { overflow: hidden; }
 .wave-order-status-complete { color: #16a34a; }
 .wave-order-status-short { color: #d97706; }
 .wave-order-status-over { color: #dc2626; }
+.wave-location-choices {
+  display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .8rem;
+  background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: .6rem .8rem;
+}
+.wave-location-choices .wlc-label { width: 100%; font-size: .85rem; font-weight: 700; color: #9a3412; margin-bottom: .2rem; }
+.wave-location-choices button {
+  border: 1px solid #fdba74; background: #fff; border-radius: 8px; padding: .4rem .7rem;
+  font-size: .85rem; font-weight: 700; cursor: pointer; color: #9a3412;
+}
+.wave-row-add { display: flex; gap: .3rem; align-items: center; }
+.wave-row-add input[type="number"] {
+  width: 52px; border: 1.5px solid var(--border, #cbd5e1); border-radius: 6px; padding: .3rem .35rem; font-size: .85rem;
+}
+.wave-row-add button {
+  border: none; background: var(--primary, #2563eb); color: #fff; border-radius: 6px;
+  padding: .3rem .6rem; font-size: .8rem; font-weight: 700; cursor: pointer;
+}
 
 /* Orders date filter row */
 .orders-date-row { display: flex; align-items: center; gap: .4rem; margin-bottom: .55rem; flex-wrap: wrap; }

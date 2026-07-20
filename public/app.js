@@ -1216,6 +1216,28 @@
       const _dlUrl  = `/api/download-wms/${data.batchId}`;
       const _dlName = `WMS_${data.idealscanCode ? data.idealscanCode + '_' : ''}${file.name.replace(/\.[^.]+$/, '')}_${new Date().toISOString().slice(0,10)}.xlsx`;
       dlBtn.onclick = () => { authDownload(_dlUrl, _dlName); unlockTabsAfterDownload(); };
+      // Offer Wave Pick right off the upload receipt when it makes sense (2+
+      // orders) — saves a trip to the Orders tab to select checkboxes for
+      // exactly the batch that was just uploaded. Still respects the
+      // download-before-scanning gate: clicking it downloads the WMS file
+      // (same as the button above) before unlocking and jumping in.
+      const waveBtn = document.getElementById('uploadStartWaveBtn');
+      if (data.orders.length >= 2) {
+        waveBtn.classList.remove('hidden');
+        waveBtn.textContent = `🌊 Start Wave Pick (${data.orders.length} orders)`;
+        waveBtn.onclick = () => {
+          authDownload(_dlUrl, _dlName);
+          unlockTabsAfterDownload();
+          switchTab('orders');
+          const orderNumbers = data.orders.map(o => o.order_number);
+          waveSelected = new Set(orderNumbers);
+          ordersView = 'active';
+          renderOrdersList();
+          startWavePick(orderNumbers);
+        };
+      } else {
+        waveBtn.classList.add('hidden');
+      }
       // Add lock note if not already present
       let noteEl = document.getElementById('downloadLockNote');
       if (!noteEl) {
@@ -5880,6 +5902,8 @@
     document.getElementById('waveModalTitle').textContent = `Wave Pick — ${activeWave.id}`;
     document.getElementById('waveModalDesc').textContent =
       `${activeWave.orderNumbers.length} orders · scan each SKU's TOTAL quantity for the whole wave once.`;
+    document.getElementById('waveScanError').classList.add('hidden');
+    renderWaveLocationChoices(null, null, null);
     renderWaveSanityStats();
     renderWaveOrdersBreakdown();
     renderWavePickList();
@@ -5939,15 +5963,68 @@
     const body = document.getElementById('wavePickListBody');
     body.innerHTML = activeWave.pickList.map(e => {
       const done = e.scannedQty >= e.totalQty;
+      const quickAdd = done ? '&#10003;' : `
+        <div class="wave-row-add">
+          <input type="number" class="wave-row-qty" min="1" value="1" />
+          <button class="wave-row-add-btn" data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}">Add</button>
+        </div>`;
       return `<tr class="${done ? 'wave-pick-done' : ''}">
+        <td>${e.location ? `<code>${esc(e.location)}</code>` : '&mdash;'}</td>
         <td><code>${esc(e.sku)}</code></td>
         <td>${esc(e.description || '')}</td>
         <td>${e.totalQty}</td>
         <td>${e.scannedQty}</td>
-        <td>${done ? '&#10003;' : ''}</td>
+        <td>${quickAdd}</td>
       </tr>`;
     }).join('');
     renderWaveSanityStats();
+    // Quick-add is tied to one exact (location, sku) row, so it can never be
+    // ambiguous — the fastest path for a packer standing at a bin with 2+
+    // SKUs sharing a code, or the location column just being handy to see.
+    body.querySelectorAll('.wave-row-add-btn').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const qtyEl = btn.closest('.wave-row-add').querySelector('.wave-row-qty');
+        const qty = Math.max(1, parseInt(qtyEl.value, 10) || 1);
+        waveScan(btn.dataset.sku, qty, btn.dataset.loc);
+      })
+    );
+  }
+
+  // Renders (or clears) the amber location-disambiguation strip under the
+  // scan bar — shown when a SKU is stocked at 2+ locations in this wave and
+  // the free-text scan can't tell which one was just picked from.
+  function renderWaveLocationChoices(sku, qty, options) {
+    const wrap = document.getElementById('waveLocationChoices');
+    if (!options) { wrap.classList.add('hidden'); wrap.innerHTML = ''; return; }
+    wrap.classList.remove('hidden');
+    wrap.innerHTML = `<div class="wlc-label">Which location for <code>${esc(sku)}</code>?</div>` +
+      options.map(o => `<button data-loc="${esc(o.location || '')}">${esc(o.location || '(no location)')} — needs ${o.needed}, scanned ${o.scanned}</button>`).join('');
+    wrap.querySelectorAll('button').forEach(btn =>
+      btn.addEventListener('click', () => { renderWaveLocationChoices(null, null, null); waveScan(sku, qty, btn.dataset.loc); })
+    );
+  }
+
+  // Core scan call, shared by the free-text bar and each row's Quick Add —
+  // `location` is optional and only required to disambiguate a SKU stocked
+  // at 2+ locations in this wave.
+  async function waveScan(sku, qty, location) {
+    if (!sku || !activeWave) return;
+    const errEl = document.getElementById('waveScanError');
+    errEl.classList.add('hidden');
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/scan`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, qty, location: location || undefined }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        if (d.ambiguousLocation) { renderWaveLocationChoices(sku, qty, d.options); return; }
+        errEl.textContent = d.error || 'Scan failed'; errEl.classList.remove('hidden');
+        return;
+      }
+      renderWaveLocationChoices(null, null, null);
+      activeWave = d.wave;
+      renderWavePickList();
+    } catch (err) { errEl.textContent = 'Network error: ' + err.message; errEl.classList.remove('hidden'); }
   }
 
   async function waveSubmitScan() {
@@ -5955,21 +6032,11 @@
     const qtyEl = document.getElementById('waveScanQty');
     const sku = input.value.trim();
     const qty = Math.max(1, parseInt(qtyEl.value, 10) || 1);
-    if (!sku || !activeWave) return;
-    const errEl = document.getElementById('waveScanError');
-    errEl.classList.add('hidden');
-    try {
-      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/scan`, {
-        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, qty }),
-      });
-      const d = await r.json();
-      if (!r.ok) { errEl.textContent = d.error || 'Scan failed'; errEl.classList.remove('hidden'); input.select(); return; }
-      activeWave = d.wave;
-      renderWavePickList();
-      input.value = '';
-      qtyEl.value = '1';
-      input.focus();
-    } catch (err) { errEl.textContent = 'Network error: ' + err.message; errEl.classList.remove('hidden'); }
+    if (!sku) return;
+    await waveScan(sku, qty, null);
+    input.value = '';
+    qtyEl.value = '1';
+    input.focus();
   }
   document.getElementById('waveScanAddBtn')?.addEventListener('click', waveSubmitScan);
   document.getElementById('waveScanInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); waveSubmitScan(); } });
@@ -6012,32 +6079,32 @@
         <div class="wave-sort-order-row">
           <span>${esc(l.order_number)} <span style="color:var(--text-light,#64748b)">(needs ${l.needed})</span></span>
           <div class="wave-alloc-controls">
-            <button data-sku="${esc(e.sku)}" data-order="${esc(l.order_number)}" data-delta="-1">&minus;</button>
+            <button data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}" data-order="${esc(l.order_number)}" data-delta="-1">&minus;</button>
             <span class="wave-alloc-val">${l.allocated}</span>
-            <button data-sku="${esc(e.sku)}" data-order="${esc(l.order_number)}" data-delta="1">+</button>
+            <button data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}" data-order="${esc(l.order_number)}" data-delta="1">+</button>
           </div>
         </div>`).join('');
       return `<div class="wave-sort-panel">
         <div class="wave-sort-panel-title">
-          <span><code>${esc(e.sku)}</code> ${esc(e.description || '')} — scanned ${e.scannedQty}</span>
+          <span>${e.location ? `<code>${esc(e.location)}</code> &middot; ` : ''}<code>${esc(e.sku)}</code> ${esc(e.description || '')} — scanned ${e.scannedQty}</span>
           ${unalloc > 0 ? `<span class="wave-sort-unalloc">${unalloc} unallocated</span>` : ''}
         </div>
         ${rows}
       </div>`;
     }).join('');
     wrap.querySelectorAll('.wave-alloc-controls button').forEach(btn =>
-      btn.addEventListener('click', () => waveAdjustAllocation(btn.dataset.sku, btn.dataset.order, parseInt(btn.dataset.delta, 10)))
+      btn.addEventListener('click', () => waveAdjustAllocation(btn.dataset.sku, btn.dataset.loc, btn.dataset.order, parseInt(btn.dataset.delta, 10)))
     );
   }
 
-  async function waveAdjustAllocation(sku, orderNumber, delta) {
-    const entry = activeWave.pickList.find(e => e.sku === sku);
+  async function waveAdjustAllocation(sku, location, orderNumber, delta) {
+    const entry = activeWave.pickList.find(e => e.sku === sku && (e.location || '') === (location || ''));
     const line  = entry?.lines.find(l => l.order_number === orderNumber);
     if (!line) return;
     const newQty = Math.max(0, line.allocated + delta);
     try {
       const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/allocate`, {
-        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, orderNumber, qty: newQty }),
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, orderNumber, qty: newQty, location: location || undefined }),
       });
       const d = await r.json();
       if (!r.ok) { alert(d.error || 'Could not adjust allocation'); return; }

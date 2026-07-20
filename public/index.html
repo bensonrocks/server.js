@@ -1359,6 +1359,7 @@
           <div id="uploadStatus" class="status-bar hidden"></div>
           <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
             <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
+            <button id="uploadStartWaveBtn" class="btn-primary hidden">&#127754; Start Wave Pick</button>
           </div>
         </div>
       </div>
@@ -2369,9 +2370,10 @@
           <button class="btn-primary btn-sm" id="waveScanAddBtn">Add</button>
         </div>
         <div id="waveScanError" class="scan-error hidden"></div>
+        <div id="waveLocationChoices" class="hidden"></div>
         <div class="dcs-wrap">
           <table class="dcs-table">
-            <thead><tr><th>SKU</th><th>Description</th><th>Needed</th><th>Scanned</th><th></th></tr></thead>
+            <thead><tr><th>Location</th><th>SKU</th><th>Description</th><th>Needed</th><th>Scanned</th><th>Quick Add</th></tr></thead>
             <tbody id="wavePickListBody"></tbody>
           </table>
         </div>

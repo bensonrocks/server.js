@@ -1592,6 +1592,52 @@ whenever the Active view has at least one selectable order, growing to show
   `focusWaybillInput()` so the packer lands straight back on that bar, and
   the post-complete confirmation explicitly tells them to scan each order's
   GI/waybill to open and complete it next.
+- **GROUPED BY LOCATION + SKU, not SKU alone** — a packer physically stands
+  at one bin and picks everything from it, so `buildWavePickList` keys each
+  pick-list entry on `(location, sku)`, not just `sku`. The SAME SKU stocked
+  in two different bins produces TWO separate consolidated lines, each with
+  its own needed-per-order breakdown — never silently summed into one
+  location-blind total. `location` flows in from `lib/keyfields.js` mapRow's
+  new `location` field (alias chain: `location`, `loc`, `bin`, `bin_code`,
+  `bin_location`, `storage_location`, `rack`, `shelf`, `zone`, …) →
+  `summarizeOrders`'s per-line push → server.js's `uniqueSkuLocationLines(ord)`
+  (a location-preserving sibling of `uniqueSkuLines`, used ONLY when building
+  a wave — every other scan/complete/mismatch path keeps using the original
+  `uniqueSkuLines`, which pools by SKU alone and must not change behaviour).
+  Orders/items with no location data fall back to grouping by SKU alone —
+  fully backward compatible with hosts that don't track locations.
+- **AMBIGUOUS-LOCATION SCANS ASK, NEVER GUESS** — if a SKU exists at 2+
+  locations in the wave, `POST /api/waves/:id/scan` without a `location`
+  returns 409 `{ambiguousLocation:true, sku, options:[{location, needed,
+  scanned}]}` instead of guessing which bin was picked from. The client
+  (`waveScan()` in app.js) shows an inline amber location picker
+  (`#waveLocationChoices`) — clicking an option resubmits the same scan with
+  that location. Each pick-list row ALSO has its own "Quick Add" qty+button
+  (`.wave-row-add-btn`, `data-sku`/`data-loc`) that scans that EXACT
+  location/SKU directly, so ambiguity can never arise from that path at all.
+  `adjustAllocation`/`findPickEntries` in lib/wave-pick.js take the same
+  optional `location` param throughout for this reason.
+- **ULD FLOOR-LOCATION PRIORITY (server.js only, NOT in the portable lib)**
+  — ULD's bin naming is Row-Bay-Location (`AA-BB-CC`, e.g. `99-001-011`);
+  Row `99` is FLOOR level — no ladder/reach truck needed, the fastest pick
+  a packer can make. `sortPickListUldFloorFirst()` re-sorts a freshly built
+  wave's pick list so every `99-…` bin is grouped together AHEAD of every
+  racked row, applied once right after `wavePick.createWave(...)` in `POST
+  /api/waves`. Deliberately kept OUT of `lib/wave-pick.js` — the core module
+  stays a generic, portable location+SKU grouping with no site-specific
+  naming convention baked in; a future IDEALOMS port (or any other warehouse
+  with a different bin-naming scheme) applies its own re-sort the same way,
+  or none at all.
+- **"START WAVE PICK" OFFERED RIGHT ON THE UPLOAD RECEIPT** — the Upload
+  tab's success screen (`#uploadStartWaveBtn`, next to the existing
+  "Download WMS File" button) appears whenever a batch of 2+ orders was just
+  uploaded, so starting a wave doesn't require a separate trip to the Orders
+  tab to hand-pick checkboxes for exactly the batch that was just uploaded.
+  It still respects the existing download-before-scanning tab lock
+  (`lockTabsForDownload`/`unlockTabsAfterDownload`) — clicking it downloads
+  the WMS file (same as the Download button), unlocks the Orders tab, then
+  jumps straight there with every order from that upload pre-selected and
+  the wave-pick overlay already open.
 
 ### Sync Strategy — packaging this as a portable feature
 
@@ -1602,8 +1648,12 @@ lifted into IDEALOMS or another codebase as one unit:
 1. Copy `lib/wave-pick.js` verbatim — zero dependencies, drop-in.
 2. Copy the `// ── Wave Picking ──` block from server.js (sits right after
    `/api/scan/reset`, before `/api/scan/resend-completion-alert`) into the
-   target's order/scan handler. It calls host functions that must already
-   exist there: `findBatchForOrder`, `uniqueSkuLines`, `resolveBeTimeCode2`,
+   target's order/scan handler, PLUS `uniqueSkuLocationLines` (sits right
+   after `uniqueSkuLines`) and `uldLocationSortKey`/`sortPickListUldFloorFirst`
+   (only if the target warehouse actually uses ULD's Row-Bay-Location naming
+   — skip these two for any other convention, or write an equivalent). The
+   endpoint block calls host functions that must already exist there:
+   `findBatchForOrder`, `uniqueSkuLines`, `resolveBeTimeCode2`,
    `addToActiveCarton`, `appendScanLog`, `journalOrderState`, `logAudit`,
    `readDb`/`writeDb`, and `req.userId` from the host's own auth middleware.
    If any are named differently, only this endpoint block needs adapting —
@@ -1612,16 +1662,22 @@ lifted into IDEALOMS or another codebase as one unit:
    _dbCache.waves = [];` to the target's db init, and `nextWaveCode(db)`
    (mirrors `nextIdealscanCode`/`nextInboundCode` — copy verbatim, only the
    `WV-` prefix and `waveCodeSeq` counter key matter).
-4. Copy the `waveSelected`/`activeWave` state vars and every `wave*`-
+4. Copy the `location` field from `lib/keyfields.js` mapRow (if the target
+   still uses that file) or add an equivalent alias chain so pick-list
+   location grouping has data to work with — it degrades gracefully to
+   SKU-only grouping if omitted entirely.
+5. Copy the `waveSelected`/`activeWave` state vars and every `wave*`-
    prefixed function from public/app.js, plus the wave-select-bar/checkbox
    additions inside `renderOrdersList()` (checkbox column, `waveCheckableNow`,
-   select-all wiring in the table header).
-5. Copy the `#wavePickOverlay` modal block from public/index.html — it must
-   stay at BODY level, not nested inside a `.tab` section (see the modal-
-   nesting visibility bug fixed for the Driver modal, above).
-6. Copy the `/* ── Wave picking ── */` CSS block from public/styles.css.
-7. Update the target's CLAUDE.md with this same Wave Picking section.
-8. Link both commits in PR/commit messages for sync tracking.
+   select-all wiring in the table header) and the `#uploadStartWaveBtn`
+   wiring right after the upload-success download-button setup.
+6. Copy the `#wavePickOverlay` modal block from public/index.html (plus the
+   `#uploadStartWaveBtn` button next to the WMS download link) — the modal
+   must stay at BODY level, not nested inside a `.tab` section (see the
+   modal-nesting visibility bug fixed for the Driver modal, above).
+7. Copy the `/* ── Wave picking ── */` CSS block from public/styles.css.
+8. Update the target's CLAUDE.md with this same Wave Picking section.
+9. Link both commits in PR/commit messages for sync tracking.
 
 ## Admin: full roster exports (Users + Drivers)
 

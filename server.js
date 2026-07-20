@@ -1174,6 +1174,24 @@ function uniqueSkuLines(ord) {
   return [...map.values()];
 }
 
+// Wave picking needs a DIFFERENT pooling than uniqueSkuLines() above: a
+// packer picks from a physical bin, so the same SKU at two different
+// locations within one order must stay two separate lines (each with its
+// own needed qty) rather than being merged into one location-blind total.
+// Deliberately a separate function — uniqueSkuLines() is relied on by every
+// other scan/complete/mismatch path, which only ever needs a SKU-level
+// total and must not change behaviour here.
+function uniqueSkuLocationLines(ord) {
+  const map = new Map();
+  for (const l of (ord.lines || [])) {
+    const key = `${l.sku}::${l.location || ''}`;
+    const m = map.get(key);
+    if (!m) { map.set(key, { ...l }); continue; }
+    m.qty += l.qty || 0;
+  }
+  return [...map.values()];
+}
+
 function completionAuditData(batch, ord, state) {
   const scanned = state.scanned || {};
   return {
@@ -1608,6 +1626,7 @@ function summarizeOrders(lines) {
       serial_number:  line.serial_number  || '',
       expiry_date:    line.expiry_date    || '',
       remarks_betime: line.remarks_betime || '',
+      location:       line.location       || '',
     });
     map[key].total_qty += line.qty;
   }
@@ -5890,6 +5909,31 @@ app.post('/api/scan/reset', (req, res) => {
 // waybill logic with zero duplication.
 function findWave(db, id) { return (db.waves || []).find(w => w.id === id); }
 
+// ULD's bin location convention is Row-Bay-Location (AA-BB-CC, e.g.
+// "99-001-011"). Row "99" is FLOOR level — no ladder/reach truck, the
+// fastest pick a packer can make — so floor bins are grouped together
+// AHEAD of every racked row, before the normal location+SKU ordering.
+// Deliberately kept OUT of lib/wave-pick.js (which stays a generic, portable
+// core with no site-specific location convention baked in) — this is a
+// thin ULD-only re-sort applied right after the wave's pick list is built.
+function uldLocationSortKey(location) {
+  const loc = String(location || '').trim();
+  if (!loc) return [2, '', '']; // no location data on this line — sort last
+  const m = /^(\d{2,})-(\d{1,4})-(\d{1,4})/.exec(loc);
+  if (!m) return [1, loc, '']; // doesn't match the Row-Bay-Location shape — sort with racked rows, by raw string
+  const [, row, bay, locNum] = m;
+  return [row === '99' ? 0 : 1, row.padStart(3, '0'), `${bay.padStart(4, '0')}-${locNum.padStart(4, '0')}`];
+}
+function sortPickListUldFloorFirst(pickList) {
+  return [...pickList].sort((a, b) => {
+    const ka = uldLocationSortKey(a.location), kb = uldLocationSortKey(b.location);
+    for (let i = 0; i < ka.length; i++) {
+      if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
+    }
+    return a.sku.localeCompare(b.sku);
+  });
+}
+
 app.post('/api/waves', (req, res) => {
   const orderNumbers = [...new Set((req.body.orderNumbers || []).map(String))];
   if (orderNumbers.length < 2) return res.status(400).json({ error: 'Select at least 2 orders to start a wave (1 order scans normally).' });
@@ -5903,9 +5947,10 @@ app.post('/api/waves', (req, res) => {
     const activeWave = (db.waves || []).find(w => w.status !== 'done' && w.status !== 'cancelled' && w.orderNumbers.includes(orderNumber));
     if (activeWave) return res.status(409).json({ error: `Order ${orderNumber} is already in wave ${activeWave.id}` });
     const ord = batch.orders.find(o => o.order_number === orderNumber);
-    orders.push({ order_number: orderNumber, items: uniqueSkuLines(ord).map(l => ({ sku: l.sku, description: l.description || '', qty: l.qty })) });
+    orders.push({ order_number: orderNumber, items: uniqueSkuLocationLines(ord).map(l => ({ sku: l.sku, description: l.description || '', qty: l.qty, location: l.location || '' })) });
   }
   const wave = wavePick.createWave({ id: nextWaveCode(db), orderNumbers, orders, createdBy: req.userId || '' });
+  wave.pickList = sortPickListUldFloorFirst(wave.pickList);
   db.waves.unshift(wave);
   writeDb(db);
   logAudit('wave_created', { waveId: wave.id, orders: orderNumbers, by: req.userId || '' });
@@ -5936,9 +5981,18 @@ app.post('/api/waves/:id/scan', (req, res) => {
   if (wave.status === 'done' || wave.status === 'cancelled') return res.status(409).json({ error: `Wave is ${wave.status}` });
   const sku = resolveBeTimeCode2(req.body.sku);
   const qty = Number(req.body.qty) || 1;
+  const location = req.body.location ? String(req.body.location).trim() : '';
   if (!sku) return res.status(400).json({ error: 'sku required' });
-  const result = wavePick.recordPickScan(wave, sku, qty, { by: req.userId || '', eventId: req.body.eventId || null });
-  if (!result) return res.status(404).json({ error: `SKU "${sku}" is not part of this wave` });
+  const result = wavePick.recordPickScan(wave, sku, qty, { by: req.userId || '', eventId: req.body.eventId || null, location });
+  if (!result.ok) {
+    if (result.reason === 'ambiguous_location') {
+      return res.status(409).json({
+        error: `SKU "${sku}" is stocked at ${result.options.length} different locations in this wave — pick which one you're at.`,
+        ambiguousLocation: true, sku, options: result.options,
+      });
+    }
+    return res.status(404).json({ error: `SKU "${sku}" is not part of this wave` });
+  }
   wavePick.autoAllocate(wave);
   writeDb(db);
   res.json({ wave, entry: result.entry });
@@ -5958,8 +6012,8 @@ app.post('/api/waves/:id/allocate', (req, res) => {
   const db = readDb();
   const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
-  const { sku, orderNumber, qty } = req.body;
-  const ok = wavePick.adjustAllocation(wave, sku, orderNumber, Number(qty) || 0);
+  const { sku, orderNumber, qty, location } = req.body;
+  const ok = wavePick.adjustAllocation(wave, sku, orderNumber, Number(qty) || 0, location);
   if (!ok) return res.status(404).json({ error: 'SKU/order not found in this wave' });
   writeDb(db);
   res.json({ wave, allocationSummary: wavePick.allocationSummary(wave) });
@@ -5970,7 +6024,7 @@ app.post('/api/waves/:id/complete', (req, res) => {
   const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
   if (wave.status === 'done') return res.status(409).json({ error: 'Wave already completed' });
-  const applied = wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty) => {
+  const applied = wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty, location) => {
     const batch = findBatchForOrder(db, orderNumber);
     if (!batch) return;
     if (!batch.orderStates) batch.orderStates = {};
@@ -5978,7 +6032,7 @@ app.post('/api/waves/:id/complete', (req, res) => {
     state.scanned[sku] = (state.scanned[sku] || 0) + qty;
     if (state.status === 'pending') state.status = 'processing';
     addToActiveCarton(state, sku, qty);
-    appendScanLog(state, { kind: 'wave_pick', sku, qty, waveId: wave.id, by: req.userId || '' });
+    appendScanLog(state, { kind: 'wave_pick', sku, qty, location: location || '', waveId: wave.id, by: req.userId || '' });
     batch.orderStates[orderNumber] = state;
     journalOrderState(orderNumber, state);
   });
