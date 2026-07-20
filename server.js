@@ -595,6 +595,28 @@ app.get('/vendor/jsqr.js', (_req, res) =>
 
 // ── Persistent storage ──────────────────────────────────────────────────────
 const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
+
+// SAFETY NET — on Railway (and similar platforms), the container filesystem
+// is EPHEMERAL: every redeploy/restart tears it down and boots a fresh one
+// from the image. Anything under DATA_DIR that isn't on an attached
+// persistent Volume is silently wiped, taking every order/batch/inventory
+// record/user account with it. Detect that misconfiguration loudly at
+// startup instead of losing data silently. Railway auto-injects several
+// RAILWAY_* env vars into every deployment, so their presence + an unset
+// DATA_DIR is a reliable signal.
+(function _warnIfEphemeralDataDir() {
+  const onRailway = Object.keys(process.env).some(k => k.startsWith('RAILWAY_'));
+  if (onRailway && !process.env.DATA_DIR) {
+    console.warn('\n' + '!'.repeat(78));
+    console.warn('!  WARNING: running on Railway but DATA_DIR is not set.');
+    console.warn('!  Orders, inventory, and user accounts are being written to the');
+    console.warn(`!  container's local disk (${DATA_DIR}), which does NOT persist`);
+    console.warn('!  across redeploys or restarts — this data WILL be lost.');
+    console.warn('!  Fix: Railway dashboard -> this service -> Volumes -> add a Volume,');
+    console.warn('!  then set env var DATA_DIR to the mount path (e.g. /data) and redeploy.');
+    console.warn('!'.repeat(78) + '\n');
+  }
+})();
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 const DB_FILE     = path.join(DATA_DIR, 'db.json');
