@@ -1552,6 +1552,36 @@ visible, never hidden rows.
   the post-complete confirmation explicitly tells them to scan each order's
   GI/waybill to open and complete it next.
 
+### Sync Strategy — packaging this as a portable feature
+
+Wave Picking is deliberately a self-contained vertical slice (1 core lib +
+isolated additions to 3 files, same shape as Transport/Zort) so it can be
+lifted into IDEALOMS or another codebase as one unit:
+
+1. Copy `lib/wave-pick.js` verbatim — zero dependencies, drop-in.
+2. Copy the `// ── Wave Picking ──` block from server.js (sits right after
+   `/api/scan/reset`, before `/api/scan/resend-completion-alert`) into the
+   target's order/scan handler. It calls host functions that must already
+   exist there: `findBatchForOrder`, `uniqueSkuLines`, `resolveBeTimeCode2`,
+   `addToActiveCarton`, `appendScanLog`, `journalOrderState`, `logAudit`,
+   `readDb`/`writeDb`, and `req.userId` from the host's own auth middleware.
+   If any are named differently, only this endpoint block needs adapting —
+   `lib/wave-pick.js` itself never changes.
+3. Add `require('./lib/wave-pick.js')`, `if (!_dbCache.waves)
+   _dbCache.waves = [];` to the target's db init, and `nextWaveCode(db)`
+   (mirrors `nextIdealscanCode`/`nextInboundCode` — copy verbatim, only the
+   `WV-` prefix and `waveCodeSeq` counter key matter).
+4. Copy the `waveSelected`/`activeWave` state vars and every `wave*`-
+   prefixed function from public/app.js, plus the wave-select-bar/checkbox
+   additions inside `renderOrdersList()` (checkbox column, `waveCheckableNow`,
+   select-all wiring in the table header).
+5. Copy the `#wavePickOverlay` modal block from public/index.html — it must
+   stay at BODY level, not nested inside a `.tab` section (see the modal-
+   nesting visibility bug fixed for the Driver modal, above).
+6. Copy the `/* ── Wave picking ── */` CSS block from public/styles.css.
+7. Update the target's CLAUDE.md with this same Wave Picking section.
+8. Link both commits in PR/commit messages for sync tracking.
+
 ## Admin: full roster exports (Users + Drivers)
 
 `GET /api/master/users/export` (checkMaster-gated, same convention as `GET
