@@ -1969,22 +1969,23 @@
 
           <!-- TAB 3: Performance Stats -->
           <div id="driverStatsTab" style="display:none">
+            <p class="hint" style="font-size:11.5px;margin:0 0 .8rem">All-time, across every job ever assigned. Distance is an ESTIMATE (Singapore postal-district centroids from the depot, same basis as route planning) — suitable for comparing drivers, not for odometer/fuel claims. See Reports &rarr; Driver Performance for a date-ranged, downloadable version.</p>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem">
               <div style="padding:1rem;background:#f0f9ff;border-radius:6px;border-left:4px solid #0ea5e9">
                 <div style="font-size:24px;font-weight:600;color:#0ea5e9" id="statTotalDistance">—</div>
-                <div style="font-size:12px;color:#64748b">Total Distance (km)</div>
+                <div style="font-size:12px;color:#64748b">Est. Distance (km)</div>
               </div>
               <div style="padding:1rem;background:#f0fdf4;border-radius:6px;border-left:4px solid #22c55e">
-                <div style="font-size:24px;font-weight:600;color:#22c55e" id="statTotalTime">—</div>
-                <div style="font-size:12px;color:#64748b">Total Time (hrs)</div>
+                <div style="font-size:24px;font-weight:600;color:#22c55e" id="statTotalCartons">—</div>
+                <div style="font-size:12px;color:#64748b">Cartons Delivered</div>
               </div>
               <div style="padding:1rem;background:#fef3c7;border-radius:6px;border-left:4px solid #f59e0b">
                 <div style="font-size:24px;font-weight:600;color:#f59e0b" id="statJobsCompleted">—</div>
-                <div style="font-size:12px;color:#64748b">Jobs Completed</div>
+                <div style="font-size:12px;color:#64748b">Jobs Delivered</div>
               </div>
               <div style="padding:1rem;background:#f3e8ff;border-radius:6px;border-left:4px solid #a855f7">
-                <div style="font-size:24px;font-weight:600;color:#a855f7" id="statAvgSpeed">—</div>
-                <div style="font-size:12px;color:#64748b">Avg Speed (km/h)</div>
+                <div style="font-size:24px;font-weight:600;color:#a855f7" id="statDriversActive">—</div>
+                <div style="font-size:12px;color:#64748b">Drivers Active</div>
               </div>
             </div>
 
@@ -1992,11 +1993,11 @@
               <table class="orders-table">
                 <thead>
                   <tr>
-                    <th>Driver</th><th>Jobs Completed</th><th>Distance (km)</th><th>Time (hrs)</th><th>Avg Speed</th><th>POD Rate</th>
+                    <th>Driver</th><th>Delivered</th><th>Open</th><th>Cartons</th><th>Est. Distance (km)</th><th>Days Active</th><th>Avg Jobs/Day</th>
                   </tr>
                 </thead>
                 <tbody id="driverStatsBody">
-                  <tr><td colspan="6" style="text-align:center;padding:2rem;color:#64748b">No driver stats available yet.</td></tr>
+                  <tr><td colspan="7" style="text-align:center;padding:2rem;color:#64748b">No driver stats available yet.</td></tr>
                 </tbody>
               </table>
             </div>

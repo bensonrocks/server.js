@@ -4651,43 +4651,47 @@
     document.getElementById('jobCompletionModal').classList.add('hidden');
   });
 
-  function renderDriverStats() {
-    let totalDistance = 0, totalTime = 0, totalJobs = 0;
-    const statsData = [];
-
-    (window.drivers || []).forEach(driver => {
-      const jobs = jobsForDriver(driver.id);
-      const completed = jobs.filter(j => j.status === 'delivered').length;
-      const dist = (driver.stats?.distance || 0);
-      const time = (driver.stats?.time || 0);
-      const speed = time > 0 ? (dist / time).toFixed(1) : 0;
-
-      totalDistance += dist;
-      totalTime += time;
-      totalJobs += completed;
-
-      statsData.push({ name: driver.name, completed, dist, time, speed });
-    });
-
-    document.getElementById('statTotalDistance').textContent = totalDistance.toFixed(1);
-    document.getElementById('statTotalTime').textContent = totalTime.toFixed(1);
-    document.getElementById('statJobsCompleted').textContent = totalJobs;
-    document.getElementById('statAvgSpeed').textContent = totalTime > 0 ? (totalDistance / totalTime).toFixed(1) : '—';
-
+  // Reads the same computation the Reports → Driver Performance XLSX uses
+  // (GET /api/drivers/performance, no date range = all-time) — real
+  // delivered/open counts, real cartons, and a genuine distance ESTIMATE
+  // (postal-district legs from the depot). The old version read
+  // driver.stats.distance/time, a field nothing in the app ever wrote, so
+  // Distance/Time/Speed always silently showed 0 — fixed by wiring to data
+  // that actually exists instead of inventing numbers for fields with no
+  // real source (there's no drive-duration tracking anywhere in the
+  // system, so Time/Avg Speed are dropped rather than faked).
+  async function renderDriverStats() {
     const tbody = document.getElementById('driverStatsBody');
-    if (!statsData.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#64748b">No driver stats available yet.</td></tr>';
+    let stats = [];
+    try {
+      const r = await fetch('/api/drivers/performance', { headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
+      if (r.ok) stats = (await r.json()).drivers || [];
+    } catch {}
+
+    const totalDelivered = stats.reduce((s, d) => s + d.delivered, 0);
+    const totalCartons   = stats.reduce((s, d) => s + d.cartons, 0);
+    const totalKm        = stats.reduce((s, d) => s + d.km, 0);
+    const activeDrivers  = stats.filter(d => d.jobsAssigned > 0).length;
+
+    document.getElementById('statTotalDistance').textContent = totalKm.toFixed(1);
+    document.getElementById('statTotalCartons').textContent = totalCartons;
+    document.getElementById('statJobsCompleted').textContent = totalDelivered;
+    document.getElementById('statDriversActive').textContent = activeDrivers;
+
+    if (!stats.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#64748b">No driver stats available yet.</td></tr>';
       return;
     }
 
-    tbody.innerHTML = statsData.map(s => `
+    tbody.innerHTML = stats.map(s => `
       <tr>
         <td>${esc(s.name)}</td>
-        <td style="text-align:center"><strong>${s.completed}</strong></td>
-        <td style="text-align:center">${s.dist.toFixed(1)}</td>
-        <td style="text-align:center">${s.time.toFixed(1)}</td>
-        <td style="text-align:center">${s.speed} km/h</td>
-        <td style="text-align:center">—</td>
+        <td style="text-align:center"><strong>${s.delivered}</strong></td>
+        <td style="text-align:center">${s.open}</td>
+        <td style="text-align:center">${s.cartons}</td>
+        <td style="text-align:center">${s.km.toFixed(1)}</td>
+        <td style="text-align:center">${s.daysActive}</td>
+        <td style="text-align:center">${s.avgJobsPerDay}</td>
       </tr>
     `).join('');
   }

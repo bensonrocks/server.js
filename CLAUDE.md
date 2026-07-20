@@ -784,6 +784,31 @@ breaking the default.
     everywhere. Any FUTURE `logAudit()` call anywhere in this file must
     avoid a bare `type` key in its data object for the same reason.
 
+## Driver Performance Stats — Administrator → Drivers, real data only
+
+The "Performance Stats" tab inside Driver Details showed Distance/Time/Avg
+Speed permanently at 0: it read `driver.stats.distance`/`driver.stats.time`,
+fields NOTHING in the app ever wrote (no `stats` object exists on
+`db.drivers` records). Jobs Completed alone looked real because it was
+computed a different way (counting delivered jobs directly).
+
+Fixed by wiring to the SAME computation the Reports → Driver Performance
+XLSX already uses correctly — extracted into `computeDriverPerformance(db,
+from, to)` in server.js (per-driver delivered/confirmed/open counts,
+cartons, and an estimated distance from real postal-sector legs starting
+at the depot) so the XLSX report and this tab can never disagree.
+`GET /api/drivers/performance` (no date range = all-time) feeds the tab.
+
+**Time (hrs) and Avg Speed were REMOVED, not fixed** — there is no
+drive-duration tracking anywhere in the system (no start/end-of-drive
+timestamps), so any "time" or "speed" number here would be fabricated.
+Replaced the 4 stat tiles with ones backed by real data: Est. Distance
+(km), Cartons Delivered, Jobs Delivered, Drivers Active. Table columns:
+Driver / Delivered / Open / Cartons / Est. Distance / Days Active / Avg
+Jobs per Day — matching the XLSX report's columns exactly. A hint line
+in the tab points to Reports → Driver Performance for a date-ranged,
+downloadable version and repeats the distance-is-an-estimate caveat.
+
 ## Driver App — real mobile PWA at /driver (public/driver.html + driver.js)
 
 Replaces an entire non-functional predecessor: the old `/api/driver/*`
