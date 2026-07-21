@@ -429,6 +429,9 @@
     const logBtn = document.getElementById('logAccessBtn');
     if (logBtn) logBtn.classList.toggle('hidden', isWarehouse);
 
+    // Manage Waves (bulk cancel) — Admin only
+    document.getElementById('manageWavesBtn')?.classList.toggle('hidden', isWarehouse);
+
     // If warehouse user lands on Upload tab, redirect to Orders
     if (isWarehouse && document.getElementById('tab-upload').classList.contains('active')) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -8005,9 +8008,10 @@
   let _pendingOrderDelCount = 0;
   let _pendingInboundDelCount = 0;
   let _pendingWaveCancelCount = 0;
+  let _pendingWavePurgeCount  = 0;
   function updatePendingDelBadge() {
     const badge = document.getElementById('pendingDelBadge');
-    const total = _pendingOrderDelCount + _pendingInboundDelCount + _pendingWaveCancelCount;
+    const total = _pendingOrderDelCount + _pendingInboundDelCount + _pendingWaveCancelCount + _pendingWavePurgeCount;
     badge.textContent = total;
     badge.classList.toggle('hidden', total === 0);
   }
@@ -8145,7 +8149,148 @@
       if (!r.ok) return;
       renderWavePendingCancellations(await r.json());
     } catch { /* silent — next poll retries */ }
+    loadWavePendingPurges();
   }
+
+  // ── Wave Deletion Requests (Master purge queue) — Administrator → Pending Deletions ──
+  // Waves an Admin already cancelled (effect was immediate). Approve deletes
+  // the record clean from the data; Reject keeps it as cancelled history.
+  async function loadWavePendingPurges() {
+    const body = document.getElementById('pendingWavePurgeBody');
+    if (!body) return;
+    let list = [];
+    try {
+      const r = await fetch('/api/master/wave-pending-purges', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      list = await r.json();
+    } catch { return; }
+    _pendingWavePurgeCount = list.length;
+    updatePendingDelBadge();
+    body.innerHTML = list.map(p => `
+      <tr>
+        <td class="dcs-name">${esc(p.id)}</td>
+        <td>${p.orderNumbers.length} order${p.orderNumbers.length === 1 ? '' : 's'} <span style="color:var(--text-light,#64748b);font-size:.8em">(${esc(p.orderNumbers.slice(0, 4).join(', '))}${p.orderNumbers.length > 4 ? '…' : ''})</span></td>
+        <td>${esc(p.requestedByName)}</td>
+        <td>${p.requestedAt ? new Date(p.requestedAt).toLocaleString() : '—'}</td>
+        <td>
+          <button class="btn-sm btn-primary wpp-approve-btn" data-id="${esc(p.id)}">&#10003; Delete Clean</button>
+          <button class="btn-sm btn-danger-sm wpp-reject-btn" data-id="${esc(p.id)}">&#215; Keep Record</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('pendingWavePurgeEmpty').classList.toggle('hidden', list.length > 0);
+    body.querySelectorAll('.wpp-approve-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Delete wave ${btn.dataset.id}'s record clean from the data? The cancellation already took effect — this only removes the record, and cannot be undone.`)) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/wave-pending-purges/${encodeURIComponent(btn.dataset.id)}/approve`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Approve failed');
+          loadWavePendingPurges();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+    body.querySelectorAll('.wpp-reject-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/master/wave-pending-purges/${encodeURIComponent(btn.dataset.id)}/reject`, {
+            method: 'POST', headers: { 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Reject failed');
+          loadWavePendingPurges();
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+  }
+
+  // ── Manage Waves (Orders tab, Admin) — select-all + bulk cancel, effect immediate ──
+  const _waveManageSel = new Set();
+  document.getElementById('manageWavesBtn')?.addEventListener('click', () => {
+    document.getElementById('waveManageOverlay').classList.remove('hidden');
+    document.getElementById('waveManagePassword').value = '';
+    document.getElementById('waveManageError').classList.add('hidden');
+    _waveManageSel.clear();
+    loadWaveManageList();
+  });
+  document.getElementById('waveManageCloseBtn')?.addEventListener('click', () =>
+    document.getElementById('waveManageOverlay').classList.add('hidden'));
+  async function loadWaveManageList() {
+    const body = document.getElementById('waveManageBody');
+    let waves = [];
+    try {
+      const r = await fetch('/api/waves');
+      if (r.ok) waves = await r.json();
+    } catch {}
+    const active = waves.filter(w => w.status !== 'cancelled');
+    body.innerHTML = active.map(w => `
+      <tr>
+        <td><input type="checkbox" class="wave-manage-check" data-id="${esc(w.id)}" ${_waveManageSel.has(w.id) ? 'checked' : ''}></td>
+        <td class="dcs-name">${esc(w.id)}</td>
+        <td>${w.status === 'done' ? '<span class="chip chip-done">Closed</span>' : `<span class="chip chip-inprog">${esc(w.status)}</span>`}</td>
+        <td>${w.orderNumbers.length} <span style="color:var(--text-light,#64748b);font-size:.8em">(${esc(w.orderNumbers.slice(0, 3).join(', '))}${w.orderNumbers.length > 3 ? '…' : ''})</span></td>
+        <td>${w.totalQty}</td>
+        <td>${w.createdAt ? new Date(w.createdAt).toLocaleString() : '—'}</td>
+      </tr>`).join('');
+    document.getElementById('waveManageEmpty').classList.toggle('hidden', active.length > 0);
+    body.querySelectorAll('.wave-manage-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) _waveManageSel.add(cb.dataset.id); else _waveManageSel.delete(cb.dataset.id);
+        updateWaveManageButtons();
+      });
+    });
+    updateWaveManageButtons();
+  }
+  function updateWaveManageButtons() {
+    const boxes = document.querySelectorAll('.wave-manage-check');
+    const n = _waveManageSel.size;
+    document.getElementById('waveManageSelectAllBtn').innerHTML =
+      (n && n >= boxes.length) ? '&#9745; Deselect All' : '&#9744; Select All';
+    document.getElementById('waveManageCancelBtn').disabled = n === 0;
+    document.getElementById('waveManageSelCount').textContent = n ? `${n} wave${n === 1 ? '' : 's'} selected` : '';
+  }
+  document.getElementById('waveManageSelectAllBtn')?.addEventListener('click', () => {
+    const boxes = document.querySelectorAll('.wave-manage-check');
+    const allSelected = _waveManageSel.size >= boxes.length && boxes.length > 0;
+    boxes.forEach(cb => {
+      cb.checked = !allSelected;
+      if (cb.checked) _waveManageSel.add(cb.dataset.id); else _waveManageSel.delete(cb.dataset.id);
+    });
+    updateWaveManageButtons();
+  });
+  document.getElementById('waveManageCancelBtn')?.addEventListener('click', async () => {
+    const ids = [..._waveManageSel];
+    const pwd = document.getElementById('waveManagePassword').value;
+    const errEl = document.getElementById('waveManageError');
+    errEl.classList.add('hidden');
+    if (!ids.length) return;
+    if (!pwd) { errEl.textContent = 'Enter your password to confirm.'; errEl.classList.remove('hidden'); return; }
+    if (!confirm(`Cancel ${ids.length} wave${ids.length === 1 ? '' : 's'} (${ids.slice(0, 6).join(', ')}${ids.length > 6 ? '…' : ''})?\n\nThis takes effect immediately: prefilled quantities are reversed and those orders go back to 0 scanned for piece-by-piece scanning. Completed orders are never touched. The wave records then wait for the Administrator to approve deleting them from the data.`)) return;
+    const btn = document.getElementById('waveManageCancelBtn');
+    btn.disabled = true; btn.textContent = 'Cancelling…';
+    try {
+      const r = await fetch('/api/waves/bulk-cancel', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ ids, password: pwd }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Bulk cancel failed');
+      const skipped = (d.cancelled || []).flatMap(c => c.skippedDone || []);
+      let msg = `${(d.cancelled || []).length} wave(s) cancelled — effect is immediate.`;
+      if (skipped.length) msg += `\n${skipped.length} order(s) were already Completed and left untouched: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''}.`;
+      msg += `\n\nThe wave record(s) now await the Administrator's approval to be deleted from the data.`;
+      alert(msg);
+      _waveManageSel.clear();
+      loadWaveManageList();
+      await refreshOrders(); renderOrdersList();
+    } catch (err) {
+      errEl.textContent = err.message; errEl.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.innerHTML = '&#128465; Cancel Selected Waves';
+  });
   function renderWavePendingCancellations(list) {
     _pendingWaveCancelCount = list.length;
     updatePendingDelBadge();

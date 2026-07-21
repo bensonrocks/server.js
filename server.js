@@ -6291,19 +6291,14 @@ app.get('/api/master/wave-pending-cancellations', (req, res) => {
   res.json(out);
 });
 
-app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const db = readDb();
-  const wave = findWave(db, req.params.id);
-  if (!wave || !wave.pending_cancellation) return res.status(404).json({ error: 'No pending cancellation request for this wave.' });
-  const pending = wave.pending_cancellation;
-  // Reverses exactly what this wave applied — an order already Completed in
-  // the meantime is SKIPPED (never touch a done order's record, same rule
-  // deletion follows) rather than corrupting an already-printed slip.
-  // Waves closed AFTER the sub-picking redesign (appliedToOrders === false)
-  // never wrote quantities into orders, so there is nothing to subtract —
-  // approval just clears the wave_id pill from each order. Older waves
-  // (no flag) DID write quantities and still get the full reversal.
+// Reverses a wave out of its orders and marks it cancelled. Shared by the
+// per-wave approval and the Master bulk-cancel. Rules:
+// - An order already Completed is SKIPPED (never touch a done order).
+// - Waves closed AFTER the sub-picking redesign (appliedToOrders === false)
+//   never wrote quantities into orders — only the wave_id pill is cleared.
+// - Older waves (no flag) DID write quantities and get the full reversal,
+//   including the processing→pending status revert for orders left at zero.
+function reverseWaveAndCancel(db, wave, byUser) {
   const reversedOrders = new Set(), skippedDone = new Set();
   if (wave.appliedToOrders === false) {
     for (const orderNumber of wave.orderNumbers || []) {
@@ -6314,42 +6309,150 @@ app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
       if (state.wave_id === wave.id) { delete state.wave_id; journalOrderState(orderNumber, state); reversedOrders.add(orderNumber); }
     }
   } else {
-  wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty, location) => {
-    const batch = findBatchForOrder(db, orderNumber);
-    if (!batch) return;
-    const state = (batch.orderStates || {})[orderNumber];
-    if (!state) return;
-    if (state.status === 'done') { skippedDone.add(orderNumber); return; }
-    state.scanned[sku] = Math.max(0, (state.scanned[sku] || 0) - qty);
-    addToActiveCarton(state, sku, -qty);
-    appendScanLog(state, { kind: 'wave_cancel_reversal', sku, qty: -qty, location: location || '', waveId: wave.id, by: req.userId || 'master' });
-    if (state.wave_id === wave.id) delete state.wave_id;
-    journalOrderState(orderNumber, state);
-    reversedOrders.add(orderNumber);
-  });
-  // applyWaveToOrderStates calls back once PER LINE, so an order with
-  // multiple SKUs gets its status checked only after every line is back
-  // out — an order left at zero scanned pieces (nothing else touched it
-  // since the wave) goes back to 'pending' instead of getting stuck showing
-  // "In Progress" with nothing scanned and no pill to explain why.
-  for (const orderNumber of reversedOrders) {
-    const batch = findBatchForOrder(db, orderNumber);
-    const state = batch && (batch.orderStates || {})[orderNumber];
-    if (!state) continue;
-    const totalScanned = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
-    if (state.status === 'processing' && totalScanned === 0) state.status = 'pending';
-  }
+    wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty, location) => {
+      const batch = findBatchForOrder(db, orderNumber);
+      if (!batch) return;
+      const state = (batch.orderStates || {})[orderNumber];
+      if (!state) return;
+      if (state.status === 'done') { skippedDone.add(orderNumber); return; }
+      state.scanned[sku] = Math.max(0, (state.scanned[sku] || 0) - qty);
+      addToActiveCarton(state, sku, -qty);
+      appendScanLog(state, { kind: 'wave_cancel_reversal', sku, qty: -qty, location: location || '', waveId: wave.id, by: byUser || 'master' });
+      if (state.wave_id === wave.id) delete state.wave_id;
+      journalOrderState(orderNumber, state);
+      reversedOrders.add(orderNumber);
+    });
+    // applyWaveToOrderStates calls back once PER LINE, so an order with
+    // multiple SKUs gets its status checked only after every line is back
+    // out — an order left at zero scanned pieces goes back to 'pending'
+    // instead of getting stuck showing "In Progress" with nothing scanned.
+    for (const orderNumber of reversedOrders) {
+      const batch = findBatchForOrder(db, orderNumber);
+      const state = batch && (batch.orderStates || {})[orderNumber];
+      if (!state) continue;
+      const totalScanned = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+      if (state.status === 'processing' && totalScanned === 0) state.status = 'pending';
+    }
   }
   wave.status      = 'cancelled';
   wave.cancelledAt = new Date().toISOString();
   delete wave.pending_cancellation;
+  return { reversed: [...reversedOrders], skippedDone: [...skippedDone] };
+}
+
+app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave || !wave.pending_cancellation) return res.status(404).json({ error: 'No pending cancellation request for this wave.' });
+  const pending = wave.pending_cancellation;
+  const { reversed, skippedDone } = reverseWaveAndCancel(db, wave, req.userId);
   writeDb(db);
   logAudit('wave_cancellation_approved', {
     waveId: wave.id, orders: wave.orderNumbers,
-    reversed: [...reversedOrders], skippedDone: [...skippedDone],
+    reversed, skippedDone,
     requestedBy: pending.requestedBy, reason: pending.reason, by: req.userId || 'master',
   });
-  res.json({ ok: true, reversed: [...reversedOrders], skippedDone: [...skippedDone] });
+  res.json({ ok: true, reversed, skippedDone });
+});
+
+// ADMIN bulk-cancel (select-all): takes effect IMMEDIATELY — closed waves
+// that prefilled quantities are reversed on the spot (orders back to 0
+// scanned / pending so packers can re-scan them piece by piece), pills
+// removed, waves marked cancelled. The cancelled wave RECORD then stays in
+// db.waves flagged `pending_purge` until Master approves deleting it clean
+// from the data (Administrator → Pending Deletions → Wave Deletion
+// Requests) — the operational effect never waits on that approval.
+app.post('/api/waves/bulk-cancel', (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Session user not found.' });
+  if ((user.role || 'admin') !== 'admin') {
+    return res.status(403).json({ error: 'Only Admin users can cancel waves.' });
+  }
+  const { password } = req.body || {};
+  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
+    return res.status(403).json({ error: 'Incorrect password.' }); // 403, not 401 — session token is still valid
+  }
+  const db  = readDb();
+  const ids = req.body?.all === true
+    ? (db.waves || []).filter(w => w.status !== 'cancelled').map(w => w.id)
+    : [...new Set((req.body?.ids || []).map(String))];
+  if (!ids.length) return res.status(400).json({ error: 'No waves selected' });
+  const results = [];
+  for (const id of ids) {
+    const wave = findWave(db, id);
+    if (!wave || wave.status === 'cancelled') continue;
+    if (wave.status !== 'done') {
+      // Still picking/sorting — nothing was ever written to any order
+      wave.status = 'cancelled';
+      wave.cancelledAt = new Date().toISOString();
+      delete wave.pending_cancellation;
+      results.push({ id, reversed: 0, skippedDone: [] });
+    } else {
+      const { reversed, skippedDone } = reverseWaveAndCancel(db, wave, req.userId);
+      results.push({ id, reversed: reversed.length, skippedDone });
+    }
+    const w = findWave(db, id);
+    w.pending_purge = { requestedBy: req.userId, requestedAt: new Date().toISOString() };
+  }
+  writeDb(db);
+  logAudit('wave_bulk_cancelled', {
+    waves: results.map(r => r.id), count: results.length, by: req.userId || '',
+  });
+  res.json({ ok: true, cancelled: results });
+});
+
+// Master purge queue — cancelled waves an Admin asked to have deleted clean
+// from the data. Approve = the wave record is removed from db.waves for
+// good; Reject = the record stays (as cancelled history) and the request is
+// cleared. Neither touches any order — the operational reversal already
+// happened at cancel time.
+app.get('/api/master/wave-pending-purges', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const nameFor = (() => {
+    const byId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+    return id => byId.get(id) || id || '(unknown)';
+  })();
+  const db = readDb();
+  const out = (db.waves || [])
+    .filter(w => w.pending_purge)
+    .map(w => ({
+      id:              w.id,
+      orderNumbers:    w.orderNumbers,
+      cancelledAt:     w.cancelledAt || null,
+      requestedBy:     w.pending_purge.requestedBy,
+      requestedByName: nameFor(w.pending_purge.requestedBy),
+      requestedAt:     w.pending_purge.requestedAt,
+    }))
+    .sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt)));
+  res.json(out);
+});
+
+app.post('/api/master/wave-pending-purges/:id/approve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db  = readDb();
+  const idx = (db.waves || []).findIndex(w => w.id === req.params.id && w.pending_purge);
+  if (idx === -1) return res.status(404).json({ error: 'No pending purge request for this wave.' });
+  const wave = db.waves[idx];
+  db.waves.splice(idx, 1);
+  writeDb(db);
+  logAudit('wave_purge_approved', {
+    waveId: wave.id, orders: wave.orderNumbers,
+    requestedBy: wave.pending_purge.requestedBy, by: req.userId || 'master',
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/master/wave-pending-purges/:id/reject', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave || !wave.pending_purge) return res.status(404).json({ error: 'No pending purge request for this wave.' });
+  const pending = wave.pending_purge;
+  delete wave.pending_purge;
+  writeDb(db);
+  logAudit('wave_purge_rejected', { waveId: wave.id, requestedBy: pending.requestedBy, by: req.userId || 'master' });
+  res.json({ ok: true });
 });
 
 app.post('/api/master/wave-pending-cancellations/:id/reject', (req, res) => {

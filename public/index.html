@@ -660,6 +660,19 @@
           </table>
           <div id="pendingWaveCancelEmpty" class="empty-state hidden">No pending wave cancellation requests.</div>
         </div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.8rem">Wave Deletion Requests</div>
+          <div class="admin-section-sub">Waves an Admin already cancelled — the reversal took effect immediately (orders reset for re-scanning). Approving here only deletes the wave record clean from the data; rejecting keeps it as cancelled history. Neither touches any order.</div>
+        </div>
+        <div id="pendingWavePurgeWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Wave</th><th>Orders</th><th>Cancelled By</th><th>When</th><th>Actions</th></tr></thead>
+            <tbody id="pendingWavePurgeBody"></tbody>
+          </table>
+          <div id="pendingWavePurgeEmpty" class="empty-state hidden">No wave deletion requests.</div>
+        </div>
       </div>
 
       <!-- Tab: Upload History -->
@@ -1399,7 +1412,8 @@
         <div class="stats-bar" id="statsBar"></div>
         <div id="kfClosureBanner" class="kf-closure-banner hidden"></div>
 
-        <div style="display:flex;justify-content:flex-end;margin-bottom:.5rem">
+        <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-bottom:.5rem">
+          <button class="btn-secondary btn-sm hidden" id="manageWavesBtn">&#127754; Manage Waves</button>
           <button class="btn-secondary btn-sm" id="stationThroughputBtn">&#128202; Station Throughput</button>
         </div>
 
@@ -2397,6 +2411,36 @@
           <button class="btn-secondary" id="waveCancelBtn">Cancel Wave</button>
           <button class="btn-primary" id="waveFinishPickingBtn">&#10003; Close Wave &mdash; Start Order Scanning</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Waves — Admin select-all + bulk cancel. Takes effect
+       immediately (orders reset for re-scanning); the cancelled wave record
+       then waits for Master approval to be deleted clean from the data. -->
+  <div id="waveManageOverlay" class="modal-overlay hidden">
+    <div class="modal" style="max-width:720px">
+      <div class="modal-title">&#127754; Manage Waves</div>
+      <p class="modal-desc">Cancelling takes effect immediately: waves that prefilled order quantities are reversed (those orders go back to 0 scanned so packers scan them piece by piece), and wave pills are removed. The wave record itself is then queued for the Administrator to approve deleting it clean from the data.</p>
+      <div style="display:flex;gap:.5rem;align-items:center;margin:.3rem 0 .6rem">
+        <button class="btn-secondary btn-sm" id="waveManageSelectAllBtn">&#9744; Select All</button>
+        <span id="waveManageSelCount" class="hint"></span>
+      </div>
+      <div class="dcs-wrap" style="max-height:320px;overflow-y:auto">
+        <table class="dcs-table">
+          <thead><tr><th style="width:2rem"></th><th>Wave</th><th>Status</th><th>Orders</th><th>Total Qty</th><th>Created</th></tr></thead>
+          <tbody id="waveManageBody"></tbody>
+        </table>
+        <div id="waveManageEmpty" class="empty-state hidden">No active or closed waves.</div>
+      </div>
+      <div class="form-field" style="margin-top:.8rem">
+        <label>Your Password <span style="color:var(--danger)">*</span></label>
+        <input type="password" id="waveManagePassword" placeholder="Confirm it's you" autocomplete="off" />
+      </div>
+      <div id="waveManageError" class="login-error hidden"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="waveManageCloseBtn">Close</button>
+        <button class="btn-danger" id="waveManageCancelBtn" disabled>&#128465; Cancel Selected Waves</button>
       </div>
     </div>
   </div>

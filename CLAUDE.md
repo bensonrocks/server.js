@@ -1766,6 +1766,24 @@ whenever the Active view has at least one selectable order, growing to show
   before this chip did. Once the order is Completed normally the chip
   disappears (gated on `scan_status`), though `wave_id` itself is left on
   the record afterward as harmless history.
+- **BULK CANCEL — "🌊 Manage Waves" (Orders tab, Admin-only button)** —
+  select-all across every non-cancelled wave, one password-confirmed
+  action (`POST /api/waves/bulk-cancel {ids|all, password}` — admin role +
+  own password re-entered, 403 not 401 on a wrong one). CANCELLATION TAKES
+  EFFECT IMMEDIATELY (per user): legacy waves that prefilled quantities
+  are reversed on the spot via `reverseWaveAndCancel()` (the same helper
+  the per-wave approval uses — extracted for exactly this reuse; orders
+  back to 0 scanned/pending, done orders skipped), new-style waves just
+  lose their pills, in-progress waves cancel outright. Each cancelled
+  wave is then stamped `pending_purge` — the RECORD stays in db.waves
+  until Master approves deleting it clean from the data: `GET
+  /api/master/wave-pending-purges` + `.../:id/approve` (splice the
+  record) / `.../:id/reject` (keep it as cancelled history) — a FOURTH
+  table ("Wave Deletion Requests") in Administrator → Pending Deletions,
+  counted into the nav badge. Approve/reject never touches any order —
+  the operational effect already happened at cancel time. This two-step
+  split (effect now, purge later) is deliberate: packers must never wait
+  on Master's approval to re-scan orders.
 - **CANCELLING A COMPLETED WAVE NEEDS MASTER APPROVAL** — `POST
   /api/waves/:id/cancel` (instant, no approval) only works on a wave still
   `picking`/`sorting`, since nothing real has been touched yet; it already
