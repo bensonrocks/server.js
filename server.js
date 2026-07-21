@@ -5319,14 +5319,17 @@ app.post('/api/transport/mark-delivered', (req, res) => {
 // (Was localStorage-only, which made drivers invisible from other logins.)
 app.get('/api/drivers', (req, res) => {
   const db = readDb();
-  res.json(db.drivers || []);
+  // Never expose pin hashes/salts — every logged-in admin/warehouse user can
+  // fetch this list for the assignment dropdowns.
+  res.json((db.drivers || []).map(({ pinHash, pinSalt, ...d }) => ({ ...d, hasPin: !!pinHash })));
 });
 
 app.post('/api/drivers', (req, res) => {
-  const { id, name, phone, vehicle, plate, capacity, capacityM3, status } = req.body || {};
+  const { id, name, phone, vehicle, plate, capacity, capacityM3, status, pin } = req.body || {};
   if (!String(name || '').trim()) return res.status(400).json({ error: 'Driver name is required' });
   const db = readDb();
   if (!db.drivers) db.drivers = [];
+  const existing = db.drivers.find(d => d.id === id);
   const drv = {
     id: id || 'DRV-' + Date.now(),
     name: String(name).trim(),
@@ -5337,11 +5340,24 @@ app.post('/api/drivers', (req, res) => {
     capacityM3: Number(capacityM3) || 0,
     status: status || 'active',
   };
+  // PIN (Driver App login) — hashed like any other password; blank on edit
+  // keeps whatever PIN is already set, same rule as every other secret field.
+  if (pin && String(pin).trim()) {
+    const pinStr = String(pin).trim();
+    if (!/^\d{4,8}$/.test(pinStr)) return res.status(400).json({ error: 'PIN must be 4-8 digits' });
+    const pinSalt = crypto.randomBytes(16).toString('hex');
+    drv.pinSalt = pinSalt;
+    drv.pinHash = hashPass(pinStr, pinSalt);
+  } else if (existing) {
+    drv.pinSalt = existing.pinSalt;
+    drv.pinHash = existing.pinHash;
+  }
   const i = db.drivers.findIndex(d => d.id === drv.id);
   if (i >= 0) db.drivers[i] = { ...db.drivers[i], ...drv }; else db.drivers.push(drv);
   writeDb(db);
-  logAudit('driver_upsert', { driverId: drv.id, name: drv.name, by: req.userId || '' });
-  res.json(drv);
+  logAudit('driver_upsert', { driverId: drv.id, name: drv.name, pinChanged: !!(pin && String(pin).trim()), by: req.userId || '' });
+  const { pinHash, pinSalt, ...pub } = db.drivers[i >= 0 ? i : db.drivers.length - 1];
+  res.json({ ...pub, hasPin: !!pinHash });
 });
 
 app.delete('/api/drivers/:id', (req, res) => {
@@ -5352,6 +5368,27 @@ app.delete('/api/drivers/:id', (req, res) => {
   writeDb(db);
   logAudit('driver_delete', { driverId: req.params.id, by: req.userId || '' });
   res.json({ success: true });
+});
+
+// Portable roster export — the full db.drivers list as an Excel sheet, e.g.
+// to hand off to (or import into) another system. Secrets (pinHash/pinSalt)
+// are NEVER included — only whether a PIN is set.
+app.get('/api/drivers/export', (req, res) => {
+  const db = readDb();
+  const rows = (db.drivers || []).map(d => [
+    d.id, d.name || '', d.phone || '', d.vehicle || '', d.plate || '',
+    d.capacity || 0, d.capacityM3 || 0, d.status || 'active', d.pinHash ? 'Yes' : 'No',
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Driver ID', 'Name', 'Phone', 'Vehicle', 'Plate', 'Capacity (kg)', 'Capacity (m3)', 'Status', 'Driver App PIN Set'],
+    ...rows,
+  ]), 'Drivers');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="IDEALONE_Drivers_${sgDateStr()}.xlsx"`);
+  logAudit('driver_roster_exported', { count: rows.length, by: req.userId || '' });
+  res.send(buf);
 });
 
 // ── Address Book endpoints — maintain the store→address cross-reference ─────
@@ -7371,6 +7408,10 @@ app.post('/api/master/users', (req, res) => {
 // unlike the single "Add Driver" form which only creates the login account.
 // Tolerant like /api/inventory/import: bad/duplicate rows are skipped and
 // reported, never aborting the whole batch.
+// Driver rows do NOT create a users[] account at all — the Driver App
+// authenticates against db.drivers[].pinHash (see the Driver App API block
+// below), so a users[]-side record would be vestigial and confusing. The
+// "password" column for a driver row IS their Driver App PIN (4-8 digits).
 app.post('/api/master/users/import', express.json({ limit: '2mb' }), (req, res) => {
   if (!checkMaster(req, res)) return;
   const { items = [] } = req.body || {};
@@ -7382,34 +7423,40 @@ app.post('/api/master/users/import', express.json({ limit: '2mb' }), (req, res) 
   const errors = [];
   const db = readDb();
   if (!db.drivers) db.drivers = [];
+  const existingDriverIds = new Set(db.drivers.map(d => d.id));
 
   items.forEach((row, i) => {
     const id = String(row.id || '').trim();
     const password = String(row.password || '');
     if (!id || !password) { skipped++; errors.push({ row: i + 1, id, error: 'id and password are required' }); return; }
-    if (password.length < 5) { skipped++; errors.push({ row: i + 1, id, error: 'Password must be at least 5 characters' }); return; }
-    if (existingIds.has(id)) { skipped++; errors.push({ row: i + 1, id, error: 'User already exists' }); return; }
     const role = ['admin', 'warehouse', 'driver'].includes(row.role) ? row.role : 'warehouse';
     const tenantId = String(row.tenant_id || tenantStore.DEFAULT_TENANT_ID).trim();
     if (!tenantStore.tenantExists(tenantId)) { skipped++; errors.push({ row: i + 1, id, error: `Tenant "${tenantId}" does not exist` }); return; }
 
-    const salt = crypto.randomBytes(16).toString('hex');
-    users.push({ id, name: String(row.name || id).trim(), role, tenant_id: tenantId, salt, passwordHash: hashPass(password, salt) });
-    existingIds.add(id);
-    imported++;
-
     if (role === 'driver') {
-      const drv = {
+      if (existingDriverIds.has(id)) { skipped++; errors.push({ row: i + 1, id, error: 'Driver already exists' }); return; }
+      if (!/^\d{4,8}$/.test(password)) { skipped++; errors.push({ row: i + 1, id, error: 'Driver PIN (password column) must be 4-8 digits' }); return; }
+      const pinSalt = crypto.randomBytes(16).toString('hex');
+      db.drivers.push({
         id, name: String(row.name || id).trim(),
         phone: String(row.phone || '').trim(),
         vehicle: String(row.vehicle || 'Van'),
         plate: '', capacity: Number(row.capacity) || 1000, capacityM3: 0,
         status: 'active',
-      };
-      const di = db.drivers.findIndex(d => d.id === id);
-      if (di >= 0) db.drivers[di] = { ...db.drivers[di], ...drv }; else db.drivers.push(drv);
+        pinSalt, pinHash: hashPass(password, pinSalt),
+      });
+      existingDriverIds.add(id);
       driverProfiles++;
+      imported++;
+      return;
     }
+
+    if (password.length < 5) { skipped++; errors.push({ row: i + 1, id, error: 'Password must be at least 5 characters' }); return; }
+    if (existingIds.has(id)) { skipped++; errors.push({ row: i + 1, id, error: 'User already exists' }); return; }
+    const salt = crypto.randomBytes(16).toString('hex');
+    users.push({ id, name: String(row.name || id).trim(), role, tenant_id: tenantId, salt, passwordHash: hashPass(password, salt) });
+    existingIds.add(id);
+    imported++;
   });
 
   writeUsers(users);
@@ -8473,247 +8520,155 @@ app.post('/api/tms/stops/:id/fail', requireAuth, requireMysql, express.json(), a
   }
 });
 
-// ── DRIVER PORTAL API ENDPOINTS ────────────────────────────────────────────
+// ── DRIVER APP API ENDPOINTS ─────────────────────────────────────────────────
+// Drivers are `db.drivers[]` records (the SAME roster the Transport route
+// planner assigns from — see /api/drivers above) with an optional PIN set
+// via Transport → Driver Details. This replaces an earlier, broken
+// implementation that authenticated against `users[role==='driver']` — a
+// store nothing could ever create a record in through normal use, and whose
+// ids never matched `transport.assignedDriver` (populated from db.drivers
+// ids by the route planner) — so no job could ever have appeared for a
+// logged-in driver even if login itself worked. Session tokens are issued
+// through the same `activeSessions` map every other login uses, just
+// namespaced `driver:<id>` so they can never collide with a staff user id.
+function driverStatusLabel(job) {
+  const remarks = String(job?.podRemarks || '').trim();
+  if (job?.status === 'confirmed')  return { label: 'Staging', color: '#64748b' };
+  if (job?.status === 'in-transit') return { label: 'On the road', color: '#f59e0b' };
+  if (job?.status === 'delivered')  return remarks
+    ? { label: 'Delivered w/ Remarks', color: '#ef4444' }
+    : { label: 'Delivered', color: '#22c55e' };
+  if (job?.status === 'cancelled')  return { label: 'Cancelled', color: '#94a3b8' };
+  return { label: 'Preplanned', color: '#0ea5e9' };
+}
+// Local token check (the '/api/driver/' prefix is exempt from the global
+// requireAuth middleware — see AUTH_PUBLIC — so each handler checks itself).
+function requireDriverAuth(req, res) {
+  const token = req.headers['x-auth-token'];
+  if (!token) { res.status(401).json({ error: 'Unauthorised' }); return null; }
+  for (const [userId, t] of activeSessions) {
+    if (t === token && userId.startsWith('driver:')) return userId.slice(7);
+  }
+  res.status(401).json({ error: 'Session expired' });
+  return null;
+}
 
-// POST /api/driver/login — PIN-based driver login (unified with main auth system)
 app.post('/api/driver/login', express.json(), (req, res) => {
-  const { id, pin } = req.body;
-
-  // Accept either id+pin or just pin
-  let userId = id;
-  let driverId = id;
-
-  if (!userId && !pin) {
+  const { id, pin } = req.body || {};
+  if (!String(id || '').trim() || !String(pin || '').trim()) {
     return res.status(400).json({ error: 'Driver ID and PIN required' });
   }
-
-  // Case-insensitive ID match
-  const idNorm = String(userId || '').trim().toLowerCase();
-  const users = readUsers();
-  const user = users.find(u => (String(u.id).trim().toLowerCase() === idNorm || u.role === 'driver') && u.role === 'driver');
-
-  if (!user) {
-    logAudit('driver_login_failed', { user: String(userId || '').trim().slice(0, 60) });
+  const idNorm = String(id).trim().toLowerCase();
+  const db = readDb();
+  const driver = (db.drivers || []).find(d => String(d.id).trim().toLowerCase() === idNorm);
+  if (!driver) {
+    logAudit('driver_login_failed', { driver: String(id).trim().slice(0, 60), reason: 'not_found' });
     return res.status(401).json({ error: 'Driver not found' });
   }
-
-  // Check PIN (stored as password hash)
-  if (hashPass(pin || '', user.salt) !== user.passwordHash) {
-    logAudit('driver_login_failed', { user: user.id });
+  if (!driver.pinHash) {
+    return res.status(401).json({ error: 'No PIN set for this driver yet — ask your dispatcher to set one in Transport → Driver Details.' });
+  }
+  if (hashPass(String(pin).trim(), driver.pinSalt) !== driver.pinHash) {
+    logAudit('driver_login_failed', { driver: driver.id, reason: 'bad_pin' });
     return res.status(401).json({ error: 'Invalid PIN' });
   }
-
-  // Create session
   const token = uuidv4();
-  activeSessions.set(user.id, token);
+  const sessionKey = 'driver:' + driver.id;
+  const kickedOther = activeSessions.has(sessionKey);
+  activeSessions.set(sessionKey, token); // one active device per driver, same rule as user logins
   persistSessions();
-
-  logAudit('driver_login', { user: user.id });
-  res.json({
-    id: user.id,
-    name: user.name || user.id,
-    role: 'driver',
-    token,
-    message: 'Login successful'
-  });
+  logAudit('driver_login', { driver: driver.id, replacedSession: kickedOther });
+  res.json({ token, driver: { id: driver.id, name: driver.name, phone: driver.phone, vehicle: driver.vehicle, plate: driver.plate } });
 });
 
-// GET /api/driver/jobs — Get driver's assigned jobs
+app.post('/api/driver/logout', express.json(), (req, res) => {
+  const driverId = requireDriverAuth(req, res);
+  if (!driverId) return;
+  activeSessions.delete('driver:' + driverId);
+  persistSessions();
+  logAudit('driver_logout', { driver: driverId });
+  res.json({ ok: true });
+});
+
+// GET /api/driver/jobs — the logged-in driver's own worklist: everything
+// assigned to them that isn't cancelled, sorted into route order (matches
+// the sequence the planner gave them), with today's already-delivered stops
+// kept visible for reference at the end of the list.
 app.get('/api/driver/jobs', (req, res) => {
-  const driverId = req.query.driverId;
-  const pin = req.headers['x-driver-pin'];
-
-  if (!driverId || !pin) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
-  // Get database and verify driver PIN
+  const driverId = requireDriverAuth(req, res);
+  if (!driverId) return;
   const db = readDb();
-  const drivers = db.drivers || [];
-  const driver = drivers.find(d => d.id === driverId && d.pin === pin);
-  if (!driver) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  // Get jobs assigned to this driver (from transport requests)
+  const todayStr = sgDateStr();
   const jobs = (db.transport || [])
-    .filter(t => t.assignedDriver === driverId)
-    .map(t => ({
-      id: t.id,
-      customer: t.clientName,
-      address: t.shipping?.addressLine1 || '',
-      postalCode: t.shipping?.zip || '',
-      city: t.shipping?.city || 'Singapore',
-      phone: t.shipping?.phone || '',
-      items: t.items || [],
-      status: t.status || 'pending',
-      location: t.geocoded ? { lat: t.geocoded.lat, lng: t.geocoded.lng } : { lat: 1.3521, lng: 103.8198 },
-      createdAt: t.createdAt
-    }))
-    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-
-  const pending = jobs.filter(j => j.status === 'pending' || j.status === 'in-progress');
-  const completed = jobs.filter(j => j.status === 'delivered' || j.status === 'failed');
-
-  res.json({ pending, completed });
+    .filter(t => t.assignedDriver === driverId && t.status !== 'cancelled')
+    .filter(t => t.status !== 'delivered' || sgDateStr(new Date(t.deliveredAt || 0)) === todayStr)
+    .sort((a, b) => (a.routeNum ?? 9999) - (b.routeNum ?? 9999) || (a.stopSeq ?? 9999) - (b.stopSeq ?? 9999))
+    .map(t => {
+      const st = driverStatusLabel(t);
+      return {
+        id: t.id,
+        client: t.clientName || '',
+        referenceId: t.referenceId || t.clientId || '',
+        address: t.shipping?.addressLine1 || '',
+        zip: t.shipping?.zip || '',
+        phone: t.shipping?.phone || '',
+        notes: t.notes || '',
+        packages: t.packages || 1,
+        routeNum: t.routeNum ?? null,
+        stopSeq: t.stopSeq ?? null,
+        status: t.status || 'pending',
+        statusLabel: st.label,
+        statusColor: st.color,
+        podRemarks: t.podRemarks || '',
+        deliveredAt: t.deliveredAt || null,
+      };
+    });
+  res.json({ jobs });
 });
 
-// POST /api/driver/jobs/:id/complete — Mark job as completed
-app.post('/api/driver/jobs/:id/complete', express.json(), (req, res) => {
-  const jobId = req.params.id;
-  const driverId = req.headers['x-driver-id'];
-  const pin = req.headers['x-driver-pin'];
-  const { status, completedAt, timeTaken, distanceTravelled, notes, location } = req.body;
-
-  if (!driverId || !pin) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
-  // Get database and verify driver
+// POST /api/driver/jobs/:id/pickup — "I've picked this up, heading out."
+// Same transition the office map popup's "Picked Up" button performs, just
+// ownership-scoped so a driver can only move their OWN assigned jobs.
+app.post('/api/driver/jobs/:id/pickup', express.json(), (req, res) => {
+  const driverId = requireDriverAuth(req, res);
+  if (!driverId) return;
   const db = readDb();
-  const drivers = db.drivers || [];
-  const driver = drivers.find(d => d.id === driverId && d.pin === pin);
-  if (!driver) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  // Update job status
-  const jobIndex = (db.transport || []).findIndex(t => t.id === jobId);
-  if (jobIndex === -1) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
-
-  const job = db.transport[jobIndex];
-  job.status = status;
-  job.completedAt = completedAt;
-  job.driverStats = {
-    timeTaken,
-    distanceTravelled,
-    completedBy: driverId,
-    notes,
-    location
-  };
-
-  // Persist to database
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
+  if (job.status !== 'confirmed') return res.status(409).json({ error: `Job is "${job.status}", not ready for pickup` });
+  job.status = 'in-transit';
+  job.updatedAt = new Date().toISOString();
   writeDb(db);
+  logAudit('driver_job_pickup', { jobId: job.id, driver: driverId, client: job.clientName || '' });
+  res.json({ ok: true, job });
+});
 
-  // Log audit event
-  logAudit('driver_job_completed', {
-    jobId,
-    driverId,
-    status,
-    timeTaken,
-    distance: distanceTravelled
-  });
-
-  res.json({ success: true, message: `Job marked as ${status}`, job });
+// POST /api/driver/jobs/:id/deliver — closes out the stop; optional remarks
+// mark it "Delivered w/ Remarks" (an issue to follow up), same rule as the
+// office Mark Delivered flow.
+app.post('/api/driver/jobs/:id/deliver', express.json(), (req, res) => {
+  const driverId = requireDriverAuth(req, res);
+  if (!driverId) return;
+  const { remarks } = req.body || {};
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
+  if (job.status === 'delivered' || job.status === 'cancelled') return res.status(409).json({ error: `Job is already ${job.status}` });
+  job.status = 'delivered';
+  job.deliveredAt = new Date().toISOString();
+  if (String(remarks || '').trim()) job.podRemarks = String(remarks).trim();
+  writeDb(db);
+  logAudit('driver_job_delivered', { jobId: job.id, driver: driverId, client: job.clientName || '', withRemarks: !!String(remarks || '').trim() });
+  res.json({ ok: true, job });
 });
 
 // GET /api/master/drivers — List all drivers (admin only)
-app.get('/api/master/drivers', (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const users = readUsers();
-  const drivers = users.filter(u => u.role === 'driver').map(d => ({
-    id: d.id,
-    name: d.name || d.id,
-    phone: d.phone || '',
-    vehicle: d.vehicle || '',
-    capacity: d.capacity || 0,
-    createdAt: d.createdAt
-  }));
-  res.json(drivers);
-});
-
-// POST /api/master/drivers — Create new driver (admin only)
-app.post('/api/master/drivers', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { id, name, pin, phone, vehicle, capacity } = req.body;
-
-  if (!id || !pin) {
-    return res.status(400).json({ error: 'Driver ID and PIN required' });
-  }
-
-  if (pin.length < 4) {
-    return res.status(400).json({ error: 'PIN must be at least 4 characters' });
-  }
-
-  const users = readUsers();
-  if (users.find(u => u.id.toLowerCase() === id.toLowerCase())) {
-    return res.status(409).json({ error: 'Driver ID already exists' });
-  }
-
-  // Create driver user
-  const salt = crypto.randomBytes(16).toString('hex');
-  const newDriver = {
-    id,
-    name: name || id,
-    role: 'driver',
-    phone: phone || '',
-    vehicle: vehicle || 'Van',
-    capacity: capacity || 1000,
-    salt,
-    passwordHash: hashPass(pin, salt),
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(newDriver);
-  writeUsers(users);
-
-  logAudit('driver_created', { driver: id, name: name || id });
-  res.json({ ...newDriver, pin: 'hidden' });
-});
-
-// DELETE /api/master/drivers/:id — Delete driver (admin only)
-app.delete('/api/master/drivers/:id', (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { id } = req.params;
-  const users = readUsers();
-  const driver = users.find(u => u.id === id && u.role === 'driver');
-
-  if (!driver) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
-
-  const filtered = users.filter(u => u.id !== id);
-  writeUsers(filtered);
-
-  logAudit('driver_deleted', { driver: id });
-  res.json({ success: true, message: `Driver ${id} deleted` });
-});
-
-// PUT /api/master/drivers/:id — Update driver (admin only)
-app.put('/api/master/drivers/:id', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { id } = req.params;
-  const { name, phone, vehicle, capacity, pin } = req.body;
-
-  const users = readUsers();
-  const driverIdx = users.findIndex(u => u.id === id && u.role === 'driver');
-
-  if (driverIdx === -1) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
-
-  const driver = users[driverIdx];
-  if (name) driver.name = name;
-  if (phone) driver.phone = phone;
-  if (vehicle) driver.vehicle = vehicle;
-  if (capacity !== undefined) driver.capacity = capacity;
-
-  // Update PIN if provided
-  if (pin) {
-    if (pin.length < 4) {
-      return res.status(400).json({ error: 'PIN must be at least 4 characters' });
-    }
-    const salt = crypto.randomBytes(16).toString('hex');
-    driver.salt = salt;
-    driver.passwordHash = hashPass(pin, salt);
-  }
-
-  writeUsers(users);
-  logAudit('driver_updated', { driver: id });
-  res.json(driver);
-});
+// NOTE: the old /api/master/drivers* CRUD (a separate users[role=='driver']
+// store, disconnected from db.drivers/route planning) was removed here —
+// Administrator → Drivers now reads/writes the same /api/drivers roster as
+// Transport → Driver Details and the Driver App.
 
 // GET /driver — Serve the driver portal
 app.get('/driver', (req, res) => {

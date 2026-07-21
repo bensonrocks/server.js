@@ -1361,6 +1361,63 @@ When porting to IdealScan or other codebases:
 5. Update CLAUDE.md in target with same Transport section
 6. Link both commits in PR/commit messages for sync tracking
 
+## Driver App — real mobile PWA at /driver (public/driver.html + driver.js)
+
+One driver identity, replacing an earlier broken predecessor and a second
+disconnected driver-management surface (both fixed together — see below).
+
+- **`db.drivers[]`** (the SAME roster Transport → Driver Details and
+  `/api/drivers` use) gains an optional PIN: `pinHash`/`pinSalt` (hashed like
+  any password), set via a "Driver App PIN" field on the shared Add/Edit
+  Driver modal (blank on edit = keep current). `GET /api/drivers` never
+  returns the hash — `hasPin: true/false` only; both Transport's and
+  Administrator's driver lists show a 📱 badge when a driver can log in.
+- **Real sessions, not a parallel auth scheme.** `POST /api/driver/login`
+  `{id, pin}` verifies against `db.drivers`, then issues a token through the
+  SAME `activeSessions` map every other login uses — namespaced `driver:<id>`
+  so it can never collide with a staff user id. One active device per
+  driver, same rule as `/api/auth/login`. `requireDriverAuth()` does the
+  token→driver lookup for every other `/api/driver/*` endpoint — the
+  `/api/driver/` path prefix is exempt from the global `requireAuth`
+  middleware (`AUTH_PUBLIC`), so each handler checks its own token.
+- **Jobs come straight from `db.transport`** — no separate job store.
+  `GET /api/driver/jobs` filters to `assignedDriver === <this driver>` and
+  `status !== 'cancelled'`, keeps today's delivered stops visible for
+  reference, sorts by `routeNum`/`stopSeq` (the planner's route order), and
+  returns the SAME status wording/colors as the office UI
+  (`driverStatusLabel()` — Staging/On the road/Delivered/Delivered w/
+  Remarks).
+- **Two actions, ownership-checked server-side** (a driver can only move
+  their OWN assigned jobs — 403 otherwise): `POST
+  /api/driver/jobs/:id/pickup` (confirmed→in-transit) and `POST
+  /api/driver/jobs/:id/deliver` `{remarks}` (→delivered; non-empty remarks =
+  "Delivered w/ Remarks"). Both refuse to regress an already-delivered/
+  cancelled job.
+- **No embedded map.** `driver.html` has no map SDK — "Navigate" is a plain
+  `https://www.google.com/maps/search/?api=1&query=` deep link (opens the
+  phone's own installed maps app, no API key) and "Call Consignee" is a
+  `tel:` link.
+- **Administrator → Drivers is unified onto `db.drivers` too.** The old
+  Admin-only "Add Driver" form and its `/api/master/drivers*` CRUD (a
+  disconnected `users[role=='driver']` store nothing else ever read) are
+  REMOVED entirely. "+ Add Driver" opens the SAME `#addEditDriverModal`
+  Transport → Driver Details uses; the list re-fetches `/api/drivers`
+  (`loadDrivers()`) and shows the same hasPin badge. Any driver added from
+  either surface immediately can log into the Driver App and gets picked up
+  by route planning — one identity, reachable from Admin, Transport, and the
+  bulk CSV user import (see "Bulk CSV import" — a driver row's `password`
+  column IS their PIN, validated 4-8 digits, and creates NO `users[]` record
+  at all, only the `db.drivers[]` profile with a PIN).
+  **Gotcha fixed along the way**: `#addEditDriverModal` used to be nested
+  INSIDE `#tab-transport` — invisible (ancestor `display:none`) whenever the
+  Administrator overlay was opened from any tab other than Transport. Moved
+  to body level (like every other global modal).
+- **`GET /api/drivers/export`** — the full roster as an XLSX (never includes
+  `pinHash`/`pinSalt`, only a Yes/No "Driver App PIN Set" column).
+- **Still separate, NOT unified**: the TMS Management → Drivers section is a
+  third driver-management surface whose backend hasn't been audited —
+  flagged here so a future pass folds it into `/api/drivers` too.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

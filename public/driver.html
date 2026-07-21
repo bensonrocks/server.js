@@ -2,405 +2,198 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IDEALONE Driver — Delivery Management</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>IDEALONE Driver</title>
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#0ea5e9" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="styles.css" />
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBs6YH_KNhsxxzzCvzJPPCW493UBYMLowc&libraries=marker,routes" defer></script>
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; }
-    .driver-container { display: flex; flex-direction: column; height: 100vh; }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; color: #1e293b; }
+    .hidden { display: none !important; }
+    button { font-family: inherit; }
 
-    /* ── PIN Login Screen ── */
-    .pin-login-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      z-index: 9999; padding: 2rem;
+    /* ── Login ── */
+    .login-wrap {
+      position: fixed; inset: 0; background: linear-gradient(160deg, #0ea5e9 0%, #0369a1 100%);
+      display: flex; align-items: center; justify-content: center; padding: 1.5rem; z-index: 999;
     }
-    .pin-login-overlay.hidden { display: none; }
-    .pin-login-box {
-      background: white; border-radius: 12px; padding: 2rem; width: 100%; max-width: 320px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    .login-box { background: #fff; border-radius: 16px; padding: 2rem 1.6rem; width: 100%; max-width: 340px; box-shadow: 0 24px 60px rgba(0,0,0,.35); }
+    .login-brand { display: flex; flex-direction: column; align-items: center; margin-bottom: 1.6rem; }
+    .login-brand img { width: 52px; height: 52px; border-radius: 12px; margin-bottom: .6rem; }
+    .login-brand h1 { font-size: 20px; font-weight: 800; }
+    .login-brand p { font-size: 12.5px; color: #64748b; margin-top: .2rem; }
+    .field-label { display: block; font-size: 12.5px; font-weight: 700; color: #475569; margin-bottom: .35rem; }
+    .id-input {
+      width: 100%; padding: .75rem .8rem; border: 2px solid #e2e8f0; border-radius: 10px;
+      font-size: 16px; margin-bottom: 1.1rem;
     }
-    .pin-login-header {
-      text-align: center; margin-bottom: 2rem;
+    .id-input:focus { outline: none; border-color: #0ea5e9; }
+    .pin-display {
+      width: 100%; padding: .8rem; border: 2px solid #e2e8f0; border-radius: 10px;
+      font-size: 20px; letter-spacing: .5em; text-align: center; font-weight: 700; margin-bottom: 1rem; color: #0f172a;
+      background: #f8fafc;
     }
-    .pin-driver-icon {
-      font-size: 48px; margin-bottom: 1rem;
+    .pin-keypad { display: grid; grid-template-columns: repeat(3,1fr); gap: .55rem; margin-bottom: 1rem; }
+    .pin-key { padding: .95rem; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 17px; font-weight: 700; background: #f8fafc; cursor: pointer; }
+    .pin-key:active { background: #0ea5e9; color: #fff; }
+    .pin-key.wide { grid-column: span 1; font-size: 12.5px; }
+    .login-submit {
+      width: 100%; padding: .85rem; background: #0ea5e9; color: #fff; border: none; border-radius: 10px;
+      font-size: 15px; font-weight: 700; cursor: pointer;
     }
-    .pin-login-header h1 {
-      font-size: 24px; font-weight: 600; color: #1e293b; margin-bottom: 0.3rem;
-    }
-    .pin-login-header p {
-      font-size: 13px; color: #64748b;
-    }
-    .pin-input-wrap {
-      margin-bottom: 1.5rem;
-    }
-    .pin-input-label {
-      display: block; font-size: 13px; font-weight: 500; color: #64748b; margin-bottom: 0.6rem;
-    }
-    .pin-input-field {
-      width: 100%; padding: 0.8rem; border: 2px solid #e2e8f0; border-radius: 8px;
-      font-size: 16px; letter-spacing: 2px; text-align: center; font-weight: 600;
-    }
-    .pin-input-field:focus {
-      outline: none; border-color: #0ea5e9; background: #f0f9ff;
-    }
-    .pin-keypad {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1rem;
-    }
-    .pin-key {
-      padding: 1rem; border: 1px solid #e2e8f0; border-radius: 8px;
-      font-size: 18px; font-weight: 600; background: #f8fafc;
-      cursor: pointer; transition: all 0.2s;
-    }
-    .pin-key:active {
-      background: #0ea5e9; color: white; transform: scale(0.95);
-    }
-    .pin-key.delete {
-      grid-column: 3; font-size: 14px;
-    }
-    .pin-key.clear {
-      grid-column: 1 / 3; font-size: 13px;
-    }
-    .pin-submit-btn {
-      width: 100%; padding: 0.8rem; background: #0ea5e9; color: white;
-      border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
-      cursor: pointer; transition: all 0.3s;
-    }
-    .pin-submit-btn:disabled {
-      background: #cbd5e1; cursor: not-allowed;
-    }
-    .pin-submit-btn:active:not(:disabled) {
-      background: #0284c7; transform: scale(0.98);
-    }
-    .pin-error {
-      color: #ef4444; font-size: 12px; margin-top: 0.5rem; text-align: center;
-    }
+    .login-submit:disabled { background: #cbd5e1; }
+    .login-error { color: #dc2626; font-size: 12.5px; text-align: center; margin-top: .7rem; min-height: 1em; }
 
-    /* ── Driver Dashboard ── */
-    .driver-dashboard { display: flex; flex-direction: column; height: 100%; }
-    .driver-header {
-      padding: 1rem; background: #0ea5e9; color: white; display: flex;
-      justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    /* ── Shell ── */
+    .app { display: none; flex-direction: column; height: 100dvh; }
+    .app.shown { display: flex; }
+    .hdr {
+      background: #0f172a; color: #fff; padding: .85rem 1rem; display: flex; justify-content: space-between; align-items: center;
+      flex-shrink: 0;
     }
-    .driver-name { font-size: 16px; font-weight: 600; }
-    .driver-time { font-size: 12px; opacity: 0.9; }
-    .driver-badge { background: rgba(255, 255, 255, 0.3); padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 12px; }
-    .driver-logout-btn {
-      background: rgba(255, 255, 255, 0.2); border: 1px solid rgba(255, 255, 255, 0.4);
-      color: white; padding: 0.4rem 0.8rem; border-radius: 6px; font-size: 12px; cursor: pointer;
-    }
+    .hdr-name { font-size: 15px; font-weight: 800; }
+    .hdr-sub { font-size: 11.5px; color: #94a3b8; }
+    .hdr-logout { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; padding: .4rem .75rem; border-radius: 8px; font-size: 12px; cursor: pointer; }
 
-    /* ── Stats Bar ── */
-    .driver-stats-bar {
-      padding: 1rem; background: #f0f9ff; border-bottom: 1px solid #cbd5e1;
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem;
-    }
-    .stat-card {
-      text-align: center; padding: 0.6rem; background: white; border-radius: 6px;
-      border: 1px solid #e2e8f0;
-    }
-    .stat-value { font-size: 18px; font-weight: 600; color: #0ea5e9; }
-    .stat-label { font-size: 11px; color: #64748b; margin-top: 0.2rem; }
+    .stats { display: grid; grid-template-columns: repeat(3,1fr); gap: .5rem; padding: .7rem; background: #e0f2fe; flex-shrink: 0; }
+    .stat { background: #fff; border-radius: 8px; padding: .5rem; text-align: center; border: 1px solid #bae6fd; }
+    .stat b { display: block; font-size: 18px; color: #0369a1; }
+    .stat span { font-size: 10.5px; color: #64748b; }
 
-    /* ── Main Content ── */
-    .driver-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .refresh-row { display: flex; align-items: center; justify-content: space-between; padding: .5rem 1rem; font-size: 12px; color: #64748b; flex-shrink: 0; }
+    .refresh-btn { background: none; border: none; color: #0ea5e9; font-weight: 700; font-size: 12.5px; cursor: pointer; }
 
-    /* ── Map View ── */
-    .driver-map-wrap {
-      flex: 1; position: relative; background: #e2e8f0; min-height: 300px;
-    }
-    #driverMap { width: 100%; height: 100%; }
-    .map-controls {
-      position: absolute; top: 1rem; right: 1rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 10;
-    }
-    .map-btn {
-      background: white; border: 1px solid #cbd5e1; padding: 0.6rem; border-radius: 6px;
-      cursor: pointer; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); font-size: 20px;
-    }
-    .current-location-indicator {
-      position: absolute; bottom: 1rem; left: 1rem; background: white; padding: 0.8rem;
-      border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); font-size: 13px; z-index: 10;
-    }
+    .list { flex: 1; overflow-y: auto; padding: .3rem .7rem 1rem; }
+    .empty-state { text-align: center; color: #94a3b8; padding: 3rem 1rem; font-size: 13.5px; }
 
-    /* ── Jobs Panel ── */
-    .driver-jobs-panel {
-      max-height: 40%; overflow-y: auto; background: white; border-top: 1px solid #e2e8f0;
-    }
-    .jobs-header {
-      padding: 1rem; border-bottom: 1px solid #e2e8f0; font-weight: 600; font-size: 14px;
-      display: flex; justify-content: space-between; align-items: center; background: #f8fafc;
-    }
-    .jobs-list { padding: 0.5rem; }
     .job-card {
-      padding: 1rem; margin-bottom: 0.5rem; background: #f8fafc; border: 1px solid #e2e8f0;
-      border-radius: 6px; cursor: pointer; transition: all 0.2s;
+      background: #fff; border-radius: 12px; padding: .9rem; margin-bottom: .6rem; border: 1px solid #e2e8f0;
+      border-left: 5px solid #94a3b8; cursor: pointer;
     }
-    .job-card:active {
-      background: #f0f9ff; border-color: #0ea5e9;
-    }
-    .job-card.active {
-      background: #f0f9ff; border-left: 4px solid #0ea5e9; border-color: #0ea5e9;
-    }
-    .job-number { font-size: 13px; color: #64748b; margin-bottom: 0.2rem; }
-    .job-customer { font-size: 15px; font-weight: 600; color: #1e293b; margin-bottom: 0.3rem; }
-    .job-address { font-size: 12px; color: #64748b; margin-bottom: 0.3rem; }
-    .job-distance { font-size: 12px; color: #0ea5e9; font-weight: 500; }
-    .job-status {
-      display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 11px;
-      font-weight: 500; margin-top: 0.3rem;
-    }
-    .job-status.pending { background: #fef3c7; color: #92400e; }
-    .job-status.in-progress { background: #dbeafe; color: #075985; }
-    .job-status.completed { background: #d1fae5; color: #065f46; }
+    .job-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem; }
+    .job-seq { font-size: 11px; color: #94a3b8; font-weight: 700; }
+    .job-client { font-size: 15px; font-weight: 800; margin: .15rem 0 .25rem; }
+    .job-addr { font-size: 12.5px; color: #475569; line-height: 1.35; }
+    .job-pill { font-size: 10.5px; font-weight: 800; padding: .2rem .55rem; border-radius: 999px; color: #fff; white-space: nowrap; }
+    .job-meta { display: flex; gap: .7rem; margin-top: .5rem; font-size: 11.5px; color: #64748b; }
 
-    /* ── Job Detail Modal ── */
-    .job-detail-modal {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-end; z-index: 1000;
+    /* ── Detail sheet ── */
+    .sheet-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: flex; align-items: flex-end; z-index: 500; }
+    .sheet {
+      background: #fff; width: 100%; max-height: 88vh; border-radius: 16px 16px 0 0; padding: 1.3rem 1.2rem calc(1.3rem + env(safe-area-inset-bottom));
+      overflow-y: auto;
     }
-    .job-detail-modal.hidden { display: none; }
-    .job-detail-sheet {
-      background: white; width: 100%; max-height: 85vh; border-radius: 12px 12px 0 0;
-      padding: 1.5rem; overflow-y: auto;
-    }
-    .job-detail-header {
-      display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.5rem;
-    }
-    .job-detail-title { font-size: 18px; font-weight: 600; color: #1e293b; }
-    .job-detail-close {
-      background: none; border: none; font-size: 24px; cursor: pointer; color: #64748b;
-    }
-    .job-detail-section {
-      padding: 1rem; background: #f8fafc; border-radius: 8px; margin-bottom: 1rem;
-    }
-    .detail-row {
-      display: flex; justify-content: space-between; padding: 0.5rem 0; font-size: 13px;
-    }
-    .detail-label { color: #64748b; font-weight: 500; }
-    .detail-value { color: #1e293b; font-weight: 600; }
-    .detail-items-list {
-      display: grid; gap: 0.5rem;
-    }
-    .detail-item {
-      padding: 0.6rem; background: white; border-radius: 6px; font-size: 12px;
-      border: 1px solid #e2e8f0;
-    }
-    .item-sku { font-weight: 600; color: #0ea5e9; }
-    .item-qty { color: #64748b; }
+    .sheet-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; }
+    .sheet-title { font-size: 17px; font-weight: 800; }
+    .sheet-close { background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer; }
+    .sheet-section { background: #f8fafc; border-radius: 10px; padding: .8rem .9rem; margin-bottom: .7rem; }
+    .sheet-row { display: flex; justify-content: space-between; padding: .3rem 0; font-size: 13px; gap: .8rem; }
+    .sheet-row span:first-child { color: #64748b; }
+    .sheet-row span:last-child { font-weight: 700; text-align: right; }
+    .link-btn { display: block; width: 100%; text-align: center; padding: .7rem; margin-top: .5rem; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13.5px; }
+    .link-nav { background: #ede9fe; color: #6d28d9; }
+    .link-call { background: #dcfce7; color: #15803d; }
+    .action-btn { width: 100%; padding: .9rem; border: none; border-radius: 10px; font-size: 15px; font-weight: 800; color: #fff; cursor: pointer; margin-top: .8rem; }
+    .action-pickup { background: #f59e0b; }
+    .action-deliver { background: #16a34a; }
+    .sheet-done { text-align: center; color: #64748b; font-size: 12.5px; padding: .6rem; }
 
-    /* ── Action Buttons ── */
-    .job-actions {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-top: 1.5rem;
+    .toast {
+      position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff;
+      padding: .6rem 1.1rem; border-radius: 999px; font-size: 12.5px; z-index: 999; box-shadow: 0 6px 20px rgba(0,0,0,.3);
     }
-    .action-btn {
-      padding: 0.8rem; border: none; border-radius: 8px; font-size: 14px; font-weight: 600;
-      cursor: pointer; transition: all 0.2s;
-    }
-    .btn-start { background: #0ea5e9; color: white; }
-    .btn-start:active { background: #0284c7; }
-    .btn-complete {
-      background: #22c55e; color: white; grid-column: 1 / 3;
-    }
-    .btn-complete:active { background: #16a34a; }
-    .btn-failed { background: #ef4444; color: white; }
-    .btn-failed:active { background: #dc2626; }
-
-    /* ── Offline Badge ── */
-    .offline-badge {
-      position: fixed; bottom: 1rem; right: 1rem; background: #ef4444; color: white;
-      padding: 0.5rem 1rem; border-radius: 20px; font-size: 12px; z-index: 500;
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.7; }
-    }
-
-    /* ── Mobile responsive ── */
-    @media (max-width: 600px) {
-      .driver-stats-bar { grid-template-columns: repeat(2, 1fr); gap: 0.4rem; padding: 0.8rem; }
-      .stat-value { font-size: 16px; }
-      .stat-label { font-size: 10px; }
-      .driver-jobs-panel { max-height: 45%; }
-      .job-actions { grid-template-columns: 1fr; }
-      .btn-complete { grid-column: 1; }
+    .offline-pill {
+      position: fixed; top: .6rem; left: 50%; transform: translateX(-50%); background: #dc2626; color: #fff;
+      padding: .35rem .9rem; border-radius: 999px; font-size: 11.5px; font-weight: 700; z-index: 998;
     }
   </style>
 </head>
 <body>
-  <div class="driver-container">
 
-    <!-- ── PIN Login Screen ── -->
-    <div id="pinLoginOverlay" class="pin-login-overlay">
-      <div class="pin-login-box">
-        <div class="pin-login-header">
-          <div class="pin-driver-icon">👤</div>
-          <h1>Driver Login</h1>
-          <p>Enter your 4-digit PIN</p>
-        </div>
-
-        <div class="pin-input-wrap">
-          <label class="pin-input-label">PIN Code</label>
-          <input type="password" id="pinInput" class="pin-input-field" placeholder="••••" maxlength="4" />
-        </div>
-
-        <div class="pin-keypad">
-          <button class="pin-key" data-key="1">1</button>
-          <button class="pin-key" data-key="2">2</button>
-          <button class="pin-key" data-key="3">3</button>
-          <button class="pin-key" data-key="4">4</button>
-          <button class="pin-key" data-key="5">5</button>
-          <button class="pin-key" data-key="6">6</button>
-          <button class="pin-key" data-key="7">7</button>
-          <button class="pin-key" data-key="8">8</button>
-          <button class="pin-key" data-key="9">9</button>
-          <button class="pin-key clear">Clear</button>
-          <button class="pin-key" data-key="0">0</button>
-          <button class="pin-key delete">← Del</button>
-        </div>
-
-        <button id="pinSubmitBtn" class="pin-submit-btn" disabled>Login</button>
-        <div id="pinError" class="pin-error"></div>
+  <!-- ── Login ── -->
+  <div id="loginWrap" class="login-wrap">
+    <div class="login-box">
+      <div class="login-brand">
+        <img src="/brand/idealone-mark.png" alt="" />
+        <h1>IDEALONE Driver</h1>
+        <p>Sign in to see your deliveries</p>
       </div>
-    </div>
-
-    <!-- ── Driver Dashboard ── -->
-    <div id="driverDashboard" class="driver-dashboard hidden">
-
-      <!-- Header -->
-      <div class="driver-header">
-        <div>
-          <div class="driver-name" id="driverHeaderName">—</div>
-          <div class="driver-time" id="driverHeaderTime">—</div>
-        </div>
-        <div style="display: flex; gap: 0.8rem; align-items: center;">
-          <div class="driver-badge" id="driverStatusBadge">Ready</div>
-          <button class="driver-logout-btn" id="logoutBtn">Logout</button>
-        </div>
+      <label class="field-label">Driver ID</label>
+      <input type="text" id="driverIdInput" class="id-input" placeholder="e.g. DRV-1001" autocomplete="username" autocapitalize="none" />
+      <label class="field-label">PIN</label>
+      <div class="pin-display" id="pinDisplay">••••</div>
+      <div class="pin-keypad">
+        <button class="pin-key" data-k="1">1</button>
+        <button class="pin-key" data-k="2">2</button>
+        <button class="pin-key" data-k="3">3</button>
+        <button class="pin-key" data-k="4">4</button>
+        <button class="pin-key" data-k="5">5</button>
+        <button class="pin-key" data-k="6">6</button>
+        <button class="pin-key" data-k="7">7</button>
+        <button class="pin-key" data-k="8">8</button>
+        <button class="pin-key" data-k="9">9</button>
+        <button class="pin-key wide" id="pinClearBtn">Clear</button>
+        <button class="pin-key" data-k="0">0</button>
+        <button class="pin-key wide" id="pinDelBtn">&#9003;</button>
       </div>
-
-      <!-- Stats Bar -->
-      <div class="driver-stats-bar">
-        <div class="stat-card">
-          <div class="stat-value" id="statJobsRemaining">—</div>
-          <div class="stat-label">Remaining</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statJobsCompleted">—</div>
-          <div class="stat-label">Completed</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statDistance">—</div>
-          <div class="stat-label">km</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statTime">—</div>
-          <div class="stat-label">hrs</div>
-        </div>
-      </div>
-
-      <!-- Main Content -->
-      <div class="driver-main">
-
-        <!-- Map -->
-        <div class="driver-map-wrap">
-          <div id="driverMap"></div>
-          <div class="map-controls">
-            <button class="map-btn" id="centerMapBtn" title="Center on my location">📍</button>
-            <button class="map-btn" id="toggleMapBtn" title="Toggle map/list">🗺️</button>
-          </div>
-          <div class="current-location-indicator">
-            <span id="currentLocationText">🔴 Locating...</span>
-          </div>
-        </div>
-
-        <!-- Jobs List Panel -->
-        <div class="driver-jobs-panel">
-          <div class="jobs-header">
-            <span>Today's Deliveries</span>
-            <span id="jobsCount">0</span>
-          </div>
-          <div class="jobs-list" id="jobsList"></div>
-        </div>
-
-      </div>
-    </div>
-
-  </div>
-
-  <!-- Job Detail Modal -->
-  <div id="jobDetailModal" class="job-detail-modal hidden">
-    <div class="job-detail-sheet">
-      <div class="job-detail-header">
-        <div>
-          <div class="job-detail-title" id="detailJobTitle">—</div>
-          <div style="font-size: 12px; color: #64748b; margin-top: 0.3rem;" id="detailJobRef">—</div>
-        </div>
-        <button class="job-detail-close" id="closeDetailBtn">✕</button>
-      </div>
-
-      <!-- Customer Info -->
-      <div class="job-detail-section">
-        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.8rem; color: #0ea5e9;">📍 Delivery Address</div>
-        <div class="detail-row">
-          <span class="detail-label">Customer</span>
-          <span class="detail-value" id="detailCustomer">—</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Address</span>
-          <span class="detail-value" id="detailAddress">—</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Postal Code</span>
-          <span class="detail-value" id="detailPostal">—</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Phone</span>
-          <span class="detail-value" id="detailPhone">—</span>
-        </div>
-      </div>
-
-      <!-- Items -->
-      <div class="job-detail-section">
-        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.8rem; color: #22c55e;">📦 Items to Deliver</div>
-        <div class="detail-items-list" id="detailItemsList"></div>
-      </div>
-
-      <!-- Navigation -->
-      <div class="job-detail-section">
-        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.8rem; color: #a855f7;">🧭 Navigation</div>
-        <div class="detail-row">
-          <span class="detail-label">Distance</span>
-          <span class="detail-value" id="detailDistance">—</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">ETA</span>
-          <span class="detail-value" id="detailETA">—</span>
-        </div>
-        <button style="width: 100%; padding: 0.6rem; margin-top: 0.8rem; background: #a855f7; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 13px;">
-          📱 Open Navigation
-        </button>
-      </div>
-
-      <!-- Actions -->
-      <div class="job-actions">
-        <button class="action-btn btn-start" id="startDeliveryBtn">▶ Start</button>
-        <button class="action-btn btn-failed" id="markFailedBtn">✗ Failed</button>
-        <button class="action-btn btn-complete" id="markCompleteBtn">✓ Complete</button>
-      </div>
+      <button id="loginBtn" class="login-submit" disabled>Sign In</button>
+      <div id="loginError" class="login-error"></div>
     </div>
   </div>
 
-  <!-- Offline Badge -->
-  <div id="offlineBadge" class="offline-badge hidden">📡 Offline Mode</div>
+  <!-- ── App shell ── -->
+  <div id="app" class="app">
+    <div class="hdr">
+      <div>
+        <div class="hdr-name" id="hdrName">—</div>
+        <div class="hdr-sub" id="hdrSub">—</div>
+      </div>
+      <button class="hdr-logout" id="logoutBtn">Logout</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="statRemaining">—</b><span>To Do</span></div>
+      <div class="stat"><b id="statOnRoad">—</b><span>On Road</span></div>
+      <div class="stat"><b id="statDone">—</b><span>Done Today</span></div>
+    </div>
+    <div class="refresh-row">
+      <span id="lastRefreshed">—</span>
+      <button class="refresh-btn" id="refreshBtn">&#8635; Refresh</button>
+    </div>
+    <div class="list" id="jobsList"></div>
+  </div>
+
+  <!-- ── Job detail sheet ── -->
+  <div id="sheetOverlay" class="sheet-overlay hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div>
+          <div class="sheet-title" id="sheetClient">—</div>
+          <div style="font-size:11.5px;color:#94a3b8;margin-top:.2rem" id="sheetId">—</div>
+        </div>
+        <button class="sheet-close" id="sheetCloseBtn">&#10005;</button>
+      </div>
+      <div class="sheet-section">
+        <div class="sheet-row"><span>Address</span><span id="sheetAddress">—</span></div>
+        <div class="sheet-row"><span>Postal</span><span id="sheetZip">—</span></div>
+        <div class="sheet-row"><span>PO / Ref</span><span id="sheetRef">—</span></div>
+        <div class="sheet-row"><span>Cartons</span><span id="sheetPackages">—</span></div>
+        <a href="#" target="_blank" rel="noopener" class="link-btn link-nav" id="sheetNavLink">&#128663; Navigate</a>
+        <a href="#" class="link-btn link-call hidden" id="sheetCallLink">&#128222; Call Consignee</a>
+      </div>
+      <div class="sheet-section hidden" id="sheetNotesWrap">
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:.3rem;color:#475569">Notes</div>
+        <div id="sheetNotes" style="font-size:13px"></div>
+      </div>
+      <button class="action-btn action-pickup hidden" id="pickupBtn">&#128230; Picked Up — On the Road</button>
+      <button class="action-btn action-deliver hidden" id="deliverBtn">&#10003; Mark Delivered</button>
+      <div class="sheet-done hidden" id="sheetDoneNote"></div>
+    </div>
+  </div>
+
+  <div id="offlinePill" class="offline-pill hidden">&#128246; Offline — will retry</div>
 
   <script src="driver.js" defer></script>
 </body>
