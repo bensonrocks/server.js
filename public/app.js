@@ -10300,6 +10300,17 @@
   // Android/Chrome exposes beforeinstallprompt, so there we show a real
   // Install button. Hidden once running standalone or after dismissal
   // (per-device, localStorage — allowed under the device-local rule).
+  // Deployed-build stamp in the sidebar — /api/version is public (no data),
+  // so this runs even before login and never trips the 401 force-reload.
+  (function initBuildStamp() {
+    const el = document.getElementById('buildStamp');
+    if (!el) return;
+    fetch('/api/version').then(r => r.json()).then(v => {
+      const boot = v.bootedAt ? new Date(v.bootedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+      el.textContent = `build ${v.commit || 'dev'}${boot ? ` · up since ${boot}` : ''}`;
+    }).catch(() => {});
+  })();
+
   (function initInstallHint() {
     const bar = document.getElementById('installHintBar');
     if (!bar) return;

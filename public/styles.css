@@ -186,6 +186,8 @@ body {
 }
 .sb-admin-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
 .sb-admin-btn.hidden { display: none !important; }
+/* Deployed-build stamp — answers "is the new version live?" from the screen */
+.sb-build-stamp { margin-top: .45rem; font-size: 10px; letter-spacing: .5px; color: rgba(255,255,255,.35); text-align: center; font-family: Consolas, monospace; }
 
 /* ── Content Pane ────────────────────────────────────────────── */
 .content-pane {

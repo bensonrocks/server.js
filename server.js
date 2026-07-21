@@ -1654,9 +1654,17 @@ function globalOrdersWithState() {
   // Orders currently inside a live (not done/cancelled) wave — the Orders
   // list shows the wave number as a pill and lets the packer reopen it
   const activeWaveByOrder = new Map();
+  // Fallback for COMPLETED waves: state.wave_id is stamped at completion
+  // time, so waves completed before that stamping existed left no mark on
+  // their orders — derive membership from the wave records themselves so
+  // the "Needs Closing" pill also appears retroactively. Newest wave wins.
+  const doneWaveByOrder = new Map();
   for (const w of db.waves || []) {
-    if (w.status === 'done' || w.status === 'cancelled') continue;
-    for (const on of w.orderNumbers || []) activeWaveByOrder.set(on, w);
+    if (w.status === 'cancelled') continue;
+    const target = w.status === 'done' ? doneWaveByOrder : activeWaveByOrder;
+    for (const on of w.orderNumbers || []) {
+      if (!target.has(on)) target.set(on, w); // db.waves is newest-first
+    }
   }
   const seen        = new Set();
   const out         = [];
@@ -1697,8 +1705,8 @@ function globalOrdersWithState() {
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
-        wave_id:           state.wave_id           || null,
-        wave_cancel_pending: !!(state.wave_id && wavesById.get(state.wave_id)?.pending_cancellation),
+        wave_id:           state.wave_id || doneWaveByOrder.get(ord.order_number)?.id || null,
+        wave_cancel_pending: !!((wavesById.get(state.wave_id) || doneWaveByOrder.get(ord.order_number))?.pending_cancellation),
         active_wave_id:     activeWaveByOrder.get(ord.order_number)?.id     || null,
         active_wave_status: activeWaveByOrder.get(ord.order_number)?.status || null,
         cartons:           state.cartons           || [],
@@ -3340,7 +3348,20 @@ const AUTH_PUBLIC = new Set([
   '/api/public/config',
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
+  '/api/version',         // deploy verification — commit + boot time, no data
 ]);
+
+// Which build is this server actually running? Railway injects the deployed
+// commit SHA; boot time tells whether a restart/redeploy has happened.
+// Shown as a small stamp in the sidebar so "is the new version live?" is
+// answerable by reading the screen instead of digging through deploy logs.
+const SERVER_BOOTED_AT = new Date().toISOString();
+app.get('/api/version', (req, res) => {
+  res.json({
+    commit: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_COMMIT || '').slice(0, 7),
+    bootedAt: SERVER_BOOTED_AT,
+  });
+});
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
