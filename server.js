@@ -2263,14 +2263,21 @@ function buildLabelMatchIndex() {
   const byWaybill = new Map();
   const scanKeys  = [];
   for (const o of allOrders) {
+    // issue_no carries the GI number for XLSX/CSV uploads that store it
+    // separately from order_number (see the Scan-to-find-order section in
+    // CLAUDE.md) — a label PDF printing the GI number must resolve here the
+    // same way the waybill-lookup bar already does, or these orders can
+    // never match a label no matter how many times the file is re-uploaded.
     const keys = [
       [normStr(o.order_number),   'order_number'],
+      [normStr(o.issue_no),       'issue_no'],
       [normStr(o.waybill_number), 'waybill_number'],
       [normStr(o.po_number),      'po_number'],
     ];
     if (keys[0][0]) byOrderNo.set(keys[0][0], o.order_number);
-    if (keys[1][0]) byWaybill.set(keys[1][0], o.order_number);
+    if (keys[1][0]) byOrderNo.set(keys[1][0], o.order_number);
     if (keys[2][0]) byWaybill.set(keys[2][0], o.order_number);
+    if (keys[3][0]) byWaybill.set(keys[3][0], o.order_number);
     for (const [key, field] of keys) {
       if (!key) continue;
       const minLen = /[A-Z]/.test(key) ? 8 : 10;

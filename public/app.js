@@ -10005,6 +10005,7 @@
         dup       ? `<span class="lri-badge lri-dup">${dup} duplicate</span>` : '',
         errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
         unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
+        matched   ? `<button class="btn-secondary btn-sm" id="lriRematchAllBtn" style="margin-left:.5rem">&#8635; Rematch All</button>` : '',
       ].filter(Boolean).join('');
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
@@ -10017,6 +10018,22 @@
           await refreshOrders();
           openLabelReview(importId);
         } catch (err) { alert(err.message); }
+      });
+      // Re-evaluates EVERY page against the current order list, including
+      // ones already marked matched — needed after a matching-rule fix
+      // (e.g. a field the index didn't used to check) so stale results from
+      // before the fix get corrected instead of being skipped.
+      document.getElementById('lriRematchAllBtn')?.addEventListener('click', async () => {
+        if (!confirm('Re-check every page in this import against the current order list, including pages already marked matched? Any that now resolve differently will be updated.')) return;
+        const btn = document.getElementById('lriRematchAllBtn');
+        btn.disabled = true; btn.textContent = 'Rematching…';
+        try {
+          const r = await fetch(`/api/label-imports/${importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Rematch failed');
+          await refreshOrders();
+          openLabelReview(importId);
+        } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = '↻ Rematch All'; }
       });
 
       const token = localStorage.getItem('wms_token') || '';

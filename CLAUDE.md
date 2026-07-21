@@ -121,6 +121,28 @@ scannable: shown as a `GI: <value>` pill on the Orders-list row (next to the
 included in the Completed-tab free-text search (`ordersView === 'completed'`
 filter) alongside order_number/waybill_number/pick_ticket/po_number.
 
+THE SAME GAP EXISTED IN LABEL MATCHING — `buildLabelMatchIndex()`
+(server.js, feeds `/api/label-imports` and the rematch endpoint) only
+indexed `order_number`/`waybill_number`/`po_number` when matching an
+uploaded carrier-label PDF's pages to orders. For BETIME orders where the
+GI number lives in `issue_no` (the XLSX/CSV path above) rather than
+`order_number`, a label PDF printing only the GI number had NO field to
+match against — those orders' import pages showed "matched" in the import
+LIST summary (100% of that file's pages matched *something*) while the
+specific order the user was looking for never got `has_order_label = true`,
+because the page actually matched a different order or nothing at all.
+Fixed by adding `issue_no` to `buildLabelMatchIndex()`'s keys exactly like
+`order_number` (own entry in `byOrderNo` plus a `scanKeys` fallback
+candidate) — verified directly: a label containing only "GI-128685" (no
+`order_number` anywhere on it) now resolves to the correct order via
+`issue_no`, with existing waybill-based matching unaffected. Since this
+only fixes matching for uploads/rematches going FORWARD, a `↻ Rematch All`
+button was added next to `⚡ Auto Match Unmatched` on the Labels import
+review screen (`POST /api/label-imports/:id/rematch {all:true}` — the
+server already supported the flag, only the client button was missing) so
+already-processed imports can be re-evaluated against the fixed index
+without re-uploading the PDF.
+
 ## Day-bucketing is SGT everywhere; Orders tab never hides unfinished work
 
 Two scoping rules that keep the sidebar badge, the Orders stat tiles, and
