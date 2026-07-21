@@ -280,6 +280,39 @@ not `gino` — used by a format that has its own separate order-number
 column and intentionally keeps the GI as a secondary/scan-only field; see
 the Scan-to-find-order section above).
 
+## Batch deletion safety + label-import deletion (server.js `DELETE /api/master/batch/:batchId`, `DELETE /api/label-imports/:id`)
+
+Found while tracking down a stale-duplicate-order label-matching bug: `DELETE
+/api/master/batch/:batchId` unconditionally spliced the ENTIRE batch with no
+check on any order's status — unlike every other destructive path in this
+app (per-order deletion request, wave-cancellation reversal), which all
+explicitly refuse to touch a `done` order. A batch containing even one
+completed order could be wiped outright with no warning. Fixed: before
+splicing, the endpoint now checks every order in the batch via
+`orderStates[order_number].status === 'done'`; if any are found it refuses
+with 403 and names the specific done order number(s), pointing at the
+per-order deletion-request workflow instead. Only batches where every order
+is still pending/processing can be deleted this way — the same rule the
+per-order path already enforced, now enforced at the batch level too.
+
+**Label-PDF imports (`db.labelImports[]`) are a separate, ADDITIVE record**
+— they only carry a `db.orderLabels[orderNumber]` pointer to a matched page
+plus the stored page PDFs on disk; they never touch a batch, an order, or
+scan state. There was previously no way to delete an import at all (only a
+per-page "unmatch"), so a bad/duplicate label upload stuck around forever.
+`DELETE /api/label-imports/:id` (checkMaster-gated, same convention as batch
+delete) removes the import record, clears every `db.orderLabels` entry that
+pointed at it (so the "Label" chip disappears from whichever orders it was
+attached to), and deletes the import's directory from
+`DATA_DIR/label_imports/<id>/`. Deliberately has NO done-order check —
+unlike a batch delete, removing a label import can't lose any operational
+progress (scanned qty, cartons, completion state); it only detaches a
+printable shipping-label PDF, so it's safe regardless of the matched
+order's status. UI: a red "🗑 Delete" button next to "Review ›" on each
+label-import card in the Administrator upload-history list
+(`renderLogContent` in app.js), confirm()-gated, `logAudit`'d as
+`label_import_deleted`.
+
 ## Duplicate order numbers — locked vs overwritable vs confirmable (server.js /api/upload)
 
 Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the

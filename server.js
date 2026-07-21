@@ -2418,6 +2418,34 @@ app.get('/api/label-imports/:id', requireAuth, (req, res) => {
   res.json(imp);
 });
 
+// Deletes a whole label-PDF import: only removes the label attachment
+// references (db.orderLabels) and the stored page PDFs — never touches
+// batches, orders, or scan state, so it's safe regardless of order status.
+app.delete('/api/label-imports/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  try {
+    const db  = readDb();
+    const idx = (db.labelImports || []).findIndex(i => i.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Import not found' });
+    const victim = db.labelImports[idx];
+    if (!db.orderLabels) db.orderLabels = {};
+    for (const [orderNumber, ref] of Object.entries(db.orderLabels)) {
+      if (ref?.importId === id) delete db.orderLabels[orderNumber];
+    }
+    db.labelImports.splice(idx, 1);
+    writeDb(db);
+    logAudit('label_import_deleted', {
+      importId: id, filename: victim.filename || '', pageCount: victim.pageCount || 0,
+      by: req.userId || 'master',
+    });
+    try { fs.rmSync(path.join(LABEL_IMPORT_DIR, id), { recursive: true, force: true }); } catch {}
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PDF served with token query-param support so browser iframes can authenticate
 app.get('/api/label-imports/:id/pages/:idx/pdf', requireAuthOrToken, (req, res) => {
   const { id, idx } = req.params;
@@ -7027,6 +7055,15 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
     const idx = db.batches.findIndex(b => b.id === batchId);
     if (idx === -1) return res.status(404).json({ error: 'Batch not found' });
     const victim = db.batches[idx];
+    const doneOrders = (victim.orders || [])
+      .filter(o => (victim.orderStates?.[o.order_number]?.status) === 'done')
+      .map(o => o.order_number);
+    if (doneOrders.length > 0) {
+      return res.status(403).json({
+        error: `This batch has ${doneOrders.length} completed order(s) and cannot be deleted. Completed work is never overwritten or removed by a batch delete — use the per-order deletion request workflow for individual orders if needed.`,
+        doneOrders: doneOrders.slice(0, 500),
+      });
+    }
     db.batches.splice(idx, 1);
     writeDb(db);
     logAudit('batch_deleted', {

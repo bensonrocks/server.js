@@ -9470,6 +9470,7 @@
             </div>
             <div class="log-card-actions">
               <button class="btn-download log-review-labels" data-import-id="${esc(li.id)}">Review &rsaquo;</button>
+              <button class="btn-del-batch btn-del-labels" data-id="${esc(li.id)}" data-name="${esc(li.filename)}" title="Delete this label import">&#128465; Delete</button>
             </div>
           </div>`;
         }
@@ -9542,7 +9543,7 @@
         });
       });
 
-      listEl.querySelectorAll('.btn-del-batch').forEach(btn => {
+      listEl.querySelectorAll('.btn-del-batch:not(.btn-del-labels)').forEach(btn => {
         btn.addEventListener('click', async e => {
           e.stopPropagation();
           const batchId = btn.dataset.id, fname = btn.dataset.name;
@@ -9550,6 +9551,21 @@
           if (!confirm(`Confirm: permanently delete "${fname}"?`)) return;
           try {
             const r = await fetch(`/api/master/batch/${encodeURIComponent(batchId)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Delete failed');
+            await refreshOrders(); renderOrdersList();
+            await renderLogContent();
+          } catch (err) { alert(err.message); }
+        });
+      });
+
+      listEl.querySelectorAll('.btn-del-labels').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          e.stopPropagation();
+          const importId = btn.dataset.id, fname = btn.dataset.name;
+          if (!confirm(`Delete label import "${fname}"?\nThis removes the matched-label attachments from any orders (their order data is untouched). This cannot be undone.`)) return;
+          try {
+            const r = await fetch(`/api/label-imports/${encodeURIComponent(importId)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
             const d = await r.json();
             if (!r.ok) throw new Error(d.error || 'Delete failed');
             await refreshOrders(); renderOrdersList();
