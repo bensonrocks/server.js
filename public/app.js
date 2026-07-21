@@ -1854,7 +1854,7 @@
       const wavePendingChip = (ord.wave_id && !isDone)
         ? (ord.wave_cancel_pending
             ? `<span class="chip chip-wave-pending chip-wave-cancel-pending" title="Cancellation requested for wave ${esc(ord.wave_id)} — awaiting Master approval">&#9203; ${esc(ord.wave_id)} — Cancellation Requested</span>`
-            : `<span class="chip chip-wave-pending${canRequestWaveCancel ? ' chip-wave-pending-clickable' : ''}" ${canRequestWaveCancel ? `data-wave-cancel="${esc(ord.wave_id)}" data-wave-order-count="${(loadedOrders.filter(o => o.wave_id === ord.wave_id)).length}"` : ''} title="Wave ${esc(ord.wave_id)} put the pieces in — this order still needs to be opened, cartons verified, and Completed individually${canRequestWaveCancel ? '. Click to request cancelling the wave.' : ''}">&#127754; ${esc(ord.wave_id)} — Needs Closing</span>`)
+            : `<span class="chip chip-wave-pending${canRequestWaveCancel ? ' chip-wave-pending-clickable' : ''}" ${canRequestWaveCancel ? `data-wave-cancel="${esc(ord.wave_id)}" data-wave-order-count="${(loadedOrders.filter(o => o.wave_id === ord.wave_id)).length}"` : ''} title="This order's stock was floor-picked in wave ${esc(ord.wave_id)} — open it and scan its items from the picked pile to pack it, like a normal order${canRequestWaveCancel ? '. Click to request cancelling the wave.' : ''}">&#127754; ${esc(ord.wave_id)} — Scan to Pack</span>`)
         : '';
       // Order sits inside a LIVE wave (picking/sorting) — show the wave
       // number and let anyone click it to reopen the wave (where the
@@ -6036,14 +6036,12 @@
       }
       activeWave = d.wave;
       document.getElementById('wavePickOverlay').classList.remove('hidden');
-      if (d.wave.status === 'sorting') showWaveSortingPhase(d.allocationSummary);
-      else showWavePickingPhase();
+      showWavePickingPhase(); // sorting-as-a-screen no longer exists — sub-picking happens by scanning each order
     } catch (err) { alert('Wave load error: ' + err.message); }
   }
 
   function showWavePickingPhase() {
     document.getElementById('wavePickingPhase').classList.remove('hidden');
-    document.getElementById('waveSortingPhase').classList.add('hidden');
     document.getElementById('waveModalTitle').textContent = `Wave Pick — ${activeWave.id}`;
     document.getElementById('waveModalDesc').textContent =
       `${activeWave.orderNumbers.length} orders · print the pick list and walk the floor — every line already assumes a full pick.`;
@@ -6189,82 +6187,23 @@
     closeWavePickOverlay();
   });
 
+  // Closing the wave ends the consolidated floor pick. It writes NOTHING
+  // into the orders — sub-picking the pile down to order level is done by
+  // opening each order and scanning every piece, exactly like normal
+  // scanning. The pill on each order tracks which ones still need that.
   document.getElementById('waveFinishPickingBtn')?.addEventListener('click', async () => {
     if (!activeWave) return;
     const short = activeWave.pickList.filter(e => e.scannedQty < e.totalQty);
-    if (short.length && !confirm(`${short.length} line(s) are marked short of the full needed quantity. Continue to Sort with the picked quantities as entered?`)) return;
-    try {
-      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/finish-picking`, { method: 'POST', headers: hdrs() });
-      const d = await r.json();
-      if (!r.ok) { alert(d.error || 'Could not finish picking'); return; }
-      activeWave = d.wave;
-      showWaveSortingPhase(d.allocationSummary);
-    } catch (err) { alert('Error: ' + err.message); }
-  });
-
-  function showWaveSortingPhase(allocationSummary) {
-    document.getElementById('wavePickingPhase').classList.add('hidden');
-    document.getElementById('waveSortingPhase').classList.remove('hidden');
-    document.getElementById('waveModalDesc').textContent =
-      'Divide each scanned SKU back into the orders that need it. Adjust with +/- if a physical count differs.';
-    renderWaveSortPanels(allocationSummary);
-  }
-
-  function renderWaveSortPanels() {
-    const wrap = document.getElementById('waveSortPanels');
-    wrap.innerHTML = activeWave.pickList.map(e => {
-      const allocatedTotal = e.lines.reduce((s, l) => s + l.allocated, 0);
-      const unalloc = e.scannedQty - allocatedTotal;
-      const rows = e.lines.map(l => `
-        <div class="wave-sort-order-row">
-          <span>${esc(l.order_number)} <span style="color:var(--text-light,#64748b)">(needs ${l.needed})</span></span>
-          <div class="wave-alloc-controls">
-            <button data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}" data-order="${esc(l.order_number)}" data-delta="-1">&minus;</button>
-            <span class="wave-alloc-val">${l.allocated}</span>
-            <button data-sku="${esc(e.sku)}" data-loc="${esc(e.location || '')}" data-order="${esc(l.order_number)}" data-delta="1">+</button>
-          </div>
-        </div>`).join('');
-      return `<div class="wave-sort-panel">
-        <div class="wave-sort-panel-title">
-          <span>${e.location ? `<code>${esc(e.location)}</code> &middot; ` : ''}<code>${esc(e.sku)}</code> ${esc(e.description || '')} — scanned ${e.scannedQty}</span>
-          ${unalloc > 0 ? `<span class="wave-sort-unalloc">${unalloc} unallocated</span>` : ''}
-        </div>
-        ${rows}
-      </div>`;
-    }).join('');
-    wrap.querySelectorAll('.wave-alloc-controls button').forEach(btn =>
-      btn.addEventListener('click', () => waveAdjustAllocation(btn.dataset.sku, btn.dataset.loc, btn.dataset.order, parseInt(btn.dataset.delta, 10)))
-    );
-  }
-
-  async function waveAdjustAllocation(sku, location, orderNumber, delta) {
-    const entry = activeWave.pickList.find(e => e.sku === sku && (e.location || '') === (location || ''));
-    const line  = entry?.lines.find(l => l.order_number === orderNumber);
-    if (!line) return;
-    const newQty = Math.max(0, line.allocated + delta);
-    try {
-      const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/allocate`, {
-        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, orderNumber, qty: newQty, location: location || undefined }),
-      });
-      const d = await r.json();
-      if (!r.ok) { alert(d.error || 'Could not adjust allocation'); return; }
-      activeWave = d.wave;
-      renderWaveSortPanels();
-    } catch (err) { alert('Error: ' + err.message); }
-  }
-
-  document.getElementById('waveBackToPickingBtn')?.addEventListener('click', () => showWavePickingPhase());
-
-  document.getElementById('waveCompleteBtn')?.addEventListener('click', async () => {
-    if (!activeWave) return;
-    if (!confirm(`Complete wave ${activeWave.id}? Allocated quantities will be applied to each order's scanned totals. You'll still need to open each order to verify cartons and hit Complete.`)) return;
+    if (short.length && !confirm(`${short.length} line(s) are marked short of the full needed quantity. Close the wave anyway?`)) return;
+    if (!confirm(`Close wave ${activeWave.id}?\n\nNext step: scan each order's GI/Waybill to open it, then scan its items from the picked pile — every order is counted piece by piece, like normal scanning.`)) return;
     try {
       const r = await fetch(`/api/waves/${encodeURIComponent(activeWave.id)}/complete`, { method: 'POST', headers: hdrs() });
       const d = await r.json();
-      if (!r.ok) { alert(d.error || 'Could not complete wave'); return; }
-      const waveId = activeWave.id;
+      if (!r.ok) { alert(d.error || 'Could not close wave'); return; }
+      const waveId  = activeWave.id;
+      const nOrders = (activeWave.orderNumbers || []).length;
       closeWavePickOverlay();
-      alert(`Wave ${waveId} applied to ${d.allocationSummary.length} order(s).\n\nNow scan each order's GI/Waybill barcode in the bar above the list to open and complete it — or find it in the list below.`);
+      alert(`Wave ${waveId} closed — consolidated pick done.\n\nNow sub-pick to order level: scan each of the ${nOrders} order's GI/Waybill barcode in the bar above the list to open it, then scan its items into the box. Each order shows a "${waveId}" pill until it's completed.`);
     } catch (err) { alert('Error: ' + err.message); }
   });
 

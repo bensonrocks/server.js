@@ -1677,19 +1677,27 @@ whenever the Active view has at least one selectable order, growing to show
   applyFn)` — it never touches any host object directly, only calls
   `applyFn(order_number, sku, qty)` per allocated line, so wiring it to a new
   host's order store is a one-function job.
-- **WAVE STATE IS ISOLATED UNTIL COMPLETE** — `db.waves[]` (own `WV-YYMMDD-NN`
-  serial, `nextWaveCode()`, mirrors `nextIdealscanCode()`/`nextInboundCode()`)
-  tracks its own `pickList`/`scannedQty`/`allocated` totals completely
-  separately from the real per-order `orderStates`. Only `POST
-  /api/waves/:id/complete` writes allocated quantities into each order's
-  actual `scanned` totals (as if scanned individually — via `addToActiveCarton`
-  + `appendScanLog({kind:'wave_pick', waveId})`, same primitives every other
-  scan path uses) and flips `pending` → `processing`. It does **NOT**
-  auto-complete orders — the packer still opens each one through the existing
-  normal scan overlay to verify cartons and hit Complete, reusing all
-  existing carton/mismatch/waybill logic with zero duplication. This also
-  makes cancelling a wave trivial (`POST /api/waves/:id/cancel`) — nothing
-  was ever written to a real order, so there's nothing to roll back.
+- **CLOSING A WAVE WRITES NOTHING INTO THE ORDERS** (corrected per user —
+  the previous design auto-filled each order's `scanned` totals at wave
+  completion, which was WRONG). The wave covers ONLY the consolidated floor
+  pick: each (location, SKU) visited once for the wave's total. Sub-picking
+  the pile back down to order level IS the normal per-order scan flow —
+  the packer opens each order (scan its GI/waybill) and scans every piece
+  from zero, so per-order verification is a real physical count, not a
+  pre-filled number. `POST /api/waves/:id/complete` (accepted from
+  `picking` or `sorting` status) only stamps `state.wave_id` on each
+  order (skipping `done` ones), sets `wave.appliedToOrders = false`, and
+  marks the wave `done`. `db.waves[]` (own `WV-YYMMDD-NN` serial,
+  `nextWaveCode()`) tracks its `pickList` totals completely separately
+  from `orderStates`. There is no on-screen sorting/allocation phase
+  anymore — the client's `#waveSortingPhase` UI was removed; the
+  `finish-picking`/`allocate` endpoints and the lib's allocation functions
+  remain for API compatibility and portability but the shipped UI closes
+  the wave straight from the picking screen ("✓ Close Wave — Start Order
+  Scanning"). LEGACY: waves completed before this redesign DID write
+  quantities (`appliedToOrders` absent = true) — the cancellation-approval
+  reversal still subtracts for those, but for new-style waves approval
+  just clears each order's `wave_id` pill (nothing to roll back).
 - **FULL PICK BY DEFAULT, AUTO-ALLOCATE, then manual override**: `POST
   /api/waves` sets every line's `scannedQty = totalQty` right after
   `wavePick.createWave(...)` (before the response is even sent) and calls
@@ -1743,7 +1751,8 @@ whenever the Active view has at least one selectable order, growing to show
   left a live wave with NO visible way back to it or to cancel it. Both
   wave pills (this one and the completed one below) include the WV- number
   in their visible text, not just the tooltip.
-- **"WAVE PICKED — NEEDS CLOSING" PILL** — completing a wave stamps
+- **"WAVE PICKED — SCAN TO PACK" PILL** (renamed from "Needs Closing" with
+  the sub-picking redesign; the mechanics below are unchanged) — closing a wave stamps
   `state.wave_id = wave.id` on every affected order's state (in the same
   `/api/waves/:id/complete` callback that writes `scanned`), exposed as
   `wave_id` on every order object from `globalOrdersWithState()` (the

@@ -2362,13 +2362,15 @@
     </div>
   </div>
 
-  <!-- Wave Pick Overlay — "consolidated pick, then sort" -->
+  <!-- Wave Pick Overlay — consolidated floor pick ONLY. Closing the wave
+       writes NOTHING into the orders: sub-picking the pile down to order
+       level is done by scanning each order individually (normal scan flow). -->
   <div id="wavePickOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:760px">
       <div class="modal-title" id="waveModalTitle">Wave Pick</div>
       <p class="modal-desc" id="waveModalDesc"></p>
 
-      <!-- Phase 1: consolidated pick list — paper-driven, not scan-driven. Every
+      <!-- Consolidated pick list — paper-driven, not scan-driven. Every
            line defaults to its full needed qty; a packer takes the printed list
            onto the floor and only edits a line here if it came up short. -->
       <div id="wavePickingPhase">
@@ -2393,16 +2395,7 @@
         </div>
         <div class="modal-actions" style="margin-top:1rem">
           <button class="btn-secondary" id="waveCancelBtn">Cancel Wave</button>
-          <button class="btn-primary" id="waveFinishPickingBtn">Finish Picking → Sort</button>
-        </div>
-      </div>
-
-      <!-- Phase 2: sort / allocate -->
-      <div id="waveSortingPhase" class="hidden">
-        <div id="waveSortPanels"></div>
-        <div class="modal-actions" style="margin-top:1rem">
-          <button class="btn-secondary" id="waveBackToPickingBtn">&larr; Back to Picking</button>
-          <button class="btn-primary" id="waveCompleteBtn">&#10003; Complete Wave</button>
+          <button class="btn-primary" id="waveFinishPickingBtn">&#10003; Close Wave &mdash; Start Order Scanning</button>
         </div>
       </div>
     </div>

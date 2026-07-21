@@ -6199,28 +6199,29 @@ app.post('/api/waves/:id/complete', (req, res) => {
   const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
   if (wave.status === 'done') return res.status(409).json({ error: 'Wave already completed' });
-  const applied = wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty, location) => {
+  // CLOSING A WAVE WRITES NOTHING INTO THE ORDERS. The wave only covers the
+  // consolidated floor pick (each location+SKU visited once for the whole
+  // wave's total). Sub-picking the pile back down to order level is done by
+  // scanning each order individually — the normal scan flow, counting every
+  // piece from zero — so per-order verification is a real physical check,
+  // not a pre-filled number. The only mark left on each order is
+  // state.wave_id, which drives the "Wave Picked — Scan to Pack" pill.
+  for (const orderNumber of wave.orderNumbers || []) {
     const batch = findBatchForOrder(db, orderNumber);
-    if (!batch) return;
+    if (!batch) continue;
     if (!batch.orderStates) batch.orderStates = {};
     const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
-    state.scanned[sku] = (state.scanned[sku] || 0) + qty;
-    if (state.status === 'pending') state.status = 'processing';
-    // Tags this order as wave-fulfilled — surfaced as a pill on the Orders
-    // list telling whoever's working the floor that the pieces are in, but
-    // THIS specific order still needs to be individually opened, its
-    // cartons verified, and Completed — a wave never does that part.
+    if (state.status === 'done') continue; // never touch a completed order
     state.wave_id = wave.id;
-    addToActiveCarton(state, sku, qty);
-    appendScanLog(state, { kind: 'wave_pick', sku, qty, location: location || '', waveId: wave.id, by: req.userId || '' });
     batch.orderStates[orderNumber] = state;
     journalOrderState(orderNumber, state);
-  });
+  }
   wave.status = 'done';
   wave.completedAt = new Date().toISOString();
+  wave.appliedToOrders = false; // waves closed before this redesign wrote real quantities (no flag = true)
   writeDb(db);
-  logAudit('wave_completed', { waveId: wave.id, orders: wave.orderNumbers, linesApplied: applied, by: req.userId || '' });
-  res.json({ ok: true, wave, allocationSummary: wavePick.allocationSummary(wave) });
+  logAudit('wave_completed', { waveId: wave.id, orders: wave.orderNumbers, by: req.userId || '' });
+  res.json({ ok: true, wave });
 });
 
 app.post('/api/waves/:id/cancel', (req, res) => {
@@ -6299,7 +6300,20 @@ app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
   // Reverses exactly what this wave applied — an order already Completed in
   // the meantime is SKIPPED (never touch a done order's record, same rule
   // deletion follows) rather than corrupting an already-printed slip.
+  // Waves closed AFTER the sub-picking redesign (appliedToOrders === false)
+  // never wrote quantities into orders, so there is nothing to subtract —
+  // approval just clears the wave_id pill from each order. Older waves
+  // (no flag) DID write quantities and still get the full reversal.
   const reversedOrders = new Set(), skippedDone = new Set();
+  if (wave.appliedToOrders === false) {
+    for (const orderNumber of wave.orderNumbers || []) {
+      const batch = findBatchForOrder(db, orderNumber);
+      const state = batch && (batch.orderStates || {})[orderNumber];
+      if (!state) continue;
+      if (state.status === 'done') { skippedDone.add(orderNumber); continue; }
+      if (state.wave_id === wave.id) { delete state.wave_id; journalOrderState(orderNumber, state); reversedOrders.add(orderNumber); }
+    }
+  } else {
   wavePick.applyWaveToOrderStates(wave, (orderNumber, sku, qty, location) => {
     const batch = findBatchForOrder(db, orderNumber);
     if (!batch) return;
@@ -6324,6 +6338,7 @@ app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
     if (!state) continue;
     const totalScanned = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
     if (state.status === 'processing' && totalScanned === 0) state.status = 'pending';
+  }
   }
   wave.status      = 'cancelled';
   wave.cancelledAt = new Date().toISOString();
