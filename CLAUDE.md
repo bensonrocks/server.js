@@ -801,6 +801,31 @@ install prompt — install = Share → Add to Home Screen, manually. So
   (`is_install_hint_dismissed`, localStorage — device-local by design).
 - iPadOS pretends to be Macintosh — detected via `maxTouchPoints > 1`.
 
+### The Driver App is its OWN installable app, not a page inside this one
+
+`/driver` used to `<link rel="manifest" href="/manifest.json">` — the SAME
+manifest the office app uses, whose `start_url`/`scope` are both `/`. A
+driver "installing" it from their phone would have gotten the OFFICE app's
+name/icon on their home screen, and tapping it would have opened the
+office login, not their own — the install would have silently pointed at
+the wrong app.
+
+Fixed with a dedicated `public/driver-manifest.json` (`name: "IDEALONE
+Driver"`, `start_url`/`scope: "/driver"`), which `driver.html` links to
+instead. `driver.html` also now registers the same no-op-but-installable
+`/sw.js` the office app uses (a registered service worker is one of the
+PWA installability criteria Android/Chrome checks before firing
+`beforeinstallprompt` — `driver.html` never registered any SW at all
+before this, so on Android the install button may never have appeared).
+`driver.js` gets its own copy of the install-hint bar logic
+(`initInstallHint`, mirroring app.js's implementation), with its own
+dismissal key (`driver_install_hint_dismissed`) so a driver dismissing
+this hint doesn't affect the office app's hint on a shared device, and
+vice versa. Verified with real Playwright + Chromium (not just code
+review): a spoofed iOS user agent produces the correct "tap Share, then
+Add to Home Screen" text; a synthetic `beforeinstallprompt` event produces
+a real Install button that calls `e.prompt()` and hides the bar on click.
+
 ## Per-user feature toggles (Administrator → Users → ⚙ Features)
 
 `user.features` = `{upload, orders, inbound, transport, labels, reports}`

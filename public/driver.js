@@ -312,6 +312,53 @@
   window.addEventListener('offline', updateOnlineState);
   updateOnlineState();
 
+  // ── Install-app hint ─────────────────────────────────────────────────────
+  // Same reasoning as the office app's installHintBar: iOS never fires an
+  // install prompt (Share -> Add to Home Screen is the only path, so it's
+  // spelled out), Android/desktop Chrome exposes a real one. Own dismissal
+  // key — a driver dismissing this shouldn't affect the office app's hint
+  // on a shared device, and vice versa. driver-manifest.json's start_url
+  // is /driver, so an installed icon opens straight to this login screen,
+  // never the office app.
+  (function initInstallHint() {
+    const bar = $('installHintBar');
+    if (!bar) return;
+    const txt = $('installHintText'), actionBtn = $('installHintAction'), closeBtn = $('installHintClose');
+    const DISMISS_KEY = 'driver_install_hint_dismissed';
+
+    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+    if (isStandalone) return;
+    try { if (localStorage.getItem(DISMISS_KEY)) return; } catch {}
+
+    closeBtn.addEventListener('click', () => {
+      bar.classList.add('hidden');
+      try { localStorage.setItem(DISMISS_KEY, '1'); } catch {}
+    });
+
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      const inSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+      txt.innerHTML = inSafari
+        ? '📲 Install this app: tap <b>Share</b>, then <b>&ldquo;Add to Home Screen&rdquo;</b>.'
+        : '📲 To install: open this page in <b>Safari</b>, tap <b>Share</b>, then <b>&ldquo;Add to Home Screen&rdquo;</b>.';
+      bar.classList.remove('hidden');
+      return;
+    }
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      txt.innerHTML = '📲 Install <b>IDEALONE Driver</b> on this phone.';
+      actionBtn.classList.remove('hidden');
+      bar.classList.remove('hidden');
+      actionBtn.addEventListener('click', () => {
+        bar.classList.add('hidden');
+        e.prompt();
+      }, { once: true });
+    });
+    window.addEventListener('appinstalled', () => bar.classList.add('hidden'));
+  })();
+
   // ── Boot ─────────────────────────────────────────────────────────────────
   renderPin();
   if (driverToken && driverInfo) showApp(); else showLogin();
