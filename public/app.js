@@ -4206,6 +4206,14 @@
         ${row('Route / Stop', job.routeNum ? `Route ${job.routeNum} · Stop #${job.stopSeq || '—'}` : '')}
         ${row('Notes', esc(job.notes || ''))}
         ${String(job.podRemarks || '').trim() ? row('POD remarks', `<span style="color:#ef4444">${esc(job.podRemarks)}</span>`) : ''}
+        ${job.podLocation ? row('POD location', `<a href="https://www.google.com/maps/search/?api=1&query=${job.podLocation.lat},${job.podLocation.lng}" target="_blank" rel="noopener">📍 View on map</a>`) : ''}
+        ${(job.podPhotos && job.podPhotos.length) ? `
+        <div style="margin-top:.6rem">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">📷 ePOD Photos (${job.podPhotos.length})</label>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem">
+            ${job.podPhotos.map(p => `<img src="/api/driver/jobs/${esc(job.id)}/photo/${esc(p.id)}?token=${encodeURIComponent(localStorage.getItem('wms_token') || '')}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;cursor:pointer" onclick="window.open(this.src,'_blank')" loading="lazy" />`).join('')}
+          </div>
+        </div>` : ''}
 
         <div style="margin-top:.9rem;padding:.7rem;background:#f0f9ff;border:1px solid #bfdbfe;border-radius:6px">
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">📍 Postal code</label>

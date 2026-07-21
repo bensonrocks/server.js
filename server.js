@@ -679,11 +679,13 @@ const SKU_DESC_FILE           = path.join(DATA_DIR, 'sku-descriptions.json');
 
 const LABEL_IMPORT_DIR   = path.join(DATA_DIR, 'label_imports');
 const INBOUND_PHOTO_DIR  = path.join(DATA_DIR, 'inbound_photos');
+const POD_PHOTO_DIR      = path.join(DATA_DIR, 'pod_photos');
 fs.mkdirSync(WMS_DIR,            { recursive: true });
 fs.mkdirSync(WAYBILL_DIR,        { recursive: true });
 fs.mkdirSync(LABEL_IMPORT_DIR,   { recursive: true });
 fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
 fs.mkdirSync(INBOUND_PHOTO_DIR,  { recursive: true });
+fs.mkdirSync(POD_PHOTO_DIR,      { recursive: true });
 
 // ── Global store (users + sessions) ───────────────────────────────────────────
 // NOT tenant-scoped — login has no tenant context yet at the point it runs,
@@ -5034,6 +5036,9 @@ app.get('/api/transport', (req, res) => {
     plannedAt: req.plannedAt || null,
     deliveredAt: req.deliveredAt || null,
     podRemarks: req.podRemarks || '',
+    podLocation: req.podLocation || null,
+    podPhotos: (req.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
+    driverAcceptedAt: req.driverAcceptedAt || null,
     pendingDeletion: !!req.pending_deletion
   }));
   res.json(transportRequests);
@@ -8562,16 +8567,47 @@ function driverStatusLabel(job) {
   if (job?.status === 'cancelled')  return { label: 'Cancelled', color: '#94a3b8' };
   return { label: 'Preplanned', color: '#0ea5e9' };
 }
+// db.drivers[] is TENANT-SCOPED data (unlike users[], which is global with
+// its own explicit tenant_id field) — a driver id alone doesn't say which
+// tenant it belongs to. Login has no tenant context yet, so it searches
+// every tenant's own db.drivers[] for a match. Session keys then ENCODE the
+// resolved tenant (driver:<tenantId>:<driverId>) so every later request can
+// re-establish the correct tenant directly from the token, with no repeated
+// search — see requireDriverAuthMiddleware below.
+function _findDriverAcrossTenants(idNorm) {
+  for (const t of tenantStore.listTenants()) {
+    const found = tenantContext.run(t.id, () => (readDb().drivers || []).find(d => String(d.id).trim().toLowerCase() === idNorm));
+    if (found) return { tenantId: t.id, driver: found };
+  }
+  return null;
+}
+
 // Local token check (the '/api/driver/' prefix is exempt from the global
 // requireAuth middleware — see AUTH_PUBLIC — so each handler checks itself).
-function requireDriverAuth(req, res) {
-  const token = req.headers['x-auth-token'];
-  if (!token) { res.status(401).json({ error: 'Unauthorised' }); return null; }
-  for (const [userId, t] of activeSessions) {
-    if (t === token && userId.startsWith('driver:')) return userId.slice(7);
+// Registered as real Express middleware (not called inline) because it must
+// re-establish the CORRECT tenant context for the rest of the request —
+// the earlier global tenantMiddleware gets this wrong for driver tokens
+// (it looks up the token's owner in the global users[] store, where
+// drivers don't exist), so this overrides it via a nested
+// tenantContext.run(), the same mechanism tenantMiddleware itself uses.
+function requireDriverAuthMiddleware(req, res, next) {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  if (!token) { res.status(401).json({ error: 'Unauthorised' }); return; }
+  for (const [sessionKey, t] of activeSessions) {
+    if (t !== token || !sessionKey.startsWith('driver:')) continue;
+    const rest = sessionKey.slice(7);
+    const sep = rest.indexOf(':');
+    // Old-format sessions (driver:<id>, pre-dating tenant-aware keys) fall
+    // back to the default tenant — the same behavior they had before this
+    // fix, so an existing logged-in driver isn't kicked out by the change.
+    const tenantId = sep >= 0 ? rest.slice(0, sep) : tenantStore.DEFAULT_TENANT_ID;
+    const driverId = sep >= 0 ? rest.slice(sep + 1) : rest;
+    req.driverId = driverId;
+    req.driverSessionKey = sessionKey;
+    tenantContext.run(tenantId, () => next());
+    return;
   }
   res.status(401).json({ error: 'Session expired' });
-  return null;
 }
 
 app.post('/api/driver/login', express.json(), (req, res) => {
@@ -8580,34 +8616,32 @@ app.post('/api/driver/login', express.json(), (req, res) => {
     return res.status(400).json({ error: 'Driver ID and PIN required' });
   }
   const idNorm = String(id).trim().toLowerCase();
-  const db = readDb();
-  const driver = (db.drivers || []).find(d => String(d.id).trim().toLowerCase() === idNorm);
-  if (!driver) {
+  const found = _findDriverAcrossTenants(idNorm);
+  if (!found) {
     logAudit('driver_login_failed', { driver: String(id).trim().slice(0, 60), reason: 'not_found' });
     return res.status(401).json({ error: 'Driver not found' });
   }
+  const { tenantId, driver } = found;
   if (!driver.pinHash) {
     return res.status(401).json({ error: 'No PIN set for this driver yet — ask your dispatcher to set one in Transport → Driver Details.' });
   }
   if (hashPass(String(pin).trim(), driver.pinSalt) !== driver.pinHash) {
-    logAudit('driver_login_failed', { driver: driver.id, reason: 'bad_pin' });
+    tenantContext.run(tenantId, () => logAudit('driver_login_failed', { driver: driver.id, reason: 'bad_pin' }));
     return res.status(401).json({ error: 'Invalid PIN' });
   }
   const token = uuidv4();
-  const sessionKey = 'driver:' + driver.id;
+  const sessionKey = `driver:${tenantId}:${driver.id}`;
   const kickedOther = activeSessions.has(sessionKey);
   activeSessions.set(sessionKey, token); // one active device per driver, same rule as user logins
   persistSessions();
-  logAudit('driver_login', { driver: driver.id, replacedSession: kickedOther });
+  tenantContext.run(tenantId, () => logAudit('driver_login', { driver: driver.id, replacedSession: kickedOther }));
   res.json({ token, driver: { id: driver.id, name: driver.name, phone: driver.phone, vehicle: driver.vehicle, plate: driver.plate } });
 });
 
-app.post('/api/driver/logout', express.json(), (req, res) => {
-  const driverId = requireDriverAuth(req, res);
-  if (!driverId) return;
-  activeSessions.delete('driver:' + driverId);
+app.post('/api/driver/logout', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  activeSessions.delete(req.driverSessionKey);
   persistSessions();
-  logAudit('driver_logout', { driver: driverId });
+  logAudit('driver_logout', { driver: req.driverId });
   res.json({ ok: true });
 });
 
@@ -8615,9 +8649,8 @@ app.post('/api/driver/logout', express.json(), (req, res) => {
 // assigned to them that isn't cancelled, sorted into route order (matches
 // the sequence the planner gave them), with today's already-delivered stops
 // kept visible for reference at the end of the list.
-app.get('/api/driver/jobs', (req, res) => {
-  const driverId = requireDriverAuth(req, res);
-  if (!driverId) return;
+app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
+  const driverId = req.driverId;
   const db = readDb();
   const todayStr = sgDateStr();
   const jobs = (db.transport || [])
@@ -8642,22 +8675,44 @@ app.get('/api/driver/jobs', (req, res) => {
         statusColor: st.color,
         podRemarks: t.podRemarks || '',
         deliveredAt: t.deliveredAt || null,
+        driverAcceptedAt: t.driverAcceptedAt || null,
+        podPhotos: (t.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
+        podLocation: t.podLocation || null,
       };
     });
   res.json({ jobs });
 });
 
+// POST /api/driver/jobs/:id/accept — the driver acknowledges a newly
+// assigned job. A separate acknowledgment layer, NOT a status transition
+// (status stays 'confirmed') — so it never interferes with the existing
+// status lifecycle the office UI/reports depend on. Pickup refuses to
+// proceed until a job has been accepted, so this is a real gate, not
+// cosmetic.
+app.post('/api/driver/jobs/:id/accept', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  const driverId = req.driverId;
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
+  if (job.status !== 'confirmed') return res.status(409).json({ error: `Job is "${job.status}", nothing to accept` });
+  job.driverAcceptedAt = new Date().toISOString();
+  writeDb(db);
+  logAudit('driver_job_accepted', { jobId: job.id, driver: driverId, client: job.clientName || '' });
+  res.json({ ok: true, job });
+});
+
 // POST /api/driver/jobs/:id/pickup — "I've picked this up, heading out."
 // Same transition the office map popup's "Picked Up" button performs, just
 // ownership-scoped so a driver can only move their OWN assigned jobs.
-app.post('/api/driver/jobs/:id/pickup', express.json(), (req, res) => {
-  const driverId = requireDriverAuth(req, res);
-  if (!driverId) return;
+app.post('/api/driver/jobs/:id/pickup', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  const driverId = req.driverId;
   const db = readDb();
   const job = (db.transport || []).find(t => t.id === req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
   if (job.status !== 'confirmed') return res.status(409).json({ error: `Job is "${job.status}", not ready for pickup` });
+  if (!job.driverAcceptedAt) return res.status(409).json({ error: 'Accept this job before picking it up.' });
   job.status = 'in-transit';
   job.updatedAt = new Date().toISOString();
   writeDb(db);
@@ -8665,23 +8720,97 @@ app.post('/api/driver/jobs/:id/pickup', express.json(), (req, res) => {
   res.json({ ok: true, job });
 });
 
-// POST /api/driver/jobs/:id/deliver — closes out the stop; optional remarks
-// mark it "Delivered w/ Remarks" (an issue to follow up), same rule as the
-// office Mark Delivered flow.
-app.post('/api/driver/jobs/:id/deliver', express.json(), (req, res) => {
-  const driverId = requireDriverAuth(req, res);
-  if (!driverId) return;
-  const { remarks } = req.body || {};
+// POST /api/driver/jobs/:id/photo — ePOD photo, taken with the phone's
+// camera (capture="environment" on the client's file input). Bytes are
+// written to disk, NEVER into db.json — same reasoning as every other
+// photo feature in this app (IdealInbound receiving photos). Ownership-
+// checked like every other driver action. A delivery cannot be confirmed
+// until at least one of these exists (see /deliver below) — this is what
+// makes ePOD a real requirement, not an optional nicety.
+app.post('/api/driver/jobs/:id/photo', upload.single('photo'), requireDriverAuthMiddleware, (req, res) => {
+  const driverId = req.driverId;
+  if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
+
+  const photoId = uuidv4();
+  const ext = (path.extname(req.file.originalname || '') || '.jpg').toLowerCase();
+  const dir = path.join(POD_PHOTO_DIR, job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${photoId}${ext}`), req.file.buffer);
+
+  const photo = { id: photoId, filename: `${photoId}${ext}`, mimeType: req.file.mimetype, uploadedAt: new Date().toISOString() };
+  job.podPhotos = job.podPhotos || [];
+  job.podPhotos.push(photo);
+  writeDb(db);
+  logAudit('driver_job_photo_added', { jobId: job.id, driver: driverId, photoId });
+  res.json({ ok: true, photo: { id: photo.id, uploadedAt: photo.uploadedAt } });
+});
+
+// GET /api/driver/jobs/:id/photo/:photoId — serves an ePOD photo. BOTH
+// staff (viewing from the office) and the driver who took it (viewing
+// their own upload in-app) can hit this, so it accepts either token type.
+// A staff token's tenant is already correctly set by the global
+// tenantMiddleware; a driver token needs the same re-resolution
+// requireDriverAuthMiddleware does (drivers aren't in the global users[]
+// store the default resolution looks up).
+function requireDriverOrStaffPhotoAuth(req, res, next) {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  if (!token) return res.status(401).json({ error: 'Unauthorised' });
+  for (const [sessionKey, t] of activeSessions) {
+    if (t !== token) continue;
+    if (sessionKey.startsWith('driver:')) {
+      const rest = sessionKey.slice(7);
+      const sep = rest.indexOf(':');
+      const tenantId = sep >= 0 ? rest.slice(0, sep) : tenantStore.DEFAULT_TENANT_ID;
+      req.userId = sessionKey;
+      tenantContext.run(tenantId, () => next());
+      return;
+    }
+    req.userId = sessionKey; // staff — tenant already correctly resolved upstream
+    return next();
+  }
+  res.status(401).json({ error: 'Session expired' });
+}
+app.get('/api/driver/jobs/:id/photo/:photoId', requireDriverOrStaffPhotoAuth, (req, res) => {
+  const { id, photoId } = req.params;
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === id);
+  const photo = job?.podPhotos?.find(p => p.id === photoId);
+  if (!photo) return res.status(404).send('Not found');
+  res.sendFile(path.join(POD_PHOTO_DIR, id, photo.filename), err => {
+    if (err && !res.headersSent) res.status(404).send('Not found');
+  });
+});
+
+// POST /api/driver/jobs/:id/deliver — closes out the stop. Requires at
+// least one ePOD photo to already be uploaded (real proof of delivery, not
+// just a status flag). GPS coordinates are best-effort: the client attempts
+// navigator.geolocation before calling this, but a denied/unavailable GPS
+// permission does NOT block the delivery — a hard block on a phone
+// permission issue would strand a real delivery over something outside the
+// driver's control, worse than a record with a missing coordinate. Optional
+// remarks mark it "Delivered w/ Remarks" (an issue to follow up), same rule
+// as the office Mark Delivered flow.
+app.post('/api/driver/jobs/:id/deliver', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  const driverId = req.driverId;
+  const { remarks, lat, lng, accuracy } = req.body || {};
   const db = readDb();
   const job = (db.transport || []).find(t => t.id === req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
   if (job.status === 'delivered' || job.status === 'cancelled') return res.status(409).json({ error: `Job is already ${job.status}` });
+  if (!(job.podPhotos && job.podPhotos.length)) return res.status(409).json({ error: 'Take a delivery photo (ePOD) before marking this delivered.' });
   job.status = 'delivered';
   job.deliveredAt = new Date().toISOString();
   if (String(remarks || '').trim()) job.podRemarks = String(remarks).trim();
+  if (Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))) {
+    job.podLocation = { lat: Number(lat), lng: Number(lng), accuracy: Number(accuracy) || null, capturedAt: new Date().toISOString() };
+  }
   writeDb(db);
-  logAudit('driver_job_delivered', { jobId: job.id, driver: driverId, client: job.clientName || '', withRemarks: !!String(remarks || '').trim() });
+  logAudit('driver_job_delivered', { jobId: job.id, driver: driverId, client: job.clientName || '', withRemarks: !!String(remarks || '').trim(), hasGps: !!job.podLocation });
   res.json({ ok: true, job });
 });
 

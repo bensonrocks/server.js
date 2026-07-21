@@ -1495,12 +1495,26 @@ disconnected driver-management surface (both fixed together — see below).
   Administrator's driver lists show a 📱 badge when a driver can log in.
 - **Real sessions, not a parallel auth scheme.** `POST /api/driver/login`
   `{id, pin}` verifies against `db.drivers`, then issues a token through the
-  SAME `activeSessions` map every other login uses — namespaced `driver:<id>`
-  so it can never collide with a staff user id. One active device per
-  driver, same rule as `/api/auth/login`. `requireDriverAuth()` does the
-  token→driver lookup for every other `/api/driver/*` endpoint — the
-  `/api/driver/` path prefix is exempt from the global `requireAuth`
-  middleware (`AUTH_PUBLIC`), so each handler checks its own token.
+  SAME `activeSessions` map every other login uses — namespaced
+  `driver:<tenantId>:<driverId>` so it can never collide with a staff user
+  id. One active device per driver, same rule as `/api/auth/login`.
+  `requireDriverAuthMiddleware` does the token→driver lookup for every
+  other `/api/driver/*` endpoint — the `/api/driver/` path prefix is exempt
+  from the global `requireAuth` middleware (`AUTH_PUBLIC`), so each handler
+  checks its own token.
+  **Multi-tenancy gotcha fixed here**: `db.drivers[]` is tenant-scoped data
+  (unlike `users[]`, which is global with its own `tenant_id` field), so a
+  driver id alone doesn't say which tenant it belongs to — the app's
+  general tenant-resolution middleware (which looks up a token's owner in
+  the global `users[]` store) silently can't find a driver there and falls
+  back to the default tenant, regardless of which tenant the driver
+  actually belongs to. `POST /api/driver/login` searches every tenant's own
+  `db.drivers[]` for the id (no tenant context exists yet at login) and
+  encodes the resolved tenant directly into the session key,so
+  `requireDriverAuthMiddleware` can re-establish the CORRECT tenant context
+  for every later request with no repeated search (verified directly: two
+  same-shaped drivers created in two different tenants only ever see their
+  own tenant's jobs, never each other's).
 - **Jobs come straight from `db.transport`** — no separate job store.
   `GET /api/driver/jobs` filters to `assignedDriver === <this driver>` and
   `status !== 'cancelled'`, keeps today's delivered stops visible for
@@ -1508,12 +1522,40 @@ disconnected driver-management surface (both fixed together — see below).
   returns the SAME status wording/colors as the office UI
   (`driverStatusLabel()` — Staging/On the road/Delivered/Delivered w/
   Remarks).
-- **Two actions, ownership-checked server-side** (a driver can only move
-  their OWN assigned jobs — 403 otherwise): `POST
-  /api/driver/jobs/:id/pickup` (confirmed→in-transit) and `POST
-  /api/driver/jobs/:id/deliver` `{remarks}` (→delivered; non-empty remarks =
-  "Delivered w/ Remarks"). Both refuse to regress an already-delivered/
-  cancelled job.
+- **Accept step.** A newly assigned job (`status:'confirmed'`, no
+  `driverAcceptedAt`) shows as "🆕 New — Tap to Accept" in the app.
+  `POST /api/driver/jobs/:id/accept` stamps `driverAcceptedAt` — a separate
+  acknowledgment layer, NOT a status transition (status stays `'confirmed'`
+  so it never interferes with the existing status lifecycle the office
+  UI/reports depend on). `POST .../pickup` refuses (409) until a job has
+  been accepted — a real gate, not cosmetic.
+- **ePOD (electronic proof of delivery) — photo + GPS, both real.**
+  `POST /api/driver/jobs/:id/photo` (multipart, `capture="environment"` on
+  the client's file input triggers the phone's camera directly) stores the
+  photo to `DATA_DIR/pod_photos/<jobId>/<photoId>.<ext>` — bytes never go
+  into db.json, same reasoning as every other photo feature in this app.
+  `POST .../deliver` REFUSES (409) until at least one ePOD photo exists —
+  proof of delivery is a real requirement here, not optional. GPS is
+  best-effort: the client calls `navigator.geolocation.getCurrentPosition()`
+  right before sending the deliver request and attaches
+  `{lat,lng,accuracy}` if it succeeds, but a denied/unavailable permission
+  does NOT block the delivery — a hard block on a phone permission issue
+  would strand a real delivery over something outside the driver's
+  control, worse than a record with a missing coordinate. Stored as
+  `job.podLocation = {lat,lng,accuracy,capturedAt}`.
+  `GET /api/driver/jobs/:id/photo/:photoId` serves the photo to EITHER a
+  driver (their own upload) or staff (office visibility) — a combined
+  auth check re-resolves tenant correctly for a driver token the same way
+  `requireDriverAuthMiddleware` does, since a plain `requireAuthOrToken`
+  would hit the same tenant-resolution gotcha above. The office Transport
+  delivery-detail modal (`openDeliveryDetail`) shows photo thumbnails and
+  a "View on map" link for the captured coordinates whenever present.
+- **Two more actions, ownership-checked server-side** (a driver can only
+  move their OWN assigned jobs — 403 otherwise): `POST
+  /api/driver/jobs/:id/pickup` (confirmed→in-transit, requires
+  `driverAcceptedAt` set) and `POST /api/driver/jobs/:id/deliver`
+  `{remarks,lat,lng,accuracy}` (→delivered; non-empty remarks = "Delivered
+  w/ Remarks"). Both refuse to regress an already-delivered/cancelled job.
 - **No embedded map.** `driver.html` has no map SDK — "Navigate" is a plain
   `https://www.google.com/maps/search/?api=1&query=` deep link (opens the
   phone's own installed maps app, no API key) and "Call Consignee" is a

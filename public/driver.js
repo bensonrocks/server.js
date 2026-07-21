@@ -133,14 +133,16 @@
       listEl.innerHTML = '<div class="empty-state">No deliveries assigned right now.<br>Pull to refresh or check back later.</div>';
       return;
     }
-    const cardHtml = j => `
-      <div class="job-card" style="border-left-color:${j.statusColor}" data-id="${esc(j.id)}">
+    const cardHtml = j => {
+      const isNew = j.status === 'confirmed' && !j.driverAcceptedAt;
+      return `
+      <div class="job-card${isNew ? ' job-new' : ''}" style="border-left-color:${isNew ? '#7c3aed' : j.statusColor}" data-id="${esc(j.id)}">
         <div class="job-top">
           <div>
             <div class="job-seq">${j.routeNum != null ? 'Stop ' + j.stopSeq + ' · Route ' + j.routeNum : j.id}</div>
             <div class="job-client">${esc(j.client || '(no client name)')}</div>
           </div>
-          <span class="job-pill" style="background:${j.statusColor}">${esc(j.statusLabel)}</span>
+          <span class="${isNew ? 'job-pill-new' : 'job-pill'}" style="${isNew ? '' : 'background:' + j.statusColor}">${isNew ? '🆕 New — Tap to Accept' : esc(j.statusLabel)}</span>
         </div>
         <div class="job-addr">${esc(j.address || 'No address on file')}${j.zip ? ' · ' + esc(j.zip) : ''}</div>
         <div class="job-meta">
@@ -148,6 +150,7 @@
           ${j.referenceId ? `<span>PO ${esc(j.referenceId)}</span>` : ''}
         </div>
       </div>`;
+    };
     listEl.innerHTML = [...active, ...done].map(cardHtml).join('');
     listEl.querySelectorAll('.job-card').forEach(el => el.addEventListener('click', () => openSheet(el.dataset.id)));
   }
@@ -161,6 +164,7 @@
     activeJobId = id;
     $('sheetClient').textContent = j.client || '(no client name)';
     $('sheetId').textContent = j.id + (j.routeNum != null ? ` · Route ${j.routeNum}, Stop ${j.stopSeq}` : '');
+    $('sheetDriverLine').textContent = 'Driver: ' + [driverInfo?.name || driverInfo?.id, driverInfo?.plate].filter(Boolean).join(' · ');
     $('sheetAddress').textContent = j.address || '—';
     $('sheetZip').textContent = j.zip || '—';
     $('sheetRef').textContent = j.referenceId || '—';
@@ -177,22 +181,54 @@
     if (j.notes) { $('sheetNotes').textContent = j.notes; notesWrap.classList.remove('hidden'); }
     else notesWrap.classList.add('hidden');
 
-    const pickupBtn = $('pickupBtn'), deliverBtn = $('deliverBtn'), doneNote = $('sheetDoneNote');
-    pickupBtn.classList.add('hidden'); deliverBtn.classList.add('hidden'); doneNote.classList.add('hidden');
-    if (j.status === 'confirmed') {
+    const acceptBtn = $('acceptBtn'), pickupBtn = $('pickupBtn'), podSection = $('podSection'),
+          deliverBtn = $('deliverBtn'), doneNote = $('sheetDoneNote');
+    acceptBtn.classList.add('hidden'); pickupBtn.classList.add('hidden');
+    podSection.classList.add('hidden'); deliverBtn.classList.add('hidden'); doneNote.classList.add('hidden');
+
+    if (j.status === 'confirmed' && !j.driverAcceptedAt) {
+      acceptBtn.classList.remove('hidden');
+    } else if (j.status === 'confirmed') {
       pickupBtn.classList.remove('hidden');
     } else if (j.status === 'in-transit') {
+      podSection.classList.remove('hidden');
+      renderPodPhotos(j);
       deliverBtn.classList.remove('hidden');
+      deliverBtn.disabled = !(j.podPhotos && j.podPhotos.length);
     } else if (j.status === 'delivered') {
       doneNote.textContent = j.podRemarks
         ? `Delivered with remarks: "${j.podRemarks}"`
         : `Delivered ${j.deliveredAt ? new Date(j.deliveredAt).toLocaleString('en-SG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) : ''}`;
+      if (j.podLocation) doneNote.textContent += ' · 📍 GPS captured';
+      if (j.podPhotos && j.podPhotos.length) doneNote.textContent += ` · 📷 ${j.podPhotos.length} photo(s)`;
       doneNote.classList.remove('hidden');
+      if (j.podPhotos && j.podPhotos.length) { podSection.classList.remove('hidden'); $('podPhotoBtn').classList.add('hidden'); renderPodPhotos(j); }
     }
     $('sheetOverlay').classList.remove('hidden');
   }
+
+  function renderPodPhotos(j) {
+    const photos = j.podPhotos || [];
+    $('podPhotoCount').textContent = photos.length + ' photo(s)';
+    $('podHint').classList.toggle('hidden', photos.length > 0);
+    $('podPhotoGrid').innerHTML = photos.map(p =>
+      `<img class="pod-photo-thumb" src="/api/driver/jobs/${encodeURIComponent(j.id)}/photo/${encodeURIComponent(p.id)}?token=${encodeURIComponent(driverToken)}" loading="lazy" />`
+    ).join('');
+  }
   $('sheetCloseBtn').addEventListener('click', () => $('sheetOverlay').classList.add('hidden'));
   $('sheetOverlay').addEventListener('click', e => { if (e.target === $('sheetOverlay')) $('sheetOverlay').classList.add('hidden'); });
+
+  $('acceptBtn').addEventListener('click', async () => {
+    if (!activeJobId) return;
+    $('acceptBtn').disabled = true;
+    try {
+      await api(`/api/driver/jobs/${encodeURIComponent(activeJobId)}/accept`, { method: 'POST' });
+      toast('✅ Job accepted');
+      $('sheetOverlay').classList.add('hidden');
+      loadJobs();
+    } catch (err) { toast('⚠ ' + err.message); }
+    $('acceptBtn').disabled = false;
+  });
 
   $('pickupBtn').addEventListener('click', async () => {
     if (!activeJobId) return;
@@ -206,20 +242,68 @@
     $('pickupBtn').disabled = false;
   });
 
+  // ── ePOD: photo (required before delivery) ──────────────────────────────
+  $('podPhotoBtn').addEventListener('click', () => $('podPhotoInput').click());
+  $('podPhotoInput').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file || !activeJobId) return;
+    $('podPhotoBtn').disabled = true;
+    $('podPhotoBtn').textContent = 'Uploading…';
+    try {
+      const fd = new FormData();
+      fd.append('photo', file);
+      const resp = await fetch(`/api/driver/jobs/${encodeURIComponent(activeJobId)}/photo`, {
+        method: 'POST', headers: { 'x-auth-token': driverToken }, body: fd,
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Photo upload failed');
+      toast('📷 Photo added');
+      // Refresh in place so the sheet doesn't jump — pull the updated job
+      // list, re-find this job, and re-render just this open sheet.
+      await loadJobs();
+      const j = jobs.find(x => x.id === activeJobId);
+      if (j) { renderPodPhotos(j); $('deliverBtn').disabled = !(j.podPhotos && j.podPhotos.length); }
+    } catch (err) { toast('⚠ ' + err.message); }
+    $('podPhotoBtn').disabled = false;
+    $('podPhotoBtn').textContent = '📷 Take Delivery Photo';
+  });
+
+  // Best-effort GPS — a denied/unavailable permission never blocks the
+  // actual delivery (see server-side comment on POST .../deliver for why).
+  function captureGps(timeoutMs = 8000) {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) return resolve(null);
+      const timer = setTimeout(() => resolve(null), timeoutMs);
+      navigator.geolocation.getCurrentPosition(
+        pos => { clearTimeout(timer); resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
+        () => { clearTimeout(timer); resolve(null); },
+        { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 }
+      );
+    });
+  }
+
   $('deliverBtn').addEventListener('click', async () => {
     if (!activeJobId) return;
     const remarks = prompt('Any issues with this delivery? Leave blank if none.');
     if (remarks === null) return; // cancelled
     $('deliverBtn').disabled = true;
+    $('deliverBtn').textContent = '📍 Getting location…';
     try {
+      const gps = await captureGps();
+      $('deliverBtn').textContent = 'Delivering…';
       await api(`/api/driver/jobs/${encodeURIComponent(activeJobId)}/deliver`, {
-        method: 'POST', body: JSON.stringify({ remarks: remarks.trim() }),
+        method: 'POST',
+        body: JSON.stringify({ remarks: remarks.trim(), lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy }),
       });
-      toast(remarks.trim() ? '✓ Delivered (with remarks)' : '✓ Delivered');
+      toast((remarks.trim() ? '✓ Delivered (with remarks)' : '✓ Delivered') + (gps ? ' · 📍 location saved' : ''));
       $('sheetOverlay').classList.add('hidden');
       loadJobs();
-    } catch (err) { toast('⚠ ' + err.message); }
-    $('deliverBtn').disabled = false;
+    } catch (err) {
+      toast('⚠ ' + err.message);
+      $('deliverBtn').disabled = false;
+    }
+    $('deliverBtn').textContent = '✓ Mark Delivered';
   });
 
   // ── Offline indicator ────────────────────────────────────────────────────

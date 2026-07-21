@@ -73,11 +73,13 @@
       background: #fff; border-radius: 12px; padding: .9rem; margin-bottom: .6rem; border: 1px solid #e2e8f0;
       border-left: 5px solid #94a3b8; cursor: pointer;
     }
+    .job-card.job-new { border-left-color: #7c3aed; background: #faf5ff; }
     .job-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem; }
     .job-seq { font-size: 11px; color: #94a3b8; font-weight: 700; }
     .job-client { font-size: 15px; font-weight: 800; margin: .15rem 0 .25rem; }
     .job-addr { font-size: 12.5px; color: #475569; line-height: 1.35; }
     .job-pill { font-size: 10.5px; font-weight: 800; padding: .2rem .55rem; border-radius: 999px; color: #fff; white-space: nowrap; }
+    .job-pill-new { font-size: 10.5px; font-weight: 800; padding: .2rem .55rem; border-radius: 999px; color: #fff; background: #7c3aed; white-space: nowrap; }
     .job-meta { display: flex; gap: .7rem; margin-top: .5rem; font-size: 11.5px; color: #64748b; }
 
     /* ── Detail sheet ── */
@@ -93,13 +95,25 @@
     .sheet-row { display: flex; justify-content: space-between; padding: .3rem 0; font-size: 13px; gap: .8rem; }
     .sheet-row span:first-child { color: #64748b; }
     .sheet-row span:last-child { font-weight: 700; text-align: right; }
-    .link-btn { display: block; width: 100%; text-align: center; padding: .7rem; margin-top: .5rem; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13.5px; }
+    .icon-row { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .5rem; }
+    .link-btn { display: block; width: 100%; text-align: center; padding: .7rem; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13.5px; }
     .link-nav { background: #ede9fe; color: #6d28d9; }
     .link-call { background: #dcfce7; color: #15803d; }
     .action-btn { width: 100%; padding: .9rem; border: none; border-radius: 10px; font-size: 15px; font-weight: 800; color: #fff; cursor: pointer; margin-top: .8rem; }
+    .action-btn:disabled { background: #cbd5e1 !important; cursor: not-allowed; }
+    .action-accept { background: #7c3aed; }
     .action-pickup { background: #f59e0b; }
+    .action-photo { background: #0ea5e9; }
     .action-deliver { background: #16a34a; }
     .sheet-done { text-align: center; color: #64748b; font-size: 12.5px; padding: .6rem; }
+
+    /* ── ePOD (photo + GPS) ── */
+    .pod-section { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: .8rem .9rem; margin-top: .7rem; }
+    .pod-title { font-weight: 800; font-size: 12.5px; color: #0369a1; margin-bottom: .5rem; display: flex; justify-content: space-between; align-items: center; }
+    .pod-photo-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: .4rem; margin-bottom: .4rem; }
+    .pod-photo-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid #e2e8f0; }
+    .pod-hint { font-size: 11.5px; color: #64748b; }
+    .pod-location-note { font-size: 11.5px; color: #16a34a; font-weight: 700; margin-top: .4rem; }
 
     .toast {
       position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff;
@@ -172,6 +186,7 @@
         <div>
           <div class="sheet-title" id="sheetClient">—</div>
           <div style="font-size:11.5px;color:#94a3b8;margin-top:.2rem" id="sheetId">—</div>
+          <div style="font-size:11px;color:#0369a1;margin-top:.15rem;font-weight:700" id="sheetDriverLine">—</div>
         </div>
         <button class="sheet-close" id="sheetCloseBtn">&#10005;</button>
       </div>
@@ -180,15 +195,29 @@
         <div class="sheet-row"><span>Postal</span><span id="sheetZip">—</span></div>
         <div class="sheet-row"><span>PO / Ref</span><span id="sheetRef">—</span></div>
         <div class="sheet-row"><span>Cartons</span><span id="sheetPackages">—</span></div>
-        <a href="#" target="_blank" rel="noopener" class="link-btn link-nav" id="sheetNavLink">&#128663; Navigate</a>
-        <a href="#" class="link-btn link-call hidden" id="sheetCallLink">&#128222; Call Consignee</a>
+        <div class="icon-row">
+          <a href="#" target="_blank" rel="noopener" class="link-btn link-nav" id="sheetNavLink">&#128663; Navigate</a>
+          <a href="#" class="link-btn link-call hidden" id="sheetCallLink">&#128222; Call</a>
+        </div>
       </div>
       <div class="sheet-section hidden" id="sheetNotesWrap">
         <div style="font-weight:700;font-size:12.5px;margin-bottom:.3rem;color:#475569">Notes</div>
         <div id="sheetNotes" style="font-size:13px"></div>
       </div>
+
+      <button class="action-btn action-accept hidden" id="acceptBtn">&#9989; Accept Job</button>
       <button class="action-btn action-pickup hidden" id="pickupBtn">&#128230; Picked Up — On the Road</button>
-      <button class="action-btn action-deliver hidden" id="deliverBtn">&#10003; Mark Delivered</button>
+
+      <!-- ePOD: photo (required) + GPS (best-effort, captured automatically) -->
+      <div class="pod-section hidden" id="podSection">
+        <div class="pod-title"><span>&#128247; Proof of Delivery</span><span id="podPhotoCount">0 photo(s)</span></div>
+        <div class="pod-photo-grid" id="podPhotoGrid"></div>
+        <div class="pod-hint" id="podHint">Take at least one photo before marking this delivered.</div>
+        <button class="action-btn action-photo" id="podPhotoBtn" style="margin-top:.6rem">&#128247; Take Delivery Photo</button>
+        <input type="file" id="podPhotoInput" accept="image/*" capture="environment" hidden />
+        <div class="pod-location-note hidden" id="podLocationNote"></div>
+      </div>
+      <button class="action-btn action-deliver hidden" id="deliverBtn" disabled>&#10003; Mark Delivered</button>
       <div class="sheet-done hidden" id="sheetDoneNote"></div>
     </div>
   </div>
