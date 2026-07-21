@@ -2312,6 +2312,43 @@ function matchLabelPage(rawText, extracted, index) {
 app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
+    // SAME FILE RE-UPLOADED — ask before replacing the earlier import.
+    // Confirmed = the earlier import (and its label attachments) is removed
+    // and this upload takes its place; label attachments are re-created by
+    // this upload's own matching pass.
+    const labelHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    {
+      const dbChk  = readDb();
+      const prior  = (dbChk.labelImports || []).find(i =>
+        i.contentHash === labelHash && i.filename === (req.file.originalname || 'label.pdf'));
+      if (prior) {
+        if (req.body?.overwrite_same_file !== 'yes') {
+          return res.status(409).json({
+            needsSameFileConfirm: true,
+            existing: {
+              filename:   prior.filename,
+              uploadedAt: (prior.uploadedAt || '').slice(0, 16).replace('T', ' '),
+              uploadedBy: prior.uploadedBy || '',
+              pageCount:  prior.pageCount || 0,
+            },
+            message: 'This exact label PDF (same name, same contents) was already uploaded.',
+          });
+        }
+        if (!dbChk.orderLabels) dbChk.orderLabels = {};
+        for (const [on, ref] of Object.entries(dbChk.orderLabels)) {
+          if (ref?.importId === prior.id) delete dbChk.orderLabels[on];
+        }
+        dbChk.labelImports = dbChk.labelImports.filter(i => i.id !== prior.id);
+        writeDb(dbChk);
+        try { fs.rmSync(path.join(LABEL_IMPORT_DIR, prior.id), { recursive: true, force: true }); } catch {}
+        logAudit('label_import_same_file_overwritten', {
+          importId: prior.id, filename: prior.filename,
+          originallyUploadedAt: prior.uploadedAt || '', originallyUploadedBy: prior.uploadedBy || '',
+          by: req.userId || '',
+        });
+      }
+    }
+
     const importId  = uuidv4();
     const importDir = path.join(LABEL_IMPORT_DIR, importId);
     fs.mkdirSync(importDir, { recursive: true });
@@ -2376,6 +2413,7 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
 
     const importRecord = {
       id: importId, filename: req.file.originalname || 'label.pdf',
+      contentHash: labelHash,
       uploadedAt: new Date().toISOString(), uploadedBy: req.userId,
       pageCount: numPages, pages,
     };
@@ -3553,6 +3591,50 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
 
+    // SAME FILE RE-UPLOADED — identical filename AND identical bytes as an
+    // earlier batch. Ask the uploader whether to overwrite that batch (it is
+    // removed and replaced by this upload) or abort. Only batches uploaded
+    // after this feature carry contentHash; older ones can't be compared.
+    const fileHash = crypto.createHash('sha256').update(orderFile.buffer).digest('hex');
+    {
+      const dbChk = readDb();
+      const prior = (dbChk.batches || []).find(b =>
+        b.contentHash === fileHash && b.filename === orderFile.originalname);
+      if (prior) {
+        const doneCount = (prior.orders || [])
+          .filter(o => prior.orderStates?.[o.order_number]?.status === 'done').length;
+        if (doneCount > 0) {
+          return res.status(422).json({
+            error: `UPLOAD ABORTED:\nThis exact file ("${prior.filename}") was already uploaded as job ${prior.idealscan_code || '(unknown)'} on ${(prior.uploaded_at || '').slice(0, 16).replace('T', ' ')}${prior.uploaded_by ? ` by ${prior.uploaded_by}` : ''}, and ${doneCount} of its order(s) are already COMPLETED.\nCompleted work is never overwritten. Nothing was saved.`,
+          });
+        }
+        if (req.body?.overwrite_same_file !== 'yes') {
+          return res.status(409).json({
+            needsSameFileConfirm: true,
+            existing: {
+              filename:   prior.filename,
+              job:        prior.idealscan_code || '',
+              uploadedAt: (prior.uploaded_at || '').slice(0, 16).replace('T', ' '),
+              uploadedBy: prior.uploaded_by || '',
+              orderCount: (prior.orders || []).length,
+            },
+            message: `This exact file (same name, same contents) was already uploaded.`,
+          });
+        }
+        // Confirmed: remove the earlier batch and its files, then proceed fresh
+        dbChk.batches = dbChk.batches.filter(b => b.id !== prior.id);
+        writeDb(dbChk);
+        try { fs.unlinkSync(path.join(WMS_DIR, `${prior.id}.xlsx`)); } catch {}
+        try { fs.rmSync(path.join(WAYBILL_DIR, prior.id), { recursive: true, force: true }); } catch {}
+        invalidateWaybillCache(prior.id);
+        logAudit('upload_same_file_overwritten', {
+          batchId: prior.id, filename: prior.filename, job: prior.idealscan_code || '',
+          originallyUploadedAt: prior.uploaded_at || '', originallyUploadedBy: prior.uploaded_by || '',
+          orders: (prior.orders || []).length, by: req.userId || '',
+        });
+      }
+    }
+
     const orderExt = path.extname(orderFile.originalname).toLowerCase();
     let pdfIssues = [];
     let mapped;
@@ -3780,6 +3862,7 @@ app.post('/api/upload', uploadFields, async (req, res) => {
     const db = readDb();
     const batch = {
       id: batchId, filename: orderFile.originalname,
+      contentHash: fileHash,
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',

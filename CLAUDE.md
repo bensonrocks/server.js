@@ -343,6 +343,27 @@ batch contains a done order, see the section above), then open each label
 import → "↻ Rematch All"; labels re-attach to the surviving GI- orders
 via `tracking_number` since those orders carry the SPTTND waybill numbers.
 
+## Same-file re-upload confirm (server.js /api/upload + /api/label-imports)
+
+Every order-file batch and label import stores a `contentHash` (sha256 of
+the uploaded bytes) at creation. When an upload's filename AND hash both
+match an existing record, the server answers 409 `{needsSameFileConfirm,
+existing: {filename, uploadedAt, uploadedBy, job/pageCount, orderCount}}`
+and the client confirm() reads the existing upload's details out loud
+(file, when, by whom) — OK resends with `overwrite_same_file=yes`, which
+REMOVES the earlier record (batch: splice + wms xlsx + waybill dir,
+audit `upload_same_file_overwritten`; label import: same cleanup as
+`DELETE /api/label-imports/:id`, audit `label_import_same_file_overwritten`)
+and proceeds fresh. Order batches with any DONE order hard-abort 422
+instead (completed work is never overwritten — same rule as everywhere).
+This check runs FIRST, before parsing and before the duplicate-ORDER
+tiers below, so an identical re-upload gets one clear file-level prompt
+instead of hundreds of per-order duplicate warnings. Records created
+before this feature carry no hash and are simply never flagged. Client
+handlers: the `needsSameFileConfirm` branch at the top of the upload
+retry chain in app.js, plus `labelSameFileConfirm()` shared by both
+label-upload entry points (`doLabelImport`, `doLabelImportFromUploadTab`).
+
 ## Duplicate order numbers — locked vs overwritable vs confirmable (server.js /api/upload)
 
 Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the

@@ -789,8 +789,19 @@
     try {
       const fd = new FormData();
       fd.append('labelPdf', file);
-      const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
-      const data = await resp.json();
+      let resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      let data = await resp.json();
+      if (resp.status === 409 && data.needsSameFileConfirm) {
+        if (!labelSameFileConfirm(data.existing)) {
+          statusEl.className = 'status-bar error';
+          statusEl.textContent = 'Upload cancelled — the earlier label upload was kept.';
+          labelImportInputUpload.value = '';
+          return;
+        }
+        fd.append('overwrite_same_file', 'yes');
+        resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+        data = await resp.json();
+      }
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
       statusEl.classList.add('hidden');
       labelImportInputUpload.value = '';
@@ -1122,6 +1133,27 @@
 
       let resp = await sendUpload();
       let data = await resp.json();
+
+      // Exact same file (same name + same contents) uploaded before —
+      // the uploader decides: replace that batch or abort.
+      if (resp.status === 409 && data.needsSameFileConfirm) {
+        const ex = data.existing || {};
+        const ok = confirm(
+          `⚠ SAME FILE ALREADY UPLOADED\n\n` +
+          `"${ex.filename}" (identical contents) was already uploaded` +
+          `${ex.job ? ` as job ${ex.job}` : ''} on ${ex.uploadedAt}` +
+          `${ex.uploadedBy ? ` by ${ex.uploadedBy}` : ''} — ${ex.orderCount} order(s).\n\n` +
+          `OK = OVERWRITE the earlier upload with this one (its orders and any scan progress are replaced)\n` +
+          `Cancel = abort this upload (keep the existing one)`);
+        if (!ok) {
+          document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+          setUploadStatus('error', 'Upload cancelled — the earlier upload of this file was kept.');
+          return;
+        }
+        form.append('overwrite_same_file', 'yes');
+        resp = await sendUpload();
+        data = await resp.json();
+      }
 
       // Suspect SKUs: the AI column detection found SKUs shaped like
       // warehouse location codes (e.g. THT-64-427-3 vs bin AC-007-003-B).
@@ -9975,6 +10007,17 @@
     }
   }
 
+  // Shared same-file confirm for both label-upload entry points
+  function labelSameFileConfirm(ex) {
+    ex = ex || {};
+    return confirm(
+      `⚠ SAME LABEL PDF ALREADY UPLOADED\n\n` +
+      `"${ex.filename}" (identical contents) was already uploaded on ${ex.uploadedAt}` +
+      `${ex.uploadedBy ? ` by ${ex.uploadedBy}` : ''} — ${ex.pageCount} page(s).\n\n` +
+      `OK = OVERWRITE it with this upload (its matched labels are re-matched from this file)\n` +
+      `Cancel = keep the earlier upload`);
+  }
+
   async function doLabelImport(file) {
     const statusEl = document.getElementById('labelImportStatus');
     statusEl.className = 'status-bar loading';
@@ -9983,8 +10026,19 @@
     const fd = new FormData();
     fd.append('labelPdf', file);
     try {
-      const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
-      const data = await resp.json();
+      let resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      let data = await resp.json();
+      if (resp.status === 409 && data.needsSameFileConfirm) {
+        if (!labelSameFileConfirm(data.existing)) {
+          statusEl.className = 'status-bar error';
+          statusEl.textContent = 'Upload cancelled — the earlier label upload was kept.';
+          document.getElementById('labelImportFileInput').value = '';
+          return;
+        }
+        fd.append('overwrite_same_file', 'yes');
+        resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+        data = await resp.json();
+      }
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
       statusEl.className = 'status-bar success';
       statusEl.textContent = `✓ Imported ${data.pageCount} page${data.pageCount !== 1 ? 's' : ''} — ${data.matched} matched`;
