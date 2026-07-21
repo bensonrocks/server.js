@@ -8722,6 +8722,37 @@ app.post('/api/inventory/seed', requireAuth, (req, res) => {
   const n = inventory.seedFromSkuMap(_skuDescMap);
   res.json({ seeded: n, total: inventory.getAll().length });
 });
+
+// ── Product Master (ULD_Product_Master_Template.xlsx) ────────────────────────
+const productMaster = require('./lib/product-master');
+
+app.get('/api/inventory/product-master-template', requireAuth, (req, res) => {
+  const buf = productMaster.buildProductMasterTemplateXlsx();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="Product_Master_Template.xlsx"');
+  res.send(buf);
+});
+
+app.post('/api/inventory/import-product-master', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  let rawRows;
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = wb.SheetNames.find(n => /product master/i.test(n)) || wb.SheetNames[0];
+    rawRows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
+  } catch (e) {
+    return res.status(400).json({ error: 'Could not read the file: ' + e.message });
+  }
+  const { rows, skipped } = productMaster.parseProductMasterRows(rawRows);
+  let imported = 0;
+  const errors = skipped.map(s => ({ row: s.row, error: s.reason }));
+  for (const row of rows) {
+    try { inventory.upsert(row); imported++; }
+    catch (e) { errors.push({ row: row.sku, error: e.message }); }
+  }
+  logAudit('product_master_imported', { imported, skipped: skipped.length, by: req.userId || '' });
+  res.json({ imported, skipped: skipped.length, errors });
+});
 app.post('/api/inventory', requireAuth, express.json(), (req, res) => {
   try { res.status(201).json(inventory.upsert(req.body || {})); }
   catch (e) { res.status(400).json({ error: e.message }); }

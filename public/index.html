@@ -2112,6 +2112,9 @@
         <div style="display:flex;gap:.6rem;flex-wrap:wrap">
           <button class="btn-secondary" onclick="invUI.reseed()">&#8635; Seed from catalog</button>
           <button class="btn-secondary" onclick="invUI.importCsv()">&#8679; Import CSV</button>
+          <button class="btn-secondary" onclick="invUI.downloadProductMasterTemplate()">&#8681; Product Master Template</button>
+          <input type="file" id="pmImportFileInput" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+          <button class="btn-secondary" onclick="invUI.importProductMaster()">&#8679; Import Product Master</button>
           <button class="btn-primary" onclick="invUI.addItem()">+ Add Item</button>
         </div>
       </div>
@@ -2129,10 +2132,10 @@
       <div style="overflow-x:auto">
         <table class="tbl" style="width:100%;border-collapse:collapse">
           <thead><tr>
-            <th style="text-align:left">SKU</th><th style="text-align:left">Name</th><th style="text-align:left">Category</th>
+            <th style="text-align:left">SKU</th><th style="text-align:left">Name</th><th style="text-align:left">Barcode</th><th style="text-align:left">Brand</th><th style="text-align:left">Category</th>
             <th style="text-align:right">On hand</th><th style="text-align:right">Reserved</th><th style="text-align:right">Available</th><th></th>
           </tr></thead>
-          <tbody id="inv-tbody"><tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">Loading&#8230;</td></tr></tbody>
+          <tbody id="inv-tbody"><tr><td colspan="9" style="text-align:center;padding:2rem;color:#94a3b8">Loading&#8230;</td></tr></tbody>
         </table>
       </div>
     </section>

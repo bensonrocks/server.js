@@ -9866,13 +9866,15 @@
     function render() {
       const tb = document.getElementById('inv-tbody'); if (!tb) return;
       const rows = filtered();
-      if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">No items.</td></tr>'; return; }
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:#94a3b8">No items.</td></tr>'; return; }
       tb.innerHTML = rows.map(r => {
         const low = r.available_qty <= r.reorder_point;
         const style = r.available_qty === 0 ? 'color:#dc2626;font-weight:700' : low ? 'color:#d97706;font-weight:600' : '';
         return `<tr>
           <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
           <td>${esc(r.name)}</td>
+          <td style="font-family:monospace;font-size:.82rem">${esc(r.barcode || '')}</td>
+          <td>${esc(r.brand || '')}</td>
           <td>${esc(r.category || '')}</td>
           <td style="text-align:right">${r.stock_qty}</td>
           <td style="text-align:right">${r.reserved_qty}</td>
@@ -9932,7 +9934,33 @@
       };
       inp.click();
     }
-    return { load, filter: render, adjust, moves, addItem, reseed, importCsv };
+    function downloadProductMasterTemplate() {
+      authDownload('/api/inventory/product-master-template', 'Product_Master_Template.xlsx');
+    }
+
+    function importProductMaster() {
+      const inp = document.getElementById('pmImportFileInput');
+      inp.onchange = async () => {
+        const file = inp.files && inp.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+          const r = await fetch('/api/inventory/import-product-master', { method: 'POST', body: fd });
+          const j = await r.json();
+          if (!r.ok) { alert(j.error || 'Import failed'); return; }
+          let msg = `Imported ${j.imported} SKU(s)`;
+          if (j.skipped) msg += `, skipped ${j.skipped}`;
+          if (j.errors && j.errors.length) msg += '. First issue: row ' + j.errors[0].row + ' — ' + j.errors[0].error;
+          alert(msg);
+          load();
+        } catch (e) { alert('Import error: ' + e.message); }
+        inp.value = '';
+      };
+      inp.click();
+    }
+
+    return { load, filter: render, adjust, moves, addItem, reseed, importCsv, downloadProductMasterTemplate, importProductMaster };
   })();
   window.invUI = invUI;
 
