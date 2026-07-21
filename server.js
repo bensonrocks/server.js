@@ -1749,6 +1749,25 @@ function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 function globalOrdersWithState() {
   const db          = readDb();
   const orderLabels = db.orderLabels || {};
+  // Orders currently inside a LIVE wave (not yet completed/cancelled) — the
+  // Orders list shows the wave code as a pill and lets anyone reopen it
+  // (that's also where the Cancel Wave button lives — before this existed,
+  // closing the Wave Pick tab left a live wave with no visible way back).
+  const activeWaveByOrder = new Map();
+  const wavesById = new Map((db.waves || []).map(w => [w.id, w]));
+  // Fallback for COMPLETED waves: state.wave_id is stamped at completion
+  // time, so waves completed before that stamping existed (or a rare
+  // apply-failure) left no mark on their orders — derive membership from
+  // the wave records themselves so the "Needs Closing" pill also appears
+  // retroactively. Newest wave wins (db.waves is unshifted, newest-first).
+  const doneWaveByOrder = new Map();
+  for (const w of db.waves || []) {
+    if (w.status === 'cancelled') continue;
+    const target = w.status === 'completed' ? doneWaveByOrder : activeWaveByOrder;
+    for (const on of w.order_numbers || []) {
+      if (!target.has(on)) target.set(on, w);
+    }
+  }
   const seen        = new Set();
   const out         = [];
   for (const batch of db.batches) {
@@ -1790,7 +1809,11 @@ function globalOrdersWithState() {
         pending_deletion:  state.pending_deletion  || null,
         cartons:           state.cartons           || [],
         active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
-        wave_id:           state.wave_id            || null,
+        wave_id:           state.wave_id || doneWaveByOrder.get(ord.order_number)?.id || null,
+        wave_code:         (wavesById.get(state.wave_id) || doneWaveByOrder.get(ord.order_number))?.code || null,
+        active_wave_id:    activeWaveByOrder.get(ord.order_number)?.id     || null,
+        active_wave_code:  activeWaveByOrder.get(ord.order_number)?.code   || null,
+        active_wave_status: activeWaveByOrder.get(ord.order_number)?.status || null,
       });
     }
   }
@@ -1809,6 +1832,20 @@ function nextIdealscanCode(db) {
   // keep only today's counter — past days never mint new codes
   for (const k of Object.keys(db.jobCodeSeq)) if (k !== day) delete db.jobCodeSeq[k];
   return `IS-${day}-${String(db.jobCodeSeq[day]).padStart(2, '0')}`;
+}
+
+// Human-readable label for a wave — waves themselves are keyed by uuidv4()
+// (every /api/waves/* route uses that as :id, and changing it would be a
+// risky ID-scheme migration for no real benefit), but a raw UUID is
+// unreadable in a pill on the Orders list. This is purely a DISPLAY field
+// (own per-day counter key, mirrors nextIdealscanCode/nextInboundCode) —
+// never used for lookups.
+function nextWaveCode(db) {
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+  if (!db.waveCodeSeq) db.waveCodeSeq = {};
+  db.waveCodeSeq[day] = (db.waveCodeSeq[day] || 0) + 1;
+  for (const k of Object.keys(db.waveCodeSeq)) if (k !== day) delete db.waveCodeSeq[k];
+  return `WV-${day}-${String(db.waveCodeSeq[day]).padStart(2, '0')}`;
 }
 
 // One-time backfill: give pre-existing batches codes based on their upload date
@@ -2350,14 +2387,23 @@ function buildLabelMatchIndex() {
   const byWaybill = new Map();
   const scanKeys  = [];
   for (const o of allOrders) {
+    // issue_no carries the GI number for XLSX/CSV uploads that store it
+    // separately from order_number (see the Scan-to-find-order section in
+    // CLAUDE.md) — a label PDF printing the GI number must resolve here the
+    // same way the waybill-lookup bar already does, or these orders can
+    // never match a label no matter how many times the file is re-uploaded.
     const keys = [
       [normStr(o.order_number),   'order_number'],
+      [normStr(o.issue_no),       'issue_no'],
       [normStr(o.waybill_number), 'waybill_number'],
       [normStr(o.po_number),      'po_number'],
     ];
-    if (keys[0][0]) byOrderNo.set(keys[0][0], o.order_number);
-    if (keys[1][0]) byWaybill.set(keys[1][0], o.order_number);
-    if (keys[2][0]) byWaybill.set(keys[2][0], o.order_number);
+    // First write wins: orders arrive newest-batch-first, so when a stale
+    // duplicate order shares a key (same waybill/GI), the CURRENT order keeps it
+    if (keys[0][0] && !byOrderNo.has(keys[0][0])) byOrderNo.set(keys[0][0], o.order_number);
+    if (keys[1][0] && !byOrderNo.has(keys[1][0])) byOrderNo.set(keys[1][0], o.order_number);
+    if (keys[2][0] && !byWaybill.has(keys[2][0])) byWaybill.set(keys[2][0], o.order_number);
+    if (keys[3][0] && !byWaybill.has(keys[3][0])) byWaybill.set(keys[3][0], o.order_number);
     for (const [key, field] of keys) {
       if (!key) continue;
       const minLen = /[A-Z]/.test(key) ? 8 : 10;
@@ -2390,6 +2436,43 @@ function matchLabelPage(rawText, extracted, index) {
 app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), tenantMiddleware, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
+    // SAME FILE RE-UPLOADED — ask before replacing the earlier import.
+    // Confirmed = the earlier import (and its label attachments) is removed
+    // and this upload takes its place; label attachments are re-created by
+    // this upload's own matching pass.
+    const labelHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    {
+      const dbChk  = readDb();
+      const prior  = (dbChk.labelImports || []).find(i =>
+        i.contentHash === labelHash && i.filename === (req.file.originalname || 'label.pdf'));
+      if (prior) {
+        if (req.body?.overwrite_same_file !== 'yes') {
+          return res.status(409).json({
+            needsSameFileConfirm: true,
+            existing: {
+              filename:   prior.filename,
+              uploadedAt: (prior.uploadedAt || '').slice(0, 16).replace('T', ' '),
+              uploadedBy: prior.uploadedBy || '',
+              pageCount:  prior.pageCount || 0,
+            },
+            message: 'This exact label PDF (same name, same contents) was already uploaded.',
+          });
+        }
+        if (!dbChk.orderLabels) dbChk.orderLabels = {};
+        for (const [on, ref] of Object.entries(dbChk.orderLabels)) {
+          if (ref?.importId === prior.id) delete dbChk.orderLabels[on];
+        }
+        dbChk.labelImports = dbChk.labelImports.filter(i => i.id !== prior.id);
+        writeDb(dbChk);
+        try { fs.rmSync(path.join(LABEL_IMPORT_DIR, prior.id), { recursive: true, force: true }); } catch {}
+        logAudit('label_import_same_file_overwritten', {
+          importId: prior.id, filename: prior.filename,
+          originallyUploadedAt: prior.uploadedAt || '', originallyUploadedBy: prior.uploadedBy || '',
+          by: req.userId || '',
+        });
+      }
+    }
+
     const importId  = uuidv4();
     const importDir = path.join(LABEL_IMPORT_DIR, importId);
     fs.mkdirSync(importDir, { recursive: true });
@@ -2454,6 +2537,7 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
 
     const importRecord = {
       id: importId, filename: req.file.originalname || 'label.pdf',
+      contentHash: labelHash,
       uploadedAt: new Date().toISOString(), uploadedBy: req.userId,
       pageCount: numPages, pages,
     };
@@ -2496,6 +2580,34 @@ app.get('/api/label-imports/:id', requireAuth, (req, res) => {
   const imp = (db.labelImports || []).find(i => i.id === req.params.id);
   if (!imp) return res.status(404).json({ error: 'Import not found' });
   res.json(imp);
+});
+
+// Deletes a whole label-PDF import: only removes the label attachment
+// references (db.orderLabels) and the stored page PDFs — never touches
+// batches, orders, or scan state, so it's safe regardless of order status.
+app.delete('/api/label-imports/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { id } = req.params;
+  try {
+    const db  = readDb();
+    const idx = (db.labelImports || []).findIndex(i => i.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Import not found' });
+    const victim = db.labelImports[idx];
+    if (!db.orderLabels) db.orderLabels = {};
+    for (const [orderNumber, ref] of Object.entries(db.orderLabels)) {
+      if (ref?.importId === id) delete db.orderLabels[orderNumber];
+    }
+    db.labelImports.splice(idx, 1);
+    writeDb(db);
+    logAudit('label_import_deleted', {
+      importId: id, filename: victim.filename || '', pageCount: victim.pageCount || 0,
+      by: req.userId || 'master',
+    });
+    try { fs.rmSync(path.join(LABEL_IMPORT_DIR, id), { recursive: true, force: true }); } catch {}
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PDF served with token query-param support so browser iframes can authenticate
@@ -2597,6 +2709,14 @@ async function rematchLabelImport(id, rematchAll) {
         rawText = (await pdfParse(pageBuf)).text || '';
         page.rawText = rawText.slice(0, 4000);
       } catch {}
+    }
+
+    // Always re-extract fields from the text — the cached page.extracted was
+    // built with whatever extraction rules existed at upload time, so regex
+    // improvements (e.g. longer tracking-number prefixes) never reach old
+    // imports unless this refresh happens
+    if (rawText.trim() && extractLabelFields) {
+      try { page.extracted = extractLabelFields(rawText); } catch {}
     }
 
     // Image-only page (no text layer): pull the embedded bitmap and OCR it.
@@ -3335,7 +3455,20 @@ const AUTH_PUBLIC = new Set([
   '/api/public/config',
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
+  '/api/version',         // deploy verification — commit + boot time, no data
 ]);
+
+// Which build is this server actually running? Railway injects the deployed
+// commit SHA; boot time tells whether a restart/redeploy has happened. Shown
+// as a small stamp in the sidebar so "is the new version live?" is
+// answerable by reading the screen instead of digging through deploy logs.
+const SERVER_BOOTED_AT = new Date().toISOString();
+app.get('/api/version', (req, res) => {
+  res.json({
+    commit: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_COMMIT || '').slice(0, 7),
+    bootedAt: SERVER_BOOTED_AT,
+  });
+});
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
@@ -3594,6 +3727,50 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     const waybillPdf = req.files?.waybillPdf?.[0];
 
     if (!orderFile) return res.status(400).json({ error: 'No order file uploaded' });
+
+    // SAME FILE RE-UPLOADED — identical filename AND identical bytes as an
+    // earlier batch. Ask the uploader whether to overwrite that batch (it is
+    // removed and replaced by this upload) or abort. Only batches uploaded
+    // after this feature carry contentHash; older ones can't be compared.
+    const fileHash = crypto.createHash('sha256').update(orderFile.buffer).digest('hex');
+    {
+      const dbChk = readDb();
+      const prior = (dbChk.batches || []).find(b =>
+        b.contentHash === fileHash && b.filename === orderFile.originalname);
+      if (prior) {
+        const doneCount = (prior.orders || [])
+          .filter(o => prior.orderStates?.[o.order_number]?.status === 'done').length;
+        if (doneCount > 0) {
+          return res.status(422).json({
+            error: `UPLOAD ABORTED:\nThis exact file ("${prior.filename}") was already uploaded as job ${prior.idealscan_code || '(unknown)'} on ${(prior.uploaded_at || '').slice(0, 16).replace('T', ' ')}${prior.uploaded_by ? ` by ${prior.uploaded_by}` : ''}, and ${doneCount} of its order(s) are already COMPLETED.\nCompleted work is never overwritten. Nothing was saved.`,
+          });
+        }
+        if (req.body?.overwrite_same_file !== 'yes') {
+          return res.status(409).json({
+            needsSameFileConfirm: true,
+            existing: {
+              filename:   prior.filename,
+              job:        prior.idealscan_code || '',
+              uploadedAt: (prior.uploaded_at || '').slice(0, 16).replace('T', ' '),
+              uploadedBy: prior.uploaded_by || '',
+              orderCount: (prior.orders || []).length,
+            },
+            message: `This exact file (same name, same contents) was already uploaded.`,
+          });
+        }
+        // Confirmed: remove the earlier batch and its files, then proceed fresh
+        dbChk.batches = dbChk.batches.filter(b => b.id !== prior.id);
+        writeDb(dbChk);
+        try { fs.unlinkSync(path.join(WMS_DIR, `${prior.id}.xlsx`)); } catch {}
+        try { fs.rmSync(path.join(WAYBILL_DIR, prior.id), { recursive: true, force: true }); } catch {}
+        invalidateWaybillCache(prior.id);
+        logAudit('upload_same_file_overwritten', {
+          batchId: prior.id, filename: prior.filename, job: prior.idealscan_code || '',
+          originallyUploadedAt: prior.uploaded_at || '', originallyUploadedBy: prior.uploaded_by || '',
+          orders: (prior.orders || []).length, by: req.userId || '',
+        });
+      }
+    }
 
     const orderExt = path.extname(orderFile.originalname).toLowerCase();
     let pdfIssues = [];
@@ -3855,6 +4032,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     const db = readDb();
     const batch = {
       id: batchId, filename: orderFile.originalname,
+      contentHash: fileHash,
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',
@@ -6879,6 +7057,15 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
     const idx = db.batches.findIndex(b => b.id === batchId);
     if (idx === -1) return res.status(404).json({ error: 'Batch not found' });
     const victim = db.batches[idx];
+    const doneOrders = (victim.orders || [])
+      .filter(o => (victim.orderStates?.[o.order_number]?.status) === 'done')
+      .map(o => o.order_number);
+    if (doneOrders.length > 0) {
+      return res.status(403).json({
+        error: `This batch has ${doneOrders.length} completed order(s) and cannot be deleted. Completed work is never overwritten or removed by a batch delete — use the per-order deletion request workflow for individual orders if needed.`,
+        doneOrders: doneOrders.slice(0, 500),
+      });
+    }
     db.batches.splice(idx, 1);
     writeDb(db);
     logAudit('batch_deleted', {
@@ -9044,6 +9231,7 @@ app.post('/api/waves', requireAuth, express.json(), (req, res) => {
   const { picks, stats } = buildWave(orders);
   const wave = {
     id: uuidv4(),
+    code: nextWaveCode(db),
     name: String(name || `Wave-${new Date().toISOString().slice(0, 16).replace('T', ' ')}`).trim(),
     status: 'created',
     created_at: new Date().toISOString(),

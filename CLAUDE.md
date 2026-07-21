@@ -121,6 +121,14 @@ scannable: shown as a `GI: <value>` pill on the Orders-list row (next to the
 included in the Completed-tab free-text search (`ordersView === 'completed'`
 filter) alongside order_number/waybill_number/pick_ticket/po_number.
 
+THE SAME GAP EXISTED IN LABEL MATCHING — `buildLabelMatchIndex()` only
+indexed `order_number`/`waybill_number`/`po_number` when matching an
+uploaded carrier-label PDF's pages to orders, so a label printing only the
+GI number (which lives in `issue_no`, not `order_number`, on the XLSX/CSV
+path above) had nothing to match against. See "Label matching — issue_no
+indexing, first-write-wins, live re-extraction" further down for the fix
+and the two other bugs found alongside it.
+
 ## Day-bucketing is SGT everywhere; Orders tab never hides unfinished work
 
 Two scoping rules that keep the sidebar badge, the Orders stat tiles, and
@@ -249,6 +257,110 @@ duplicate rule has three tiers:
   unshifted to the FRONT of db.batches, so order-number lookups
   (findBatchForOrder, scanning) resolve to the new pending order, not the
   completed old one.
+
+## Same-file re-upload confirmation (server.js /api/upload, /api/label-imports)
+
+Distinct from the duplicate-ORDER-NUMBER tiers above — this catches
+literally re-uploading the SAME FILE (identical filename AND identical
+bytes, sha256 `contentHash` stored on the batch/import record at upload
+time). Runs first, before parsing and before the per-order duplicate
+checks:
+- **CONFIRMABLE** (409 `{needsSameFileConfirm, existing:{filename,
+  uploadedAt, uploadedBy, ...}}`): client confirm() reads out the earlier
+  upload's details; OK resends with `overwrite_same_file=yes`, which
+  REMOVES the earlier batch/import (and, for label imports, its
+  `db.orderLabels` attachments) and proceeds fresh with this upload —
+  never stacks a duplicate copy.
+- **HARD abort** (422, orders only): the earlier batch has a DONE order —
+  same standing rule as everywhere else, completed work is never
+  overwritten, so this aborts instead of offering the confirm.
+- Only batches/imports uploaded after this feature shipped carry
+  `contentHash`; older records simply never match, so they're invisible
+  to this check (not a bug — nothing to compare against).
+
+## Batch deletion refuses completed orders; label imports are deletable
+
+`DELETE /api/master/batch/:batchId` used to splice the whole batch
+unconditionally — the only destructive path in the app that didn't check
+for completed work first. Now refuses (403, naming every completed order
+in the batch) if ANY order inside is `done`; the per-order deletion
+request workflow (admin-request + Master-approve, see order/inbound
+deletion elsewhere in this file) is the only way to remove a batch that
+contains completed work, one order at a time.
+
+`DELETE /api/label-imports/:id` (master-key gated) is new: a label PDF
+import carries no operational progress (it's just PDF pages matched to
+orders for printing/reference), so it's deletable outright with no
+done-order check — removes the import record, every `db.orderLabels`
+entry pointing at it, and the page PDFs on disk. UI: 🗑 button on each
+label-import card in the upload history.
+
+## Label matching — issue_no indexing, first-write-wins, live re-extraction (server.js `buildLabelMatchIndex`/`rematchLabelImport`)
+
+Three bugs that together meant "500+ matched labels never appeared on the
+orders the packers actually work from":
+
+1. **`issue_no` wasn't indexed.** Same gap as the scan-to-find-order bar
+   (see above) — BETIME/XLSX orders carry their GI number in `issue_no`,
+   a field separate from `order_number`. A label PDF printing only the GI
+   number had nothing to match against until `issue_no` was added to
+   `buildLabelMatchIndex()`'s keys (own `byOrderNo` entry + a `scanKeys`
+   fallback candidate), exactly like `order_number`.
+2. **Stale duplicates were winning the match index.** `buildLabelMatchIndex()`
+   used `Map.set()` for the `byOrderNo`/`byWaybill` maps — since orders
+   are iterated newest-batch-first, a stale duplicate order sharing a
+   waybill/GI key with the CURRENT order would overwrite it (last write
+   wins). Now first-write-wins: `if (!byOrderNo.has(key)) byOrderNo.set(...)`,
+   so the newest order (encountered first in the newest-first iteration)
+   always keeps the key.
+3. **Rematch reused the cached extraction.** `rematchLabelImport()` matched
+   against `page.extracted` as captured at upload time, so an extraction
+   improvement (e.g. the tracking-number regex widening below) never
+   reached an already-processed import — only fresh uploads benefited.
+   Rematch now re-runs `extractLabelFields(rawText)` on every page before
+   matching, so `↻ Rematch All` (added next to `⚡ Auto Match Unmatched`
+   on the Labels import review screen) genuinely re-evaluates old imports
+   against current logic, not just the current order list.
+
+`lib/label-extract.js`'s tracking-number regex was also widened from
+`[A-Z]{2,4}\d{10,18}` to `[A-Z]{2,6}\d{9,18}` — 5–6 letter courier
+prefixes (SPXSG…, SPTTND…) were being missed entirely; existing
+TRACX/SGDEX/postal patterns run first and are unaffected.
+
+## Live-wave visibility pill + build stamp (server.js `globalOrdersWithState`, public/app.js)
+
+Before a wave had a visible pill, closing the Wave Pick tab left a
+picking/created wave with NO way back to it — and therefore no reachable
+Cancel Wave button. `globalOrdersWithState()` now maps every order to its
+wave via `activeWaveByOrder` (waves not yet `completed`/`cancelled`) and
+`doneWaveByOrder` (completed waves, newest-first so a stale duplicate
+never wins — same first-write-wins pattern as the label match index
+above), exposing `active_wave_id`/`active_wave_code`/`active_wave_status`
+and `wave_id`/`wave_code`. Every wave gets a short display code
+(`nextWaveCode()`, `WV-YYMMDD-NN`, per-SGT-day counter) alongside its
+internal UUID — the UUID stays the primary key everywhere, `code` is
+purely for what's shown on screen.
+
+- **Purple "🌊 WV-… — Picking/Ready" chip** on any order still inside a
+  live (not-yet-completed) wave, clickable by anyone
+  (`resumeWavePick(waveId)` → switches to the Wave Pick tab and opens
+  that wave's detail view directly, where Cancel Wave lives).
+- The existing amber "Needs Closing" pill (shown once a wave is completed
+  but the order hasn't been individually finished through Scan & Check)
+  now shows the WV- code in its visible text too, not just in the tooltip.
+- **Retroactive fallback**: `wave_id`/`wave_code` resolve via
+  `doneWaveByOrder` even when `state.wave_id` was never stamped on the
+  order (e.g. a wave completed with no fully-picked lines, or one
+  completed before the stamping feature existed) — so the pill isn't
+  silently missing for older/edge-case data, it's derived fresh from
+  `db.waves` every time `globalOrdersWithState()` runs.
+
+**Build stamp** — `GET /api/version` (public, no auth — `AUTH_PUBLIC`)
+returns `{commit, bootedAt}` (`RAILWAY_GIT_COMMIT_SHA`/`SOURCE_COMMIT` +
+process start time); rendered as a small `build xxxxxxx · up since …`
+line under the sidebar's Administrator button (`initBuildStamp` in
+app.js) so "did the new deploy actually go live?" is answerable by
+reading the screen instead of digging through deploy logs.
 
 ## ZORT integration — per-client merchant store connections (lib/zort.js + server.js)
 

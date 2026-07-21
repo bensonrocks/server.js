@@ -787,8 +787,19 @@
     try {
       const fd = new FormData();
       fd.append('labelPdf', file);
-      const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
-      const data = await resp.json();
+      let resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      let data = await resp.json();
+      if (resp.status === 409 && data.needsSameFileConfirm) {
+        if (!labelSameFileConfirm(data.existing)) {
+          statusEl.className = 'status-bar error';
+          statusEl.textContent = 'Upload cancelled — the earlier label upload was kept.';
+          labelImportInputUpload.value = '';
+          return;
+        }
+        fd.append('overwrite_same_file', 'yes');
+        resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+        data = await resp.json();
+      }
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
       statusEl.classList.add('hidden');
       labelImportInputUpload.value = '';
@@ -1120,6 +1131,27 @@
 
       let resp = await sendUpload();
       let data = await resp.json();
+
+      // Exact same file (same name + same contents) uploaded before —
+      // the uploader decides: replace that batch or abort.
+      if (resp.status === 409 && data.needsSameFileConfirm) {
+        const ex = data.existing || {};
+        const ok = confirm(
+          `⚠ SAME FILE ALREADY UPLOADED\n\n` +
+          `"${ex.filename}" (identical contents) was already uploaded` +
+          `${ex.job ? ` as job ${ex.job}` : ''} on ${ex.uploadedAt}` +
+          `${ex.uploadedBy ? ` by ${ex.uploadedBy}` : ''} — ${ex.orderCount} order(s).\n\n` +
+          `OK = OVERWRITE the earlier upload with this one (its orders and any scan progress are replaced)\n` +
+          `Cancel = abort this upload (keep the existing one)`);
+        if (!ok) {
+          document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+          setUploadStatus('error', 'Upload cancelled — the earlier upload of this file was kept.');
+          return;
+        }
+        form.append('overwrite_same_file', 'yes');
+        resp = await sendUpload();
+        data = await resp.json();
+      }
 
       // Suspect SKUs: the AI column detection found SKUs shaped like
       // warehouse location codes (e.g. THT-64-427-3 vs bin AC-007-003-B).
@@ -1807,9 +1839,17 @@
 
       // Chips under order number
       const cartonCount = (ord.cartons || []).length;
+      // Order sits inside a LIVE wave (created/picking, not yet completed) —
+      // show the wave code and let anyone click it to reopen the wave (the
+      // Cancel Wave button lives there too — before this chip existed,
+      // closing the Wave Pick tab left a live wave with no visible way back).
+      const activeWaveChip = (ord.active_wave_id && ord.scan_status !== 'done')
+        ? `<span class="chip chip-wave-active" style="cursor:pointer" onclick="event.stopPropagation();resumeWavePick('${esc(ord.active_wave_id)}')" title="This order is in wave ${esc(ord.active_wave_code || ord.active_wave_id)} (${ord.active_wave_status === 'picking' ? 'picking' : 'ready to pick'}). Click to reopen it — cancel it from there if needed.">&#127754; ${esc(ord.active_wave_code || ord.active_wave_id.slice(0, 8))} — ${ord.active_wave_status === 'picking' ? 'Picking' : 'Ready'}</span>`
+        : '';
       const chips = [
+        activeWaveChip,
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
-        (ord.wave_id && ord.scan_status !== 'done') ? `<span class="chip chip-wave-needs-closing" title="Picked as part of a wave — complete this order normally through Scan & Check to close it out" style="cursor:pointer" onclick="event.stopPropagation();requestWaveCancellation('${esc(ord.wave_id)}')">&#127754; Wave Picked — Needs Closing</span>` : '',
+        (ord.wave_id && ord.scan_status !== 'done') ? `<span class="chip chip-wave-needs-closing" title="Picked as part of a wave — complete this order normally through Scan & Check to close it out" style="cursor:pointer" onclick="event.stopPropagation();requestWaveCancellation('${esc(ord.wave_id)}')">&#127754; ${esc(ord.wave_code || ord.wave_id)} — Needs Closing</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
         // 1 carton is the default and not worth a chip — only shown once an order actually split into more than one box
@@ -9148,6 +9188,7 @@
             </div>
             <div class="log-card-actions">
               <button class="btn-download log-review-labels" data-import-id="${esc(li.id)}">Review &rsaquo;</button>
+              <button class="btn-del-batch btn-del-labels" data-id="${esc(li.id)}" data-name="${esc(li.filename)}" title="Delete this label import">&#128465; Delete</button>
             </div>
           </div>`;
         }
@@ -9220,7 +9261,7 @@
         });
       });
 
-      listEl.querySelectorAll('.btn-del-batch').forEach(btn => {
+      listEl.querySelectorAll('.btn-del-batch:not(.btn-del-labels)').forEach(btn => {
         btn.addEventListener('click', async e => {
           e.stopPropagation();
           const batchId = btn.dataset.id, fname = btn.dataset.name;
@@ -9228,6 +9269,21 @@
           if (!confirm(`Confirm: permanently delete "${fname}"?`)) return;
           try {
             const r = await fetch(`/api/master/batch/${encodeURIComponent(batchId)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Delete failed');
+            await refreshOrders(); renderOrdersList();
+            await renderLogContent();
+          } catch (err) { alert(err.message); }
+        });
+      });
+
+      listEl.querySelectorAll('.btn-del-labels').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          e.stopPropagation();
+          const importId = btn.dataset.id, fname = btn.dataset.name;
+          if (!confirm(`Delete label import "${fname}"?\nThis removes the matched-label attachments from any orders (their order data is untouched). This cannot be undone.`)) return;
+          try {
+            const r = await fetch(`/api/label-imports/${encodeURIComponent(importId)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
             const d = await r.json();
             if (!r.ok) throw new Error(d.error || 'Delete failed');
             await refreshOrders(); renderOrdersList();
@@ -9637,6 +9693,17 @@
     }
   }
 
+  // Shared same-file confirm for both label-upload entry points
+  function labelSameFileConfirm(ex) {
+    ex = ex || {};
+    return confirm(
+      `⚠ SAME LABEL PDF ALREADY UPLOADED\n\n` +
+      `"${ex.filename}" (identical contents) was already uploaded on ${ex.uploadedAt}` +
+      `${ex.uploadedBy ? ` by ${ex.uploadedBy}` : ''} — ${ex.pageCount} page(s).\n\n` +
+      `OK = OVERWRITE it with this upload (its matched labels are re-matched from this file)\n` +
+      `Cancel = keep the earlier upload`);
+  }
+
   async function doLabelImport(file) {
     const statusEl = document.getElementById('labelImportStatus');
     statusEl.className = 'status-bar loading';
@@ -9645,8 +9712,19 @@
     const fd = new FormData();
     fd.append('labelPdf', file);
     try {
-      const resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
-      const data = await resp.json();
+      let resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      let data = await resp.json();
+      if (resp.status === 409 && data.needsSameFileConfirm) {
+        if (!labelSameFileConfirm(data.existing)) {
+          statusEl.className = 'status-bar error';
+          statusEl.textContent = 'Upload cancelled — the earlier label upload was kept.';
+          document.getElementById('labelImportFileInput').value = '';
+          return;
+        }
+        fd.append('overwrite_same_file', 'yes');
+        resp = await fetch('/api/label-imports', { method: 'POST', body: fd });
+        data = await resp.json();
+      }
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
       statusEl.className = 'status-bar success';
       statusEl.textContent = `✓ Imported ${data.pageCount} page${data.pageCount !== 1 ? 's' : ''} — ${data.matched} matched`;
@@ -9683,6 +9761,7 @@
         dup       ? `<span class="lri-badge lri-dup">${dup} duplicate</span>` : '',
         errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
         unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
+        matched   ? `<button class="btn-secondary btn-sm" id="lriRematchAllBtn" style="margin-left:.5rem">&#8635; Rematch All</button>` : '',
       ].filter(Boolean).join('');
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
@@ -9695,6 +9774,22 @@
           await refreshOrders();
           openLabelReview(importId);
         } catch (err) { alert(err.message); }
+      });
+      // Re-evaluates EVERY page against the current order list, including
+      // ones already marked matched — needed after a matching-rule fix
+      // (e.g. a field the index didn't used to check) so stale results from
+      // before the fix get corrected instead of being skipped.
+      document.getElementById('lriRematchAllBtn')?.addEventListener('click', async () => {
+        if (!confirm('Re-check every page in this import against the current order list, including pages already marked matched? Any that now resolve differently will be updated.')) return;
+        const btn = document.getElementById('lriRematchAllBtn');
+        btn.disabled = true; btn.textContent = 'Rematching…';
+        try {
+          const r = await fetch(`/api/label-imports/${importId}/rematch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Rematch failed');
+          await refreshOrders();
+          openLabelReview(importId);
+        } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = '↻ Rematch All'; }
       });
 
       const token = localStorage.getItem('wms_token') || '';
@@ -9851,6 +9946,17 @@
   document.getElementById('labelMatchCancelBtn').addEventListener('click', () =>
     document.getElementById('labelManualMatchOverlay').classList.add('hidden')
   );
+
+  // Deployed-build stamp in the sidebar — /api/version is public (no data),
+  // so this runs even before login and never trips the 401 force-reload.
+  (function initBuildStamp() {
+    const el = document.getElementById('buildStamp');
+    if (!el) return;
+    fetch('/api/version').then(r => r.json()).then(v => {
+      const boot = v.bootedAt ? new Date(v.bootedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+      el.textContent = `build ${v.commit || 'dev'}${boot ? ` · up since ${boot}` : ''}`;
+    }).catch(() => {});
+  })();
 
   // ── Install-app helper ─────────────────────────────────────────────────────
   // iOS NEVER fires an install prompt — installing means Safari → Share →
@@ -10249,6 +10355,15 @@
       alert('Cancellation request submitted — a Master needs to approve it before anything is reversed.');
       if (typeof refreshOrders === 'function') refreshOrders();
     } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  // Reopen a live wave from its pill on the Orders list — switches to the
+  // Wave Pick tab and opens that wave's detail view directly, where the
+  // Cancel Wave button lives. Before this pill existed, closing the Wave
+  // Pick tab left a live wave with no visible way back to it.
+  window.resumeWavePick = function (waveId) {
+    switchTab('waves');
+    waveUI.openWave(waveId);
   };
 
   // ── Init ───────────────────────────────────────────────────────────────────
