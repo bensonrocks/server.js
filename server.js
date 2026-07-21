@@ -4341,6 +4341,11 @@ app.post('/api/scan/new-carton', (req, res) => {
     return res.status(400).json({ error: 'Scan at least one item into this carton before starting a new one.' });
   }
   current.closedAt = new Date().toISOString();
+  // SEALED: once a new carton starts, the previous carton's contents are
+  // locked — reopening it (carton/switch) or merging it away (cancel-multi)
+  // needs an administrator unlock (/api/scan/carton/unlock). Protects the
+  // physical reality: that box may already be taped shut.
+  current.locked = true;
   // Always a genuinely new carton, appended after whatever exists — even if
   // the packer had switched back to an earlier one to edit it. Use it to
   // reopen a past carton instead (/api/scan/carton/switch).
@@ -4375,6 +4380,12 @@ app.post('/api/scan/carton/switch', (req, res) => {
   activeCarton(state); // ensure cartons/pointer initialized before lookup
   const target = state.cartons.find(c => c.num === num);
   if (!target) return res.status(404).json({ error: `Carton ${num} not found.` });
+  if (target.locked) {
+    return res.status(403).json({
+      lockedCarton: true, cartonNum: num,
+      error: `Carton ${num} is sealed — its contents are locked. An administrator must unlock it before it can be reopened.`,
+    });
+  }
   const current = state.cartons.find(c => c.num === state.activeCartonNum);
   if (current && current.num !== target.num && !current.closedAt) current.closedAt = new Date().toISOString();
   target.closedAt = null; // reopened
@@ -4406,6 +4417,13 @@ app.post('/api/scan/carton/cancel-multi', (req, res) => {
   if (!state.cartons || state.cartons.length <= 1) {
     return res.status(400).json({ error: 'This order is not split into multiple cartons.' });
   }
+  const lockedNums = state.cartons.filter(c => c.locked).map(c => c.num);
+  if (lockedNums.length) {
+    return res.status(403).json({
+      lockedCarton: true,
+      error: `Carton ${lockedNums.join(', ')} is sealed — an administrator must unlock all sealed cartons before merging back to one box.`,
+    });
+  }
   const merged = {};
   let earliest = state.cartons[0].startedAt;
   for (const c of state.cartons) {
@@ -4421,6 +4439,39 @@ app.post('/api/scan/carton/cancel-multi', (req, res) => {
   journalOrderState(orderNumber, state);
   writeDb(db);
   res.json({ ok: true, cartonCount: 1, activeCartonNum: 1 });
+});
+
+// Administrator unlock for a sealed carton — admin role + own password
+// re-entered (403 on a wrong one, never 401: the session token is still
+// valid and a 401 would trip the client's global session-expired reload).
+// Unlocking only clears the seal; reopening still goes through the normal
+// carton/switch call afterwards.
+app.post('/api/scan/carton/unlock', (req, res) => {
+  const { orderNumber, cartonNum, password } = req.body || {};
+  const num = parseInt(cartonNum, 10);
+  if (!orderNumber || !num) return res.status(400).json({ error: 'orderNumber and cartonNum required' });
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Session user not found.' });
+  if ((user.role || 'admin') !== 'admin') {
+    return res.status(403).json({ error: 'Only an administrator can unlock a sealed carton.' });
+  }
+  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
+    return res.status(403).json({ error: 'Incorrect password.' });
+  }
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const state = (batch.orderStates || {})[orderNumber];
+  const target = state?.cartons?.find(c => c.num === num);
+  if (!target) return res.status(404).json({ error: `Carton ${num} not found.` });
+  if (!target.locked) return res.json({ ok: true, alreadyUnlocked: true });
+  target.locked = false;
+  state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'carton_unlock', raw: '', sku: '', qty: num, by: req.userId || '' });
+  journalOrderState(orderNumber, state);
+  writeDb(db);
+  logAudit('carton_unlocked', { order: orderNumber, cartonNum: num, by: req.userId || '' });
+  res.json({ ok: true });
 });
 
 // Records that the packer confirmed they wrote the carton label — persists

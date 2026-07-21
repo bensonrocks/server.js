@@ -682,6 +682,29 @@ breaking the default.
   active — even if the packer had switched back to edit an earlier one.
   Refuses (400) if the currently active carton is still empty — prevents
   phantom cartons from a stray double-tap.
+- **SEALED CARTONS — new-carton LOCKS the carton it closes.** The closed
+  carton gets `locked: true`; `carton/switch` to it returns 403
+  `{lockedCarton:true}` and `cancel-multi` refuses while any carton is
+  locked — that box may already be taped shut, so its contents (SKU+qty)
+  can't silently change. `POST /api/scan/carton/unlock {orderNumber,
+  cartonNum, password}` (admin role + OWN password re-entered, 403 not 401
+  on a wrong one, audit-logged `carton_unlocked`) clears the seal; the
+  client's `switchCarton()` offers this inline to admins (prompt for
+  password on the 403) and just shows "sealed" to warehouse users. Since
+  every scan/setqty only ever tallies into the ACTIVE carton, blocking
+  switch-to-locked is sufficient to protect sealed contents. Legacy
+  cartons without the flag are simply unlocked.
+- **"SEAL FINAL CARTON" SCREEN** (`showSealFinalCarton()` /
+  `#sealCartonOverlay`) — when the last piece is scanned and the order
+  completes (auto-complete or the Complete button), a big green screen
+  shows the FINAL carton's label (`{order}-{NN}`) plus "Order complete —
+  N pcs in M carton(s)" for ~4 seconds (tap or any key skips), then the
+  flow closes the scan overlay back to the orders summary with the
+  waybill-scan bar focused, ready for the next order. This REPLACED the
+  old click-to-confirm label prompt at completion (`doCompleteOrder` no
+  longer calls `showCartonLabelPrompt` for the last carton — the seal
+  screen posts `carton/label-confirmed` fire-and-forget instead). The
+  carton-1-on-open and closing-a-carton label prompts are unchanged.
 - ORDER-LEVEL SPLIT CONFIRM (client-only, `requestNewCarton()` in app.js):
   before even calling `/new-carton`, if the order's total scanned pieces are
   less than total ordered, a `confirm()` warns that starting a new carton

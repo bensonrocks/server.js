@@ -921,6 +921,14 @@ body.scan-open { overflow: hidden; }
 .modal-actions .btn-danger { text-align: center; padding: .65rem; }
 .carton-label-text { font-size: 2.1rem; font-weight: 800; text-align: center; letter-spacing: .02em; color: var(--text); background: var(--surface-2); border: 2px dashed var(--border); border-radius: var(--radius-sm); padding: .9rem .5rem; margin: .3rem 0; font-family: monospace; }
 
+/* Seal Final Carton — big, unmissable, auto-dismissing completion screen */
+.seal-carton-modal { text-align: center; border: 3px solid #16a34a; }
+.seal-carton-icon { font-size: 3rem; }
+.seal-carton-title { font-size: 1.6rem; font-weight: 900; letter-spacing: .08em; color: #16a34a; margin: .3rem 0 .6rem; }
+.seal-carton-label { border-color: #16a34a; }
+.seal-carton-sub { font-size: 1.05rem; font-weight: 700; margin: .5rem 0 .2rem; }
+.seal-carton-hint { color: var(--text-light, #64748b); font-size: .85rem; margin-top: .6rem; }
+
 .mismatch-table-wrap { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 1.1rem; overflow-x: auto; }
 .mismatch-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 .mismatch-table th { background: var(--surface-2); padding: .5rem .75rem; font-size: .72rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border); }

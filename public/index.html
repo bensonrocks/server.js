@@ -2342,6 +2342,18 @@
     </div>
   </div>
 
+  <!-- Seal Final Carton — shown for a few seconds when the last piece is
+       scanned and the order completes, then auto-returns to the orders list -->
+  <div id="sealCartonOverlay" class="modal-overlay hidden">
+    <div class="modal seal-carton-modal">
+      <div class="seal-carton-icon">&#128230;</div>
+      <div class="seal-carton-title">SEAL FINAL CARTON</div>
+      <div class="carton-label-text seal-carton-label" id="sealCartonLabel">ORDER-01</div>
+      <div class="seal-carton-sub" id="sealCartonSub">Order complete</div>
+      <div class="seal-carton-hint">Returning to orders<span id="sealCartonCountdown"></span>… (tap to continue now)</div>
+    </div>
+  </div>
+
   <!-- Inbound photo lightbox — full-size view of a receiving photo -->
   <div id="inboundPhotoLightbox" class="inbound-photo-lightbox hidden">
     <div class="inbound-photo-lightbox-bar">

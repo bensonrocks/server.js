@@ -6742,6 +6742,24 @@
         body: JSON.stringify({ orderNumber: activeOrder.order_number, cartonNum: num }),
       });
       const data = await resp.json();
+      if (!resp.ok && data.lockedCarton) {
+        // Sealed carton — an admin can unlock on the spot (own password),
+        // anyone else just sees that it's sealed.
+        if (currentUser?.role !== 'admin') {
+          showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error);
+          return;
+        }
+        const pwd = prompt(`🔒 Carton ${num} is SEALED — its contents are locked.\n\nEnter YOUR password to unlock it (this is audit-logged):`);
+        if (!pwd) return;
+        const ur = await fetch('/api/scan/carton/unlock', {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ orderNumber: activeOrder.order_number, cartonNum: num, password: pwd }),
+        });
+        const ud = await ur.json();
+        if (!ur.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', ud.error || 'Unlock failed'); return; }
+        showFeedback(document.getElementById('itemScanFeedback'), 'success', `🔓 Carton ${num} unlocked`);
+        return switchCarton(num); // retry now that it's unlocked
+      }
       if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not switch carton.'); return; }
       activeOrder.cartonNum   = data.activeCartonNum;
       activeOrder.cartonCount = data.cartonCount;
@@ -7673,6 +7691,43 @@
   }
 
   // ── Complete order ─────────────────────────────────────────────────────────
+  // "SEAL FINAL CARTON" — shown the moment the order completes, with the
+  // final carton's label, for a few seconds (the packer looks at the screen
+  // while taping the box). Tap anywhere to continue immediately; otherwise
+  // it auto-dismisses and the flow returns to the orders list.
+  function showSealFinalCarton(order) {
+    return new Promise(resolve => {
+      const overlay = document.getElementById('sealCartonOverlay');
+      const nn      = String(order.cartonCount || 1).padStart(2, '0');
+      const totalPcs = Object.values(order.scanned || {}).reduce((s, v) => s + v, 0);
+      document.getElementById('sealCartonLabel').textContent = `${order.order_number}-${nn}`;
+      document.getElementById('sealCartonSub').textContent =
+        `✓ Order ${order.order_number} complete — ${totalPcs} pc${totalPcs === 1 ? '' : 's'} in ${order.cartonCount || 1} carton${(order.cartonCount || 1) === 1 ? '' : 's'}`;
+      overlay.classList.remove('hidden');
+      // Persist the final carton's label confirmation for the audit trail —
+      // fire-and-forget, the seal screen itself is the packer-facing pause
+      fetch('/api/scan/carton/label-confirmed', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: order.order_number, cartonNum: order.cartonCount || 1 }),
+      }).catch(() => {});
+      let secs = 4;
+      const cd = document.getElementById('sealCartonCountdown');
+      cd.textContent = ` in ${secs}`;
+      const tick = setInterval(() => { secs--; cd.textContent = secs > 0 ? ` in ${secs}` : ''; }, 1000);
+      const done = () => {
+        clearInterval(tick);
+        overlay.classList.add('hidden');
+        overlay.removeEventListener('click', done);
+        document.removeEventListener('keydown', keyDone, true);
+        resolve();
+      };
+      const keyDone = () => done();
+      const timer = setTimeout(done, 4000);
+      overlay.addEventListener('click', () => { clearTimeout(timer); done(); });
+      document.addEventListener('keydown', keyDone, true);
+    });
+  }
+
   async function doCompleteOrder() {
     const completeBtn = document.getElementById('completeOrderBtn');
     beginScanBusy(completeBtn);
@@ -7698,11 +7753,11 @@
 
         // Update matching transport record
         updateTransportRecordOnOrderCompletion(completedOrder);
-        // The last carton never went through requestNewCarton()'s "closing"
-        // prompt (nothing ever superseded it) — label it now, before moving on.
-        if ((completedOrder.cartonCount || 1) > 1 && !cartonLabelConfirmed(completedOrder, completedOrder.cartonCount)) {
-          await showCartonLabelPrompt(`${completedOrder.order_number}-${String(completedOrder.cartonCount).padStart(2, '0')}`, completedOrder.cartonCount);
-        }
+        // SEAL FINAL CARTON — replaces the old click-to-confirm label prompt
+        // at completion: shows the final carton number big on screen for a
+        // few seconds (the packer looks up while taping the box), then the
+        // flow returns to the orders list ready for the next order.
+        await showSealFinalCarton(completedOrder);
         closeScanOverlay();
         await refreshOrders();
         renderOrdersDash();
