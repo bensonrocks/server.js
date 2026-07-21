@@ -1853,10 +1853,17 @@
       const canRequestWaveCancel = currentUser?.role === 'admin';
       const wavePendingChip = (ord.wave_id && !isDone)
         ? (ord.wave_cancel_pending
-            ? `<span class="chip chip-wave-pending chip-wave-cancel-pending" title="Cancellation requested for wave ${esc(ord.wave_id)} — awaiting Master approval">&#9203; Wave Cancellation Requested</span>`
-            : `<span class="chip chip-wave-pending${canRequestWaveCancel ? ' chip-wave-pending-clickable' : ''}" ${canRequestWaveCancel ? `data-wave-cancel="${esc(ord.wave_id)}" data-wave-order-count="${(loadedOrders.filter(o => o.wave_id === ord.wave_id)).length}"` : ''} title="Wave ${esc(ord.wave_id)} put the pieces in — this order still needs to be opened, cartons verified, and Completed individually${canRequestWaveCancel ? '. Click to request cancelling the wave.' : ''}">&#127754; Wave Picked — Needs Closing</span>`)
+            ? `<span class="chip chip-wave-pending chip-wave-cancel-pending" title="Cancellation requested for wave ${esc(ord.wave_id)} — awaiting Master approval">&#9203; ${esc(ord.wave_id)} — Cancellation Requested</span>`
+            : `<span class="chip chip-wave-pending${canRequestWaveCancel ? ' chip-wave-pending-clickable' : ''}" ${canRequestWaveCancel ? `data-wave-cancel="${esc(ord.wave_id)}" data-wave-order-count="${(loadedOrders.filter(o => o.wave_id === ord.wave_id)).length}"` : ''} title="Wave ${esc(ord.wave_id)} put the pieces in — this order still needs to be opened, cartons verified, and Completed individually${canRequestWaveCancel ? '. Click to request cancelling the wave.' : ''}">&#127754; ${esc(ord.wave_id)} — Needs Closing</span>`)
+        : '';
+      // Order sits inside a LIVE wave (picking/sorting) — show the wave
+      // number and let anyone click it to reopen the wave (where the
+      // "Cancel Wave" button also lives).
+      const activeWaveChip = (ord.active_wave_id && !isDone)
+        ? `<span class="chip chip-wave-active" data-wave-open="${esc(ord.active_wave_id)}" title="This order is in wave ${esc(ord.active_wave_id)} (${ord.active_wave_status === 'sorting' ? 'sorting' : 'picking'}). Click to reopen the wave — cancel it from there if needed.">&#127754; ${esc(ord.active_wave_id)} — ${ord.active_wave_status === 'sorting' ? 'Sorting' : 'Picking'}</span>`
         : '';
       const chips = [
+        activeWaveChip,
         wavePendingChip,
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
@@ -2004,6 +2011,13 @@
       chip.addEventListener('click', e => {
         e.stopPropagation();
         openWaveCancelRequestModal(chip.dataset.waveCancel, chip.dataset.waveOrderCount);
+      });
+    });
+
+    document.querySelectorAll('.chip-wave-active').forEach(chip => {
+      chip.addEventListener('click', e => {
+        e.stopPropagation();
+        resumeWavePick(chip.dataset.waveOpen);
       });
     });
 
@@ -6006,6 +6020,25 @@
       document.getElementById('wavePickOverlay').classList.remove('hidden');
       showWavePickingPhase();
     } catch (err) { alert('Wave start error: ' + err.message); }
+  }
+
+  // Reopen a live wave from its pill on the Orders list — resumes at the
+  // right phase; the Cancel Wave button lives inside the overlay.
+  async function resumeWavePick(waveId) {
+    try {
+      const r = await fetch(`/api/waves/${encodeURIComponent(waveId)}`);
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || 'Could not load wave'); return; }
+      if (d.wave.status === 'done' || d.wave.status === 'cancelled') {
+        alert(`Wave ${waveId} is already ${d.wave.status}.`);
+        await refreshOrders(); renderOrdersList();
+        return;
+      }
+      activeWave = d.wave;
+      document.getElementById('wavePickOverlay').classList.remove('hidden');
+      if (d.wave.status === 'sorting') showWaveSortingPhase(d.allocationSummary);
+      else showWavePickingPhase();
+    } catch (err) { alert('Wave load error: ' + err.message); }
   }
 
   function showWavePickingPhase() {

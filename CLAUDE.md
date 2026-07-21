@@ -1717,6 +1717,20 @@ whenever the Active view has at least one selectable order, growing to show
   `focusWaybillInput()` so the packer lands straight back on that bar, and
   the post-complete confirmation explicitly tells them to scan each order's
   GI/waybill to open and complete it next.
+- **LIVE-WAVE PILL + REOPEN** — from the moment a wave is CREATED, every
+  order in it shows a purple `🌊 <WV-id> — Picking` (or `— Sorting`) chip
+  (`.chip-wave-active`): `globalOrdersWithState()` cross-references
+  non-terminal waves' `orderNumbers` into `active_wave_id`/
+  `active_wave_status` per order. The chip is clickable for EVERYONE (not
+  admin-gated — reopening a wave is a packer action): `resumeWavePick(id)`
+  fetches `GET /api/waves/:id` and reopens the overlay at the right phase
+  (`sorting` → `showWaveSortingPhase(allocationSummary)`, else picking).
+  This is also the discoverable route to the **Cancel Wave** button, which
+  lives inside the overlay (`#waveCancelBtn`, instant cancel while the wave
+  is still picking/sorting) — before this pill existed, closing the overlay
+  left a live wave with NO visible way back to it or to cancel it. Both
+  wave pills (this one and the completed one below) include the WV- number
+  in their visible text, not just the tooltip.
 - **"WAVE PICKED — NEEDS CLOSING" PILL** — completing a wave stamps
   `state.wave_id = wave.id` on every affected order's state (in the same
   `/api/waves/:id/complete` callback that writes `scanned`), exposed as

@@ -2605,6 +2605,9 @@ body.ls-open { overflow: hidden; }
 .chip-wave-pending { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; font-weight: 700; }
 .chip-wave-pending-clickable { cursor: pointer; }
 .chip-wave-pending-clickable:hover { background: #bfdbfe; }
+/* Order inside a LIVE wave (picking/sorting) — always clickable, reopens the wave */
+.chip-wave-active { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-weight: 700; cursor: pointer; }
+.chip-wave-active:hover { background: #ddd6fe; }
 .chip-wave-cancel-pending { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
 
 /* ── Official IdealOne mark (bitmap) — keep aspect inside the old square slots ── */

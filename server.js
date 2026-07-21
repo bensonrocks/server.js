@@ -1651,6 +1651,13 @@ function globalOrdersWithState() {
   const db          = readDb();
   const orderLabels = db.orderLabels || {};
   const wavesById    = new Map((db.waves || []).map(w => [w.id, w]));
+  // Orders currently inside a live (not done/cancelled) wave — the Orders
+  // list shows the wave number as a pill and lets the packer reopen it
+  const activeWaveByOrder = new Map();
+  for (const w of db.waves || []) {
+    if (w.status === 'done' || w.status === 'cancelled') continue;
+    for (const on of w.orderNumbers || []) activeWaveByOrder.set(on, w);
+  }
   const seen        = new Set();
   const out         = [];
   for (const batch of db.batches) {
@@ -1692,6 +1699,8 @@ function globalOrdersWithState() {
         pending_deletion:  state.pending_deletion  || null,
         wave_id:           state.wave_id           || null,
         wave_cancel_pending: !!(state.wave_id && wavesById.get(state.wave_id)?.pending_cancellation),
+        active_wave_id:     activeWaveByOrder.get(ord.order_number)?.id     || null,
+        active_wave_status: activeWaveByOrder.get(ord.order_number)?.status || null,
         cartons:           state.cartons           || [],
         active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
       });
