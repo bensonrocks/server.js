@@ -1361,6 +1361,58 @@ When porting to IdealScan or other codebases:
 5. Update CLAUDE.md in target with same Transport section
 6. Link both commits in PR/commit messages for sync tracking
 
+## Wave Picking — order-state integration, "Needs Closing" pill, cancellation
+
+Wave Picking (lib/wave-pick.js, the "Wave Pick" tab) originally only
+tracked its own pick-list state — completing a wave never touched a real
+order's `scanned`/`status`, so the packer still had to re-scan everything
+through Scan & Check afterward, defeating half the point. Closes the loop:
+
+- **`applyWaveToOrders(db, wave, req)`** (server.js, called from `POST
+  /api/waves/:id/complete`): for every FULLY-picked line (`picked_qty >=
+  total_qty` — a still-short line is left for the packer to finish via the
+  normal Scan & Check flow, not silently credited), writes each order's
+  share into the SAME fields `/api/scan/increment` writes —
+  `state.scanned[sku]`, `addToActiveCarton`, `appendScanLog`,
+  `journalOrderState` — via `findBatchForOrder`. Stamps `state.wave_id =
+  wave.id`. Never touches an order already `'done'` (skipped and reported
+  separately as `skippedDone` — this codebase's standing rule). The
+  `/complete` response includes `appliedOrders`/`skippedIncomplete`/
+  `skippedDone` so the caller knows exactly what happened.
+- **"🌊 Wave Picked — Needs Closing" pill** on the Orders list: shown
+  whenever `order.wave_id` is set AND `scan_status !== 'done'` — i.e. a
+  wave touched this order's scanned state but the packer hasn't
+  individually completed it yet. Disappears the moment the order is
+  completed normally (no explicit clearing needed — the pill's own
+  condition just stops matching). Admin-clickable → prompts for a reason +
+  password → `POST /api/waves/:id/cancel-request`.
+- **Cancellation — two tiers, mirroring the order/inbound deletion
+  pattern**: `POST /api/waves/:id/cancel` is instant for a wave that hasn't
+  been completed yet (nothing was ever applied, nothing to undo). A
+  **completed** wave needs Master approval — `POST
+  /api/waves/:id/cancel-request` (admin role + the admin's own password
+  re-confirmed, same reasoning as inbound deletion: 403 not 401 on a wrong
+  password, since the session token itself is still valid) sets
+  `wave.pending_cancellation`; `GET/approve/reject
+  /api/master/wave-pending-cancellations` mirror the existing
+  pending-deletions endpoints exactly, including the nav badge being the
+  SUM across all three pending-request tables now (orders, inbound,
+  waves). Administrator → Pending Deletions gained a third table ("Wave
+  Cancellation Requests") below the existing two.
+- **`reverseWaveFromOrders(db, wave, req)`**: runs `applyWaveToOrders`
+  backwards on approval — subtracts what was added, per (order, sku).
+  Skips (and reports as `skippedDone`) any order that became `'done'` in
+  the meantime. **Reverts `state.status` back to `'pending'` ONLY if the
+  order's TOTAL scanned qty across ALL its SKU lines is genuinely back to
+  zero** — an order with scans from OUTSIDE the wave (a packer's own
+  manual scan on the same or a different line) correctly KEEPS its
+  `'processing'` status instead of being wrongly reset. Verified directly:
+  an order with a wave-applied qty of 2 plus one extra manual scan (total
+  3) reversed to 1 remaining and correctly stayed `'processing'`, while a
+  sibling order with only wave-applied scans correctly reverted to
+  `'pending'`. Also clears `state.wave_id` on the reversed order so the
+  pill can't reappear for a cancelled wave.
+
 ## Product Master (lib/product-master.js) — ULD_Product_Master_Template.xlsx
 
 Adopted the client's real onboarding spreadsheet format as the Inventory

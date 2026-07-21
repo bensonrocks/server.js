@@ -2568,6 +2568,8 @@ body.ls-open { overflow: hidden; }
 .chip-claimed { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
 .chip-pending-delete { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); font-weight: 700; }
 .chip-cartons { background: #eef2f7; color: #475569; border: 1px solid #cbd5e1; font-weight: 700; }
+.chip-wave-needs-closing { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; font-weight: 700; }
+.chip-wave-cancel-pending { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-weight: 700; }
 
 /* ── Official IdealOne mark (bitmap) — keep aspect inside the old square slots ── */
 img.is-icon-xs, img.is-icon-sm, img.is-icon-hdr, img.is-icon-lg { object-fit: contain; }

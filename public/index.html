@@ -647,6 +647,18 @@
           </table>
           <div id="pendingInboundDelEmpty" class="empty-state hidden">No pending inbound deletion requests.</div>
         </div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.8rem">Wave Cancellation Requests</div>
+        </div>
+        <div id="pendingWaveCancelWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Wave</th><th>Orders</th><th>Reason</th><th>Requested By</th><th>Actions</th></tr></thead>
+            <tbody id="pendingWaveCancelBody"></tbody>
+          </table>
+          <div id="pendingWaveCancelEmpty" class="empty-state hidden">No pending wave cancellation requests.</div>
+        </div>
       </div>
 
       <!-- Tab: Upload History -->
@@ -1449,7 +1461,8 @@
           <h2 id="waveDetailTitle">Wave</h2>
           <div style="display:flex;gap:.5rem">
             <button class="btn-secondary" onclick="waveUI.print()">&#128424; Print Pick Sheet</button>
-            <button class="btn-primary" onclick="waveUI.complete()">&#10003; Complete Wave</button>
+            <button class="btn-primary" id="waveCompleteBtn" onclick="waveUI.complete()">&#10003; Complete Wave</button>
+            <button class="btn-danger-sm" id="waveCancelBtn" onclick="waveUI.cancel()">&#10005; Cancel Wave</button>
             <button class="btn-secondary" onclick="waveUI.backToList()">&#8592; Back</button>
           </div>
         </div>
