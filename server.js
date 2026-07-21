@@ -2274,10 +2274,12 @@ function buildLabelMatchIndex() {
       [normStr(o.waybill_number), 'waybill_number'],
       [normStr(o.po_number),      'po_number'],
     ];
-    if (keys[0][0]) byOrderNo.set(keys[0][0], o.order_number);
-    if (keys[1][0]) byOrderNo.set(keys[1][0], o.order_number);
-    if (keys[2][0]) byWaybill.set(keys[2][0], o.order_number);
-    if (keys[3][0]) byWaybill.set(keys[3][0], o.order_number);
+    // First write wins: orders arrive newest-batch-first, so when a stale
+    // duplicate order shares a key (same waybill/GI), the CURRENT order keeps it
+    if (keys[0][0] && !byOrderNo.has(keys[0][0])) byOrderNo.set(keys[0][0], o.order_number);
+    if (keys[1][0] && !byOrderNo.has(keys[1][0])) byOrderNo.set(keys[1][0], o.order_number);
+    if (keys[2][0] && !byWaybill.has(keys[2][0])) byWaybill.set(keys[2][0], o.order_number);
+    if (keys[3][0] && !byWaybill.has(keys[3][0])) byWaybill.set(keys[3][0], o.order_number);
     for (const [key, field] of keys) {
       if (!key) continue;
       const minLen = /[A-Z]/.test(key) ? 8 : 10;
@@ -2545,6 +2547,14 @@ async function rematchLabelImport(id, rematchAll) {
         rawText = (await pdfParse(pageBuf)).text || '';
         page.rawText = rawText.slice(0, 4000);
       } catch {}
+    }
+
+    // Always re-extract fields from the text — the cached page.extracted was
+    // built with whatever extraction rules existed at upload time, so regex
+    // improvements (e.g. longer tracking-number prefixes) never reach old
+    // imports unless this refresh happens
+    if (rawText.trim() && extractLabelFields) {
+      try { page.extracted = extractLabelFields(rawText); } catch {}
     }
 
     // Image-only page (no text layer): pull the embedded bitmap and OCR it.
