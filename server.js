@@ -1121,6 +1121,62 @@ function transportLegKm(zipA, zipB) {
   return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+// Per-driver performance summary shared by the Driver Performance XLSX
+// report AND the lightweight Administrator → Drivers "Performance Stats"
+// tab (GET /api/drivers/performance) — one real computation, two callers,
+// so the numbers can never drift apart. `from`/`to` are 'YYYY-MM-DD';
+// omit both for all-time. Distance is an ESTIMATE (Singapore postal-sector
+// centroids from the depot, same basis route planning uses) — never treat
+// as odometer data.
+function computeDriverPerformance(db, from, to) {
+  const day = at => at ? sgDateStr(new Date(at)) : '';
+  const jobs = (db.transport || []).filter(rec => {
+    if (!rec.assignedDriver && !rec.assignedDriverName) return false;
+    if (!from && !to) return true;
+    const d = day(rec.deliveredAt || rec.plannedAt || rec.createdAt);
+    return (!from || d >= from) && (!to || d <= to);
+  });
+
+  const drivers = {};
+  for (const rec of jobs) {
+    const key = rec.assignedDriverName || rec.assignedDriver;
+    const drv = drivers[key] ||= { jobs: [], days: {} };
+    drv.jobs.push(rec);
+    const d = day(rec.deliveredAt || rec.plannedAt || rec.createdAt);
+    (drv.days[d] ||= []).push(rec);
+  }
+
+  const DEPOT_ZIP = getTransportDepot(db).zip;
+  const dayDistanceKm = list => {
+    const sorted = [...list].sort((a, b) =>
+      (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99));
+    let km = 0, prev = DEPOT_ZIP;
+    for (const rec of sorted) {
+      const zip = rec.shipping?.zip || '';
+      km += transportLegKm(prev, zip);
+      prev = zip;
+    }
+    return km;
+  };
+
+  const summary = Object.keys(drivers).sort().map(name => {
+    const drv = drivers[name];
+    const delivered = drv.jobs.filter(j => j.status === 'delivered').length;
+    const confirmed = drv.jobs.filter(j => j.status === 'confirmed').length;
+    const open      = drv.jobs.filter(j => j.status === 'preplanned' || j.status === 'pending').length;
+    const cartons   = drv.jobs.reduce((s, j) => s + (j.packages || 1), 0);
+    const km        = Object.values(drv.days).reduce((s, list) => s + dayDistanceKm(list), 0);
+    const daysActive = Object.keys(drv.days).length;
+    return {
+      name, jobsAssigned: drv.jobs.length, delivered, confirmed, open, cartons,
+      km: Math.round(km * 10) / 10, daysActive,
+      avgJobsPerDay: daysActive ? Math.round(drv.jobs.length / daysActive * 10) / 10 : 0,
+    };
+  });
+
+  return { drivers, summary };
+}
+
 // Apply fix schedule constraints to route planning
 function applyFixScheduleToRoutes(db, routes, transportRecords, options = {}) {
   const dayOfWeek = options.dayOfWeek || new Date().toLocaleDateString('en-US', { weekday: 'long' });
@@ -5392,6 +5448,15 @@ app.get('/api/drivers/export', (req, res) => {
   res.send(buf);
 });
 
+// All-time per-driver performance summary for the Administrator → Drivers
+// "Performance Stats" tab — same computation as the Driver Performance
+// report (kind='drivers'), just as JSON with no date range.
+app.get('/api/drivers/performance', requireAuth, (req, res) => {
+  const db = readDb();
+  const { summary } = computeDriverPerformance(db, null, null);
+  res.json({ drivers: summary });
+});
+
 // ── Address Book endpoints — maintain the store→address cross-reference ─────
 app.get('/api/address-book', (req, res) => {
   const db = readDb();
@@ -6761,56 +6826,11 @@ app.get('/api/master/report/:kind', (req, res) => {
 
     } else if (kind === 'drivers') {
       title = 'Driver_Performance';
-      // Live data from db.transport (like 'aging'/'inbound') — transport jobs
-      // aren't audit-log events. A job lands in the range if it was planned,
-      // delivered, or created inside it.
-      const jobs = (db.transport || []).filter(rec => {
-        if (!rec.assignedDriver && !rec.assignedDriverName) return false;
-        const d = day(rec.deliveredAt || rec.plannedAt || rec.createdAt);
-        return d >= from && d <= to;
-      });
-
-      // Group per driver, and per driver-day for distance estimation
-      const drivers = {};
-      for (const rec of jobs) {
-        const key = rec.assignedDriverName || rec.assignedDriver;
-        const drv = drivers[key] ||= { jobs: [], days: {} };
-        drv.jobs.push(rec);
-        const d = day(rec.deliveredAt || rec.plannedAt || rec.createdAt);
-        (drv.days[d] ||= []).push(rec);
-      }
-
-      // Distance: per driver-day, stops in route order, legs measured with the
-      // same postal-sector coordinates route planning uses, starting from the
-      // configured depot (default: Penjuru warehouse). An ESTIMATE
-      // (district-to-district), not odometer data — labelled in the sheet.
-      const DEPOT_ZIP = getTransportDepot(db).zip;
-      const dayDistanceKm = list => {
-        const sorted = [...list].sort((a, b) =>
-          (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99));
-        let km = 0, prev = DEPOT_ZIP;
-        for (const rec of sorted) {
-          const zip = rec.shipping?.zip || '';
-          km += transportLegKm(prev, zip);
-          prev = zip;
-        }
-        return km;
-      };
+      const { drivers, summary } = computeDriverPerformance(db, from, to);
 
       addSheet('Driver Summary', [
         ['Driver', 'Jobs Assigned', 'Delivered', 'Confirmed (awaiting delivery)', 'Preplanned (open)', 'Total Cartons', 'Est. Distance (km)', 'Days Active', 'Avg Jobs / Day'],
-        ...Object.keys(drivers).sort().map(name => {
-          const drv = drivers[name];
-          const delivered = drv.jobs.filter(j => j.status === 'delivered').length;
-          const confirmed = drv.jobs.filter(j => j.status === 'confirmed').length;
-          const open      = drv.jobs.filter(j => j.status === 'preplanned' || j.status === 'pending').length;
-          const cartons   = drv.jobs.reduce((s, j) => s + (j.packages || 1), 0);
-          const km        = Object.values(drv.days).reduce((s, list) => s + dayDistanceKm(list), 0);
-          const daysActive = Object.keys(drv.days).length;
-          return [name, drv.jobs.length, delivered, confirmed, open, cartons,
-                  Math.round(km * 10) / 10, daysActive,
-                  Math.round(drv.jobs.length / daysActive * 10) / 10];
-        }),
+        ...summary.map(s => [s.name, s.jobsAssigned, s.delivered, s.confirmed, s.open, s.cartons, s.km, s.daysActive, s.avgJobsPerDay]),
       ]);
 
       addSheet('Driver Jobs', [
