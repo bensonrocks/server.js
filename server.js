@@ -6131,11 +6131,30 @@ app.post('/api/waves', (req, res) => {
 
 app.get('/api/waves', (req, res) => {
   const db = readDb();
+  // ?detail=1 adds each wave's per-order scan progress (for Wave Management)
+  let orderStatusByNumber = null;
+  if (req.query.detail === '1') {
+    orderStatusByNumber = new Map();
+    for (const o of globalOrdersWithState()) {
+      orderStatusByNumber.set(o.order_number, {
+        status: o.scan_status,
+        scannedTotal: Object.values(o.scanned || {}).reduce((s, v) => s + v, 0),
+        totalQty: o.total_qty || 0,
+      });
+    }
+  }
   res.json((db.waves || []).map(w => ({
     id: w.id, createdAt: w.createdAt, createdBy: w.createdBy, status: w.status,
     orderNumbers: w.orderNumbers, skuCount: w.pickList.length,
     totalQty: w.pickList.reduce((s, e) => s + e.totalQty, 0),
     scannedQty: w.pickList.reduce((s, e) => s + e.scannedQty, 0),
+    pending_purge: !!w.pending_purge,
+    ...(orderStatusByNumber ? {
+      orders: (w.orderNumbers || []).map(n => {
+        const s = orderStatusByNumber.get(n);
+        return { order_number: n, status: s?.status || 'missing', scannedTotal: s?.scannedTotal || 0, totalQty: s?.totalQty || 0 };
+      }),
+    } : {}),
   })));
 });
 

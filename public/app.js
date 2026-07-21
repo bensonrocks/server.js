@@ -636,6 +636,8 @@
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
+    document.getElementById('ordersSubMenu').style.display =
+      (name === 'orders' && (currentUser?.role || 'admin') !== 'warehouse') ? 'block' : 'none';
     if (name === 'inbound') { renderInboundTab(); }
     if (name === 'transport') {
       document.getElementById('transportSubMenu').style.display = 'block';
@@ -8209,37 +8211,67 @@
 
   // ── Manage Waves (Orders tab, Admin) — select-all + bulk cancel, effect immediate ──
   const _waveManageSel = new Set();
-  document.getElementById('manageWavesBtn')?.addEventListener('click', () => {
+  function openWaveManagement() {
     document.getElementById('waveManageOverlay').classList.remove('hidden');
     document.getElementById('waveManagePassword').value = '';
     document.getElementById('waveManageError').classList.add('hidden');
     _waveManageSel.clear();
     loadWaveManageList();
-  });
+  }
+  document.getElementById('manageWavesBtn')?.addEventListener('click', openWaveManagement);
+  document.getElementById('waveMgmtSidebarBtn')?.addEventListener('click', openWaveManagement);
   document.getElementById('waveManageCloseBtn')?.addEventListener('click', () =>
     document.getElementById('waveManageOverlay').classList.add('hidden'));
   async function loadWaveManageList() {
     const body = document.getElementById('waveManageBody');
     let waves = [];
     try {
-      const r = await fetch('/api/waves');
+      const r = await fetch('/api/waves?detail=1');
       if (r.ok) waves = await r.json();
     } catch {}
     const active = waves.filter(w => w.status !== 'cancelled');
-    body.innerHTML = active.map(w => `
+
+    // Stats strip: how many waves are going on, and their reach
+    const live      = active.filter(w => w.status !== 'done');
+    const closed    = active.filter(w => w.status === 'done');
+    const allOrders = active.flatMap(w => w.orders || []);
+    const ordersLeft = allOrders.filter(o => o.status !== 'done').length;
+    document.getElementById('waveMgmtStats').innerHTML = [
+      [live.length, 'Waves Picking Now'],
+      [closed.length, 'Closed — Scan to Pack'],
+      [allOrders.length, 'Orders in Waves'],
+      [ordersLeft, 'Orders Still to Pack'],
+    ].map(([val, lbl]) => `<div class="dstat"><div class="dstat-val">${val}</div><div class="dstat-lbl">${lbl}</div></div>`).join('');
+
+    body.innerHTML = active.map(w => {
+      const orders = w.orders || [];
+      const done = orders.filter(o => o.status === 'done').length;
+      const orderChips = orders.map(o =>
+        `<span class="chip ${o.status === 'done' ? 'chip-done' : o.status === 'processing' ? 'chip-inprog' : 'chip-unproc'}" title="${esc(o.order_number)}: ${o.scannedTotal}/${o.totalQty} scanned">${esc(o.order_number)}</span>`).join(' ');
+      return `
       <tr>
         <td><input type="checkbox" class="wave-manage-check" data-id="${esc(w.id)}" ${_waveManageSel.has(w.id) ? 'checked' : ''}></td>
-        <td class="dcs-name">${esc(w.id)}</td>
+        <td class="dcs-name">${esc(w.id)}${w.pending_purge ? ' <span class="chip chip-unproc" title="Cancelled — awaiting Master approval to delete the record">purge pending</span>' : ''}</td>
         <td>${w.status === 'done' ? '<span class="chip chip-done">Closed</span>' : `<span class="chip chip-inprog">${esc(w.status)}</span>`}</td>
-        <td>${w.orderNumbers.length} <span style="color:var(--text-light,#64748b);font-size:.8em">(${esc(w.orderNumbers.slice(0, 3).join(', '))}${w.orderNumbers.length > 3 ? '…' : ''})</span></td>
+        <td>${orders.length}</td>
+        <td>${done}/${orders.length} packed</td>
         <td>${w.totalQty}</td>
-        <td>${w.createdAt ? new Date(w.createdAt).toLocaleString() : '—'}</td>
-      </tr>`).join('');
+        <td>${w.createdAt ? new Date(w.createdAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}${w.createdBy ? `<div class="hint">${esc(w.createdBy)}</div>` : ''}</td>
+        <td>${w.status !== 'done' ? `<button class="btn-sm btn-primary wave-mgmt-open" data-id="${esc(w.id)}">Open</button>` : ''}</td>
+      </tr>
+      <tr class="wave-mgmt-orders-row"><td></td><td colspan="7" style="padding:.2rem .5rem .6rem">${orderChips}</td></tr>`;
+    }).join('');
     document.getElementById('waveManageEmpty').classList.toggle('hidden', active.length > 0);
     body.querySelectorAll('.wave-manage-check').forEach(cb => {
       cb.addEventListener('change', () => {
         if (cb.checked) _waveManageSel.add(cb.dataset.id); else _waveManageSel.delete(cb.dataset.id);
         updateWaveManageButtons();
+      });
+    });
+    body.querySelectorAll('.wave-mgmt-open').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('waveManageOverlay').classList.add('hidden');
+        resumeWavePick(btn.dataset.id);
       });
     });
     updateWaveManageButtons();

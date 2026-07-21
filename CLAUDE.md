@@ -1766,7 +1766,22 @@ whenever the Active view has at least one selectable order, growing to show
   before this chip did. Once the order is Completed normally the chip
   disappears (gated on `scan_status`), though `wave_id` itself is left on
   the record afterward as harmless history.
-- **BULK CANCEL — "🌊 Manage Waves" (Orders tab, Admin-only button)** —
+- **WAVE MANAGEMENT VIEW — sidebar sub-item under Orders** — "🌊 Wave
+  Management" (`#ordersSubMenu`/`#waveMgmtSidebarBtn`, same sub-menu
+  pattern as Transport's; shown when the Orders tab is active, hidden for
+  warehouse role) opens `#waveManageOverlay`: a stats strip (Waves Picking
+  Now / Closed — Scan to Pack / Orders in Waves / Orders Still to Pack)
+  plus one row per non-cancelled wave — status, order count, "N/M packed"
+  progress, total qty, created by/when, an Open button (live waves →
+  `resumeWavePick`) and a per-order chip row colour-coded by each order's
+  scan status (green done / amber processing / red pending, tooltip shows
+  scanned/total). Data: `GET /api/waves?detail=1` adds an `orders[]`
+  array (order_number, status, scannedTotal, totalQty) resolved through
+  `globalOrdersWithState()` — only on demand, the plain list endpoint is
+  unchanged. The same overlay hosts the bulk-cancel below (it grew out of
+  the earlier "Manage Waves" modal — one surface, two jobs: see how many
+  waves are going on + administer them).
+- **BULK CANCEL — same overlay ("🌊 Wave Management", Admin-only)** —
   select-all across every non-cancelled wave, one password-confirmed
   action (`POST /api/waves/bulk-cancel {ids|all, password}` — admin role +
   own password re-entered, 403 not 401 on a wrong one). CANCELLATION TAKES

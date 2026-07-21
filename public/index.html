@@ -1291,6 +1291,9 @@
     <nav class="sb-nav">
       <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
       <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
+      <div style="padding-left:2rem;display:none" id="ordersSubMenu">
+        <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="waveMgmtSidebarBtn">🌊 Wave Management</button>
+      </div>
       <button class="tab-btn" data-tab="inbound"><span class="tab-icon">&#128230;</span>Inbound</button>
       <button class="tab-btn" data-tab="transport"><span class="tab-icon">&#128666;</span>Transport</button>
       <div style="padding-left:2rem;display:none" id="transportSubMenu">
@@ -2419,22 +2422,23 @@
        immediately (orders reset for re-scanning); the cancelled wave record
        then waits for Master approval to be deleted clean from the data. -->
   <div id="waveManageOverlay" class="modal-overlay hidden">
-    <div class="modal" style="max-width:720px">
-      <div class="modal-title">&#127754; Manage Waves</div>
-      <p class="modal-desc">Cancelling takes effect immediately: waves that prefilled order quantities are reversed (those orders go back to 0 scanned so packers scan them piece by piece), and wave pills are removed. The wave record itself is then queued for the Administrator to approve deleting it clean from the data.</p>
+    <div class="modal" style="max-width:860px">
+      <div class="modal-title">&#127754; Wave Management</div>
+      <p class="modal-desc">Every wave and the orders it covers. Cancelling takes effect immediately: waves that prefilled order quantities are reversed (those orders go back to 0 scanned so packers scan them piece by piece), and wave pills are removed. The wave record itself is then queued for the Administrator to approve deleting it clean from the data.</p>
+      <div class="dash-stats-grid" id="waveMgmtStats" style="grid-template-columns:repeat(4,1fr);margin-bottom:.8rem"></div>
       <div style="display:flex;gap:.5rem;align-items:center;margin:.3rem 0 .6rem">
         <button class="btn-secondary btn-sm" id="waveManageSelectAllBtn">&#9744; Select All</button>
         <span id="waveManageSelCount" class="hint"></span>
       </div>
-      <div class="dcs-wrap" style="max-height:320px;overflow-y:auto">
+      <div class="dcs-wrap" style="max-height:380px;overflow-y:auto">
         <table class="dcs-table">
-          <thead><tr><th style="width:2rem"></th><th>Wave</th><th>Status</th><th>Orders</th><th>Total Qty</th><th>Created</th></tr></thead>
+          <thead><tr><th style="width:2rem"></th><th>Wave</th><th>Status</th><th>Orders</th><th>Progress</th><th>Total Qty</th><th>Created</th><th></th></tr></thead>
           <tbody id="waveManageBody"></tbody>
         </table>
         <div id="waveManageEmpty" class="empty-state hidden">No active or closed waves.</div>
       </div>
       <div class="form-field" style="margin-top:.8rem">
-        <label>Your Password <span style="color:var(--danger)">*</span></label>
+        <label>Your Password <span style="color:var(--danger)">*</span> <span class="hint">(needed only to cancel)</span></label>
         <input type="password" id="waveManagePassword" placeholder="Confirm it's you" autocomplete="off" />
       </div>
       <div id="waveManageError" class="login-error hidden"></div>
