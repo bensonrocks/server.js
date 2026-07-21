@@ -313,6 +313,36 @@ label-import card in the Administrator upload-history list
 (`renderLogContent` in app.js), confirm()-gated, `logAudit`'d as
 `label_import_deleted`.
 
+## Label matching — current order wins, extraction always refreshed (server.js `buildLabelMatchIndex`/`rematchLabelImport`)
+
+Two rules learned from a production incident where 500+ matched labels
+never appeared on the orders the packers actually work from (a stale
+duplicate batch — created before the GINo-detection fix above — held
+orders keyed by the 18-digit CustRef for the same physical shipments):
+
+- **FIRST WRITE WINS in `buildLabelMatchIndex`** — orders arrive from
+  `globalOrdersWithState()` newest-batch-first (db.batches is unshifted),
+  so when a stale duplicate order shares a normalized key (same waybill,
+  same GI) with the current order, the index must NOT let the stale one
+  overwrite it. Plain `Map.set` did exactly that; all four key inserts now
+  check `.has()` first. `issue_no` is indexed alongside `order_number`
+  (into `byOrderNo`) — XLSX/CSV-path orders carry their GI number there,
+  not in `order_number` (see Scan-to-find-order above).
+- **`rematchLabelImport` MUST re-run `extractLabelFields(rawText)` on
+  every page it processes** — `page.extracted` is a cache built with
+  whatever extraction rules existed at upload time, so any later regex
+  improvement (e.g. widening the tracking-number prefix from `{2,4}` to
+  `{2,6}` letters for SPTTND/SPXSG) silently never reached existing
+  imports through "Auto Match Unmatched"/"Rematch All". The refresh runs
+  whenever rawText is non-empty; the OCR branch still sets it too for
+  image-only pages.
+
+The remediation path for the production data itself: delete the stale
+batch (Administrator → upload history → Delete Batch — now refuses if the
+batch contains a done order, see the section above), then open each label
+import → "↻ Rematch All"; labels re-attach to the surviving GI- orders
+via `tracking_number` since those orders carry the SPTTND waybill numbers.
+
 ## Duplicate order numbers — locked vs overwritable vs confirmable (server.js /api/upload)
 
 Clients RECYCLE order numbers (date-letter codes like `20260716-H`); the
