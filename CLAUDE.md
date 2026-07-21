@@ -544,8 +544,20 @@ outbound scanning and IdealInbound receiving. Current state:
 
 - Network-failed item scans are queued in localStorage (`is_offline_scans`),
   counted on screen as pending (⏳ rows, amber pill), and replayed on reconnect.
-- IDEMPOTENCY: every queued event carries an eventId; increment ignores ids it
-  has seen (state.scanEventIds, capped 100) so replays never double-count.
+- IDEMPOTENCY — EVENTID IS MINTED AT SCAN TIME, NOT AT ENQUEUE TIME. Every
+  scan (`handleItemScan` → `_scanQueue`) carries an eventId on its VERY FIRST
+  `/api/scan/increment` request; a network-failed scan is queued WITH THE
+  SAME id, and the replay sends it again plus `isReplay: true`. The server
+  ignores ids it has already counted (`state.scanEventIds`, capped 100).
+  This closed a real production double-count: the first attempt used to send
+  NO eventId, so a scan the server processed whose response outlived the
+  client's 8s `fetchT` timeout was queued as "offline" with a fresh id and
+  counted a SECOND time on replay — packers saw "scan 1 piece, system shows
+  2" intermittently (whenever Railway responded slowly). Server-side, the id
+  is REGISTERED only at the moment the piece is actually counted — never on
+  the 409 `crossCartonConfirm` bounce — so the confirmed retry (same id +
+  `confirmCrossCarton`) still counts; the cross-carton skip now keys on
+  `isReplay`, not on eventId presence (every live scan has one now).
 - Complete + auto-complete are BLOCKED while an order has unsynced scans.
 - `/api/scan/resolve-cache` gives the client CODE2/learned/alias maps so
   offline scans resolve to the right line locally.

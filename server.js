@@ -4273,24 +4273,24 @@ app.post('/api/scan/increment', (req, res) => {
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   const holder = claimBlocker(state, req.userId);
   if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
-  // Idempotent replay: offline-queued scans carry an eventId. If a scan
-  // reached the server but the response was lost mid-Wi-Fi-drop, the replay
-  // must NOT count the piece twice.
+  // Idempotent scans: EVERY scan now carries an eventId (minted client-side
+  // at scan time, not just for offline-queued replays). If a scan reached
+  // the server but the response was lost — dead Wi-Fi mid-drop, OR a slow
+  // response that outlived the client's 8s fetch timeout (this one showed
+  // up in production as "scan once, system counts 2") — any retry/replay
+  // reuses the same id and must NOT count the piece twice. The id is only
+  // REGISTERED at the moment a piece is actually counted (below), so a 409
+  // cross-carton bounce doesn't burn the id for its confirmed retry.
   const eventId = String(req.body.eventId || '').slice(0, 64);
-  if (eventId) {
-    if (!state.scanEventIds) state.scanEventIds = [];
-    if (state.scanEventIds.includes(eventId)) {
-      return res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku] || 0, ordered_qty: item.qty, dedup: true });
-    }
-    state.scanEventIds.push(eventId);
-    if (state.scanEventIds.length > 100) state.scanEventIds.splice(0, state.scanEventIds.length - 100);
+  if (eventId && state.scanEventIds?.includes(eventId)) {
+    return res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku] || 0, ordered_qty: item.qty, dedup: true, cartonNum: activeCarton(state).num, cartonCount: (state.cartons || []).length });
   }
   // Same SKU already sitting in a DIFFERENT carton? Fine — orders can
   // legitimately split one SKU across boxes — but it's easy to do by
   // accident, so confirm before it happens. Skipped for offline replays
-  // (eventId present): the packer already made the physical call with no
-  // network to ask, re-litigating it after the fact isn't meaningful.
-  if (!eventId && !req.body.confirmCrossCarton && state.cartons && state.cartons.length > 1) {
+  // (isReplay): the packer already made the physical call with no network
+  // to ask, re-litigating it after the fact isn't meaningful.
+  if (!req.body.isReplay && !req.body.confirmCrossCarton && state.cartons && state.cartons.length > 1) {
     const active = activeCarton(state);
     if (!(active.scans[item.sku] > 0)) {
       const elsewhere = state.cartons.filter(c => c.num !== active.num && (c.scans[item.sku] || 0) > 0).map(c => c.num);
@@ -4306,6 +4306,11 @@ app.post('/api/scan/increment', (req, res) => {
     }
   }
   refreshClaim(state, req.userId);
+  if (eventId) {
+    if (!state.scanEventIds) state.scanEventIds = [];
+    state.scanEventIds.push(eventId);
+    if (state.scanEventIds.length > 100) state.scanEventIds.splice(0, state.scanEventIds.length - 100);
+  }
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   addToActiveCarton(state, item.sku, 1);

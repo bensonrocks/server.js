@@ -7367,7 +7367,16 @@
   let   _scanBusy  = false;
 
   function handleItemScan(sku) {
-    _scanQueue.push(sku);
+    // The eventId is minted HERE, at scan time, and rides along on the very
+    // first request — not just on offline replays. If the server processes
+    // the scan but the response outlives the 8s fetch timeout, the queued
+    // retry reuses this same id and the server's dedupe absorbs it. Minting
+    // only at enqueue time (the old way) meant a slow-response scan was
+    // counted once live and once again on replay — "scan 1, get 2 pcs".
+    _scanQueue.push({
+      raw: sku,
+      eventId: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+    });
     if (!_scanBusy) _drainScanQueue();
   }
 
@@ -7450,9 +7459,9 @@
     pill.classList.remove('hidden');
   }
 
-  function enqueueOfflineScan(raw) {
+  function enqueueOfflineScan(raw, eventId) {
     const evt = {
-      id: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+      id: eventId || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
       orderNumber: activeOrder.order_number,
       raw: String(raw).trim(),
       at: new Date().toISOString(),
@@ -7488,7 +7497,7 @@
         try {
           resp = await fetchT('/api/scan/increment', {
             method: 'POST', headers: hdrs(),
-            body: JSON.stringify({ orderNumber: evt.orderNumber, sku: evt.raw, eventId: evt.id }),
+            body: JSON.stringify({ orderNumber: evt.orderNumber, sku: evt.raw, eventId: evt.id, isReplay: true }),
           });
           data = await resp.json();
         } catch {
@@ -7532,12 +7541,14 @@
     if (_scanBusy || !_scanQueue.length) return;
     _scanBusy = true;
     while (_scanQueue.length) {
-      const sku      = _scanQueue.shift();
+      const entry    = _scanQueue.shift();
+      const sku      = entry.raw;
+      const eventId  = entry.eventId;
       const feedback = document.getElementById('itemScanFeedback');
       try {
         const resp = await fetchT('/api/scan/increment', {
           method: 'POST', headers: hdrs(),
-          body: JSON.stringify({ orderNumber: activeOrder.order_number, sku }),
+          body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, eventId }),
         });
         let data = await resp.json();
         if (!resp.ok) {
@@ -7554,7 +7565,7 @@
             if (!ok) { continue; }
             const retry = await fetchT('/api/scan/increment', {
               method: 'POST', headers: hdrs(),
-              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, confirmCrossCarton: true }),
+              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, eventId, confirmCrossCarton: true }),
             });
             data = await retry.json();
             if (!retry.ok) { showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`); continue; }
@@ -7586,8 +7597,10 @@
         );
       } catch (err) {
         // Network failure (dead Wi-Fi hangs or refuses) — save the scan
-        // durably and keep the packer moving; it syncs automatically
-        enqueueOfflineScan(sku);
+        // durably and keep the packer moving; it syncs automatically.
+        // The SAME eventId is carried into the queue so a scan the server
+        // actually processed (response lost) is deduped on replay.
+        enqueueOfflineScan(sku, eventId);
       }
     }
     _scanBusy = false;
