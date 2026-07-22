@@ -8657,12 +8657,47 @@
   document.getElementById('adminExportDriversBtn')?.addEventListener('click', () =>
     authDownload('/api/drivers/export', `IDEALONE_Drivers_${new Date().toISOString().slice(0,10)}.xlsx`));
 
+  // Import drivers from a spreadsheet (round-trips the Export file). Fills the
+  // real db.drivers roster, so imported drivers appear in Transport route
+  // planning AND can sign into the Driver App at /driver immediately.
+  const driverImportInput = document.getElementById('driverImportFileInput');
+  document.getElementById('adminImportDriversBtn')?.addEventListener('click', () => driverImportInput?.click());
+  driverImportInput?.addEventListener('change', async () => {
+    const file = driverImportInput.files && driverImportInput.files[0];
+    driverImportInput.value = '';
+    if (!file) return;
+    await importDriversFile(file);
+  });
+
+  async function importDriversFile(file) {
+    try {
+      showDriverStatus(`Importing "${file.name}"…`, 'progress');
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/drivers/import', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) { showDriverStatus(d.error || 'Import failed', 'error'); return; }
+      let msg = `✓ ${d.imported} added, ${d.updated} updated`;
+      msg += `, ${d.withPin} with a Driver App PIN`;
+      if (d.skipped) msg += `, ${d.skipped} skipped`;
+      msg += '. Drivers can now be assigned routes and sign into /driver.';
+      if (d.errors && d.errors.length) msg += ' First issue: row ' + d.errors[0].row + ' — ' + d.errors[0].error;
+      showDriverStatus(msg, (d.imported + d.updated) > 0 ? 'success' : 'error');
+      loadDriverList();
+      if (typeof loadDrivers === 'function') loadDrivers(); // refresh window.drivers for the planner
+    } catch (err) { showDriverStatus('Import error: ' + err.message, 'error'); }
+  }
+
+  let _driverStatusTimer = null;
   function showDriverStatus(msg, type) {
     const el = document.getElementById('driverMgmtStatus');
     el.textContent  = msg;
     el.className    = `status-bar ${type}`;
     el.classList.remove('hidden');
-    setTimeout(() => el.classList.add('hidden'), 4000);
+    if (_driverStatusTimer) { clearTimeout(_driverStatusTimer); _driverStatusTimer = null; }
+    // Keep import results / errors on screen; only fade transient progress.
+    if (type === 'progress' || type === 'error') return;
+    _driverStatusTimer = setTimeout(() => el.classList.add('hidden'), 8000);
   }
 
   // ── Email Configuration ──────────────────────────────────────────────────────

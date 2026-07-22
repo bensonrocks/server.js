@@ -5789,6 +5789,109 @@ app.get('/api/drivers/export', (req, res) => {
   res.send(buf);
 });
 
+// Roster IMPORT — the round-trip partner of /api/drivers/export. Accepts the
+// exported Drivers sheet (CSV or XLSX), or any file with recognizable driver
+// columns, and upserts each row into db.drivers so the Driver App (/driver)
+// and route planner pick them up immediately. This is what was MISSING: the
+// export could be downloaded and hand-edited, but there was no way to load it
+// back — a driver file uploaded through the Users importer (which needs a
+// role=driver column this export lacks) silently became warehouse USERS
+// instead of drivers, so nothing appeared in the TMS/driver app.
+// Auth-only (the global middleware already enforces a valid session), matching
+// POST /api/drivers and DELETE /api/drivers/:id — no master key needed, so the
+// Import button works from both the Administrator → Drivers and Transport →
+// Driver Details surfaces exactly like the existing Add/Export actions.
+app.post('/api/drivers/import', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const buf = req.file.buffer;
+  const name = (req.file.originalname || '').toLowerCase();
+  let rawRows = [];
+  try {
+    const isXlsx = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b;
+    const isXls  = buf.length > 7 && buf[0] === 0xd0 && buf[1] === 0xcf;
+    if (isXlsx || isXls || name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    } else {
+      const text = buf.toString('utf8').replace(/^﻿/, '');
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) return res.status(400).json({ error: 'Empty file.' });
+      const delim = (lines[0].includes(';') && !lines[0].includes(',')) ? ';' : ',';
+      const cols = lines[0].split(delim).map(c => c.trim());
+      rawRows = lines.slice(1).map(line => {
+        const cells = line.split(delim); const o = {};
+        cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
+        return o;
+      });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'Could not parse file: ' + e.message });
+  }
+
+  // Normalize headers (lowercase, strip non-alphanumerics) and map flexibly so
+  // both the export's "Driver ID"/"Capacity (kg)" and a hand-typed "id"/"pin"
+  // all resolve. The PIN follows the same convention as the Users importer:
+  // the "password" column IS the Driver App PIN (4-8 digits); an explicit
+  // pin column wins if present.
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const pick = (row, keys) => {
+    for (const k of Object.keys(row)) { if (keys.includes(norm(k))) return row[k]; }
+    return '';
+  };
+  const db = readDb();
+  if (!db.drivers) db.drivers = [];
+  let imported = 0, updated = 0, withPin = 0, skipped = 0;
+  const errors = [];
+
+  rawRows.forEach((row, i) => {
+    const id   = String(pick(row, ['id', 'driverid']) || '').trim();
+    const name = String(pick(row, ['name', 'drivername']) || '').trim();
+    if (!id && !name) { skipped++; return; } // blank row
+    if (!name) { skipped++; errors.push({ row: i + 1, id, error: 'Name is required' }); return; }
+
+    // PIN: explicit pin/driverapppin column first, else password. "Driver App
+    // PIN Set" is a Yes/No status column in the export, but accept it if it
+    // holds a numeric PIN (some users type the PIN there).
+    let pinRaw = String(pick(row, ['pin', 'driverapppin', 'apppin']) || '').trim();
+    if (!pinRaw) pinRaw = String(pick(row, ['password']) || '').trim();
+    if (!pinRaw) { const s = String(pick(row, ['driverapppinset']) || '').trim(); if (/^\d{4,8}$/.test(s)) pinRaw = s; }
+    if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) {
+      errors.push({ row: i + 1, id, error: `PIN "${pinRaw}" must be 4-8 digits — driver imported WITHOUT app login` });
+      pinRaw = '';
+    }
+
+    const driverId = id || ('DRV-' + Date.now() + '-' + i);
+    const existingIdx = db.drivers.findIndex(d => d.id === driverId);
+    const existing = existingIdx >= 0 ? db.drivers[existingIdx] : null;
+    const drv = {
+      id: driverId,
+      name,
+      phone:   String(pick(row, ['phone', 'phonenumber', 'contact']) || '').trim(),
+      vehicle: String(pick(row, ['vehicle', 'vehicletype']) || 'Van').trim() || 'Van',
+      plate:   String(pick(row, ['plate', 'platenumber', 'licenseplate']) || '').trim().toUpperCase(),
+      capacity:   Number(pick(row, ['capacitykg', 'capacity'])) || 0,
+      capacityM3: Number(pick(row, ['capacitym3', 'capacitym'])) || 0,
+      status:  String(pick(row, ['status']) || 'active').trim() || 'active',
+    };
+    if (pinRaw) {
+      const pinSalt = crypto.randomBytes(16).toString('hex');
+      drv.pinSalt = pinSalt;
+      drv.pinHash = hashPass(pinRaw, pinSalt);
+      withPin++;
+    } else if (existing) {
+      drv.pinSalt = existing.pinSalt;
+      drv.pinHash = existing.pinHash;
+    }
+    if (existingIdx >= 0) { db.drivers[existingIdx] = { ...existing, ...drv }; updated++; }
+    else { db.drivers.push(drv); imported++; }
+  });
+
+  writeDb(db);
+  logAudit('drivers_bulk_imported', { imported, updated, withPin, skipped, by: req.userId || '' });
+  res.json({ imported, updated, withPin, skipped, total: imported + updated, errors });
+});
+
 // All-time per-driver performance summary for the Administrator → Drivers
 // "Performance Stats" tab — same computation as the Driver Performance
 // report (kind='drivers'), just as JSON with no date range.

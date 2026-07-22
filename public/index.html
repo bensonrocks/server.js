@@ -733,9 +733,12 @@
           </div>
           <div style="display:flex;gap:.5rem">
             <button class="btn-secondary btn-sm" id="adminExportDriversBtn">&#11015; Export (Excel)</button>
+            <button class="btn-secondary btn-sm" id="adminImportDriversBtn">&#11014; Import (Excel/CSV)</button>
             <button class="btn-primary btn-sm" id="adminAddDriverBtn">+ Add Driver</button>
           </div>
         </div>
+        <input type="file" id="driverImportFileInput" accept=".csv,.txt,.xlsx,.xls" hidden />
+        <div class="admin-section-sub" style="margin:.2rem 0 .6rem">Import fills the driver roster from a spreadsheet (the same file you get from Export, hand-edited). Columns: ID, Name, Password (=Driver App PIN, 4-8 digits), Phone, Vehicle, Plate, Capacity (kg), Capacity (m3), Status.</div>
         <div id="driversList" class="driver-list-wrap"></div>
         <div id="driverMgmtStatus" class="status-bar hidden"></div>
       </div>
