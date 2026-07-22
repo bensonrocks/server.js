@@ -7688,11 +7688,8 @@ app.post('/api/master/users', (req, res) => {
 // authenticates against db.drivers[].pinHash (see the Driver App API block
 // below), so a users[]-side record would be vestigial and confusing. The
 // "password" column for a driver row IS their Driver App PIN (4-8 digits).
-app.post('/api/master/users/import', express.json({ limit: '2mb' }), (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const { items = [] } = req.body || {};
-  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
-
+// Shared row-import logic for both the JSON and file-upload user import routes.
+function importUserRows(items, req) {
   const users = readUsers();
   const existingIds = new Set(users.map(u => u.id));
   let imported = 0, driverProfiles = 0, skipped = 0;
@@ -7738,7 +7735,60 @@ app.post('/api/master/users/import', express.json({ limit: '2mb' }), (req, res) 
   writeUsers(users);
   if (driverProfiles) writeDb(db);
   logAudit('users_bulk_imported', { imported, driverProfiles, skipped, by: req.userId || '' });
-  res.json({ imported, driverProfiles, skipped, errors });
+  return { imported, driverProfiles, skipped, errors };
+}
+
+app.post('/api/master/users/import', express.json({ limit: '2mb' }), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { items = [] } = req.body || {};
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+  res.json(importUserRows(items, req));
+});
+
+// File-upload variant — accepts the RAW file (CSV, TXT, XLSX, or XLS) and
+// parses it server-side. Exists because real-world "CSV" files are very often
+// actually Excel workbooks (Windows hides extensions; Excel re-saves .csv as
+// .xlsx) — parsing client-side as text produced garbage for those, which
+// looked like "the import doesn't work".
+app.post('/api/master/users/import-file', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const buf = req.file.buffer;
+  const name = (req.file.originalname || '').toLowerCase();
+  let items = [];
+  try {
+    const isXlsx = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b; // "PK" zip header
+    const isXls  = buf.length > 7 && buf[0] === 0xd0 && buf[1] === 0xcf; // legacy OLE header
+    if (isXlsx || isXls || name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      items = rows.map(r => {
+        const o = {};
+        for (const [k, v] of Object.entries(r)) o[String(k).trim().toLowerCase()] = String(v).trim();
+        return o;
+      });
+    } else {
+      const text = buf.toString('utf8').replace(/^﻿/, ''); // strip BOM
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) return res.status(400).json({ error: 'Empty file.' });
+      // Excel in some locales exports semicolon-separated "CSV"
+      const delim = (lines[0].includes(';') && !lines[0].includes(',')) ? ';' : ',';
+      const cols = lines[0].split(delim).map(c => c.trim().toLowerCase());
+      items = lines.slice(1).map(line => {
+        const cells = line.split(delim); const o = {};
+        cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
+        return o;
+      });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'Could not parse file: ' + e.message });
+  }
+  items = items.filter(o => o.id && o.password);
+  if (!items.length) {
+    return res.status(400).json({ error: 'No rows with id + password found. Header row must include: id, password (and optionally name, role, phone, vehicle, capacity).' });
+  }
+  res.json(importUserRows(items, req));
 });
 
 // ── Tenant management (master-key only) ───────────────────────────────────────

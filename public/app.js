@@ -8392,6 +8392,13 @@
     URL.revokeObjectURL(url);
   });
 
+  // Global guard: a file dropped anywhere OUTSIDE a drop zone must never make
+  // the browser navigate away to the file (which silently killed the app page
+  // and looked like "drag & drop doesn't work"). Zone handlers still run —
+  // this only cancels the browser's default open-the-file behaviour.
+  document.addEventListener('dragover', e => { e.preventDefault(); });
+  document.addEventListener('drop', e => { e.preventDefault(); });
+
   const userImportDropZone = document.getElementById('userImportDropZone');
   const userImportFileInput = document.getElementById('userImportFileInput');
   document.getElementById('userImportBrowseBtn').addEventListener('click', e => { e.stopPropagation(); userImportFileInput.click(); });
@@ -8409,20 +8416,16 @@
 
   async function processUserImportFile(file) {
     try {
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
-      if (!lines.length) { showUserStatus('Empty file.', 'error'); return; }
-      const cols = lines[0].split(',').map(c => c.trim().toLowerCase());
-      const items = lines.slice(1).map(line => {
-        const cells = line.split(','); const o = {};
-        cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
-        return o;
-      }).filter(o => o.id && o.password);
-      if (!items.length) { showUserStatus('No rows with id + password found. Header must include: id,password (and optionally name,role,phone,vehicle,capacity).', 'error'); return; }
-      const r = await fetch('/api/master/users/import', {
+      showUserStatus(`Importing "${file.name}"…`, 'progress');
+      // Send the RAW file — the server parses CSV, TXT, XLSX and XLS. (Files
+      // that look like CSV are often actually Excel workbooks; parsing
+      // client-side as text silently produced garbage for those.)
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/master/users/import-file', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
-        body: JSON.stringify({ items }),
+        headers: { 'x-master-key': LOG_PASSWORD },
+        body: fd,
       });
       const d = await r.json();
       if (!r.ok) { showUserStatus(d.error || 'Import failed', 'error'); return; }
