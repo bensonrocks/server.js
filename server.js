@@ -626,7 +626,19 @@ app.get('/vendor/jsqr.js', (_req, res) =>
 );
 
 // ── Persistent storage ──────────────────────────────────────────────────────
-const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
+// Resolution order:
+//   1. DATA_DIR                    — explicit override (always wins)
+//   2. RAILWAY_VOLUME_MOUNT_PATH   — Railway auto-injects this whenever a Volume
+//                                    is attached (e.g. "/data"). Using it means
+//                                    simply MOUNTING a volume is enough — no need
+//                                    to also hand-set DATA_DIR. This is the fix
+//                                    for "I added a volume but data still vanished".
+//   3. ./data                      — local dev fallback (ephemeral on Railway).
+const _railwayVolumePath = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+const DATA_DIR    = process.env.DATA_DIR || _railwayVolumePath || path.join(__dirname, 'data');
+if (!process.env.DATA_DIR && _railwayVolumePath) {
+  console.log(`[IdealScan] Using Railway Volume at ${_railwayVolumePath} for persistent storage (auto-detected via RAILWAY_VOLUME_MOUNT_PATH).`);
+}
 
 // SAFETY NET — on Railway (and similar platforms), the container filesystem
 // is EPHEMERAL: every redeploy/restart tears it down and boots a fresh one
@@ -634,11 +646,12 @@ const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
 // persistent Volume is silently wiped, taking every order/batch/inventory
 // record/user account with it. Detect that misconfiguration loudly at
 // startup instead of losing data silently. Railway auto-injects several
-// RAILWAY_* env vars into every deployment, so their presence + an unset
-// DATA_DIR is a reliable signal.
+// RAILWAY_* env vars into every deployment; the danger case is one where NO
+// volume is attached (no mount path) AND no explicit DATA_DIR.
 const _onRailway = Object.keys(process.env).some(k => k.startsWith('RAILWAY_'));
+const _dataDirIsPersistentByConfig = !!(process.env.DATA_DIR || _railwayVolumePath);
 (function _warnIfEphemeralDataDir() {
-  if (_onRailway && !process.env.DATA_DIR) {
+  if (_onRailway && !_dataDirIsPersistentByConfig) {
     console.warn('\n' + '!'.repeat(78));
     console.warn('!  WARNING: running on Railway but DATA_DIR is not set.');
     console.warn('!  Orders, inventory, and user accounts are being written to the');
@@ -657,7 +670,9 @@ const _onRailway = Object.keys(process.env).some(k => k.startsWith('RAILWAY_'));
 // keeps resetting to 1 across real restarts, the disk is ephemeral and data is
 // being lost. Exposed via /api/version so the UI can show a clear banner —
 // this is the definitive answer to "why does my data keep disappearing?".
-const PERSISTENCE = { bootCount: 1, survivedRestart: false, previousBootAt: null, firstBootAt: null, dataDir: DATA_DIR, dataDirExplicit: !!process.env.DATA_DIR, onRailway: _onRailway };
+// dataDirExplicit: true when storage is pointed at a persistent location by
+// config — either an explicit DATA_DIR or an auto-detected Railway Volume mount.
+const PERSISTENCE = { bootCount: 1, survivedRestart: false, previousBootAt: null, firstBootAt: null, dataDir: DATA_DIR, dataDirExplicit: _dataDirIsPersistentByConfig, railwayVolume: _railwayVolumePath || null, onRailway: _onRailway };
 (function _persistenceSelfTest() {
   const markerFile = path.join(DATA_DIR, '.persistence-marker.json');
   let prev = null;

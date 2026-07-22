@@ -10052,10 +10052,36 @@
   })();
 
   // Storage-persistence banner — the definitive answer to "why does my data
-  // disappear?". Only shown when there's a REAL risk (Railway + no explicit
-  // DATA_DIR), and made unmissable if a restart has already dropped data.
+  // disappear?". Three states:
+  //   RED   dataLostOnLastRestart — Railway, no volume/DATA_DIR: data IS being lost.
+  //   (none) persistent OR not-at-risk — storage is proven safe: stay silent.
+  //   BLUE  configured (volume/DATA_DIR detected) but first boot, not yet proven —
+  //         reassure, don't alarm; it confirms itself after the next restart.
   function showStorageBanner(storage) {
-    if (!storage || !storage.ephemeralRisk) return; // config is safe or unknown — say nothing
+    if (!storage) return;
+    if (storage.persistent) return;                 // proven safe — say nothing
+    if (!storage.ephemeralRisk) return;             // not on Railway / not at risk
+
+    const lost = storage.dataLostOnLastRestart;     // the unambiguous broken case
+    const configured = storage.dataDirExplicit;     // a volume or DATA_DIR is set
+
+    // Volume/DATA_DIR is set and there's simply been no restart yet to prove it —
+    // this is the CORRECT setup mid-confirmation. Don't scream about it.
+    if (configured && !lost) {
+      let info = document.getElementById('storageInfoBar');
+      if (!info) {
+        info = document.createElement('div');
+        info.id = 'storageInfoBar';
+        info.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:.55rem 1rem;font-size:.8rem;font-weight:600;text-align:center;background:#1d4ed8;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+        document.body.appendChild(info);
+      }
+      info.innerHTML = '💾 Persistent storage detected — it will be confirmed automatically after the next restart. Your data is being saved to the volume.'
+        + ' <span id="storageInfoClose" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>';
+      document.getElementById('storageInfoClose')?.addEventListener('click', () => info.remove());
+      return;
+    }
+
+    // Genuinely dangerous: no persistent storage configured on Railway.
     let bar = document.getElementById('storageWarnBar');
     if (!bar) {
       bar = document.createElement('div');
@@ -10063,15 +10089,11 @@
       bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:.7rem 1rem;font-size:.85rem;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.2)';
       document.body.appendChild(bar);
     }
-    const proven = storage.dataLostOnLastRestart;
-    bar.style.background = proven ? '#b91c1c' : '#b45309';
+    bar.style.background = '#b91c1c';
     bar.style.color = '#fff';
-    bar.innerHTML = (proven
-      ? '⚠ DATA IS BEING LOST: this server\'s storage does NOT survive restarts. '
-      : '⚠ Storage not confirmed persistent — your data may be lost on the next restart. ')
-      + 'Fix in Railway → this service → <b>Volumes</b>: add a Volume, then set env var '
-      + '<b>DATA_DIR</b> to its mount path (e.g. <code>/data</code>) and redeploy. '
-      + '<a href="https://code.claude.com/docs/en/claude-code-on-the-web" target="_blank" style="color:#fde68a;text-decoration:underline">docs</a>'
+    bar.innerHTML = '⚠ DATA IS BEING LOST: this server\'s storage does NOT survive restarts. '
+      + 'Fix in Railway → this service → <b>Volumes</b>: add a Volume (mount path e.g. <code>/data</code>) and redeploy. '
+      + 'The app now uses a mounted volume automatically — no extra env var needed.'
       + ' <span id="storageWarnClose" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>';
     document.getElementById('storageWarnClose')?.addEventListener('click', () => bar.remove());
   }
