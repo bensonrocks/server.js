@@ -1387,7 +1387,7 @@
     const carriers  = {};
 
     for (const ord of orders) {
-      const plat = (ord.platform  || '').trim() || 'Unspecified';
+      const plat = (ord.platform  || '').trim() || 'Shopify/Own website';
       const carr = (ord.carrier   || '').trim() || 'Unspecified';
       const shop = (ord.shop_name || '').trim();
 
