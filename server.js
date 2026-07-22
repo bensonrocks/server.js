@@ -9155,6 +9155,171 @@ app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Client-Specific SKU Variants ────────────────────────────────────────────
+app.get('/api/inventory/clients/:clientId/variants', requireAuth, (req, res) => {
+  res.json(inventory.getClientVariants(req.params.clientId));
+});
+app.post('/api/inventory/clients/:clientId/variants/:sku', requireAuth, express.json(), (req, res) => {
+  try {
+    const variant = inventory.upsertClientVariant(req.params.clientId, req.params.sku, req.body || {});
+    res.json(variant);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/clients/:clientId/variants/:sku', requireAuth, (req, res) => {
+  const variant = inventory.getClientVariantBySku(req.params.clientId, req.params.sku);
+  if (!variant) return res.status(404).json({ error: 'Variant not found' });
+  res.json(variant);
+});
+
+// ── Warehouse Locations & Stock Distribution ────────────────────────────────
+app.get('/api/inventory/locations', requireAuth, (req, res) => {
+  res.json(inventory.getLocations({
+    zone: req.query.zone,
+    active: req.query.active !== 'false'
+  }));
+});
+app.post('/api/inventory/locations', requireAuth, express.json(), (req, res) => {
+  try {
+    const { zone, aisle, shelf, bin, capacity, environment } = req.body || {};
+    if (!zone || !aisle || !shelf || !bin) return res.status(400).json({ error: 'zone, aisle, shelf, bin required' });
+    const loc = inventory.createLocation(zone, aisle, shelf, bin, capacity, environment);
+    logAudit('warehouse_location_created', { location: `${zone}-${aisle}-${shelf}-${bin}`, capacity, environment, by: req.userId || '' });
+    res.status(201).json(loc);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/:sku/locations', requireAuth, (req, res) => {
+  res.json(inventory.stockByLocation(req.params.sku));
+});
+app.post('/api/inventory/transfer', requireAuth, express.json(), (req, res) => {
+  try {
+    const { sku, from_location, to_location, qty } = req.body || {};
+    if (!sku || !from_location || !to_location || !qty) return res.status(400).json({ error: 'sku, from_location, to_location, qty required' });
+    const result = inventory.transferStock(sku, from_location, to_location, Number(qty), req.userId || '');
+    logAudit('stock_transfer', { sku, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Suppliers & Reorder Management ──────────────────────────────────────────
+app.get('/api/inventory/suppliers', requireAuth, (req, res) => {
+  res.json(inventory.getSuppliers({ active: req.query.active !== 'false' }));
+});
+app.post('/api/inventory/suppliers', requireAuth, express.json(), (req, res) => {
+  try {
+    const { id, name } = req.body || {};
+    if (!id || !name) return res.status(400).json({ error: 'id and name required' });
+    const supplier = inventory.upsertSupplier(id, req.body);
+    logAudit('supplier_created', { id, name, by: req.userId || '' });
+    res.status(201).json(supplier);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/suppliers/:supplierId', requireAuth, (req, res) => {
+  const suppliers = inventory.getSuppliers();
+  const supplier = suppliers.find(s => s.supplier_id === req.params.supplierId);
+  if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+  res.json(supplier);
+});
+app.post('/api/inventory/suppliers/:supplierId/skus/:sku', requireAuth, express.json(), (req, res) => {
+  try {
+    const mapping = inventory.mapSupplierSku(req.params.supplierId, req.params.sku, req.body || {});
+    logAudit('supplier_sku_mapped', { supplier: req.params.supplierId, sku: req.params.sku, by: req.userId || '' });
+    res.json(mapping);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/:sku/suppliers', requireAuth, (req, res) => {
+  res.json(inventory.getSupplierOptions(req.params.sku));
+});
+app.get('/api/inventory/reorder-suggestions', requireAuth, (req, res) => {
+  res.json(inventory.getReorderSuggestions());
+});
+
+// ── Cycle Counts ────────────────────────────────────────────────────────────
+app.post('/api/inventory/cycle-counts', requireAuth, express.json(), (req, res) => {
+  try {
+    const { count_id, location_id, counted_by } = req.body || {};
+    if (!count_id) return res.status(400).json({ error: 'count_id required' });
+    const count = inventory.startCycleCount(count_id, location_id, counted_by || req.userId || '');
+    logAudit('cycle_count_started', { count_id, location_id, by: req.userId || '' });
+    res.status(201).json(count);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/inventory/cycle-counts/:countId/lines', requireAuth, express.json(), (req, res) => {
+  try {
+    const { sku, counted_qty, expected_qty, reason } = req.body || {};
+    if (!sku || counted_qty === undefined) return res.status(400).json({ error: 'sku and counted_qty required' });
+    const line = inventory.recordCycleCountLine(req.params.countId, sku, Number(counted_qty), expected_qty !== undefined ? Number(expected_qty) : null, reason);
+    res.json(line);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/inventory/cycle-counts/:countId/complete', requireAuth, express.json(), (req, res) => {
+  try {
+    const { verified_by } = req.body || {};
+    const result = inventory.completeCycleCount(req.params.countId, verified_by || req.userId || '');
+    logAudit('cycle_count_completed', { count_id: req.params.countId, lines: result.lines, variances: result.variances, by: req.userId || '' });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Stock Alerts ────────────────────────────────────────────────────────────
+app.get('/api/inventory/alerts', requireAuth, (req, res) => {
+  res.json(inventory.getActiveAlerts({
+    sku: req.query.sku,
+    clientId: req.query.client_id,
+    severity: req.query.severity
+  }));
+});
+app.post('/api/inventory/alerts/:alertId/resolve', requireAuth, (req, res) => {
+  const alert = inventory.resolveAlert(req.params.alertId);
+  if (!alert) return res.status(404).json({ error: 'Alert not found' });
+  logAudit('alert_resolved', { alert_id: req.params.alertId, by: req.userId || '' });
+  res.json(alert);
+});
+
+// ── Batch/Lot Tracking ──────────────────────────────────────────────────────
+app.post('/api/inventory/batches', requireAuth, express.json(), (req, res) => {
+  try {
+    const { batch_id, sku, quantity } = req.body || {};
+    if (!batch_id || !sku || quantity === undefined) return res.status(400).json({ error: 'batch_id, sku, quantity required' });
+    const batch = inventory.createBatch(batch_id, sku, Number(quantity), req.body);
+    logAudit('batch_created', { batch_id, sku, quantity: Number(quantity), by: req.userId || '' });
+    res.status(201).json(batch);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/:sku/batches', requireAuth, (req, res) => {
+  res.json(inventory.getBatchesBySku(req.params.sku, { includeQuarantined: req.query.all === 'true' }));
+});
+app.post('/api/inventory/batches/:batchId/quarantine', requireAuth, express.json(), (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    const batch = inventory.quarantineBatch(req.params.batchId, reason);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    logAudit('batch_quarantined', { batch_id: req.params.batchId, reason, by: req.userId || '' });
+    res.json(batch);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Analytics & Reports ────────────────────────────────────────────────────
+app.get('/api/inventory/analytics/aging', requireAuth, (req, res) => {
+  res.json({
+    data: inventory.stockAging(Number(req.query.limit) || 50),
+    description: 'Stock ordered by age (oldest first)'
+  });
+});
+app.post('/api/inventory/analytics/turnover', requireAuth, express.json(), (req, res) => {
+  const { skus, days } = req.body || {};
+  if (!Array.isArray(skus)) return res.status(400).json({ error: 'skus array required' });
+  res.json(inventory.turnoverRate(skus, Number(days) || 30));
+});
+app.get('/api/inventory/analytics/slow-movers', requireAuth, (req, res) => {
+  res.json({
+    data: inventory.slowMovers(Number(req.query.days) || 30, Number(req.query.minAge) || 60),
+    description: 'SKUs with low movement over period'
+  });
+});
+app.get('/api/inventory/analytics/value', requireAuth, (req, res) => {
+  res.json(inventory.stockValue());
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  WAVE PICKING — consolidate multiple pending orders into one location-sorted
 //  pick list (lib/wave-pick.js). Waves live in db.waves (same readDb()/
