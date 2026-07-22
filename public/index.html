@@ -2140,102 +2140,18 @@
       </div>
     </section>
 
-    <!-- ── TAB: Inventory (System A — ported, additive) ── -->
+    <!-- ── TAB: Inventory (3PL/4PL client-owned stock model) ── -->
     <section id="tab-inventory" class="tab">
-      <div class="section-header">
-        <h2>Inventory Management</h2>
-        <div style="display:flex;gap:.4rem;flex-wrap:wrap;font-size:.9rem">
-          <button class="btn-sm" data-inv-tab="stock">Stock</button>
-          <button class="btn-sm" data-inv-tab="clients">Clients</button>
-          <button class="btn-sm" data-inv-tab="suppliers">Suppliers</button>
-          <button class="btn-sm" data-inv-tab="alerts">Alerts</button>
-          <button class="btn-sm" data-inv-tab="analytics">Analytics</button>
-          <div style="flex:1"></div>
-          <button class="btn-secondary btn-sm" onclick="invUI.reseed()">Seed</button>
-          <button class="btn-secondary btn-sm" onclick="invUI.importCsv()">CSV</button>
-          <button class="btn-primary btn-sm" onclick="invUI.addItem()">+ Item</button>
+      <div class="panel">
+        <h2>📦 Inventory Management</h2>
+        <p style="color:#64748b;margin-top:1rem">Inventory system is being rearchitected for the 3PL/4PL consignment model, where all stock is client-owned and the provider manages it on their behalf.</p>
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:1.2rem;margin-top:1rem">
+          <h3 style="margin:0 0 .5rem;color:#166534">✓ Database Model Complete</h3>
+          <p style="margin:0;font-size:.9rem;color:#4b5563">The inventory database has been rearchitected with mandatory client-scoping — all operations now require explicit client context. Each client manages only their own stock.</p>
         </div>
-      </div>
-
-      <!-- Stock Management Tab -->
-      <div id="inv-tab-stock" class="inv-tab-panel">
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-bottom:1rem">
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">Total SKUs</div><div id="inv-s-total" style="font-size:1.6rem;font-weight:800">0</div></div>
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">Low stock</div><div id="inv-s-low" style="font-size:1.6rem;font-weight:800;color:#d97706">0</div></div>
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">Out of stock</div><div id="inv-s-out" style="font-size:1.6rem;font-weight:800;color:#dc2626">0</div></div>
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">Stock value</div><div id="inv-s-val" style="font-size:1.6rem;font-weight:800">$0</div></div>
-        </div>
-        <div style="display:flex;gap:.6rem;align-items:center;margin-bottom:.75rem;flex-wrap:wrap">
-          <input id="inv-search" placeholder="Search SKU&#8230;" oninput="invUI.filter()" style="flex:1;min-width:180px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px">
-          <select id="inv-cat" onchange="invUI.filter()" style="padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px"><option>All categories</option></select>
-          <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem"><input type="checkbox" id="inv-low-only" onchange="invUI.filter()"> Low stock</label>
-        </div>
-        <div style="overflow-x:auto">
-          <table class="tbl" style="width:100%">
-            <thead><tr>
-              <th>SKU</th><th>Name</th><th>Category</th><th style="text-align:right">On hand</th>
-              <th style="text-align:right">Reserved</th><th style="text-align:right">Available</th><th></th>
-            </tr></thead>
-            <tbody id="inv-tbody"><tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Client Variants Tab -->
-      <div id="inv-tab-clients" class="inv-tab-panel hidden">
-        <div style="margin-bottom:1rem"><button class="btn-primary btn-sm" onclick="invUI.addClientVariant()">+ Add Client Variant</button></div>
-        <div style="overflow-x:auto">
-          <table class="tbl" style="width:100%">
-            <thead><tr>
-              <th>Client</th><th>Master SKU</th><th>Client SKU</th><th>Client Name</th>
-              <th style="text-align:right">Cost</th><th style="text-align:right">Margin %</th><th></th>
-            </tr></thead>
-            <tbody id="inv-client-variants-tbody"><tr><td colspan="7" style="text-align:center;padding:2rem">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Suppliers Tab -->
-      <div id="inv-tab-suppliers" class="inv-tab-panel hidden">
-        <div style="margin-bottom:1rem"><button class="btn-primary btn-sm" onclick="invUI.addSupplier()">+ Add Supplier</button></div>
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:1rem;margin-bottom:1rem">
-          <h4 style="margin:0 0 .5rem">⚠️ Reorder Suggestions</h4>
-          <div id="inv-reorder-suggestions" style="font-size:.9rem"><p style="color:#64748b">Loading…</p></div>
-        </div>
-        <div style="overflow-x:auto">
-          <table class="tbl" style="width:100%">
-            <thead><tr>
-              <th>Supplier</th><th>Contact</th><th>Phone</th><th style="text-align:right">Lead time</th>
-              <th style="text-align:right">Min order</th><th></th>
-            </tr></thead>
-            <tbody id="inv-suppliers-tbody"><tr><td colspan="6" style="text-align:center;padding:2rem">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Alerts Tab -->
-      <div id="inv-tab-alerts" class="inv-tab-panel hidden">
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:1rem;margin-bottom:1rem">
-          <h4 style="margin:0 0 .5rem;color:#991b1b">🚨 Active Alerts</h4>
-          <div id="inv-alerts-list" style="font-size:.9rem"><p style="color:#64748b">Loading…</p></div>
-        </div>
-      </div>
-
-      <!-- Analytics Tab -->
-      <div id="inv-tab-analytics" class="inv-tab-panel hidden">
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-bottom:1rem">
-          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:1rem">
-            <h4 style="margin:0 0 .5rem">Stock Value</h4>
-            <div id="inv-analytics-value" style="font-size:1.4rem;font-weight:bold">$0</div>
-          </div>
-          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:1rem">
-            <h4 style="margin:0 0 .5rem">Stock Aging</h4>
-            <div id="inv-analytics-aging" style="font-size:.9rem">Loading…</div>
-          </div>
-        </div>
-        <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:1rem;margin-bottom:1rem">
-          <h4 style="margin:0 0 .5rem">Slow Movers (low turnover)</h4>
-          <div id="inv-slow-movers" style="font-size:.85rem;max-height:300px;overflow-y:auto"><p style="color:#64748b">Loading…</p></div>
+        <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:1.2rem;margin-top:.75rem">
+          <h3 style="margin:0 0 .5rem;color:#92400e">⏱ API Implementation Pending</h3>
+          <p style="margin:0;font-size:.9rem;color:#4b5563">REST APIs and the client UI are being updated to reflect the client-first, client-owned stock model. Expected in the next iteration.</p>
         </div>
       </div>
     </section>
