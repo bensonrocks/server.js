@@ -1388,7 +1388,9 @@
 
     for (const ord of orders) {
       const plat = (ord.platform  || '').trim() || 'Shopify/Own website';
-      const carr = (ord.carrier   || '').trim() || 'Unspecified';
+      // Carrier: if none specified, check if it's going through TMS (Inhouse Delivery)
+      let carr = (ord.carrier   || '').trim();
+      if (!carr) carr = ord.transport_id ? 'Inhouse Delivery' : 'Unspecified';
       const shop = (ord.shop_name || '').trim();
 
       if (!platforms[plat]) platforms[plat] = { orders: 0, units: 0, shops: new Set() };
