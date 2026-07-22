@@ -4120,12 +4120,14 @@ app.get('/api/orders', (req, res) => {
 // Orders still missing a carrier label — the counterpart to a label import's
 // "unmatched" pages. Non-done orders where has_order_label is false, slimmed
 // to what the label-review "Orders without a label" panel needs. Optional
-// ?client= filter (case-insensitive) narrows to one client's orders.
+// ?batchIds=id1,id2,… filter narrows to those batch(es) only (when viewing a
+// specific label import, shows only orders from batches with matched pages).
 app.get('/api/orders/without-label', (req, res) => {
-  const clientFilter = String(req.query.client || '').trim().toLowerCase();
+  const batchIdsParam = String(req.query.batchIds || '').trim();
+  const batchIds = batchIdsParam ? new Set(batchIdsParam.split(',').map(s => s.trim()).filter(Boolean)) : null;
   const out = globalOrdersWithState()
     .filter(o => o.scan_status !== 'done' && !o.has_order_label)
-    .filter(o => !clientFilter || String(o.client_name || '').trim().toLowerCase() === clientFilter)
+    .filter(o => !batchIds || batchIds.has(o.batchId))
     .map(o => ({
       order_number:   o.order_number,
       client_name:    o.client_name || '',

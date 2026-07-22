@@ -10324,7 +10324,13 @@
       // Orders still missing a label — the counterpart to unmatched pages.
       // Auto-expanded when the unmatched filter is active so the two lists
       // sit together for pairing; clickable to open the affected order.
-      renderNoLabelPanel(filter === 'unmatched');
+      // Filter to batches that contain matched orders from this import.
+      const batchIds = new Set();
+      imp.pages.filter(p => p.matchedOrderNumber).forEach(p => {
+        const o = loadedOrders.find(x => x.order_number === p.matchedOrderNumber);
+        if (o && o.batchId) batchIds.add(o.batchId);
+      });
+      renderNoLabelPanel(filter === 'unmatched', batchIds.size > 0 ? Array.from(batchIds) : null);
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
         const btn = document.getElementById('lriAutoMatchBtn');
@@ -10432,7 +10438,7 @@
   // Panel on the label-review screen listing active orders that still have
   // NO label — so an unmatched label page and the order it belongs to can be
   // eyeballed side by side. Each row opens the affected order (scan overlay).
-  async function renderNoLabelPanel(expand) {
+  async function renderNoLabelPanel(expand, batchIds) {
     const panel  = document.getElementById('labelReviewNoLabelPanel');
     const bodyEl = document.getElementById('lriNoLabelBody');
     const titleEl = document.getElementById('lriNoLabelTitle');
@@ -10448,7 +10454,11 @@
     bodyEl.innerHTML = '<p class="hint" style="padding:.6rem">Loading…</p>';
     setOpen(!!expand);
     try {
-      const r = await fetch('/api/orders/without-label');
+      // Filter to batches that were matched in this import, or show all if none matched yet
+      const url = batchIds && batchIds.length > 0
+        ? `/api/orders/without-label?batchIds=${batchIds.join(',')}`
+        : '/api/orders/without-label';
+      const r = await fetch(url);
       const list = r.ok ? await r.json() : [];
       titleEl.textContent = `Orders without a label (${list.length})`;
       if (!list.length) {
