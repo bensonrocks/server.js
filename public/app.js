@@ -30,6 +30,7 @@
   let activeClientFilter  = 'all';
   let activeCarrierFilter = 'all';
   let ordersView          = 'active';   // 'active' | 'completed' sub-tab
+  let orderSelection      = new Set();  // order_numbers ticked for group actions
   let completedSearch     = '';
   let _archSearch         = { q: '', results: null }; // archive search cache
   let ordersDateFilter    = 'today';    // 'today' | 'yesterday' | 'week' | 'all' | 'range'
@@ -1868,6 +1869,7 @@
 
       return `<tr class="orders-tr status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
         <td class="ord-stripe-cell"></td>
+        ${isAdminView ? `<td class="ord-select-cell"><input type="checkbox" class="ord-select" data-order="${esc(ord.order_number)}" ${orderSelection.has(ord.order_number) ? 'checked' : ''} onclick="event.stopPropagation()" /></td>` : ''}
         <td class="col-order">
           <span class="ord-no-link">${esc(ord.order_number)}</span>
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
@@ -1895,15 +1897,29 @@
       </tr>`;
     }).join('');
 
+    // Keep the selection set limited to orders actually visible right now, so
+    // a stale tick from a previous filter/view can't act on a hidden order.
+    const visibleNums = new Set(orders.map(o => o.order_number));
+    orderSelection = new Set([...orderSelection].filter(n => visibleNums.has(n)));
+
     const rz = id => `<span class="col-resize" data-col="${id}"></span>`;
+    const bulkBarHTML = isAdminView ? `
+      <div id="ordersBulkBar" class="orders-bulk-bar hidden">
+        <span id="ordersBulkCount" class="obb-count">0 selected</span>
+        <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print waybill/label for each selected order that has one">&#128438; Print Labels</button>
+        <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
+        <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
+      </div>` : '';
     document.getElementById('ordersDashList').innerHTML = `
       ${subTabsHTML}
       ${ordersColsToggleHTML()}
+      ${bulkBarHTML}
       <div class="orders-table-wrap">
         <table class="orders-table">
           <thead>
             <tr>
               <th style="width:4px;padding:0"></th>
+              ${isAdminView ? `<th class="ord-select-cell"><input type="checkbox" id="ordSelectAll" title="Select all shown" /></th>` : ''}
               <th data-col="orderno">ORDER NO${rz('orderno')}</th>
               <th class="col-client" data-col="client">CLIENT${rz('client')}</th>
               <th class="col-customer" data-col="customer">CUSTOMER${rz('customer')}</th>
@@ -1921,6 +1937,7 @@
     initOrdersColResize();
     initOrdersColsToggle();
     wireOrdersSubtabs();
+    wireOrdersSelection();
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
@@ -2000,6 +2017,97 @@
         } catch (err) { btn.disabled = false; alert(err.message); }
       });
     });
+  }
+
+  // ── Orders mass-select + group actions (admin) ─────────────────────────────
+  // Row checkboxes + a header "select all" feed orderSelection; a floating bar
+  // exposes group actions (bulk deletion-request, bulk label printing). Only
+  // rendered for admins (per-row delete is already admin-only).
+  function updateOrdersBulkBar() {
+    const bar = document.getElementById('ordersBulkBar');
+    if (!bar) return;
+    const n = orderSelection.size;
+    bar.classList.toggle('hidden', n === 0);
+    const countEl = document.getElementById('ordersBulkCount');
+    if (countEl) countEl.textContent = `${n} selected`;
+    // "Request Deletion" only makes sense for orders that are deletable
+    // (not done, not already pending) — disable it if none of the selected qualify.
+    const selectable = [...orderSelection]
+      .map(nm => loadedOrders.find(o => o.order_number === nm))
+      .filter(o => o && o.scan_status !== 'done' && !o.pending_deletion && !o.archived);
+    const delBtn = document.getElementById('ordersBulkDelete');
+    if (delBtn) {
+      delBtn.disabled = selectable.length === 0;
+      delBtn.textContent = `\u{1F5D1} Request Deletion${selectable.length ? ` (${selectable.length})` : ''}`;
+    }
+    // Sync the header select-all checkbox to the current state
+    const all = document.getElementById('ordSelectAll');
+    if (all) {
+      const boxes = document.querySelectorAll('.ord-select');
+      const checked = document.querySelectorAll('.ord-select:checked');
+      all.checked = boxes.length > 0 && checked.length === boxes.length;
+      all.indeterminate = checked.length > 0 && checked.length < boxes.length;
+    }
+  }
+
+  function wireOrdersSelection() {
+    document.querySelectorAll('.ord-select').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) orderSelection.add(cb.dataset.order);
+        else orderSelection.delete(cb.dataset.order);
+        updateOrdersBulkBar();
+      });
+    });
+    const all = document.getElementById('ordSelectAll');
+    all?.addEventListener('change', () => {
+      document.querySelectorAll('.ord-select').forEach(cb => {
+        cb.checked = all.checked;
+        if (all.checked) orderSelection.add(cb.dataset.order);
+        else orderSelection.delete(cb.dataset.order);
+      });
+      updateOrdersBulkBar();
+    });
+    document.getElementById('ordersBulkClear')?.addEventListener('click', () => {
+      orderSelection.clear();
+      document.querySelectorAll('.ord-select').forEach(cb => { cb.checked = false; });
+      updateOrdersBulkBar();
+    });
+    document.getElementById('ordersBulkPrint')?.addEventListener('click', () => {
+      const picked = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(Boolean);
+      const printable = picked.filter(o => o.has_order_label || o.has_waybill_pdf);
+      if (!printable.length) { alert('None of the selected orders have a printable label or waybill yet.'); return; }
+      // Open each in turn — the print modals stack sequentially.
+      printable.forEach(o => {
+        if (o.has_order_label) showPrintOrderLabelModal(o);
+        else if (o.has_waybill_pdf && o.batchId) showPrintWaybillModal(o);
+      });
+    });
+    document.getElementById('ordersBulkDelete')?.addEventListener('click', () => {
+      const selectable = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status !== 'done' && !o.pending_deletion && !o.archived);
+      if (!selectable.length) { alert('None of the selected orders can be deleted (completed/archived/already pending are skipped).'); return; }
+      openBulkDeleteOrdersModal(selectable.map(o => ({ orderNumber: o.order_number, batchId: o.batchId || '' })));
+    });
+    updateOrdersBulkBar();
+  }
+
+  // Bulk deletion request — reuses the SAME per-order modal DOM (reason + the
+  // admin's own password), but loops the request over every selected order.
+  let _bulkDelTargets = null;
+  function openBulkDeleteOrdersModal(targets) {
+    _bulkDelTargets = targets;
+    document.getElementById('delOrderNumber').textContent = `${targets.length} order(s): ` + targets.map(t => t.orderNumber).slice(0, 8).join(', ') + (targets.length > 8 ? '…' : '');
+    const reasonEl = document.getElementById('delOrderReason');
+    const passEl   = document.getElementById('delOrderPassword');
+    reasonEl.value = '';
+    passEl.value   = '';
+    document.getElementById('delOrderError').classList.add('hidden');
+    document.getElementById('delOrderConfirmBtn').disabled = true;
+    document.getElementById('deleteOrderOverlay').classList.remove('hidden');
+    setTimeout(() => reasonEl.focus(), 100);
   }
 
   // ── IdealInbound — receiving (POs/ASNs and returns) ─────────────────────────
@@ -5722,6 +5830,7 @@
   // ── Request Order Deletion (admin: reason + own password; Master approves) ──
   let _delOrderTarget = null; // { orderNumber, batchId }
   function openDeleteOrderModal(orderNumber, batchId) {
+    _bulkDelTargets = null;   // single-order path — clear any bulk selection
     _delOrderTarget = { orderNumber, batchId };
     document.getElementById('delOrderNumber').textContent = orderNumber;
     const reasonEl = document.getElementById('delOrderReason');
@@ -5751,13 +5860,42 @@
   document.getElementById('delOrderConfirmBtn').addEventListener('click', async () => {
     const reason   = document.getElementById('delOrderReason').value.trim();
     const password = document.getElementById('delOrderPassword').value;
-    if (!_delOrderFormReady() || !_delOrderTarget) {
+    const isBulk   = Array.isArray(_bulkDelTargets) && _bulkDelTargets.length > 0;
+    if (!_delOrderFormReady() || (!_delOrderTarget && !isBulk)) {
       document.getElementById('delOrderError').classList.remove('hidden');
       return;
     }
-    const { orderNumber, batchId } = _delOrderTarget;
     const btn = document.getElementById('delOrderConfirmBtn');
-    btn.disabled = true; btn.textContent = 'Requesting…';
+    btn.disabled = true;
+
+    if (isBulk) {
+      const targets = _bulkDelTargets;
+      let ok = 0; const fails = [];
+      for (let i = 0; i < targets.length; i++) {
+        btn.textContent = `Requesting… ${i + 1}/${targets.length}`;
+        try {
+          const r = await fetch('/api/scan/order-deletion-request', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderNumber: targets[i].orderNumber, batchId: targets[i].batchId, reason, password }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Request failed');
+          ok++;
+        } catch (err) { fails.push(`${targets[i].orderNumber}: ${err.message}`); }
+      }
+      document.getElementById('deleteOrderOverlay').classList.add('hidden');
+      _bulkDelTargets = null;
+      orderSelection.clear();
+      await refreshOrders(); renderOrdersList();
+      btn.textContent = '\u{1F5D1} Request Deletion';
+      btn.disabled = !_delOrderFormReady();
+      if (fails.length) alert(`Requested deletion for ${ok} order(s).\n${fails.length} failed:\n` + fails.slice(0, 10).join('\n'));
+      else alert(`Deletion requested for ${ok} order(s). Master approval is required to remove them.`);
+      return;
+    }
+
+    const { orderNumber, batchId } = _delOrderTarget;
+    btn.textContent = 'Requesting…';
     try {
       const r = await fetch('/api/scan/order-deletion-request', {
         method: 'POST',

@@ -1240,6 +1240,21 @@ body.log-open { overflow: hidden; }
    ORDERS TABLE  (replaces dash-order-card grid)
    ================================================================ */
 .orders-table-wrap { overflow-x: auto; margin-top: .5rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-sm); }
+
+/* Orders mass-select + group-action bar */
+.ord-select-cell { width: 32px; text-align: center; padding: 0 !important; }
+.ord-select-cell input, #ordSelectAll { width: 16px; height: 16px; cursor: pointer; margin: 0; }
+.orders-bulk-bar {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  margin-top: .5rem; padding: .55rem .9rem;
+  background: var(--primary); color: #fff;
+  border-radius: var(--radius); box-shadow: var(--shadow-sm);
+}
+.orders-bulk-bar.hidden { display: none; }
+.orders-bulk-bar .obb-count { font-weight: 700; margin-right: .3rem; }
+.orders-bulk-bar .btn-sm { padding: .3rem .7rem; }
+.orders-bulk-bar .btn-danger { background: #b91c1c; color: #fff; border: none; }
+.orders-bulk-bar .btn-danger:disabled { opacity: .5; cursor: not-allowed; }
 .orders-table { width: 100%; border-collapse: collapse; font-size: .83rem; }
 .orders-table thead { background: var(--surface-2); }
 .orders-table thead th {
