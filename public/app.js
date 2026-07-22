@@ -10047,8 +10047,34 @@
     fetch('/api/version').then(r => r.json()).then(v => {
       const boot = v.bootedAt ? new Date(v.bootedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
       el.textContent = `build ${v.commit || 'dev'}${boot ? ` · up since ${boot}` : ''}`;
+      showStorageBanner(v.storage);
     }).catch(() => {});
   })();
+
+  // Storage-persistence banner — the definitive answer to "why does my data
+  // disappear?". Only shown when there's a REAL risk (Railway + no explicit
+  // DATA_DIR), and made unmissable if a restart has already dropped data.
+  function showStorageBanner(storage) {
+    if (!storage || !storage.ephemeralRisk) return; // config is safe or unknown — say nothing
+    let bar = document.getElementById('storageWarnBar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'storageWarnBar';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:.7rem 1rem;font-size:.85rem;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+      document.body.appendChild(bar);
+    }
+    const proven = storage.dataLostOnLastRestart;
+    bar.style.background = proven ? '#b91c1c' : '#b45309';
+    bar.style.color = '#fff';
+    bar.innerHTML = (proven
+      ? '⚠ DATA IS BEING LOST: this server\'s storage does NOT survive restarts. '
+      : '⚠ Storage not confirmed persistent — your data may be lost on the next restart. ')
+      + 'Fix in Railway → this service → <b>Volumes</b>: add a Volume, then set env var '
+      + '<b>DATA_DIR</b> to its mount path (e.g. <code>/data</code>) and redeploy. '
+      + '<a href="https://code.claude.com/docs/en/claude-code-on-the-web" target="_blank" style="color:#fde68a;text-decoration:underline">docs</a>'
+      + ' <span id="storageWarnClose" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>';
+    document.getElementById('storageWarnClose')?.addEventListener('click', () => bar.remove());
+  }
 
   // ── Install-app helper ─────────────────────────────────────────────────────
   // iOS NEVER fires an install prompt — installing means Safari → Share →

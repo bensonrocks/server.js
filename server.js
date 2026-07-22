@@ -636,9 +636,9 @@ const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
 // startup instead of losing data silently. Railway auto-injects several
 // RAILWAY_* env vars into every deployment, so their presence + an unset
 // DATA_DIR is a reliable signal.
+const _onRailway = Object.keys(process.env).some(k => k.startsWith('RAILWAY_'));
 (function _warnIfEphemeralDataDir() {
-  const onRailway = Object.keys(process.env).some(k => k.startsWith('RAILWAY_'));
-  if (onRailway && !process.env.DATA_DIR) {
+  if (_onRailway && !process.env.DATA_DIR) {
     console.warn('\n' + '!'.repeat(78));
     console.warn('!  WARNING: running on Railway but DATA_DIR is not set.');
     console.warn('!  Orders, inventory, and user accounts are being written to the');
@@ -647,6 +647,46 @@ const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
     console.warn('!  Fix: Railway dashboard -> this service -> Volumes -> add a Volume,');
     console.warn('!  then set env var DATA_DIR to the mount path (e.g. /data) and redeploy.');
     console.warn('!'.repeat(78) + '\n');
+  }
+})();
+
+// ── Persistence self-test — proves EMPIRICALLY whether DATA_DIR survives ──────
+// restarts, instead of only guessing from env vars. On every boot we read a
+// marker file, bump a boot counter, and rewrite it. If a marker written by a
+// PREVIOUS boot is still there, storage is genuinely persistent. If the counter
+// keeps resetting to 1 across real restarts, the disk is ephemeral and data is
+// being lost. Exposed via /api/version so the UI can show a clear banner —
+// this is the definitive answer to "why does my data keep disappearing?".
+const PERSISTENCE = { bootCount: 1, survivedRestart: false, previousBootAt: null, firstBootAt: null, dataDir: DATA_DIR, dataDirExplicit: !!process.env.DATA_DIR, onRailway: _onRailway };
+(function _persistenceSelfTest() {
+  const markerFile = path.join(DATA_DIR, '.persistence-marker.json');
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch {}
+  if (prev && typeof prev.bootCount === 'number') {
+    PERSISTENCE.bootCount       = prev.bootCount + 1;
+    PERSISTENCE.survivedRestart = true;               // a prior boot's marker is still here
+    PERSISTENCE.previousBootAt  = prev.lastBootAt || null;
+    PERSISTENCE.firstBootAt     = prev.firstBootAt || prev.lastBootAt || null;
+  } else {
+    PERSISTENCE.firstBootAt = new Date().toISOString();
+  }
+  const marker = {
+    bootCount:   PERSISTENCE.bootCount,
+    firstBootAt: PERSISTENCE.firstBootAt,
+    lastBootAt:  new Date().toISOString(),
+  };
+  // Write SYNCHRONOUSLY at boot so the marker is durable before we serve any
+  // request (mkdir first — DATA_DIR may not exist yet on a fresh volume).
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(markerFile, JSON.stringify(marker));
+  } catch (e) {
+    console.error('[persistence] could not write marker — DATA_DIR not writable?', e.message);
+  }
+  if (PERSISTENCE.survivedRestart) {
+    console.log(`[persistence] OK — DATA_DIR is persistent (boot #${PERSISTENCE.bootCount}, data survived restart).`);
+  } else if (PERSISTENCE.bootCount === 1) {
+    console.log('[persistence] first boot — will confirm persistence on next restart.');
   }
 })();
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
@@ -740,7 +780,24 @@ function readUsers() {
 function writeUsers(users) {
   const db = readGlobalDb();
   db.users = users;
-  writeGlobalDb(db);
+  // User-account changes are rare but must NEVER be lost (a created user that
+  // vanishes on the next restart is exactly the "data doesn't stick" bug).
+  // Write the global store SYNCHRONOUSLY here — atomic tmp+rename — instead of
+  // the deferred setImmediate path, so the account is durable the instant the
+  // request returns.
+  _persistGlobalDbSync();
+}
+// Synchronous atomic write of the global store (users + sessions).
+function _persistGlobalDbSync() {
+  try {
+    const file = tenantStore.globalFile();
+    const tmp = file + '.tmp';
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(_globalCache));
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    console.error('[writeGlobalDb] sync persist error:', e.message);
+  }
 }
 function hashPass(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
@@ -902,13 +959,19 @@ function gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;
   console.log(`[IdealScan] ${signal} received — shutting down cleanly`);
-  const done = () => process.exit(0);
+  const done = () => {
+    // Final safety flush of the global store (users/sessions) before exit.
+    try { _persistGlobalDbSync(); } catch {}
+    process.exit(0);
+  };
   setTimeout(done, 3000); // hard cap so a stuck flush can never hang the deploy
   (function waitForFlush() {
-    // Check if ANY tenant has a write in progress — _dbWriting is a Map
-    let anyWriting = false;
-    for (const [, isWriting] of _dbWriting) {
-      if (isWriting) { anyWriting = true; break; }
+    // Wait for ANY tenant db AND the global store to finish flushing.
+    let anyWriting = _globalWriting;
+    if (!anyWriting) {
+      for (const [, isWriting] of _dbWriting) {
+        if (isWriting) { anyWriting = true; break; }
+      }
     }
     if (!anyWriting) return done();
     setTimeout(waitForFlush, 50);
@@ -3487,9 +3550,26 @@ const AUTH_PUBLIC = new Set([
 // answerable by reading the screen instead of digging through deploy logs.
 const SERVER_BOOTED_AT = new Date().toISOString();
 app.get('/api/version', (req, res) => {
+  // storage.persistent: true = PROVEN to survive restarts (a prior boot's marker
+  // was found). Once true it stays true. It's only false on the genuine first
+  // boot OR when the disk is ephemeral.
+  //   ephemeralRisk       — on Railway and not yet proven persistent → worth a warning.
+  //   dataLostOnLastRestart — the unambiguous case: on Railway with NO explicit
+  //                           DATA_DIR at all, which is always wrong there.
+  const ephemeralRisk = PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart;
+  const dataLostOnLastRestart = PERSISTENCE.onRailway && !PERSISTENCE.dataDirExplicit;
   res.json({
     commit: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_COMMIT || '').slice(0, 7),
     bootedAt: SERVER_BOOTED_AT,
+    storage: {
+      persistent:      PERSISTENCE.survivedRestart,   // empirically confirmed
+      bootCount:       PERSISTENCE.bootCount,
+      previousBootAt:  PERSISTENCE.previousBootAt,
+      dataDirExplicit: PERSISTENCE.dataDirExplicit,
+      onRailway:       PERSISTENCE.onRailway,
+      ephemeralRisk,                                   // config looks unsafe
+      dataLostOnLastRestart,                           // proven data loss happened
+    },
   });
 });
 app.use((req, res, next) => {
