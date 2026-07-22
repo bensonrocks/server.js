@@ -8232,6 +8232,13 @@
     try {
       const resp  = await fetch('/api/master/users', { headers: { 'x-master-key': LOG_PASSWORD } });
       const users = await resp.json();
+      if (!Array.isArray(users)) {
+        // A non-array here (e.g. an auth error object) would otherwise make
+        // .map() throw and silently leave the list unchanged — the classic
+        // "nothing happened" symptom. Surface it instead.
+        showUserStatus('Could not load users: ' + (users && users.error ? users.error : 'unexpected response'), 'error');
+        return;
+      }
       const roleLabel = { warehouse: 'Warehouse', driver: 'Driver' };
       listEl.innerHTML = users.map(u => `
         <div class="user-row" data-id="${esc(u.id)}">
@@ -8429,21 +8436,31 @@
       });
       const d = await r.json();
       if (!r.ok) { showUserStatus(d.error || 'Import failed', 'error'); return; }
-      let msg = `Imported ${d.imported} user(s)`;
-      if (d.driverProfiles) msg += ` (${d.driverProfiles} with a driver route-planning profile)`;
-      msg += `, skipped ${d.skipped}.`;
+      const staffCount = (d.imported || 0) - (d.driverProfiles || 0);
+      let msg = `✓ Imported ${d.imported} row(s): ${staffCount} staff user(s)`;
+      if (d.driverProfiles) msg += ` + ${d.driverProfiles} driver(s) — drivers appear on the “Drivers” tab, not this list`;
+      msg += `. Skipped ${d.skipped}.`;
       if (d.errors && d.errors.length) msg += ' First issue: row ' + d.errors[0].row + ' (' + d.errors[0].id + ') — ' + d.errors[0].error;
       showUserStatus(msg, d.imported > 0 ? 'success' : 'error');
       loadUserList();
-    } catch (err) { showUserStatus(err.message, 'error'); }
+      if (d.driverProfiles) { try { loadDriverList(); } catch {} }
+    } catch (err) { showUserStatus('Import error: ' + err.message, 'error'); }
   }
 
+  let _userStatusTimer = null;
   function showUserStatus(msg, type) {
     const el = document.getElementById('userMgmtStatus');
     el.textContent  = msg;
     el.className    = `status-bar ${type}`;
     el.classList.remove('hidden');
-    setTimeout(() => el.classList.add('hidden'), 4000);
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (_userStatusTimer) { clearTimeout(_userStatusTimer); _userStatusTimer = null; }
+    // Errors and import results STAY until the next action — auto-hiding after
+    // 4s made real imports look like "nothing happened". Only transient
+    // progress/success notices fade.
+    if (type === 'progress') return;
+    if (type === 'error') return;              // keep errors visible until fixed
+    _userStatusTimer = setTimeout(() => el.classList.add('hidden'), 8000);
   }
 
   // ── Driver Management ────────────────────────────────────────────────────────
