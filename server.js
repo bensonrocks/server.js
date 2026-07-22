@@ -871,6 +871,20 @@ function writeDb(data) {
   setImmediate(() => _persistDb(tenantId));
 }
 
+// Ensure database is flushed to disk before continuing (used for critical ops like uploads)
+function flushDb() {
+  return new Promise(resolve => {
+    const tenantId = tenantContext.currentTenantId();
+    const checkWrite = () => {
+      if (!_dbWriting.get(tenantId)) return resolve();
+      setTimeout(checkWrite, 10);
+    };
+    // Trigger an immediate persist if there's a pending write
+    if (_dbWritePending.get(tenantId)) _persistDb(tenantId);
+    checkWrite();
+  });
+}
+
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 // Every redeploy sends the OLD container SIGTERM so the new one can take over.
 // Node's default SIGTERM behavior is to die instantly with no cleanup, which
@@ -887,7 +901,12 @@ function gracefulShutdown(signal) {
   const done = () => process.exit(0);
   setTimeout(done, 3000); // hard cap so a stuck flush can never hang the deploy
   (function waitForFlush() {
-    if (!_dbWriting) return done();
+    // Check if ANY tenant has a write in progress — _dbWriting is a Map
+    let anyWriting = false;
+    for (const [, isWriting] of _dbWriting) {
+      if (isWriting) { anyWriting = true; break; }
+    }
+    if (!anyWriting) return done();
     setTimeout(waitForFlush, 50);
   })();
 }
@@ -4114,6 +4133,8 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // won't sequence well — surfaced now rather than discovered later.
     const linesWithLocation = mapped.filter(r => (r.location || '').trim()).length;
 
+    // Ensure database is flushed to disk before responding — prevents data loss if server crashes
+    await flushDb();
     console.log(`[upload] sending response — ${orders.length} order(s), batchId=${batchId}${transportJobsCreated ? `, ${transportJobsCreated} transport job(s)` : ''}`);
     res.json({
       sessionId,
