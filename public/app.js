@@ -765,11 +765,11 @@
   document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
   document.getElementById('photoUploadBtn').addEventListener('click', e => { e.stopPropagation(); photoInput.click(); });
   dropZone.addEventListener('click', () => fileInput.click());
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', e => {
-    e.preventDefault(); dropZone.classList.remove('dragover');
-    if (e.dataTransfer.files[0]) previewOrderFile(e.dataTransfer.files[0]);
+    e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) previewOrderFile(e.dataTransfer.files[0]);
   });
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) previewOrderFile(fileInput.files[0]); });
   photoInput.addEventListener('change', () => { if (photoInput.files[0]) previewPhotoFile(photoInput.files[0]); });
@@ -8396,11 +8396,11 @@
   const userImportFileInput = document.getElementById('userImportFileInput');
   document.getElementById('userImportBrowseBtn').addEventListener('click', e => { e.stopPropagation(); userImportFileInput.click(); });
   userImportDropZone.addEventListener('click', () => userImportFileInput.click());
-  userImportDropZone.addEventListener('dragover', e => { e.preventDefault(); userImportDropZone.classList.add('dragover'); });
+  userImportDropZone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; userImportDropZone.classList.add('dragover'); });
   userImportDropZone.addEventListener('dragleave', () => userImportDropZone.classList.remove('dragover'));
   userImportDropZone.addEventListener('drop', e => {
-    e.preventDefault(); userImportDropZone.classList.remove('dragover');
-    if (e.dataTransfer.files[0]) processUserImportFile(e.dataTransfer.files[0]);
+    e.preventDefault(); e.stopPropagation(); userImportDropZone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) processUserImportFile(e.dataTransfer.files[0]);
   });
   userImportFileInput.addEventListener('change', () => {
     if (userImportFileInput.files[0]) processUserImportFile(userImportFileInput.files[0]);
@@ -10014,10 +10014,12 @@
   }
 
   // Labels tab upload wiring
-  document.getElementById('labelImportDropZone').addEventListener('dragover', e => e.preventDefault());
-  document.getElementById('labelImportDropZone').addEventListener('drop', e => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
+  const labelImportDropZone = document.getElementById('labelImportDropZone');
+  labelImportDropZone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; labelImportDropZone.classList.add('dragover'); });
+  labelImportDropZone.addEventListener('dragleave', () => labelImportDropZone.classList.remove('dragover'));
+  labelImportDropZone.addEventListener('drop', e => {
+    e.preventDefault(); e.stopPropagation(); labelImportDropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
     if (file) doLabelImport(file);
   });
   document.getElementById('labelImportBrowseBtn').addEventListener('click', () =>
