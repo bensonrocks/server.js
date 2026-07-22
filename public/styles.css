@@ -2744,3 +2744,10 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .conn-card.conn-soon { opacity: .75; }
 .conn-card.conn-live { border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e33; }
 #connZortPanel .admin-section-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: .8rem; }
+
+/* ── Inventory tab sub-sections ──────────────────────────────────────────── */
+.inv-tab-panel { display: none; }
+.inv-tab-panel.active { display: block; }
+[data-inv-tab] { padding: .4rem .8rem; font-size: .85rem; font-weight: 600; background: #f1f5f9; color: #475569; border: none; border-radius: 6px; cursor: pointer; transition: all .2s; }
+[data-inv-tab]:hover { background: #e2e8f0; }
+[data-inv-tab].active { background: #0f172a; color: #fff; }

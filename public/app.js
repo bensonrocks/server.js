@@ -10225,9 +10225,135 @@
       inp.click();
     }
 
-    return { load, filter: render, adjust, moves, addItem, reseed, importCsv, downloadProductMasterTemplate, importProductMaster };
+    // ── Tab switching & new features ────────────────────────────────────────
+    async function initTabs() {
+      const tabs = document.querySelectorAll('[data-inv-tab]');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', async () => {
+          const tabName = tab.dataset.invTab;
+          tabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          document.querySelectorAll('.inv-tab-panel').forEach(p => p.classList.remove('active'));
+          const panel = document.getElementById(`inv-tab-${tabName}`);
+          if (panel) { panel.classList.add('active'); if (tabName !== 'stock') await loadTabData(tabName); }
+        });
+      });
+      document.querySelector('[data-inv-tab]')?.classList.add('active');
+      document.getElementById('inv-tab-stock').classList.add('active');
+    }
+    async function loadTabData(tabName) {
+      if (tabName === 'clients') await loadClientVariants();
+      else if (tabName === 'suppliers') await loadSuppliers();
+      else if (tabName === 'alerts') await loadAlerts();
+      else if (tabName === 'analytics') await loadAnalytics();
+    }
+    async function loadClientVariants() {
+      try {
+        const r = await fetch('/api/inventory/clients/' + (currentUser?.client_id || 'default') + '/variants');
+        const variants = r.ok ? await r.json() : [];
+        const tb = document.getElementById('inv-client-variants-tbody');
+        if (!tb) return;
+        if (!variants.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem">No variants yet.</td></tr>'; return; }
+        tb.innerHTML = variants.map(v => `<tr>
+          <td>${esc(v.client_id)}</td>
+          <td style="font-family:monospace">${esc(v.master_sku)}</td>
+          <td style="font-family:monospace">${esc(v.client_sku)}</td>
+          <td>${esc(v.client_name || '')}</td>
+          <td style="text-align:right">$${Number(v.client_cost || 0).toFixed(2)}</td>
+          <td style="text-align:right">${Number(v.client_margin || 0).toFixed(1)}%</td>
+          <td><button class="btn-secondary btn-sm" onclick="invUI.editVariant('${esc(v.master_sku)}')">Edit</button></td>
+        </tr>`).join('');
+      } catch (e) { console.error('Load variants failed:', e); }
+    }
+    async function loadSuppliers() {
+      try {
+        const [suppR, suggestR] = await Promise.all([
+          fetch('/api/inventory/suppliers'),
+          fetch('/api/inventory/reorder-suggestions')
+        ]);
+        const suppliers = suppR.ok ? await suppR.json() : [];
+        const suggestions = suggestR.ok ? await suggestR.json() : [];
+
+        const sb = document.getElementById('inv-reorder-suggestions');
+        if (suggestions.length) {
+          sb.innerHTML = suggestions.slice(0, 5).map(s => `<div style="padding:.4rem;background:#fff;border-radius:4px;margin:.3rem 0">
+            <strong>${esc(s.sku)}</strong>: need ${s.needed} units (currently ${s.available_qty}/${s.reorder_point}) · ${s.supplier || 'No supplier'} · ~$${Number(s.cost_needed || 0).toFixed(2)}
+          </div>`).join('');
+        } else sb.innerHTML = '<p style="color:#64748b;margin:0">No reorder suggestions.</p>';
+
+        const tb = document.getElementById('inv-suppliers-tbody');
+        if (!tb) return;
+        if (!suppliers.length) { tb.innerHTML = '<tr><td colspan="6">No suppliers yet.</td></tr>'; return; }
+        tb.innerHTML = suppliers.map(s => `<tr>
+          <td><strong>${esc(s.name)}</strong></td>
+          <td>${esc(s.contact_person || '')}</td>
+          <td>${esc(s.phone || '')}</td>
+          <td style="text-align:right">${s.lead_time_days || 7}d</td>
+          <td style="text-align:right">Qty ${s.min_order_qty || 1}</td>
+          <td><button class="btn-secondary btn-sm" onclick="invUI.editSupplier('${esc(s.supplier_id)}')">Edit</button></td>
+        </tr>`).join('');
+      } catch (e) { console.error('Load suppliers failed:', e); }
+    }
+    async function loadAlerts() {
+      try {
+        const r = await fetch('/api/inventory/alerts');
+        const alerts = r.ok ? await r.json() : [];
+        const el = document.getElementById('inv-alerts-list');
+        if (!el) return;
+        if (!alerts.length) { el.innerHTML = '<p style="color:#64748b;margin:0">No active alerts.</p>'; return; }
+        el.innerHTML = alerts.map(a => `<div style="padding:.6rem;background:#fff;border:1px solid #fecaca;border-radius:4px;margin:.4rem 0">
+          <div style="display:flex;justify-content:space-between;align-items:start;gap:.5rem">
+            <div><strong>${esc(a.sku)}</strong> · <span style="font-size:.8rem;color:#64748b">${a.alert_type}</span></div>
+            <button class="btn-secondary btn-sm" onclick="invUI.resolveAlert('${esc(a.alert_id)}')">✓ Resolve</button>
+          </div>
+          <p style="margin:.3rem 0 0;font-size:.85rem">${esc(a.message)}</p>
+        </div>`).join('');
+      } catch (e) { console.error('Load alerts failed:', e); }
+    }
+    async function loadAnalytics() {
+      try {
+        const [valR, agingR, slowR] = await Promise.all([
+          fetch('/api/inventory/analytics/value'),
+          fetch('/api/inventory/analytics/aging'),
+          fetch('/api/inventory/analytics/slow-movers')
+        ]);
+        const value = valR.ok ? await valR.json() : {};
+        const aging = agingR.ok ? await agingR.json() : { data: [] };
+        const slow = slowR.ok ? await slowR.json() : { data: [] };
+
+        setText('inv-analytics-value', money(value.totalCost || 0));
+
+        const agingEl = document.getElementById('inv-analytics-aging');
+        if (aging.data?.length) {
+          agingEl.innerHTML = `<p style="margin:0">${aging.data.length} SKU(s) on hand · Oldest: ${aging.data[0].days_on_hand || 0} days</p>`;
+        }
+
+        const slowEl = document.getElementById('inv-slow-movers');
+        if (slow.data?.length) {
+          slowEl.innerHTML = slow.data.slice(0, 10).map(s => `<div style="padding:.3rem 0;font-size:.8rem;border-bottom:1px solid #e2e8f0">
+            <strong>${esc(s.sku)}</strong> · ${s.stock_qty} units · ${s.days_on_hand}d on hand
+          </div>`).join('');
+        } else slowEl.innerHTML = '<p style="color:#64748b;margin:0">No slow movers detected.</p>';
+      } catch (e) { console.error('Load analytics failed:', e); }
+    }
+
+    return {
+      load, filter: render, adjust, moves, addItem, reseed, importCsv, downloadProductMasterTemplate, importProductMaster,
+      initTabs, loadClientVariants, loadSuppliers, loadAlerts, loadAnalytics,
+      editVariant: (sku) => alert('Edit variant for ' + sku + ' (UI coming)'),
+      editSupplier: (id) => alert('Edit supplier ' + id + ' (UI coming)'),
+      resolveAlert: async (alertId) => {
+        await fetch('/api/inventory/alerts/' + encodeURIComponent(alertId) + '/resolve', { method: 'POST' });
+        loadAlerts();
+      },
+      addClientVariant: () => alert('Add client variant (UI coming)'),
+      addSupplier: () => alert('Add supplier (UI coming)')
+    };
   })();
   window.invUI = invUI;
+
+  // Initialize inventory tabs on startup
+  setTimeout(() => invUI.initTabs(), 100);
 
   // ── WAVE PICK UI — consolidate multiple orders into one location-sorted ────
   // pick list (/api/waves/*). Additive: reads the same order list Orders/
