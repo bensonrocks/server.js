@@ -114,6 +114,18 @@ found by scanning its GI-number barcode, even though the number was
 captured and stored correctly. Both call sites use the same `strip0`
 leading-zero-tolerant comparison as the other identifier fields.
 
+LABEL-REVIEW STATUS FILTER — the label-review screen's summary counts
+(`openLabelReview(importId, filter)` in public/app.js) are clickable filter
+chips (`.lri-filter-chip`: All / matched / unmatched / duplicate / error);
+clicking one shows only those pages, the active chip is outlined. The real
+page index is preserved through the filter (`imp.pages.map((page,i)=>({page,i}))`
+BEFORE filtering) so Match/Unmatch/Enlarge still target the correct page.
+The "N unmatched" badge in BOTH label lists — the Labels tab history
+(`.lhi-unmatched-link`) and the Administrator Upload-History label card
+(`.log-unmatched-link`, `renderLogContent`) — opens the review already
+filtered to `unmatched` (`stopPropagation` so it doesn't also trigger the
+row's open-review), for quick tracking of what still needs matching.
+
 DISPLAY — `issue_no`, whenever present, also needs to be visible, not just
 scannable: shown as a `GI: <value>` pill on the Orders-list row (next to the
 `idealscan_code` job-code, `public/app.js` `renderOrdersList`) and as a

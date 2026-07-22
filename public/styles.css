@@ -2191,6 +2191,14 @@ body.ls-open { overflow: hidden; }
 .lri-unmatched { background: var(--warning-bg);  color: var(--warning);  border: 1px solid var(--warning-border); }
 .lri-dup       { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
 .lri-err       { background: var(--danger-bg);   color: var(--danger);   border: 1px solid var(--danger-border); }
+.lri-all       { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+/* Clickable status-count filter chips on the label-review header */
+.lri-filter-chip { cursor: pointer; user-select: none; }
+.lri-filter-chip:hover { filter: brightness(0.96); }
+.lri-filter-active { outline: 2px solid currentColor; outline-offset: 1px; font-weight: 800; }
+/* Clickable "N unmatched ›" badges in the label lists */
+.lhi-unmatched-link, .log-unmatched-link { cursor: pointer; }
+.lhi-unmatched-link:hover, .log-unmatched-link:hover { filter: brightness(0.95); }
 
 .label-review-body {
   flex: 1;

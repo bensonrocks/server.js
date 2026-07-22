@@ -9714,7 +9714,7 @@
               <div class="log-chips">
                 <span class="chip">${li.pageCount} page${li.pageCount !== 1 ? 's' : ''}</span>
                 ${li.matched   ? `<span class="chip chip-done">${li.matched} matched</span>` : ''}
-                ${li.unmatched ? `<span class="chip chip-unproc">${li.unmatched} unmatched</span>` : ''}
+                ${li.unmatched ? `<span class="chip chip-unproc log-unmatched-link" data-import-id="${esc(li.id)}" role="button" title="Show the unmatched label pages">${li.unmatched} unmatched &rsaquo;</span>` : ''}
               </div>
             </div>
             <div class="log-card-actions">
@@ -9757,6 +9757,12 @@
 
       listEl.querySelectorAll('.log-review-labels').forEach(btn =>
         btn.addEventListener('click', () => openLabelReview(btn.dataset.importId))
+      );
+      listEl.querySelectorAll('.log-unmatched-link').forEach(badge =>
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openLabelReview(badge.dataset.importId, 'unmatched');
+        })
       );
 
       listEl.querySelectorAll('.btn-attach-waybill').forEach(btn => {
@@ -10189,7 +10195,7 @@
             <div class="lhi-right">
               <span class="lhi-pages">${imp.pageCount} page${imp.pageCount !== 1 ? 's' : ''}</span>
               ${imp.matched    ? `<span class="lhi-badge lhi-matched">${imp.matched} matched</span>` : ''}
-              ${imp.unmatched  ? `<span class="lhi-badge lhi-unmatched">${imp.unmatched} unmatched</span>` : ''}
+              ${imp.unmatched  ? `<span class="lhi-badge lhi-unmatched lhi-unmatched-link" data-import-id="${esc(imp.id)}" role="button" title="Show the unmatched label pages">${imp.unmatched} unmatched &rsaquo;</span>` : ''}
               ${imp.duplicate  ? `<span class="lhi-badge lhi-duplicate">${imp.duplicate} duplicate</span>` : ''}
               ${imp.error      ? `<span class="lhi-badge lhi-error">${imp.error} error</span>` : ''}
               ${hasUnmatched   ? `<button class="btn-primary btn-sm lhi-automatch-btn" data-import-id="${esc(imp.id)}">&#9889; Auto Match</button>` : ''}
@@ -10213,9 +10219,15 @@
           } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = '⚡ Auto Match'; }
         })
       );
+      listEl.querySelectorAll('.lhi-unmatched-link').forEach(badge =>
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openLabelReview(badge.dataset.importId, 'unmatched');
+        })
+      );
       listEl.querySelectorAll('.label-history-item').forEach(el =>
         el.addEventListener('click', (e) => {
-          if (e.target.closest('.lhi-automatch-btn')) return;
+          if (e.target.closest('.lhi-automatch-btn') || e.target.closest('.lhi-unmatched-link')) return;
           openLabelReview(el.dataset.importId);
         })
       );
@@ -10269,7 +10281,9 @@
     }
   }
 
-  async function openLabelReview(importId) {
+  // filter: 'all' | 'matched' | 'unmatched' | 'duplicate' | 'error' — lets the
+  // user click a status count to see just those label pages, for easy tracking.
+  async function openLabelReview(importId, filter = 'all') {
     _labelReviewImportId = importId;
     const overlay = document.getElementById('labelReviewOverlay');
     const body    = document.getElementById('labelReviewBody');
@@ -10286,14 +10300,26 @@
       const unmatched = imp.pages.filter(p => p.matchStatus === 'unmatched').length;
       const dup       = imp.pages.filter(p => p.matchStatus === 'duplicate').length;
       const errCount  = imp.pages.filter(p => p.matchStatus === 'error').length;
+      // Guard against opening a filter that has no rows (e.g. after all
+      // unmatched were resolved) — fall back to showing everything.
+      const countFor = f => f === 'matched' ? matched : f === 'unmatched' ? unmatched : f === 'duplicate' ? dup : f === 'error' ? errCount : imp.pages.length;
+      if (filter !== 'all' && countFor(filter) === 0) filter = 'all';
+      // Clickable status chips act as filters; the active one is highlighted.
+      const chip = (f, cls, label, n) =>
+        `<span class="lri-badge ${cls} lri-filter-chip${filter === f ? ' lri-filter-active' : ''}" data-filter="${f}" role="button" title="Show only ${label} pages">${label === 'all' ? `All ${n}` : `${n} ${label}`}</span>`;
       summEl.innerHTML = [
-        matched   ? `<span class="lri-badge lri-matched">${matched} matched</span>` : '',
-        unmatched ? `<span class="lri-badge lri-unmatched">${unmatched} unmatched</span>` : '',
-        dup       ? `<span class="lri-badge lri-dup">${dup} duplicate</span>` : '',
-        errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
+        chip('all', 'lri-all', 'all', imp.pages.length),
+        matched   ? chip('matched', 'lri-matched', 'matched', matched) : '',
+        unmatched ? chip('unmatched', 'lri-unmatched', 'unmatched', unmatched) : '',
+        dup       ? chip('duplicate', 'lri-dup', 'duplicate', dup) : '',
+        errCount  ? chip('error', 'lri-err', 'error', errCount) : '',
         unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
         matched   ? `<button class="btn-secondary btn-sm" id="lriRematchAllBtn" style="margin-left:.5rem">&#8635; Rematch All</button>` : '',
       ].filter(Boolean).join('');
+
+      summEl.querySelectorAll('.lri-filter-chip').forEach(c =>
+        c.addEventListener('click', () => openLabelReview(importId, c.dataset.filter))
+      );
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
         const btn = document.getElementById('lriAutoMatchBtn');
@@ -10324,7 +10350,16 @@
       });
 
       const token = localStorage.getItem('wms_token') || '';
-      body.innerHTML = imp.pages.map((page, i) => {
+      // Keep the real page index (i) with each page, THEN filter — so
+      // Match/Unmatch/Enlarge still target the correct page after filtering.
+      const shownPages = imp.pages
+        .map((page, i) => ({ page, i }))
+        .filter(({ page }) => filter === 'all' || page.matchStatus === filter);
+      if (!shownPages.length) {
+        body.innerHTML = `<p class="hint" style="padding:2rem;text-align:center">No ${filter === 'all' ? '' : filter + ' '}pages to show.</p>`;
+        return;
+      }
+      body.innerHTML = shownPages.map(({ page, i }) => {
         const pdfUrl = `/api/label-imports/${esc(importId)}/pages/${i}/pdf?token=${encodeURIComponent(token)}`;
         const statusCls = { matched: 'lri-matched', unmatched: 'lri-unmatched', duplicate: 'lri-dup', error: 'lri-err' }[page.matchStatus] || 'lri-unmatched';
         const f = page.extracted || {};
