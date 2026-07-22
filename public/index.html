@@ -2594,6 +2594,15 @@
         <div id="labelReviewSummary" class="label-review-summary"></div>
       </div>
     </div>
+    <!-- Orders still missing a label — shown collapsed above the pages,
+         auto-expanded when the "unmatched" filter is active -->
+    <div id="labelReviewNoLabelPanel" class="lri-nolabel-panel hidden">
+      <button class="lri-nolabel-head" id="lriNoLabelToggle" type="button">
+        <span id="lriNoLabelTitle">Orders without a label</span>
+        <span class="lri-nolabel-caret" id="lriNoLabelCaret">&#9656;</span>
+      </button>
+      <div class="lri-nolabel-body hidden" id="lriNoLabelBody"></div>
+    </div>
     <div class="label-review-body" id="labelReviewBody"></div>
   </div>
 

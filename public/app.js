@@ -10321,6 +10321,11 @@
         c.addEventListener('click', () => openLabelReview(importId, c.dataset.filter))
       );
 
+      // Orders still missing a label — the counterpart to unmatched pages.
+      // Auto-expanded when the unmatched filter is active so the two lists
+      // sit together for pairing; clickable to open the affected order.
+      renderNoLabelPanel(filter === 'unmatched');
+
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
         const btn = document.getElementById('lriAutoMatchBtn');
         btn.disabled = true; btn.textContent = 'Matching… (reading label images can take a minute)';
@@ -10421,6 +10426,80 @@
       );
     } catch (err) {
       body.innerHTML = `<p class="hint" style="color:var(--danger);padding:2rem">${esc(err.message)}</p>`;
+    }
+  }
+
+  // Panel on the label-review screen listing active orders that still have
+  // NO label — so an unmatched label page and the order it belongs to can be
+  // eyeballed side by side. Each row opens the affected order (scan overlay).
+  async function renderNoLabelPanel(expand) {
+    const panel  = document.getElementById('labelReviewNoLabelPanel');
+    const bodyEl = document.getElementById('lriNoLabelBody');
+    const titleEl = document.getElementById('lriNoLabelTitle');
+    const caret  = document.getElementById('lriNoLabelCaret');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    const setOpen = open => {
+      bodyEl.classList.toggle('hidden', !open);
+      caret.innerHTML = open ? '&#9662;' : '&#9656;';
+    };
+    document.getElementById('lriNoLabelToggle').onclick = () =>
+      setOpen(bodyEl.classList.contains('hidden'));
+    bodyEl.innerHTML = '<p class="hint" style="padding:.6rem">Loading…</p>';
+    setOpen(!!expand);
+    try {
+      const r = await fetch('/api/orders/without-label');
+      const list = r.ok ? await r.json() : [];
+      titleEl.textContent = `Orders without a label (${list.length})`;
+      if (!list.length) {
+        bodyEl.innerHTML = '<p class="hint" style="padding:.6rem">Every active order has a label. 🎉</p>';
+        return;
+      }
+      bodyEl.innerHTML = `
+        <table class="lri-nolabel-table">
+          <thead><tr><th>Order</th><th>Client</th><th>GI / Waybill</th><th>Status</th><th></th></tr></thead>
+          <tbody>${list.map(o => `
+            <tr>
+              <td><code>${esc(o.order_number)}</code></td>
+              <td>${esc(o.client_name || '—')}</td>
+              <td>${esc(o.issue_no || o.waybill_number || '—')}${o.has_waybill_pdf ? ' <span class="chip chip-waybill" title="Has a waybill PDF">&#128196;</span>' : ''}</td>
+              <td><span class="chip ${o.scan_status === 'processing' ? 'chip-inprog' : 'chip-unproc'}">${esc(o.scan_status)}</span></td>
+              <td><button class="btn-sm btn-primary lri-open-order-btn" data-order="${esc(o.order_number)}" data-batchid="${esc(o.batchId || '')}">Open &rsaquo;</button></td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+      bodyEl.querySelectorAll('.lri-open-order-btn').forEach(btn =>
+        btn.addEventListener('click', () => openOrderFromLabelReview(btn.dataset.order, list.find(x => x.order_number === btn.dataset.order)))
+      );
+    } catch {
+      bodyEl.innerHTML = '<p class="hint" style="padding:.6rem;color:var(--danger)">Could not load orders.</p>';
+    }
+  }
+
+  // Open an order picked from the no-label panel. The order may be outside
+  // the currently loaded date window, so seed loadedOrders (same trick as
+  // waybillLookupGo) before handing off to the normal scan overlay.
+  async function openOrderFromLabelReview(orderNumber, slim) {
+    document.getElementById('labelReviewOverlay').classList.add('hidden');
+    if (!loadedOrders.find(o => o.order_number === orderNumber)) {
+      try {
+        const r = await fetch(`/api/waybill-lookup`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ waybill: orderNumber }),
+        });
+        const d = await r.json();
+        if (r.ok && d.order_number && !loadedOrders.find(o => o.order_number === d.order_number)) {
+          loadedOrders.push(d);
+          orderNumber = d.order_number;
+        }
+      } catch {}
+    }
+    switchTab('orders');
+    if (loadedOrders.find(o => o.order_number === orderNumber)) {
+      openScanOverlay(orderNumber);
+    } else {
+      // Fall back to the waybill-scan bar lookup (handles archived/other windows)
+      focusWaybillInput();
+      alert(`Open ${orderNumber} by scanning its GI/waybill in the bar above the list.`);
     }
   }
 

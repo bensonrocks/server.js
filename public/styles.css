@@ -2529,6 +2529,82 @@ body.ls-open { overflow: hidden; }
 }
 .lri-zoom-btn:hover { background: var(--primary); }
 
+/* ── Label Review: Orders without label (collapsible panel) ── */
+.lri-nolabel-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+.lri-nolabel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .75rem 1rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: .95rem;
+  color: var(--text);
+  gap: .5rem;
+}
+.lri-nolabel-head:hover { background: var(--bg); }
+.lri-nolabel-caret {
+  display: inline-block;
+  font-size: .75rem;
+  transition: transform 0.15s ease;
+  color: var(--text-light);
+}
+.lri-nolabel-body {
+  overflow-x: auto;
+  background: var(--surface);
+}
+.lri-nolabel-body.hidden { display: none; }
+.lri-nolabel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+}
+.lri-nolabel-table thead {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.lri-nolabel-table th {
+  padding: .5rem .75rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-light);
+  font-size: .82rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.lri-nolabel-table tbody tr {
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.1s ease;
+}
+.lri-nolabel-table tbody tr:hover { background: var(--primary-light); }
+.lri-nolabel-table td {
+  padding: .6rem .75rem;
+  vertical-align: middle;
+}
+.lri-nolabel-table code {
+  background: var(--surface-2);
+  padding: .2em .4em;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: .85rem;
+}
+.lri-nolabel-table .chip { margin-right: .3rem; }
+.lri-open-order-btn {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
 /* ── Inbound receiving photos (per-scan + general shots) ── */
 .inbound-photo-grid { display: flex; flex-wrap: wrap; gap: .6rem; padding: .5rem 1rem 1rem; }
 .inbound-photo-grid:empty::after {

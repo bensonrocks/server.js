@@ -4117,6 +4117,28 @@ app.get('/api/orders', (req, res) => {
   res.json(orders);
 });
 
+// Orders still missing a carrier label — the counterpart to a label import's
+// "unmatched" pages. Non-done orders where has_order_label is false, slimmed
+// to what the label-review "Orders without a label" panel needs. Optional
+// ?client= filter (case-insensitive) narrows to one client's orders.
+app.get('/api/orders/without-label', (req, res) => {
+  const clientFilter = String(req.query.client || '').trim().toLowerCase();
+  const out = globalOrdersWithState()
+    .filter(o => o.scan_status !== 'done' && !o.has_order_label)
+    .filter(o => !clientFilter || String(o.client_name || '').trim().toLowerCase() === clientFilter)
+    .map(o => ({
+      order_number:   o.order_number,
+      client_name:    o.client_name || '',
+      issue_no:       o.issue_no || '',
+      waybill_number: o.waybill_number || '',
+      carrier:        o.carrier || '',
+      scan_status:    o.scan_status,
+      batchId:        o.batchId || '',
+      has_waybill_pdf: !!o.has_waybill_pdf,
+    }));
+  res.json(out);
+});
+
 // Completed-tab search across ARCHIVED orders (older than 60 days)
 app.get('/api/orders/archived', (req, res) => {
   res.json(searchArchivedOrders(req.query.q));
