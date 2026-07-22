@@ -4436,24 +4436,24 @@ app.post('/api/scan/increment', (req, res) => {
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   const holder = claimBlocker(state, req.userId);
   if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
-  // Idempotent replay: offline-queued scans carry an eventId. If a scan
-  // reached the server but the response was lost mid-Wi-Fi-drop, the replay
-  // must NOT count the piece twice.
+  // Idempotent scans: EVERY scan now carries an eventId (minted client-side
+  // at scan time, not just for offline-queued replays). If a scan reached
+  // the server but the response was lost — dead Wi-Fi mid-drop, OR a slow
+  // response that outlived the client's 8s fetch timeout (this one showed
+  // up in production as "scan once, system counts 2") — any retry/replay
+  // reuses the same id and must NOT count the piece twice. The id is only
+  // REGISTERED at the moment a piece is actually counted (below), so a 409
+  // cross-carton bounce doesn't burn the id for its confirmed retry.
   const eventId = String(req.body.eventId || '').slice(0, 64);
-  if (eventId) {
-    if (!state.scanEventIds) state.scanEventIds = [];
-    if (state.scanEventIds.includes(eventId)) {
-      return res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku] || 0, ordered_qty: item.qty, dedup: true });
-    }
-    state.scanEventIds.push(eventId);
-    if (state.scanEventIds.length > 100) state.scanEventIds.splice(0, state.scanEventIds.length - 100);
+  if (eventId && state.scanEventIds?.includes(eventId)) {
+    return res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku] || 0, ordered_qty: item.qty, dedup: true, cartonNum: activeCarton(state).num, cartonCount: (state.cartons || []).length });
   }
   // Same SKU already sitting in a DIFFERENT carton? Fine — orders can
   // legitimately split one SKU across boxes — but it's easy to do by
   // accident, so confirm before it happens. Skipped for offline replays
-  // (eventId present): the packer already made the physical call with no
-  // network to ask, re-litigating it after the fact isn't meaningful.
-  if (!eventId && !req.body.confirmCrossCarton && state.cartons && state.cartons.length > 1) {
+  // (isReplay): the packer already made the physical call with no network
+  // to ask, re-litigating it after the fact isn't meaningful.
+  if (!req.body.isReplay && !req.body.confirmCrossCarton && state.cartons && state.cartons.length > 1) {
     const active = activeCarton(state);
     if (!(active.scans[item.sku] > 0)) {
       const elsewhere = state.cartons.filter(c => c.num !== active.num && (c.scans[item.sku] || 0) > 0).map(c => c.num);
@@ -4469,6 +4469,11 @@ app.post('/api/scan/increment', (req, res) => {
     }
   }
   refreshClaim(state, req.userId);
+  if (eventId) {
+    if (!state.scanEventIds) state.scanEventIds = [];
+    state.scanEventIds.push(eventId);
+    if (state.scanEventIds.length > 100) state.scanEventIds.splice(0, state.scanEventIds.length - 100);
+  }
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   addToActiveCarton(state, item.sku, 1);
@@ -4499,6 +4504,7 @@ app.post('/api/scan/new-carton', (req, res) => {
     return res.status(400).json({ error: 'Scan at least one item into this carton before starting a new one.' });
   }
   current.closedAt = new Date().toISOString();
+  current.locked = true;
   // Always a genuinely new carton, appended after whatever exists — even if
   // the packer had switched back to an earlier one to edit it. Use it to
   // reopen a past carton instead (/api/scan/carton/switch).
@@ -4533,6 +4539,7 @@ app.post('/api/scan/carton/switch', (req, res) => {
   activeCarton(state); // ensure cartons/pointer initialized before lookup
   const target = state.cartons.find(c => c.num === num);
   if (!target) return res.status(404).json({ error: `Carton ${num} not found.` });
+  if (target.locked) return res.status(403).json({ lockedCarton: true, error: 'This carton is sealed. Unlock it to edit.' });
   const current = state.cartons.find(c => c.num === state.activeCartonNum);
   if (current && current.num !== target.num && !current.closedAt) current.closedAt = new Date().toISOString();
   target.closedAt = null; // reopened
@@ -4563,6 +4570,9 @@ app.post('/api/scan/carton/cancel-multi', (req, res) => {
   if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
   if (!state.cartons || state.cartons.length <= 1) {
     return res.status(400).json({ error: 'This order is not split into multiple cartons.' });
+  }
+  if (state.cartons.some(c => c.locked)) {
+    return res.status(403).json({ error: 'Cannot merge cartons while any is sealed. Unlock them first.' });
   }
   const merged = {};
   let earliest = state.cartons[0].startedAt;
@@ -4605,6 +4615,34 @@ app.post('/api/scan/carton/label-confirmed', (req, res) => {
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({ ok: true });
+});
+
+// Admin unlock a sealed carton (for fixing a mistake or re-opening for amendments).
+// Requires admin role + own password (403 on wrong password, not 401).
+app.post('/api/scan/carton/unlock', requireAuth, express.json(), (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Session user not found.' });
+  if ((user.role || 'admin') !== 'admin') return res.status(403).json({ error: 'Admin role required.' });
+  const { orderNumber, cartonNum, password } = req.body;
+  if (!orderNumber || !cartonNum || !password) return res.status(400).json({ error: 'orderNumber, cartonNum, and password required' });
+  const passHash = hashPass(password, user.passSalt);
+  if (passHash !== user.passHash) return res.status(403).json({ error: 'Wrong password.' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const num = parseInt(cartonNum, 10);
+  if (!state.cartons) return res.status(404).json({ error: 'No cartons found.' });
+  const carton = state.cartons.find(c => c.num === num);
+  if (!carton) return res.status(404).json({ error: `Carton ${num} not found.` });
+  if (!carton.locked) return res.status(400).json({ error: `Carton ${num} is not sealed.` });
+  carton.locked = false;
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  writeDb(db);
+  logAudit('carton_unlocked', { order: orderNumber, cartonNum: num, unlockedBy: req.userId || '' });
+  res.json({ ok: true, cartonNum: num });
 });
 
 // Read-only — a single carton's contents for printing a per-box packing
@@ -9136,50 +9174,43 @@ function _findOrder(db, orderNumber) {
   return null;
 }
 
-// Writes what a wave picked into each affected order's REAL scanned state —
-// the same fields /api/scan/increment writes — so completing a wave actually
-// closes the fulfillment loop instead of just marking the wave itself done.
-// Only fully-picked lines (picked_qty >= total_qty) are applied; a still-
-// short line is left for the packer to finish through the normal Scan &
-// Check flow. Never touches an order already 'done' (this codebase's
-// standing rule — see CLAUDE.md). Returns which orders were touched and
-// which pick lines were skipped for being incomplete.
-function applyWaveToOrders(db, wave, req) {
-  const appliedOrders = [];
-  const skippedIncomplete = [];
-  const skippedDone = [];
-  for (const pick of wave.picks) {
-    if (pick.picked_qty < pick.total_qty) { skippedIncomplete.push({ sku: pick.sku, location: pick.location }); continue; }
-    for (const o of pick.orders) {
-      const batch = findBatchForOrder(db, o.order_number);
-      if (!batch) continue;
-      if (!batch.orderStates) batch.orderStates = {};
-      const state = batch.orderStates[o.order_number] || { status: 'pending', scanned: {} };
-      if (state.status === 'done') { skippedDone.push(o.order_number); continue; }
-      if (state.status === 'pending') state.status = 'processing';
-      state.scanned[pick.sku] = (state.scanned[pick.sku] || 0) + o.qty;
-      addToActiveCarton(state, pick.sku, o.qty);
-      state.wave_id = wave.id;
-      state.updated_at = new Date().toISOString();
-      appendScanLog(state, { kind: 'wave_pick', sku: pick.sku, location: pick.location || '', qty: o.qty, waveId: wave.id, by: req.userId || '' });
-      batch.orderStates[o.order_number] = state;
-      journalOrderState(o.order_number, state);
-      if (!appliedOrders.includes(o.order_number)) appliedOrders.push(o.order_number);
-    }
-  }
-  return { appliedOrders, skippedIncomplete, skippedDone: [...new Set(skippedDone)] };
-}
+function findWave(db, id) { return (db.waves || []).find(w => w.id === id); }
 
-// Reverses exactly what applyWaveToOrders() applied — run when a completed
-// wave's cancellation is approved. Skips (and reports) any order already
-// 'done' by the time reversal runs — never regress completed work. Reverts
-// status back to 'pending' only if the order's TOTAL scanned qty across ALL
-// SKU lines is genuinely back to zero — an order with scans from OUTSIDE
-// this wave (a packer's own manual scan) correctly keeps its 'processing'
-// status instead of being wrongly reset.
+// Reverses a wave out of its orders — run when a completed wave's
+// cancellation is approved (either the per-wave Master approval, or the
+// Admin bulk-cancel below). Two paths, matched to what the wave actually
+// did to its orders:
+// - NEW-STYLE waves (wave.applied_to_orders === false — see
+//   /api/waves/:id/complete) never wrote a single scanned piece; closing
+//   only stamped state.wave_id. Reversal here is symmetric: just clear it.
+// - LEGACY waves (field absent/true — completed before this redesign,
+//   corrected per user: a wave used to auto-fill each order's scanned
+//   totals at completion, which was wrong) genuinely wrote quantities via
+//   the old apply-on-complete logic, so those get subtracted back out.
+// Both paths skip (and report) any order already 'done' by the time
+// reversal runs — never regress completed work. The legacy path also
+// reverts status back to 'pending' only if the order's TOTAL scanned qty
+// across ALL SKU lines is genuinely back to zero — an order with scans
+// from OUTSIDE this wave (a packer's own manual scan) correctly keeps its
+// 'processing' status instead of being wrongly reset.
 function reverseWaveFromOrders(db, wave, req) {
   const reversedOrders = [];
   const skippedDone = [];
+  if (wave.applied_to_orders === false) {
+    for (const orderNumber of wave.order_numbers || []) {
+      const batch = findBatchForOrder(db, orderNumber);
+      const state = batch && (batch.orderStates || {})[orderNumber];
+      if (!state) continue;
+      if (state.status === 'done') { skippedDone.push(orderNumber); continue; }
+      if (state.wave_id === wave.id) {
+        delete state.wave_id;
+        state.updated_at = new Date().toISOString();
+        journalOrderState(orderNumber, state);
+        reversedOrders.push(orderNumber);
+      }
+    }
+    return { reversedOrders, skippedDone: [...new Set(skippedDone)] };
+  }
   for (const pick of wave.picks) {
     if (pick.picked_qty < pick.total_qty) continue; // never applied in the first place
     for (const o of pick.orders) {
@@ -9202,14 +9233,29 @@ function reverseWaveFromOrders(db, wave, req) {
   return { reversedOrders, skippedDone: [...new Set(skippedDone)] };
 }
 
+// ?detail=1 adds each wave's per-order scan progress — for Wave Management
+// (how far along is each order that this wave touched). Resolved through
+// globalOrdersWithState() on demand only; the plain list stays cheap.
 app.get('/api/waves', requireAuth, (req, res) => {
   const db = readDb();
-  res.json((db.waves || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at)));
+  let waves = (db.waves || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (req.query.detail === '1') {
+    const byOrderNumber = new Map(globalOrdersWithState().map(o => [o.order_number, o]));
+    waves = waves.map(w => ({
+      ...w,
+      orders: (w.order_numbers || []).map(on => {
+        const o = byOrderNumber.get(on);
+        const scannedTotal = o ? Object.values(o.scanned || {}).reduce((s, v) => s + v, 0) : 0;
+        return { order_number: on, status: o?.scan_status || 'missing', scannedTotal, totalQty: o?.total_qty || 0 };
+      }),
+    }));
+  }
+  res.json(waves);
 });
 
 app.get('/api/waves/:id', requireAuth, (req, res) => {
   const db = readDb();
-  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
   res.json(wave);
 });
@@ -9267,27 +9313,50 @@ app.post('/api/waves/:id/pick', requireAuth, express.json(), (req, res) => {
   res.json(wave);
 });
 
+// CLOSING A WAVE WRITES NOTHING INTO THE ORDERS (corrected per user — the
+// previous design auto-filled each order's scanned totals at completion,
+// which was wrong). A wave covers ONLY the consolidated floor pick — each
+// (location, SKU) visited once for the wave's total. Sub-picking that pile
+// back down to order level is the normal per-order scan flow: the packer
+// opens each order and scans every piece from zero, so per-order
+// verification is a real physical count, not a pre-filled number. The only
+// mark left on each order is state.wave_id, driving the "Scan to Pack" pill.
 app.post('/api/waves/:id/complete', requireAuth, express.json(), (req, res) => {
   const db = readDb();
-  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  if (wave.status === 'completed') return res.status(409).json({ error: 'Wave already completed' });
   const incomplete = wave.picks.filter(p => p.picked_qty < p.total_qty).length;
   if (incomplete && req.body?.force !== true) {
-    return res.status(409).json({ needsForceComplete: true, incomplete, message: `${incomplete} pick line(s) are not fully picked yet. Complete anyway?` });
+    return res.status(409).json({ needsForceComplete: true, incomplete, message: `${incomplete} pick line(s) are not fully picked yet. Close the wave anyway?` });
   }
-  const { appliedOrders, skippedIncomplete, skippedDone } = applyWaveToOrders(db, wave, req);
+  const appliedOrders = [];
+  const skippedDone = [];
+  for (const orderNumber of wave.order_numbers || []) {
+    const batch = findBatchForOrder(db, orderNumber);
+    if (!batch) continue;
+    if (!batch.orderStates) batch.orderStates = {};
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    if (state.status === 'done') { skippedDone.push(orderNumber); continue; }
+    state.wave_id = wave.id;
+    state.updated_at = new Date().toISOString();
+    batch.orderStates[orderNumber] = state;
+    journalOrderState(orderNumber, state);
+    appliedOrders.push(orderNumber);
+  }
   wave.status = 'completed';
   wave.completed_at = new Date().toISOString();
+  wave.applied_to_orders = false; // legacy waves (field absent) DID write quantities — see reverseWaveFromOrders
   writeDb(db);
   logAudit('wave_completed', { id: wave.id, forced: !!incomplete, appliedOrders: appliedOrders.length, by: req.userId || '' });
-  res.json({ ...wave, appliedOrders, skippedIncomplete, skippedDone });
+  res.json({ ...wave, appliedOrders, skippedDone });
 });
 
 // Instant cancel — only for a wave that hasn't been completed yet, so
 // nothing has been applied to any order's real state to undo.
 app.post('/api/waves/:id/cancel', requireAuth, express.json(), (req, res) => {
   const db = readDb();
-  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
   if (wave.status === 'completed') return res.status(409).json({ error: 'This wave is already completed — use the cancellation request flow (requires Master approval) instead.' });
   wave.status = 'cancelled';
@@ -9312,7 +9381,7 @@ app.post('/api/waves/:id/cancel-request', requireAuth, express.json(), (req, res
     return res.status(403).json({ error: 'Incorrect password.' }); // 403 not 401 — see inbound deletion-request for why
   }
   const db = readDb();
-  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
   if (wave.status !== 'completed') return res.status(400).json({ error: 'Only a completed wave needs a cancellation request — an in-progress wave can be cancelled instantly.' });
   if (wave.pending_cancellation) return res.status(409).json({ error: 'A cancellation request is already pending for this wave.' });
@@ -9339,15 +9408,26 @@ app.get('/api/master/wave-pending-cancellations', (req, res) => {
   res.json(out);
 });
 
-app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const db = readDb();
-  const wave = (db.waves || []).find(w => w.id === req.params.id);
-  if (!wave || !wave.pending_cancellation) return res.status(404).json({ error: 'No pending cancellation request for this wave.' });
-  const pending = wave.pending_cancellation;
+// Shared by the per-wave Master approval above and the Admin bulk-cancel
+// below: reverses the wave out of its orders (reverseWaveFromOrders — which
+// itself branches new-style vs legacy) and marks it cancelled. Does NOT
+// persist (writeDb) or clear pending_cancellation/pending_purge — callers do
+// that themselves, since they differ (one clears pending_cancellation, the
+// other sets pending_purge).
+function reverseWaveAndCancel(db, wave, req) {
   const { reversedOrders, skippedDone } = reverseWaveFromOrders(db, wave, req);
   wave.status = 'cancelled';
   wave.cancelled_at = new Date().toISOString();
+  return { reversedOrders, skippedDone };
+}
+
+app.post('/api/master/wave-pending-cancellations/:id/approve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave || !wave.pending_cancellation) return res.status(404).json({ error: 'No pending cancellation request for this wave.' });
+  const pending = wave.pending_cancellation;
+  const { reversedOrders, skippedDone } = reverseWaveAndCancel(db, wave, req);
   delete wave.pending_cancellation;
   writeDb(db);
   logAudit('wave_cancellation_approved', {
@@ -9361,12 +9441,103 @@ app.post('/api/master/wave-pending-cancellations/:id/reject', (req, res) => {
   if (!checkMaster(req, res)) return;
   const note = String(req.body?.note || '').trim();
   const db = readDb();
-  const wave = (db.waves || []).find(w => w.id === req.params.id);
+  const wave = findWave(db, req.params.id);
   if (!wave || !wave.pending_cancellation) return res.status(404).json({ error: 'No pending cancellation request for this wave.' });
   const pending = wave.pending_cancellation;
   delete wave.pending_cancellation;
   writeDb(db);
   logAudit('wave_cancellation_rejected', { id: wave.id, by: req.userId || 'master', requestedBy: pending.requestedBy, reason: pending.reason, note });
+  res.json({ ok: true });
+});
+
+// ADMIN bulk-cancel (select-all): takes effect IMMEDIATELY — legacy waves
+// that prefilled quantities are reversed on the spot (orders back to 0
+// scanned/pending so packers can re-scan them piece by piece), new-style
+// waves just lose their wave_id pill, in-progress waves cancel outright
+// (nothing was ever written). The cancelled wave RECORD then stays in
+// db.waves flagged pending_purge until Master approves deleting it clean
+// from the data (Administrator → Pending Deletions → Wave Deletion
+// Requests) — the operational effect never waits on that approval.
+app.post('/api/waves/bulk-cancel', requireAuth, express.json(), (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Session user not found.' });
+  if ((user.role || 'admin') !== 'admin') {
+    return res.status(403).json({ error: 'Only Admin users can cancel waves.' });
+  }
+  const { password } = req.body || {};
+  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
+    return res.status(403).json({ error: 'Incorrect password.' }); // 403, not 401 — session token is still valid
+  }
+  const db  = readDb();
+  const ids = req.body?.all === true
+    ? (db.waves || []).filter(w => w.status !== 'cancelled').map(w => w.id)
+    : [...new Set((req.body?.ids || []).map(String))];
+  if (!ids.length) return res.status(400).json({ error: 'No waves selected' });
+  const results = [];
+  for (const id of ids) {
+    const wave = findWave(db, id);
+    if (!wave || wave.status === 'cancelled') continue;
+    if (wave.status !== 'completed') {
+      // Still created/picking — nothing was ever written to any order
+      wave.status = 'cancelled';
+      wave.cancelled_at = new Date().toISOString();
+      delete wave.pending_cancellation;
+      results.push({ id, reversed: 0, skippedDone: [] });
+    } else {
+      const { reversedOrders, skippedDone } = reverseWaveAndCancel(db, wave, req);
+      delete wave.pending_cancellation;
+      results.push({ id, reversed: reversedOrders.length, skippedDone });
+    }
+    findWave(db, id).pending_purge = { requestedBy: req.userId, requestedAt: new Date().toISOString() };
+  }
+  writeDb(db);
+  logAudit('wave_bulk_cancelled', { waves: results.map(r => r.id), count: results.length, by: req.userId || '' });
+  res.json({ ok: true, cancelled: results });
+});
+
+// Master purge queue — cancelled waves an Admin already asked to have
+// deleted clean from the data. Approve = the wave record is removed from
+// db.waves for good; Reject = the record stays (as cancelled history) and
+// the request is cleared. Neither touches any order — the operational
+// reversal already happened at cancel time.
+app.get('/api/master/wave-pending-purges', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const byId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+  const db = readDb();
+  const out = (db.waves || [])
+    .filter(w => w.pending_purge)
+    .map(w => ({
+      id: w.id, name: w.name, orderNumbers: w.order_numbers,
+      cancelledAt: w.cancelled_at || null,
+      requestedBy: w.pending_purge.requestedBy,
+      requestedByName: byId.get(w.pending_purge.requestedBy) || w.pending_purge.requestedBy,
+      requestedAt: w.pending_purge.requestedAt,
+    }))
+    .sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt)));
+  res.json(out);
+});
+
+app.post('/api/master/wave-pending-purges/:id/approve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db  = readDb();
+  const idx = (db.waves || []).findIndex(w => w.id === req.params.id && w.pending_purge);
+  if (idx === -1) return res.status(404).json({ error: 'No pending purge request for this wave.' });
+  const wave = db.waves[idx];
+  db.waves.splice(idx, 1);
+  writeDb(db);
+  logAudit('wave_purge_approved', { id: wave.id, orders: wave.order_numbers, requestedBy: wave.pending_purge.requestedBy, by: req.userId || 'master' });
+  res.json({ ok: true });
+});
+
+app.post('/api/master/wave-pending-purges/:id/reject', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave || !wave.pending_purge) return res.status(404).json({ error: 'No pending purge request for this wave.' });
+  const pending = wave.pending_purge;
+  delete wave.pending_purge;
+  writeDb(db);
+  logAudit('wave_purge_rejected', { id: wave.id, requestedBy: pending.requestedBy, by: req.userId || 'master' });
   res.json({ ok: true });
 });
 

@@ -425,6 +425,9 @@
     const logBtn = document.getElementById('logAccessBtn');
     if (logBtn) logBtn.classList.toggle('hidden', isWarehouse);
 
+    // Manage Waves (bulk cancel) — Admin only
+    document.getElementById('manageWavesBtn')?.classList.toggle('hidden', isWarehouse);
+
     // If warehouse user lands on Upload tab, redirect to Orders
     if (isWarehouse && document.getElementById('tab-upload').classList.contains('active')) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -629,6 +632,8 @@
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
+    document.getElementById('ordersSubMenu').style.display =
+      (name === 'orders' && (currentUser?.role || 'admin') !== 'warehouse') ? 'block' : 'none';
     if (name === 'inbound') { renderInboundTab(); }
     if (name === 'inventory') { renderInventory(); }
     if (name === 'waves') { waveUI.load(); }
@@ -1849,7 +1854,7 @@
       const chips = [
         activeWaveChip,
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
-        (ord.wave_id && ord.scan_status !== 'done') ? `<span class="chip chip-wave-needs-closing" title="Picked as part of a wave — complete this order normally through Scan & Check to close it out" style="cursor:pointer" onclick="event.stopPropagation();requestWaveCancellation('${esc(ord.wave_id)}')">&#127754; ${esc(ord.wave_code || ord.wave_id)} — Needs Closing</span>` : '',
+        (ord.wave_id && ord.scan_status !== 'done') ? `<span class="chip chip-wave-needs-closing" title="This order's stock was floor-picked in wave ${esc(ord.wave_code || ord.wave_id)} — open it and scan its items from the picked pile to pack it, like a normal order" style="cursor:pointer" onclick="event.stopPropagation();requestWaveCancellation('${esc(ord.wave_id)}')">&#127754; ${esc(ord.wave_code || ord.wave_id)} — Scan to Pack</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
         // 1 carton is the default and not worth a chip — only shown once an order actually split into more than one box
@@ -6354,6 +6359,43 @@
       document.getElementById('cartonLabelConfirmBtn').onclick = confirm;
     });
   }
+
+  // Big green "SEAL FINAL CARTON" screen at order completion. Shows the final
+  // carton label for ~4s, auto-dismisses on timer or any key/click.
+  function showSealFinalCarton(labelText, cartonNum) {
+    return new Promise(resolve => {
+      const overlay = document.getElementById('sealCartonOverlay');
+      document.getElementById('sealCartonLabel').textContent = labelText;
+      overlay.classList.remove('hidden');
+      let dismissed = false;
+      const dismiss = () => {
+        if (dismissed) return;
+        dismissed = true;
+        clearTimeout(timer);
+        overlay.classList.add('hidden');
+        document.removeEventListener('keydown', onKeydown, true);
+        overlay.removeEventListener('click', onClick);
+        if (activeOrder) {
+          if (!activeOrder.cartons) activeOrder.cartons = [];
+          let c = activeOrder.cartons.find(x => x.num === cartonNum);
+          if (!c) { c = { num: cartonNum, scans: {} }; activeOrder.cartons.push(c); }
+          c.labelConfirmed = true;
+        }
+        fetch('/api/scan/carton/label-confirmed', {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ orderNumber: activeOrder?.order_number, cartonNum, label: labelText }),
+        }).catch(() => {}); // fire-and-forget: never block the UI
+        resolve();
+      };
+      const onKeydown = () => dismiss();
+      const onClick = () => dismiss();
+      document.addEventListener('keydown', onKeydown, true);
+      overlay.addEventListener('click', onClick);
+      // Auto-dismiss after ~4 seconds
+      const timer = setTimeout(dismiss, 4000);
+    });
+  }
+
   // Fixed control code a packer can scan (from a printed card at the station)
   // instead of reaching for the mouse — same action as clicking "+ New Carton".
   const NEW_CARTON_CODES = new Set(['NEWCARTON', 'NEW CARTON', 'NEW-CARTON', 'NEWBOX']);
@@ -6416,7 +6458,28 @@
         body: JSON.stringify({ orderNumber: activeOrder.order_number, cartonNum: num }),
       });
       const data = await resp.json();
-      if (!resp.ok) { showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not switch carton.'); return; }
+      if (!resp.ok) {
+        if (data.lockedCarton && (currentUser?.role || 'admin') === 'admin') {
+          // Carton is sealed — offer admin the unlock option
+          const pwd = prompt(`Carton ${num} is sealed. Enter your password to unlock it (for fixing):`, '');
+          if (pwd) {
+            try {
+              const unlockResp = await fetch('/api/scan/carton/unlock', {
+                method: 'POST', headers: hdrs(),
+                body: JSON.stringify({ orderNumber: activeOrder.order_number, cartonNum: num, password: pwd }),
+              });
+              const unlockData = await unlockResp.json();
+              if (!unlockResp.ok) { alert('Unlock failed: ' + (unlockData.error || 'wrong password')); return; }
+              // Retry the switch now that it's unlocked
+              await switchCarton(num);
+              return;
+            } catch (err) { alert('Unlock error: ' + err.message); return; }
+          }
+          return;
+        }
+        showFeedback(document.getElementById('itemScanFeedback'), 'error', data.error || 'Could not switch carton.');
+        return;
+      }
       activeOrder.cartonNum   = data.activeCartonNum;
       activeOrder.cartonCount = data.cartonCount;
       updateCartonBadge(activeOrder);
@@ -6985,7 +7048,16 @@
   let   _scanBusy  = false;
 
   function handleItemScan(sku) {
-    _scanQueue.push(sku);
+    // The eventId is minted HERE, at scan time, and rides along on the very
+    // first request — not just on offline replays. If the server processes
+    // the scan but the response outlives the 8s fetch timeout, the queued
+    // retry reuses this same id and the server's dedupe absorbs it. Minting
+    // only at enqueue time (the old way) meant a slow-response scan was
+    // counted once live and once again on replay — "scan 1, get 2 pcs".
+    _scanQueue.push({
+      raw: sku,
+      eventId: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+    });
     if (!_scanBusy) _drainScanQueue();
   }
 
@@ -7068,9 +7140,9 @@
     pill.classList.remove('hidden');
   }
 
-  function enqueueOfflineScan(raw) {
+  function enqueueOfflineScan(raw, eventId) {
     const evt = {
-      id: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+      id: eventId || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
       orderNumber: activeOrder.order_number,
       raw: String(raw).trim(),
       at: new Date().toISOString(),
@@ -7106,7 +7178,7 @@
         try {
           resp = await fetchT('/api/scan/increment', {
             method: 'POST', headers: hdrs(),
-            body: JSON.stringify({ orderNumber: evt.orderNumber, sku: evt.raw, eventId: evt.id }),
+            body: JSON.stringify({ orderNumber: evt.orderNumber, sku: evt.raw, eventId: evt.id, isReplay: true }),
           });
           data = await resp.json();
         } catch {
@@ -7150,12 +7222,14 @@
     if (_scanBusy || !_scanQueue.length) return;
     _scanBusy = true;
     while (_scanQueue.length) {
-      const sku      = _scanQueue.shift();
+      const entry    = _scanQueue.shift();
+      const sku      = entry.raw;
+      const eventId  = entry.eventId;
       const feedback = document.getElementById('itemScanFeedback');
       try {
         const resp = await fetchT('/api/scan/increment', {
           method: 'POST', headers: hdrs(),
-          body: JSON.stringify({ orderNumber: activeOrder.order_number, sku }),
+          body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, eventId }),
         });
         let data = await resp.json();
         if (!resp.ok) {
@@ -7172,7 +7246,7 @@
             if (!ok) { continue; }
             const retry = await fetchT('/api/scan/increment', {
               method: 'POST', headers: hdrs(),
-              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, confirmCrossCarton: true }),
+              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, eventId, confirmCrossCarton: true }),
             });
             data = await retry.json();
             if (!retry.ok) { showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`); continue; }
@@ -7204,8 +7278,10 @@
         );
       } catch (err) {
         // Network failure (dead Wi-Fi hangs or refuses) — save the scan
-        // durably and keep the packer moving; it syncs automatically
-        enqueueOfflineScan(sku);
+        // durably and keep the packer moving; it syncs automatically.
+        // The SAME eventId is carried into the queue so a scan the server
+        // actually processed (response lost) is deduped on replay.
+        enqueueOfflineScan(sku, eventId);
       }
     }
     _scanBusy = false;
@@ -7359,10 +7435,11 @@
 
         // Update matching transport record
         updateTransportRecordOnOrderCompletion(completedOrder);
-        // The last carton never went through requestNewCarton()'s "closing"
-        // prompt (nothing ever superseded it) — label it now, before moving on.
-        if ((completedOrder.cartonCount || 1) > 1 && !cartonLabelConfirmed(completedOrder, completedOrder.cartonCount)) {
-          await showCartonLabelPrompt(`${completedOrder.order_number}-${String(completedOrder.cartonCount).padStart(2, '0')}`, completedOrder.cartonCount);
+        // Show "SEAL FINAL CARTON" screen with the final carton label
+        const finalCartonNum = completedOrder.cartonCount || 1;
+        const finalLabel = `${completedOrder.order_number}-${String(finalCartonNum).padStart(2, '0')}`;
+        if (!cartonLabelConfirmed(completedOrder, finalCartonNum)) {
+          await showSealFinalCarton(finalLabel, finalCartonNum);
         }
         closeScanOverlay();
         await refreshOrders();
@@ -10293,18 +10370,23 @@
       renderDetail();
     }
 
+    // Closes the consolidated floor pick. Writes NOTHING into the orders —
+    // sub-picking the pile down to order level is done by opening each order
+    // and scanning every piece from zero, exactly like normal scanning.
     async function complete() {
+      if (!confirm(`Close wave "${currentWave.name}"?\n\nNext step: scan each order's GI/Waybill to open it, then scan its items from the picked pile — every order is counted piece by piece, like normal scanning.`)) return;
       let r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       let j = await r.json();
       if (r.status === 409 && j.needsForceComplete) {
-        if (!confirm(j.message + '\n\nOK = complete anyway\nCancel = keep picking')) return;
+        if (!confirm(j.message + '\n\nOK = close anyway\nCancel = keep picking')) return;
         r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) });
         j = await r.json();
       }
-      if (!r.ok) { alert(j.error || 'Could not complete wave.'); return; }
+      if (!r.ok) { alert(j.error || 'Could not close wave.'); return; }
       currentWave = j;
       renderDetail();
       load();
+      alert(`Wave "${currentWave.name}" closed — consolidated pick done.\n\nNow sub-pick to order level: scan each of the ${(currentWave.order_numbers || []).length} order's GI/Waybill barcode in the bar above the Orders list to open it, then scan its items into the box. Each order shows a "${currentWave.code || currentWave.id}" pill until it's completed.`);
     }
 
     async function cancel() {
@@ -10349,7 +10431,7 @@
   // re-confirmed, then a Master reviews it in Administrator → Pending
   // Deletions.
   window.requestWaveCancellation = async function (waveId) {
-    const reason = prompt('Reason for cancelling this wave? (Every order it touched will have its wave-picked quantities reversed once a Master approves.)');
+    const reason = prompt('Reason for cancelling this wave? (Once a Master approves: legacy waves that prefilled quantities have them reversed; any order still open loses its "Scan to Pack" pill.)');
     if (reason === null) return;
     if (!reason.trim()) { alert('A reason is required.'); return; }
     const password = prompt('Re-enter your password to confirm:');
@@ -10375,6 +10457,125 @@
     switchTab('waves');
     waveUI.openWave(waveId);
   };
+
+  // ── Wave Management (sidebar sub-item under Orders, Admin-only) ────────────
+  // One overlay, two jobs: see how many waves are going on right now (stats
+  // strip + per-wave order progress), and administer them (select-all bulk
+  // cancel). Cancelling takes effect immediately — see /api/waves/bulk-cancel.
+  const _waveManageSel = new Set();
+  function openWaveManagement() {
+    document.getElementById('waveManageOverlay').classList.remove('hidden');
+    document.getElementById('waveManagePassword').value = '';
+    document.getElementById('waveManageError').classList.add('hidden');
+    _waveManageSel.clear();
+    loadWaveManageList();
+  }
+  document.getElementById('manageWavesBtn')?.addEventListener('click', openWaveManagement);
+  document.getElementById('waveMgmtSidebarBtn')?.addEventListener('click', openWaveManagement);
+  document.getElementById('waveManageCloseBtn')?.addEventListener('click', () =>
+    document.getElementById('waveManageOverlay').classList.add('hidden'));
+
+  async function loadWaveManageList() {
+    const body = document.getElementById('waveManageBody');
+    let waves = [];
+    try {
+      const r = await fetch('/api/waves?detail=1', { headers: hdrs() });
+      if (r.ok) waves = await r.json();
+    } catch {}
+    const active = waves.filter(w => w.status !== 'cancelled');
+
+    // Stats strip: how many waves are going on, and their reach
+    const live       = active.filter(w => w.status !== 'completed');
+    const closed     = active.filter(w => w.status === 'completed');
+    const allOrders  = active.flatMap(w => w.orders || []);
+    const ordersLeft = allOrders.filter(o => o.status !== 'done').length;
+    document.getElementById('waveMgmtStats').innerHTML = [
+      [live.length, 'Waves Picking Now'],
+      [closed.length, 'Closed — Scan to Pack'],
+      [allOrders.length, 'Orders in Waves'],
+      [ordersLeft, 'Orders Still to Pack'],
+    ].map(([val, lbl]) => `<div class="dstat"><div class="dstat-val">${val}</div><div class="dstat-lbl">${lbl}</div></div>`).join('');
+
+    body.innerHTML = active.map(w => {
+      const orders = w.orders || [];
+      const done = orders.filter(o => o.status === 'done').length;
+      const orderChips = orders.map(o =>
+        `<span class="chip ${o.status === 'done' ? 'chip-done' : o.status === 'processing' ? 'chip-inprog' : 'chip-unproc'}" title="${esc(o.order_number)}: ${o.scannedTotal}/${o.totalQty} scanned">${esc(o.order_number)}</span>`).join(' ');
+      return `
+      <tr>
+        <td><input type="checkbox" class="wave-manage-check" data-id="${esc(w.id)}" ${_waveManageSel.has(w.id) ? 'checked' : ''}></td>
+        <td class="dcs-name">${esc(w.code || w.id)}${w.pending_purge ? ' <span class="chip chip-unproc" title="Cancelled — awaiting Master approval to delete the record">purge pending</span>' : ''}</td>
+        <td>${w.status === 'completed' ? '<span class="chip chip-done">Closed</span>' : `<span class="chip chip-inprog">${esc(w.status)}</span>`}</td>
+        <td>${orders.length}</td>
+        <td>${done}/${orders.length} packed</td>
+        <td>${w.stats?.totalUnits ?? '—'}</td>
+        <td>${w.created_at ? new Date(w.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}${w.created_by ? `<div class="hint">${esc(w.created_by)}</div>` : ''}</td>
+        <td>${w.status !== 'completed' ? `<button class="btn-sm btn-primary wave-mgmt-open" data-id="${esc(w.id)}">Open</button>` : ''}</td>
+      </tr>
+      <tr class="wave-mgmt-orders-row"><td></td><td colspan="7" style="padding:.2rem .5rem .6rem">${orderChips}</td></tr>`;
+    }).join('');
+    document.getElementById('waveManageEmpty').classList.toggle('hidden', active.length > 0);
+    body.querySelectorAll('.wave-manage-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) _waveManageSel.add(cb.dataset.id); else _waveManageSel.delete(cb.dataset.id);
+        updateWaveManageButtons();
+      });
+    });
+    body.querySelectorAll('.wave-mgmt-open').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('waveManageOverlay').classList.add('hidden');
+        resumeWavePick(btn.dataset.id);
+      });
+    });
+    updateWaveManageButtons();
+  }
+  function updateWaveManageButtons() {
+    const boxes = document.querySelectorAll('.wave-manage-check');
+    const n = _waveManageSel.size;
+    document.getElementById('waveManageSelectAllBtn').innerHTML =
+      (n && n >= boxes.length) ? '&#9745; Deselect All' : '&#9744; Select All';
+    document.getElementById('waveManageCancelBtn').disabled = n === 0;
+    document.getElementById('waveManageSelCount').textContent = n ? `${n} wave${n === 1 ? '' : 's'} selected` : '';
+  }
+  document.getElementById('waveManageSelectAllBtn')?.addEventListener('click', () => {
+    const boxes = document.querySelectorAll('.wave-manage-check');
+    const allSelected = _waveManageSel.size >= boxes.length && boxes.length > 0;
+    boxes.forEach(cb => {
+      cb.checked = !allSelected;
+      if (cb.checked) _waveManageSel.add(cb.dataset.id); else _waveManageSel.delete(cb.dataset.id);
+    });
+    updateWaveManageButtons();
+  });
+  document.getElementById('waveManageCancelBtn')?.addEventListener('click', async () => {
+    const ids = [..._waveManageSel];
+    const pwd = document.getElementById('waveManagePassword').value;
+    const errEl = document.getElementById('waveManageError');
+    errEl.classList.add('hidden');
+    if (!ids.length) return;
+    if (!pwd) { errEl.textContent = 'Enter your password to confirm.'; errEl.classList.remove('hidden'); return; }
+    if (!confirm(`Cancel ${ids.length} wave${ids.length === 1 ? '' : 's'}?\n\nThis takes effect immediately: legacy waves that prefilled quantities are reversed and those orders go back to 0 scanned for piece-by-piece scanning. Completed orders are never touched. The wave record(s) then wait for the Administrator to approve deleting them from the data.`)) return;
+    const btn = document.getElementById('waveManageCancelBtn');
+    btn.disabled = true; btn.textContent = 'Cancelling…';
+    try {
+      const r = await fetch('/api/waves/bulk-cancel', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ ids, password: pwd }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Bulk cancel failed');
+      const skipped = (d.cancelled || []).flatMap(c => c.skippedDone || []);
+      let msg = `${(d.cancelled || []).length} wave(s) cancelled — effect is immediate.`;
+      if (skipped.length) msg += `\n${skipped.length} order(s) were already Completed and left untouched: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''}.`;
+      msg += `\n\nThe wave record(s) now await the Administrator's approval to be deleted from the data.`;
+      alert(msg);
+      _waveManageSel.clear();
+      loadWaveManageList();
+      await refreshOrders(); renderOrdersList();
+    } catch (err) {
+      errEl.textContent = err.message; errEl.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.innerHTML = '&#128465; Cancel Selected Waves';
+  });
 
   // ── Init ───────────────────────────────────────────────────────────────────
   initLogin();
