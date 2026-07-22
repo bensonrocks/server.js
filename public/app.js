@@ -8315,11 +8315,22 @@
     URL.revokeObjectURL(url);
   });
 
-  document.getElementById('userImportBrowseBtn').addEventListener('click', () => document.getElementById('userImportFileInput').click());
-  document.getElementById('userImportFileInput').addEventListener('change', async () => {
-    const inp = document.getElementById('userImportFileInput');
-    const file = inp.files && inp.files[0];
-    if (!file) return;
+  const userImportDropZone = document.getElementById('userImportDropZone');
+  const userImportFileInput = document.getElementById('userImportFileInput');
+  document.getElementById('userImportBrowseBtn').addEventListener('click', e => { e.stopPropagation(); userImportFileInput.click(); });
+  userImportDropZone.addEventListener('click', () => userImportFileInput.click());
+  userImportDropZone.addEventListener('dragover', e => { e.preventDefault(); userImportDropZone.classList.add('dragover'); });
+  userImportDropZone.addEventListener('dragleave', () => userImportDropZone.classList.remove('dragover'));
+  userImportDropZone.addEventListener('drop', e => {
+    e.preventDefault(); userImportDropZone.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) processUserImportFile(e.dataTransfer.files[0]);
+  });
+  userImportFileInput.addEventListener('change', () => {
+    if (userImportFileInput.files[0]) processUserImportFile(userImportFileInput.files[0]);
+    userImportFileInput.value = '';
+  });
+
+  async function processUserImportFile(file) {
     try {
       const text = await file.text();
       const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -8345,8 +8356,7 @@
       showUserStatus(msg, d.imported > 0 ? 'success' : 'error');
       loadUserList();
     } catch (err) { showUserStatus(err.message, 'error'); }
-    inp.value = '';
-  });
+  }
 
   function showUserStatus(msg, type) {
     const el = document.getElementById('userMgmtStatus');

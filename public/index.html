@@ -699,9 +699,12 @@
         <div class="admin-add-card">
           <div class="admin-add-title">Import Users / Drivers from CSV</div>
           <div class="admin-section-sub" style="margin-bottom:.5rem">Columns: id, name, password, role (admin / warehouse / driver), and for driver rows optionally phone, vehicle, capacity. For driver rows, "password" is their Driver App PIN (4-8 digits) — they get a route-planning profile automatically and can immediately sign in at <code>/driver</code> and be assigned routes.</div>
-          <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <div class="upload-area upload-area-sm" id="userImportDropZone">
             <input type="file" id="userImportFileInput" accept=".csv,text/csv,application/vnd.ms-excel,text/plain" hidden />
-            <button class="btn-secondary btn-sm" id="userImportBrowseBtn">&#8679; Choose CSV</button>
+            <div class="upload-icon" style="font-size:1.4rem">&#8679;</div>
+            <p style="font-size:.82rem">Drag &amp; drop CSV or <button class="link-btn" id="userImportBrowseBtn">browse</button></p>
+          </div>
+          <div style="margin-top:.4rem">
             <a class="admin-action-link" id="userImportTemplateBtn">&#8681; Download template</a>
           </div>
         </div>
