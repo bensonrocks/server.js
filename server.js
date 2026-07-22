@@ -875,12 +875,16 @@ function writeDb(data) {
 function flushDb() {
   return new Promise(resolve => {
     const tenantId = tenantContext.currentTenantId();
+    let writeStarted = false;
     const checkWrite = () => {
-      if (!_dbWriting.get(tenantId)) return resolve();
+      const isWriting = _dbWriting.get(tenantId);
+      if (isWriting) writeStarted = true;
+      // Resolved when write has started AND finished (writeStarted ensures we waited for the actual write)
+      if (writeStarted && !isWriting) return resolve();
       setTimeout(checkWrite, 10);
     };
-    // Trigger an immediate persist if there's a pending write
-    if (_dbWritePending.get(tenantId)) _persistDb(tenantId);
+    // Trigger an immediate persist
+    _persistDb(tenantId);
     checkWrite();
   });
 }
