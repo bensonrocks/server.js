@@ -4069,6 +4069,15 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
+    // BOM explosion — replace any bundle SKU with its component lines BEFORE
+    // orders are summarized / inventory-checked, so the whole pipeline sees
+    // real components (IdealOne is the bundle master). The client is file-level.
+    {
+      const _fc = mapped.find(r => r.client_name)?.client_name || '';
+      const _cid = invClientId(((req.body?.client_name || '').trim() || _fc).trim());
+      mapped = explodeBundleRows(mapped, () => _cid);
+    }
+
     const sessionId = req.headers['x-session-id'] || uuidv4();
     const orders    = summarizeOrders(mapped);
 
@@ -8359,7 +8368,10 @@ async function pullZortStore(db, store) {
     if (list.length < query.limit) break;
   }
 
-  const orders = summarizeOrders(rows.filter(r => r.sku && r.qty > 0));
+  // Explode any bundle SKUs into their components BEFORE summarizing, using
+  // each row's resolved client (rows carry client_name from the channel map).
+  const explodedRows = explodeBundleRows(rows, r => invClientId(r.client_name));
+  const orders = summarizeOrders(explodedRows.filter(r => r.sku && r.qty > 0));
   // summarizeOrders keeps only known fields — re-attach the Zort linkage the
   // completion push needs, and the client each order resolved to
   for (const o of orders) {
@@ -8481,11 +8493,21 @@ function zortNotifyStockChange(db, clientId, skus) {
     if (!Array.isArray(skus) || !skus.length) return;
     const stores = zortStoresForClient(db, clientId);
     if (!stores.length) return;
-    let added = 0;
-    for (const store of stores) for (const sku of [...new Set(skus.filter(Boolean))]) {
-      if (enqueueZortStock(db, store.id, clientId, sku)) added++;
+    const cid = invClientId(clientId);
+    // The changed components, PLUS any bundle whose recipe includes one of them
+    // (its derived availability just moved). IdealOne is the bundle master, so
+    // it computes and pushes the bundle SKU's sellable number to ZORT too.
+    const targets = new Set(skus.filter(Boolean));
+    if (inventory.available()) {
+      for (const sku of [...targets]) {
+        try { for (const bSku of inventory.bundlesContaining(cid, sku)) targets.add(bSku); } catch (_) {}
+      }
     }
-    if (added) { writeDb(db); logAudit('zort_stock_enqueued', { clientId: invClientId(clientId), count: added }); }
+    let added = 0;
+    for (const store of stores) for (const sku of targets) {
+      if (enqueueZortStock(db, store.id, cid, sku)) added++;
+    }
+    if (added) { writeDb(db); logAudit('zort_stock_enqueued', { clientId: cid, count: added }); }
   } catch (e) { console.error('[zort] notifyStockChange error:', e.message); }
 }
 
@@ -8525,8 +8547,19 @@ async function _zortSendOutboxEntry(db, store, entry) {
     return true;
   }
   // kind === 'stock' — recompute CURRENT available right now and push absolute.
-  const item = inventory.available() ? inventory.get(entry.sku, entry.clientId) : null;
-  const available = item ? Math.max(0, item.stock_qty - item.reserved_qty) : 0;
+  // A bundle SKU has no stock row of its own; its sellable quantity is DERIVED
+  // from its components (IdealOne is the bundle master).
+  let available = 0;
+  if (inventory.available()) {
+    let bundle = null;
+    try { bundle = inventory.getBundle(entry.clientId, entry.sku); } catch (_) {}
+    if (bundle) {
+      available = inventory.bundleAvailable(entry.clientId, entry.sku);
+    } else {
+      const item = inventory.get(entry.sku, entry.clientId);
+      available = item ? Math.max(0, item.stock_qty - item.reserved_qty) : 0;
+    }
+  }
   await zortApi.adjustInventory(store, { sku: entry.sku, qty: available });
   logAudit('zort_stock_pushed', { sku: entry.sku, client: store.clientName || '', qty: available });
   return true;
@@ -9729,6 +9762,29 @@ inventory.init();
 // unscoped.
 function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
 
+// BOM explosion at import — IdealOne is the bundle master. Any order line whose
+// SKU is a defined bundle for that client is REPLACED by its component lines
+// (qty × qtyPerBundle), tagged from_bundle. Done once at import so everything
+// downstream (pick list, scanning, deduction, reports) sees real components and
+// needs no bundle awareness. `clientOf(row)` returns the owning client for a
+// row. Rows are {sku, qty, ...}. No-op if inventory is unavailable.
+function explodeBundleRows(rows, clientOf) {
+  if (!inventory.available() || !Array.isArray(rows)) return rows;
+  const out = [];
+  for (const r of rows) {
+    let bundle = null;
+    try { bundle = r && r.sku ? inventory.getBundle(clientOf(r), r.sku) : null; } catch (_) {}
+    if (bundle && bundle.components.length) {
+      const bundleQty = Number(r.qty) || 0;
+      for (const c of bundle.components) {
+        out.push({ ...r, sku: c.sku, qty: bundleQty * c.qty, from_bundle: r.sku,
+          description: (r.description ? '' : '') || c.sku });
+      }
+    } else out.push(r);
+  }
+  return out;
+}
+
 // Every /api/inventory route needs an explicit client. Reads take ?clientId=,
 // writes take it in the body. Missing → 400 (never a 500 from the store guard).
 function reqClientId(req) {
@@ -9901,6 +9957,35 @@ app.post('/api/inventory/:sku/adjust', requireAuth, express.json(), (req, res) =
   }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
+
+// ── Bundles / BOM (IdealOne is the master) — registered BEFORE /:sku so
+// "bundles" isn't swallowed as a SKU param. Availability is DERIVED from
+// component stock and pushed to any ZORT stock-sync store for the client.
+app.get('/api/inventory/bundles', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const bundles = inventory.getBundles(clientId).map(b => ({ ...b, available: inventory.bundleAvailable(clientId, b.bundle_sku) }));
+  res.json(bundles);
+});
+app.post('/api/inventory/bundles', requireAuth, express.json(), (req, res) => {
+  try {
+    const { clientId, bundle_sku, name, components } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
+    const bundle = inventory.upsertBundle(cid, bundle_sku, name, components);
+    logAudit('bundle_upsert', { clientId: cid, bundle: bundle.bundle_sku, components: bundle.components.length, by: req.userId || '' });
+    zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
+    res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/inventory/bundles/:sku', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  inventory.deleteBundle(clientId, req.params.sku);
+  logAudit('bundle_deleted', { clientId, bundle: req.params.sku, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
 app.get('/api/inventory/:sku', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });

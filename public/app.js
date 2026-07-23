@@ -10437,14 +10437,83 @@
       } catch (e) { st.className = 'status-bar error'; st.textContent = 'Upload error: ' + e.message; }
     }
 
-    // wire buttons once
+    // ── Bundles / BOM ───────────────────────────────────────────────────────
+    async function loadBundles() {
+      const tb = $('invBundleTbody'); if (!tb || !clientId) return;
+      try {
+        const r = await fetch('/api/inventory/bundles?clientId=' + encodeURIComponent(clientId));
+        const bundles = r.ok ? await r.json() : [];
+        if (!bundles.length) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:1.2rem;color:#94a3b8">No bundles defined.</td></tr>'; return; }
+        tb.innerHTML = bundles.map(b => `<tr>
+          <td style="font-family:monospace;font-weight:600">${esc(b.bundle_sku)}</td>
+          <td>${esc(b.name || '')}</td>
+          <td style="font-size:.82rem">${b.components.map(c => `${esc(c.sku)}×${c.qty}`).join(' + ')}</td>
+          <td style="text-align:right;font-weight:700;color:${b.available <= 0 ? '#dc2626' : '#059669'}">${b.available}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn-secondary btn-sm b-edit" data-sku="${esc(b.bundle_sku)}">✎</button>
+            <button class="btn-danger btn-sm b-del" data-sku="${esc(b.bundle_sku)}">🗑</button>
+          </td></tr>`).join('');
+        tb.querySelectorAll('.b-edit').forEach(btn => btn.addEventListener('click', () => openBundle(bundles.find(x => x.bundle_sku === btn.dataset.sku))));
+        tb.querySelectorAll('.b-del').forEach(btn => btn.addEventListener('click', async () => {
+          if (!confirm(`Delete bundle "${btn.dataset.sku}"? (components and their stock are untouched)`)) return;
+          await fetch('/api/inventory/bundles/' + encodeURIComponent(btn.dataset.sku) + '?clientId=' + encodeURIComponent(clientId), { method: 'DELETE' });
+          loadBundles();
+        }));
+      } catch (e) { /* leave prior */ }
+    }
+
+    function compRow(sku, qty) {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;gap:.4rem;margin-bottom:.35rem';
+      div.innerHTML = `<input class="bm-csku" placeholder="component SKU" value="${esc(sku || '')}" style="flex:2;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+        <input class="bm-cqty" type="number" min="1" value="${qty || 1}" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+        <button class="btn-secondary btn-sm bm-crm" type="button">✕</button>`;
+      div.querySelector('.bm-crm').addEventListener('click', () => div.remove());
+      return div;
+    }
+    function openBundle(b) {
+      if (!clientId) { alert('Load a client first.'); return; }
+      $('bmSku').value = b?.bundle_sku || '';
+      $('bmName').value = b?.name || '';
+      $('bmError').classList.add('hidden');
+      const wrap = $('bmComponents'); wrap.innerHTML = '';
+      const comps = (b && b.components && b.components.length) ? b.components : [{ sku: '', qty: 1 }];
+      comps.forEach(c => wrap.appendChild(compRow(c.sku, c.qty)));
+      $('bundleModal').classList.remove('hidden');
+    }
+
     setTimeout(() => {
       $('invLoadBtn')?.addEventListener('click', load);
       $('invUploadBtn')?.addEventListener('click', pickFile);
       $('invClient')?.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+      $('invBundleAddBtn')?.addEventListener('click', () => openBundle(null));
+      $('bmAddComp')?.addEventListener('click', () => $('bmComponents').appendChild(compRow('', 1)));
+      $('bmCancelBtn')?.addEventListener('click', () => $('bundleModal').classList.add('hidden'));
+      $('bmSaveBtn')?.addEventListener('click', async () => {
+        const bundle_sku = $('bmSku').value.trim();
+        const name = $('bmName').value.trim();
+        const components = [...document.querySelectorAll('#bmComponents > div')].map(d => ({
+          sku: d.querySelector('.bm-csku').value.trim(), qty: Number(d.querySelector('.bm-cqty').value) || 0,
+        })).filter(c => c.sku && c.qty > 0);
+        const err = $('bmError');
+        if (!bundle_sku) { err.textContent = 'Bundle SKU is required.'; err.classList.remove('hidden'); return; }
+        if (!components.length) { err.textContent = 'Add at least one component.'; err.classList.remove('hidden'); return; }
+        try {
+          const r = await fetch('/api/inventory/bundles', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId, bundle_sku, name, components }) });
+          const d = await r.json();
+          if (!r.ok) { err.textContent = d.error || 'Save failed'; err.classList.remove('hidden'); return; }
+          $('bundleModal').classList.add('hidden');
+          loadBundles();
+        } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); }
+      });
     }, 0);
 
-    return { init, load, renderList, pickFile };
+    // load bundles whenever a client is loaded
+    const _origLoad = load;
+    load = async function () { await _origLoad(); loadBundles(); };
+
+    return { init, load, renderList, pickFile, loadBundles };
   })();
   window.invUI = invUI;
     let items = [];

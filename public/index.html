@@ -2206,8 +2206,45 @@
             <tbody id="invTbody"><tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">Load a client to see stock.</td></tr></tbody>
           </table>
         </div>
+
+        <!-- Bundles / BOM -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div>
+              <b>🎁 Bundles (BOM)</b>
+              <div class="hint" style="margin:.2rem 0 0">A bundle SKU = component SKUs × qty. Availability is <b>computed from components</b> and synced to ZORT. When a bundle is ordered it auto-explodes into components for picking.</div>
+            </div>
+            <button class="btn-secondary btn-sm" id="invBundleAddBtn">+ Define bundle</button>
+          </div>
+          <div style="overflow-x:auto;margin-top:.6rem">
+            <table class="tbl" style="width:100%">
+              <thead><tr>
+                <th style="text-align:left">Bundle SKU</th><th style="text-align:left">Name</th>
+                <th style="text-align:left">Recipe</th><th style="text-align:right">Can make</th><th></th>
+              </tr></thead>
+              <tbody id="invBundleTbody"><tr><td colspan="5" style="text-align:center;padding:1.2rem;color:#94a3b8">No bundles defined.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
+
+    <!-- Define/edit bundle modal -->
+    <div id="bundleModal" class="modal-overlay hidden">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-title">🎁 Define bundle</div>
+        <div class="form-group"><label>Bundle SKU (what the marketplace sells)</label><input type="text" id="bmSku" placeholder="e.g. GIFTSET-XMAS" autocomplete="off" /></div>
+        <div class="form-group"><label>Name</label><input type="text" id="bmName" placeholder="e.g. Christmas Gift Set" autocomplete="off" /></div>
+        <label style="font-weight:600;font-size:.85rem">Components (SKU × qty per bundle)</label>
+        <div id="bmComponents" style="margin:.4rem 0"></div>
+        <button class="btn-secondary btn-sm" id="bmAddComp">+ Add component</button>
+        <div id="bmError" class="status-bar error hidden" style="margin-top:.6rem"></div>
+        <div style="display:flex;gap:.6rem;margin-top:1rem">
+          <button class="btn-primary" id="bmSaveBtn">Save bundle</button>
+          <button class="btn-secondary" id="bmCancelBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ── TAB 3: Labels ── -->
     <section id="tab-labels" class="tab">
