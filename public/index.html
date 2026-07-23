@@ -2235,6 +2235,12 @@
         <div class="modal-title">🎁 Define bundle</div>
         <div class="form-group"><label>Bundle SKU (what the marketplace sells)</label><input type="text" id="bmSku" placeholder="e.g. GIFTSET-XMAS" autocomplete="off" /></div>
         <div class="form-group"><label>Name</label><input type="text" id="bmName" placeholder="e.g. Christmas Gift Set" autocomplete="off" /></div>
+        <div class="form-group"><label>Type</label>
+          <select id="bmType">
+            <option value="virtual">Virtual — assemble on order (availability derived from components)</option>
+            <option value="physical">Physical kit — pre-build ahead (its own real stock)</option>
+          </select>
+        </div>
         <label style="font-weight:600;font-size:.85rem">Components (SKU × qty per bundle)</label>
         <div id="bmComponents" style="margin:.4rem 0"></div>
         <button class="btn-secondary btn-sm" id="bmAddComp">+ Add component</button>

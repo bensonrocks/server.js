@@ -10444,16 +10444,38 @@
         const r = await fetch('/api/inventory/bundles?clientId=' + encodeURIComponent(clientId));
         const bundles = r.ok ? await r.json() : [];
         if (!bundles.length) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:1.2rem;color:#94a3b8">No bundles defined.</td></tr>'; return; }
-        tb.innerHTML = bundles.map(b => `<tr>
-          <td style="font-family:monospace;font-weight:600">${esc(b.bundle_sku)}</td>
+        tb.innerHTML = bundles.map(b => {
+          const isPhys = b.type === 'physical';
+          const typeBadge = isPhys
+            ? '<span style="font-size:.68rem;background:#ede9fe;color:#6d28d9;padding:.1rem .35rem;border-radius:4px">physical kit</span>'
+            : '<span style="font-size:.68rem;background:#e0f2fe;color:#0369a1;padding:.1rem .35rem;border-radius:4px">virtual</span>';
+          const canMakeLabel = isPhys ? `can build ${b.available}` : `${b.available}`;
+          return `<tr>
+          <td style="font-family:monospace;font-weight:600">${esc(b.bundle_sku)}<div>${typeBadge}</div></td>
           <td>${esc(b.name || '')}</td>
           <td style="font-size:.82rem">${b.components.map(c => `${esc(c.sku)}×${c.qty}`).join(' + ')}</td>
-          <td style="text-align:right;font-weight:700;color:${b.available <= 0 ? '#dc2626' : '#059669'}">${b.available}</td>
+          <td style="text-align:right;font-weight:700;color:${b.available <= 0 ? '#dc2626' : '#059669'}">${canMakeLabel}</td>
           <td style="text-align:right;white-space:nowrap">
+            ${isPhys ? `<button class="btn-primary btn-sm b-build" data-sku="${esc(b.bundle_sku)}" title="Consume components and add built stock">🔨 Build</button>` : ''}
             <button class="btn-secondary btn-sm b-edit" data-sku="${esc(b.bundle_sku)}">✎</button>
             <button class="btn-danger btn-sm b-del" data-sku="${esc(b.bundle_sku)}">🗑</button>
-          </td></tr>`).join('');
+          </td></tr>`; }).join('');
         tb.querySelectorAll('.b-edit').forEach(btn => btn.addEventListener('click', () => openBundle(bundles.find(x => x.bundle_sku === btn.dataset.sku))));
+        tb.querySelectorAll('.b-build').forEach(btn => btn.addEventListener('click', async () => {
+          const b = bundles.find(x => x.bundle_sku === btn.dataset.sku);
+          const v = prompt(`Build how many "${btn.dataset.sku}"?\n\nYou can build up to ${b.available} from current component stock.\nThis consumes the components and adds the built kits to stock.`);
+          if (v === null) return;
+          const qty = Number(v);
+          if (!(qty > 0)) { alert('Enter a positive number.'); return; }
+          try {
+            const r = await fetch('/api/inventory/bundles/' + encodeURIComponent(btn.dataset.sku) + '/build', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, qty }) });
+            const d = await r.json();
+            if (!r.ok) { alert(d.error || 'Build failed'); return; }
+            alert(`✓ Built ${d.built} × ${btn.dataset.sku}\nConsumed: ${d.consumed.map(c => c.sku + '×' + c.qty).join(', ')}`);
+            load(); // refresh stock + bundles
+          } catch (e) { alert('Build error: ' + e.message); }
+        }));
         tb.querySelectorAll('.b-del').forEach(btn => btn.addEventListener('click', async () => {
           if (!confirm(`Delete bundle "${btn.dataset.sku}"? (components and their stock are untouched)`)) return;
           await fetch('/api/inventory/bundles/' + encodeURIComponent(btn.dataset.sku) + '?clientId=' + encodeURIComponent(clientId), { method: 'DELETE' });
@@ -10475,6 +10497,7 @@
       if (!clientId) { alert('Load a client first.'); return; }
       $('bmSku').value = b?.bundle_sku || '';
       $('bmName').value = b?.name || '';
+      $('bmType').value = b?.type === 'physical' ? 'physical' : 'virtual';
       $('bmError').classList.add('hidden');
       const wrap = $('bmComponents'); wrap.innerHTML = '';
       const comps = (b && b.components && b.components.length) ? b.components : [{ sku: '', qty: 1 }];
@@ -10500,7 +10523,7 @@
         if (!components.length) { err.textContent = 'Add at least one component.'; err.classList.remove('hidden'); return; }
         try {
           const r = await fetch('/api/inventory/bundles', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientId, bundle_sku, name, components }) });
+            body: JSON.stringify({ clientId, bundle_sku, name, components, type: $('bmType').value }) });
           const d = await r.json();
           if (!r.ok) { err.textContent = d.error || 'Save failed'; err.classList.remove('hidden'); return; }
           $('bundleModal').classList.add('hidden');

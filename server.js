@@ -8553,9 +8553,11 @@ async function _zortSendOutboxEntry(db, store, entry) {
   if (inventory.available()) {
     let bundle = null;
     try { bundle = inventory.getBundle(entry.clientId, entry.sku); } catch (_) {}
-    if (bundle) {
+    if (bundle && bundle.type === 'virtual') {
+      // Virtual bundle: sellable = derived from component stock.
       available = inventory.bundleAvailable(entry.clientId, entry.sku);
     } else {
+      // Normal SKU, or a PHYSICAL kit (a real built SKU) — use its own on-hand.
       const item = inventory.get(entry.sku, entry.clientId);
       available = item ? Math.max(0, item.stock_qty - item.reserved_qty) : 0;
     }
@@ -9774,6 +9776,9 @@ function explodeBundleRows(rows, clientOf) {
   for (const r of rows) {
     let bundle = null;
     try { bundle = r && r.sku ? inventory.getBundle(clientOf(r), r.sku) : null; } catch (_) {}
+    // Only VIRTUAL bundles explode into components. A PHYSICAL kit is a real,
+    // pre-built SKU on the shelf — it ships as itself, so leave the line alone.
+    if (bundle && bundle.type === 'physical') bundle = null;
     if (bundle && bundle.components.length) {
       const bundleQty = Number(r.qty) || 0;
       for (const c of bundle.components) {
@@ -9969,13 +9974,29 @@ app.get('/api/inventory/bundles', requireAuth, (req, res) => {
 });
 app.post('/api/inventory/bundles', requireAuth, express.json(), (req, res) => {
   try {
-    const { clientId, bundle_sku, name, components } = req.body || {};
+    const { clientId, bundle_sku, name, components, type } = req.body || {};
     const cid = String(clientId || '').trim();
     if (!cid) return res.status(400).json({ error: 'clientId is required' });
-    const bundle = inventory.upsertBundle(cid, bundle_sku, name, components);
-    logAudit('bundle_upsert', { clientId: cid, bundle: bundle.bundle_sku, components: bundle.components.length, by: req.userId || '' });
-    zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
+    const bundle = inventory.upsertBundle(cid, bundle_sku, name, components, type);
+    logAudit('bundle_upsert', { clientId: cid, bundle: bundle.bundle_sku, bundleType: bundle.type, components: bundle.components.length, by: req.userId || '' });
+    // Only a virtual bundle's availability tracks its components; a physical
+    // kit's sellable number is its own (built) stock.
+    if (bundle.type === 'virtual') zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
     res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// PHYSICAL KITTING — build N units: consume components, inbound the bundle SKU
+// as real stock, then sync both the consumed components AND the new bundle
+// stock up to ZORT.
+app.post('/api/inventory/bundles/:sku/build', requireAuth, express.json(), (req, res) => {
+  try {
+    const cid = String(req.body?.clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
+    const result = inventory.buildBundle(cid, req.params.sku, req.body?.qty);
+    logAudit('bundle_built', { clientId: cid, bundle: req.params.sku, built: result.built, by: req.userId || '' });
+    // Components dropped, the kit SKU rose — push all of them to ZORT.
+    zortNotifyStockChange(readDb(), cid, [req.params.sku, ...result.consumed.map(c => c.sku)]);
+    res.json({ ok: true, ...result });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.delete('/api/inventory/bundles/:sku', requireAuth, (req, res) => {
