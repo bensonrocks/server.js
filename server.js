@@ -4014,6 +4014,7 @@ app.get('/api/stats', (_req, res) => {
 
   let todayPending = 0, todayDone = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
   let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0, totalDone = 0;
+  let todayLines = 0, yesterdayLines = 0;
   const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
 
   for (const batch of db.batches) {
@@ -4051,6 +4052,13 @@ app.get('/api/stats', (_req, res) => {
           const ms = new Date(state.endTime) - new Date(state.startTime);
           if (ms > 0 && ms < 7200000) { totalScanMs += ms; scanCount++; }
         }
+        // Count scanned lines for today/yesterday
+        if (doneDate === todayStr) {
+          todayLines += Object.keys(state.scanned || {}).length;
+        }
+        if (doneDate === yesterdayStr) {
+          yesterdayLines += Object.keys(state.scanned || {}).length;
+        }
       }
     }
   }
@@ -4062,7 +4070,7 @@ app.get('/api/stats', (_req, res) => {
     .map(([name, v]) => ({ name, ...v }));
 
   res.json({ todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
-    pendingBacklog, totalDone,
+    pendingBacklog, totalDone, todayLines, yesterdayLines,
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats });
 });
 

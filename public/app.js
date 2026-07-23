@@ -6027,23 +6027,23 @@
       const r = await fetch('/api/stats');
       if (!r.ok) return;
       const stats = await r.json();
-      document.getElementById('smpTodayOrders').textContent = stats.todayPending || '0';
-      document.getElementById('smpYesterdayDone').textContent = stats.yesterdayDone || '0';
-      // Lines: sum of all items across today's pending orders
-      const lines = (stats.clientStats || [])
+      // Today's lines: sum of all items across today's pending orders
+      const todayLines = (stats.clientStats || [])
         .reduce((sum, c) => sum + (c.todayLines || 0), 0);
-      document.getElementById('smpTodayLines').textContent = lines || '0';
-      // Active packers: rough count from loaded orders with recent activity
+      document.getElementById('smpTodayLines').textContent = todayLines || '0';
+      // Yesterday's lines: from stats
+      document.getElementById('smpYesterdayLines').textContent = stats.yesterdayLines || '0';
+      // Idle time and sessions: show current idle time from idle tracking
       const now = Date.now();
-      const activeThreshold = 5 * 60000; // 5 minutes
-      const active = new Set();
-      for (const o of loadedOrders) {
-        if (o.scan_status === 'processing' && o.lastOperator && o.endTime) {
-          const elapsed = now - new Date(o.endTime);
-          if (elapsed < activeThreshold) active.add(o.lastOperator);
-        }
+      if (_lastScanTime) {
+        const idleMs = now - _lastScanTime;
+        const idleMins = Math.floor(idleMs / 60000);
+        const elapsedMins = Math.max(0, idleMins - 10); // only count time after 10-min threshold
+        document.getElementById('smpIdleTime').textContent = elapsedMins > 0 ? elapsedMins.toString() : '0';
+      } else {
+        document.getElementById('smpIdleTime').textContent = '—';
       }
-      document.getElementById('smpActivePackers').textContent = active.size.toString();
+      document.getElementById('smpIdleSessions').textContent = _idleSessionCount.toString();
     } catch {}
   }
   function startScanMetricsRefresh() {
