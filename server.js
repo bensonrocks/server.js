@@ -1397,6 +1397,9 @@ function completionAuditData(batch, ord, state) {
   return {
     order:     ord.order_number,
     batchId:   batch.id,
+    // Self-identify marketplace (Lazada/ZORT) completions so the data-retention
+    // purge can find their PII later even after the batch is archived/gone.
+    source:    piiPurge.isMarketplaceOrder(batch, ord) ? 'zort' : 'internal',
     client:    batch.client_name  || '',
     customer:  ord.customer_name  || '',
     carrier:   ord.carrier        || '',
@@ -2120,6 +2123,95 @@ function runAuditLogArchive() {
 }
 setTimeout(runAuditLogArchive, 90 * 1000);          // shortly after boot (staggered from batch archive)
 setInterval(runAuditLogArchive, 24 * 3600 * 1000);  // then daily
+
+// ── Marketplace (Lazada/ZORT) data-retention purge ──────────────────────────
+// Lazada ISV Q8e: personal data from a COMPLETED marketplace order must be
+// permanently deleted after 3 months. We redact the personal fields (customer
+// name, address, phone/email, tracking) from completed ZORT-sourced orders and
+// their order_completed audit events once completion is older than the window,
+// across BOTH live db.json and the on-disk archive files. Business records
+// (order no, SKU/qty, timings, client) are kept. Set MARKETPLACE_RETENTION_DAYS
+// to 0 to disable, or another value to change the window (default 90 days).
+// Nightly gzip backups still contain pre-purge data but rotate off within 14
+// days, so all copies are gone by ~retention + 14 days.
+const piiPurge = require('./lib/pii-purge');
+const MARKETPLACE_RETENTION_DAYS = process.env.MARKETPLACE_RETENTION_DAYS !== undefined
+  ? Number(process.env.MARKETPLACE_RETENTION_DAYS) : 90;
+
+function _archiveFiles(re) {
+  try { return fs.readdirSync(ARCHIVE_DIR).filter(f => re.test(f)); } catch { return []; }
+}
+function _rewriteArchive(file, data) {
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, file);
+}
+
+function runMarketplaceDataPurge(overrideDays) {
+  const days = overrideDays !== undefined ? overrideDays : MARKETPLACE_RETENTION_DAYS;
+  if (!(days > 0)) return { disabled: true };
+  try {
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+    const keys = new Set();          // batchId|order for every marketplace order (any age)
+    let orders = 0, events = 0;
+
+    // 1. Live batches — redact old completed marketplace orders + collect keys.
+    const db = readDb();
+    orders += piiPurge.purgeBatches(db.batches || [], cutoff, keys);
+
+    // 2. Archived batch files — redact + finish collecting keys (a live audit
+    //    event may reference an already-archived batch, so gather all keys
+    //    before the audit passes).
+    for (const f of _archiveFiles(/^archive-.*\.json$/)) {
+      const file = path.join(ARCHIVE_DIR, f);
+      let batches; try { batches = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+      const hits = piiPurge.purgeBatches(batches, cutoff, keys);
+      if (hits) { orders += hits; _rewriteArchive(file, batches); }
+    }
+
+    // 3. Live audit log.
+    events += piiPurge.purgeAudit(db.auditLog || [], cutoff, keys);
+    if (orders || events) writeDb(db); // persist live redactions (batches + audit)
+
+    // 4. Archived audit files.
+    for (const f of _archiveFiles(/^audit-archive-.*\.json$/)) {
+      const file = path.join(ARCHIVE_DIR, f);
+      let evs; try { evs = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+      const hits = piiPurge.purgeAudit(evs, cutoff, keys);
+      if (hits) { events += hits; _rewriteArchive(file, evs); }
+    }
+
+    if (orders || events) {
+      logAudit('marketplace_data_purged', { retentionDays: days, orders, auditEvents: events });
+      console.log(`[IdealScan] Marketplace data purge: redacted PII on ${orders} order(s) + ${events} audit event(s) older than ${days}d`);
+    }
+    return { orders, auditEvents: events, retentionDays: days };
+  } catch (e) {
+    console.error('[IdealScan] marketplace data purge failed:', e.message);
+    return { error: e.message };
+  }
+}
+setTimeout(runMarketplaceDataPurge, 120 * 1000);         // shortly after boot (staggered)
+setInterval(runMarketplaceDataPurge, 24 * 3600 * 1000);  // then daily
+
+// Master: report the retention policy + run the purge on demand (for audits /
+// a compliance reviewer). The `days` override lets a reviewer prove the sweep
+// works without waiting for real data to age past the window.
+app.get('/api/master/data-retention', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json({
+    marketplaceRetentionDays: MARKETPLACE_RETENTION_DAYS,
+    enabled: MARKETPLACE_RETENTION_DAYS > 0,
+    policy: 'Personal data on completed marketplace (Lazada/ZORT) orders is redacted after the retention window, in live data and archives; nightly backups rotate off within 14 days.',
+  });
+});
+app.post('/api/master/data-retention/purge-now', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const days = req.body && req.body.days !== undefined ? Number(req.body.days) : undefined;
+  const result = runMarketplaceDataPurge(days);
+  logAudit('marketplace_data_purge_manual', { by: req.userId || '', ...result });
+  res.json({ ok: true, result });
+});
 
 // Merges live db.auditLog with archived months when a report's requested
 // range reaches further back than what's still live — transparent to every
