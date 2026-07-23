@@ -5850,21 +5850,19 @@ app.post('/api/drivers/import', upload.single('file'), tenantMiddleware, (req, r
     if (!id && !name) { skipped++; return; } // blank row
     if (!name) { skipped++; errors.push({ row: i + 1, id, error: 'Name is required' }); return; }
 
-    // PIN priority — the Driver App PIN is what a driver types to sign in.
-    // ANY column whose header mentions "pin" (e.g. "Driver App PIN",
-    // "Driver App PIN Set", "PIN") and holds a 4-8 digit value wins, because a
-    // column explicitly NAMED for the PIN is the least surprising source. Only
-    // if no such column exists do we fall back to the generic "password" column
-    // (the Users-importer convention where password == driver PIN). This avoids
-    // the trap where a file has BOTH a "Password" and a "Driver App PIN" column
-    // with different numbers — the one literally labelled PIN is authoritative.
-    let pinRaw = '';
-    for (const k of Object.keys(row)) {
-      if (!norm(k).includes('pin')) continue;
-      const v = String(row[k]).trim();
-      if (/^\d{4,8}$/.test(v)) { pinRaw = v; break; }
+    // PIN source — the "Password" column IS the Driver App login PIN (the
+    // user's convention: e.g. a 5-digit "12345"). Password wins whenever it's
+    // present; only if there's no Password column do we fall back to an
+    // explicit PIN-named column (or a numeric "Driver App PIN Set" cell).
+    // Supports 4-8 digit PINs, so 5-digit PINs are fully honoured.
+    let pinRaw = String(pick(row, ['password']) || '').trim();
+    if (!pinRaw) {
+      for (const k of Object.keys(row)) {
+        if (!norm(k).includes('pin')) continue;
+        const v = String(row[k]).trim();
+        if (/^\d{4,8}$/.test(v)) { pinRaw = v; break; }
+      }
     }
-    if (!pinRaw) pinRaw = String(pick(row, ['password']) || '').trim();
     if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) {
       errors.push({ row: i + 1, id, error: `PIN "${pinRaw}" must be 4-8 digits — driver imported WITHOUT app login` });
       pinRaw = '';
