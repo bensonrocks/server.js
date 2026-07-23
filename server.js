@@ -6700,6 +6700,15 @@ app.get('/api/profile', requireAuth, (req, res) => {
   });
 });
 
+// Client-side audit logging (fire-and-forget from the browser)
+app.post('/api/audit-log', requireAuth, express.json(), (req, res) => {
+  const { type, data } = req.body || {};
+  if (type) {
+    logAudit(type, { ...data, from: 'client' });
+  }
+  res.json({ ok: true });
+});
+
 // Per-user orders-table layout: column widths (px) and hidden columns
 app.put('/api/profile/table-prefs', requireAuth, (req, res) => {
   const users = readUsers();
