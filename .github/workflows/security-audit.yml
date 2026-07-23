@@ -1,0 +1,86 @@
+name: Security Audit (dependency vulnerability scan)
+
+# Automated dependency vulnerability scanning.
+#
+# Compliance: satisfies the "vulnerability scanning at least once every three
+# months" requirement (Lazada ISV Q7e) — this runs MONTHLY, well inside that
+# window, and also on every pull request so new dependencies are checked before
+# they merge. Each run's log + uploaded report is the audit evidence.
+#
+# The scan REPORTS rather than hard-fails, because some current advisories are
+# in a transitive dependency with no upstream fix available (see SECURITY.md);
+# failing the build on an unfixable issue would just block all work. New
+# high/critical issues are surfaced loudly in the job summary so they get
+# attention.
+
+on:
+  schedule:
+    - cron: '0 3 1 * *'        # 03:00 UTC on the 1st of every month
+  workflow_dispatch: {}        # allow a manual run on demand (for an audit)
+  pull_request: {}             # check new dependencies before they merge
+  push:
+    branches:
+      - main
+      - master
+      - claude/ecommerce-order-dashboard-cxMNo
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run npm audit (production dependencies)
+        id: audit
+        run: |
+          set +e
+          # Machine-readable report (uploaded as evidence) + human summary in the log.
+          npm audit --omit=dev --json > audit-report.json 2>/dev/null
+          npm audit --omit=dev | tee audit-summary.txt
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Summarize results
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            let j = {}; try { j = JSON.parse(fs.readFileSync("audit-report.json","utf8")); } catch (_) {}
+            const v = (j.metadata && j.metadata.vulnerabilities) || {};
+            const line = `Vulnerabilities — critical: ${v.critical||0}, high: ${v.high||0}, moderate: ${v.moderate||0}, low: ${v.low||0} (total ${v.total||0})`;
+            const md = [
+              "## Dependency vulnerability scan",
+              "",
+              "`npm audit --omit=dev`",
+              "",
+              line,
+              "",
+              "Full machine-readable report is attached as the `npm-audit-report` artifact.",
+              "See SECURITY.md for the scanning policy and any accepted (unfixable-upstream) advisories.",
+            ].join("\n");
+            fs.writeFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+            console.log(line);
+            // Surface new high/critical as a workflow warning (does not fail the build).
+            if ((v.critical||0) + (v.high||0) > 0) {
+              console.log(`::warning::${(v.critical||0)} critical and ${(v.high||0)} high vulnerabilities present — review against SECURITY.md accepted list.`);
+            }
+          '
+
+      - name: Upload audit report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: |
+            audit-report.json
+            audit-summary.txt
+          retention-days: 90

@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "audit": "npm audit --omit=dev",
+    "audit:report": "npm audit --omit=dev --json > audit-report.json || true"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
