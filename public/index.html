@@ -738,7 +738,7 @@
           </div>
         </div>
         <input type="file" id="driverImportFileInput" accept=".csv,.txt,.xlsx,.xls" hidden />
-        <div class="admin-section-sub" style="margin:.2rem 0 .6rem">Import fills the driver roster from a spreadsheet (the same file you get from Export, hand-edited). Columns: ID, Name, Password (=Driver App PIN, 4-8 digits), Phone, Vehicle, Plate, Capacity (kg), Capacity (m3), Status.</div>
+        <div class="admin-section-sub" style="margin:.2rem 0 .6rem">Import fills the driver roster from a spreadsheet (the same file you get from Export, hand-edited). Columns: ID, Name, Phone, Vehicle, Plate, Capacity (kg), Capacity (m3), Status, and the <b>Driver App PIN</b> (4-8 digits) — put it in a column named “Driver App PIN” or “Password”. If both exist, the PIN column wins.</div>
         <div id="driversList" class="driver-list-wrap"></div>
         <div id="driverMgmtStatus" class="status-bar hidden"></div>
       </div>
