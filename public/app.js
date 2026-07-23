@@ -5990,11 +5990,12 @@
 
   function endIdleSession() {
     const now = Date.now();
-    if (_lastScanTime && !_idleStartTime) {
+    if (_lastScanTime && _lastScanTime !== null) {
       const idleMs = now - _lastScanTime;
       const idleMins = Math.floor(idleMs / 60000);
-      if (idleMins >= 10) {
-        _idleStartTime = _lastScanTime;
+      if (idleMins >= 10 && !_idleStartTime) {
+        // Log idle session only once per idle period
+        _idleStartTime = _lastScanTime; // mark that we've logged this period
         _idleSessionCount++;
         _idleTotalMinutes += idleMins;
         // Log idle session in background (fire-and-forget)
@@ -6005,7 +6006,9 @@
         });
       }
     }
+    // Reset idle tracking for next period
     _lastScanTime = Date.now();
+    _idleStartTime = null; // reset the flag for next idle period
     updateIdleDisplay();
   }
 
