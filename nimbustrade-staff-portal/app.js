@@ -7,6 +7,7 @@
   let ordersPage = 1;
   let allClients = [];
   let allVendors = [];
+  let selectedInvLocationByClient = {};
 
   const MARKET_PRESETS = [
     { code: 'SG', name: 'Singapore', city: 'Singapore', lat: 1.3521, lng: 103.8198 },
@@ -418,31 +419,36 @@
 
     container.innerHTML = allClients.map((client) => {
       const clientLocations = locations.filter((l) => l.client_id === client.id);
-      const locationsHtml = clientLocations.length
-        ? clientLocations.map((loc) => {
-            const items = inventory.filter((i) => i.location_id === loc.id);
-            const itemsHtml = items.length
-              ? items.map((i) => `
-                  <div class="inv-item-row" data-id="${i.id}">
-                    <div class="item-name">${escapeHtml(i.product_name)}<small>${i.sku}</small></div>
-                    <span class="item-label">qty</span><input type="number" class="qty-input" min="0" value="${i.qty_on_hand}" />
-                    <span class="item-label">alert at</span><input type="number" class="threshold-input" min="0" value="${i.replenish_threshold}" />
-                    ${i.lowStock ? '<span class="active-badge off">Low stock</span>' : '<span class="active-badge on">OK</span>'}
-                    <button class="row-action save-inv-btn">Save</button>
-                  </div>
-                `).join('')
-              : '<p class="empty-note">No inventory items yet.</p>';
-            return `
-              <div class="location-block" data-location-id="${loc.id}">
-                <div class="location-head">
-                  <h4>${loc.country_name}</h4>
-                  <span>${escapeHtml(loc.city)} &nbsp;·&nbsp; <button class="row-action" data-add-item="${loc.id}">+ Add item</button></span>
-                </div>
-                ${itemsHtml}
-              </div>
-            `;
-          }).join('')
-        : '<p class="empty-note">No fulfillment locations yet — add one to start tracking inventory.</p>';
+      if (!clientLocations.length) {
+        return `
+          <div class="panel client-inv-panel">
+            <div class="client-inv-head">
+              <h3>${escapeHtml(client.name)}</h3>
+              <button class="btn btn-ghost-sm" data-add-location="${client.id}" data-name="${escapeHtml(client.name)}">+ Add Location</button>
+            </div>
+            <p class="empty-note">No fulfillment locations yet — add one to start tracking inventory.</p>
+          </div>
+        `;
+      }
+
+      let activeLocId = selectedInvLocationByClient[client.id];
+      if (!clientLocations.find((l) => l.id === activeLocId)) {
+        activeLocId = clientLocations[0].id;
+        selectedInvLocationByClient[client.id] = activeLocId;
+      }
+      const activeLoc = clientLocations.find((l) => l.id === activeLocId);
+      const items = inventory.filter((i) => i.location_id === activeLoc.id);
+      const itemsHtml = items.length
+        ? items.map((i) => `
+            <div class="inv-item-row" data-id="${i.id}">
+              <div class="item-name">${escapeHtml(i.product_name)}<small>${i.sku}</small></div>
+              <span class="item-label">qty</span><input type="number" class="qty-input" min="0" value="${i.qty_on_hand}" />
+              <span class="item-label">alert at</span><input type="number" class="threshold-input" min="0" value="${i.replenish_threshold}" />
+              ${i.lowStock ? '<span class="active-badge off">Low stock</span>' : '<span class="active-badge on">OK</span>'}
+              <button class="row-action save-inv-btn">Save</button>
+            </div>
+          `).join('')
+        : '<p class="empty-note">No inventory items yet.</p>';
 
       return `
         <div class="panel client-inv-panel">
@@ -450,10 +456,31 @@
             <h3>${escapeHtml(client.name)}</h3>
             <button class="btn btn-ghost-sm" data-add-location="${client.id}" data-name="${escapeHtml(client.name)}">+ Add Location</button>
           </div>
-          ${locationsHtml}
+          <div class="location-block" data-client-id="${client.id}">
+            <div class="inv-location-tabs">
+              ${clientLocations.map((loc) => `
+                <button class="inv-location-tab${loc.id === activeLoc.id ? ' active' : ''}" data-client="${client.id}" data-loc="${loc.id}">
+                  ${loc.country_name}<span>${escapeHtml(loc.city)}</span>
+                </button>
+              `).join('')}
+            </div>
+            <div class="inv-location-panel">
+              <div class="location-head">
+                <span>${escapeHtml(activeLoc.city)} &nbsp;·&nbsp; <button class="row-action" data-add-item="${activeLoc.id}">+ Add item</button></span>
+              </div>
+              ${itemsHtml}
+            </div>
+          </div>
         </div>
       `;
     }).join('');
+
+    container.querySelectorAll('.inv-location-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        selectedInvLocationByClient[btn.dataset.client] = btn.dataset.loc;
+        loadInventory();
+      });
+    });
 
     container.querySelectorAll('[data-add-location]').forEach((btn) => {
       btn.addEventListener('click', () => {

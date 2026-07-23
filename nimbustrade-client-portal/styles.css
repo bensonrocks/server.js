@@ -493,12 +493,34 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
 .pagination button:disabled { opacity: 0.4; cursor: default; }
 
 /* ---------- Inventory ---------- */
-.inventory-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.inventory-grid { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
 
-.inv-location { background: var(--surface); padding: 15px 16px; }
-.inv-location-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
-.inv-location-head h4 { font-family: var(--font-display); font-size: 15px; font-weight: 700; margin: 0; }
-.inv-location-head span { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); }
+.inv-location-tabs { display: flex; flex-wrap: wrap; background: var(--bg-alt); border-bottom: 1px solid var(--border); }
+.inv-location-tab {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 14px;
+  border: none;
+  border-right: 1px solid var(--border);
+  margin-bottom: -1px;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+}
+.inv-location-tab:last-child { border-right: none; }
+.inv-location-tab span { font-family: var(--font-mono); font-size: 10px; font-weight: 500; color: var(--fg-muted); }
+.inv-location-tab:hover:not(.active) { color: var(--fg); }
+.inv-location-tab.active { background: var(--surface); color: var(--fg); border-bottom: 2px solid var(--accent-strong); }
+.inv-location-tab.active span { color: var(--accent); }
+
+.inv-location-panel { padding: 4px 18px 6px; }
 
 .inv-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border-soft); }
 .inv-item:first-of-type { border-top: none; }
@@ -561,7 +583,6 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
 @media (max-width: 900px) {
   .stat-grid { flex-wrap: wrap; }
   .stat-tile { flex: 1 1 50%; border-bottom: 1px solid var(--border); }
-  .inventory-grid { grid-template-columns: 1fr; }
   .table-controls { flex-direction: column; }
   .table-controls input { width: 100%; }
   .app-toolbar { flex-direction: column; align-items: flex-start; }

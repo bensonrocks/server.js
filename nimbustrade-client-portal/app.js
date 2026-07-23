@@ -15,6 +15,8 @@
   let clientName = localStorage.getItem('nt-client-name') || '';
   let selectedCountry = '';
   let currentPage = 1;
+  let inventoryLocations = [];
+  let selectedInvLocation = null;
 
   const $ = (sel) => document.querySelector(sel);
   const loginScreen = $('#login-screen');
@@ -311,15 +313,31 @@
   // ---------- Inventory ----------
 
   async function loadInventory() {
+    inventoryLocations = await api('/inventory');
+    if (!inventoryLocations.find((l) => l.id === selectedInvLocation)) {
+      selectedInvLocation = inventoryLocations.length ? inventoryLocations[0].id : null;
+    }
+    renderInventory();
+  }
+
+  function renderInventory() {
     const grid = $('#inventory-grid');
-    const locations = await api('/inventory');
-    grid.innerHTML = locations.map((loc) => `
-      <div class="inv-location">
-        <div class="inv-location-head">
-          <h4>${loc.country_name}</h4>
-          <span>${loc.city}</span>
-        </div>
-        ${loc.items.map((i) => `
+    if (!inventoryLocations.length) {
+      grid.innerHTML = '<p class="table-loading">No locations yet.</p>';
+      return;
+    }
+    const active = inventoryLocations.find((l) => l.id === selectedInvLocation) || inventoryLocations[0];
+
+    grid.innerHTML = `
+      <div class="inv-location-tabs">
+        ${inventoryLocations.map((loc) => `
+          <button class="inv-location-tab${loc.id === active.id ? ' active' : ''}" data-loc="${loc.id}">
+            ${loc.country_name}<span>${escapeHtml(loc.city)}</span>
+          </button>
+        `).join('')}
+      </div>
+      <div class="inv-location-panel">
+        ${active.items.map((i) => `
           <div class="inv-item">
             <div class="inv-item-name">${escapeHtml(i.product_name)}<small>${i.sku}</small></div>
             <div class="inv-item-qty">${i.qty_on_hand}</div>
@@ -332,7 +350,14 @@
           </div>
         `).join('')}
       </div>
-    `).join('');
+    `;
+
+    grid.querySelectorAll('.inv-location-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        selectedInvLocation = btn.dataset.loc;
+        renderInventory();
+      });
+    });
 
     grid.querySelectorAll('button[data-save]').forEach((btn) => {
       btn.addEventListener('click', async () => {
