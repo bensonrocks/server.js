@@ -584,14 +584,15 @@ main {
 /* Compact idle badge for Orders tab dashboard */
 .idle-badge {
   display: flex; align-items: center; gap: .5rem;
-  background: #fff3cd; border: 1px solid #ffc107;
+  background: #f0fdf4; border: 1px solid #86efac;
   border-radius: 6px; padding: .4rem .75rem;
   font-size: .85rem; box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
 }
 .idle-badge.hidden { display: none; }
 .idle-badge-icon { font-size: 1rem; }
-.idle-badge-time { font-weight: 700; color: #d97706; }
-.idle-badge-detail { font-size: .75rem; color: #92400e; }
+.idle-badge-time { font-weight: 700; color: #16a34a; }
+.idle-badge-detail { font-size: .75rem; color: #4b5563; }
 
 /* ================================================================
    WAYBILL SCAN BAR

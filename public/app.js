@@ -5968,15 +5968,25 @@
     const idleEl = document.getElementById('dashIdleStatus');
     if (!idleEl) return;
 
+    // Always show the badge, update content based on idle status
+    idleEl.classList.remove('hidden');
+
     if (idleMins < 10) {
-      idleEl.classList.add('hidden');
+      // Not idle yet - show active status
+      idleEl.innerHTML = `
+        <span class="idle-badge-icon">✓</span>
+        <span class="idle-badge-time" style="color: #16a34a;">Active</span>
+        <span class="idle-badge-detail">${_idleSessionCount} sessions</span>`;
     } else {
-      idleEl.classList.remove('hidden');
-      const elapsedMins = idleMins - 10; // only show time after 10 min threshold
+      // Idle - show warning
+      const elapsedMins = idleMins - 10; // time after 10 min threshold
       idleEl.innerHTML = `
         <span class="idle-badge-icon">⏸</span>
         <span class="idle-badge-time">${elapsedMins}m idle</span>
         <span class="idle-badge-detail">${_idleSessionCount} sessions</span>`;
+      // Change background to warn when idle
+      idleEl.style.background = '#fff3cd';
+      idleEl.style.borderColor = '#ffc107';
     }
   }
 
