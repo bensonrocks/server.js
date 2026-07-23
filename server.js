@@ -4115,19 +4115,25 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // the uploader decides: add the missing SKUs (at zero stock) and track
     // this upload against Inventory, or continue without tracking, or abort.
     // Skipped entirely if the inventory store itself is unavailable.
+    // Resolve the owning client FIRST — all inventory is client-scoped (3PL
+    // model), so the inventory check/reserve below needs a client id.
+    const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
+    const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
+    const invCid     = invClientId(clientName);
+
     let inventoryTracked = false;
     if (inventory.available()) {
       const uniqueSkus = [...new Set(mapped.map(r => r.sku).filter(Boolean))];
-      const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku));
+      const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku, invCid));
       if (missingSkus.length) {
         const decision = String(req.body?.inventory_decision || '').toLowerCase();
         if (decision === 'track') {
-          for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku }); } catch (_) {} }
+          for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku, clientId: invCid }); } catch (_) {} }
           inventoryTracked = true;
-          logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), ...clientInfo(req) });
+          logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
         } else if (decision === 'skip') {
           inventoryTracked = false;
-          logAudit('upload_inventory_tracking_skipped', { missingCount: missingSkus.length, skus: missingSkus.slice(0, 20), ...clientInfo(req) });
+          logAudit('upload_inventory_tracking_skipped', { missingCount: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
         } else {
           return res.status(409).json({
             needsInventoryConfirm: true,
@@ -4143,8 +4149,6 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
 
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
     const batchId    = uuidv4();
-    const fileClientName = mapped.find(r => r.client_name)?.client_name || '';
-    const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
     const direction  = req.body?.direction === 'Inbound' ? 'Inbound' : 'Outbound';
 
     const db = readDb();
@@ -4159,6 +4163,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       orderStates: {},
       orders,
       inventory_tracked: inventoryTracked,
+      inventory_client: inventoryTracked ? invCid : undefined,
     };
 
     // Reserve stock for every line — moves qty from available into reserved
@@ -4166,11 +4171,13 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // ships. Never blocks the upload: a reservation failure (e.g. a SKU
     // slipped through unresolved) is logged, not fatal.
     let inventorySkusReserved = 0;
+    const reservedSkus = new Set();
     if (inventoryTracked && inventory.available()) {
       for (const order of orders) {
         try {
-          inventory.reserveOrder({ id: order.order_number, items: order.lines.map(l => ({ sku: l.sku, qty: l.qty })) });
+          inventory.reserveOrder(invCid, { id: order.order_number, items: order.lines.map(l => ({ sku: l.sku, qty: l.qty })) });
           inventorySkusReserved++;
+          for (const l of order.lines) if (l.sku) reservedSkus.add(l.sku);
         } catch (e) { console.warn('[upload] inventory reserve failed for', order.order_number, e.message); }
       }
     }
@@ -4184,6 +4191,9 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       transportJobsCreated = createTransportJobsFromOrders(db, orders, clientName, batchId);
     }
     writeDb(db);
+    // Reserving stock lowered availability — let any ZORT stock-sync store for
+    // this client hear the new numbers (no-op if none configured).
+    if (reservedSkus.size) zortNotifyStockChange(db, invCid, [...reservedSkus]);
     fs.writeFile(path.join(WMS_DIR, `${batchId}.xlsx`), wmsBuffer, err => {
       if (err) console.error('[upload] XLSX write error:', err.message);
     });
@@ -5194,8 +5204,40 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   state.status  = 'done';
   state.endTime = new Date().toISOString();
   rec.state = state;
+
+  // Goods received → increase physical stock for this client. Guarded so a
+  // re-end (shouldn't happen — 409 above — but defensive) never double-adds.
+  // POs: add the scanned qty per SKU. Returns: only the units marked
+  // straight_to_inventory become sellable stock (damaged/kiv are excluded).
+  let receivedSkus = [];
+  if (!state.inventory_applied && inventory.available()) {
+    const cid = invClientId(rec.client_name);
+    const additions = {}; // sku -> qty to add
+    if (rec.type === 'return') {
+      for (const [sku, conds] of Object.entries(state.conditionTotals || {})) {
+        const good = Number((conds || {}).straight_to_inventory || 0);
+        if (good > 0) additions[sku] = good;
+      }
+    } else {
+      for (const [sku, qty] of Object.entries(state.scanned || {})) {
+        const n = Number(qty || 0);
+        if (n > 0) additions[sku] = n;
+      }
+    }
+    for (const [sku, qty] of Object.entries(additions)) {
+      try {
+        if (!inventory.get(sku, cid)) inventory.upsert({ sku, name: sku, clientId: cid });
+        inventory.adjust(sku, cid, qty, 'inbound', `Receipt ${rec.serial || rec.id}`);
+        receivedSkus.push(sku);
+      } catch (e) { console.warn('[inbound] inventory add failed for', sku, e.message); }
+    }
+    if (receivedSkus.length) state.inventory_applied = true;
+  }
+
   writeDb(db);
-  logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, by: req.userId || '' });
+  logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, received: receivedSkus.length, by: req.userId || '' });
+  // Received stock raised availability → notify ZORT stock-sync stores.
+  if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
   res.json({ ok: true });
 });
 
@@ -6420,11 +6462,28 @@ app.post('/api/scan/complete', (req, res) => {
     batch.orderStates[orderNumber] = state;
     journalOrderState(orderNumber, state);
     updateTransportOnOrderCompletion(db, ord, state);
+
+    // The order shipped — deduct physical stock and release its reservation
+    // (deductOrder does both). Guarded so a re-fire (e.g. offline replay) can
+    // never double-deduct. Only for inventory-tracked batches. Records the
+    // SKUs whose availability changed so we can notify ZORT below.
+    let deductedSkus = [];
+    if (batch.inventory_tracked && !state.inventory_deducted && inventory.available()) {
+      const cid = batch.inventory_client || invClientId(batch.client_name);
+      try {
+        inventory.deductOrder(cid, { id: orderNumber, items: (ord.lines || []).map(l => ({ sku: l.sku, qty: l.qty })) });
+        state.inventory_deducted = true;
+        deductedSkus = [...new Set((ord.lines || []).map(l => l.sku).filter(Boolean))];
+      } catch (e) { console.warn('[scan/complete] inventory deduct failed for', orderNumber, e.message); }
+    }
+
     writeDb(db);
     logAudit('order_completed', completionAuditData(batch, ord, state));
     // Zort-sourced order? Push the completion back to the client's store
     // (async, never blocks completion; failures are audit-logged).
     pushZortCompletion(db, ord, state);
+    // Shipped stock changed availability → notify ZORT stock-sync stores.
+    if (deductedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), deductedSkus);
     sendCompletionAlert(orderNumber, ord, operator).then(result => {
       const db2    = readDb();
       const batch2 = findBatchForOrder(db2, orderNumber);
@@ -8094,8 +8153,8 @@ const zortApi = require('./lib/zort.js');
 
 function zortStores(db) { return db.zortStores || (db.zortStores = []); }
 function zortMask(s) { s = String(s || ''); return s.length <= 6 ? '••••' : s.slice(0, 3) + '••••' + s.slice(-3); }
-function zortStorePublic(s) {
-  return {
+function zortStorePublic(s, db) {
+  const out = {
     id: s.id, clientName: s.clientName, storename: s.storename,
     apikeyMasked: zortMask(s.apikey), apisecretMasked: zortMask(s.apisecret),
     endpoint: s.endpoint || '', enabled: !!s.enabled,
@@ -8103,8 +8162,56 @@ function zortStorePublic(s) {
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
     completeStatusCode: s.completeStatusCode ?? 1,
+    stockSync: !!s.stockSync,
     lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
   };
+  // Outbox health for this store (pending vs stalled), if a db is supplied.
+  if (db) {
+    const mine = (db.zortOutbox || []).filter(e => e.storeId === s.id);
+    out.outboxPending = mine.filter(e => !e.stalled).length;
+    out.outboxStalled = mine.filter(e => e.stalled).length;
+  }
+  return out;
+}
+
+// Reconcile a Zort order that is now VOID against what we already imported.
+// Standing rule: completed/in-progress work is never silently regressed. Only
+// a still-pending, never-scanned order is auto-cancelled (and its reservation
+// released); anything worked on is flagged for a human via an audit conflict.
+function handleZortVoid(db, orderNumber, zortId, store) {
+  try {
+    let batch = null, ord = null;
+    for (const b of db.batches || []) {
+      const o = (b.orders || []).find(x => x.order_number === orderNumber && (!zortId || x.zort_id === zortId || !x.zort_id));
+      if (o) { batch = b; ord = o; break; }
+    }
+    if (!batch || !ord) return; // never imported — nothing to reconcile
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+
+    if (state.status === 'done' || state.status === 'processing' || scannedTotal > 0) {
+      logAudit('zort_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
+      return;
+    }
+
+    // Pending + untouched → cancel it and give the reserved units back.
+    state.status = 'unprocessed';
+    let releasedSkus = [];
+    if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
+      const cid = batch.inventory_client || invClientId(batch.client_name);
+      const items = (ord.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: l.qty }));
+      try {
+        inventory.releaseOrder(cid, { id: orderNumber, items });
+        state.inventory_released = true;
+        releasedSkus = [...new Set(items.map(i => i.sku))];
+      } catch (e) { console.warn('[zort-void] release failed for', orderNumber, e.message); }
+    }
+    state.updated_at = new Date().toISOString();
+    batch.orderStates[orderNumber] = state;
+    journalOrderState(orderNumber, state);
+    logAudit('zort_order_voided', { order: orderNumber, client: batch.client_name || '', released: releasedSkus.length });
+    if (releasedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), releasedSkus);
+  } catch (e) { console.error('[zort] handleZortVoid error:', e.message); }
 }
 
 // Pull new/updated orders from one store into a fresh batch.
@@ -8127,8 +8234,10 @@ async function pullZortStore(db, store) {
     for (const o of list) {
       const number = String(o.number || '').trim();
       if (!number) continue;
-      // Zort status 2 = voided/cancelled in their scheme — never import
-      if (Number(o.status) === 2) { skippedVoid++; continue; }
+      // Zort status 2 = voided/cancelled in their scheme — never import as a
+      // new order, but if we ALREADY imported this order, reconcile the
+      // cancellation (release its reservation if it hasn't been worked yet).
+      if (Number(o.status) === 2) { skippedVoid++; handleZortVoid(db, number, o.id, store); continue; }
       if (existing.has(number)) { skippedExisting++; continue; }
       const lines = o.list || o.orderlist || [];
       if (!lines.length) continue;
@@ -8181,7 +8290,26 @@ async function pullZortStore(db, store) {
   }
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '');
   const batchClients = [];
+  const reservedByClient = new Map(); // clientId -> Set(sku) reserved this pull
   for (const [clientName, clientOrders] of byClient) {
+    const cid = invClientId(clientName);
+    // Reserve stock for every pulled order (marketplace sale) exactly like an
+    // upload — but only when the SKU already exists in this client's inventory
+    // (a Zort pull never invents catalog items). Reservations lower available,
+    // which the stock push below then reflects to ZORT.
+    let tracked = false;
+    if (inventory.available()) {
+      for (const o of clientOrders) {
+        const items = (o.lines || []).filter(l => l.sku && inventory.get(l.sku, cid)).map(l => ({ sku: l.sku, qty: l.qty }));
+        if (!items.length) continue;
+        try {
+          inventory.reserveOrder(cid, { id: o.order_number, items });
+          tracked = true;
+          if (!reservedByClient.has(cid)) reservedByClient.set(cid, new Set());
+          for (const it of items) reservedByClient.get(cid).add(it.sku);
+        } catch (e) { console.warn('[zort-pull] reserve failed for', o.order_number, e.message); }
+      }
+    }
     const batch = {
       id: uuidv4(),
       filename:    `zort-${clientName.replace(/[^A-Za-z0-9_-]+/g, '_')}-${stamp}`,
@@ -8193,6 +8321,8 @@ async function pullZortStore(db, store) {
       row_count:   clientOrders.reduce((n, o) => n + o.lines.length, 0),
       orderStates: {},
       orders: clientOrders,
+      inventory_tracked: tracked,
+      inventory_client: tracked ? cid : undefined,
     };
     db.batches.unshift(batch);
     batchClients.push(`${clientName} (${clientOrders.length})`);
@@ -8200,11 +8330,75 @@ async function pullZortStore(db, store) {
   store.lastPullAt = new Date().toISOString();
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients };
   writeDb(db);
+  // Reservations from this pull lowered available — reflect it back to ZORT
+  // stock-sync stores (e.g. a Shopee sale reserving stock updates the
+  // Lazada-visible number for the same client).
+  for (const [cid, skuSet] of reservedByClient) zortNotifyStockChange(db, cid, [...skuSet]);
   logAudit('zort_pull', { storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients.slice(0, 20) });
   return store.lastResult;
 }
 
-// Fire-and-forget push of a completed order back to its client's Zort store.
+// ── ZORT outbox — durable, retrying up/down message queue ───────────────────
+// Every message to ZORT (a completion status, a stock-level update) is first
+// ENQUEUED into db.zortOutbox, then drained by a background worker with
+// retry/backoff. This means a message is never lost to a transient network
+// blip or a ZORT outage: it rides the same atomic writeDb + nightly-backup
+// machinery as every other record, survives a crash/redeploy, and replays
+// until it succeeds. This is the "replay up and down" guarantee.
+//
+// Entry shape: { id, kind:'completion'|'stock', storeId, clientId, sku?,
+//   orderNumber?, zortId?, tracking?, action?, attempts, nextAttemptAt,
+//   createdAt, lastError?, stalled? }
+function zortOutbox(db) { return db.zortOutbox || (db.zortOutbox = []); }
+
+// Which enabled, stock-syncing stores serve this client? A store serves a
+// client if its own clientName maps to it, OR any of its channel→client
+// mappings resolves to it (a ZORT account fans many clients' channels).
+function zortStoresForClient(db, clientId, { requireStockSync = true } = {}) {
+  const cid = invClientId(clientId);
+  return zortStores(db).filter(s => {
+    if (!s.enabled) return false;
+    if (requireStockSync && !s.stockSync) return false;
+    if (invClientId(s.clientName) === cid) return true;
+    return Object.values(s.channelClients || {}).some(v => invClientId(v) === cid);
+  });
+}
+
+// Enqueue a stock-level push for one (store, sku). Coalesces: if a non-stalled
+// 'stock' entry for the same (store, sku) is already pending, we skip — the
+// drainer recomputes the CURRENT available at send time, so one pending entry
+// always carries the latest number.
+function enqueueZortStock(db, storeId, clientId, sku) {
+  const ob = zortOutbox(db);
+  if (ob.some(e => e.kind === 'stock' && e.storeId === storeId && e.sku === sku && !e.stalled)) return false;
+  ob.push({
+    id: uuidv4(), kind: 'stock', storeId, clientId: invClientId(clientId), sku,
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+// Public hook: "stock for this client's SKUs changed" — fan out to every
+// matching ZORT store. Provider-agnostic at the call sites (they just say what
+// changed); this function decides who needs to hear it. Persists the outbox.
+// NOTE: matches the existing ZORT feature's tenant scope — it enqueues into the
+// db handed in by the calling request; the drainer runs in the default-tenant
+// context like the auto-pull scheduler.
+function zortNotifyStockChange(db, clientId, skus) {
+  try {
+    if (!Array.isArray(skus) || !skus.length) return;
+    const stores = zortStoresForClient(db, clientId);
+    if (!stores.length) return;
+    let added = 0;
+    for (const store of stores) for (const sku of [...new Set(skus.filter(Boolean))]) {
+      if (enqueueZortStock(db, store.id, clientId, sku)) added++;
+    }
+    if (added) { writeDb(db); logAudit('zort_stock_enqueued', { clientId: invClientId(clientId), count: added }); }
+  } catch (e) { console.error('[zort] notifyStockChange error:', e.message); }
+}
+
+// Enqueue a completion status push for a Zort-sourced order (replaces the old
+// fire-and-forget send — now durable + retried). Persists the outbox.
 function pushZortCompletion(db, ord, state) {
   try {
     if (!ord?.zort_id || !ord?.zort_store_id) return;
@@ -8212,23 +8406,83 @@ function pushZortCompletion(db, ord, state) {
     if (!store || !store.enabled) return;
     const action = store.completeAction || 'none';
     if (action === 'none') return;
-    const tracking = String(ord.waybill_number || '').trim();
-    const p =
-      action === 'pack'        ? zortApi.packOrder(store, { id: ord.zort_id, trackingno: tracking || undefined }) :
-      action === 'readytoship' ? zortApi.readyToShip(store, { id: ord.zort_id, trackingno: tracking || undefined }) :
-      zortApi.updateOrderStatus(store, { id: ord.zort_id, status: store.completeStatusCode ?? 1, actionDate: new Date().toISOString().slice(0, 10) });
-    p.then(() => {
-      logAudit('zort_completion_pushed', { order: ord.order_number, client: store.clientName || '', action });
-    }).catch(err => {
-      console.error(`[zort] completion push failed for ${ord.order_number}:`, err.message);
-      logAudit('zort_completion_push_failed', { order: ord.order_number, client: store.clientName || '', action, error: String(err.message).slice(0, 200) });
+    zortOutbox(db).push({
+      id: uuidv4(), kind: 'completion', storeId: store.id, clientId: invClientId(store.clientName),
+      orderNumber: ord.order_number, zortId: ord.zort_id, action,
+      tracking: String(ord.waybill_number || '').trim(),
+      attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
     });
-  } catch (e) { console.error('[zort] push error:', e.message); }
+    writeDb(db);
+  } catch (e) { console.error('[zort] enqueue completion error:', e.message); }
 }
+
+// Backoff schedule for a failed send (minutes), then hourly.
+function _zortBackoffMs(attempts) {
+  const mins = [1, 5, 15, 60][Math.min(attempts, 3)] ?? 60;
+  return mins * 60000;
+}
+
+// Send one outbox entry. Returns true on success (entry should be removed).
+async function _zortSendOutboxEntry(db, store, entry) {
+  if (entry.kind === 'completion') {
+    const t = entry.tracking || undefined;
+    if (entry.action === 'pack')        await zortApi.packOrder(store, { id: entry.zortId, trackingno: t });
+    else if (entry.action === 'readytoship') await zortApi.readyToShip(store, { id: entry.zortId, trackingno: t });
+    else await zortApi.updateOrderStatus(store, { id: entry.zortId, status: store.completeStatusCode ?? 1, actionDate: new Date().toISOString().slice(0, 10) });
+    logAudit('zort_completion_pushed', { order: entry.orderNumber, client: store.clientName || '', action: entry.action });
+    return true;
+  }
+  // kind === 'stock' — recompute CURRENT available right now and push absolute.
+  const item = inventory.available() ? inventory.get(entry.sku, entry.clientId) : null;
+  const available = item ? Math.max(0, item.stock_qty - item.reserved_qty) : 0;
+  await zortApi.adjustInventory(store, { sku: entry.sku, qty: available });
+  logAudit('zort_stock_pushed', { sku: entry.sku, client: store.clientName || '', qty: available });
+  return true;
+}
+
+// Drain due outbox entries. Guarded like the auto-pull scheduler; runs in the
+// default-tenant context (bare readDb) to match the rest of the ZORT feature.
+let _zortOutboxDraining = false;
+async function drainZortOutbox() {
+  if (_zortOutboxDraining) return;
+  _zortOutboxDraining = true;
+  try {
+    const db = readDb();
+    const ob = zortOutbox(db);
+    if (!ob.length) return;
+    const now = Date.now();
+    let changed = false;
+    const remaining = [];
+    for (const entry of ob) {
+      if (new Date(entry.nextAttemptAt).getTime() > now) { remaining.push(entry); continue; }
+      const store = zortStores(db).find(s => s.id === entry.storeId);
+      if (!store || !store.enabled) { remaining.push(entry); continue; } // store paused — hold, don't drop
+      try {
+        await _zortSendOutboxEntry(db, store, entry);
+        changed = true; // success → drop entry (not pushed to remaining)
+      } catch (err) {
+        entry.attempts = (entry.attempts || 0) + 1;
+        entry.lastError = String(err.message).slice(0, 200);
+        entry.nextAttemptAt = new Date(now + _zortBackoffMs(entry.attempts)).toISOString();
+        if (entry.attempts >= 20 && !entry.stalled) {
+          entry.stalled = true;
+          logAudit(entry.kind === 'stock' ? 'zort_stock_push_failed' : 'zort_completion_push_failed',
+            { storeId: store.id, client: store.clientName || '', sku: entry.sku, order: entry.orderNumber, attempts: entry.attempts, error: entry.lastError });
+        }
+        changed = true;
+        remaining.push(entry);
+      }
+    }
+    if (changed) { db.zortOutbox = remaining; writeDb(db); }
+  } catch (e) { console.error('[zort] outbox drain error:', e.message); }
+  finally { _zortOutboxDraining = false; }
+}
+setInterval(drainZortOutbox, Math.max(1000, Number(process.env.ZORT_OUTBOX_MS) || 30000));
 
 app.get('/api/master/zort/stores', (req, res) => {
   if (!checkMaster(req, res)) return;
-  res.json(zortStores(readDb()).map(zortStorePublic));
+  const db = readDb();
+  res.json(zortStores(db).map(s => zortStorePublic(s, db)));
 });
 
 app.post('/api/master/zort/stores', (req, res) => {
@@ -8264,9 +8518,10 @@ app.post('/api/master/zort/stores', (req, res) => {
   store.autoPullMinutes = Math.max(0, Math.min(1440, parseInt(b.autoPullMinutes, 10) || 0));
   if (['none', 'status', 'pack', 'readytoship'].includes(b.completeAction)) store.completeAction = b.completeAction;
   if (b.completeStatusCode !== undefined) store.completeStatusCode = parseInt(b.completeStatusCode, 10) || 1;
+  if (b.stockSync !== undefined) store.stockSync = !!b.stockSync;
   writeDb(db);
-  logAudit('zort_store_saved', { client: store.clientName, storeId: store.id, by: req.userId || '' });
-  res.json(zortStorePublic(store));
+  logAudit('zort_store_saved', { client: store.clientName, storeId: store.id, stockSync: !!store.stockSync, by: req.userId || '' });
+  res.json(zortStorePublic(store, db));
 });
 
 app.delete('/api/master/zort/stores/:id', (req, res) => {
@@ -8319,6 +8574,42 @@ app.post('/api/master/zort/stores/:id/pull', async (req, res) => {
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });
   }
+});
+
+// Initial / manual FULL stock sync — enqueue a stock push for every SKU this
+// store's client(s) own. The drainer sends the current available for each.
+app.post('/api/master/zort/stores/:id/push-stock', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+  // Every client this store serves (its own label + any mapped channel client).
+  const clients = new Set([invClientId(store.clientName), ...Object.values(store.channelClients || {}).map(invClientId)]);
+  let enqueued = 0;
+  for (const cid of clients) {
+    let items = [];
+    try { items = inventory.getAll({ clientId: cid }); } catch (_) {}
+    for (const it of items) if (enqueueZortStock(db, store.id, cid, it.sku)) enqueued++;
+  }
+  writeDb(db);
+  logAudit('zort_stock_push_all', { storeId: store.id, client: store.clientName || '', enqueued, by: req.userId || '' });
+  res.json({ ok: true, enqueued });
+});
+
+// Outbox status — pending & stalled entries (for the Connections status panel).
+app.get('/api/master/zort/outbox', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const ob = zortOutbox(readDb());
+  res.json({
+    pending: ob.filter(e => !e.stalled).length,
+    stalled: ob.filter(e => e.stalled).length,
+    entries: ob.slice(0, 200).map(e => ({
+      id: e.id, kind: e.kind, storeId: e.storeId, clientId: e.clientId,
+      sku: e.sku, orderNumber: e.orderNumber, attempts: e.attempts,
+      nextAttemptAt: e.nextAttemptAt, stalled: !!e.stalled, lastError: e.lastError || null,
+    })),
+  });
 });
 
 // Auto-pull scheduler: each enabled store with autoPullMinutes > 0 is pulled
@@ -9338,44 +9629,56 @@ app.get('/driver', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const inventory = require('./lib/inventory-store');
 inventory.init();
-// Auto-seed ONLY the original "default" tenant — _skuDescMap is that tenant's
-// specific product catalog (loaded from the BETIME CODE2 reference file), not
-// a shared master catalog. A brand-new tenant is a different business with
-// its own products, so it must start with a genuinely empty inventory, not
-// pre-populated with an unrelated tenant's SKUs. They can still call
-// POST /api/inventory/seed explicitly if they ever want this same catalog.
-function _invSeed() {
-  if (tenantContext.currentTenantId() !== tenantStore.DEFAULT_TENANT_ID) return;
-  try { inventory.seedFromSkuMap(_skuDescMap); } catch (_) {}
+
+// 3PL model: ALL stock is client-owned. Orders/batches carry only a free-text
+// client_name, while the inventory store keys on client_id — so we derive a
+// stable client_id from the client name (one helper, used everywhere). An
+// empty/blank name falls back to 'GENERAL' so nothing is ever silently
+// unscoped.
+function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
+
+// Every /api/inventory route needs an explicit client. Reads take ?clientId=,
+// writes take it in the body. Missing → 400 (never a 500 from the store guard).
+function reqClientId(req) {
+  const c = req.query?.clientId || req.body?.clientId || '';
+  return String(c).trim();
 }
 
 app.get('/api/inventory', requireAuth, (req, res) => {
-  _invSeed();
-  const { category, search, lowStock, clientId } = req.query;
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const { category, search, lowStock } = req.query;
   res.json(inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId }));
 });
 app.get('/api/inventory/stats', requireAuth, (req, res) => {
-  _invSeed();
-  res.json(inventory.getStats({ clientId: req.query.clientId }));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.getStats({ clientId }));
 });
 app.get('/api/inventory/velocity', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   const limit = Math.min(Number(req.query.limit) || 20, 50);
-  res.json(inventory.velocity(limit, req.query.clientId || null));
+  res.json(inventory.velocity(clientId, limit));
 });
 app.post('/api/inventory/import', requireAuth, express.json(), (req, res) => {
-  const { items = [], mode = 'upsert' } = req.body || {};
+  const { items = [], mode = 'upsert', clientId } = req.body || {};
+  const cid = String(clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required' });
   if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
   let imported = 0, skipped = 0; const errors = [];
-  if (mode === 'replace') { try { inventory.getAll().forEach(r => inventory.remove(r.sku)); } catch (_) {} }
+  if (mode === 'replace') { try { inventory.getAll({ clientId: cid }).forEach(r => inventory.remove(r.sku, cid)); } catch (_) {} }
   for (const it of items) {
-    try { inventory.upsert(it); imported++; }
+    try { inventory.upsert({ ...it, clientId: cid }); imported++; }
     catch (e) { skipped++; errors.push({ sku: it && it.sku, error: e.message }); }
   }
   res.json({ imported, skipped, errors });
 });
 app.post('/api/inventory/seed', requireAuth, (req, res) => {
-  const n = inventory.seedFromSkuMap(_skuDescMap);
-  res.json({ seeded: n, total: inventory.getAll().length });
+  const cid = String(req.body?.clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required' });
+  const n = inventory.seedFromSkuMap(cid, _skuDescMap);
+  res.json({ seeded: n, total: inventory.getAll({ clientId: cid }).length });
 });
 
 // ── Product Master (ULD_Product_Master_Template.xlsx) ────────────────────────
@@ -9390,6 +9693,8 @@ app.get('/api/inventory/product-master-template', requireAuth, (req, res) => {
 
 app.post('/api/inventory/import-product-master', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const cid = String(req.body?.clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
   let rawRows;
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -9402,53 +9707,55 @@ app.post('/api/inventory/import-product-master', upload.single('file'), tenantMi
   let imported = 0;
   const errors = skipped.map(s => ({ row: s.row, error: s.reason }));
   for (const row of rows) {
-    try { inventory.upsert(row); imported++; }
+    try { inventory.upsert({ ...row, clientId: cid }); imported++; }
     catch (e) { errors.push({ row: row.sku, error: e.message }); }
   }
-  logAudit('product_master_imported', { imported, skipped: skipped.length, by: req.userId || '' });
+  logAudit('product_master_imported', { imported, skipped: skipped.length, clientId: cid, by: req.userId || '' });
   res.json({ imported, skipped: skipped.length, errors });
 });
 app.post('/api/inventory', requireAuth, express.json(), (req, res) => {
-  try { res.status(201).json(inventory.upsert(req.body || {})); }
-  catch (e) { res.status(400).json({ error: e.message }); }
+  try {
+    const body = req.body || {};
+    if (!String(body.clientId || '').trim()) return res.status(400).json({ error: 'clientId is required' });
+    res.status(201).json(inventory.upsert(body));
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get('/api/inventory/:sku/movements', requireAuth, (req, res) => {
-  res.json(inventory.movements(req.params.sku, Number(req.query.limit) || 50));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.movements(req.params.sku, clientId, Number(req.query.limit) || 50));
 });
 app.post('/api/inventory/:sku/adjust', requireAuth, express.json(), (req, res) => {
-  const { qty, type = 'adjustment', reason = '' } = req.body || {};
+  const { qty, type = 'adjustment', reason = '', clientId } = req.body || {};
+  const cid = String(clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required' });
   if (qty === undefined || Number.isNaN(Number(qty))) return res.status(400).json({ error: 'qty (number) is required' });
-  try { res.json(inventory.adjust(req.params.sku, Number(qty), type, reason)); }
+  try {
+    const result = inventory.adjust(req.params.sku, cid, Number(qty), type, reason);
+    zortNotifyStockChange(readDb(), cid, [req.params.sku]);
+    res.json(result);
+  }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get('/api/inventory/:sku', requireAuth, (req, res) => {
-  const item = inventory.get(req.params.sku);
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const item = inventory.get(req.params.sku, clientId);
   if (!item) return res.status(404).json({ error: 'SKU not found' });
   res.json(item);
 });
 app.put('/api/inventory/:sku', requireAuth, express.json(), (req, res) => {
-  try { res.json(inventory.upsert({ ...(req.body || {}), sku: req.params.sku })); }
-  catch (e) { res.status(400).json({ error: e.message }); }
-});
-app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
-  inventory.remove(req.params.sku);
-  res.json({ ok: true });
-});
-
-// ── Client-Specific SKU Variants ────────────────────────────────────────────
-app.get('/api/inventory/clients/:clientId/variants', requireAuth, (req, res) => {
-  res.json(inventory.getClientVariants(req.params.clientId));
-});
-app.post('/api/inventory/clients/:clientId/variants/:sku', requireAuth, express.json(), (req, res) => {
   try {
-    const variant = inventory.upsertClientVariant(req.params.clientId, req.params.sku, req.body || {});
-    res.json(variant);
+    const body = { ...(req.body || {}), sku: req.params.sku };
+    if (!String(body.clientId || '').trim()) return res.status(400).json({ error: 'clientId is required' });
+    res.json(inventory.upsert(body));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
-app.get('/api/inventory/clients/:clientId/variants/:sku', requireAuth, (req, res) => {
-  const variant = inventory.getClientVariantBySku(req.params.clientId, req.params.sku);
-  if (!variant) return res.status(404).json({ error: 'Variant not found' });
-  res.json(variant);
+app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  inventory.remove(req.params.sku, clientId);
+  res.json({ ok: true });
 });
 
 // ── Warehouse Locations & Stock Distribution ────────────────────────────────
@@ -9468,85 +9775,108 @@ app.post('/api/inventory/locations', requireAuth, express.json(), (req, res) => 
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get('/api/inventory/:sku/locations', requireAuth, (req, res) => {
-  res.json(inventory.stockByLocation(req.params.sku));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.stockByLocation(clientId, req.params.sku));
 });
 app.post('/api/inventory/transfer', requireAuth, express.json(), (req, res) => {
   try {
-    const { sku, from_location, to_location, qty } = req.body || {};
+    const { sku, from_location, to_location, qty, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!sku || !from_location || !to_location || !qty) return res.status(400).json({ error: 'sku, from_location, to_location, qty required' });
-    const result = inventory.transferStock(sku, from_location, to_location, Number(qty), req.userId || '');
-    logAudit('stock_transfer', { sku, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
+    const result = inventory.transferStock(cid, sku, from_location, to_location, Number(qty), req.userId || '');
+    logAudit('stock_transfer', { sku, clientId: cid, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
     res.json(result);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// ── Suppliers & Reorder Management ──────────────────────────────────────────
+// ── Suppliers & Reorder Management (per client) ─────────────────────────────
 app.get('/api/inventory/suppliers', requireAuth, (req, res) => {
-  res.json(inventory.getSuppliers({ active: req.query.active !== 'false' }));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.getSuppliers(clientId, { active: req.query.active !== 'false' }));
 });
 app.post('/api/inventory/suppliers', requireAuth, express.json(), (req, res) => {
   try {
-    const { id, name } = req.body || {};
+    const { id, name, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!id || !name) return res.status(400).json({ error: 'id and name required' });
-    const supplier = inventory.upsertSupplier(id, req.body);
-    logAudit('supplier_created', { id, name, by: req.userId || '' });
+    const supplier = inventory.upsertSupplier(cid, id, req.body);
+    logAudit('supplier_created', { id, name, clientId: cid, by: req.userId || '' });
     res.status(201).json(supplier);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get('/api/inventory/suppliers/:supplierId', requireAuth, (req, res) => {
-  const suppliers = inventory.getSuppliers();
-  const supplier = suppliers.find(s => s.supplier_id === req.params.supplierId);
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const supplier = inventory.getSuppliers(clientId).find(s => s.supplier_id === req.params.supplierId);
   if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
   res.json(supplier);
 });
 app.post('/api/inventory/suppliers/:supplierId/skus/:sku', requireAuth, express.json(), (req, res) => {
   try {
-    const mapping = inventory.mapSupplierSku(req.params.supplierId, req.params.sku, req.body || {});
-    logAudit('supplier_sku_mapped', { supplier: req.params.supplierId, sku: req.params.sku, by: req.userId || '' });
+    const cid = String(req.body?.clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
+    const mapping = inventory.mapSupplierSku(cid, req.params.supplierId, req.params.sku, req.body || {});
+    logAudit('supplier_sku_mapped', { supplier: req.params.supplierId, sku: req.params.sku, clientId: cid, by: req.userId || '' });
     res.json(mapping);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get('/api/inventory/:sku/suppliers', requireAuth, (req, res) => {
-  res.json(inventory.getSupplierOptions(req.params.sku));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.getSupplierOptions(clientId, req.params.sku));
 });
 app.get('/api/inventory/reorder-suggestions', requireAuth, (req, res) => {
-  res.json(inventory.getReorderSuggestions());
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.getReorderSuggestions(clientId));
 });
 
-// ── Cycle Counts ────────────────────────────────────────────────────────────
+// ── Cycle Counts (per client) ────────────────────────────────────────────────
 app.post('/api/inventory/cycle-counts', requireAuth, express.json(), (req, res) => {
   try {
-    const { count_id, location_id, counted_by } = req.body || {};
+    const { count_id, location_id, counted_by, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!count_id) return res.status(400).json({ error: 'count_id required' });
-    const count = inventory.startCycleCount(count_id, location_id, counted_by || req.userId || '');
-    logAudit('cycle_count_started', { count_id, location_id, by: req.userId || '' });
+    const count = inventory.startCycleCount(cid, count_id, location_id, counted_by || req.userId || '');
+    logAudit('cycle_count_started', { count_id, location_id, clientId: cid, by: req.userId || '' });
     res.status(201).json(count);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.post('/api/inventory/cycle-counts/:countId/lines', requireAuth, express.json(), (req, res) => {
   try {
-    const { sku, counted_qty, expected_qty, reason } = req.body || {};
+    const { sku, counted_qty, expected_qty, reason, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!sku || counted_qty === undefined) return res.status(400).json({ error: 'sku and counted_qty required' });
-    const line = inventory.recordCycleCountLine(req.params.countId, sku, Number(counted_qty), expected_qty !== undefined ? Number(expected_qty) : null, reason);
+    const line = inventory.recordCycleCountLine(cid, req.params.countId, sku, Number(counted_qty), expected_qty !== undefined ? Number(expected_qty) : null, reason);
     res.json(line);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.post('/api/inventory/cycle-counts/:countId/complete', requireAuth, express.json(), (req, res) => {
   try {
-    const { verified_by } = req.body || {};
-    const result = inventory.completeCycleCount(req.params.countId, verified_by || req.userId || '');
-    logAudit('cycle_count_completed', { count_id: req.params.countId, lines: result.lines, variances: result.variances, by: req.userId || '' });
+    const { verified_by, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
+    const result = inventory.completeCycleCount(cid, req.params.countId, verified_by || req.userId || '');
+    logAudit('cycle_count_completed', { count_id: req.params.countId, lines: result.lines, variances: result.variances, clientId: cid, by: req.userId || '' });
+    // A cycle count that changed quantities changes availability → tell ZORT.
+    if (result.variances > 0 && Array.isArray(result.adjustedSkus) && result.adjustedSkus.length) {
+      zortNotifyStockChange(readDb(), cid, result.adjustedSkus);
+    }
     res.json(result);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// ── Stock Alerts ────────────────────────────────────────────────────────────
+// ── Stock Alerts (per client) ────────────────────────────────────────────────
 app.get('/api/inventory/alerts', requireAuth, (req, res) => {
-  res.json(inventory.getActiveAlerts({
-    sku: req.query.sku,
-    clientId: req.query.client_id,
-    severity: req.query.severity
-  }));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.getActiveAlerts(clientId, { sku: req.query.sku, severity: req.query.severity }));
 });
 app.post('/api/inventory/alerts/:alertId/resolve', requireAuth, (req, res) => {
   const alert = inventory.resolveAlert(req.params.alertId);
@@ -9555,49 +9885,61 @@ app.post('/api/inventory/alerts/:alertId/resolve', requireAuth, (req, res) => {
   res.json(alert);
 });
 
-// ── Batch/Lot Tracking ──────────────────────────────────────────────────────
+// ── Batch/Lot Tracking (per client) ──────────────────────────────────────────
 app.post('/api/inventory/batches', requireAuth, express.json(), (req, res) => {
   try {
-    const { batch_id, sku, quantity } = req.body || {};
+    const { batch_id, sku, quantity, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!batch_id || !sku || quantity === undefined) return res.status(400).json({ error: 'batch_id, sku, quantity required' });
-    const batch = inventory.createBatch(batch_id, sku, Number(quantity), req.body);
-    logAudit('batch_created', { batch_id, sku, quantity: Number(quantity), by: req.userId || '' });
+    const batch = inventory.createBatch(cid, batch_id, sku, Number(quantity), req.body);
+    logAudit('batch_created', { batch_id, sku, quantity: Number(quantity), clientId: cid, by: req.userId || '' });
     res.status(201).json(batch);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get('/api/inventory/:sku/batches', requireAuth, (req, res) => {
-  res.json(inventory.getBatchesBySku(req.params.sku, { includeQuarantined: req.query.all === 'true' }));
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.getBatchesBySku(clientId, req.params.sku, { includeQuarantined: req.query.all === 'true' }));
 });
 app.post('/api/inventory/batches/:batchId/quarantine', requireAuth, express.json(), (req, res) => {
   try {
     const { reason } = req.body || {};
-    const batch = inventory.quarantineBatch(req.params.batchId, reason);
+    const batch = inventory.quarantineBatch(req.params.batchId);
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
     logAudit('batch_quarantined', { batch_id: req.params.batchId, reason, by: req.userId || '' });
     res.json(batch);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// ── Analytics & Reports ────────────────────────────────────────────────────
+// ── Analytics & Reports (per client) ────────────────────────────────────────
 app.get('/api/inventory/analytics/aging', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   res.json({
-    data: inventory.stockAging(Number(req.query.limit) || 50),
+    data: inventory.stockAging(clientId, Number(req.query.limit) || 50),
     description: 'Stock ordered by age (oldest first)'
   });
 });
 app.post('/api/inventory/analytics/turnover', requireAuth, express.json(), (req, res) => {
-  const { skus, days } = req.body || {};
+  const { skus, days, clientId } = req.body || {};
+  const cid = String(clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required' });
   if (!Array.isArray(skus)) return res.status(400).json({ error: 'skus array required' });
-  res.json(inventory.turnoverRate(skus, Number(days) || 30));
+  res.json(inventory.turnoverRate(cid, skus, Number(days) || 30));
 });
 app.get('/api/inventory/analytics/slow-movers', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   res.json({
-    data: inventory.slowMovers(Number(req.query.days) || 30, Number(req.query.minAge) || 60),
+    data: inventory.slowMovers(clientId, Number(req.query.days) || 30, Number(req.query.minAge) || 60),
     description: 'SKUs with low movement over period'
   });
 });
 app.get('/api/inventory/analytics/value', requireAuth, (req, res) => {
-  res.json(inventory.stockValue());
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.stockValue(clientId));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

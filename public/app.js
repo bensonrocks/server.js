@@ -8155,26 +8155,32 @@
       const r = await fetch('/api/master/zort/stores', { headers: { 'x-master-key': LOG_PASSWORD } });
       const stores = await r.json();
       if (!stores.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding:1rem;color:#64748b">No ZORT stores connected yet. Click “+ Connect Store” and paste the client\'s API credentials from their ZORT settings page.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:1rem;color:#64748b">No ZORT stores connected yet. Click “+ Connect Store” and paste the client\'s API credentials from their ZORT settings page.</td></tr>';
         return;
       }
       const actLbl = { none: 'nothing', pack: 'Pack', readytoship: 'Ready to ship', status: 'status code' };
-      tbody.innerHTML = stores.map(s => `
+      tbody.innerHTML = stores.map(s => {
+        const stockBadge = s.stockSync
+          ? `<span style="color:#059669;font-weight:600">📦 On</span>` + (s.outboxPending ? `<br><span style="color:#64748b;font-size:.75rem">${s.outboxPending} queued</span>` : '') + (s.outboxStalled ? `<br><span style="color:#dc2626;font-size:.75rem">⚠ ${s.outboxStalled} stalled</span>` : '')
+          : `<span style="color:#94a3b8">off</span>`;
+        return `
         <tr data-zid="${esc(s.id)}">
           <td><b>${esc(s.clientName)}</b>${s.enabled ? '' : ' <span style="color:#ef4444">(disabled)</span>'}</td>
           <td>${esc(s.storename)}</td>
           <td><code>${esc(s.apikeyMasked)}</code></td>
           <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
           <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
+          <td>${stockBadge}</td>
           <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Marketplaces this client has linked inside their ZORT account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
+            ${s.stockSync ? '<button class="btn-secondary btn-sm z-pushstock" title="Enqueue current stock levels for every SKU to ZORT">⇪ Push Stock</button>' : ''}
             <button class="btn-secondary btn-sm z-edit">&#9998;</button>
             <button class="btn-danger btn-sm z-del">&#128465;</button>
           </td>
-        </tr>`).join('');
+        </tr>`; }).join('');
       tbody.querySelectorAll('tr').forEach(tr => {
         const id = tr.dataset.zid;
         const store = stores.find(s => s.id === id);
@@ -8210,6 +8216,18 @@
           } catch (err) { zortStatus('error', 'Pull failed: ' + err.message); }
           e.target.disabled = false;
         });
+        tr.querySelector('.z-pushstock')?.addEventListener('click', async e => {
+          if (!confirm(`Push current stock levels for every SKU owned by ${store.clientName} to ZORT?\n\nThis enqueues an absolute available-quantity update per SKU; the background sync sends them with retry.`)) return;
+          e.target.disabled = true;
+          zortStatus('progress', `Enqueuing stock for ${store.clientName}…`);
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/push-stock`, { method: 'POST', headers: zortHdrs() });
+            const d = await r2.json();
+            if (d.ok) { zortStatus('success', `✓ ${d.enqueued} stock update(s) queued — syncing in the background`); loadZortStores(); }
+            else zortStatus('error', `✗ ${d.error}`);
+          } catch (err) { zortStatus('error', 'Push stock failed: ' + err.message); }
+          e.target.disabled = false;
+        });
         tr.querySelector('.z-edit').addEventListener('click', () => openZortForm(store));
         tr.querySelector('.z-del').addEventListener('click', async () => {
           if (!confirm(`Disconnect ZORT store for "${store.clientName}"?\n\nAlready-imported orders stay; new orders will no longer pull and completions will no longer push back.`)) return;
@@ -8235,6 +8253,7 @@
     document.getElementById('zfCompleteAction').value = store?.completeAction || 'none';
     document.getElementById('zfStatusCode').value = store?.completeStatusCode ?? 1;
     document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', (store?.completeAction || 'none') !== 'status');
+    document.getElementById('zfStockSync').checked = !!store?.stockSync;
   }
   document.getElementById('zortAddStoreBtn')?.addEventListener('click', () => openZortForm(null));
   document.getElementById('zortCancelStoreBtn')?.addEventListener('click', () => document.getElementById('zortStoreForm').classList.add('hidden'));
@@ -8286,6 +8305,7 @@
       autoPullMinutes: parseInt(document.getElementById('zfAutoPull').value, 10) || 0,
       completeAction: document.getElementById('zfCompleteAction').value,
       completeStatusCode: parseInt(document.getElementById('zfStatusCode').value, 10) || 1,
+      stockSync: document.getElementById('zfStockSync').checked,
       enabled: true,
     };
     try {
