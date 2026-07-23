@@ -5974,9 +5974,9 @@
       idleEl.classList.remove('hidden');
       const elapsedMins = idleMins - 10; // only show time after 10 min threshold
       idleEl.innerHTML = `
-        <span class="idle-icon">⏸</span>
-        <span class="idle-time">${elapsedMins}m idle</span>
-        <span class="idle-detail">${_idleSessionCount} sessions • ${_idleTotalMinutes}m total</span>`;
+        <span class="idle-badge-icon">⏸</span>
+        <span class="idle-badge-time">${elapsedMins}m idle</span>
+        <span class="idle-badge-detail">${_idleSessionCount} sessions</span>`;
     }
   }
 
