@@ -561,6 +561,27 @@ main {
 .stat-box.unprocessed .val { color: var(--danger); }
 
 /* ================================================================
+   IDLE STATUS DISPLAY
+   ================================================================ */
+.idle-status {
+  display: flex; align-items: center; gap: .6rem;
+  background: #fff3cd; border: 1px solid #ffc107;
+  border-radius: var(--radius-lg); padding: .75rem 1rem;
+  margin-bottom: .85rem; box-shadow: var(--shadow-sm);
+  font-size: .9rem;
+}
+.idle-status.hidden { display: none; }
+.idle-icon {
+  font-size: 1.2rem; color: #ff6b6b; font-weight: bold;
+}
+.idle-time {
+  font-weight: 700; color: #d97706; white-space: nowrap;
+}
+.idle-detail {
+  font-size: .8rem; color: #92400e; margin-left: auto; white-space: nowrap;
+}
+
+/* ================================================================
    WAYBILL SCAN BAR
    ================================================================ */
 .waybill-scan-bar { padding: .75rem 0 .5rem; }

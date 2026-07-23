@@ -172,6 +172,8 @@
     document.getElementById('printerSettingsBtn').classList.remove('hidden');
     document.getElementById('lockBtn').classList.remove('hidden');
     applyRoleUI();
+    // Start idle tracking for this user session
+    startIdleTracking();
   }
 
   // ── Per-user profile (printer settings) ──────────────────────────────────
@@ -5951,6 +5953,70 @@
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
 
+  // Idle tracking: detect when packer hasn't scanned for 10+ minutes
+  let _lastScanTime = null;
+  let _idleStartTime = null;
+  let _idleSessionCount = 0;
+  let _idleTotalMinutes = 0;
+  let _idleUpdateInterval = null;
+
+  function updateIdleDisplay() {
+    const now = Date.now();
+    if (!_lastScanTime) return;
+    const idleMs = now - _lastScanTime;
+    const idleMins = Math.floor(idleMs / 60000);
+    const idleEl = document.getElementById('dashIdleStatus');
+    if (!idleEl) return;
+
+    if (idleMins < 10) {
+      idleEl.classList.add('hidden');
+    } else {
+      idleEl.classList.remove('hidden');
+      const elapsedMins = idleMins - 10; // only show time after 10 min threshold
+      idleEl.innerHTML = `
+        <span class="idle-icon">⏸</span>
+        <span class="idle-time">${elapsedMins}m idle</span>
+        <span class="idle-detail">${_idleSessionCount} sessions • ${_idleTotalMinutes}m total</span>`;
+    }
+  }
+
+  function startIdleTracking() {
+    _lastScanTime = Date.now();
+    _idleStartTime = null;
+    if (!_idleUpdateInterval) {
+      _idleUpdateInterval = setInterval(updateIdleDisplay, 1000); // update every 1s
+    }
+  }
+
+  function endIdleSession() {
+    const now = Date.now();
+    if (_lastScanTime && !_idleStartTime) {
+      const idleMs = now - _lastScanTime;
+      const idleMins = Math.floor(idleMs / 60000);
+      if (idleMins >= 10) {
+        _idleStartTime = _lastScanTime;
+        _idleSessionCount++;
+        _idleTotalMinutes += idleMins;
+        // Log idle session in background (fire-and-forget)
+        logAuditBackground('packer_idle_session', {
+          operator: currentUser?.name || 'unknown',
+          idleMinutes: idleMins,
+          sessionNumber: _idleSessionCount
+        });
+      }
+    }
+    _lastScanTime = Date.now();
+    updateIdleDisplay();
+  }
+
+  function logAuditBackground(type, data) {
+    fetch('/api/audit-log', {
+      method: 'POST',
+      headers: hdrs(),
+      body: JSON.stringify({ type, data })
+    }).catch(() => {}); // silent fail
+  }
+
   // Live metrics panel auto-refresh (5s interval while scanning)
   let _scanMetricsInterval = null;
   async function loadScanMetrics() {
@@ -7546,6 +7612,8 @@
       const entry    = _scanQueue.shift();
       const sku      = entry.raw;
       const eventId  = entry.eventId;
+      // End any idle session when a scan arrives
+      endIdleSession();
       const feedback = document.getElementById('itemScanFeedback');
       try {
         const resp = await fetchT('/api/scan/increment', {
