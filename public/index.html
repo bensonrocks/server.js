@@ -219,6 +219,30 @@
     <div class="scan-order-meta" id="scanOrderMeta"></div>
     <div class="scan-progressbar"><i id="scanProgressBarFill"></i></div>
 
+    <!-- Live metrics panel: throughput & packing station stats for warehouse staff -->
+    <div class="scan-metrics-panel" id="scanMetricsPanel">
+      <div class="smp-stat">
+        <span class="smp-label">Today</span>
+        <span class="smp-value" id="smpTodayOrders">—</span>
+        <span class="smp-unit">orders</span>
+      </div>
+      <div class="smp-stat">
+        <span class="smp-label">Lines</span>
+        <span class="smp-value" id="smpTodayLines">—</span>
+        <span class="smp-unit">scanned</span>
+      </div>
+      <div class="smp-stat">
+        <span class="smp-label">Yesterday</span>
+        <span class="smp-value" id="smpYesterdayDone">—</span>
+        <span class="smp-unit">done</span>
+      </div>
+      <div class="smp-stat">
+        <span class="smp-label">Active</span>
+        <span class="smp-value" id="smpActivePackers">—</span>
+        <span class="smp-unit">now</span>
+      </div>
+    </div>
+
     <!-- Warehouse-mobile layout: live camera viewfinder pinned above the item
          list with Camera / Scanner tabs (courier pickup-scan style). Shown by
          enterItemsPhase only for warehouse-role users on phones. -->

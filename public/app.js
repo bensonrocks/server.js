@@ -5950,6 +5950,42 @@
   });
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
+
+  // Live metrics panel auto-refresh (5s interval while scanning)
+  let _scanMetricsInterval = null;
+  async function loadScanMetrics() {
+    try {
+      const r = await fetch('/api/stats');
+      if (!r.ok) return;
+      const stats = await r.json();
+      document.getElementById('smpTodayOrders').textContent = stats.todayPending || '0';
+      document.getElementById('smpYesterdayDone').textContent = stats.yesterdayDone || '0';
+      // Lines: sum of all items across today's pending orders
+      const lines = (stats.clientStats || [])
+        .reduce((sum, c) => sum + (c.todayLines || 0), 0);
+      document.getElementById('smpTodayLines').textContent = lines || '0';
+      // Active packers: rough count from loaded orders with recent activity
+      const now = Date.now();
+      const activeThreshold = 5 * 60000; // 5 minutes
+      const active = new Set();
+      for (const o of loadedOrders) {
+        if (o.scan_status === 'processing' && o.lastOperator && o.endTime) {
+          const elapsed = now - new Date(o.endTime);
+          if (elapsed < activeThreshold) active.add(o.lastOperator);
+        }
+      }
+      document.getElementById('smpActivePackers').textContent = active.size.toString();
+    } catch {}
+  }
+  function startScanMetricsRefresh() {
+    loadScanMetrics(); // load immediately
+    if (_scanMetricsInterval) clearInterval(_scanMetricsInterval);
+    _scanMetricsInterval = setInterval(loadScanMetrics, 5000); // refresh every 5s
+  }
+  function stopScanMetricsRefresh() {
+    if (_scanMetricsInterval) { clearInterval(_scanMetricsInterval); _scanMetricsInterval = null; }
+  }
+
   async function openScanOverlay(orderNumber) {
     if (!currentUser) { requireLogin(() => openScanOverlay(orderNumber)); return; }
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
@@ -5991,6 +6027,7 @@
     enterItemsPhase(ord);
     attachGlobalScanCapture();
     loadResolveCache(); // keep the offline barcode cache fresh (non-blocking)
+    startScanMetricsRefresh(); // start live metrics updates
   }
 
   function focusWaybillInput() {
@@ -6007,6 +6044,7 @@
     _scanBusy = false;
     stopTimer();
     activeOrder = null;
+    stopScanMetricsRefresh(); // stop live metrics updates
     focusWaybillInput();
   }
 
