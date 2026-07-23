@@ -4892,11 +4892,23 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
   const requestedNum = parseInt(req.query.cartonNum, 10);
   const carton = requestedNum ? cartons.find(c => c.num === requestedNum) : cartons[cartons.length - 1];
   if (!carton) return res.status(404).json({ error: 'Carton not found' });
+  const cid = invClientId(batch.client_name || ord.client_name || '');
   const items = Object.entries(carton.scans || {})
     .filter(([, qty]) => qty > 0)
     .map(([sku, qty]) => {
       const line = uniqueSkuLines(ord).find(l => l.sku === sku);
-      return { sku, description: line?.description || '', qty };
+      // If this SKU is a PHYSICAL kit, show what's inside on the slip so the
+      // packer/customer can see the kit's contents (per kit × qty shipped).
+      let contains = null;
+      if (inventory.available()) {
+        try {
+          const bundle = inventory.getBundle(cid, sku);
+          if (bundle && bundle.type === 'physical' && bundle.components.length) {
+            contains = bundle.components.map(c => ({ sku: c.sku, qty: c.qty, total: c.qty * qty }));
+          }
+        } catch (_) {}
+      }
+      return { sku, description: line?.description || '', qty, contains };
     });
   res.json({
     orderNumber,

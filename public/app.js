@@ -6695,7 +6695,15 @@
       const w = window.open('', '_blank', 'width=420,height=650');
       if (!w) { alert('Please allow pop-ups to print the carton slip.'); return; }
       const rows = data.items.length
-        ? data.items.map(i => `<tr><td>${esc(i.sku)}</td><td>${esc(i.description)}</td><td>${i.qty}</td></tr>`).join('')
+        ? data.items.map(i => {
+            let r = `<tr><td>${esc(i.sku)}</td><td>${esc(i.description)}</td><td>${i.qty}</td></tr>`;
+            // Physical kit → show its contents so packer/customer sees inside.
+            if (i.contains && i.contains.length) {
+              const inside = i.contains.map(c => `${esc(c.sku)} ×${c.total}`).join(' + ');
+              r += `<tr class="kit-contains"><td></td><td colspan="2">↳ contains: ${inside}</td></tr>`;
+            }
+            return r;
+          }).join('')
         : `<tr><td colspan="3" style="text-align:center;color:#888">Nothing scanned into this carton yet</td></tr>`;
       w.document.write(`
         <html><head><title>Carton ${data.cartonNum} — ${esc(data.orderNumber)}</title>
@@ -6708,6 +6716,7 @@
           table { width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: .5rem; }
           th, td { border: 1px solid #ccc; padding: .35rem .5rem; text-align: left; }
           th { background: #f3f4f6; }
+          tr.kit-contains td { border-top: none; font-size: .78rem; color: #6d28d9; font-style: italic; }
           svg { max-width: 100%; margin: .4rem 0; }
         </style></head>
         <body>
