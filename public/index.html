@@ -2152,16 +2152,59 @@
 
     <!-- ── TAB: Inventory (3PL/4PL client-owned stock model) ── -->
     <section id="tab-inventory" class="tab">
-      <div class="panel">
-        <h2>📦 Inventory Management</h2>
-        <p style="color:#64748b;margin-top:1rem">Inventory system is being rearchitected for the 3PL/4PL consignment model, where all stock is client-owned and the provider manages it on their behalf.</p>
-        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:1.2rem;margin-top:1rem">
-          <h3 style="margin:0 0 .5rem;color:#166534">✓ Database Model Complete</h3>
-          <p style="margin:0;font-size:.9rem;color:#4b5563">The inventory database has been rearchitected with mandatory client-scoping — all operations now require explicit client context. Each client manages only their own stock.</p>
+      <div class="section-header">
+        <h2>📦 Inventory <span style="font-weight:400;color:#64748b;font-size:.85rem">— client-owned stock (3PL)</span></h2>
+      </div>
+
+      <!-- Client picker: all stock is client-owned, so pick whose stock first -->
+      <div class="panel" style="margin-bottom:1rem">
+        <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">CLIENT (whose stock)</label>
+            <input id="invClient" list="invClientList" placeholder="e.g. LazadaClient — same name as on their orders" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+            <datalist id="invClientList"></datalist>
+          </div>
+          <button class="btn-primary btn-sm" id="invLoadBtn" style="padding:.55rem 1rem">Load stock</button>
         </div>
-        <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:1.2rem;margin-top:.75rem">
-          <h3 style="margin:0 0 .5rem;color:#92400e">⏱ API Implementation Pending</h3>
-          <p style="margin:0;font-size:.9rem;color:#4b5563">REST APIs and the client UI are being updated to reflect the client-first, client-owned stock model. Expected in the next iteration.</p>
+      </div>
+
+      <div id="invBody" class="hidden">
+        <!-- stats -->
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-bottom:1rem">
+          <div class="panel" style="padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">SKUs</div><div id="inv-s-total" style="font-size:1.5rem;font-weight:800">0</div></div>
+          <div class="panel" style="padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">On hand</div><div id="inv-s-onhand" style="font-size:1.5rem;font-weight:800">0</div></div>
+          <div class="panel" style="padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">Reserved</div><div id="inv-s-res" style="font-size:1.5rem;font-weight:800;color:#d97706">0</div></div>
+          <div class="panel" style="padding:.85rem 1rem"><div style="font-size:.68rem;color:#64748b">Available</div><div id="inv-s-avail" style="font-size:1.5rem;font-weight:800;color:#059669">0</div></div>
+        </div>
+
+        <!-- upload -->
+        <div class="panel" style="margin-bottom:1rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div>
+              <b>⬆ Upload stock file</b>
+              <div class="hint" style="margin:.2rem 0 0">CSV or Excel with columns <code>sku</code>, <code>name</code>, <code>stock_qty</code>. <b>Adds to</b> existing on-hand (a receiving/restock).</div>
+            </div>
+            <div style="display:flex;gap:.6rem;align-items:center">
+              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem"><input type="checkbox" id="invPushZort" checked /> Sync to ZORT after</label>
+              <input type="file" id="invFileInput" accept=".csv,.txt,.xlsx,.xls" hidden />
+              <button class="btn-primary btn-sm" id="invUploadBtn">Choose file…</button>
+            </div>
+          </div>
+          <div id="invUploadStatus" class="status-bar hidden" style="margin-top:.6rem"></div>
+        </div>
+
+        <!-- stock table -->
+        <div style="display:flex;gap:.6rem;margin-bottom:.6rem">
+          <input id="invSearch" placeholder="Search SKU / name…" oninput="invUI.renderList()" style="flex:1;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+        </div>
+        <div style="overflow-x:auto">
+          <table class="tbl" style="width:100%">
+            <thead><tr>
+              <th style="text-align:left">SKU</th><th style="text-align:left">Name</th>
+              <th style="text-align:right">On hand</th><th style="text-align:right">Reserved</th><th style="text-align:right">Available</th>
+            </tr></thead>
+            <tbody id="invTbody"><tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">Load a client to see stock.</td></tr></tbody>
+          </table>
         </div>
       </div>
     </section>

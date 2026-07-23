@@ -10357,12 +10357,96 @@
     window.addEventListener('appinstalled', () => bar.classList.add('hidden'));
   })();
 
-  // ── INVENTORY UI — 3PL/4PL client-owned stock model (rearchitecting) ────
-  // The inventory system is being rearchitected for a proper 3PL/4PL consignment model
-  // where all stock is explicitly client-owned. Database layer complete (commit 9cf0844).
-  // UI and API endpoints pending update to client-first design.
-  function renderInventory() { /* placeholder while rearchitecting */ }
-  const invUI = { /* stub — disabled during rearchitecture */ };
+  // ── INVENTORY UI — client-owned stock (3PL). Pick a client, load/upload their
+  // stock; uploads ADD to on-hand and (optionally) sync levels up to ZORT. ────
+  function renderInventory() { invUI.init(); }
+  const invUI = (function () {
+    let clientId = '';
+    let items = [];
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const $ = id => document.getElementById(id);
+
+    function init() {
+      // Populate the client suggestions from orders already in the app.
+      const names = [...new Set((loadedOrders || []).map(o => o.client_name).filter(Boolean))].sort();
+      const dl = $('invClientList');
+      if (dl) dl.innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join('');
+    }
+
+    async function load() {
+      clientId = ($('invClient').value || '').trim();
+      if (!clientId) { alert('Enter a client name first (the same name used on their orders).'); return; }
+      try {
+        const [listR, statsR] = await Promise.all([
+          fetch('/api/inventory?clientId=' + encodeURIComponent(clientId)),
+          fetch('/api/inventory/stats?clientId=' + encodeURIComponent(clientId)),
+        ]);
+        items = listR.ok ? await listR.json() : [];
+        const stats = statsR.ok ? await statsR.json() : {};
+        const onHand = items.reduce((s, r) => s + (r.stock_qty || 0), 0);
+        const reserved = items.reduce((s, r) => s + (r.reserved_qty || 0), 0);
+        const avail = items.reduce((s, r) => s + (r.available_qty || 0), 0);
+        $('inv-s-total').textContent = stats.totalSKUs ?? items.length;
+        $('inv-s-onhand').textContent = onHand;
+        $('inv-s-res').textContent = reserved;
+        $('inv-s-avail').textContent = avail;
+        $('invBody').classList.remove('hidden');
+        renderList();
+      } catch (e) { alert('Load failed: ' + e.message); }
+    }
+
+    function renderList() {
+      const tb = $('invTbody'); if (!tb) return;
+      const q = ($('invSearch')?.value || '').toLowerCase();
+      const rows = items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q));
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">${items.length ? 'No match.' : 'No stock yet — upload a file to add some.'}</td></tr>`; return; }
+      tb.innerHTML = rows.map(r => `<tr>
+        <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
+        <td>${esc(r.name || '')}</td>
+        <td style="text-align:right">${r.stock_qty}</td>
+        <td style="text-align:right;color:#d97706">${r.reserved_qty}</td>
+        <td style="text-align:right;font-weight:700;color:${r.available_qty <= 0 ? '#dc2626' : '#059669'}">${r.available_qty}</td>
+      </tr>`).join('');
+    }
+
+    function pickFile() {
+      if (!clientId) { alert('Load a client first.'); return; }
+      const inp = $('invFileInput');
+      inp.onchange = async () => { const f = inp.files && inp.files[0]; inp.value = ''; if (f) await uploadFile(f); };
+      inp.click();
+    }
+
+    async function uploadFile(file) {
+      const st = $('invUploadStatus');
+      st.className = 'status-bar progress'; st.textContent = `Uploading "${file.name}"…`; st.classList.remove('hidden');
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('clientId', clientId);
+        fd.append('mode', 'add'); // adds to existing stock (receiving/restock)
+        fd.append('push_to_zort', $('invPushZort').checked ? 'true' : 'false');
+        const r = await fetch('/api/inventory/import-file', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
+        let msg = `✓ Added stock for ${d.applied} SKU(s)`;
+        if (d.skipped) msg += `, skipped ${d.skipped}`;
+        if (d.pushedToZort) msg += ` · ${d.enqueued} update(s) queued to ZORT`;
+        if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
+        st.className = 'status-bar success'; st.textContent = msg;
+        load(); // refresh totals + table
+      } catch (e) { st.className = 'status-bar error'; st.textContent = 'Upload error: ' + e.message; }
+    }
+
+    // wire buttons once
+    setTimeout(() => {
+      $('invLoadBtn')?.addEventListener('click', load);
+      $('invUploadBtn')?.addEventListener('click', pickFile);
+      $('invClient')?.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+    }, 0);
+
+    return { init, load, renderList, pickFile };
+  })();
+  window.invUI = invUI;
     let items = [];
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 

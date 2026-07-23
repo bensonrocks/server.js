@@ -9773,6 +9773,78 @@ app.post('/api/inventory/seed', requireAuth, (req, res) => {
   res.json({ seeded: n, total: inventory.getAll({ clientId: cid }).length });
 });
 
+// Stock upload — the Inventory tab's file loader. Accepts CSV or XLSX with
+// columns sku, name (optional), stock_qty (aliases qty/quantity/stock/on_hand).
+// mode 'add' (default) ADDS the uploaded qty to current on-hand (a receiving/
+// restock); mode 'set' makes it the exact on-hand (a stocktake). clientId is
+// required (all stock is client-owned). If push_to_zort is set, the affected
+// SKUs' new available levels are enqueued to that client's ZORT stock-sync
+// store(s) after the load.
+app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const cid  = String(req.body?.clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
+  const mode = String(req.body?.mode || 'add').toLowerCase() === 'set' ? 'set' : 'add';
+  const pushToZort = String(req.body?.push_to_zort || '') === 'true' || req.body?.push_to_zort === true;
+  if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+
+  const buf = req.file.buffer;
+  const name = (req.file.originalname || '').toLowerCase();
+  let rows = [];
+  try {
+    const isXlsx = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b;
+    const isXls  = buf.length > 7 && buf[0] === 0xd0 && buf[1] === 0xcf;
+    if (isXlsx || isXls || name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+        .map(r => { const o = {}; for (const [k, v] of Object.entries(r)) o[String(k).trim().toLowerCase().replace(/[^a-z0-9]/g, '')] = v; return o; });
+    } else {
+      const text = buf.toString('utf8').replace(/^﻿/, '');
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) return res.status(400).json({ error: 'Empty file.' });
+      const delim = (lines[0].includes(';') && !lines[0].includes(',')) ? ';' : ',';
+      const cols = lines[0].split(delim).map(c => c.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+      rows = lines.slice(1).map(line => {
+        const cells = line.split(delim); const o = {};
+        cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
+        return o;
+      });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'Could not parse file: ' + e.message });
+  }
+
+  const qtyOf = r => Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? r.onhand ?? r.available ?? 0) || 0;
+  let applied = 0, skipped = 0; const errors = []; const affected = new Set();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
+    if (!sku) { skipped++; continue; }
+    const qty = qtyOf(r);
+    const nm  = String(r.name ?? r.description ?? sku).trim() || sku;
+    try {
+      const existing = inventory.get(sku, cid);
+      if (mode === 'set') {
+        inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty });
+      } else { // add
+        if (!existing) inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty });
+        else if (qty !== 0) inventory.adjust(sku, cid, qty, 'upload', 'Stock upload');
+      }
+      applied++; affected.add(sku);
+    } catch (e) { skipped++; errors.push({ row: i + 2, sku, error: e.message }); }
+  }
+
+  let pushed = 0;
+  if (pushToZort && affected.size) {
+    const db = readDb();
+    const before = (db.zortOutbox || []).length;
+    zortNotifyStockChange(db, cid, [...affected]);
+    pushed = ((readDb().zortOutbox || []).length) - before;
+  }
+  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '' });
+  res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed, errors: errors.slice(0, 20) });
+});
+
 // ── Product Master (ULD_Product_Master_Template.xlsx) ────────────────────────
 const productMaster = require('./lib/product-master');
 
