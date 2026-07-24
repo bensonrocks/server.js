@@ -4786,6 +4786,18 @@ app.post('/api/scan/increment', (req, res) => {
       if (item) break;
     }
   }
+  // SKU↔barcode inter-search from the client's item master: if the scanned
+  // value is a BARCODE on file for this client, resolve it to its SKU and match
+  // that against the order. This is the onboarding default — a client uploads
+  // SKU + Barcode and both scan interchangeably, no teaching needed.
+  if (!item && inventory.available()) {
+    const cid = invClientId(batch.client_name || ord.client_name || '');
+    try {
+      const raw = String(req.body.sku || '').trim();
+      const row = inventory.getByBarcode(raw, cid) || (sku !== raw ? inventory.getByBarcode(sku, cid) : null);
+      if (row && row.sku) item = findBySku(row.sku);
+    } catch (_) { /* inventory optional */ }
+  }
   if (!item) {
     // Unknown (or differently-named) product barcode? Offer teach-on-scan:
     // the packer confirms which line this is and it's remembered for good.
