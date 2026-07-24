@@ -10605,6 +10605,57 @@
     document.getElementById('storageWarnClose')?.addEventListener('click', () => bar.remove());
   }
 
+  // Proactive subsystem-health banner (Administrators only). The storage banner
+  // above answers "is my data safe?" from /api/version at boot. THIS one polls the
+  // live health snapshot on a timer so a RUNTIME problem — inventory store down,
+  // ZORT stock-sync stalled — shows up on screen the moment it happens, BEFORE any
+  // packer hits an error and has to report it. Silent when everything is healthy.
+  (function initHealthBanner() {
+    let dismissedSig = '';                 // the exact unhealthy state the admin dismissed
+    function topOffset() {
+      // Stack below whichever storage banner (if any) is already pinned to the top.
+      const s = document.getElementById('storageWarnBar') || document.getElementById('storageInfoBar');
+      return s ? Math.ceil(s.getBoundingClientRect().height) : 0;
+    }
+    function render(issues) {
+      let bar = document.getElementById('healthWarnBar');
+      if (!issues.length) { if (bar) bar.remove(); dismissedSig = ''; return; }
+      const sig = issues.map(i => i.sev + ':' + i.text).join('|');
+      if (sig === dismissedSig) { if (bar) bar.remove(); return; } // this exact state was dismissed
+      const crit = issues.some(i => i.sev === 'crit');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'healthWarnBar';
+        document.body.appendChild(bar);
+      }
+      bar.style.cssText = `position:fixed;top:${topOffset()}px;left:0;right:0;z-index:9998;`
+        + `padding:.6rem 1rem;font-size:.82rem;font-weight:600;text-align:center;`
+        + `background:${crit ? '#b91c1c' : '#d97706'};color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)`;
+      const lines = issues.map(i => `${i.sev === 'crit' ? '⛔' : '⚠'} ${i.text}`).join(' &nbsp;·&nbsp; ');
+      bar.innerHTML = `${lines} &nbsp; <span class="hb-open" style="cursor:pointer;text-decoration:underline">Open System Outages</span>`
+        + ` <span class="hb-close" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>`;
+      bar.querySelector('.hb-open')?.addEventListener('click', () => {
+        try { document.getElementById('logAccessBtn')?.click(); } catch {}
+      });
+      bar.querySelector('.hb-close')?.addEventListener('click', () => { dismissedSig = sig; bar.remove(); });
+    }
+    async function poll() {
+      if ((currentUser?.role || '') !== 'admin') { render([]); return; } // endpoint is master-gated
+      let h;
+      try {
+        const r = await fetch('/api/master/system-errors/health', { headers: { 'x-master-key': LOG_PASSWORD } });
+        if (!r.ok) return;
+        h = await r.json();
+      } catch { return; }
+      const issues = [];
+      if (h.inventoryAvailable === false) issues.push({ sev: 'crit', text: 'Inventory store is DOWN — stock levels & reservations are not being tracked.' });
+      if (h.zortOutboxStalled > 0) issues.push({ sev: 'warn', text: `ZORT stock sync stalled — ${h.zortOutboxStalled} update(s) repeatedly failing to reach ZORT.` });
+      render(issues);
+    }
+    setTimeout(poll, 4000);          // let login settle, then first check
+    setInterval(poll, 60000);        // and re-check every minute
+  })();
+
   // ── Install-app helper ─────────────────────────────────────────────────────
   // iOS NEVER fires an install prompt — installing means Safari → Share →
   // "Add to Home Screen", which nobody finds unaided, so we spell it out.
