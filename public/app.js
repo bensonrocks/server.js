@@ -1,4 +1,54 @@
 (() => {
+  // ── Global error safety net — NEVER fail silently ──────────────────────────
+  // Any uncaught error or unhandled promise rejection (and any code that calls
+  // showTechError explicitly) pops a dialog with the error + instructions to
+  // send it to the IdealOne Tech team. Self-contained (no CSS/HTML dependency).
+  const TECH_TEAM = 'IdealOne Tech team';
+  function showTechError(detail, context) {
+    try {
+      const text = (detail && detail.stack) ? String(detail.stack)
+                 : (detail && detail.message) ? String(detail.message)
+                 : String(detail == null ? 'Unknown error' : detail);
+      const when = new Date().toISOString();
+      const page = location.hash || location.pathname;
+      const full = `IdealOne error report\nWhen: ${when}\nWhere: ${page}\nContext: ${context || '(none)'}\n\n${text}`;
+      let ov = document.getElementById('techErrorOverlay');
+      if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'techErrorOverlay';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:1rem';
+        ov.innerHTML = `
+          <div style="background:#fff;max-width:520px;width:100%;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;font-family:-apple-system,Arial,sans-serif">
+            <div style="background:#b91c1c;color:#fff;padding:.9rem 1.1rem;font-weight:800;font-size:1rem">⚠ Something went wrong</div>
+            <div style="padding:1.1rem">
+              <p style="margin:0 0 .6rem;color:#334155">The system hit an error and couldn't complete that action. Please <b>send this error to the ${TECH_TEAM}</b> so we can fix it.</p>
+              <pre id="techErrorText" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:.7rem;font-size:.72rem;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0 0 .8rem"></pre>
+              <div style="display:flex;gap:.5rem;justify-content:flex-end">
+                <button id="techErrorCopy" style="padding:.5rem .9rem;border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;cursor:pointer;font-weight:600">📋 Copy error</button>
+                <button id="techErrorClose" style="padding:.5rem .9rem;border:none;background:#1e40af;color:#fff;border-radius:8px;cursor:pointer;font-weight:600">Close</button>
+              </div>
+            </div>
+          </div>`;
+        document.body.appendChild(ov);
+        ov.querySelector('#techErrorClose').addEventListener('click', () => ov.remove());
+        ov.querySelector('#techErrorCopy').addEventListener('click', () => {
+          const t = document.getElementById('techErrorText').textContent;
+          if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => {
+            const b = ov.querySelector('#techErrorCopy'); b.textContent = '✓ Copied'; setTimeout(() => { b.textContent = '📋 Copy error'; }, 1500);
+          });
+        });
+      }
+      document.getElementById('techErrorText').textContent = full;
+      ov.style.display = 'flex';
+    } catch (_) {
+      // last-resort fallback so an error IN the error dialog still surfaces
+      alert('Something went wrong. Please send this to the ' + TECH_TEAM + ':\n\n' + String(detail));
+    }
+  }
+  window.showTechError = showTechError;
+  window.addEventListener('error', e => { showTechError(e.error || e.message, 'Uncaught error'); });
+  window.addEventListener('unhandledrejection', e => { showTechError(e.reason, 'Unhandled async error'); });
+
   // ── Auth token — injected into every /api/ request automatically ───────────
   const _origFetch = window.fetch.bind(window);
   window.fetch = function (url, opts = {}) {
