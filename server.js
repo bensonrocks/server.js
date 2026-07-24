@@ -4352,12 +4352,14 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
-    // BOM explosion — replace any bundle SKU with its component lines BEFORE
-    // orders are summarized / inventory-checked, so the whole pipeline sees
-    // real components (IdealOne is the bundle master). The client is file-level.
+    // Normalize each line to the in-house SKU (file may key by barcode), THEN
+    // explode any bundle SKU into its component lines — BEFORE orders are
+    // summarized / inventory-checked, so the whole pipeline sees real in-house
+    // components (IdealOne is the master). The client is file-level.
     {
       const _fc = mapped.find(r => r.client_name)?.client_name || '';
       const _cid = invClientId(((req.body?.client_name || '').trim() || _fc).trim());
+      mapped = normalizeOrderRowsToInhouseSku(mapped, () => _cid);
       mapped = explodeBundleRows(mapped, () => _cid);
     }
 
@@ -8675,9 +8677,11 @@ async function pullZortStore(db, store) {
     if (list.length < query.limit) break;
   }
 
-  // Explode any bundle SKUs into their components BEFORE summarizing, using
-  // each row's resolved client (rows carry client_name from the channel map).
-  const explodedRows = explodeBundleRows(rows, r => invClientId(r.client_name));
+  // Normalize each line to the in-house SKU (a ZORT feed may key lines by
+  // barcode), THEN explode any bundle SKUs into components — both keyed on each
+  // row's resolved client (rows carry client_name from the channel map).
+  const normRows = normalizeOrderRowsToInhouseSku(rows, r => invClientId(r.client_name));
+  const explodedRows = explodeBundleRows(normRows, r => invClientId(r.client_name));
   const orders = summarizeOrders(explodedRows.filter(r => r.sku && r.qty > 0));
   // summarizeOrders keeps only known fields — re-attach the Zort linkage the
   // completion push needs, and the client each order resolved to
@@ -10070,6 +10074,28 @@ inventory.init();
 // empty/blank name falls back to 'GENERAL' so nothing is ever silently
 // unscoped.
 function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
+
+// Import-time SKU normalization — convert each order line's identifier to the
+// client's canonical in-house SKU. If a line arrives keyed by BARCODE (e.g. a
+// ZORT feed that only carries barcodes), swap it to the in-house SKU using the
+// client's item master so pick lists, scanning, stock deduction and the ZORT
+// stock-push all key on one identifier. A line already keyed by in-house SKU is
+// unchanged; an unrecognised code is left as-is (handled by teach/validation).
+// Runs BEFORE bundle explosion so a barcode-keyed bundle resolves then explodes.
+function normalizeOrderRowsToInhouseSku(rows, clientOf) {
+  if (!inventory.available() || !Array.isArray(rows)) return rows;
+  for (const r of rows) {
+    if (!r || !r.sku) continue;
+    try {
+      const inhouse = inventory.resolveToInhouseSku(r.sku, clientOf(r));
+      if (inhouse && inhouse !== r.sku) {
+        r.source_code = r.sku;   // keep what the source (ZORT/file) sent, for reference
+        r.sku = inhouse;
+      }
+    } catch (_) { /* inventory optional */ }
+  }
+  return rows;
+}
 
 // BOM explosion at import — IdealOne is the bundle master. Any order line whose
 // SKU is a defined bundle for that client is REPLACED by its component lines
