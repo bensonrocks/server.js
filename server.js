@@ -1407,6 +1407,10 @@ function completionAuditData(batch, ord, state) {
     operator:  state.operator     || '',
     startTime: state.startTime    || null,
     endTime:   state.endTime      || null,
+    // Carton count for per-carton 3PL billing (a single implicit carton if the
+    // order never split). lineCount too, so billing needn't re-count lines[].
+    cartons:   Math.max(1, (state.cartons || []).length),
+    lineCount: uniqueSkuLines(ord).length,
     pieces:    uniqueSkuLines(ord).reduce((s, l) => s + (scanned[l.sku] ?? l.qty ?? 0), 0),
     lines:     uniqueSkuLines(ord).map(l => ({
       sku: l.sku, description: l.description || '', qty: l.qty,
@@ -2211,6 +2215,136 @@ app.post('/api/master/data-retention/purge-now', express.json(), (req, res) => {
   const result = runMarketplaceDataPurge(days);
   logAudit('marketplace_data_purge_manual', { by: req.userId || '', ...result });
   res.json({ ok: true, result });
+});
+
+// ── 3PL client billing — rate cards + invoicing ─────────────────────────────
+// A 3PL charges clients for the fulfillment work done for them. Rate cards live
+// in db.rateCards (per client); invoices are computed on demand from data the
+// app already records — completed orders (order handling / lines / units /
+// cartons), inbound receipts (units received), and a DAILY STOCK SNAPSHOT
+// (units × days = storage). Nothing here charges anyone automatically; it
+// produces a statement the operator reviews and exports.
+const billing = require('./lib/billing');
+
+// Daily snapshot of every client's on-hand units → storage billing basis.
+// db.stockSnapshots = { 'YYYY-MM-DD': { clientId: units } }. Kept ~400 days.
+function runStockSnapshot() {
+  try {
+    if (!inventory.available()) return;
+    const totals = inventory.stockByClientTotals();
+    const db = readDb();
+    if (!db.stockSnapshots) db.stockSnapshots = {};
+    db.stockSnapshots[sgDateStr()] = totals;
+    // prune snapshots older than ~400 days (keeps the object small)
+    const keep = new Set();
+    for (let i = 0; i < 400; i++) keep.add(sgDateStr(new Date(Date.now() - i * 86400000)));
+    for (const d of Object.keys(db.stockSnapshots)) if (!keep.has(d)) delete db.stockSnapshots[d];
+    writeDb(db);
+  } catch (e) { console.error('[billing] stock snapshot failed:', e.message); }
+}
+setTimeout(runStockSnapshot, 150 * 1000);            // shortly after boot (staggered)
+setInterval(runStockSnapshot, 24 * 3600 * 1000);     // then daily
+
+function _monthsBetween(from, to) {
+  const [fy, fm] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  return Math.max(1, (ty - fy) * 12 + (tm - fm) + 1);
+}
+
+// Gather the billable metrics for one client over [from,to] (YYYY-MM-DD) from
+// the data the app already records.
+function gatherBillingMetrics(db, clientName, from, to) {
+  const cid = invClientId(clientName);
+  const inRange = d => d && d.slice(0, 10) >= from && d.slice(0, 10) <= to;
+  let orders = 0, lines = 0, units = 0, cartons = 0;
+  for (const e of readAuditLogForRange(db, from, to)) {
+    if (e.type !== 'order_completed' || e.client !== clientName) continue;
+    if (!inRange(e.endTime || e.at)) continue;
+    orders += 1;
+    lines  += Number(e.lineCount ?? (Array.isArray(e.lines) ? e.lines.length : 0)) || 0;
+    units  += Number(e.pieces) || 0;
+    cartons += Number(e.cartons) || 1;
+  }
+  let inboundUnits = 0;
+  for (const rec of db.inbound || []) {
+    if (rec.client_name !== clientName) continue;
+    const st = rec.state || {};
+    if (st.status !== 'done' || !inRange(st.endTime)) continue;
+    inboundUnits += Object.values(st.scanned || {}).reduce((s, q) => s + (Number(q) || 0), 0);
+  }
+  let storageUnitDays = 0;
+  for (const [d, byClient] of Object.entries(db.stockSnapshots || {})) {
+    if (d >= from && d <= to) storageUnitDays += Number((byClient || {})[cid] || 0);
+  }
+  return { orders, lines, units, cartons, inboundUnits, storageUnitDays, months: _monthsBetween(from, to) };
+}
+
+app.get('/api/master/billing/charge-types', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(billing.CHARGE_TYPES);
+});
+app.get('/api/master/rate-cards', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(readDb().rateCards || []);
+});
+app.post('/api/master/rate-cards', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  let card;
+  try { card = billing.normalizeRateCard(req.body || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const db = readDb();
+  if (!db.rateCards) db.rateCards = [];
+  const i = db.rateCards.findIndex(c => c.client === card.client);
+  if (i >= 0) db.rateCards[i] = card; else db.rateCards.push(card);
+  writeDb(db);
+  logAudit('rate_card_saved', { client: card.client, charges: card.charges.length, by: req.userId || '' });
+  res.json(card);
+});
+app.delete('/api/master/rate-cards/:client', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  db.rateCards = (db.rateCards || []).filter(c => c.client !== req.params.client);
+  writeDb(db);
+  logAudit('rate_card_deleted', { client: req.params.client, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
+// Compute an invoice (metrics + line items + total) for a client + date range.
+function buildInvoice(db, client, from, to) {
+  const card = (db.rateCards || []).find(c => c.client === client) || { client, currency: 'SGD', charges: [] };
+  const metrics = gatherBillingMetrics(db, client, from, to);
+  const invoice = billing.computeInvoice(card, metrics);
+  return { client, from, to, currency: invoice.currency, metrics, lines: invoice.lines, total: invoice.total, hasRateCard: !!(db.rateCards || []).find(c => c.client === client) };
+}
+
+app.get('/api/master/billing/invoice', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const client = String(req.query.client || '').trim();
+  const from = String(req.query.from || '').slice(0, 10);
+  const to   = String(req.query.to || '').slice(0, 10);
+  if (!client || !from || !to) return res.status(400).json({ error: 'client, from, to (YYYY-MM-DD) required' });
+  res.json(buildInvoice(readDb(), client, from, to));
+});
+app.get('/api/master/billing/invoice/export', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const client = String(req.query.client || '').trim();
+  const from = String(req.query.from || '').slice(0, 10);
+  const to   = String(req.query.to || '').slice(0, 10);
+  if (!client || !from || !to) return res.status(400).json({ error: 'client, from, to (YYYY-MM-DD) required' });
+  const inv = buildInvoice(readDb(), client, from, to);
+  const aoa = [
+    ['INVOICE / STATEMENT'],
+    ['Client', client], ['Period', `${from} to ${to}`], ['Currency', inv.currency], [],
+    ['Charge', 'Qty', 'Unit', 'Rate', 'Amount'],
+    ...inv.lines.map(l => [l.label, l.qty, l.unit, l.rate, l.amount]),
+    [], ['', '', '', 'TOTAL', inv.total],
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Invoice');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Invoice_${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${from}_${to}.xlsx"`);
+  logAudit('invoice_exported', { client, from, to, total: inv.total, by: req.userId || '' });
+  res.send(buf);
 });
 
 // Merges live db.auditLog with archived months when a report's requested
