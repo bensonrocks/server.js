@@ -3932,6 +3932,7 @@ const AUTH_PUBLIC = new Set([
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
   '/api/version',         // deploy verification — commit + boot time, no data
+  '/api/errors',          // client error reporting — logs even if a crash happened pre-login
 ]);
 
 // Which build is this server actually running? Railway injects the deployed
@@ -3960,6 +3961,103 @@ app.get('/api/version', (req, res) => {
       ephemeralRisk,                                   // config looks unsafe
       dataLostOnLastRestart,                           // proven data loss happened
     },
+  });
+});
+
+// ── System Outages — record client errors, let Admins troubleshoot/resolve ───
+// Every error the client surfaces (via showTechError) is logged here, GROUPED by
+// signature so a recurring error is one row with a count (not spam). Each row is
+// 🔴 open until an Administrator marks it 🟢 resolved; a resolved error that
+// recurs auto-reopens (goes red again). Lives in db.systemErrors.
+function systemErrors(db) { return db.systemErrors || (db.systemErrors = []); }
+function _errSig(context, message) {
+  const base = String(context || '') + '|' + String(message || '').split('\n')[0].slice(0, 160);
+  let h = 0; for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) | 0;
+  return 'e' + Math.abs(h).toString(36);
+}
+app.post('/api/errors', express.json({ limit: '256kb' }), (req, res) => {
+  try {
+    const b = req.body || {};
+    const message = String(b.message || 'Unknown error').slice(0, 4000);
+    const context = String(b.context || '').slice(0, 200);
+    const sig = _errSig(context, message);
+    const now = new Date().toISOString();
+    const db = readDb();
+    const list = systemErrors(db);
+    let e = list.find(x => x.signature === sig);
+    if (e) {
+      e.count += 1; e.lastAt = now;
+      e.lastPage = String(b.page || '').slice(0, 200);
+      e.lastUser = req.userId || e.lastUser || '';
+      if (e.status === 'resolved') { e.status = 'open'; e.reopenedAt = now; } // recurred → back to red
+    } else {
+      e = {
+        id: uuidv4().slice(0, 8), signature: sig, context, message,
+        stack: String(b.stack || '').slice(0, 4000),
+        page: String(b.page || '').slice(0, 200), userAgent: String(b.userAgent || '').slice(0, 200),
+        count: 1, firstAt: now, lastAt: now, status: 'open',
+        lastUser: req.userId || '', app: String(b.app || 'office').slice(0, 20),
+      };
+      list.unshift(e);
+      if (list.length > 500) list.length = 500; // cap
+    }
+    writeDb(db);
+    res.json({ ok: true, id: e.id });
+  } catch (err) { res.status(200).json({ ok: false }); } // never let error-logging itself error out loudly
+});
+
+app.get('/api/master/system-errors', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const list = systemErrors(readDb());
+  res.json({
+    open: list.filter(e => e.status === 'open').length,
+    errors: list.slice(0, 200),
+  });
+});
+app.post('/api/master/system-errors/:id/resolve', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const e = systemErrors(db).find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: 'Not found' });
+  e.status = 'resolved'; e.resolvedAt = new Date().toISOString(); e.resolvedBy = req.userId || '';
+  e.resolveNote = String(req.body?.note || '').slice(0, 500);
+  writeDb(db);
+  logAudit('system_error_resolved', { id: e.id, context: e.context, by: req.userId || '' });
+  res.json(e);
+});
+app.post('/api/master/system-errors/:id/reopen', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const e = systemErrors(db).find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: 'Not found' });
+  e.status = 'open'; delete e.resolvedAt; delete e.resolvedBy;
+  writeDb(db);
+  res.json(e);
+});
+app.delete('/api/master/system-errors/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  db.systemErrors = systemErrors(db).filter(x => x.id !== req.params.id);
+  writeDb(db);
+  res.json({ ok: true });
+});
+// Troubleshoot: a live health snapshot the admin runs against an error, so they
+// can see whether the underlying subsystems are currently healthy.
+app.get('/api/master/system-errors/health', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const ob = db.zortOutbox || [];
+  res.json({
+    at: new Date().toISOString(),
+    serverUp: true,
+    bootedAt: SERVER_BOOTED_AT,
+    storagePersistent: PERSISTENCE.survivedRestart,
+    ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
+    inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
+    zortStores: (db.zortStores || []).length,
+    zortOutboxPending: ob.filter(e => !e.stalled).length,
+    zortOutboxStalled: ob.filter(e => e.stalled).length,
+    openErrors: (db.systemErrors || []).filter(e => e.status === 'open').length,
   });
 });
 app.use((req, res, next) => {

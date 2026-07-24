@@ -22,6 +22,10 @@
       }
       document.getElementById('techErrorText').textContent = full;
       ov.style.display = 'flex';
+      try {
+        fetch('/api/errors', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, context: context || '', page: location.pathname, stack: text, userAgent: navigator.userAgent, app: 'driver' }) }).catch(() => {});
+      } catch (_) {}
     } catch (_) { alert('Something went wrong. Please send this to the IdealOne Tech team:\n\n' + String(detail)); }
   }
   window.showTechError = showTechError;

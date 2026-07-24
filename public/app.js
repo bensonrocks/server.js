@@ -40,6 +40,15 @@
       }
       document.getElementById('techErrorText').textContent = full;
       ov.style.display = 'flex';
+      // Record it under System Outages (Administrator) — fire-and-forget so the
+      // logging can never itself throw a dialog.
+      try {
+        _origFetch('/api/errors', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('wms_token') ? { 'x-auth-token': localStorage.getItem('wms_token') } : {}) },
+          body: JSON.stringify({ message: text, context: context || '', page, stack: text, userAgent: navigator.userAgent, app: 'office' }),
+        }).catch(() => {});
+      } catch (_) {}
     } catch (_) {
       // last-resort fallback so an error IN the error dialog still surfaces
       alert('Something went wrong. Please send this to the ' + TECH_TEAM + ':\n\n' + String(detail));
@@ -8196,8 +8205,105 @@
       if (btn.dataset.adminTab === 'drivers') loadDriverList();
       if (btn.dataset.adminTab === 'users') loadUserList();
       if (btn.dataset.adminTab === 'onboarding') obUI.load();
+      if (btn.dataset.adminTab === 'outages') outagesUI.load();
     });
   });
+
+  // ── System Outages module ────────────────────────────────────────────────
+  const outagesUI = (function () {
+    let errors = [];
+    let current = null;
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const $ = id => document.getElementById(id);
+    const mk = () => ({ 'x-master-key': LOG_PASSWORD });
+    const mkJson = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
+
+    async function load() {
+      try {
+        const r = await fetch('/api/master/system-errors', { headers: mk() });
+        const d = r.ok ? await r.json() : { errors: [], open: 0 };
+        errors = d.errors || [];
+        updateBadge(d.open || 0);
+      } catch { errors = []; }
+      render();
+    }
+    function updateBadge(open) {
+      const b = $('outagesBadge'); if (!b) return;
+      if (open > 0) { b.textContent = open; b.classList.remove('hidden'); } else b.classList.add('hidden');
+    }
+    function render() {
+      const el = $('outagesList'); if (!el) return;
+      if (!errors.length) { el.innerHTML = '<div class="empty-state" style="padding:1.5rem;color:#059669">✓ No errors reported. All systems nominal.</div>'; return; }
+      el.innerHTML = errors.map(e => {
+        const open = e.status === 'open';
+        const dot = open ? '🔴' : '🟢';
+        const border = open ? '#dc2626' : '#059669';
+        return `<div class="user-row" data-id="${esc(e.id)}" style="cursor:pointer;border-left:4px solid ${border}">
+          <span style="font-size:1.1rem">${dot}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600">${esc(e.context || 'Error')}${e.app === 'driver' ? ' <span class="hint">(driver app)</span>' : ''}</div>
+            <div class="hint" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((e.message || '').split('\n')[0].slice(0, 100))}</div>
+          </div>
+          <span class="hint" style="text-align:right">×${e.count}<br>${new Date(e.lastAt).toLocaleString()}</span>
+          <button class="btn-secondary btn-sm ob-ts" data-id="${esc(e.id)}">🔧 Troubleshoot</button>
+        </div>`;
+      }).join('');
+      el.querySelectorAll('.ob-ts').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); openTs(btn.dataset.id); }));
+      el.querySelectorAll('.user-row').forEach(row => row.addEventListener('click', () => openTs(row.dataset.id)));
+    }
+    function openTs(id) {
+      current = errors.find(e => e.id === id); if (!current) return;
+      const e = current;
+      $('outageDetail').innerHTML = `
+        <div><b>${esc(e.context || 'Error')}</b> — <span style="color:${e.status === 'open' ? '#dc2626' : '#059669'}">${e.status === 'open' ? '🔴 Open' : '🟢 Resolved'}</span></div>
+        <div class="hint" style="margin:.3rem 0">Seen ${e.count}× · first ${new Date(e.firstAt).toLocaleString()} · last ${new Date(e.lastAt).toLocaleString()}${e.lastUser ? ' · last user ' + esc(e.lastUser) : ''} · ${esc(e.app || 'office')} app</div>
+        <div class="hint">Page: ${esc(e.page || e.lastPage || '—')}</div>
+        <pre style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:.7rem;font-size:.72rem;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;margin:.6rem 0 0">${esc(e.stack || e.message)}</pre>`;
+      $('outageHealth').innerHTML = '';
+      $('outageResolveBtn').style.display = e.status === 'open' ? '' : 'none';
+      $('outageReopenBtn').style.display = e.status === 'resolved' ? '' : 'none';
+      $('outageModal').classList.remove('hidden');
+    }
+    async function health() {
+      const el = $('outageHealth'); el.innerHTML = '<span class="hint">Checking…</span>';
+      try {
+        const r = await fetch('/api/master/system-errors/health', { headers: mk() });
+        const h = await r.json();
+        const row = (ok, label, val) => `<div style="display:flex;gap:.5rem;font-size:.82rem"><span>${ok ? '✓' : '⚠'}</span><span style="flex:1">${label}</span><b style="color:${ok ? '#059669' : '#d97706'}">${val}</b></div>`;
+        el.innerHTML = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.7rem;display:grid;gap:.3rem">
+          ${row(h.serverUp, 'Server', 'up')}
+          ${row(h.storagePersistent, 'Storage persistent', h.storagePersistent ? 'yes' : 'UNPROVEN')}
+          ${row(h.inventoryAvailable, 'Inventory store', h.inventoryAvailable ? 'available' : 'DOWN')}
+          ${row(h.zortOutboxStalled === 0, 'ZORT outbox stalled', h.zortOutboxStalled)}
+          ${row(true, 'ZORT outbox pending', h.zortOutboxPending)}
+          ${row(h.openErrors === 0, 'Open errors', h.openErrors)}
+        </div>`;
+      } catch (e) { el.innerHTML = '<span style="color:#dc2626">Health check failed: ' + esc(e.message) + '</span>'; }
+    }
+    async function resolve() {
+      if (!current) return;
+      const note = prompt('Resolution note (optional) — what fixed it?') || '';
+      await fetch(`/api/master/system-errors/${current.id}/resolve`, { method: 'POST', headers: mkJson(), body: JSON.stringify({ note }) });
+      $('outageModal').classList.add('hidden');
+      load();
+    }
+    async function reopen() {
+      if (!current) return;
+      await fetch(`/api/master/system-errors/${current.id}/reopen`, { method: 'POST', headers: mk() });
+      $('outageModal').classList.add('hidden');
+      load();
+    }
+
+    setTimeout(() => {
+      $('outagesRefreshBtn')?.addEventListener('click', load);
+      $('outageHealthBtn')?.addEventListener('click', health);
+      $('outageResolveBtn')?.addEventListener('click', resolve);
+      $('outageReopenBtn')?.addEventListener('click', reopen);
+      $('outageCloseBtn')?.addEventListener('click', () => $('outageModal').classList.add('hidden'));
+    }, 0);
+
+    return { load };
+  })();
 
   // ── Client onboarding module ─────────────────────────────────────────────
   const obUI = (function () {

@@ -548,6 +548,7 @@
       <div class="admin-nav">
         <button class="admin-nav-btn active" data-admin-tab="activity">&#128225; Live Activity</button>
         <button class="admin-nav-btn" data-admin-tab="onboarding">&#127881; Onboard Client</button>
+        <button class="admin-nav-btn" data-admin-tab="outages">&#128680; System Outages <span id="outagesBadge" class="admin-nav-badge hidden">0</span></button>
         <button class="admin-nav-btn" data-admin-tab="overview">&#128200; Activity Overview</button>
         <button class="admin-nav-btn" data-admin-tab="deletions">&#128465; Pending Deletions <span id="pendingDelBadge" class="admin-nav-badge hidden">0</span></button>
         <button class="admin-nav-btn" data-admin-tab="batches">&#128196; Upload History</button>
@@ -673,6 +674,35 @@
                 <button class="btn-danger btn-sm" id="obDeleteBtn">🗑 Remove client</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: System Outages -->
+      <div class="admin-tab hidden" id="adminTab-outages">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">🚨 System Outages</div>
+            <div class="admin-section-sub">Errors reported from the apps. 🔴 open until resolved; 🟢 resolved. A resolved error that recurs turns red again.</div>
+          </div>
+          <button class="btn-secondary btn-sm" id="outagesRefreshBtn">↻ Refresh</button>
+        </div>
+        <div id="outagesList" class="driver-list-wrap"></div>
+      </div>
+
+      <!-- Troubleshoot modal -->
+      <div id="outageModal" class="modal-overlay hidden">
+        <div class="modal" style="max-width:600px">
+          <div class="modal-title">🔧 Troubleshoot</div>
+          <div id="outageDetail" style="font-size:.85rem"></div>
+          <div style="margin-top:.8rem">
+            <button class="btn-secondary btn-sm" id="outageHealthBtn">Run health check</button>
+            <div id="outageHealth" style="margin-top:.6rem"></div>
+          </div>
+          <div style="display:flex;gap:.6rem;margin-top:1rem">
+            <button class="btn-primary" id="outageResolveBtn" style="background:#059669">✓ Mark Resolved (green)</button>
+            <button class="btn-secondary" id="outageReopenBtn">Reopen (red)</button>
+            <button class="btn-secondary" id="outageCloseBtn">Close</button>
           </div>
         </div>
       </div>
