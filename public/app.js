@@ -8145,8 +8145,140 @@
       if (btn.dataset.adminTab === 'tms') renderTmsTab();
       if (btn.dataset.adminTab === 'drivers') loadDriverList();
       if (btn.dataset.adminTab === 'users') loadUserList();
+      if (btn.dataset.adminTab === 'onboarding') obUI.load();
     });
   });
+
+  // ── Client onboarding module ─────────────────────────────────────────────
+  const obUI = (function () {
+    let profiles = [];
+    let current = null; // selected client name ('' = new/unsaved)
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const $ = id => document.getElementById(id);
+    const mk = () => ({ 'x-master-key': LOG_PASSWORD });
+    const mkJson = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
+
+    async function load() {
+      try {
+        const r = await fetch('/api/master/client-profiles', { headers: mk() });
+        profiles = r.ok ? await r.json() : [];
+      } catch { profiles = []; }
+      renderList();
+    }
+    function renderList() {
+      const el = $('obClientList');
+      if (!el) return;
+      if (!profiles.length) { el.innerHTML = '<div class="empty-state" style="padding:1rem">No clients yet — click + New.</div>'; return; }
+      el.innerHTML = profiles.map(p => {
+        const pend = (p.instructions || []).filter(i => i.status === 'Processing').length;
+        return `<div class="user-row" data-client="${esc(p.client)}" style="cursor:pointer;${current === p.client ? 'background:#eff6ff' : ''}">
+          <span class="user-name">${esc(p.client)}</span>
+          <span class="user-id">${esc((p.type || '').toUpperCase())}${p.commodity ? ' · ' + esc(p.commodity) : ''}</span>
+          <span class="hint">${p.itemCount ? p.itemCount + ' items' : 'no items'}${pend ? ` · ⏳ ${pend}` : ''}</span>
+        </div>`;
+      }).join('');
+      el.querySelectorAll('.user-row').forEach(row => row.addEventListener('click', () => select(row.dataset.client)));
+    }
+    function openBlank() {
+      current = '';
+      $('obDetailEmpty').classList.add('hidden');
+      $('obDetailBody').classList.remove('hidden');
+      $('obName').value = ''; $('obName').disabled = false;
+      $('obType').value = ''; $('obCommodity').value = '';
+      $('obItemCount').textContent = ''; $('obItemStatus').classList.add('hidden');
+      $('obInstrList').innerHTML = ''; $('obTestResult').textContent = '';
+      $('obSaveStatus').textContent = '';
+    }
+    function select(client) {
+      const p = profiles.find(x => x.client === client);
+      if (!p) return;
+      current = client;
+      renderList();
+      $('obDetailEmpty').classList.add('hidden');
+      $('obDetailBody').classList.remove('hidden');
+      $('obName').value = p.client; $('obName').disabled = true; // name is the key
+      $('obType').value = p.type || ''; $('obCommodity').value = p.commodity || '';
+      $('obItemCount').textContent = p.itemCount ? `${p.itemCount} items loaded` : 'no items yet';
+      $('obItemStatus').classList.add('hidden'); $('obTestResult').textContent = ''; $('obSaveStatus').textContent = '';
+      renderInstr(p.instructions || []);
+    }
+    function renderInstr(list) {
+      $('obInstrList').innerHTML = list.length ? list.map(i => {
+        const badge = i.status === 'Deployed'
+          ? '<span style="font-size:.7rem;background:#dcfce7;color:#166534;padding:.1rem .4rem;border-radius:4px">Deployed</span>'
+          : '<span style="font-size:.7rem;background:#fef9c3;color:#854d0e;padding:.1rem .4rem;border-radius:4px">⏳ Processing</span>';
+        return `<div style="display:flex;align-items:center;gap:.5rem;padding:.35rem 0;border-bottom:1px solid #f1f5f9">
+          <span style="flex:1;font-size:.85rem">${esc(i.text)}</span>${badge}</div>`;
+      }).join('') : '<span class="hint">None yet.</span>';
+    }
+
+    async function save() {
+      const client = $('obName').value.trim();
+      if (!client) { $('obSaveStatus').textContent = 'Name required.'; return; }
+      const body = { client, type: $('obType').value, commodity: $('obCommodity').value.trim() };
+      const r = await fetch('/api/master/client-profiles', { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
+      if (!r.ok) { const d = await r.json(); $('obSaveStatus').textContent = d.error || 'Save failed'; return; }
+      $('obSaveStatus').textContent = '✓ Saved';
+      await load(); select(client);
+    }
+    function uploadItems() {
+      if (!current) { alert('Save the client first.'); return; }
+      const inp = $('obItemFile');
+      inp.onchange = async () => {
+        const f = inp.files && inp.files[0]; inp.value = ''; if (!f) return;
+        const st = $('obItemStatus'); st.className = 'status-bar progress'; st.textContent = `Uploading "${f.name}"…`; st.classList.remove('hidden');
+        const fd = new FormData(); fd.append('file', f);
+        try {
+          const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/item-master`, { method: 'POST', headers: mk(), body: fd });
+          const d = await r.json();
+          if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
+          st.className = 'status-bar success'; st.textContent = `✓ ${d.imported} item(s) loaded${d.skipped ? `, ${d.skipped} skipped` : ''}. SKU↔barcode search is on.`;
+          $('obItemCount').textContent = `${d.itemCount} items loaded`;
+        } catch (e) { st.className = 'status-bar error'; st.textContent = 'Error: ' + e.message; }
+      };
+      inp.click();
+    }
+    async function testCode() {
+      if (!current) { alert('Save the client first.'); return; }
+      const code = $('obTestCode').value.trim(); if (!code) return;
+      const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/test-resolve?code=${encodeURIComponent(code)}`, { headers: mk() });
+      const d = await r.json();
+      const el = $('obTestResult');
+      if (!r.ok) { el.innerHTML = `<span style="color:#dc2626">${esc(d.error || 'error')}</span>`; return; }
+      el.innerHTML = d.found
+        ? `<span style="color:#059669">✓ matched by <b>${esc(d.matchedBy)}</b> → SKU <b>${esc(d.sku)}</b>${d.barcode ? ` (barcode ${esc(d.barcode)})` : ''} — ${esc(d.name || '')}</span>`
+        : `<span style="color:#dc2626">✗ "${esc(code)}" not found in this client's item master</span>`;
+    }
+    async function addInstr() {
+      if (!current) { alert('Save the client first.'); return; }
+      const text = $('obInstrText').value.trim(); if (!text) return;
+      const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/instructions`, { method: 'POST', headers: mkJson(), body: JSON.stringify({ text }) });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || 'Failed'); return; }
+      $('obInstrText').value = '';
+      await load(); select(current);
+    }
+    async function remove() {
+      if (!current) return;
+      if (!confirm(`Remove client "${current}"? (their stock/orders are NOT deleted — this only removes the onboarding profile)`)) return;
+      await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}`, { method: 'DELETE', headers: mk() });
+      current = null; $('obDetailBody').classList.add('hidden'); $('obDetailEmpty').classList.remove('hidden');
+      load();
+    }
+
+    setTimeout(() => {
+      $('obNewBtn')?.addEventListener('click', openBlank);
+      $('obSaveBtn')?.addEventListener('click', save);
+      $('obItemUploadBtn')?.addEventListener('click', uploadItems);
+      $('obTestBtn')?.addEventListener('click', testCode);
+      $('obTestCode')?.addEventListener('keydown', e => { if (e.key === 'Enter') testCode(); });
+      $('obInstrAddBtn')?.addEventListener('click', addInstr);
+      $('obInstrText')?.addEventListener('keydown', e => { if (e.key === 'Enter') addInstr(); });
+      $('obDeleteBtn')?.addEventListener('click', remove);
+    }, 0);
+
+    return { load };
+  })();
 
   // ── ZORT merchant connections (Administrator → ZORT) ───────────────────────
   const zortHdrs = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });

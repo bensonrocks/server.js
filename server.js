@@ -2347,6 +2347,155 @@ app.get('/api/master/billing/invoice/export', (req, res) => {
   res.send(buf);
 });
 
+// ── Client onboarding — profiles, item-master upload, per-client instructions ─
+// A single place to bring a new client live: capture who they are (name, B2B/
+// B2C, commodity), load their item master (SKU + Barcode → both scan
+// interchangeably by default), and record special handling instructions. Simple
+// config-type instructions auto-apply (Deployed); anything needing custom code
+// is stored as Processing for a developer to implement then mark Deployed.
+// db.clientProfiles[] = { client, type, commodity, barcodeSearch, instructions:
+//   [{id, text, status, createdAt}], status, itemCount, createdAt, updatedAt }.
+function clientProfiles(db) { return db.clientProfiles || (db.clientProfiles = []); }
+
+app.get('/api/master/client-profiles', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(clientProfiles(readDb()));
+});
+app.post('/api/master/client-profiles', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const b = req.body || {};
+  const client = String(b.client || '').trim();
+  if (!client) return res.status(400).json({ error: 'client name is required' });
+  const db = readDb();
+  const list = clientProfiles(db);
+  let p = list.find(x => x.client === client);
+  if (!p) { p = { client, instructions: [], status: 'Deployed', createdAt: new Date().toISOString() }; list.push(p); }
+  if (b.type !== undefined)      p.type = ['b2b', 'b2c'].includes(String(b.type).toLowerCase()) ? String(b.type).toLowerCase() : (p.type || '');
+  if (b.commodity !== undefined) p.commodity = String(b.commodity).slice(0, 120);
+  p.barcodeSearch = b.barcodeSearch !== undefined ? !!b.barcodeSearch : (p.barcodeSearch !== false);
+  p.updatedAt = new Date().toISOString();
+  writeDb(db);
+  logAudit('client_profile_saved', { client, type: p.type, by: req.userId || '' });
+  res.json(p);
+});
+app.delete('/api/master/client-profiles/:client', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  db.clientProfiles = clientProfiles(db).filter(x => x.client !== req.params.client);
+  writeDb(db);
+  logAudit('client_profile_deleted', { client: req.params.client, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
+// Add a special-handling instruction. Config-type (recognised) instructions
+// auto-apply → Deployed; anything else is stored as Processing for a developer.
+app.post('/api/master/client-profiles/:client/instructions', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const text = String(req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'instruction text is required' });
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  // Recognise the built-in config-type instructions that apply automatically.
+  const t = text.toLowerCase();
+  const isBarcodeRule = /barcode/.test(t) && /(sku|in.?house|search)/.test(t);
+  const instr = {
+    id: uuidv4().slice(0, 8), text,
+    status: isBarcodeRule ? 'Deployed' : 'Processing',
+    kind: isBarcodeRule ? 'barcode_sku_search' : 'custom',
+    createdAt: new Date().toISOString(),
+  };
+  if (isBarcodeRule) p.barcodeSearch = true; // the default rule — enable it
+  p.instructions = p.instructions || [];
+  p.instructions.push(instr);
+  writeDb(db);
+  logAudit('client_instruction_added', { client: p.client, status: instr.status, kind: instr.kind, by: req.userId || '' });
+  res.json(instr);
+});
+// Flip an instruction's status (a developer marks a Processing item Deployed).
+app.post('/api/master/client-profiles/:client/instructions/:id/status', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const status = ['Processing', 'Deployed'].includes(req.body?.status) ? req.body.status : null;
+  if (!status) return res.status(400).json({ error: 'status must be Processing or Deployed' });
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  const instr = p && (p.instructions || []).find(i => i.id === req.params.id);
+  if (!instr) return res.status(404).json({ error: 'instruction not found' });
+  instr.status = status;
+  writeDb(db);
+  res.json(instr);
+});
+
+// Upload the client's item master (SKU, Name, Barcode, optional stock). Captures
+// barcode so SKU↔barcode inter-search works. Reuses the inventory upsert.
+app.post('/api/master/client-profiles/:client/item-master', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+  const client = req.params.client;
+  const cid = invClientId(client);
+  const buf = req.file.buffer, name = (req.file.originalname || '').toLowerCase();
+  let rows = [];
+  try {
+    const isXlsx = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b;
+    const isXls  = buf.length > 7 && buf[0] === 0xd0 && buf[1] === 0xcf;
+    if (isXlsx || isXls || name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+        .map(r => { const o = {}; for (const [k, v] of Object.entries(r)) o[String(k).trim().toLowerCase().replace(/[^a-z0-9]/g, '')] = v; return o; });
+    } else {
+      const text = buf.toString('utf8').replace(/^﻿/, '');
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) return res.status(400).json({ error: 'Empty file.' });
+      const delim = (lines[0].includes(';') && !lines[0].includes(',')) ? ';' : ',';
+      const cols = lines[0].split(delim).map(c => c.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+      rows = lines.slice(1).map(line => { const cells = line.split(delim); const o = {}; cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); }); return o; });
+    }
+  } catch (e) { return res.status(400).json({ error: 'Could not parse file: ' + e.message }); }
+
+  let imported = 0, skipped = 0; const errors = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
+    if (!sku) { skipped++; continue; }
+    try {
+      inventory.upsert({
+        sku, clientId: cid,
+        name: String(r.name ?? r.description ?? r.productname ?? sku).trim() || sku,
+        barcode: String(r.barcode ?? r.ean ?? r.upc ?? r.barcodeeanupc ?? '').trim(),
+        stock_qty: Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? 0) || 0,
+      });
+      imported++;
+    } catch (e) { skipped++; errors.push({ row: i + 2, sku, error: e.message }); }
+  }
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === client);
+  if (p) { p.itemCount = (inventory.getAll({ clientId: cid }) || []).length; p.updatedAt = new Date().toISOString(); writeDb(db); }
+  logAudit('client_item_master_uploaded', { client, imported, skipped, by: req.userId || '' });
+  res.json({ imported, skipped, errors: errors.slice(0, 20), itemCount: p ? p.itemCount : imported });
+});
+
+// Test the SKU↔barcode resolution for a client — paste a code, see what it maps
+// to (proves the item master + inter-search work before going live).
+app.get('/api/master/client-profiles/:client/test-resolve', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const code = String(req.query.code || '').trim();
+  if (!code) return res.status(400).json({ error: 'code required' });
+  const cid = invClientId(req.params.client);
+  if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+  const bySku = inventory.get(code, cid);
+  const byBarcode = bySku ? null : inventory.getByBarcode(code, cid);
+  const row = bySku || byBarcode;
+  res.json({
+    code,
+    found: !!row,
+    matchedBy: bySku ? 'sku' : (byBarcode ? 'barcode' : null),
+    sku: row ? row.sku : null,
+    name: row ? row.name : null,
+    barcode: row ? row.barcode : null,
+  });
+});
+
 // Merges live db.auditLog with archived months when a report's requested
 // range reaches further back than what's still live — transparent to every
 // report kind, which just keeps reading `log` as before.
