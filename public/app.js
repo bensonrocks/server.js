@@ -918,6 +918,10 @@
 
     const form = new FormData();
     form.append('orderFile', file);
+    // Pass the client name typed on the upload page (if any) so the preview can
+    // compute the staging heads-up even when the file has no client column.
+    const preClient = document.getElementById('clientNameInput')?.value.trim();
+    if (preClient) form.append('client_name', preClient);
 
     try {
       const resp = await fetch('/api/preview', {
@@ -1022,6 +1026,19 @@
       dupEl.classList.add('hidden');
     }
 
+    // Staging decision — only when some units would come from received-but-unbinned
+    // stock. Default "wait till binned"; user can switch to "allocate from staging".
+    const stagingSec = document.getElementById('stagingSection');
+    if (preview.stagingUnits > 0) {
+      document.getElementById('stagingUnitsLabel').textContent = preview.stagingUnits;
+      const sk = (preview.stagingSkus || []).map(s => `${s.sku} (${s.units})`).join(', ');
+      document.getElementById('stagingSkusHint').textContent = sk ? `In staging: ${sk}` : '';
+      document.getElementById('pickStagingWait').checked = true;
+      stagingSec.classList.remove('hidden');
+    } else {
+      stagingSec.classList.add('hidden');
+    }
+
     // Flagged orders: review & amend quantities right here before approving
     const adjWrap = document.getElementById('confirmAdjustSection');
     const flagged = (preview.flagged || []).filter(f => (f.lines || []).length);
@@ -1075,6 +1092,10 @@
     document.querySelectorAll('input[name="arrangeDelivery"]').forEach(r => { r.checked = false; });
     document.getElementById('arrangeDeliveryError')?.classList.add('hidden');
     document.getElementById('deliveryPlanningSection')?.classList.remove('hidden');
+    // Staging section stays hidden until the preview says there's staging stock;
+    // reset its choice to the conservative default (wait till binned).
+    document.getElementById('stagingSection')?.classList.add('hidden');
+    document.getElementById('pickStagingWait') && (document.getElementById('pickStagingWait').checked = true);
     document.getElementById('uploadConfirmOverlay').classList.remove('hidden');
   }
 
@@ -1100,6 +1121,9 @@
   }
   function pickStrategyChoice() {
     return document.querySelector('input[name="pickStrategy"]:checked')?.value || 'fefo';
+  }
+  function pickStagingChoice() {
+    return document.querySelector('input[name="pickStaging"]:checked')?.value || 'wait';
   }
   document.querySelectorAll('input[name="arrangeDelivery"]').forEach(r =>
     r.addEventListener('change', () => document.getElementById('arrangeDeliveryError')?.classList.add('hidden')));
@@ -1137,7 +1161,7 @@
         const resp = await fetch('/api/ocr/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-session-id': SESSION_ID },
-          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection, arrange_delivery: arrangeDeliveryChoice(), pick_strategy: pickStrategyChoice() }),
+          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection, arrange_delivery: arrangeDeliveryChoice(), pick_strategy: pickStrategyChoice(), pick_staging: pickStagingChoice() }),
         });
         const data = await resp.json();
         document.getElementById('uploadConfirmOverlay').classList.add('hidden');
@@ -1181,6 +1205,7 @@
     // Delivery-arrangement decision — 'yes' also creates Transport jobs
     form.append('arrange_delivery', arrangeDeliveryChoice());
     form.append('pick_strategy', pickStrategyChoice());
+    form.append('pick_staging', pickStagingChoice());
 
     try {
       const sendUpload = async () => {
@@ -7063,11 +7088,20 @@
       // would break the fixed 5-rows-per-page layout)
       const lotParts = [];
       // Pick-from-bin locations (FEFO/FIFO-allocated at upload) — the pick list.
+      // A 'STAGING' pseudo-location means "pick from the receiving area" (chosen at
+      // upload when there was received-but-unbinned stock).
       if (item.pick_locations && item.pick_locations.length) {
-        const locs = item.pick_locations.map(pl => `${esc(pl.location_id)}&nbsp;×${pl.qty}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
-        lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
+        const binPicks = item.pick_locations.filter(pl => pl.location_id !== 'STAGING');
+        const stagePicks = item.pick_locations.filter(pl => pl.location_id === 'STAGING');
+        if (binPicks.length) {
+          const locs = binPicks.map(pl => `${esc(pl.location_id)}&nbsp;×${pl.qty}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
+          lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
+        }
+        const stageQty = stagePicks.reduce((s, p) => s + p.qty, 0);
+        if (stageQty > 0) lotParts.push(`<span class="lot-badge lot-stage" title="Pick from the receiving/staging area (not yet binned)" style="background:#ffedd5;color:#9a3412">&#128229; Staging ×${stageQty}</span>`);
       }
-      if (item.pick_shortfall > 0) lotParts.push(`<span class="lot-badge lot-short" title="No bin stock allocated — walk-up pick" style="background:#fef3c7;color:#92400e">&#9888; ${item.pick_shortfall} walk-up</span>`);
+      if (item.awaiting_putaway_qty > 0) lotParts.push(`<span class="lot-badge lot-await" title="Received but not yet put away — waiting for putaway before this can be picked from a bin" style="background:#fef9c3;color:#854d0e">&#9203; ${item.awaiting_putaway_qty} awaiting putaway</span>`);
+      if (item.pick_shortfall > 0) lotParts.push(`<span class="lot-badge lot-short" title="No stock anywhere — walk-up pick / backorder" style="background:#fee2e2;color:#991b1b">&#9888; ${item.pick_shortfall} walk-up</span>`);
       if (item.batch_number)  lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(item.batch_number)}</span>`);
       if (item.serial_number) lotParts.push(`<span class="lot-badge lot-serial">S/N&nbsp;${esc(item.serial_number)}</span>`);
       if (item.expiry_date)   lotParts.push(`<span class="lot-badge lot-expiry">Exp&nbsp;${esc(item.expiry_date)}</span>`);

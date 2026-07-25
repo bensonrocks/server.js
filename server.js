@@ -4183,12 +4183,18 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       if (overwritable.length) errors.push(`⚠ ${overwritable.length} order(s) already uploaded earlier (not yet completed): ${list(overwritable)} — you'll be asked to Overwrite or Abort when you approve`);
       if (asNew.length)        errors.push(`⚠ ${asNew.length} completed order(s) share a number with this file but have a different GI: ${list(asNew)} — you'll be asked to confirm uploading them as new orders`);
     }
-    const clientName = allRows.find(r => r.client_name)?.client_name || '';
+    const clientName = allRows.find(r => r.client_name)?.client_name || String(req.body?.client_name || '').trim();
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
 
     // Check if delivery planning is available (orders have postal codes)
     const hasPostalCodes = orders.some(o => o.postal_code || o.zip || o.zip_code);
     const deliveryPlanningAvailable = hasPostalCodes;
+
+    // Staging heads-up: how many units this file would draw from received-but-not-
+    // yet-binned stock. Drives the "allocate from staging vs wait till binned"
+    // prompt in the Confirm modal — only shown when this is > 0.
+    let staging = { units: 0, skus: [] };
+    try { if (clientName) staging = stagingDemand(invClientId(clientName), orders, 'fefo'); } catch (_) {}
 
     res.json({
       rowCount: allRows.length,
@@ -4199,6 +4205,8 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       customerNames,
       flagged,
       duplicateWarnings,
+      stagingUnits: staging.units,
+      stagingSkus: staging.skus.slice(0, 8),
       deliveryPlanningAvailable,
       deliveryPlanningHint: deliveryPlanningAvailable ? 'This shipment can be grouped into delivery jobs for route planning.' : null
     });
@@ -4691,8 +4699,11 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       }
       // Allocate pick locations per line (FEFO/FIFO over bin lots). This is what
       // puts a bin on every pick-list line — l.pick_locations = [{location, qty,
-      // expiry}]; l.pick_shortfall = units with no bin (walk-up/backorder).
-      allocatePickLocations(invCid, orders, pickStrategy);
+      // expiry}]; l.pick_shortfall = units with no stock; l.awaiting_putaway_qty =
+      // units sitting in staging when the user chose to wait till binned.
+      const stagingMode = String(req.body?.pick_staging || 'wait').toLowerCase() === 'staging' ? 'staging' : 'wait';
+      batch.pick_staging = stagingMode;
+      allocatePickLocations(invCid, orders, pickStrategy, stagingMode);
     }
 
     db.batches.unshift(batch);
@@ -10261,20 +10272,60 @@ function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
 
 // Allocate physical bin locations to every order line via FEFO/FIFO, stamping
 // l.pick_locations (what the pick list shows) + l.pick_shortfall (units with no
-// bin — a walk-up pick / backorder). Pure planning: consumes nothing. Safe no-op
-// when the inventory store is down.
-function allocatePickLocations(clientId, orders, strategy) {
+// stock anywhere — a real walk-up / backorder). Pure planning: consumes nothing.
+//
+// stagingMode governs what happens to a line's bin-shortfall that IS covered by
+// STAGING stock (received but not yet put away — inventory.stagingQty):
+//   'staging' → allocate those units to a pseudo-location 'STAGING' (pick from the
+//               receiving area now, before it's shelved).
+//   'wait'    → don't allocate them; stamp l.awaiting_putaway_qty so the pick line
+//               shows "awaiting putaway" and the order waits until putaway is done.
+// A running per-SKU staging pool is drawn down across the whole batch so two orders
+// can't both be promised the same staging units.
+function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait') {
   if (!inventory.available()) return;
+  const stagingLeft = {}; // sku -> staging units still unallocated this batch
+  const stagingFor = sku => (stagingLeft[sku] !== undefined ? stagingLeft[sku] : (stagingLeft[sku] = inventory.stagingQty(clientId, sku)));
   for (const order of (orders || [])) {
     for (const l of (order.lines || [])) {
       if (!l.sku) continue;
       try {
         const a = inventory.allocatePick(clientId, l.sku, Number(l.qty) || 0, strategy);
         l.pick_locations = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
-        l.pick_shortfall = a.shortfall;
+        let shortfall = a.shortfall;
+        l.awaiting_putaway_qty = 0;
+        if (shortfall > 0) {
+          const fromStaging = Math.min(shortfall, stagingFor(l.sku));
+          if (fromStaging > 0) {
+            stagingLeft[l.sku] -= fromStaging;
+            shortfall -= fromStaging;
+            if (stagingMode === 'staging') l.pick_locations.push({ location_id: 'STAGING', qty: fromStaging, expiry_date: null });
+            else l.awaiting_putaway_qty = fromStaging;
+          }
+        }
+        l.pick_shortfall = shortfall; // whatever's left has no stock at all
       } catch (_) { /* leave line un-allocated */ }
     }
   }
+}
+
+// Heads-up for the Confirm modal: how many units across this file are covered by
+// STAGING (received-but-unbinned) stock rather than a bin — i.e. the units the
+// "allocate from staging vs wait till binned" choice actually governs. Read-only.
+function stagingDemand(clientId, orders, strategy) {
+  if (!inventory.available()) return { units: 0, skus: [] };
+  const demand = {}; // sku -> total ordered
+  for (const o of (orders || [])) for (const l of (o.lines || [])) if (l.sku) demand[l.sku] = (demand[l.sku] || 0) + (Number(l.qty) || 0);
+  const skus = [];
+  let units = 0;
+  for (const [sku, dem] of Object.entries(demand)) {
+    const binned = inventory.binnedQty(clientId, sku);
+    const staging = inventory.stagingQty(clientId, sku);
+    const afterBins = Math.max(0, dem - binned);
+    const fromStaging = Math.min(afterBins, staging);
+    if (fromStaging > 0) { units += fromStaging; skus.push({ sku, units: fromStaging }); }
+  }
+  return { units, skus };
 }
 
 // ── Backorders — orders short on stock at reserve time ───────────────────────

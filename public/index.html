@@ -2722,6 +2722,21 @@
         <p class="hint" style="margin:.5rem 0 0 0;font-size:12px">Picks the bin with the nearest expiry (FEFO) or oldest received date (FIFO). Lots without an expiry fall back to inbound date. Each pick line shows its bin.</p>
       </div>
 
+      <div id="stagingSection" class="form-group hidden" style="margin-top:.9rem;padding:.75rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px">
+        <label style="font-weight:600;display:block;margin-bottom:.4rem">📥 <span id="stagingUnitsLabel">Some</span> unit(s) are received but not yet put away in bins (staging)</label>
+        <div style="display:flex;gap:1.25rem;flex-wrap:wrap">
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="radio" name="pickStaging" id="pickStagingWait" value="wait" checked />
+            <span><b>Wait till binned</b> — hold those units until putaway</span>
+          </label>
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="radio" name="pickStaging" id="pickStagingNow" value="staging" />
+            <span><b>Allocate from staging</b> — pick from the receiving area now</span>
+          </label>
+        </div>
+        <p class="hint" id="stagingSkusHint" style="margin:.5rem 0 0 0;font-size:12px"></p>
+      </div>
+
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="confirmCancelBtn">Cancel</button>
         <button class="btn-primary"   id="confirmApproveBtn">Approve &amp; Upload &#8594;</button>
