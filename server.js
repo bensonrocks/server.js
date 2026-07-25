@@ -4068,6 +4068,25 @@ app.use((req, res, next) => {
   requireAuth(req, res, next);
 });
 
+// Lightweight system-health snapshot for the in-app warning banner. Unlike the
+// master-gated /api/master/system-errors/health (which also carries error counts
+// and detail for the admin Troubleshoot modal), this returns ONLY the operational
+// booleans the banner needs and sits behind the normal requireAuth gate above — so
+// EVERY signed-in INTERNAL user (admin AND warehouse) can see an outage warning,
+// while client/driver portals (which never hold a staff session token) can't reach
+// it. No error contents, no client data — just "is a subsystem failing right now?".
+app.get('/api/system-health', (req, res) => {
+  const db = readDb();
+  const ob = db.zortOutbox || [];
+  res.json({
+    at: new Date().toISOString(),
+    inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
+    zortOutboxStalled: ob.filter(e => e.stalled).length,
+    storagePersistent: PERSISTENCE.survivedRestart,
+    ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
+  });
+});
+
 // Parse-only preview — returns stats without saving anything
 app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (req, res) => {
   try {
