@@ -5143,6 +5143,7 @@ app.post('/api/scan/increment', (req, res) => {
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   addToActiveCarton(state, item.sku, 1);
+  reconcileBinConsumption(db, batch, ord, state, item.sku); // live per-scan bin decrement
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'scan', raw: String(req.body.sku || '').trim(), sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
@@ -6901,6 +6902,7 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
   addToActiveCarton(state, item.sku, 1);
+  reconcileBinConsumption(db, batch, ord, state, item.sku); // live per-scan bin decrement
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'teach', raw: bc, sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
@@ -6995,6 +6997,7 @@ app.post('/api/scan/setqty', (req, res) => {
   const prevQty = state.scanned[item.sku] || 0;
   state.scanned[item.sku] = qn;
   addToActiveCarton(state, item.sku, qn - prevQty); // manual correction — nudge the open carton by the delta
+  reconcileBinConsumption(db, batch, ord, state, item.sku); // sync bins to the corrected count (up or down)
   state.updated_at = new Date().toISOString();
   appendScanLog(state, { kind: 'count', raw: '', sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
@@ -7071,13 +7074,12 @@ app.post('/api/scan/complete', (req, res) => {
         inventory.deductOrder(cid, { id: orderNumber, items: (ord.lines || []).map(l => ({ sku: l.sku, qty: l.qty })) });
         state.inventory_deducted = true;
         deductedSkus = [...new Set((ord.lines || []).map(l => l.sku).filter(Boolean))];
-        // Also decrement the physical BIN LOTS. Re-allocate FRESH from current bin
-        // state (the batch's FEFO/FIFO strategy) rather than replaying the
-        // upload-time plan — stock may have moved since — so occupancy stays true.
-        const strat = batch.pick_strategy || 'fefo';
-        const allocations = (ord.lines || []).filter(l => l.sku)
-          .map(l => inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat));
-        if (allocations.length) { try { inventory.consumeAllocations(cid, allocations, operator || ''); } catch (e) { console.warn('[scan/complete] bin consume failed', e.message); } }
+        // Bin lots are decremented LIVE per-scan (reconcileBinConsumption). Here we
+        // just do a final reconcile per SKU to catch any gap — e.g. an order marked
+        // done without scanning every unit — so bins always match the final count.
+        for (const sku of new Set((ord.lines || []).map(l => l.sku).filter(Boolean))) {
+          reconcileBinConsumption(db, batch, ord, state, sku);
+        }
       } catch (e) { console.warn('[scan/complete] inventory deduct failed for', orderNumber, e.message); }
     }
 
@@ -10307,6 +10309,44 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
       } catch (_) { /* leave line un-allocated */ }
     }
   }
+}
+
+// Bring an order's bin consumption in line with what's been SCANNED for one SKU —
+// called live from every scan path so bin occupancy updates per-scan, not only at
+// completion. Monotonic + reversible: scanning up consumes more from bins
+// (FEFO/FIFO), a downward correction (setqty lower) returns units to their bins.
+// state.bin_consumed[sku] records the exact lots taken so a return is precise.
+// No-op unless the batch is inventory-tracked and the store is available.
+function reconcileBinConsumption(db, batch, ord, state, sku) {
+  if (!sku || !batch || !batch.inventory_tracked || !inventory.available()) return;
+  const cid = batch.inventory_client || invClientId(batch.client_name);
+  const strat = batch.pick_strategy || 'fefo';
+  const ordered = (ord.lines || []).filter(l => l.sku === sku).reduce((s, l) => s + (Number(l.qty) || 0), 0);
+  const target = Math.min(Number(state.scanned?.[sku] || 0), ordered);   // never consume beyond ordered
+  state.bin_consumed = state.bin_consumed || {};
+  const list = state.bin_consumed[sku] || [];
+  const have = list.reduce((s, e) => s + e.qty, 0);
+  try {
+    if (target > have) {
+      const picks = inventory.allocatePick(cid, sku, target - have, strat).picks;
+      if (picks.length) {
+        inventory.consumeAllocations(cid, [{ sku, picks }]);
+        for (const p of picks) list.push({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null, received_at: p.received_at || null, lot_number: p.lot_number || '' });
+      }
+    } else if (target < have) {
+      let give = have - target;
+      const back = [];
+      while (give > 0 && list.length) {
+        const last = list[list.length - 1];
+        const take = Math.min(give, last.qty);
+        back.push({ sku, location_id: last.location_id, qty: take, received_at: last.received_at, expiry_date: last.expiry_date, lot_number: last.lot_number });
+        last.qty -= take; give -= take;
+        if (last.qty <= 0) list.pop();
+      }
+      if (back.length) inventory.restoreLots(cid, back);
+    }
+    state.bin_consumed[sku] = list;
+  } catch (e) { console.warn('[bin-reconcile] failed for', sku, e.message); }
 }
 
 // Heads-up for the Confirm modal: how many units across this file are covered by
