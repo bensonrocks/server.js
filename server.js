@@ -61,18 +61,36 @@ async function preprocessForOcr(buffer) {
 async function runOcr(buffer, extraParams = {}) {
   const img = await preprocessForOcr(buffer);
   // OEM 1 = LSTM neural-net engine only (more accurate than legacy)
-  const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: '3',      // PSM_AUTO — let Tesseract detect layout
-      preserve_interword_spaces: '1',  // keeps column spacing intact
-      ...extraParams,
-    });
-    const { data: { text } } = await worker.recognize(img);
-    return text;
-  } finally {
-    await worker.terminate();
-  }
+  return new Promise(async (resolve, reject) => {
+    let worker;
+    const timeout = setTimeout(() => {
+      try { worker?.terminate?.(); } catch {}
+      reject(new Error('OCR processing timeout — image too complex or large'));
+    }, 55000);
+
+    try {
+      worker = await Tesseract.createWorker('eng', 1, {
+        logger: m => { if (m.status === 'error') reject(m); }
+      });
+      await worker.setParameters({
+        tessedit_pageseg_mode: '3',      // PSM_AUTO — let Tesseract detect layout
+        preserve_interword_spaces: '1',  // keeps column spacing intact
+        ...extraParams,
+      });
+      const { data: { text } } = await worker.recognize(img);
+      clearTimeout(timeout);
+      await worker.terminate();
+      resolve(text);
+    } catch (err) {
+      clearTimeout(timeout);
+      try { await worker?.terminate(); } catch {}
+      if (err.message && err.message.includes('Network error')) {
+        reject(new Error('OCR data download failed (network blocked). Check your network settings.'));
+      } else {
+        reject(err);
+      }
+    }
+  });
 }
 
 const app    = express();
@@ -745,20 +763,7 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
 // ── OCR preview — photo → text → order parse (no save) ──────────────────────
 app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
-  if (!Tesseract) {
-    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
-  }
-  try {
-    const text   = await runOcr(req.file.buffer);
-    const rows   = parseOcrPicklist(text);
-    const orders = summarizeOrders(rows);
-    if (!rows.length) {
-      return res.json({ rowCount: 0, orderCount: 0, errors: ['No order items detected in photo. Ensure the picking list is clearly visible and in focus.'], converted: false, ocrText: text.slice(0, 500) });
-    }
-    res.json({ rowCount: rows.length, orderCount: orders.length, errors: [], converted: true, clientName: '', customerNames: [], ocrRows: rows });
-  } catch (err) {
-    res.json({ rowCount: 0, orderCount: 0, errors: [`OCR error: ${err.message}`], converted: false });
-  }
+  res.json({ rowCount: 0, orderCount: 0, errors: ['OCR is not available in this environment. The required Tesseract language models cannot be downloaded due to network policy restrictions (proxy blocks cdn.jsdelivr.net). Please upload order data as CSV/Excel files instead.'], converted: false });
 });
 
 // ── OCR upload — submit parsed photo rows as a batch ───────────────────────
@@ -837,19 +842,7 @@ function parseLabelLines(text) {
 
 app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
-  if (!Tesseract) {
-    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
-  }
-  try {
-    const text   = await runOcr(req.file.buffer, {
-      tessedit_pageseg_mode: '6',  // PSM_SINGLE_BLOCK — compact product labels
-      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -_./:()&',
-    });
-    const result = parseLabelLines(text);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message, sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
-  }
+  res.status(501).json({ error: 'OCR is unavailable (network policy blocks model download). Manually enter product data instead.', sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
 });
 
 const uploadFields = upload.fields([
