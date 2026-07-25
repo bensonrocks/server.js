@@ -685,13 +685,26 @@ function _isFooterRow(rec) {
   return /^(total\s+whole|total\s+loose|grand\s+total|subtotal|remarks?[\s:]|picked\s+by|checked\s+by|released\s+by)/i.test(String(first).trim());
 }
 
+// Every uploaded order must carry a unique key: GI No / GI Number,
+// Waybill No, or Order Reference. If the file has item rows but none of
+// them resolved a key, reject with an explicit message instead of silently
+// dropping every row as metadata.
+function _requireOrderKey(mappedRows) {
+  const itemRows = mappedRows.filter(r => r.sku);
+  if (itemRows.length && itemRows.every(r => !r.order_number || r.order_number === 'UNKNOWN')) {
+    throw new Error('No order key found — the file must contain a GI No / GI Number, Waybill No, or Order Reference column.');
+  }
+}
+
 // ── File parsing ────────────────────────────────────────────────────────────
 function parseUploadedFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.csv') {
     const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
     const detected = detectColumnMap(records);
-    return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const mapped   = records.map(r => mapRow(r, detected));
+    _requireOrderKey(mapped);
+    return mapped.filter(r => r.sku && !isMetadataRow(r));
   }
   if (ext === '.xlsx' || ext === '.xls') {
     const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
@@ -701,7 +714,9 @@ function parseUploadedFile(buffer, filename) {
     const finalRecs            = melted || records;
     const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
     const detected             = detectColumnMap(cleanRecs);
-    return cleanRecs.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const mapped               = cleanRecs.map(r => mapRow(r, detected));
+    _requireOrderKey(mapped);
+    return mapped.filter(r => r.sku && !isMetadataRow(r));
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -738,6 +753,7 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
       const detected = detectColumnMap(records);
       const all      = records.map(r => mapRow(r, detected));
+      _requireOrderKey(all);
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = all.length - allRows.length;
     } else {
@@ -749,6 +765,7 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
       const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
       const detected             = detectColumnMap(cleanRecs);
       const all                  = cleanRecs.map(r => mapRow(r, detected));
+      _requireOrderKey(all);
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = cleanRecs.length - allRows.length;
     }
