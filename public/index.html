@@ -2330,6 +2330,102 @@
             </table>
           </div>
         </div>
+
+        <!-- 📍 Bin locations & putaway -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div><b>📍 Bin locations &amp; putaway</b>
+            <div class="hint" style="margin:.2rem 0 .6rem">Define warehouse bins (zone-aisle-shelf-bin), then place stock into them. Placing records <b>where</b> units sit; it doesn't change the sellable total.</div>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem">
+            <input id="locZone" placeholder="Zone (A)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locAisle" placeholder="Aisle (01)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locShelf" placeholder="Shelf (02)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locBin" placeholder="Bin (03)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <select id="locEnv" style="padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"><option value="dry">Dry</option><option value="cold">Cold</option><option value="frozen">Frozen</option></select>
+            <button class="btn-secondary btn-sm" id="locAddBtn">+ Create bin</button>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem;border-top:1px dashed #e2e8f0;padding-top:.6rem">
+            <input id="putSku" list="invSkuList" placeholder="SKU" style="flex:1;min-width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <select id="putLoc" style="min-width:130px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"></select>
+            <input id="putQty" type="number" placeholder="Qty" style="width:90px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <button class="btn-primary btn-sm" id="putBtn">Place stock</button>
+          </div>
+          <datalist id="invSkuList"></datalist>
+          <div id="locMsg" class="status-bar hidden" style="margin-bottom:.6rem"></div>
+          <div style="overflow-x:auto">
+            <table class="tbl" style="width:100%">
+              <thead><tr><th style="text-align:left">Bin</th><th style="text-align:left">Env</th><th style="text-align:left">SKU</th><th style="text-align:left">Name</th><th style="text-align:right">Qty</th></tr></thead>
+              <tbody id="locStockTbody"><tr><td colspan="5" style="text-align:center;padding:1.2rem;color:#94a3b8">No stock placed in bins yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 🔀 Stock transfer -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div><b>🔀 Stock transfer</b>
+            <div class="hint" style="margin:.2rem 0 .6rem">Move units between bins. The source bin must already hold enough stock.</div>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end">
+            <input id="trSku" list="invSkuList" placeholder="SKU" style="flex:1;min-width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <select id="trFrom" style="min-width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"></select>
+            <span style="align-self:center">→</span>
+            <select id="trTo" style="min-width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"></select>
+            <input id="trQty" type="number" placeholder="Qty" style="width:90px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <button class="btn-primary btn-sm" id="trBtn">Transfer</button>
+          </div>
+          <div id="trMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+        </div>
+
+        <!-- 🧮 Cycle count -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div><b>🧮 Cycle count</b>
+              <div class="hint" style="margin:.2rem 0 0">Count physical stock, record counted quantities, then post — variances update on-hand automatically (and sync to ZORT).</div>
+            </div>
+            <button class="btn-secondary btn-sm" id="ccStartBtn">▶ Start count</button>
+          </div>
+          <div id="ccActive" class="hidden" style="margin-top:.7rem;border-top:1px dashed #e2e8f0;padding-top:.7rem">
+            <div class="hint" style="margin-bottom:.5rem">Count <b id="ccId"></b> — in progress</div>
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem">
+              <input id="ccSku" list="invSkuList" placeholder="SKU" style="flex:1;min-width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+              <input id="ccQty" type="number" placeholder="Counted qty" style="width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+              <button class="btn-secondary btn-sm" id="ccAddBtn">+ Add line</button>
+            </div>
+            <div style="overflow-x:auto">
+              <table class="tbl" style="width:100%">
+                <thead><tr><th style="text-align:left">SKU</th><th style="text-align:right">Expected</th><th style="text-align:right">Counted</th><th style="text-align:right">Variance</th></tr></thead>
+                <tbody id="ccTbody"><tr><td colspan="4" style="text-align:center;padding:1rem;color:#94a3b8">No lines counted yet.</td></tr></tbody>
+              </table>
+            </div>
+            <div style="display:flex;gap:.5rem;margin-top:.6rem">
+              <button class="btn-primary btn-sm" id="ccCompleteBtn">✓ Post count &amp; apply variances</button>
+              <button class="btn-secondary btn-sm" id="ccCancelBtn">Cancel</button>
+            </div>
+          </div>
+          <div id="ccMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+        </div>
+
+        <!-- 🚚 Suppliers & reorder -->
+        <div class="panel" style="margin-top:1.25rem;margin-bottom:1rem">
+          <div><b>🚚 Suppliers &amp; reorder</b>
+            <div class="hint" style="margin:.2rem 0 .6rem">Add suppliers and see which SKUs are at/below their reorder point and should be restocked.</div>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem">
+            <input id="supId" placeholder="Supplier code" style="width:130px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="supName" placeholder="Supplier name" style="flex:1;min-width:140px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="supLead" type="number" placeholder="Lead days" style="width:100px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <button class="btn-secondary btn-sm" id="supAddBtn">+ Add supplier</button>
+          </div>
+          <div id="supList" class="hint" style="margin-bottom:.6rem"></div>
+          <div id="supMsg" class="status-bar hidden" style="margin-bottom:.6rem"></div>
+          <div style="font-weight:600;font-size:.82rem;margin-bottom:.3rem">Reorder suggestions</div>
+          <div style="overflow-x:auto">
+            <table class="tbl" style="width:100%">
+              <thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Name</th><th style="text-align:right">Available</th><th style="text-align:right">Reorder pt</th><th style="text-align:right">Need</th><th style="text-align:left">Supplier</th></tr></thead>
+              <tbody id="reorderTbody"><tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">Nothing needs reordering.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 

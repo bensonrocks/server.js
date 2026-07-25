@@ -10890,9 +10890,181 @@
       });
     }, 0);
 
-    // load bundles whenever a client is loaded
+    // ── WMS: bin locations, putaway, transfers, cycle counts, suppliers/reorder ──
+    // (Previously dormant backend — routes existed but had no UI and the GETs were
+    //  shadowed by /api/inventory/:sku. Now surfaced, all scoped to the loaded client.)
+    let locations = [];
+    let ccId = '';
+    let ccLines = [];
+    function wmsMsg(id, cls, text) { const el = $(id); if (!el) return; el.className = 'status-bar ' + cls; el.textContent = text; el.classList.remove('hidden'); }
+    function fillSkuDatalist() {
+      const dl = $('invSkuList'); if (dl) dl.innerHTML = items.map(r => `<option value="${esc(r.sku)}"></option>`).join('');
+    }
+    async function refreshLocations() {
+      try { const r = await fetch('/api/inventory/locations'); locations = r.ok ? await r.json() : []; } catch { locations = []; }
+      const opts = locations.map(l => `<option value="${esc(l.location_id)}">${esc(l.location_id)}</option>`).join('');
+      const blank = '<option value="">— bin —</option>';
+      ['putLoc', 'trFrom', 'trTo'].forEach(id => { const s = $(id); if (s) s.innerHTML = blank + opts; });
+    }
+    async function loadLocationStock() {
+      const tb = $('locStockTbody'); if (!tb || !clientId) return;
+      try {
+        const r = await fetch('/api/inventory/location-stock?clientId=' + encodeURIComponent(clientId));
+        const rows = r.ok ? await r.json() : [];
+        if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:1.2rem;color:#94a3b8">No stock placed in bins yet.</td></tr>'; return; }
+        tb.innerHTML = rows.map(x => `<tr>
+          <td style="font-family:monospace">${esc(x.location_id)}</td>
+          <td>${esc(x.environment || '')}</td>
+          <td style="font-family:monospace;font-weight:600">${esc(x.sku)}</td>
+          <td>${esc(x.name || '')}</td>
+          <td style="text-align:right;font-weight:700">${x.quantity}</td></tr>`).join('');
+      } catch { /* keep prior */ }
+    }
+    async function createLocation() {
+      const zone = $('locZone').value.trim(), aisle = $('locAisle').value.trim(), shelf = $('locShelf').value.trim(), bin = $('locBin').value.trim();
+      if (!zone || !aisle || !shelf || !bin) { wmsMsg('locMsg', 'error', 'Zone, aisle, shelf and bin are all required.'); return; }
+      try {
+        const r = await fetch('/api/inventory/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zone, aisle, shelf, bin, environment: $('locEnv').value }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('locMsg', 'error', d.error || 'Failed'); return; }
+        wmsMsg('locMsg', 'success', '✓ Bin ' + d.location_id + ' created.');
+        ['locZone', 'locAisle', 'locShelf', 'locBin'].forEach(id => { $(id).value = ''; });
+        refreshLocations();
+      } catch (e) { wmsMsg('locMsg', 'error', e.message); }
+    }
+    async function placeStock() {
+      const sku = $('putSku').value.trim(), location_id = $('putLoc').value, qty = $('putQty').value;
+      if (!clientId) { alert('Load a client first.'); return; }
+      if (!sku || !location_id || qty === '') { wmsMsg('locMsg', 'error', 'SKU, bin and qty are required.'); return; }
+      try {
+        const r = await fetch('/api/inventory/place-stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, location_id, qty: Number(qty) }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('locMsg', 'error', d.error || 'Failed'); return; }
+        wmsMsg('locMsg', 'success', `✓ ${sku} @ ${location_id} now ${d.quantity}.`);
+        $('putSku').value = ''; $('putQty').value = '';
+        loadLocationStock();
+      } catch (e) { wmsMsg('locMsg', 'error', e.message); }
+    }
+    async function transfer() {
+      const sku = $('trSku').value.trim(), from_location = $('trFrom').value, to_location = $('trTo').value, qty = $('trQty').value;
+      if (!clientId) { alert('Load a client first.'); return; }
+      if (!sku || !from_location || !to_location || qty === '') { wmsMsg('trMsg', 'error', 'SKU, both bins and qty are required.'); return; }
+      if (from_location === to_location) { wmsMsg('trMsg', 'error', 'From and To bins must differ.'); return; }
+      try {
+        const r = await fetch('/api/inventory/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, from_location, to_location, qty: Number(qty) }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('trMsg', 'error', d.error || 'Failed'); return; }
+        wmsMsg('trMsg', 'success', `✓ Moved ${d.qty} × ${sku}: ${from_location} → ${to_location}.`);
+        $('trQty').value = '';
+        loadLocationStock();
+      } catch (e) { wmsMsg('trMsg', 'error', e.message); }
+    }
+    function ccRender() {
+      const tb = $('ccTbody'); if (!tb) return;
+      if (!ccLines.length) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:#94a3b8">No lines counted yet.</td></tr>'; return; }
+      tb.innerHTML = ccLines.map(l => `<tr>
+        <td style="font-family:monospace;font-weight:600">${esc(l.sku)}</td>
+        <td style="text-align:right">${l.expected}</td>
+        <td style="text-align:right">${l.counted}</td>
+        <td style="text-align:right;font-weight:700;color:${l.variance === 0 ? '#059669' : (l.variance > 0 ? '#0369a1' : '#dc2626')}">${l.variance > 0 ? '+' : ''}${l.variance}</td></tr>`).join('');
+    }
+    async function ccStart() {
+      if (!clientId) { alert('Load a client first.'); return; }
+      const id = 'CC-' + Date.now().toString(36).toUpperCase();
+      try {
+        const r = await fetch('/api/inventory/cycle-counts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, count_id: id }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('ccMsg', 'error', d.error || 'Failed'); return; }
+        ccId = id; ccLines = []; $('ccId').textContent = id; ccRender();
+        $('ccActive').classList.remove('hidden'); $('ccMsg').classList.add('hidden');
+        $('ccSku').focus();
+      } catch (e) { wmsMsg('ccMsg', 'error', e.message); }
+    }
+    async function ccAddLine() {
+      const sku = $('ccSku').value.trim(), qty = $('ccQty').value;
+      if (!ccId) return;
+      if (!sku || qty === '') { wmsMsg('ccMsg', 'error', 'SKU and counted qty required.'); return; }
+      try {
+        const r = await fetch('/api/inventory/cycle-counts/' + encodeURIComponent(ccId) + '/lines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, counted_qty: Number(qty) }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('ccMsg', 'error', d.error || 'Failed'); return; }
+        ccLines = ccLines.filter(l => l.sku !== d.sku); ccLines.push({ sku: d.sku, expected: d.expected, counted: d.counted, variance: d.variance });
+        $('ccSku').value = ''; $('ccQty').value = ''; $('ccSku').focus(); ccRender();
+      } catch (e) { wmsMsg('ccMsg', 'error', e.message); }
+    }
+    async function ccComplete() {
+      if (!ccId) return;
+      try {
+        const r = await fetch('/api/inventory/cycle-counts/' + encodeURIComponent(ccId) + '/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('ccMsg', 'error', d.error || 'Failed'); return; }
+        $('ccActive').classList.add('hidden');
+        wmsMsg('ccMsg', 'success', `✓ Count ${ccId} posted — ${d.lines} line(s), ${d.variances} variance(s) applied to on-hand.`);
+        ccId = ''; ccLines = [];
+        load(); // refresh stock totals (variances changed them)
+      } catch (e) { wmsMsg('ccMsg', 'error', e.message); }
+    }
+    function ccCancel() { $('ccActive').classList.add('hidden'); ccId = ''; ccLines = []; wmsMsg('ccMsg', 'progress', 'Count abandoned — no variances were applied to stock.'); }
+    async function loadSuppliers() {
+      const el = $('supList'); if (!el || !clientId) return;
+      try {
+        const r = await fetch('/api/inventory/suppliers?clientId=' + encodeURIComponent(clientId));
+        const sup = r.ok ? await r.json() : [];
+        el.innerHTML = sup.length ? 'Suppliers: ' + sup.map(s => `<span style="background:#f1f5f9;border-radius:4px;padding:.1rem .4rem;margin-right:.3rem">${esc(s.name)} (${esc(s.supplier_id)})</span>`).join('') : 'No suppliers yet.';
+      } catch { /* keep prior */ }
+    }
+    async function addSupplier() {
+      const id = $('supId').value.trim(), name = $('supName').value.trim(), lead = $('supLead').value;
+      if (!clientId) { alert('Load a client first.'); return; }
+      if (!id || !name) { wmsMsg('supMsg', 'error', 'Supplier code and name required.'); return; }
+      try {
+        const r = await fetch('/api/inventory/suppliers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, id, name, lead_time_days: Number(lead) || 7 }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('supMsg', 'error', d.error || 'Failed'); return; }
+        wmsMsg('supMsg', 'success', '✓ Supplier saved.');
+        $('supId').value = ''; $('supName').value = ''; $('supLead').value = '';
+        loadSuppliers();
+      } catch (e) { wmsMsg('supMsg', 'error', e.message); }
+    }
+    async function loadReorder() {
+      const tb = $('reorderTbody'); if (!tb || !clientId) return;
+      try {
+        const r = await fetch('/api/inventory/reorder-suggestions?clientId=' + encodeURIComponent(clientId));
+        const rows = r.ok ? await r.json() : [];
+        if (!rows.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">Nothing needs reordering.</td></tr>'; return; }
+        tb.innerHTML = rows.map(x => `<tr>
+          <td style="font-family:monospace;font-weight:600">${esc(x.sku)}</td>
+          <td>${esc(x.name || '')}</td>
+          <td style="text-align:right">${x.available_qty}</td>
+          <td style="text-align:right">${x.reorder_point}</td>
+          <td style="text-align:right;font-weight:700;color:#d97706">${x.needed}</td>
+          <td>${esc(x.supplier || '—')}</td></tr>`).join('');
+      } catch { /* keep prior */ }
+    }
+
+    setTimeout(() => {
+      $('locAddBtn')?.addEventListener('click', createLocation);
+      $('putBtn')?.addEventListener('click', placeStock);
+      $('trBtn')?.addEventListener('click', transfer);
+      $('ccStartBtn')?.addEventListener('click', ccStart);
+      $('ccAddBtn')?.addEventListener('click', ccAddLine);
+      $('ccQty')?.addEventListener('keydown', e => { if (e.key === 'Enter') ccAddLine(); });
+      $('ccCompleteBtn')?.addEventListener('click', ccComplete);
+      $('ccCancelBtn')?.addEventListener('click', ccCancel);
+      $('supAddBtn')?.addEventListener('click', addSupplier);
+    }, 0);
+
+    // load bundles + WMS panels whenever a client is loaded
     const _origLoad = load;
-    load = async function () { await _origLoad(); loadBundles(); };
+    load = async function () {
+      await _origLoad();
+      fillSkuDatalist();
+      loadBundles();
+      refreshLocations();
+      loadLocationStock();
+      loadSuppliers();
+      loadReorder();
+    };
 
     return { init, load, renderList, pickFile, loadBundles };
   })();

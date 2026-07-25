@@ -10457,26 +10457,11 @@ app.delete('/api/inventory/bundles/:sku', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/inventory/:sku', requireAuth, (req, res) => {
-  const clientId = reqClientId(req);
-  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
-  const item = inventory.get(req.params.sku, clientId);
-  if (!item) return res.status(404).json({ error: 'SKU not found' });
-  res.json(item);
-});
-app.put('/api/inventory/:sku', requireAuth, express.json(), (req, res) => {
-  try {
-    const body = { ...(req.body || {}), sku: req.params.sku };
-    if (!String(body.clientId || '').trim()) return res.status(400).json({ error: 'clientId is required' });
-    res.json(inventory.upsert(body));
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
-app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
-  const clientId = reqClientId(req);
-  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
-  inventory.remove(req.params.sku, clientId);
-  res.json({ ok: true });
-});
+// NOTE: the single-segment /api/inventory/:sku GET/PUT/DELETE routes are
+// registered LAST (just below the analytics routes) — they would otherwise
+// shadow every specific single-segment route here (locations, suppliers,
+// reorder-suggestions, alerts), matching them as :sku='locations' etc. Express
+// matches in registration order, so all named routes must precede :sku.
 
 // ── Warehouse Locations & Stock Distribution ────────────────────────────────
 app.get('/api/inventory/locations', requireAuth, (req, res) => {
@@ -10507,6 +10492,25 @@ app.post('/api/inventory/transfer', requireAuth, express.json(), (req, res) => {
     if (!sku || !from_location || !to_location || !qty) return res.status(400).json({ error: 'sku, from_location, to_location, qty required' });
     const result = inventory.transferStock(cid, sku, from_location, to_location, Number(qty), req.userId || '');
     logAudit('stock_transfer', { sku, clientId: cid, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// Client-wide bin occupancy (every SKU×bin with stock) — Locations overview.
+app.get('/api/inventory/location-stock', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json(inventory.locationStockForClient(clientId));
+});
+// Place / seed stock into a bin (basic putaway). Does not change the sellable
+// total; it records where units physically sit so transfers have something to move.
+app.post('/api/inventory/place-stock', requireAuth, express.json(), (req, res) => {
+  try {
+    const { sku, location_id, qty, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid) return res.status(400).json({ error: 'clientId is required' });
+    if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
+    const result = inventory.placeStock(cid, sku, location_id, Number(qty), req.userId || '');
+    logAudit('stock_placed', { sku, clientId: cid, location: location_id, qty: Number(qty), by: req.userId || '' });
     res.json(result);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -10660,6 +10664,30 @@ app.get('/api/inventory/analytics/value', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   res.json(inventory.stockValue(clientId));
+});
+
+// Generic single-segment /api/inventory/:sku CRUD — registered AFTER all the
+// named single-segment routes above (locations, suppliers, reorder-suggestions,
+// alerts, location-stock) so it never shadows them (Express matches in order).
+app.get('/api/inventory/:sku', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const item = inventory.get(req.params.sku, clientId);
+  if (!item) return res.status(404).json({ error: 'SKU not found' });
+  res.json(item);
+});
+app.put('/api/inventory/:sku', requireAuth, express.json(), (req, res) => {
+  try {
+    const body = { ...(req.body || {}), sku: req.params.sku };
+    if (!String(body.clientId || '').trim()) return res.status(400).json({ error: 'clientId is required' });
+    res.json(inventory.upsert(body));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  inventory.remove(req.params.sku, clientId);
+  res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
