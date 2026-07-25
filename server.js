@@ -1401,17 +1401,17 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
 });
 
 // ── Bulk delete: mark orders for deletion (pending admin approval) ────────────
-app.post('/api/orders/pending-delete', (req, res) => {
-  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+app.post('/api/orders/pending-delete', requireAuth, (req, res) => {
   const { orders } = req.body;
   if (!Array.isArray(orders) || orders.length === 0) {
     return res.status(400).json({ error: 'No orders specified' });
   }
   try {
     const db = readDb();
+    const user = readUsers().find(u => u.id === req.userId);
     if (!db.pending_deletions) db.pending_deletions = [];
     const now = new Date().toISOString();
-    const requestedBy = req.user.email || req.user.name || 'unknown';
+    const requestedBy = user?.name || req.userId || 'unknown';
 
     for (const orderNum of orders) {
       // Find the order to mark it
@@ -1448,8 +1448,9 @@ app.post('/api/orders/pending-delete', (req, res) => {
 });
 
 // ── Admin: list pending deletions ──────────────────────────────────────────────
-app.get('/api/admin/orders/pending-delete', (req, res) => {
-  if (!req.user || req.user.role !== 'admin') {
+app.get('/api/admin/orders/pending-delete', requireAuth, (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user || user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
@@ -1475,8 +1476,9 @@ app.get('/api/admin/orders/pending-delete', (req, res) => {
 });
 
 // ── Admin: approve and execute deletion ──────────────────────────────────────
-app.post('/api/admin/orders/approve-delete', (req, res) => {
-  if (!req.user || req.user.role !== 'admin') {
+app.post('/api/admin/orders/approve-delete', requireAuth, (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user || user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
   }
   const { orders } = req.body;
@@ -1486,7 +1488,7 @@ app.post('/api/admin/orders/approve-delete', (req, res) => {
   try {
     const db = readDb();
     const now = new Date().toISOString();
-    const approvedBy = req.user.email || req.user.name || 'admin';
+    const approvedBy = user.name || req.userId || 'admin';
 
     for (const orderNum of orders) {
       let batchId = null;
@@ -1525,8 +1527,9 @@ app.post('/api/admin/orders/approve-delete', (req, res) => {
 });
 
 // ── Admin: reject pending deletion ─────────────────────────────────────────────
-app.post('/api/admin/orders/reject-delete', (req, res) => {
-  if (!req.user || req.user.role !== 'admin') {
+app.post('/api/admin/orders/reject-delete', requireAuth, (req, res) => {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user || user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
   }
   const { orders } = req.body;
