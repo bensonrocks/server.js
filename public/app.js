@@ -1135,7 +1135,9 @@
             ${kfBtn}
           </div>
         </div>`;
-    }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>';
+    }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>');
+
+
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
