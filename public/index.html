@@ -2338,12 +2338,23 @@
             <div class="hint" style="margin:.2rem 0 .6rem">Define warehouse bins (zone-aisle-shelf-bin), then place stock into them. Placing records <b>where</b> units sit; it doesn't change the sellable total.</div>
           </div>
           <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem">
-            <input id="locZone" placeholder="Zone (A)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
-            <input id="locAisle" placeholder="Aisle (01)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
-            <input id="locShelf" placeholder="Shelf (02)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
-            <input id="locBin" placeholder="Bin (03)" style="width:80px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locZone" placeholder="Zone (A)" style="width:70px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locAisle" placeholder="Aisle (01)" style="width:70px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locShelf" placeholder="Shelf (02)" style="width:70px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locBin" placeholder="Bin (03)" style="width:70px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <select id="locEnv" style="padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"><option value="dry">Dry</option><option value="cold">Cold</option><option value="frozen">Frozen</option></select>
+            <input id="locLen" type="number" placeholder="L cm" title="Length (cm)" style="width:64px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locWid" type="number" placeholder="B cm" title="Breadth (cm)" style="width:64px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locHt" type="number" placeholder="H cm" title="Height (cm)" style="width:64px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <input id="locCap" type="number" placeholder="Max units" title="Max unit capacity" style="width:84px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <button class="btn-secondary btn-sm" id="locAddBtn">+ Create bin</button>
+            <button class="btn-secondary btn-sm" id="locManageBtn" title="Edit bin dimensions / capacity">⚙ Manage bins</button>
+          </div>
+          <div id="locManageWrap" class="hidden" style="margin-bottom:.6rem;border:1px solid #e2e8f0;border-radius:8px;padding:.5rem;overflow-x:auto">
+            <table class="tbl" style="width:100%">
+              <thead><tr><th style="text-align:left">Bin</th><th>Env</th><th style="text-align:right">L</th><th style="text-align:right">B</th><th style="text-align:right">H</th><th style="text-align:right">Max units</th><th></th></tr></thead>
+              <tbody id="locManageTbody"></tbody>
+            </table>
           </div>
           <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem;border-top:1px dashed #e2e8f0;padding-top:.6rem">
             <input id="putSku" list="invSkuList" placeholder="SKU" style="flex:1;min-width:120px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
@@ -2694,6 +2705,21 @@
         </div>
         <p class="hint" style="margin:.5rem 0 0 0;font-size:12px">Yes: each order also appears on the Transport map for route planning &amp; drivers. No: orders go to scanning only.</p>
         <p id="arrangeDeliveryError" class="hint hidden" style="margin:.4rem 0 0 0;font-size:12px;color:var(--danger,#ef4444);font-weight:600">Please choose Yes or No before approving.</p>
+      </div>
+
+      <div id="pickStrategySection" class="form-group" style="margin-top:.9rem;padding:.75rem;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px">
+        <label style="font-weight:600;display:block;margin-bottom:.5rem">📦 Stock rotation for picking this batch</label>
+        <div style="display:flex;gap:1.25rem">
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="radio" name="pickStrategy" id="pickStrategyFefo" value="fefo" checked />
+            <span><b>FEFO</b> — First-Expiry-First-Out</span>
+          </label>
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="radio" name="pickStrategy" id="pickStrategyFifo" value="fifo" />
+            <span><b>FIFO</b> — oldest inbound first</span>
+          </label>
+        </div>
+        <p class="hint" style="margin:.5rem 0 0 0;font-size:12px">Picks the bin with the nearest expiry (FEFO) or oldest received date (FIFO). Lots without an expiry fall back to inbound date. Each pick line shows its bin.</p>
       </div>
 
       <div class="modal-actions" style="margin-top:1rem">

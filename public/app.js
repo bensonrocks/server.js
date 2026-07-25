@@ -1098,6 +1098,9 @@
   function arrangeDeliveryChoice() {
     return document.querySelector('input[name="arrangeDelivery"]:checked')?.value || '';
   }
+  function pickStrategyChoice() {
+    return document.querySelector('input[name="pickStrategy"]:checked')?.value || 'fefo';
+  }
   document.querySelectorAll('input[name="arrangeDelivery"]').forEach(r =>
     r.addEventListener('change', () => document.getElementById('arrangeDeliveryError')?.classList.add('hidden')));
 
@@ -1134,7 +1137,7 @@
         const resp = await fetch('/api/ocr/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-session-id': SESSION_ID },
-          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection, arrange_delivery: arrangeDeliveryChoice() }),
+          body: JSON.stringify({ rows: pendingOcrRows, client_name: clientName, direction: uploadDirection, arrange_delivery: arrangeDeliveryChoice(), pick_strategy: pickStrategyChoice() }),
         });
         const data = await resp.json();
         document.getElementById('uploadConfirmOverlay').classList.add('hidden');
@@ -1177,6 +1180,7 @@
     if (adjustments.length) form.append('adjustments', JSON.stringify(adjustments));
     // Delivery-arrangement decision — 'yes' also creates Transport jobs
     form.append('arrange_delivery', arrangeDeliveryChoice());
+    form.append('pick_strategy', pickStrategyChoice());
 
     try {
       const sendUpload = async () => {
@@ -2258,7 +2262,8 @@
     const rec = putawayReceived(job), placed = putawayPlacedBySku(job);
     return Object.entries(rec).reduce((s, [sku, q]) => s + Math.max(0, q - (placed[sku] || 0)), 0);
   }
-  let _putawayJob = null, _putawayLocations = [];
+  const PUTAWAY_REASONS = ['Bin full / no space', 'Consolidating stock', 'Damaged / QA hold', 'Cold-chain / segregation'];
+  let _putawayJob = null, _putawayLocations = [], _putawaySuggest = {};
   async function openPutaway(id) {
     _putawayJob = (inboundJobs || []).find(j => j.id === id);
     if (!_putawayJob) return;
@@ -2266,37 +2271,63 @@
     document.getElementById('putawayMsg').classList.add('hidden');
     try { const r = await fetch('/api/inventory/locations'); _putawayLocations = r.ok ? await r.json() : []; } catch { _putawayLocations = []; }
     document.getElementById('putawayNoBins').classList.toggle('hidden', _putawayLocations.length > 0);
+    // Suggest the bin where each SKU already lives (co-location).
+    const cid = _putawayJob.client_name || '';
+    _putawaySuggest = {};
+    await Promise.all(Object.keys(putawayReceived(_putawayJob)).map(async sku => {
+      try { const r = await fetch(`/api/inventory/suggest-location?clientId=${encodeURIComponent(cid)}&sku=${encodeURIComponent(sku)}`); if (r.ok) { const d = await r.json(); if (d.location_id) _putawaySuggest[sku] = d.location_id; } } catch {}
+    }));
     renderPutaway();
     document.getElementById('inboundPutawayModal').classList.remove('hidden');
   }
+  function _expiryForSku(sku) { return ((_putawayJob.lines || []).find(l => l.sku === sku) || {}).expiry_date || ''; }
   function renderPutaway() {
     const rec = putawayReceived(_putawayJob), placed = putawayPlacedBySku(_putawayJob);
-    const binOpts = '<option value="">— bin —</option>' + _putawayLocations.map(l => `<option value="${esc(l.location_id)}">${esc(l.location_id)}</option>`).join('');
     const rows = Object.entries(rec);
     const body = document.getElementById('putawayBody');
     if (!rows.length) { body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">Nothing received to put away.</td></tr>'; return; }
+    const reasonOpts = PUTAWAY_REASONS.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
     body.innerHTML = rows.map(([sku, q]) => {
       const done = placed[sku] || 0, remain = Math.max(0, q - done);
-      return `<tr data-sku="${esc(sku)}">
+      const sug = _putawaySuggest[sku] || '';
+      const binOpts = '<option value="">— bin —</option>' + _putawayLocations.map(l => `<option value="${esc(l.location_id)}" ${l.location_id === sug ? 'selected' : ''}>${esc(l.location_id)}${l.location_id === sug ? ' (suggested)' : ''}</option>`).join('');
+      const exp = _expiryForSku(sku);
+      return `<tr data-sku="${esc(sku)}" data-suggest="${esc(sug)}">
         <td style="font-family:monospace;font-weight:600">${esc(sku)}</td>
         <td style="text-align:right">${q}</td>
         <td style="text-align:right;color:${done >= q ? '#059669' : '#d97706'}">${done}</td>
-        <td><select class="pa-loc" style="padding:.35rem;border:1px solid #e2e8f0;border-radius:6px">${binOpts}</select></td>
-        <td style="text-align:right"><input class="pa-qty" type="number" value="${remain}" style="width:75px;padding:.35rem;border:1px solid #e2e8f0;border-radius:6px"></td>
-        <td><button class="btn-primary btn-sm pa-place" ${remain <= 0 ? 'disabled' : ''}>Place</button></td></tr>`;
+        <td>
+          <select class="pa-loc" style="padding:.35rem;border:1px solid #e2e8f0;border-radius:6px">${binOpts}</select>
+          <div class="pa-reason-wrap hidden" style="margin-top:.3rem"><select class="pa-reason" style="padding:.3rem;border:1px solid #f59e0b;border-radius:6px;font-size:.8rem"><option value="">Reason for other bin…</option>${reasonOpts}</select></div>
+          <div style="margin-top:.3rem;display:flex;gap:.3rem">
+            <input class="pa-exp" type="date" value="${esc(exp)}" title="Expiry (FEFO)" style="padding:.3rem;border:1px solid #e2e8f0;border-radius:6px;font-size:.78rem">
+            <input class="pa-lot" placeholder="Lot#" style="width:70px;padding:.3rem;border:1px solid #e2e8f0;border-radius:6px;font-size:.78rem">
+          </div>
+        </td>
+        <td style="text-align:right;vertical-align:top"><input class="pa-qty" type="number" value="${remain}" style="width:70px;padding:.35rem;border:1px solid #e2e8f0;border-radius:6px"></td>
+        <td style="vertical-align:top"><button class="btn-primary btn-sm pa-place" ${remain <= 0 ? 'disabled' : ''}>Place</button></td></tr>`;
     }).join('');
+    // Show the reason selector only when the chosen bin differs from the suggestion.
+    body.querySelectorAll('.pa-loc').forEach(sel => sel.addEventListener('change', () => {
+      const tr = sel.closest('tr'); const sug = tr.dataset.suggest;
+      const wrap = tr.querySelector('.pa-reason-wrap');
+      wrap.classList.toggle('hidden', !(sug && sel.value && sel.value !== sug));
+    }));
     body.querySelectorAll('.pa-place').forEach(btn => btn.addEventListener('click', async () => {
-      const tr = btn.closest('tr'); const sku = tr.dataset.sku;
+      const tr = btn.closest('tr'); const sku = tr.dataset.sku; const sug = tr.dataset.suggest;
       const location_id = tr.querySelector('.pa-loc').value; const qty = tr.querySelector('.pa-qty').value;
+      const expiry_date = tr.querySelector('.pa-exp').value || null; const lot_number = tr.querySelector('.pa-lot').value || '';
+      const override_reason = tr.querySelector('.pa-reason')?.value || '';
       const msg = document.getElementById('putawayMsg');
       if (!location_id || qty === '') { msg.className = 'status-bar error'; msg.textContent = 'Pick a bin and qty.'; msg.classList.remove('hidden'); return; }
+      if (sug && location_id !== sug && !override_reason) { msg.className = 'status-bar error'; msg.textContent = `This SKU is already in ${sug}. Pick a reason for using a different bin.`; msg.classList.remove('hidden'); return; }
       try {
-        const r = await fetch(`/api/inbound/${encodeURIComponent(_putawayJob.id)}/putaway`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku, location_id, qty: Number(qty) }) });
+        const r = await fetch(`/api/inbound/${encodeURIComponent(_putawayJob.id)}/putaway`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku, location_id, qty: Number(qty), expiry_date, lot_number, override_reason }) });
         const d = await r.json();
         if (!r.ok) { msg.className = 'status-bar error'; msg.textContent = d.error || 'Failed'; msg.classList.remove('hidden'); return; }
-        msg.className = 'status-bar success'; msg.textContent = `✓ ${sku} → ${location_id} (${qty}).`; msg.classList.remove('hidden');
+        msg.className = 'status-bar success'; msg.textContent = `✓ ${sku} → ${location_id} (${qty})${expiry_date ? ' exp ' + expiry_date : ''}.`; msg.classList.remove('hidden');
         _putawayJob.putaway = d.putaway; renderPutaway();
-        renderInboundTab(); // refresh the row's remaining count
+        renderInboundTab();
       } catch (e) { msg.className = 'status-bar error'; msg.textContent = e.message; msg.classList.remove('hidden'); }
     }));
   }
@@ -7031,6 +7062,12 @@
       // Lot badges live inside the SKU cell (an extra table row per item
       // would break the fixed 5-rows-per-page layout)
       const lotParts = [];
+      // Pick-from-bin locations (FEFO/FIFO-allocated at upload) — the pick list.
+      if (item.pick_locations && item.pick_locations.length) {
+        const locs = item.pick_locations.map(pl => `${esc(pl.location_id)}&nbsp;×${pl.qty}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
+        lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
+      }
+      if (item.pick_shortfall > 0) lotParts.push(`<span class="lot-badge lot-short" title="No bin stock allocated — walk-up pick" style="background:#fef3c7;color:#92400e">&#9888; ${item.pick_shortfall} walk-up</span>`);
       if (item.batch_number)  lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(item.batch_number)}</span>`);
       if (item.serial_number) lotParts.push(`<span class="lot-badge lot-serial">S/N&nbsp;${esc(item.serial_number)}</span>`);
       if (item.expiry_date)   lotParts.push(`<span class="lot-badge lot-expiry">Exp&nbsp;${esc(item.expiry_date)}</span>`);
@@ -11025,25 +11062,56 @@
         const r = await fetch('/api/inventory/location-stock?clientId=' + encodeURIComponent(clientId));
         const rows = r.ok ? await r.json() : [];
         if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:1.2rem;color:#94a3b8">No stock placed in bins yet.</td></tr>'; return; }
-        tb.innerHTML = rows.map(x => `<tr>
-          <td style="font-family:monospace">${esc(x.location_id)}</td>
+        // Roll bin fill (all lots at a bin) so we can show qty vs capacity.
+        const binTotals = {}; rows.forEach(x => { binTotals[x.location_id] = (binTotals[x.location_id] || 0) + x.quantity; });
+        tb.innerHTML = rows.map(x => {
+          const cap = x.capacity || 0; const fill = binTotals[x.location_id] || 0;
+          const over = cap > 0 && fill > cap;
+          const capCell = cap > 0 ? `<div class="hint" style="color:${over ? '#dc2626' : '#94a3b8'}">bin ${fill}/${cap}${over ? ' ⚠ over' : ''}</div>` : '';
+          const exp = x.expiry_date ? `<span class="hint" style="margin-left:.3rem">exp ${esc(x.expiry_date)}</span>` : '';
+          return `<tr>
+          <td style="font-family:monospace">${esc(x.location_id)}${capCell}</td>
           <td>${esc(x.environment || '')}</td>
           <td style="font-family:monospace;font-weight:600">${esc(x.sku)}</td>
-          <td>${esc(x.name || '')}</td>
-          <td style="text-align:right;font-weight:700">${x.quantity}</td></tr>`).join('');
+          <td>${esc(x.name || '')}${exp}</td>
+          <td style="text-align:right;font-weight:700">${x.quantity}</td></tr>`;
+        }).join('');
       } catch { /* keep prior */ }
     }
     async function createLocation() {
       const zone = $('locZone').value.trim(), aisle = $('locAisle').value.trim(), shelf = $('locShelf').value.trim(), bin = $('locBin').value.trim();
       if (!zone || !aisle || !shelf || !bin) { wmsMsg('locMsg', 'error', 'Zone, aisle, shelf and bin are all required.'); return; }
+      const body = { zone, aisle, shelf, bin, environment: $('locEnv').value,
+        length_cm: $('locLen').value || 0, width_cm: $('locWid').value || 0, height_cm: $('locHt').value || 0, capacity: $('locCap').value || 0 };
       try {
-        const r = await fetch('/api/inventory/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zone, aisle, shelf, bin, environment: $('locEnv').value }) });
+        const r = await fetch('/api/inventory/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const d = await r.json();
         if (!r.ok) { wmsMsg('locMsg', 'error', d.error || 'Failed'); return; }
         wmsMsg('locMsg', 'success', '✓ Bin ' + d.location_id + ' created.');
-        ['locZone', 'locAisle', 'locShelf', 'locBin'].forEach(id => { $(id).value = ''; });
-        refreshLocations();
+        ['locZone', 'locAisle', 'locShelf', 'locBin', 'locLen', 'locWid', 'locHt', 'locCap'].forEach(id => { $(id).value = ''; });
+        refreshLocations(); if (!$('locManageWrap').classList.contains('hidden')) renderManageBins();
       } catch (e) { wmsMsg('locMsg', 'error', e.message); }
+    }
+    function renderManageBins() {
+      const tb = $('locManageTbody'); if (!tb) return;
+      if (!locations.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:1rem;color:#94a3b8">No bins yet.</td></tr>'; return; }
+      const num = (v) => `<input type="number" value="${v || 0}" style="width:64px;padding:.25rem;border:1px solid #e2e8f0;border-radius:5px;text-align:right">`;
+      tb.innerHTML = locations.map(l => `<tr data-loc="${esc(l.location_id)}">
+        <td style="font-family:monospace">${esc(l.location_id)}</td>
+        <td><select class="lm-env" style="padding:.25rem;border:1px solid #e2e8f0;border-radius:5px">${['dry', 'cold', 'frozen'].map(e => `<option value="${e}" ${l.environment === e ? 'selected' : ''}>${e}</option>`).join('')}</select></td>
+        <td class="lm-len">${num(l.length_cm)}</td><td class="lm-wid">${num(l.width_cm)}</td><td class="lm-ht">${num(l.height_cm)}</td><td class="lm-cap">${num(l.capacity)}</td>
+        <td><button class="btn-secondary btn-sm lm-save">Save</button></td></tr>`).join('');
+      tb.querySelectorAll('.lm-save').forEach(btn => btn.addEventListener('click', async () => {
+        const tr = btn.closest('tr'); const id = tr.dataset.loc;
+        const body = {
+          environment: tr.querySelector('.lm-env').value,
+          length_cm: tr.querySelector('.lm-len input').value, width_cm: tr.querySelector('.lm-wid input').value,
+          height_cm: tr.querySelector('.lm-ht input').value, capacity: tr.querySelector('.lm-cap input').value,
+        };
+        const r = await fetch('/api/inventory/locations/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (r.ok) { wmsMsg('locMsg', 'success', `✓ ${id} updated.`); refreshLocations(); loadLocationStock(); }
+        else { const d = await r.json().catch(() => ({})); wmsMsg('locMsg', 'error', d.error || 'Update failed'); }
+      }));
     }
     async function placeStock() {
       const sku = $('putSku').value.trim(), location_id = $('putLoc').value, qty = $('putQty').value;
@@ -11157,6 +11225,7 @@
 
     setTimeout(() => {
       $('locAddBtn')?.addEventListener('click', createLocation);
+      $('locManageBtn')?.addEventListener('click', () => { const w = $('locManageWrap'); w.classList.toggle('hidden'); if (!w.classList.contains('hidden')) renderManageBins(); });
       $('putBtn')?.addEventListener('click', placeStock);
       $('trBtn')?.addEventListener('click', transfer);
       $('ccStartBtn')?.addEventListener('click', ccStart);

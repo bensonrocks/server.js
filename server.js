@@ -4673,6 +4673,11 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // so a second order can't be promised the same units before this one
     // ships. Never blocks the upload: a reservation failure (e.g. a SKU
     // slipped through unresolved) is logged, not fatal.
+    // Pick rotation for this drop — FEFO (nearest expiry) or FIFO (oldest inbound),
+    // chosen per upload. Stamped on the batch and used to allocate bins per line.
+    const pickStrategy = String(req.body?.pick_strategy || 'fefo').toLowerCase() === 'fifo' ? 'fifo' : 'fefo';
+    batch.pick_strategy = pickStrategy;
+
     let inventorySkusReserved = 0;
     const reservedSkus = new Set();
     if (inventoryTracked && inventory.available()) {
@@ -4684,6 +4689,10 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
           for (const l of order.lines) if (l.sku) reservedSkus.add(l.sku);
         } catch (e) { console.warn('[upload] inventory reserve failed for', order.order_number, e.message); }
       }
+      // Allocate pick locations per line (FEFO/FIFO over bin lots). This is what
+      // puts a bin on every pick-list line — l.pick_locations = [{location, qty,
+      // expiry}]; l.pick_shortfall = units with no bin (walk-up/backorder).
+      allocatePickLocations(invCid, orders, pickStrategy);
     }
 
     db.batches.unshift(batch);
@@ -5427,17 +5436,30 @@ async function parseInboundFile(buffer, filename) {
   const SKU_KEYS  = new Set(['sku', 'productcode', 'itemcode', 'code']);
   const DESC_KEYS = new Set(['description', 'productdescription', 'itemdescription', 'productname', 'name']);
   const QTY_KEYS  = new Set(['qty', 'quantity', 'expectedqty', 'orderedqty', 'expectedquantity']);
+  const EXP_KEYS  = new Set(['expiry', 'expirydate', 'expdate', 'exp', 'bestbefore', 'bbd']);
+  const LOT_KEYS  = new Set(['lot', 'lotno', 'lotnumber', 'batch', 'batchno', 'batchnumber']);
   const headerKeys = Object.keys(rows[0]);
   const skuKey  = headerKeys.find(k => SKU_KEYS.has(norm(k)));
   const descKey = headerKeys.find(k => DESC_KEYS.has(norm(k)));
   const qtyKey  = headerKeys.find(k => QTY_KEYS.has(norm(k)));
+  const expKey  = headerKeys.find(k => EXP_KEYS.has(norm(k)));
+  const lotKey  = headerKeys.find(k => LOT_KEYS.has(norm(k)));
   if (!skuKey) throw new Error('Could not find a SKU column. Expected a header like "SKU" or "Product Code".');
+  const fmtDate = v => {
+    if (!v) return '';
+    if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+    return String(v).trim();
+  };
   const out = [];
   for (const r of rows) {
     const sku = String(r[skuKey] || '').trim();
     if (!sku) continue;
     const qty = qtyKey ? Math.max(0, parseInt(r[qtyKey], 10) || 0) : 0;
-    out.push({ sku, description: descKey ? String(r[descKey] || '').trim() : '', qty });
+    out.push({
+      sku, description: descKey ? String(r[descKey] || '').trim() : '', qty,
+      expiry_date: expKey ? fmtDate(r[expKey]) : '',   // FEFO capture from ASN when the column exists
+      lot_number:  lotKey ? String(r[lotKey] || '').trim() : '',
+    });
   }
   return out;
 }
@@ -5521,9 +5543,11 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
     // etc.) — merge into one expected line so scanning matches cleanly.
     const merged = new Map();
     for (const r of rows) {
-      const cur = merged.get(r.sku) || { sku: r.sku, description: r.description, expected_qty: 0 };
+      const cur = merged.get(r.sku) || { sku: r.sku, description: r.description, expected_qty: 0, expiry_date: '', lot_number: '' };
       cur.expected_qty += r.qty;
       if (!cur.description && r.description) cur.description = r.description;
+      if (!cur.expiry_date && r.expiry_date) cur.expiry_date = r.expiry_date; // ASN-carried expiry → putaway prefill
+      if (!cur.lot_number && r.lot_number) cur.lot_number = r.lot_number;
       merged.set(r.sku, cur);
     }
 
@@ -5787,15 +5811,18 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const state = rec.state || (rec.state = {});
   if (state.status !== 'done') return res.status(400).json({ error: 'Finish receiving (End Receipt) before putaway.' });
-  const { sku, location_id, qty } = req.body || {};
+  const { sku, location_id, qty, expiry_date, lot_number, override_reason } = req.body || {};
   if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
   const cid = invClientId(rec.client_name);
+  // received_at = the inbound's upload/receipt date, so FIFO rotates by when goods
+  // actually arrived (not when someone got around to putaway).
+  const receivedAt = (rec.uploaded_at || new Date().toISOString()).slice(0, 10);
   try {
-    const result = inventory.placeStock(cid, sku, location_id, Number(qty), req.userId || '');
+    const result = inventory.placeStock(cid, sku, location_id, Number(qty), { received_at: receivedAt, expiry_date, lot_number, operator: req.userId || '' });
     state.putaway = state.putaway || [];
-    state.putaway.push({ sku, location_id, qty: Number(qty), at: new Date().toISOString(), by: req.userId || '' });
+    state.putaway.push({ sku, location_id, qty: Number(qty), expiry_date: expiry_date || null, lot_number: lot_number || '', override_reason: override_reason || '', at: new Date().toISOString(), by: req.userId || '' });
     writeDb(db);
-    logAudit('inbound_putaway', { id: rec.id, sku, location: location_id, qty: Number(qty), by: req.userId || '' });
+    logAudit('inbound_putaway', { id: rec.id, sku, location: location_id, qty: Number(qty), expiry: expiry_date || '', reason: override_reason || '', by: req.userId || '' });
     res.json({ ok: true, placed: result, putaway: state.putaway });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -7033,6 +7060,13 @@ app.post('/api/scan/complete', (req, res) => {
         inventory.deductOrder(cid, { id: orderNumber, items: (ord.lines || []).map(l => ({ sku: l.sku, qty: l.qty })) });
         state.inventory_deducted = true;
         deductedSkus = [...new Set((ord.lines || []).map(l => l.sku).filter(Boolean))];
+        // Also decrement the physical BIN LOTS. Re-allocate FRESH from current bin
+        // state (the batch's FEFO/FIFO strategy) rather than replaying the
+        // upload-time plan — stock may have moved since — so occupancy stays true.
+        const strat = batch.pick_strategy || 'fefo';
+        const allocations = (ord.lines || []).filter(l => l.sku)
+          .map(l => inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat));
+        if (allocations.length) { try { inventory.consumeAllocations(cid, allocations, operator || ''); } catch (e) { console.warn('[scan/complete] bin consume failed', e.message); } }
       } catch (e) { console.warn('[scan/complete] inventory deduct failed for', orderNumber, e.message); }
     }
 
@@ -10225,6 +10259,24 @@ inventory.init();
 // unscoped.
 function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
 
+// Allocate physical bin locations to every order line via FEFO/FIFO, stamping
+// l.pick_locations (what the pick list shows) + l.pick_shortfall (units with no
+// bin — a walk-up pick / backorder). Pure planning: consumes nothing. Safe no-op
+// when the inventory store is down.
+function allocatePickLocations(clientId, orders, strategy) {
+  if (!inventory.available()) return;
+  for (const order of (orders || [])) {
+    for (const l of (order.lines || [])) {
+      if (!l.sku) continue;
+      try {
+        const a = inventory.allocatePick(clientId, l.sku, Number(l.qty) || 0, strategy);
+        l.pick_locations = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
+        l.pick_shortfall = a.shortfall;
+      } catch (_) { /* leave line un-allocated */ }
+    }
+  }
+}
+
 // ── Backorders — orders short on stock at reserve time ───────────────────────
 // When an order reserves more of a SKU than was AVAILABLE (stock − reserved), the
 // difference is a shortfall: the order is promised units that aren't physically
@@ -10588,12 +10640,34 @@ app.get('/api/inventory/locations', requireAuth, (req, res) => {
 });
 app.post('/api/inventory/locations', requireAuth, express.json(), (req, res) => {
   try {
-    const { zone, aisle, shelf, bin, capacity, environment } = req.body || {};
+    const { zone, aisle, shelf, bin, capacity, environment, length_cm, width_cm, height_cm } = req.body || {};
     if (!zone || !aisle || !shelf || !bin) return res.status(400).json({ error: 'zone, aisle, shelf, bin required' });
-    const loc = inventory.createLocation(zone, aisle, shelf, bin, capacity, environment);
+    let loc = inventory.createLocation(zone, aisle, shelf, bin, capacity, environment);
+    // Physical dimensions (optional) are set via updateLocation so createLocation's
+    // signature stays stable.
+    if (length_cm || width_cm || height_cm || capacity) {
+      loc = inventory.updateLocation(loc.location_id, { length_cm, width_cm, height_cm, capacity, environment });
+    }
     logAudit('warehouse_location_created', { location: `${zone}-${aisle}-${shelf}-${bin}`, capacity, environment, by: req.userId || '' });
     res.status(201).json(loc);
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// Admin: set a bin's dimensions (L×B×H) + max unit capacity + environment/active.
+app.put('/api/inventory/locations/:id', requireAuth, express.json(), (req, res) => {
+  const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+  if (role === 'warehouse') return res.status(403).json({ error: 'Administrator access required.' });
+  try {
+    const loc = inventory.updateLocation(req.params.id, req.body || {});
+    logAudit('warehouse_location_updated', { location: req.params.id, by: req.userId || '' });
+    res.json(loc);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// Suggest the bin where a SKU already lives (co-location) — for putaway.
+app.get('/api/inventory/suggest-location', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  const sku = String(req.query.sku || '').trim();
+  if (!clientId || !sku) return res.status(400).json({ error: 'clientId and sku required' });
+  res.json({ location_id: inventory.suggestLocationForSku(clientId, sku) });
 });
 app.get('/api/inventory/:sku/locations', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
@@ -10621,12 +10695,12 @@ app.get('/api/inventory/location-stock', requireAuth, (req, res) => {
 // total; it records where units physically sit so transfers have something to move.
 app.post('/api/inventory/place-stock', requireAuth, express.json(), (req, res) => {
   try {
-    const { sku, location_id, qty, clientId } = req.body || {};
+    const { sku, location_id, qty, clientId, expiry_date, lot_number } = req.body || {};
     const cid = String(clientId || '').trim();
     if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
-    const result = inventory.placeStock(cid, sku, location_id, Number(qty), req.userId || '');
-    logAudit('stock_placed', { sku, clientId: cid, location: location_id, qty: Number(qty), by: req.userId || '' });
+    const result = inventory.placeStock(cid, sku, location_id, Number(qty), { expiry_date, lot_number, operator: req.userId || '' });
+    logAudit('stock_placed', { sku, clientId: cid, location: location_id, qty: Number(qty), expiry: expiry_date || '', by: req.userId || '' });
     res.json(result);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
