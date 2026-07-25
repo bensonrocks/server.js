@@ -340,12 +340,12 @@ function summarizeOrders(lines) {
     }
     map[key].lines.push({
       sku:            line.sku,
-      description:    line.sku,
+      description:    line.description || line.name || line.product || '',
       qty:            line.qty,
-      uom:            'EACH',
-      batch_number:   line.batch_number   || '',
+      uom:            line.uom || 'EACH',
+      batch_number:   line.batch_number   || line.lot_number || '',
       serial_number:  line.serial_number  || '',
-      expiry_date:    line.expiry_date    || '',
+      expiry_date:    line.expiry_date    || line.expiring  || '',
       remarks_betime: line.remarks_betime || '',
     });
     map[key].total_qty += line.qty;
