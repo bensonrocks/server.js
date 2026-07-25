@@ -972,6 +972,7 @@ app.get('/api/stats', (_req, res) => {
   const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
 
   for (const batch of db.batches) {
+    if (!batch.uploaded_at) continue; // Skip batches without upload date
     const batchDate   = batch.uploaded_at.split('T')[0];
     const states      = batch.orderStates || {};
     const batchOrders = batch.orders      || [];
