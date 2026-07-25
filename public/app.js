@@ -1184,7 +1184,7 @@
 
     document.getElementById('deletSelectedBtn')?.addEventListener('click', async () => {
       if (selectedOrders.size === 0) return;
-      if (!confirm(`Mark ${selectedOrders.size} order(s) for deletion?\nAdministrator approval is required.`)) return;
+      if (!confirm(`Mark ${selectedOrders.size} order(s) for deletion?\nAdmin approval is required.`)) return;
       try {
         const r = await fetch('/api/orders/pending-delete', {
           method: 'POST',
