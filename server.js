@@ -10940,7 +10940,7 @@ app.delete('/api/inventory/:sku', requireAuth, (req, res) => {
 //  order, across N orders" (the picking phase); Scan & Check remains the
 //  per-order pack/verify phase that happens afterwards.
 // ─────────────────────────────────────────────────────────────────────────────
-const { buildWave } = require('./lib/wave-pick');
+const { buildWave, _naturalCompare: waveNaturalCompare } = require('./lib/wave-pick');
 
 function _findOrder(db, orderNumber) {
   for (const b of db.batches || []) {
@@ -11036,6 +11036,43 @@ app.get('/api/waves/:id', requireAuth, (req, res) => {
   res.json(wave);
 });
 
+// Enrich a wave's consolidated pick rows with the ACTUAL bins to pick from
+// (FEFO/FIFO over bin lots), and re-sort the walk by bin location. Display only —
+// the physical decrement still happens later when each order is re-scanned and
+// completed (so a wave never double-decrements bins). Falls back to the printed
+// location code for any SKU with no binned stock.
+function enrichWaveWithBins(db, wave) {
+  if (!inventory.available()) return;
+  // order_number -> {clientId, strategy} from its batch.
+  const meta = {};
+  for (const b of db.batches || []) {
+    const clientId = b.inventory_client || invClientId(b.client_name);
+    const strategy = b.pick_strategy || 'fefo';
+    for (const o of b.orders || []) meta[o.order_number] = { clientId, strategy };
+  }
+  for (const row of wave.picks || []) {
+    const first = (row.orders || [])[0];
+    const m = first && meta[first.order_number];
+    if (!m || !m.clientId) continue;
+    try {
+      const a = inventory.allocatePick(m.clientId, row.sku, row.total_qty, m.strategy);
+      row.bins = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
+      row.bin_shortfall = a.shortfall;
+      row.bin_location = a.picks.length ? a.picks[0].location_id : '';
+    } catch (_) { /* leave printed location as the guide */ }
+  }
+  // Re-sort the walk by real bin (natural order); rows with a bin come first,
+  // then rows still relying on the printed code, then unlocated.
+  wave.picks.sort((x, y) => {
+    const xl = x.bin_location || x.location || '';
+    const yl = y.bin_location || y.location || '';
+    if (!xl && yl) return 1;
+    if (xl && !yl) return -1;
+    const c = waveNaturalCompare(xl, yl);
+    return c !== 0 ? c : x.sku.localeCompare(y.sku);
+  });
+}
+
 app.post('/api/waves', requireAuth, express.json(), (req, res) => {
   const { name, order_numbers } = req.body || {};
   if (!Array.isArray(order_numbers) || !order_numbers.length) {
@@ -11062,6 +11099,7 @@ app.post('/api/waves', requireAuth, express.json(), (req, res) => {
     picks,
     stats,
   };
+  enrichWaveWithBins(db, wave); // stamp each pick row with its real FEFO/FIFO bins + re-sort the walk
   db.waves = db.waves || [];
   db.waves.unshift(wave);
   writeDb(db);

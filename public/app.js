@@ -11312,6 +11312,17 @@
 
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
+    // Show the real FEFO/FIFO bins to pick from (with expiry); fall back to the
+    // printed location code when a SKU has no binned stock.
+    function waveBinCell(p) {
+      if (p.bins && p.bins.length) {
+        const parts = p.bins.map(b => `${esc(b.location_id)}&nbsp;×${b.qty}${b.expiry_date ? `<span style="opacity:.65;font-weight:400"> exp ${esc(b.expiry_date)}</span>` : ''}`);
+        const short = p.bin_shortfall > 0 ? `<div style="color:#b45309;font-weight:600;font-size:.72rem">⚠ ${p.bin_shortfall} not binned</div>` : '';
+        return `<div style="font-size:.82rem">${parts.join('<br>')}</div>${short}`;
+      }
+      return esc(p.location || '—');
+    }
+
     async function load() {
       document.getElementById('waveDetailWrap').classList.add('hidden');
       document.getElementById('waveListWrap').classList.remove('hidden');
@@ -11420,7 +11431,7 @@
       document.getElementById('wave-picks-tbody').innerHTML = w.picks.map(p => {
         const done = p.picked_qty >= p.total_qty;
         return `<tr style="${done ? 'background:#f0fdf4' : ''}">
-          <td style="font-family:monospace;font-weight:700">${esc(p.location || '—')}</td>
+          <td style="font-family:monospace;font-weight:700">${waveBinCell(p)}</td>
           <td style="font-weight:600">${esc(p.sku)}</td>
           <td>${esc(p.description)}</td>
           <td style="text-align:right">${p.total_qty}</td>
@@ -11474,7 +11485,8 @@
 
     function print() {
       const w = currentWave;
-      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.1rem">${esc(p.location || '—')}</td><td style="font-weight:600">${esc(p.sku)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.1rem">${p.total_qty}</td><td>${p.orders.map(o => esc(o.order_number) + ' (' + o.qty + ')').join(', ')}</td><td style="width:2rem;border:1px solid #999"></td></tr>`).join('');
+      const binText = p => (p.bins && p.bins.length) ? p.bins.map(b => `${b.location_id} ×${b.qty}${b.expiry_date ? ' exp ' + b.expiry_date : ''}`).join(' / ') : (p.location || '—');
+      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.05rem">${esc(binText(p))}</td><td style="font-weight:600">${esc(p.sku)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.1rem">${p.total_qty}</td><td>${p.orders.map(o => esc(o.order_number) + ' (' + o.qty + ')').join(', ')}</td><td style="width:2rem;border:1px solid #999"></td></tr>`).join('');
       const win = window.open('', '_blank');
       win.document.write(`<html><head><title>Wave Pick — ${esc(w.name)}</title><style>
         body{font-family:sans-serif;padding:20px} h1{font-size:1.3rem}
