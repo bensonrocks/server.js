@@ -230,6 +230,52 @@ function resolveBeTimeCode2(scanned) {
   return _beTimeCode2Map[k] || k;
 }
 
+// ── SKU → description master catalog ────────────────────────────────────────
+// Learned automatically from every upload whose file carries descriptions
+// (e.g. the GI Analysis export), then used to fill descriptions on uploads
+// that don't (bare picking lists, OCR photo scans). Bulk view/load via
+// /api/master/sku-catalog.
+const SKU_CATALOG_FILE = path.join(DATA_DIR, 'sku_catalog.json');
+let _skuCatalog = {};
+try {
+  _skuCatalog = JSON.parse(fs.readFileSync(SKU_CATALOG_FILE, 'utf8'));
+  console.log(`[IdealScan] SKU catalog loaded: ${Object.keys(_skuCatalog).length} entries`);
+} catch {
+  console.log('[IdealScan] sku_catalog.json not found — starting with empty SKU catalog');
+}
+function _saveSkuCatalog() {
+  try { fs.writeFileSync(SKU_CATALOG_FILE, JSON.stringify(_skuCatalog, null, 2)); }
+  catch (e) { console.error('[sku-catalog] save failed:', e.message); }
+}
+
+// Record SKU→description pairs from rows that carry both. A description equal
+// to the SKU itself is noise (old snapshots stored SKU as description) and is
+// never learned. Returns the number of new/changed entries persisted.
+function learnSkuDescriptions(rows) {
+  let learned = 0;
+  for (const r of rows) {
+    const sku  = String(r.sku || '').trim();
+    const desc = String(r.description || '').trim();
+    if (!sku || !desc || desc === sku) continue;
+    if (_skuCatalog[sku] !== desc) { _skuCatalog[sku] = desc; learned++; }
+  }
+  if (learned) _saveSkuCatalog();
+  return learned;
+}
+
+// Fill blank descriptions from the catalog (in place). Returns count filled.
+function fillSkuDescriptions(rows) {
+  let filled = 0;
+  for (const r of rows) {
+    const sku = String(r.sku || '').trim();
+    if (sku && !String(r.description || '').trim() && _skuCatalog[sku]) {
+      r.description = _skuCatalog[sku];
+      filled++;
+    }
+  }
+  return filled;
+}
+
 // ── Email config ─────────────────────────────────────────────────────────────
 function readEmailConfig() {
   let saved = {};
@@ -773,6 +819,7 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
     if (allRows.length > UPLOAD_MAX_ROWS) {
       return res.json({ rowCount: allRows.length, orderCount: 0, errors: [`File has ${allRows.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.`], converted: false });
     }
+    fillSkuDescriptions(allRows);   // preview shows catalog-filled descriptions (no learning on preview)
     const orders     = summarizeOrders(allRows);
     const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     const clientName = allRows.find(r => r.client_name)?.client_name || '';
@@ -795,6 +842,8 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     const { rows, client_name = '', direction = 'Outbound' } = req.body || {};
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows provided' });
 
+    learnSkuDescriptions(rows);
+    fillSkuDescriptions(rows);      // OCR rows never carry descriptions — fill from catalog
     const orders    = summarizeOrders(rows);
     const wmsRows   = [];
     let vLine = 1;
@@ -882,6 +931,8 @@ app.post('/api/upload', uploadFields, async (req, res) => {
 
     const mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
     if (!mapped.length) return res.status(400).json({ error: 'No valid order rows found' });
+    learnSkuDescriptions(mapped);   // grow the catalog from files that have descriptions
+    fillSkuDescriptions(mapped);    // fill blanks from the catalog for files that don't
     if (mapped.length > UPLOAD_MAX_ROWS) return res.status(400).json({ error: `File has ${mapped.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.` });
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
@@ -2077,6 +2128,48 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Master: SKU → description catalog ───────────────────────────────────────
+app.get('/api/master/sku-catalog', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json({ entries: Object.keys(_skuCatalog).length, map: _skuCatalog });
+});
+
+// POST — bulk-load an XLSX/CSV with SKU + Description columns; merges into the
+// catalog (existing SKUs are updated, others kept).
+app.post('/api/master/sku-catalog', upload.single('file'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb      = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws      = wb.Sheets[wb.SheetNames[0]];
+    const records = XLSX.utils.sheet_to_json(ws, { defval: null });
+    const SKU_KEYS  = ['sku', 'product_code', 'item_code', 'item_no', 'code', 'barcode'];
+    const DESC_KEYS = ['description', 'item_description', 'product_description', 'product_name', 'item_name', 'name', 'desc'];
+    let added = 0, updated = 0, skipped = 0;
+    for (const rec of records) {
+      const n = {};
+      for (const k of Object.keys(rec)) n[normalizeKey(k)] = rec[k];
+      const sku  = String(SKU_KEYS.map(k => n[k]).find(v => v != null) ?? '').trim();
+      const desc = String(DESC_KEYS.map(k => n[k]).find(v => v != null) ?? '').trim();
+      if (!sku || !desc || desc === sku) { skipped++; continue; }
+      if (_skuCatalog[sku] === undefined)      added++;
+      else if (_skuCatalog[sku] !== desc)      updated++;
+      _skuCatalog[sku] = desc;
+    }
+    _saveSkuCatalog();
+    res.json({ ok: true, entries: Object.keys(_skuCatalog).length, added, updated, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/master/sku-catalog', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  _skuCatalog = {};
+  _saveSkuCatalog();
+  res.json({ ok: true, entries: 0 });
 });
 
 // ── Completion slip ──────────────────────────────────────────────────────────
