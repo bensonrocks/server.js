@@ -517,7 +517,7 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
 // ── Header-row detection ─────────────────────────────────────────────────────
 // Some files have title/blank rows before the real column headers.
 // Scan the first 15 rows and pick the one that looks most like headers.
-const _HEADER_TERMS = /^(s[._\/]?n\.?|seq\.?|no\.?|status|account|reference|consign|address|remarks?|order|sku|item|code|qty|quantity|name|desc|date|product|part|material|batch|expiry|price|amount|total|uom|unit|barcode|pick|ticket|deliver|waybill|carrier|tel|phone|weight|pcs|pieces|line|ref|invoice|dispatch|pick_ticket)$/i;
+const _HEADER_TERMS = /^(s[._\/]?n\.?|seq\.?|no\.?|status|account|reference|consign|address|remarks?|order|sku|item|code|qty|quantity|name|desc|description|date|product|part|material|batch|expiry|price|amount|total|uom|unit|barcode|pick|ticket|deliver|waybill|carrier|tel|phone|weight|pcs|pieces|line|ref|invoice|dispatch|pick_ticket)$/i;
 
 function _detectHeaderRow(aoa) {
   let bestIdx = 0, bestScore = -1;
