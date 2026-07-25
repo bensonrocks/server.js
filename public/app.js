@@ -10913,6 +10913,17 @@
       const names = [...new Set((loadedOrders || []).map(o => o.client_name).filter(Boolean))].sort();
       const dl = $('invClientList');
       if (dl) dl.innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join('');
+      // Show the function panels IMMEDIATELY — bin setup is global and works with
+      // no client; the client-scoped panels prompt to load a client. (Previously
+      // the whole panel set stayed hidden until "Load stock", so the tab looked
+      // empty and the functions seemed missing.)
+      $('invBody')?.classList.remove('hidden');
+      refreshLocations();          // global bins → dropdowns + Manage-bins list
+      if (!clientId) {
+        $('invNoClientHint')?.classList.remove('hidden');
+        ['inv-s-total', 'inv-s-onhand', 'inv-s-res', 'inv-s-avail'].forEach(id => { const e = $(id); if (e) e.textContent = '0'; });
+        renderList();              // stock table shows the "load a client" prompt
+      }
     }
 
     async function load() {
@@ -10933,6 +10944,7 @@
         $('inv-s-res').textContent = reserved;
         $('inv-s-avail').textContent = avail;
         $('invBody').classList.remove('hidden');
+        $('invNoClientHint')?.classList.add('hidden');
         renderList();
       } catch (e) { alert('Load failed: ' + e.message); }
     }
@@ -10941,7 +10953,7 @@
       const tb = $('invTbody'); if (!tb) return;
       const q = ($('invSearch')?.value || '').toLowerCase();
       const rows = items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q));
-      if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">${items.length ? 'No match.' : 'No stock yet — upload a file to add some.'}</td></tr>`; return; }
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
       tb.innerHTML = rows.map(r => `<tr>
         <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
         <td>${esc(r.name || '')}</td>
