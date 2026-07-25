@@ -4678,7 +4678,8 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     if (inventoryTracked && inventory.available()) {
       for (const order of orders) {
         try {
-          inventory.reserveOrder(invCid, { id: order.order_number, items: order.lines.map(l => ({ sku: l.sku, qty: l.qty })) });
+          const rres = inventory.reserveOrder(invCid, { id: order.order_number, items: order.lines.map(l => ({ sku: l.sku, qty: l.qty })) });
+          recordBackorders(db, clientName, order.order_number, batchId, rres); // any short lines → awaiting-stock queue
           inventorySkusReserved++;
           for (const l of order.lines) if (l.sku) reservedSkus.add(l.sku);
         } catch (e) { console.warn('[upload] inventory reserve failed for', order.order_number, e.message); }
@@ -5470,6 +5471,8 @@ app.get('/api/inbound', (req, res) => {
       endTime:           state.endTime || null,
       photos:            (rec.photos || []).map(p => ({ id: p.id, sku: p.sku, caption: p.caption, uploadedAt: p.uploadedAt })),
       pending_deletion:  rec.pending_deletion || null,
+      received_totals:   state.received_totals || null,   // sku -> qty received (for Putaway)
+      putaway:           state.putaway || [],              // [{sku, location_id, qty, at, by}]
     };
   });
   res.json(list);
@@ -5759,6 +5762,12 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
       } catch (e) { console.warn('[inbound] inventory add failed for', sku, e.message); }
     }
     if (receivedSkus.length) state.inventory_applied = true;
+    // Remember what was received so the Putaway step (directing goods to bins)
+    // knows the SKUs + quantities without re-deriving them. Sellable stock is
+    // already on inventory.stock_qty; putaway only records WHERE it physically sits.
+    state.received_totals = additions;
+    // Newly-received stock can satisfy orders waiting on it — release backorders.
+    if (receivedSkus.length) releaseBackorders(db, cid, additions);
   }
 
   writeDb(db);
@@ -5766,6 +5775,29 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   // Received stock raised availability → notify ZORT stock-sync stores.
   if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
   res.json({ ok: true });
+});
+
+// PUTAWAY — direct received goods into a bin. The stock is already sellable
+// (added to inventory.stock_qty at end-receipt); this records WHERE it physically
+// sits (stock_by_location), so it never changes the sellable total — same
+// semantics as the Inventory tab's Place Stock, but seeded from what was received.
+app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state || (rec.state = {});
+  if (state.status !== 'done') return res.status(400).json({ error: 'Finish receiving (End Receipt) before putaway.' });
+  const { sku, location_id, qty } = req.body || {};
+  if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
+  const cid = invClientId(rec.client_name);
+  try {
+    const result = inventory.placeStock(cid, sku, location_id, Number(qty), req.userId || '');
+    state.putaway = state.putaway || [];
+    state.putaway.push({ sku, location_id, qty: Number(qty), at: new Date().toISOString(), by: req.userId || '' });
+    writeDb(db);
+    logAudit('inbound_putaway', { id: rec.id, sku, location: location_id, qty: Number(qty), by: req.userId || '' });
+    res.json({ ok: true, placed: result, putaway: state.putaway });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // Read-only per-carton receiving slip — mirrors the outbound carton-slip.
@@ -8835,7 +8867,8 @@ async function pullZortStore(db, store) {
         const items = (o.lines || []).filter(l => l.sku && inventory.get(l.sku, cid)).map(l => ({ sku: l.sku, qty: l.qty }));
         if (!items.length) continue;
         try {
-          inventory.reserveOrder(cid, { id: o.order_number, items });
+          const rres = inventory.reserveOrder(cid, { id: o.order_number, items });
+          recordBackorders(db, clientName, o.order_number, null, rres); // marketplace order short on stock → backorder
           tracked = true;
           if (!reservedByClient.has(cid)) reservedByClient.set(cid, new Set());
           for (const it of items) reservedByClient.get(cid).add(it.sku);
@@ -10192,6 +10225,61 @@ inventory.init();
 // unscoped.
 function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
 
+// ── Backorders — orders short on stock at reserve time ───────────────────────
+// When an order reserves more of a SKU than was AVAILABLE (stock − reserved), the
+// difference is a shortfall: the order is promised units that aren't physically
+// here yet. We record that as a backorder so there's a visible "awaiting stock"
+// queue, and auto-decrement it (FIFO) when matching stock arrives via an inbound
+// receipt or a stock upload. This is a TRACKING layer only — it never blocks
+// picking (a packer can still grab whatever is on the shelf) and never changes the
+// reservation math the ZORT stock-sync depends on.
+function backorders(db) { return db.backorders || (db.backorders = []); }
+function recordBackorders(db, clientName, orderNumber, batchId, reserveResults) {
+  const cid = invClientId(clientName);
+  const list = backorders(db);
+  const now = new Date().toISOString();
+  let recorded = 0;
+  for (const r of (reserveResults || [])) {
+    if (!r || !r.ok || !(r.shortfall > 0)) continue;
+    // One open backorder per (order, sku) — a re-upload updates it in place.
+    let bo = list.find(x => x.order_number === orderNumber && x.sku === r.sku && x.status === 'open');
+    if (bo) { bo.ordered = r.ordered; bo.shortfall = r.shortfall; bo.remaining = r.shortfall; bo.updated_at = now; }
+    else {
+      list.unshift({
+        id: uuidv4().slice(0, 8), order_number: orderNumber, batch_id: batchId || null,
+        client_name: clientName, client_id: cid, sku: r.sku,
+        ordered: r.ordered, shortfall: r.shortfall, remaining: r.shortfall,
+        status: 'open', created_at: now, updated_at: now, released_qty: 0,
+      });
+    }
+    recorded++;
+  }
+  if (list.length > 5000) list.length = 5000; // cap
+  return recorded;
+}
+// Stock arrived (additions = {sku: qty}) — pay down open backorders for this
+// client, oldest first (FIFO), and mark them fulfilled when fully covered.
+function releaseBackorders(db, clientId, additions) {
+  const list = backorders(db);
+  const now = new Date().toISOString();
+  const fulfilled = [];
+  for (const [sku, addQty] of Object.entries(additions || {})) {
+    let avail = Number(addQty) || 0;
+    if (avail <= 0) continue;
+    // FIFO: oldest open backorders first (list is unshifted newest-first).
+    const open = list.filter(b => b.client_id === clientId && b.sku === sku && b.status === 'open')
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    for (const bo of open) {
+      if (avail <= 0) break;
+      const take = Math.min(avail, bo.remaining);
+      bo.remaining -= take; bo.released_qty += take; avail -= take; bo.updated_at = now;
+      if (bo.remaining <= 0) { bo.status = 'fulfilled'; bo.fulfilled_at = now; fulfilled.push(bo.id); }
+    }
+  }
+  if (fulfilled.length) logAudit('backorders_fulfilled', { clientId, count: fulfilled.length, ids: fulfilled });
+  return fulfilled;
+}
+
 // Import-time SKU normalization — convert each order line's identifier to the
 // client's canonical in-house SKU. If a line arrives keyed by BARCODE (e.g. a
 // ZORT feed that only carries barcodes), swap it to the in-house SKU using the
@@ -10327,6 +10415,7 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
 
   const qtyOf = r => Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? r.onhand ?? r.available ?? 0) || 0;
   let applied = 0, skipped = 0; const errors = []; const affected = new Set();
+  const additions = {}; // sku -> positive stock increase (for backorder release)
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
@@ -10336,13 +10425,21 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     try {
       const existing = inventory.get(sku, cid);
       if (mode === 'set') {
+        const delta = qty - (existing ? existing.stock_qty : 0);
         inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty });
+        if (delta > 0) additions[sku] = (additions[sku] || 0) + delta;
       } else { // add
-        if (!existing) inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty });
-        else if (qty !== 0) inventory.adjust(sku, cid, qty, 'upload', 'Stock upload');
+        if (!existing) { inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty }); if (qty > 0) additions[sku] = (additions[sku] || 0) + qty; }
+        else if (qty !== 0) { inventory.adjust(sku, cid, qty, 'upload', 'Stock upload'); if (qty > 0) additions[sku] = (additions[sku] || 0) + qty; }
       }
       applied++; affected.add(sku);
     } catch (e) { skipped++; errors.push({ row: i + 2, sku, error: e.message }); }
+  }
+  // Uploaded stock can satisfy orders waiting on it → pay down backorders (FIFO).
+  if (Object.keys(additions).length) {
+    const bdb = readDb();
+    releaseBackorders(bdb, cid, additions);
+    writeDb(bdb);
   }
 
   let pushed = 0;
@@ -10354,6 +10451,25 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   }
   logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '' });
   res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed, errors: errors.slice(0, 20) });
+});
+
+// ── Backorders — the "awaiting stock" queue ──────────────────────────────────
+// Read by any signed-in internal user (warehouse cares "what am I waiting on").
+app.get('/api/backorders', requireAuth, (req, res) => {
+  const list = backorders(readDb());
+  const status = req.query.status || 'open';
+  const rows = (status === 'all' ? list : list.filter(b => b.status === status)).slice(0, 500);
+  res.json({ open: list.filter(b => b.status === 'open').length, backorders: rows });
+});
+// Manually clear a backorder (e.g. the order was cancelled, or resolved offline).
+app.post('/api/backorders/:id/resolve', express.json(), requireAuth, (req, res) => {
+  const db = readDb();
+  const bo = backorders(db).find(x => x.id === req.params.id);
+  if (!bo) return res.status(404).json({ error: 'Not found' });
+  bo.status = 'resolved'; bo.remaining = 0; bo.resolved_at = new Date().toISOString(); bo.resolved_by = req.userId || '';
+  writeDb(db);
+  logAudit('backorder_resolved', { id: bo.id, order: bo.order_number, sku: bo.sku, by: req.userId || '' });
+  res.json(bo);
 });
 
 // ── Product Master (ULD_Product_Master_Template.xlsx) ────────────────────────

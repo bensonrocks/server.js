@@ -1535,6 +1535,7 @@
 
         <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-bottom:.5rem">
           <button class="btn-secondary btn-sm hidden" id="manageWavesBtn">&#127754; Manage Waves</button>
+          <button class="btn-secondary btn-sm" id="backordersBtn">&#9203; Backorders <span id="backordersBadge" class="nav-badge hidden">0</span></button>
           <button class="btn-secondary btn-sm" id="stationThroughputBtn">&#128202; Station Throughput</button>
         </div>
 
@@ -2758,6 +2759,43 @@
       <div id="stpEmpty" class="empty-state hidden">No completed orders in the last 3 days.</div>
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="stpCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backorders — orders short on stock at reserve time ("awaiting stock" queue) -->
+  <div id="backordersModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:820px">
+      <div class="modal-title">&#9203; Backorders — awaiting stock</div>
+      <p class="modal-desc">Orders that reserved more of a SKU than was available. They stay here until matching stock arrives (an inbound receipt or a stock upload pays them down automatically, oldest first). This is a visibility queue — it never blocks picking whatever is on the shelf.</p>
+      <div class="dcs-wrap">
+        <table class="dcs-table">
+          <thead><tr><th>Order</th><th>Client</th><th>SKU</th><th style="text-align:right">Ordered</th><th style="text-align:right">Short</th><th style="text-align:right">Remaining</th><th>Waiting since</th><th></th></tr></thead>
+          <tbody id="backordersBody"></tbody>
+        </table>
+      </div>
+      <div id="backordersEmpty" class="empty-state hidden">Nothing waiting on stock. 🎉</div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="backordersCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Putaway — direct received inbound goods into warehouse bins -->
+  <div id="inboundPutawayModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:640px">
+      <div class="modal-title">&#128205; Putaway — <span id="putawayJobRef"></span></div>
+      <p class="modal-desc">Place the goods you just received into warehouse bins. This records WHERE stock physically sits — the sellable total was already added when you ended the receipt.</p>
+      <div id="putawayNoBins" class="status-bar error hidden" style="margin-bottom:.6rem">No bins defined yet. Create bins first in the Inventory tab (📍 Bin locations).</div>
+      <div style="overflow-x:auto">
+        <table class="tbl" style="width:100%">
+          <thead><tr><th style="text-align:left">SKU</th><th style="text-align:right">Received</th><th style="text-align:right">Placed</th><th style="text-align:left">Bin</th><th style="text-align:right">Qty</th><th></th></tr></thead>
+          <tbody id="putawayBody"></tbody>
+        </table>
+      </div>
+      <div id="putawayMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="putawayCloseBtn">Close</button>
       </div>
     </div>
   </div>

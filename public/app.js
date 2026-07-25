@@ -691,7 +691,7 @@
     const ttEl = document.getElementById('ctTabTitle');
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
-    if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
+    if (name === 'orders') { renderOrdersDash(); loadBackordersBadge(); setTimeout(() => focusWaybillInput(), 300); }
     document.getElementById('ordersSubMenu').style.display =
       (name === 'orders' && (currentUser?.role || 'admin') !== 'warehouse') ? 'block' : 'none';
     if (name === 'inbound') { renderInboundTab(); }
@@ -2214,6 +2214,7 @@
                 <td>${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
                 <td>
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
+                  ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
                   ${isAdmin && job.status !== 'done' && !job.pending_deletion ? `<button class="btn-del-order" data-inbound-del-id="${esc(job.id)}" data-inbound-del-ref="${esc(job.reference || job.id.slice(0, 8))}" title="Request deletion">&#128465;</button>` : ''}
                 </td>
               </tr>`).join('')}
@@ -2229,7 +2230,119 @@
         openDeleteInboundModal(btn.dataset.inboundDelId, btn.dataset.inboundDelRef);
       });
     });
+    list.querySelectorAll('[data-inbound-putaway-id]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); openPutaway(btn.dataset.inboundPutawayId); });
+    });
   }
+
+  // ── Putaway — direct received inbound goods into warehouse bins ─────────────
+  // received_totals (sku->qty) comes from the inbound record; state.putaway is the
+  // list of placements already done. "Remaining" = received − placed, per SKU.
+  function putawayReceived(job) {
+    if (job.received_totals && Object.keys(job.received_totals).length) return { ...job.received_totals };
+    // Fallback for jobs received before received_totals was stored: derive it.
+    const out = {};
+    if (job.type === 'return') {
+      for (const [sku, c] of Object.entries(job.conditionTotals || {})) { const g = Number((c || {}).straight_to_inventory || 0); if (g > 0) out[sku] = g; }
+    } else {
+      for (const [sku, q] of Object.entries(job.scanned || {})) { const n = Number(q || 0); if (n > 0) out[sku] = n; }
+    }
+    return out;
+  }
+  function putawayPlacedBySku(job) {
+    const placed = {};
+    for (const p of (job.putaway || [])) placed[p.sku] = (placed[p.sku] || 0) + Number(p.qty || 0);
+    return placed;
+  }
+  function putawayRemaining(job) {
+    const rec = putawayReceived(job), placed = putawayPlacedBySku(job);
+    return Object.entries(rec).reduce((s, [sku, q]) => s + Math.max(0, q - (placed[sku] || 0)), 0);
+  }
+  let _putawayJob = null, _putawayLocations = [];
+  async function openPutaway(id) {
+    _putawayJob = (inboundJobs || []).find(j => j.id === id);
+    if (!_putawayJob) return;
+    document.getElementById('putawayJobRef').textContent = _putawayJob.serial || _putawayJob.reference || id.slice(0, 8);
+    document.getElementById('putawayMsg').classList.add('hidden');
+    try { const r = await fetch('/api/inventory/locations'); _putawayLocations = r.ok ? await r.json() : []; } catch { _putawayLocations = []; }
+    document.getElementById('putawayNoBins').classList.toggle('hidden', _putawayLocations.length > 0);
+    renderPutaway();
+    document.getElementById('inboundPutawayModal').classList.remove('hidden');
+  }
+  function renderPutaway() {
+    const rec = putawayReceived(_putawayJob), placed = putawayPlacedBySku(_putawayJob);
+    const binOpts = '<option value="">— bin —</option>' + _putawayLocations.map(l => `<option value="${esc(l.location_id)}">${esc(l.location_id)}</option>`).join('');
+    const rows = Object.entries(rec);
+    const body = document.getElementById('putawayBody');
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">Nothing received to put away.</td></tr>'; return; }
+    body.innerHTML = rows.map(([sku, q]) => {
+      const done = placed[sku] || 0, remain = Math.max(0, q - done);
+      return `<tr data-sku="${esc(sku)}">
+        <td style="font-family:monospace;font-weight:600">${esc(sku)}</td>
+        <td style="text-align:right">${q}</td>
+        <td style="text-align:right;color:${done >= q ? '#059669' : '#d97706'}">${done}</td>
+        <td><select class="pa-loc" style="padding:.35rem;border:1px solid #e2e8f0;border-radius:6px">${binOpts}</select></td>
+        <td style="text-align:right"><input class="pa-qty" type="number" value="${remain}" style="width:75px;padding:.35rem;border:1px solid #e2e8f0;border-radius:6px"></td>
+        <td><button class="btn-primary btn-sm pa-place" ${remain <= 0 ? 'disabled' : ''}>Place</button></td></tr>`;
+    }).join('');
+    body.querySelectorAll('.pa-place').forEach(btn => btn.addEventListener('click', async () => {
+      const tr = btn.closest('tr'); const sku = tr.dataset.sku;
+      const location_id = tr.querySelector('.pa-loc').value; const qty = tr.querySelector('.pa-qty').value;
+      const msg = document.getElementById('putawayMsg');
+      if (!location_id || qty === '') { msg.className = 'status-bar error'; msg.textContent = 'Pick a bin and qty.'; msg.classList.remove('hidden'); return; }
+      try {
+        const r = await fetch(`/api/inbound/${encodeURIComponent(_putawayJob.id)}/putaway`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku, location_id, qty: Number(qty) }) });
+        const d = await r.json();
+        if (!r.ok) { msg.className = 'status-bar error'; msg.textContent = d.error || 'Failed'; msg.classList.remove('hidden'); return; }
+        msg.className = 'status-bar success'; msg.textContent = `✓ ${sku} → ${location_id} (${qty}).`; msg.classList.remove('hidden');
+        _putawayJob.putaway = d.putaway; renderPutaway();
+        renderInboundTab(); // refresh the row's remaining count
+      } catch (e) { msg.className = 'status-bar error'; msg.textContent = e.message; msg.classList.remove('hidden'); }
+    }));
+  }
+  setTimeout(() => {
+    document.getElementById('putawayCloseBtn')?.addEventListener('click', () => document.getElementById('inboundPutawayModal').classList.add('hidden'));
+  }, 0);
+
+  // ── Backorders — "awaiting stock" queue (Orders tab) ───────────────────────
+  async function loadBackordersBadge() {
+    try {
+      const r = await fetch('/api/backorders?status=open');
+      if (!r.ok) return;
+      const d = await r.json();
+      const b = document.getElementById('backordersBadge'); if (!b) return;
+      if (d.open > 0) { b.textContent = d.open; b.classList.remove('hidden'); } else b.classList.add('hidden');
+    } catch { /* ignore */ }
+  }
+  async function openBackorders() {
+    const modal = document.getElementById('backordersModal');
+    const body = document.getElementById('backordersBody');
+    const empty = document.getElementById('backordersEmpty');
+    modal.classList.remove('hidden');
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:1.2rem;color:#94a3b8">Loading…</td></tr>';
+    let rows = [];
+    try { const r = await fetch('/api/backorders?status=open'); rows = r.ok ? (await r.json()).backorders : []; } catch { rows = []; }
+    if (!rows.length) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    body.innerHTML = rows.map(b => `<tr data-id="${esc(b.id)}">
+      <td style="font-family:monospace">${esc(b.order_number)}</td>
+      <td>${esc(b.client_name || '')}</td>
+      <td style="font-family:monospace;font-weight:600">${esc(b.sku)}</td>
+      <td style="text-align:right">${b.ordered}</td>
+      <td style="text-align:right;color:#dc2626">${b.shortfall}</td>
+      <td style="text-align:right;font-weight:700;color:#d97706">${b.remaining}</td>
+      <td class="hint">${b.created_at ? new Date(b.created_at).toLocaleDateString() : '—'}</td>
+      <td><button class="btn-secondary btn-sm bo-resolve" data-id="${esc(b.id)}">Resolve</button></td></tr>`).join('');
+    body.querySelectorAll('.bo-resolve').forEach(btn => btn.addEventListener('click', async () => {
+      if (!confirm('Mark this backorder resolved? (use when the order was cancelled or handled offline)')) return;
+      await fetch(`/api/backorders/${encodeURIComponent(btn.dataset.id)}/resolve`, { method: 'POST' });
+      openBackorders(); loadBackordersBadge();
+    }));
+  }
+  setTimeout(() => {
+    document.getElementById('backordersBtn')?.addEventListener('click', openBackorders);
+    document.getElementById('backordersCloseBtn')?.addEventListener('click', () => document.getElementById('backordersModal').classList.add('hidden'));
+  }, 0);
 
   // ── Transport Tab (TMS Importer) ──────────────────────────────────────────────
   // Import delivery schedules from BETIME and Outright, manage transport requests.
