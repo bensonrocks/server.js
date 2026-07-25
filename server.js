@@ -1273,6 +1273,28 @@ app.put('/api/profile/printer', requireAuth, (req, res) => {
   res.json({ ok: true, printerName: users[idx].printerName, labelSize: users[idx].labelSize });
 });
 
+// ── Check for deleted orders (notify user on login) ────────────────────────
+app.get('/api/user/deleted-orders-check', requireAuth, (req, res) => {
+  try {
+    const db = readDb();
+    const deletedOrders = (db.deleted_orders || []).filter(o => {
+      // Show orders deleted within last 24 hours and not yet acknowledged
+      const timeSinceDelete = Date.now() - new Date(o.deleted_at).getTime();
+      return timeSinceDelete < 24 * 60 * 60 * 1000 && !o.acknowledged;
+    });
+
+    if (deletedOrders.length > 0) {
+      // Mark as acknowledged for this user
+      deletedOrders.forEach(o => { o.acknowledged = true; });
+      writeDb(db);
+    }
+
+    res.json({ ok: true, deleted_orders: deletedOrders });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Public stats (no auth needed) ──────────────────────────────────────────
 // /api/stats already has no auth — it's used on page load before login.
 
@@ -1373,6 +1395,159 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     try { fs.unlinkSync(path.join(WAYBILL_DIR, batchId, `${orderNumber}.pdf`)); } catch {}
     writeDb(db);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Bulk delete: mark orders for deletion (pending admin approval) ────────────
+app.post('/api/orders/pending-delete', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  const { orders } = req.body;
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return res.status(400).json({ error: 'No orders specified' });
+  }
+  try {
+    const db = readDb();
+    if (!db.pending_deletions) db.pending_deletions = [];
+    const now = new Date().toISOString();
+    const requestedBy = req.user.email || req.user.name || 'unknown';
+
+    for (const orderNum of orders) {
+      // Find the order to mark it
+      let found = false;
+      for (const batch of db.batches || []) {
+        const order = (batch.orders || []).find(o => o.order_number === orderNum);
+        if (order) {
+          order.pending_delete = true;
+          order.deletion_requested_at = now;
+          order.deletion_requested_by = requestedBy;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        return res.status(404).json({ error: `Order ${orderNum} not found` });
+      }
+    }
+
+    // Log the deletion requests
+    db.pending_deletions.push({
+      id: Date.now().toString(),
+      orders: orders,
+      requested_by: requestedBy,
+      requested_at: now,
+      status: 'pending'
+    });
+
+    writeDb(db);
+    res.json({ ok: true, orders_marked: orders.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin: list pending deletions ──────────────────────────────────────────────
+app.get('/api/admin/orders/pending-delete', (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const db = readDb();
+    const pending = [];
+    for (const batch of db.batches || []) {
+      for (const order of batch.orders || []) {
+        if (order.pending_delete) {
+          pending.push({
+            order_number: order.order_number,
+            batch_id: batch.id,
+            customer_name: order.customer_name,
+            deletion_requested_by: order.deletion_requested_by,
+            deletion_requested_at: order.deletion_requested_at
+          });
+        }
+      }
+    }
+    res.json({ ok: true, count: pending.length, orders: pending });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin: approve and execute deletion ──────────────────────────────────────
+app.post('/api/admin/orders/approve-delete', (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const { orders } = req.body;
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return res.status(400).json({ error: 'No orders specified' });
+  }
+  try {
+    const db = readDb();
+    const now = new Date().toISOString();
+    const approvedBy = req.user.email || req.user.name || 'admin';
+
+    for (const orderNum of orders) {
+      let batchId = null;
+      for (const batch of db.batches || []) {
+        const order = (batch.orders || []).find(o => o.order_number === orderNum);
+        if (order && order.pending_delete) {
+          // Store deletion notification for owner
+          const deletedOrdersLog = db.deleted_orders || [];
+          deletedOrdersLog.push({
+            order_number: orderNum,
+            deleted_at: now,
+            deleted_by: approvedBy,
+            originally_requested_by: order.deletion_requested_by,
+            customer_name: order.customer_name
+          });
+          db.deleted_orders = deletedOrdersLog;
+
+          // Hard delete from batch
+          batch.orders = batch.orders.filter(o => o.order_number !== orderNum);
+          batch.order_count = batch.orders.length;
+          if (batch.rawRows) batch.rawRows = batch.rawRows.filter(r => r.order_number !== orderNum);
+          if (batch.orderStates) delete batch.orderStates[orderNum];
+          try { fs.unlinkSync(path.join(WAYBILL_DIR, batch.id, `${orderNum}.pdf`)); } catch {}
+          batchId = batch.id;
+          break;
+        }
+      }
+      if (!batchId) return res.status(404).json({ error: `Pending deletion not found for ${orderNum}` });
+    }
+
+    writeDb(db);
+    res.json({ ok: true, approved: orders.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin: reject pending deletion ─────────────────────────────────────────────
+app.post('/api/admin/orders/reject-delete', (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const { orders } = req.body;
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return res.status(400).json({ error: 'No orders specified' });
+  }
+  try {
+    const db = readDb();
+    for (const orderNum of orders) {
+      for (const batch of db.batches || []) {
+        const order = (batch.orders || []).find(o => o.order_number === orderNum);
+        if (order) {
+          order.pending_delete = false;
+          delete order.deletion_requested_at;
+          delete order.deletion_requested_by;
+          break;
+        }
+      }
+    }
+    writeDb(db);
+    res.json({ ok: true, rejected: orders.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -156,6 +156,52 @@
     document.getElementById('printerSettingsBtn').classList.remove('hidden');
     document.getElementById('lockBtn').classList.remove('hidden');
     applyRoleUI();
+    checkDeletedOrderNotifications();
+  }
+
+  async function checkDeletedOrderNotifications() {
+    if (!currentUser) return;
+    try {
+      const r = await fetch('/api/user/deleted-orders-check', { headers: hdrs() });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.deleted_orders && d.deleted_orders.length > 0) {
+        showDeletedOrdersNotification(d.deleted_orders);
+      }
+    } catch {}
+  }
+
+  function showDeletedOrdersNotification(orders) {
+    const modal = document.getElementById('deletedOrdersModal') || createDeletedOrdersModal();
+    const listEl = modal.querySelector('.deleted-orders-list');
+    listEl.innerHTML = orders.map(o => `
+      <div class="deleted-order-item">
+        <span class="deleted-order-no">${esc(o.order_number)}</span>
+        <span class="deleted-order-time">${new Date(o.deleted_at).toLocaleString()}</span>
+      </div>
+    `).join('');
+    modal.querySelector('.deleted-orders-count').textContent = orders.length;
+    modal.classList.remove('hidden');
+  }
+
+  function createDeletedOrdersModal() {
+    const html = `
+    <div id="deletedOrdersModal" class="modal-overlay">
+      <div class="modal" style="max-width: 500px">
+        <div class="modal-title">Deleted Orders Notification</div>
+        <p style="color: var(--text-light); margin: 1rem 0">
+          <span class="deleted-orders-count">0</span> of your order(s) have been deleted by an administrator:
+        </p>
+        <div class="deleted-orders-list"></div>
+        <div style="margin-top: 1.5rem; text-align: right">
+          <button class="btn btn-primary" onclick="document.getElementById('deletedOrdersModal').classList.add('hidden')">OK</button>
+        </div>
+      </div>
+    </div>`;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    document.body.appendChild(wrapper.firstElementChild);
+    return document.getElementById('deletedOrdersModal');
   }
 
   // ── Per-user profile (printer settings) ──────────────────────────────────
@@ -1029,7 +1075,19 @@
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
     const isAdminView = (currentUser?.role || 'admin') === 'admin';
 
-    document.getElementById('ordersDashList').innerHTML = orders.length ? orders.map(ord => {
+    // Build select-all + delete button header
+    const headerHtml = orders.length ? `
+      <div class="order-list-header">
+        <label class="select-all-label">
+          <input type="checkbox" id="selectAllOrders" class="select-all-checkbox" />
+          <span>Select All</span>
+        </label>
+        <button id="deletSelectedBtn" class="btn-delete-selected hidden" title="Delete selected orders">
+          &#128465; Delete Selected (<span id="selectedCount">0</span>)
+        </button>
+      </div>` : '';
+
+    document.getElementById('ordersDashList').innerHTML = headerHtml + (orders.length ? orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
       const canScan      = ord.scan_status !== 'done';
       const elapsed      = fmtElapsed(ord.startTime, ord.endTime);
@@ -1048,8 +1106,12 @@
           ? `<span class="kf-closed-badge">&#10003; Keyfields closed</span>`
           : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Acknowledge closed in Keyfields WMS">Close in Keyfields</button>`
         : '';
+      const pendingDeletePill = ord.pending_delete ? `<span class="pill-pending-delete" title="Pending admin approval for deletion">🗑 Pending Delete</span>` : '';
       return `
-        <div class="dash-order-card status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
+        <div class="dash-order-card status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}${ord.pending_delete ? ' pending-delete' : ''}" data-order="${esc(ord.order_number)}">
+          <div class="dash-order-checkbox">
+            <input type="checkbox" class="order-checkbox" data-order="${esc(ord.order_number)}" ${ord.pending_delete ? 'disabled' : ''} />
+          </div>
           <div class="dash-order-left">
             <span class="dash-order-no">${esc(ord.order_number)}</span>
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
@@ -1060,6 +1122,7 @@
             ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
             ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
             ${emailIndicator}
+            ${pendingDeletePill}
           </div>
           <div class="dash-order-right">
             ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
@@ -1070,7 +1133,6 @@
             ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" data-auth-dl="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" data-auth-dl-name="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
             ${kfBtn}
-            ${logUnlocked ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Delete this order">&#128465;</button>` : ''}
           </div>
         </div>`;
     }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>';
@@ -1085,24 +1147,61 @@
         if (ord) printWaybillLabel(ord);
       })
     );
-    document.querySelectorAll('.dash-order-card').forEach(card =>
-      card.addEventListener('click', () => {
+    // Checkbox event listeners for bulk delete
+    let selectedOrders = new Set();
+    function updateDeleteButtonState() {
+      const btn = document.getElementById('deletSelectedBtn');
+      const count = selectedOrders.size;
+      if (count > 0) {
+        btn.classList.remove('hidden');
+        document.getElementById('selectedCount').textContent = count;
+      } else {
+        btn.classList.add('hidden');
+      }
+    }
+
+    document.getElementById('selectAllOrders')?.addEventListener('change', e => {
+      document.querySelectorAll('.order-checkbox:not(:disabled)').forEach(cb => {
+        cb.checked = e.target.checked;
+        const order = cb.dataset.order;
+        if (e.target.checked) selectedOrders.add(order);
+        else selectedOrders.delete(order);
+      });
+      updateDeleteButtonState();
+    });
+
+    document.querySelectorAll('.order-checkbox').forEach(cb => {
+      cb.addEventListener('change', e => {
+        e.stopPropagation();
+        const order = cb.dataset.order;
+        if (cb.checked) selectedOrders.add(order);
+        else selectedOrders.delete(order);
+        updateDeleteButtonState();
+      });
+    });
+
+    document.getElementById('deletSelectedBtn')?.addEventListener('click', async () => {
+      if (selectedOrders.size === 0) return;
+      if (!confirm(`Mark ${selectedOrders.size} order(s) for deletion?\nAdministrator approval is required.`)) return;
+      try {
+        const r = await fetch('/api/orders/pending-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orders: Array.from(selectedOrders) })
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed to mark for deletion');
+        selectedOrders.clear();
+        await refreshOrders(); renderOrdersList();
+      } catch (err) { alert('Error: ' + err.message); }
+    });
+
+    document.querySelectorAll('.dash-order-card').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') return;
         const ord = loadedOrders.find(o => o.order_number === card.dataset.order);
         if (ord && ord.scan_status !== 'done') openScanOverlay(card.dataset.order);
       })
-    );
-    document.querySelectorAll('.btn-del-order').forEach(btn => {
-      btn.addEventListener('click', async e => {
-        e.stopPropagation();
-        const orderNumber = btn.dataset.order, batchId = btn.dataset.batchid;
-        if (!confirm(`Delete order ${orderNumber}?\nThis cannot be undone.`)) return;
-        try {
-          const r = await fetch(`/api/master/order/${encodeURIComponent(batchId)}/${encodeURIComponent(orderNumber)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
-          const d = await r.json();
-          if (!r.ok) throw new Error(d.error || 'Delete failed');
-          await refreshOrders(); renderOrdersList();
-        } catch (err) { alert(err.message); }
-      });
     });
 
     document.querySelectorAll('.btn-resend-alert').forEach(btn => {
@@ -1139,6 +1238,73 @@
         } catch (err) { btn.disabled = false; alert(err.message); }
       });
     });
+
+    // Admin: Load pending deletions
+    if ((currentUser?.role || 'admin') === 'admin') {
+      loadPendingDeletions();
+    }
+  }
+
+  async function loadPendingDeletions() {
+    try {
+      const r = await fetch('/api/admin/orders/pending-delete', { headers: hdrs() });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.count === 0) {
+        document.getElementById('pendingDeletionPanel').classList.add('hidden');
+        return;
+      }
+      const panel = document.getElementById('pendingDeletionPanel');
+      const list = document.getElementById('pendingDeleteList');
+      document.getElementById('pendingDeleteCount').textContent = d.count;
+      list.innerHTML = d.orders.map(o => `
+        <div class="pdp-item">
+          <div class="pdp-info">
+            <div class="pdp-order-no">${esc(o.order_number)}</div>
+            <div class="pdp-meta">
+              Requested by ${esc(o.deletion_requested_by)} · ${new Date(o.deletion_requested_at).toLocaleString()}
+            </div>
+          </div>
+          <div class="pdp-actions">
+            <button class="btn-approve-delete" data-order="${esc(o.order_number)}" data-batch="${esc(o.batch_id)}">Approve</button>
+            <button class="btn-reject-delete" data-order="${esc(o.order_number)}">Reject</button>
+          </div>
+        </div>
+      `).join('');
+      panel.classList.remove('hidden');
+
+      // Add event listeners
+      list.querySelectorAll('.btn-approve-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const order = btn.dataset.order;
+          if (!confirm(`Permanently delete order ${order}?`)) return;
+          try {
+            const r = await fetch('/api/admin/orders/approve-delete', {
+              method: 'POST',
+              headers: { ...hdrs(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ orders: [order] })
+            });
+            if (!r.ok) throw new Error((await r.json()).error || 'Failed');
+            await refreshOrders(); renderOrdersList();
+          } catch (err) { alert('Error: ' + err.message); }
+        });
+      });
+
+      list.querySelectorAll('.btn-reject-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const order = btn.dataset.order;
+          try {
+            const r = await fetch('/api/admin/orders/reject-delete', {
+              method: 'POST',
+              headers: { ...hdrs(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ orders: [order] })
+            });
+            if (!r.ok) throw new Error((await r.json()).error || 'Failed');
+            await refreshOrders(); renderOrdersList();
+          } catch (err) { alert('Error: ' + err.message); }
+        });
+      });
+    } catch {}
   }
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
