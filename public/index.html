@@ -2366,6 +2366,13 @@
             <button class="btn-primary btn-sm" id="putBtn">Place stock</button>
           </div>
           <datalist id="invSkuList"></datalist>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin-bottom:.6rem;border-top:1px dashed #e2e8f0;padding-top:.6rem">
+            <span style="font-size:.82rem;font-weight:600">🔍 Bin lookup:</span>
+            <input id="binLookup" list="binLookupList" placeholder="scan / type a bin (e.g. A-01-02-03)" style="flex:1;min-width:160px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <datalist id="binLookupList"></datalist>
+            <button class="btn-secondary btn-sm" id="binLookupBtn">Look up</button>
+          </div>
+          <div id="binLookupResult" class="hidden" style="margin-bottom:.6rem;border:1px solid #e2e8f0;border-radius:8px;padding:.6rem;background:#f8fafc"></div>
           <div id="locMsg" class="status-bar hidden" style="margin-bottom:.6rem"></div>
           <div style="overflow-x:auto">
             <table class="tbl" style="width:100%">

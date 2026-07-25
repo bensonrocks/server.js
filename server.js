@@ -5825,6 +5825,10 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
   if (state.status !== 'done') return res.status(400).json({ error: 'Finish receiving (End Receipt) before putaway.' });
   const { sku, location_id, qty, expiry_date, lot_number, override_reason } = req.body || {};
   if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
+  const capChk = inventory.binCapacityCheck(location_id, Number(qty));
+  if (capChk.exceeds && req.body?.override !== true) {
+    return res.status(409).json({ needsCapacityOverride: true, location: location_id, ...capChk, message: `${location_id} holds ${capChk.occupied}/${capChk.capacity}; adding ${capChk.adding} exceeds by ${capChk.over}.` });
+  }
   const cid = invClientId(rec.client_name);
   // received_at = the inbound's upload/receipt date, so FIFO rotates by when goods
   // actually arrived (not when someone got around to putaway).
@@ -10753,6 +10757,14 @@ app.put('/api/inventory/locations/:id', requireAuth, express.json(), (req, res) 
     res.json(loc);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+// Bin lookup / physical audit — scan a bin, see everything in it (all clients).
+app.get('/api/inventory/bin/:locationId', requireAuth, (req, res) => {
+  const loc = inventory.getLocation(req.params.locationId);
+  if (!loc) return res.status(404).json({ error: 'No such bin' });
+  const contents = inventory.binContents(req.params.locationId);
+  const occupied = contents.reduce((s, c) => s + c.qty, 0);
+  res.json({ location: loc, occupied, capacity: Number(loc.capacity) || 0, contents });
+});
 // Suggest the bin where a SKU already lives (co-location) — for putaway.
 app.get('/api/inventory/suggest-location', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
@@ -10771,6 +10783,10 @@ app.post('/api/inventory/transfer', requireAuth, express.json(), (req, res) => {
     const cid = String(clientId || '').trim();
     if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!sku || !from_location || !to_location || !qty) return res.status(400).json({ error: 'sku, from_location, to_location, qty required' });
+    const cap = inventory.binCapacityCheck(to_location, Number(qty));
+    if (cap.exceeds && req.body?.override !== true) {
+      return res.status(409).json({ needsCapacityOverride: true, location: to_location, ...cap, message: `${to_location} holds ${cap.occupied}/${cap.capacity}; adding ${cap.adding} exceeds by ${cap.over}.` });
+    }
     const result = inventory.transferStock(cid, sku, from_location, to_location, Number(qty), req.userId || '');
     logAudit('stock_transfer', { sku, clientId: cid, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
     res.json(result);
@@ -10790,6 +10806,10 @@ app.post('/api/inventory/place-stock', requireAuth, express.json(), (req, res) =
     const cid = String(clientId || '').trim();
     if (!cid) return res.status(400).json({ error: 'clientId is required' });
     if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
+    const cap = inventory.binCapacityCheck(location_id, Number(qty));
+    if (cap.exceeds && req.body?.override !== true) {
+      return res.status(409).json({ needsCapacityOverride: true, location: location_id, ...cap, message: `${location_id} holds ${cap.occupied}/${cap.capacity}; adding ${cap.adding} exceeds by ${cap.over}.` });
+    }
     const result = inventory.placeStock(cid, sku, location_id, Number(qty), { expiry_date, lot_number, operator: req.userId || '' });
     logAudit('stock_placed', { sku, clientId: cid, location: location_id, qty: Number(qty), expiry: expiry_date || '', by: req.userId || '' });
     res.json(result);

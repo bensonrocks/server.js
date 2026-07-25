@@ -2264,6 +2264,20 @@
     });
   }
 
+  // POST that transparently handles a capacity-exceeded 409: asks the user to
+  // confirm over-filling the bin, then resends with override. Returns {r, d} on
+  // a real response, or {cancelled:true} if the user declined the override.
+  async function postWithCapacityOverride(url, body) {
+    let r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let d = await r.json().catch(() => ({}));
+    if (r.status === 409 && d.needsCapacityOverride) {
+      if (!confirm(`⚠ ${d.message}\n\nPlace anyway (over the bin's max capacity)?`)) return { cancelled: true };
+      r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, override: true }) });
+      d = await r.json().catch(() => ({}));
+    }
+    return { r, d };
+  }
+
   // ── Putaway — direct received inbound goods into warehouse bins ─────────────
   // received_totals (sku->qty) comes from the inbound record; state.putaway is the
   // list of placements already done. "Remaining" = received − placed, per SKU.
@@ -2347,8 +2361,8 @@
       if (!location_id || qty === '') { msg.className = 'status-bar error'; msg.textContent = 'Pick a bin and qty.'; msg.classList.remove('hidden'); return; }
       if (sug && location_id !== sug && !override_reason) { msg.className = 'status-bar error'; msg.textContent = `This SKU is already in ${sug}. Pick a reason for using a different bin.`; msg.classList.remove('hidden'); return; }
       try {
-        const r = await fetch(`/api/inbound/${encodeURIComponent(_putawayJob.id)}/putaway`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku, location_id, qty: Number(qty), expiry_date, lot_number, override_reason }) });
-        const d = await r.json();
+        const { r, d, cancelled } = await postWithCapacityOverride(`/api/inbound/${encodeURIComponent(_putawayJob.id)}/putaway`, { sku, location_id, qty: Number(qty), expiry_date, lot_number, override_reason });
+        if (cancelled) return;
         if (!r.ok) { msg.className = 'status-bar error'; msg.textContent = d.error || 'Failed'; msg.classList.remove('hidden'); return; }
         msg.className = 'status-bar success'; msg.textContent = `✓ ${sku} → ${location_id} (${qty})${expiry_date ? ' exp ' + expiry_date : ''}.`; msg.classList.remove('hidden');
         _putawayJob.putaway = d.putaway; renderPutaway();
@@ -11101,6 +11115,7 @@
       const opts = locations.map(l => `<option value="${esc(l.location_id)}">${esc(l.location_id)}</option>`).join('');
       const blank = '<option value="">— bin —</option>';
       ['putLoc', 'trFrom', 'trTo'].forEach(id => { const s = $(id); if (s) s.innerHTML = blank + opts; });
+      const dl = $('binLookupList'); if (dl) dl.innerHTML = opts;
     }
     async function loadLocationStock() {
       const tb = $('locStockTbody'); if (!tb || !clientId) return;
@@ -11159,13 +11174,37 @@
         else { const d = await r.json().catch(() => ({})); wmsMsg('locMsg', 'error', d.error || 'Update failed'); }
       }));
     }
+    // Bin lookup — scan/type a bin, see everything physically in it (all clients).
+    async function binLookup() {
+      const id = ($('binLookup').value || '').trim();
+      const el = $('binLookupResult');
+      if (!id) { el.classList.add('hidden'); return; }
+      try {
+        const r = await fetch('/api/inventory/bin/' + encodeURIComponent(id));
+        const d = await r.json();
+        if (!r.ok) { el.className = ''; el.innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Not found')}</span>`; el.classList.remove('hidden'); return; }
+        const cap = d.capacity > 0 ? ` · ${d.occupied}/${d.capacity}${d.occupied > d.capacity ? ' ⚠ over' : ''}` : ` · ${d.occupied} units`;
+        const env = d.location.environment ? ` (${esc(d.location.environment)})` : '';
+        const rows = d.contents.length ? d.contents.map(c => `<tr>
+          <td style="font-family:monospace;font-weight:600">${esc(c.sku)}</td>
+          <td>${esc(c.name || '')}</td>
+          <td class="hint">${esc(c.client_id || '')}</td>
+          <td style="text-align:right;font-weight:700">${c.qty}</td>
+          <td class="hint">${c.expiry_date ? 'exp ' + esc(c.expiry_date) : ''}${c.lot_number ? ' · lot ' + esc(c.lot_number) : ''}</td></tr>`).join('')
+          : '<tr><td colspan="5" style="text-align:center;padding:.8rem;color:#94a3b8">Bin is empty.</td></tr>';
+        el.className = '';
+        el.innerHTML = `<div style="font-weight:700;margin-bottom:.4rem">📍 ${esc(id)}${env}<span class="hint" style="font-weight:400">${cap}</span></div>
+          <div style="overflow-x:auto"><table class="tbl" style="width:100%"><thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Name</th><th style="text-align:left">Client</th><th style="text-align:right">Qty</th><th style="text-align:left">Lot/Exp</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+        el.classList.remove('hidden');
+      } catch (e) { el.className = ''; el.innerHTML = `<span style="color:#dc2626">${esc(e.message)}</span>`; el.classList.remove('hidden'); }
+    }
     async function placeStock() {
       const sku = $('putSku').value.trim(), location_id = $('putLoc').value, qty = $('putQty').value;
       if (!clientId) { alert('Load a client first.'); return; }
       if (!sku || !location_id || qty === '') { wmsMsg('locMsg', 'error', 'SKU, bin and qty are required.'); return; }
       try {
-        const r = await fetch('/api/inventory/place-stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, location_id, qty: Number(qty) }) });
-        const d = await r.json();
+        const { r, d, cancelled } = await postWithCapacityOverride('/api/inventory/place-stock', { clientId, sku, location_id, qty: Number(qty) });
+        if (cancelled) return;
         if (!r.ok) { wmsMsg('locMsg', 'error', d.error || 'Failed'); return; }
         wmsMsg('locMsg', 'success', `✓ ${sku} @ ${location_id} now ${d.quantity}.`);
         $('putSku').value = ''; $('putQty').value = '';
@@ -11178,8 +11217,8 @@
       if (!sku || !from_location || !to_location || qty === '') { wmsMsg('trMsg', 'error', 'SKU, both bins and qty are required.'); return; }
       if (from_location === to_location) { wmsMsg('trMsg', 'error', 'From and To bins must differ.'); return; }
       try {
-        const r = await fetch('/api/inventory/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, from_location, to_location, qty: Number(qty) }) });
-        const d = await r.json();
+        const { r, d, cancelled } = await postWithCapacityOverride('/api/inventory/transfer', { clientId, sku, from_location, to_location, qty: Number(qty) });
+        if (cancelled) return;
         if (!r.ok) { wmsMsg('trMsg', 'error', d.error || 'Failed'); return; }
         wmsMsg('trMsg', 'success', `✓ Moved ${d.qty} × ${sku}: ${from_location} → ${to_location}.`);
         $('trQty').value = '';
@@ -11272,6 +11311,8 @@
     setTimeout(() => {
       $('locAddBtn')?.addEventListener('click', createLocation);
       $('locManageBtn')?.addEventListener('click', () => { const w = $('locManageWrap'); w.classList.toggle('hidden'); if (!w.classList.contains('hidden')) renderManageBins(); });
+      $('binLookupBtn')?.addEventListener('click', binLookup);
+      $('binLookup')?.addEventListener('keydown', e => { if (e.key === 'Enter') binLookup(); });
       $('putBtn')?.addEventListener('click', placeStock);
       $('trBtn')?.addEventListener('click', transfer);
       $('ccStartBtn')?.addEventListener('click', ccStart);
