@@ -6207,6 +6207,30 @@
         document.getElementById('inboundForceEndBtn').addEventListener('click', () => endInboundReceipt(true));
         return;
       }
+      if (resp.status === 409 && data.needsPhotos) {
+        // Photo evidence is compulsory (damage/discrepancy) — offer the camera
+        // right here: one tap opens it, tagged to the first missing SKU (or as a
+        // general shipment photo for a discrepancy-only case).
+        feedback.className = 'scan-feedback error';
+        feedback.innerHTML = `📷 ${esc(data.message)} <button class="link-btn" id="evidencePhotoBtn" style="font-weight:700">Take photo now</button>`;
+        feedback.classList.remove('hidden');
+        clearTimeout(feedback._t);
+        feedback._t = setTimeout(() => feedback.classList.add('hidden'), 15000);
+        const wasForce = !!force;
+        document.getElementById('evidencePhotoBtn')?.addEventListener('click', () => {
+          if (data.missingSkus && data.missingSkus.length) {
+            lastScannedInboundSku = data.missingSkus[0];
+            _pendingPhotoCondition = 'damaged';
+            document.getElementById('inboundScanPhotoInput').click();
+          } else {
+            document.getElementById('inboundGeneralPhotoInput').click();
+          }
+          // After the receiver snaps + uploads, they just tap End Receipt again
+          // (force choice preserved by the normal flow).
+          void wasForce;
+        });
+        return;
+      }
       if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Could not end receipt'); return; }
       activeInbound.status = 'done';
       // Last carton never went through the "closing" prompt (nothing ever

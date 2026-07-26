@@ -5771,6 +5771,29 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
     return res.status(409).json({ needsConfirm: true, mismatches, extras });
   }
 
+  // PHOTO EVIDENCE IS COMPULSORY — and NOT bypassable by force:
+  // - every SKU with damaged/KIV units needs ≥1 photo tagged to that SKU;
+  // - a job ending with discrepancies (short/over/extras) needs ≥1 photo of the
+  //   shipment (any photo on the job).
+  // Claims and client disputes live or die on this evidence.
+  {
+    const photos = rec.photos || [];
+    const missingSkus = [];
+    for (const [sku, conds] of Object.entries(state.conditionTotals || {})) {
+      const bad = (Number(conds?.damaged) || 0) + (Number(conds?.kiv) || 0);
+      if (bad > 0 && !photos.some(p => p.sku === sku)) missingSkus.push(sku);
+    }
+    const needsJobPhoto = (mismatches.length || extras.length) && photos.length === 0;
+    if (missingSkus.length || needsJobPhoto) {
+      return res.status(409).json({
+        needsPhotos: true, missingSkus, needsJobPhoto: !!needsJobPhoto,
+        message: missingSkus.length
+          ? `Photo required before ending: ${missingSkus.join(', ')} ha${missingSkus.length > 1 ? 've' : 's'} damaged/KIV units — take at least 1 photo of each (📷 button).`
+          : 'This receipt has discrepancies — take at least 1 photo of the shipment as evidence before ending.',
+      });
+    }
+  }
+
   if (state.cartons && state.cartons.length) {
     const last = state.cartons[state.cartons.length - 1];
     if (state.cartons.length > 1 && !Object.keys(last.scans || {}).length) state.cartons.pop();
