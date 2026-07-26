@@ -7160,7 +7160,16 @@
         const binPicks = item.pick_locations.filter(pl => pl.location_id !== 'STAGING');
         const stagePicks = item.pick_locations.filter(pl => pl.location_id === 'STAGING');
         if (binPicks.length) {
-          const locs = binPicks.map(pl => `${esc(pl.location_id)}&nbsp;×${pl.qty}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
+          const upc = Number(item.units_per_carton) || 1;
+          const qtyLabel = q => {
+            if (upc <= 1) return `×${q}`;
+            const ctn = Math.floor(q / upc), ea = q % upc;
+            const parts = [];
+            if (ctn) parts.push(`${ctn} ctn`);
+            if (ea) parts.push(`${ea} ea`);
+            return `×${q} (${parts.join(' + ')})`;
+          };
+          const locs = binPicks.map(pl => `${esc(pl.location_id)}&nbsp;${qtyLabel(pl.qty)}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
           lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
           lotParts.push(`<span class="lot-badge bin-empty-btn" data-sku="${esc(item.sku)}" title="Bin empty? Re-pick this SKU from another bin" style="cursor:pointer;background:#fee2e2;color:#991b1b">&#128683; empty?</span>`);
         }
@@ -11514,7 +11523,9 @@
     // printed location code when a SKU has no binned stock.
     function waveBinCell(p) {
       if (p.bins && p.bins.length) {
-        const parts = p.bins.map(b => `${esc(b.location_id)}&nbsp;×${b.qty}${b.expiry_date ? `<span style="opacity:.65;font-weight:400"> exp ${esc(b.expiry_date)}</span>` : ''}`);
+        const upc = Number(p.units_per_carton) || 1;
+        const qlbl = q => { if (upc <= 1) return `×${q}`; const c = Math.floor(q / upc), e = q % upc; const a = []; if (c) a.push(`${c} ctn`); if (e) a.push(`${e} ea`); return `×${q} (${a.join(' + ')})`; };
+        const parts = p.bins.map(b => `${esc(b.location_id)}&nbsp;${qlbl(b.qty)}${b.expiry_date ? `<span style="opacity:.65;font-weight:400"> exp ${esc(b.expiry_date)}</span>` : ''}`);
         const short = p.bin_shortfall > 0 ? `<div style="color:#b45309;font-weight:600;font-size:.72rem">⚠ ${p.bin_shortfall} not binned</div>` : '';
         return `<div style="font-size:.82rem">${parts.join('<br>')}</div>${short}`;
       }

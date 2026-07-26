@@ -7028,15 +7028,22 @@ app.post('/api/scan/report-bin-empty', (req, res) => {
   const lines = (ord.lines || []).filter(l => l.sku === sku);
   if (inventory.available()) {
     try { removed = inventory.zeroBinLot(cid, sku, location_id, req.userId || ''); } catch (e) { console.warn('[bin-empty] zero failed', e.message); }
-    // Re-allocate every line of this SKU fresh — allocatePick now skips the
-    // emptied bin automatically (it only picks from lots with qty > 0).
+    // Re-allocate every line of this SKU fresh (carton-aware) — allocatePick now
+    // skips the emptied bin automatically (it only picks from lots with qty > 0).
+    const upc = Number((inventory.get(sku, cid) || {}).units_per_carton) || 1;
     for (const l of lines) {
       try {
-        const a = inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat);
-        l.pick_locations = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
+        const a = inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat, upc);
+        const byLoc = []; const idx = {};
+        for (const p of a.picks) { if (idx[p.location_id] === undefined) { idx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null, kind: p.kind }); } const e = byLoc[idx[p.location_id]]; e.qty += p.qty; if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date; }
+        l.pick_locations = byLoc;
         l.pick_shortfall = a.shortfall;
+        l.units_per_carton = upc;
       } catch (_) {}
     }
+    // Re-freeze the consume plan from the new allocation on the next scan.
+    const st = batch.orderStates && batch.orderStates[orderNumber];
+    if (st && st.bin_plan) delete st.bin_plan[sku];
   }
   writeDb(db);
   logAudit('bin_reported_empty', { order: orderNumber, sku, location: location_id, removed, by: req.userId || '' });
@@ -10329,8 +10336,19 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
     for (const l of (order.lines || [])) {
       if (!l.sku) continue;
       try {
-        const a = inventory.allocatePick(clientId, l.sku, Number(l.qty) || 0, strategy);
-        l.pick_locations = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
+        const upc = Number((inventory.get(l.sku, clientId) || {}).units_per_carton) || 1;
+        l.units_per_carton = upc;
+        const a = inventory.allocatePick(clientId, l.sku, Number(l.qty) || 0, strategy, upc);
+        // Aggregate the lot-level picks into one row per bin (preserving plan order:
+        // bulk case-picks first, then pick-face eaches).
+        const byLoc = []; const idx = {};
+        for (const p of a.picks) {
+          if (idx[p.location_id] === undefined) { idx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null, kind: p.kind }); }
+          const e = byLoc[idx[p.location_id]];
+          e.qty += p.qty;
+          if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date;
+        }
+        l.pick_locations = byLoc;
         let shortfall = a.shortfall;
         l.awaiting_putaway_qty = 0;
         if (shortfall > 0) {
@@ -10358,29 +10376,55 @@ function reconcileBinConsumption(db, batch, ord, state, sku) {
   if (!sku || !batch || !batch.inventory_tracked || !inventory.available()) return;
   const cid = batch.inventory_client || invClientId(batch.client_name);
   const strat = batch.pick_strategy || 'fefo';
+  const upc = Number((inventory.get(sku, cid) || {}).units_per_carton) || 1;
   const ordered = (ord.lines || []).filter(l => l.sku === sku).reduce((s, l) => s + (Number(l.qty) || 0), 0);
   const target = Math.min(Number(state.scanned?.[sku] || 0), ordered);   // never consume beyond ordered
   state.bin_consumed = state.bin_consumed || {};
   const list = state.bin_consumed[sku] || [];
-  const have = list.reduce((s, e) => s + e.qty, 0);
   try {
-    if (target > have) {
-      const picks = inventory.allocatePick(cid, sku, target - have, strat).picks;
-      if (picks.length) {
-        inventory.consumeAllocations(cid, [{ sku, picks }]);
-        for (const p of picks) list.push({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null, received_at: p.received_at || null, lot_number: p.lot_number || '' });
+    // FROZEN plan: follow the SAME carton-aware plan the pick list already shows —
+    // frozen once (from the line's pick_locations) so it never shifts as this order
+    // consumes its own bins. Recomputing against depleted bins would spill units to
+    // the wrong bin at completion. STAGING units aren't in a bin, so they're skipped.
+    state.bin_plan = state.bin_plan || {};
+    if (!state.bin_plan[sku]) {
+      const agg = {}; const orderArr = [];
+      for (const l of (ord.lines || []).filter(x => x.sku === sku)) {
+        for (const p of (l.pick_locations || [])) {
+          if (p.location_id === 'STAGING') continue;
+          if (agg[p.location_id] === undefined) { agg[p.location_id] = 0; orderArr.push(p.location_id); }
+          agg[p.location_id] += p.qty;
+        }
       }
-    } else if (target < have) {
-      let give = have - target;
-      const back = [];
-      while (give > 0 && list.length) {
-        const last = list[list.length - 1];
-        const take = Math.min(give, last.qty);
-        back.push({ sku, location_id: last.location_id, qty: take, received_at: last.received_at, expiry_date: last.expiry_date, lot_number: last.lot_number });
-        last.qty -= take; give -= take;
-        if (last.qty <= 0) list.pop();
+      if (!orderArr.length) { // no stored plan — derive one
+        for (const p of inventory.allocatePick(cid, sku, ordered, strat, upc).picks) {
+          if (agg[p.location_id] === undefined) { agg[p.location_id] = 0; orderArr.push(p.location_id); }
+          agg[p.location_id] += p.qty;
+        }
       }
-      if (back.length) inventory.restoreLots(cid, back);
+      state.bin_plan[sku] = orderArr.map(loc => ({ loc, qty: agg[loc] }));
+    }
+    const steps = state.bin_plan[sku];
+    let remT = target; const desired = {};
+    for (const s of steps) { if (remT <= 0) break; const t = Math.min(remT, s.qty); desired[s.loc] = (desired[s.loc] || 0) + t; remT -= t; }
+    const cur = {}; for (const e of list) cur[e.location_id] = (cur[e.location_id] || 0) + e.qty;
+    const locs = new Set([...Object.keys(desired), ...Object.keys(cur)]);
+    for (const loc of locs) {
+      const want = desired[loc] || 0, have = cur[loc] || 0;
+      if (want > have) {
+        const taken = inventory.consumeFromLocation(cid, sku, loc, want - have, strat);
+        for (const t of taken) list.push({ location_id: loc, lot_id: t.lot_id, qty: t.qty, expiry_date: t.expiry_date || null, received_at: t.received_at || null, lot_number: t.lot_number || '' });
+      } else if (want < have) {
+        let give = have - want; const back = [];
+        for (let i = list.length - 1; i >= 0 && give > 0; i--) {
+          if (list[i].location_id !== loc) continue;
+          const take = Math.min(give, list[i].qty);
+          back.push({ sku, location_id: loc, qty: take, received_at: list[i].received_at, expiry_date: list[i].expiry_date, lot_number: list[i].lot_number });
+          list[i].qty -= take; give -= take;
+          if (list[i].qty <= 0) list.splice(i, 1);
+        }
+        if (back.length) inventory.restoreLots(cid, back);
+      }
     }
     state.bin_consumed[sku] = list;
   } catch (e) { console.warn('[bin-reconcile] failed for', sku, e.message); }
@@ -11269,8 +11313,13 @@ function enrichWaveWithBins(db, wave) {
     const m = first && meta[first.order_number];
     if (!m || !m.clientId) continue;
     try {
-      const a = inventory.allocatePick(m.clientId, row.sku, row.total_qty, m.strategy);
-      row.bins = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
+      const upc = Number((inventory.get(row.sku, m.clientId) || {}).units_per_carton) || 1;
+      row.units_per_carton = upc;
+      const a = inventory.allocatePick(m.clientId, row.sku, row.total_qty, m.strategy, upc);
+      // Aggregate lot picks into one row per bin for display.
+      const byLoc = []; const bidx = {};
+      for (const p of a.picks) { if (bidx[p.location_id] === undefined) { bidx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null }); } const e = byLoc[bidx[p.location_id]]; e.qty += p.qty; if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date; }
+      row.bins = byLoc;
       row.bin_shortfall = a.shortfall;
       row.bin_location = a.picks.length ? a.picks[0].location_id : '';
     } catch (_) { /* leave printed location as the guide */ }
