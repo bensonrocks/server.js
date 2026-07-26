@@ -7110,6 +7110,7 @@
         if (binPicks.length) {
           const locs = binPicks.map(pl => `${esc(pl.location_id)}&nbsp;×${pl.qty}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
           lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
+          lotParts.push(`<span class="lot-badge bin-empty-btn" data-sku="${esc(item.sku)}" title="Bin empty? Re-pick this SKU from another bin" style="cursor:pointer;background:#fee2e2;color:#991b1b">&#128683; empty?</span>`);
         }
         const stageQty = stagePicks.reduce((s, p) => s + p.qty, 0);
         if (stageQty > 0) lotParts.push(`<span class="lot-badge lot-stage" title="Pick from the receiving/staging area (not yet binned)" style="background:#ffedd5;color:#9a3412">&#128229; Staging ×${stageQty}</span>`);
@@ -7188,6 +7189,24 @@
         if (!item) return;
         await learnNoBarcodeSku(item);
         renderItemsTable(activeOrder);
+      });
+    });
+    // Short-pick: the allocated bin is physically empty → re-pick from another bin.
+    document.querySelectorAll('.bin-empty-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const item = lineOf(btn.dataset.sku);
+        const bins = (item?.pick_locations || []).filter(p => p.location_id !== 'STAGING').map(p => p.location_id);
+        if (!bins.length) return;
+        let loc = bins[0];
+        if (bins.length > 1) { loc = prompt(`Which bin is empty?\n${bins.map((b, i) => `${i + 1}. ${b}`).join('\n')}\n\nType the bin code:`, bins[0]); if (!loc) return; }
+        else if (!confirm(`Report ${loc} empty and re-pick ${item.sku} from another bin?`)) return;
+        try {
+          const r = await fetch('/api/scan/report-bin-empty', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderNumber: activeOrder.order_number, sku: item.sku, location_id: loc }) });
+          const d = await r.json();
+          if (!r.ok) { alert(d.error || 'Failed'); return; }
+          for (const upd of (d.lines || [])) for (const l of (activeOrder.lines || [])) if (l.sku === upd.sku) { l.pick_locations = upd.pick_locations; l.pick_shortfall = upd.pick_shortfall; }
+          renderItemsTable(activeOrder);
+        } catch (e) { alert(e.message); }
       });
     });
 

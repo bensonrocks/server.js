@@ -7010,6 +7010,39 @@ app.post('/api/scan/setqty', (req, res) => {
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num, cartonCount: state.cartons.length });
 });
 
+// SHORT-PICK — the packer physically found an allocated bin empty. Clear this
+// SKU's phantom lots at that bin and re-allocate the order's pick to the next
+// FEFO/FIFO bin, so the pick list stops pointing at an empty shelf. Audit-logged
+// (a bin that reads stock but is empty is a discrepancy worth a cycle count).
+app.post('/api/scan/report-bin-empty', (req, res) => {
+  const { orderNumber, sku, location_id } = req.body || {};
+  if (!orderNumber || !sku || !location_id) return res.status(400).json({ error: 'orderNumber, sku, location_id required' });
+  const db = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord = batch.orders.find(o => o.order_number === orderNumber);
+  if (!ord) return res.status(404).json({ error: 'Order not found' });
+  const cid = batch.inventory_client || invClientId(batch.client_name);
+  const strat = batch.pick_strategy || 'fefo';
+  let removed = 0;
+  const lines = (ord.lines || []).filter(l => l.sku === sku);
+  if (inventory.available()) {
+    try { removed = inventory.zeroBinLot(cid, sku, location_id, req.userId || ''); } catch (e) { console.warn('[bin-empty] zero failed', e.message); }
+    // Re-allocate every line of this SKU fresh — allocatePick now skips the
+    // emptied bin automatically (it only picks from lots with qty > 0).
+    for (const l of lines) {
+      try {
+        const a = inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat);
+        l.pick_locations = a.picks.map(p => ({ location_id: p.location_id, qty: p.qty, expiry_date: p.expiry_date || null }));
+        l.pick_shortfall = a.shortfall;
+      } catch (_) {}
+    }
+  }
+  writeDb(db);
+  logAudit('bin_reported_empty', { order: orderNumber, sku, location: location_id, removed, by: req.userId || '' });
+  res.json({ ok: true, removed, lines: lines.map(l => ({ sku: l.sku, pick_locations: l.pick_locations || [], pick_shortfall: l.pick_shortfall || 0 })) });
+});
+
 app.post('/api/scan/save', (req, res) => {
   const { orderNumber } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
