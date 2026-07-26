@@ -389,13 +389,14 @@
     </div>
 
     <div class="item-scan-dock">
-      <div id="inboundConditionRow" class="hidden inbound-condition-row">
-        <label for="inboundConditionSelect">Condition</label>
-        <select id="inboundConditionSelect">
-          <option value="straight_to_inventory">Straight to Inventory</option>
-          <option value="damaged">Damaged</option>
-          <option value="kiv">KIV</option>
-        </select>
+      <!-- Condition of the NEXT scan — big segmented buttons so a gloved thumb
+           on a PDA can hit them. Resets to Good after each non-good scan. -->
+      <div id="inboundConditionRow" class="inbound-condition-row">
+        <div class="cond-seg" id="inboundCondSeg">
+          <button type="button" class="cond-btn cond-good active" data-cond="straight_to_inventory">✅ Good</button>
+          <button type="button" class="cond-btn cond-damaged" data-cond="damaged">💥 Damaged</button>
+          <button type="button" class="cond-btn cond-kiv" data-cond="kiv">⏸ KIV</button>
+        </div>
       </div>
       <div class="item-scan-wrap">
         <span class="scan-icon-prefix">&#9524;</span>
@@ -2399,6 +2400,23 @@
             <table class="tbl" style="width:100%">
               <thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Bin</th><th style="text-align:right">Missing</th><th style="text-align:left">Order</th><th style="text-align:left">Reported</th><th></th></tr></thead>
               <tbody id="discTbody"><tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">No open discrepancies. 🎉</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 🚧 Quarantine -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div><b>🚧 Quarantine</b> <span id="quarBadge" class="nav-badge hidden">0</span>
+              <div class="hint" style="margin:.2rem 0 0">Damaged / KIV units from receiving — held out of sellable stock until dispositioned: <b>Release</b> (passed inspection → sellable, ZORT updated), <b>Dispose</b>, or <b>Return to client</b>.</div>
+            </div>
+            <button class="btn-secondary btn-sm" id="quarRefreshBtn">Refresh</button>
+          </div>
+          <div id="quarMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+          <div style="overflow-x:auto;margin-top:.6rem">
+            <table class="tbl" style="width:100%">
+              <thead><tr><th style="text-align:left">SKU</th><th style="text-align:right">Qty</th><th style="text-align:left">Condition</th><th style="text-align:left">From</th><th style="text-align:left">Since</th><th></th></tr></thead>
+              <tbody id="quarTbody"><tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">Nothing in quarantine. 🎉</td></tr></tbody>
             </table>
           </div>
         </div>

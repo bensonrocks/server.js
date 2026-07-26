@@ -5637,15 +5637,14 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   state.scanned[sku] = (state.scanned[sku] || 0) + inc;
   addToActiveCarton(state, sku, inc);
 
-  if (rec.type === 'return') {
-    const cond = INBOUND_CONDITIONS.has(condition) ? condition : 'straight_to_inventory';
-    state.conditionTotals = state.conditionTotals || {};
-    state.conditionTotals[sku] = state.conditionTotals[sku] || { straight_to_inventory: 0, damaged: 0, kiv: 0 };
-    state.conditionTotals[sku][cond] += inc;
-    appendScanLog(state, { kind: 'scan', raw, sku, qty: inc, condition: cond, by: req.userId || '' });
-  } else {
-    appendScanLog(state, { kind: 'scan', raw, sku, qty: inc, by: req.userId || '' });
-  }
+  // Condition applies to EVERY receiving type now, not just returns — a PO
+  // arriving with crushed units is routine, and those units must never land in
+  // sellable stock. Default is good (straight_to_inventory).
+  const cond = INBOUND_CONDITIONS.has(condition) ? condition : 'straight_to_inventory';
+  state.conditionTotals = state.conditionTotals || {};
+  state.conditionTotals[sku] = state.conditionTotals[sku] || { straight_to_inventory: 0, damaged: 0, kiv: 0 };
+  state.conditionTotals[sku][cond] += inc;
+  appendScanLog(state, { kind: 'scan', raw, sku, qty: inc, condition: cond, by: req.userId || '' });
 
   if (state.status === 'pending') { state.status = 'processing'; state.startTime = new Date().toISOString(); }
   state.updated_at = new Date().toISOString();
@@ -5653,7 +5652,7 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   writeDb(db);
 
   const carton = activeCarton(state);
-  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], cartonNum: carton.num, cartonCount: state.cartons.length });
+  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], condition: cond, condition_totals: state.conditionTotals[sku], cartonNum: carton.num, cartonCount: state.cartons.length });
 });
 
 app.post('/api/inbound/:id/new-carton', (req, res) => {
@@ -5750,14 +5749,17 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   const state = rec.state = rec.state || {};
   if (state.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended.' });
 
-  if (rec.type === 'po' && !force) {
-    const mismatches = (rec.lines || [])
-      .map(l => ({ sku: l.sku, description: l.description, expected_qty: l.expected_qty, scanned_qty: (state.scanned || {})[l.sku] || 0 }))
-      .filter(m => m.scanned_qty !== m.expected_qty);
-    const extras = Object.entries(state.scanned || {})
-      .filter(([sku]) => !(rec.lines || []).some(l => l.sku === sku))
-      .map(([sku, qty]) => ({ sku, scanned_qty: qty }));
-    if (mismatches.length || extras.length) return res.status(409).json({ needsConfirm: true, mismatches, extras });
+  // Expected-vs-received discrepancies — computed for BOTH the confirm gate and
+  // (below, once ending is confirmed) PERSISTED on the record, so short/over
+  // shipments become a permanent, reportable fact — not a dialog that evaporates.
+  const mismatches = rec.type === 'po' ? (rec.lines || [])
+    .map(l => ({ sku: l.sku, description: l.description, expected_qty: l.expected_qty, scanned_qty: (state.scanned || {})[l.sku] || 0 }))
+    .filter(m => m.scanned_qty !== m.expected_qty) : [];
+  const extras = rec.type === 'po' ? Object.entries(state.scanned || {})
+    .filter(([sku]) => !(rec.lines || []).some(l => l.sku === sku))
+    .map(([sku, qty]) => ({ sku, scanned_qty: qty })) : [];
+  if (rec.type === 'po' && !force && (mismatches.length || extras.length)) {
+    return res.status(409).json({ needsConfirm: true, mismatches, extras });
   }
 
   if (state.cartons && state.cartons.length) {
@@ -5778,18 +5780,36 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   let receivedSkus = [];
   if (!state.inventory_applied && inventory.available()) {
     const cid = invClientId(rec.client_name);
-    const additions = {}; // sku -> qty to add
+    const additions = {}; // sku -> GOOD qty to add (damaged/KIV never become sellable)
     if (rec.type === 'return') {
       for (const [sku, conds] of Object.entries(state.conditionTotals || {})) {
         const good = Number((conds || {}).straight_to_inventory || 0);
         if (good > 0) additions[sku] = good;
       }
     } else {
+      // PO: scanned minus damaged/KIV (scans default to good, so a job with no
+      // condition tagging behaves exactly as before).
       for (const [sku, qty] of Object.entries(state.scanned || {})) {
-        const n = Number(qty || 0);
-        if (n > 0) additions[sku] = n;
+        const ct = (state.conditionTotals || {})[sku] || {};
+        const good = Math.max(0, (Number(qty) || 0) - (Number(ct.damaged) || 0) - (Number(ct.kiv) || 0));
+        if (good > 0) additions[sku] = good;
       }
     }
+    // Damaged/KIV units become QUARANTINE entries — trackable, disposition
+    // pending (release to stock / dispose / return to client) — instead of
+    // silently living as numbers on this job. One entry per SKU×condition.
+    for (const [sku, conds] of Object.entries(state.conditionTotals || {})) {
+      for (const cond of ['damaged', 'kiv']) {
+        const n = Number((conds || {})[cond] || 0);
+        if (n <= 0) continue;
+        (db.quarantine = db.quarantine || []).unshift({
+          id: uuidv4().slice(0, 8), clientId: cid, sku, qty: n, condition: cond,
+          source: rec.serial || rec.reference || rec.id, sourceId: rec.id,
+          createdAt: new Date().toISOString(), status: 'open',
+        });
+      }
+    }
+    if (db.quarantine && db.quarantine.length > 500) db.quarantine.length = 500;
     for (const [sku, qty] of Object.entries(additions)) {
       try {
         if (!inventory.get(sku, cid)) inventory.upsert({ sku, name: sku, clientId: cid });
@@ -5806,11 +5826,21 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
     if (receivedSkus.length) releaseBackorders(db, cid, additions);
   }
 
+  // PERSIST the receiving discrepancies on the record — the GRN and reports read
+  // these; they're the supplier-claim / client-proof paper trail.
+  rec.discrepancies = mismatches;
+  rec.extras = extras;
+  rec.received_by = req.userId || '';
+
   writeDb(db);
-  logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, received: receivedSkus.length, by: req.userId || '' });
+  logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, received: receivedSkus.length, discrepancies: mismatches.length, extras: extras.length, by: req.userId || '' });
   // Received stock raised availability → notify ZORT stock-sync stores.
   if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
-  res.json({ ok: true });
+  // GRN email to the configured alert recipient — fire-and-forget, never blocks.
+  sendInboundGrnAlert(rec).then(r => {
+    logAudit(r?.sent ? 'inbound_grn_emailed' : 'inbound_grn_email_skipped', { id: rec.id, serial: rec.serial, reason: r?.reason || '' });
+  }).catch(e => logAudit('inbound_grn_email_failed', { id: rec.id, error: String(e.message || e).slice(0, 200) }));
+  res.json({ ok: true, discrepancies: mismatches.length, extras: extras.length });
 });
 
 // PUTAWAY — direct received goods into a bin. The stock is already sellable
@@ -5842,6 +5872,61 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
     res.json({ ok: true, placed: result, putaway: state.putaway });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+
+// GRN (Goods Received Note) — the client-facing receiving report for one job:
+// expected vs received vs damaged/KIV per SKU, discrepancies, who/when. The
+// client renders this JSON into a printable page (same pattern as carton slips).
+function grnData(rec) {
+  const state = rec.state || {};
+  const scanned = state.scanned || {};
+  const ct = state.conditionTotals || {};
+  const skus = new Set([...(rec.lines || []).map(l => l.sku), ...Object.keys(scanned)]);
+  const lines = [...skus].map(sku => {
+    const exp = (rec.lines || []).find(l => l.sku === sku);
+    const c = ct[sku] || {};
+    const received = Number(scanned[sku] || 0);
+    const damaged = Number(c.damaged || 0), kiv = Number(c.kiv || 0);
+    return {
+      sku, description: exp?.description || '',
+      expected: exp ? Number(exp.expected_qty || 0) : null,   // null = unlisted extra
+      received, good: Math.max(0, received - damaged - kiv), damaged, kiv,
+      diff: exp ? received - Number(exp.expected_qty || 0) : null,
+    };
+  }).sort((a, b) => a.sku.localeCompare(b.sku));
+  const tot = k => lines.reduce((s, l) => s + (Number(l[k]) || 0), 0);
+  return {
+    serial: rec.serial || '', reference: rec.reference || '', type: rec.type,
+    client: rec.client_name || '', source: rec.source_name || '',
+    received_by: rec.received_by || state.operator || '',
+    started: state.startTime || null, ended: state.endTime || null,
+    lines, totals: { expected: tot('expected'), received: tot('received'), good: tot('good'), damaged: tot('damaged'), kiv: tot('kiv') },
+    discrepancies: rec.discrepancies || [], extras: rec.extras || [],
+    cartons: (state.cartons || []).length || 1,
+    photos: (rec.photos || []).length,
+  };
+}
+app.get('/api/inbound/:id/grn', (req, res) => {
+  const rec = findInbound(readDb(), req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  res.json(grnData(rec));
+});
+async function sendInboundGrnAlert(rec) {
+  const transporter = buildTransporter();
+  const fromEmail = getFromEmail();
+  const toEmail = getDefaultRecipient();
+  if (!transporter || !fromEmail || !toEmail) return { sent: false, reason: 'not_configured' };
+  const g = grnData(rec);
+  const rows = g.lines.map(l => `<tr><td>${l.sku}</td><td>${l.expected ?? '—'}</td><td>${l.received}</td><td>${l.good}</td><td>${l.damaged || ''}</td><td>${l.kiv || ''}</td><td>${l.diff === null ? 'unlisted' : (l.diff === 0 ? '' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td></tr>`).join('');
+  await transporter.sendMail({
+    from: fromEmail, to: toEmail,
+    subject: `GRN ${g.serial || g.reference} — ${g.client} received (${g.totals.received} pcs${g.totals.damaged ? `, ${g.totals.damaged} damaged` : ''}${g.discrepancies.length ? `, ${g.discrepancies.length} discrepancy` : ''})`,
+    html: `<h3>Goods Received Note — ${g.serial || g.reference}</h3>
+      <p>Client: <b>${g.client}</b> · Source: ${g.source || '—'} · Type: ${g.type === 'po' ? 'PO/ASN' : 'Return'} · Received by: ${g.received_by || '—'} · Ended: ${g.ended || ''}</p>
+      <table border="1" cellpadding="4" cellspacing="0"><tr><th>SKU</th><th>Expected</th><th>Received</th><th>Good</th><th>Damaged</th><th>KIV</th><th>Diff</th></tr>${rows}</table>
+      <p>Totals: received ${g.totals.received} · good ${g.totals.good} · damaged ${g.totals.damaged} · KIV ${g.totals.kiv} · cartons ${g.cartons} · photos ${g.photos}</p>`,
+  });
+  return { sent: true };
+}
 
 // Read-only per-carton receiving slip — mirrors the outbound carton-slip.
 app.get('/api/inbound/:id/carton-slip', (req, res) => {
@@ -11012,6 +11097,45 @@ app.get('/api/inventory/count-suggestions', requireAuth, (req, res) => {
   // Repeat-discrepancy bins first, then never-counted, then stale.
   out.sort((a, b) => (discCount[b.location_id] || 0) - (discCount[a.location_id] || 0));
   res.json({ suggestions: out.slice(0, 30) });
+});
+
+// ── Quarantine — damaged/KIV units from receiving, awaiting disposition ─────
+app.get('/api/inventory/quarantine', requireAuth, (req, res) => {
+  const list = readDb().quarantine || [];
+  const status = req.query.status || 'open';
+  res.json({
+    open: list.filter(q => q.status === 'open').length,
+    quarantine: (status === 'all' ? list : list.filter(q => q.status === status)).slice(0, 200),
+  });
+});
+// Disposition: release (units passed inspection → sellable stock, ZORT told),
+// dispose (scrapped) or return_to_client — the latter two just close the entry,
+// since quarantined units never entered sellable stock in the first place.
+app.post('/api/inventory/quarantine/:id/resolve', requireAuth, express.json(), (req, res) => {
+  const db = readDb();
+  const q = (db.quarantine || []).find(x => x.id === req.params.id);
+  if (!q) return res.status(404).json({ error: 'Not found' });
+  if (q.status !== 'open') return res.status(409).json({ error: 'Already resolved' });
+  const action = String(req.body?.action || '').toLowerCase();
+  const note = String(req.body?.note || '').slice(0, 500);
+  if (!['release', 'dispose', 'return_to_client'].includes(action)) return res.status(400).json({ error: "action must be 'release', 'dispose' or 'return_to_client'" });
+  const qty = Math.min(Math.max(1, Number(req.body?.qty) || q.qty), q.qty); // partial allowed
+  if (action === 'release') {
+    try {
+      if (!inventory.get(q.sku, q.clientId)) inventory.upsert({ sku: q.sku, name: q.sku, clientId: q.clientId });
+      inventory.adjust(q.sku, q.clientId, qty, 'quarantine_release', `Quarantine ${q.id} released (${q.condition})${note ? ' — ' + note : ''}`);
+      zortNotifyStockChange(db, q.clientId, [q.sku]);
+    } catch (e) { return res.status(400).json({ error: 'Release failed: ' + e.message }); }
+  }
+  if (qty < q.qty) { // partial: shrink the open entry, log the resolved part
+    q.qty -= qty;
+    (db.quarantine = db.quarantine || []).unshift({ ...q, id: uuidv4().slice(0, 8), qty, status: 'resolved', resolution: action, note, resolvedBy: req.userId || '', resolvedAt: new Date().toISOString() });
+  } else {
+    q.status = 'resolved'; q.resolution = action; q.note = note; q.resolvedBy = req.userId || ''; q.resolvedAt = new Date().toISOString();
+  }
+  writeDb(db);
+  logAudit('quarantine_resolved', { id: q.id, sku: q.sku, condition: q.condition, action, qty, note, by: req.userId || '' });
+  res.json({ ok: true });
 });
 
 // ── Stock discrepancies — every bin-empty report must be resolved ───────────

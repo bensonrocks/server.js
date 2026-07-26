@@ -2244,6 +2244,7 @@
                 <td>
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
+                  ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grn-id="${esc(job.id)}" title="Goods Received Note — expected vs received vs damaged, printable proof of receipt">&#128196; GRN</button>` : ''}
                   ${isAdmin && job.status !== 'done' && !job.pending_deletion ? `<button class="btn-del-order" data-inbound-del-id="${esc(job.id)}" data-inbound-del-ref="${esc(job.reference || job.id.slice(0, 8))}" title="Request deletion">&#128465;</button>` : ''}
                 </td>
               </tr>`).join('')}
@@ -2262,6 +2263,52 @@
     list.querySelectorAll('[data-inbound-putaway-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); openPutaway(btn.dataset.inboundPutawayId); });
     });
+    list.querySelectorAll('[data-inbound-grn-id]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); printGrn(btn.dataset.inboundGrnId); });
+    });
+  }
+
+  // GRN — printable Goods Received Note (client-facing proof of receipt).
+  async function printGrn(id) {
+    let g;
+    try {
+      const r = await fetch(`/api/inbound/${encodeURIComponent(id)}/grn`, { headers: hdrs() });
+      g = await r.json();
+      if (!r.ok) { alert(g.error || 'Could not load GRN.'); return; }
+    } catch (e) { alert(e.message); return; }
+    const w = window.open('', '_blank', 'width=760,height=900');
+    if (!w) { alert('Please allow pop-ups to view the GRN.'); return; }
+    const rows = g.lines.map(l => `<tr${l.damaged || l.kiv ? ' style="background:#fef2f2"' : ''}>
+      <td>${esc(l.sku)}</td><td>${esc(l.description)}</td>
+      <td class="n">${l.expected === null ? '<i>unlisted</i>' : l.expected}</td>
+      <td class="n">${l.received}</td><td class="n">${l.good}</td>
+      <td class="n">${l.damaged || ''}</td><td class="n">${l.kiv || ''}</td>
+      <td class="n">${l.diff === null ? '' : (l.diff === 0 ? '✓' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td></tr>`).join('');
+    const disc = g.discrepancies.length || g.extras.length
+      ? `<h3>⚠ Discrepancies</h3><ul>
+          ${g.discrepancies.map(m => `<li>${esc(m.sku)}: expected ${m.expected_qty}, received ${m.scanned_qty}</li>`).join('')}
+          ${g.extras.map(x => `<li>${esc(x.sku)}: ${x.scanned_qty} received but not on the paperwork</li>`).join('')}</ul>`
+      : '<p>✓ No discrepancies — received exactly as expected.</p>';
+    w.document.write(`<html><head><title>GRN ${esc(g.serial || g.reference)}</title><style>
+      body{font-family:sans-serif;margin:24px;font-size:13px}
+      h2{margin:.1em 0}.meta{color:#555;margin-bottom:14px}
+      table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px 7px;text-align:left}
+      td.n,th.n{text-align:right}thead{background:#f1f5f9}
+      .tot{margin-top:10px;font-weight:600}
+      .sig{margin-top:36px;display:flex;gap:40px}.sig div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:12px}
+      @media print{.noprint{display:none}}
+    </style></head><body>
+      <div class="noprint" style="margin-bottom:12px"><button onclick="window.print()">🖨 Print</button></div>
+      <h2>Goods Received Note — ${esc(g.serial || g.reference)}</h2>
+      <div class="meta">Client: <b>${esc(g.client)}</b> · Source: ${esc(g.source || '—')} · Type: ${g.type === 'po' ? 'PO / ASN' : 'Return'} · Ref: ${esc(g.reference || '—')}<br>
+      Received by: ${esc(g.received_by || '—')} · Started: ${g.started ? new Date(g.started).toLocaleString() : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString() : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
+      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th class="n">Diff</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div class="tot">Totals — expected ${g.totals.expected} · received ${g.totals.received} · good ${g.totals.good} · damaged ${g.totals.damaged} · KIV ${g.totals.kiv}</div>
+      ${disc}
+      <div class="sig"><div>Received by (warehouse)</div><div>Acknowledged by (client)</div></div>
+    </body></html>`);
+    w.document.close();
   }
 
   // POST that transparently handles a capacity-exceeded 409: asks the user to
@@ -5903,7 +5950,7 @@
         ${job.source_name ? `<span class="meta-pill">${esc(job.source_name)}</span>` : ''}
         ${job.client_name ? `<span class="meta-pill">${esc(job.client_name)}</span>` : ''}
       </div>`;
-    document.getElementById('inboundConditionRow').classList.toggle('hidden', job.type !== 'return');
+    setInboundCondition('straight_to_inventory'); // condition buttons show for ALL types now
     updateInboundCartonBadge(job);
     renderInboundItemsTable(job);
     lastScannedInboundSku = null;
@@ -5929,14 +5976,28 @@
     renderInboundTab();
   });
 
+  // Condition of the NEXT inbound scan — driven by the big segmented buttons.
+  // Applies to EVERY receiving type (a PO can arrive damaged too, not just
+  // returns). Auto-resets to Good after a non-good scan: damage is the
+  // exception, and a sticky Damaged button would quietly quarantine everything.
+  let inboundCondition = 'straight_to_inventory';
+  function setInboundCondition(cond) {
+    inboundCondition = cond;
+    document.querySelectorAll('#inboundCondSeg .cond-btn').forEach(b => b.classList.toggle('active', b.dataset.cond === cond));
+  }
+  setTimeout(() => {
+    document.querySelectorAll('#inboundCondSeg .cond-btn').forEach(b =>
+      b.addEventListener('click', () => { setInboundCondition(b.dataset.cond); document.getElementById('inboundScanInput')?.focus(); }));
+  }, 0);
+
   async function inboundScan(code) {
     if (!activeInbound || activeInbound.status === 'done') return;
     const feedback = document.getElementById('inboundScanFeedback');
     try {
-      const condition = document.getElementById('inboundConditionSelect').value;
+      const condition = inboundCondition;
       const resp = await fetch(`/api/inbound/${activeInbound.id}/scan`, {
         method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ code, qty: 1, condition: activeInbound.type === 'return' ? condition : undefined }),
+        body: JSON.stringify({ code, qty: 1, condition }),
       });
       const data = await resp.json();
       if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Scan failed'); return; }
@@ -5949,7 +6010,11 @@
       lastScannedInboundSku = data.sku;
       updateInboundCartonBadge(activeInbound);
       renderInboundItemsTable(activeInbound);
-      showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
+      const ct = data.condition_totals || {};
+      if (data.condition === 'damaged') showFeedback(feedback, 'error', `${data.sku}: received as 💥 DAMAGED (${ct.damaged || 1} damaged so far) — ${data.scanned_qty} total`);
+      else if (data.condition === 'kiv') showFeedback(feedback, 'error', `${data.sku}: received as ⏸ KIV (${ct.kiv || 1} KIV so far) — ${data.scanned_qty} total`);
+      else showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
+      if (inboundCondition !== 'straight_to_inventory') setInboundCondition('straight_to_inventory');
     } catch (err) {
       showFeedback(feedback, 'error', err.message);
     }
@@ -11050,6 +11115,7 @@
       $('invBody')?.classList.remove('hidden');
       refreshLocations();          // global bins → dropdowns + Manage-bins list
       loadDiscrepancies();         // open bin-empty reports (all clients until one is loaded)
+      loadQuarantine();            // damaged/KIV awaiting disposition
       if (!clientId) {
         $('invNoClientHint')?.classList.remove('hidden');
         ['inv-s-total', 'inv-s-onhand', 'inv-s-res', 'inv-s-avail'].forEach(id => { const e = $(id); if (e) e.textContent = '0'; });
@@ -11473,6 +11539,41 @@
           <td>${esc(x.supplier || '—')}</td></tr>`).join('');
       } catch { /* keep prior */ }
     }
+    // ── Quarantine (damaged/KIV from receiving, awaiting disposition) ─────────
+    async function loadQuarantine() {
+      const tb = $('quarTbody'); if (!tb) return;
+      try {
+        const r = await fetch('/api/inventory/quarantine?status=open');
+        const d = r.ok ? await r.json() : { open: 0, quarantine: [] };
+        const badge = $('quarBadge');
+        if (badge) { if (d.open > 0) { badge.textContent = d.open; badge.classList.remove('hidden'); } else badge.classList.add('hidden'); }
+        const rows = (d.quarantine || []).filter(x => !clientId || x.clientId === clientId);
+        if (!rows.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">Nothing in quarantine. 🎉</td></tr>'; return; }
+        tb.innerHTML = rows.map(x => `<tr data-id="${esc(x.id)}" data-qty="${x.qty}">
+          <td style="font-family:monospace;font-weight:600">${esc(x.sku)}</td>
+          <td style="text-align:right;font-weight:700">${x.qty}</td>
+          <td>${x.condition === 'damaged' ? '💥 Damaged' : '⏸ KIV'}</td>
+          <td class="hint">${esc(x.source || '')}</td>
+          <td class="hint">${x.createdAt ? new Date(x.createdAt).toLocaleDateString() : ''}</td>
+          <td style="white-space:nowrap">
+            <button class="btn-secondary btn-sm q-rel" title="Passed inspection — add to sellable stock (updates ZORT)">✓ Release</button>
+            <button class="btn-danger btn-sm q-disp" title="Scrap — close without adding stock">🗑 Dispose</button>
+            <button class="btn-secondary btn-sm q-ret" title="Hand back to the client — close without adding stock">↩ Return</button>
+          </td></tr>`).join('');
+        const resolve = async (tr, action) => {
+          const maxQ = Number(tr.dataset.qty);
+          let qty = maxQ;
+          if (maxQ > 1) { const v = prompt(`${action === 'release' ? 'Release' : action === 'dispose' ? 'Dispose' : 'Return'} how many? (in quarantine: ${maxQ})`, String(maxQ)); if (v === null) return; qty = Number(v); if (!(qty > 0)) { alert('Enter a positive number.'); return; } }
+          const note = prompt('Note (optional)') || '';
+          const r2 = await fetch(`/api/inventory/quarantine/${encodeURIComponent(tr.dataset.id)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, qty, note }) });
+          if (r2.ok) { wmsMsg('quarMsg', 'success', `✓ ${action === 'release' ? 'Released to stock (ZORT updated)' : action === 'dispose' ? 'Disposed' : 'Returned to client'}.`); loadQuarantine(); if (action === 'release') load(); }
+          else { const e = await r2.json().catch(() => ({})); wmsMsg('quarMsg', 'error', e.error || 'Failed'); }
+        };
+        tb.querySelectorAll('.q-rel').forEach(b => b.addEventListener('click', () => resolve(b.closest('tr'), 'release')));
+        tb.querySelectorAll('.q-disp').forEach(b => b.addEventListener('click', () => resolve(b.closest('tr'), 'dispose')));
+        tb.querySelectorAll('.q-ret').forEach(b => b.addEventListener('click', () => resolve(b.closest('tr'), 'return_to_client')));
+      } catch { /* keep prior */ }
+    }
     // ── Stock discrepancies (bin-empty reports needing resolution) ────────────
     async function loadDiscrepancies() {
       const tb = $('discTbody'); if (!tb) return;
@@ -11615,6 +11716,7 @@
       $('supAddBtn')?.addEventListener('click', addSupplier);
       $('repRefreshBtn')?.addEventListener('click', () => loadReplenishment(true));
       $('discRefreshBtn')?.addEventListener('click', loadDiscrepancies);
+      $('quarRefreshBtn')?.addEventListener('click', loadQuarantine);
     }, 0);
 
     // load bundles + WMS panels whenever a client is loaded
@@ -11629,6 +11731,7 @@
       loadReorder();
       loadReplenishment();
       loadDiscrepancies();
+      loadQuarantine();
       loadCountsDue();
     };
 
