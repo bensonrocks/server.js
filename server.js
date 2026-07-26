@@ -5503,7 +5503,7 @@ app.get('/api/inbound', (req, res) => {
       active_carton_num: state.activeCartonNum || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
       startTime:         state.startTime || null,
       endTime:           state.endTime || null,
-      photos:            (rec.photos || []).map(p => ({ id: p.id, sku: p.sku, caption: p.caption, uploadedAt: p.uploadedAt })),
+      photos:            (rec.photos || []).map(p => ({ id: p.id, sku: p.sku, condition: p.condition || null, caption: p.caption, uploadedAt: p.uploadedAt })),
       pending_deletion:  rec.pending_deletion || null,
       received_totals:   state.received_totals || null,   // sku -> qty received (for Putaway)
       putaway:           state.putaway || [],              // [{sku, location_id, qty, at, by}]
@@ -5524,6 +5524,14 @@ app.post('/api/inbound/:id/photo', upload.single('photo'), tenantMiddleware, (re
   const rec = findInbound(db, id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
 
+  // Cap: 4 photos per SKU per job (metadata lives in the JSON db; the bytes go
+  // to disk — the cap plus client-side compression keeps volume usage sane).
+  const skuTag = (req.body.sku || '').trim() || null;
+  if (skuTag) {
+    const existing = (rec.photos || []).filter(p => p.sku === skuTag).length;
+    if (existing >= 4) return res.status(409).json({ error: `${skuTag} already has 4 photos (max 4 per SKU). Delete-and-retake isn't supported — the 4 you have are the record.` });
+  }
+
   const photoId = uuidv4();
   const ext = (path.extname(req.file.originalname || '') || '.jpg').toLowerCase();
   const dir = path.join(INBOUND_PHOTO_DIR, id);
@@ -5534,7 +5542,8 @@ app.post('/api/inbound/:id/photo', upload.single('photo'), tenantMiddleware, (re
     id: photoId,
     filename: `${photoId}${ext}`,
     mimeType: req.file.mimetype,
-    sku: (req.body.sku || '').trim() || null,
+    sku: skuTag,
+    condition: ['damaged', 'kiv'].includes(String(req.body.condition || '')) ? req.body.condition : null, // damage-evidence tag
     caption: (req.body.caption || '').trim(),
     uploadedBy: req.userId || '',
     uploadedAt: new Date().toISOString(),
@@ -5542,7 +5551,7 @@ app.post('/api/inbound/:id/photo', upload.single('photo'), tenantMiddleware, (re
   rec.photos = rec.photos || [];
   rec.photos.push(photo);
   writeDb(db);
-  res.json({ ok: true, photo: { id: photo.id, sku: photo.sku, caption: photo.caption, uploadedAt: photo.uploadedAt } });
+  res.json({ ok: true, photo: { id: photo.id, sku: photo.sku, condition: photo.condition, caption: photo.caption, uploadedAt: photo.uploadedAt } });
 });
 
 app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, async (req, res) => {

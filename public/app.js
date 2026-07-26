@@ -6011,9 +6011,21 @@
       updateInboundCartonBadge(activeInbound);
       renderInboundItemsTable(activeInbound);
       const ct = data.condition_totals || {};
-      if (data.condition === 'damaged') showFeedback(feedback, 'error', `${data.sku}: received as 💥 DAMAGED (${ct.damaged || 1} damaged so far) — ${data.scanned_qty} total`);
-      else if (data.condition === 'kiv') showFeedback(feedback, 'error', `${data.sku}: received as ⏸ KIV (${ct.kiv || 1} KIV so far) — ${data.scanned_qty} total`);
-      else showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
+      if (data.condition === 'damaged' || data.condition === 'kiv') {
+        // Damage/KIV evidence: offer the camera right in the feedback line —
+        // one tap opens the phone camera, photo tagged to this SKU + condition.
+        const label = data.condition === 'damaged' ? `💥 DAMAGED (${ct.damaged || 1} so far)` : `⏸ KIV (${ct.kiv || 1} so far)`;
+        feedback.className = 'scan-feedback error';
+        feedback.innerHTML = `${esc(data.sku)}: received as ${label} — ${data.scanned_qty} total <button class="link-btn" id="damagePhotoChip" style="font-weight:700">📷 Damage photo</button>`;
+        feedback.classList.remove('hidden');
+        clearTimeout(feedback._t);
+        feedback._t = setTimeout(() => feedback.classList.add('hidden'), 12000); // longer — give them time to tap
+        document.getElementById('damagePhotoChip')?.addEventListener('click', () => {
+          _pendingPhotoCondition = data.condition;
+          lastScannedInboundSku = data.sku;
+          document.getElementById('inboundScanPhotoInput').click();
+        });
+      } else showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
       if (inboundCondition !== 'straight_to_inventory') setInboundCondition('straight_to_inventory');
     } catch (err) {
       showFeedback(feedback, 'error', err.message);
@@ -6029,11 +6041,34 @@
 
   // ── Inbound receiving photos — per-scan (tagged to the last SKU scanned)
   // and general (untagged, e.g. a shot of the box/shipment) ──────────────
-  async function uploadInboundPhoto(file, sku) {
+  // Downscale a camera photo in the browser before upload — a phone shot is
+  // 3–6 MB raw; at max-edge 1600px JPEG q0.82 it's ~200–400 KB, so 4 photos per
+  // SKU costs ~1 MB of volume instead of ~20. Non-images / small files pass
+  // through untouched; any failure falls back to the original (never blocks).
+  async function downscalePhoto(file) {
+    try {
+      if (!/^image\//.test(file.type) || file.size < 500 * 1024) return file;
+      const bmp = await createImageBitmap(file);
+      const MAX = 1600;
+      const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+      if (scale >= 1) return file;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bmp.width * scale);
+      canvas.height = Math.round(bmp.height * scale);
+      canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.82));
+      if (!blob || blob.size >= file.size) return file;
+      return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+    } catch { return file; }
+  }
+
+  async function uploadInboundPhoto(file, sku, condition) {
     if (!activeInbound) return;
+    const compact = await downscalePhoto(file);
     const fd = new FormData();
-    fd.append('photo', file);
+    fd.append('photo', compact);
     if (sku) fd.append('sku', sku);
+    if (condition) fd.append('condition', condition);
     try {
       const resp = await fetch(`/api/inbound/${activeInbound.id}/photo`, { method: 'POST', body: fd });
       const data = await resp.json();
@@ -6057,23 +6092,29 @@
     if (file) uploadInboundPhoto(file, null);
   });
 
+  // When the pending photo is damage evidence (set by the "📷 Damage photo"
+  // chip after a damaged/KIV scan) it's tagged with that condition; a normal
+  // per-scan photo carries no condition.
+  let _pendingPhotoCondition = null;
   document.getElementById('inboundScanPhotoBtn').addEventListener('click', () => {
     if (!lastScannedInboundSku) { alert('Scan an item first, then attach a photo to it.'); return; }
+    _pendingPhotoCondition = null;
     document.getElementById('inboundScanPhotoInput').click();
   });
   document.getElementById('inboundScanPhotoInput').addEventListener('change', e => {
     const file = e.target.files[0];
     e.target.value = '';
-    if (file) uploadInboundPhoto(file, lastScannedInboundSku);
+    if (file) uploadInboundPhoto(file, lastScannedInboundSku, _pendingPhotoCondition);
+    _pendingPhotoCondition = null;
   });
 
   function renderInboundPhotoGrid(job) {
     const grid = document.getElementById('inboundPhotoGrid');
     const token = localStorage.getItem('wms_token') || '';
     grid.innerHTML = (job.photos || []).map(p => `
-      <div class="inbound-photo-card" data-photo-id="${esc(p.id)}" data-photo-tag="${esc(p.sku || 'General')}">
+      <div class="inbound-photo-card" data-photo-id="${esc(p.id)}" data-photo-tag="${esc(p.sku || 'General')}${p.condition ? ' — ' + (p.condition === 'damaged' ? '💥 damaged' : '⏸ KIV') : ''}">
         <img src="/api/inbound/${job.id}/photo/${p.id}?token=${encodeURIComponent(token)}" loading="lazy" />
-        <div class="ipc-tag">${esc(p.sku || 'General')}</div>
+        <div class="ipc-tag"${p.condition ? ' style="background:#dc2626;color:#fff"' : ''}>${esc(p.sku || 'General')}${p.condition ? (p.condition === 'damaged' ? ' 💥' : ' ⏸') : ''}</div>
       </div>`).join('');
     grid.querySelectorAll('.inbound-photo-card').forEach(card => {
       card.addEventListener('click', () => {
