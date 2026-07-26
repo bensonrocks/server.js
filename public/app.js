@@ -11379,14 +11379,29 @@
           <td>${esc(x.supplier || '—')}</td></tr>`).join('');
       } catch { /* keep prior */ }
     }
-    // ── Replenishment ─────────────────────────────────────────────────────────
-    async function loadReplenishment() {
+    // ── Replenishment (daily run) ─────────────────────────────────────────────
+    function renderRepStatus(run) {
+      const el = $('repStatus'); if (!el) return;
+      if (!run || !run.day) { el.textContent = ''; return; }
+      const when = run.generatedAt ? new Date(run.generatedAt).toLocaleString() : '';
+      const n = (run.items || []).length;
+      if (run.status === 'empty' || n === 0) el.innerHTML = `📅 Today's run (${esc(run.day)}) — <span style="color:#059669;font-weight:600">✓ nothing to replenish</span> · generated ${esc(when)}`;
+      else el.innerHTML = `📅 Today's run (${esc(run.day)}) — <b>${n}</b> SKU(s) below target · generated ${esc(when)}. Acting is optional; if you skip, tomorrow's run recomputes what's needed then.`;
+    }
+    async function loadReplenishment(force) {
       const tb = $('repTbody'); if (!tb || !clientId) return;
       const days = Number($('repDays').value) || 7;
       try {
-        const r = await fetch(`/api/inventory/replenishment?clientId=${encodeURIComponent(clientId)}&daysCover=${days}`);
-        const d = r.ok ? await r.json() : { suggestions: [] };
-        const rows = d.suggestions || [];
+        let run;
+        if (force) {
+          const r = await fetch('/api/inventory/replenishment/run/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, daysCover: days }) });
+          run = r.ok ? await r.json() : { items: [] };
+        } else {
+          const r = await fetch(`/api/inventory/replenishment/run?clientId=${encodeURIComponent(clientId)}&daysCover=${days}`);
+          run = r.ok ? await r.json() : { items: [] };
+        }
+        renderRepStatus(run);
+        const rows = run.items || [];
         if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:1.2rem;color:#94a3b8">✓ All pick faces at/above target (or no shipping history yet).</td></tr>'; return; }
         tb.innerHTML = rows.map(x => {
           const canMove = x.from_bin && x.to_bin;
@@ -11461,7 +11476,7 @@
       $('ccCompleteBtn')?.addEventListener('click', ccComplete);
       $('ccCancelBtn')?.addEventListener('click', ccCancel);
       $('supAddBtn')?.addEventListener('click', addSupplier);
-      $('repRefreshBtn')?.addEventListener('click', loadReplenishment);
+      $('repRefreshBtn')?.addEventListener('click', () => loadReplenishment(true));
     }, 0);
 
     // load bundles + WMS panels whenever a client is loaded

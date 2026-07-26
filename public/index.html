@@ -2410,9 +2410,10 @@
             <div style="display:flex;gap:.4rem;align-items:center">
               <label style="font-size:.82rem">Days of cover</label>
               <input id="repDays" type="number" value="7" min="1" style="width:60px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
-              <button class="btn-secondary btn-sm" id="repRefreshBtn">Refresh</button>
+              <button class="btn-secondary btn-sm" id="repRefreshBtn" title="Regenerate today's run with the current days-of-cover">Regenerate</button>
             </div>
           </div>
+          <div id="repStatus" class="hint" style="margin-top:.5rem"></div>
           <div id="repMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
           <div style="overflow-x:auto;margin-top:.6rem">
             <table class="tbl" style="width:100%">

@@ -10826,8 +10826,62 @@ app.get('/api/inventory/serials', requireAuth, (req, res) => {
   if (!cid || !sku) return res.status(400).json({ error: 'clientId and sku required' });
   res.json({ counts: inventory.serialCounts(cid, sku), serials: inventory.serialsForSku(cid, sku, { status: req.query.status }) });
 });
-// Replenishment — which pick faces are below ~N days of demand and can be topped
-// up from bulk. Read-only suggestions; the client applies each move via transfer.
+// ── Daily replenishment runs ────────────────────────────────────────────────
+// A run is a per-client, per-SGT-day snapshot of what each pick face needs. It's
+// GENERATED DAILY (scheduler below) so there's a standing task the user can act
+// on or skip. Acting is optional; a run is never carried forward — each day is
+// recomputed from CURRENT state, so anything still short simply reappears in the
+// new day's run with fresh numbers, and anything since satisfied drops off.
+function replenishmentRuns(db) { return db.replenishmentRuns || (db.replenishmentRuns = []); }
+function generateReplenishmentRun(db, clientId, day, daysCover = 7) {
+  const items = inventory.replenishmentSuggestions(clientId, { daysCover, lookbackDays: 28 }).map(x => ({ ...x, applied: false }));
+  const runs = replenishmentRuns(db);
+  const now = new Date().toISOString();
+  let run = runs.find(r => r.clientId === clientId && r.day === day);
+  const status = items.length ? 'open' : 'empty';
+  if (run) { run.items = items; run.generatedAt = now; run.daysCover = daysCover; run.status = status; }
+  else { run = { id: uuidv4().slice(0, 8), clientId, day, generatedAt: now, daysCover, items, status }; runs.unshift(run); }
+  if (runs.length > 400) runs.length = 400; // keep recent runs only
+  return run;
+}
+function runDailyReplenishment() {
+  try {
+    if (!inventory.available()) return;
+    const db = readDb();
+    const day = sgDateStr();
+    if (db.lastReplenishDay === day) return; // already generated today
+    const clients = Object.keys(inventory.stockByClientTotals());
+    for (const cid of clients) { try { generateReplenishmentRun(db, cid, day, 7); } catch (_) {} }
+    db.lastReplenishDay = day;
+    writeDb(db);
+    console.log(`[IdealScan] Daily replenishment runs generated for ${clients.length} client(s) — ${day}`);
+  } catch (e) { console.error('[IdealScan] daily replenishment failed:', e.message); }
+}
+setTimeout(runDailyReplenishment, 120 * 1000);        // shortly after boot
+setInterval(runDailyReplenishment, 6 * 3600 * 1000);  // re-check every 6h (rolls over at the SGT day boundary)
+
+// Today's replenishment run for a client (generates it on first access of the day
+// if the scheduler hasn't yet). daysCover query overrides the default for the day.
+app.get('/api/inventory/replenishment/run', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const day = sgDateStr();
+  const db = readDb();
+  let run = replenishmentRuns(db).find(r => r.clientId === clientId && r.day === day);
+  if (!run) { run = generateReplenishmentRun(db, clientId, day, Number(req.query.daysCover) || 7); writeDb(db); }
+  res.json(run);
+});
+// Force-regenerate today's run (e.g. after changing days-of-cover).
+app.post('/api/inventory/replenishment/run/generate', requireAuth, express.json(), (req, res) => {
+  const clientId = String(req.body?.clientId || '').trim();
+  if (!clientId) return res.status(400).json({ error: 'clientId required' });
+  const db = readDb();
+  const run = generateReplenishmentRun(db, clientId, sgDateStr(), Number(req.body?.daysCover) || 7);
+  writeDb(db);
+  res.json(run);
+});
+
+// Live (unstored) suggestions — kept for ad-hoc use.
 app.get('/api/inventory/replenishment', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
@@ -10847,9 +10901,14 @@ app.post('/api/inventory/replenishment/apply', requireAuth, express.json(), (req
     if (cap.exceeds && req.body?.override !== true) {
       return res.status(409).json({ needsCapacityOverride: true, location: to_location, ...cap, message: `${to_location} holds ${cap.occupied}/${cap.capacity}; adding ${cap.adding} exceeds by ${cap.over}.` });
     }
+    const db = readDb();
     const result = inventory.transferStock(cid, sku, from_location, to_location, Number(qty), req.userId || '');
     logAudit('replenishment', { sku, clientId: cid, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
-    res.json(result);
+    // Refresh today's run so the applied SKU drops off (it's now at target) and
+    // the checklist reflects what's still needed.
+    const run = generateReplenishmentRun(db, cid, sgDateStr(), Number(req.body?.daysCover) || 7);
+    writeDb(db);
+    res.json({ ...result, run });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 // Bin lookup / physical audit — scan a bin, see everything in it (all clients).
