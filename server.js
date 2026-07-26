@@ -10790,6 +10790,42 @@ app.put('/api/inventory/locations/:id', requireAuth, express.json(), (req, res) 
     res.json(loc);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+// ── Serial numbers ──────────────────────────────────────────────────────────
+app.post('/api/inventory/serials', requireAuth, express.json(), (req, res) => {
+  try {
+    const cid = String(req.body?.clientId || '').trim();
+    const sku = String(req.body?.sku || '').trim();
+    const serials = Array.isArray(req.body?.serials) ? req.body.serials : String(req.body?.serials || '').split(/[\s,;]+/);
+    if (!cid || !sku) return res.status(400).json({ error: 'clientId and sku required' });
+    const result = inventory.addSerials(cid, sku, serials, String(req.body?.received_ref || ''));
+    logAudit('serials_received', { clientId: cid, sku, added: result.added, ref: req.body?.received_ref || '', by: req.userId || '' });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/inventory/serials/ship', requireAuth, express.json(), (req, res) => {
+  try {
+    const cid = String(req.body?.clientId || '').trim();
+    const serials = Array.isArray(req.body?.serials) ? req.body.serials : String(req.body?.serials || '').split(/[\s,;]+/);
+    if (!cid) return res.status(400).json({ error: 'clientId required' });
+    const result = inventory.shipSerials(cid, serials, String(req.body?.shipped_ref || ''));
+    logAudit('serials_shipped', { clientId: cid, shipped: result.shipped, ref: req.body?.shipped_ref || '', by: req.userId || '' });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/api/inventory/serials/lookup', requireAuth, (req, res) => {
+  const cid = reqClientId(req);
+  const serial = String(req.query.serial || '').trim();
+  if (!cid || !serial) return res.status(400).json({ error: 'clientId and serial required' });
+  const rec = inventory.serialLookup(cid, serial);
+  if (!rec) return res.status(404).json({ error: 'Serial not found for this client' });
+  res.json(rec);
+});
+app.get('/api/inventory/serials', requireAuth, (req, res) => {
+  const cid = reqClientId(req);
+  const sku = String(req.query.sku || '').trim();
+  if (!cid || !sku) return res.status(400).json({ error: 'clientId and sku required' });
+  res.json({ counts: inventory.serialCounts(cid, sku), serials: inventory.serialsForSku(cid, sku, { status: req.query.status }) });
+});
 // Bin lookup / physical audit — scan a bin, see everything in it (all clients).
 app.get('/api/inventory/bin/:locationId', requireAuth, (req, res) => {
   const loc = inventory.getLocation(req.params.locationId);

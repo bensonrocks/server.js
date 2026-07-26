@@ -207,6 +207,7 @@
           <button class="btn-new-carton" id="newCartonBtn" title="Box is full — start scanning the next carton">+ New Carton</button>
           <button class="btn-print-carton-card" id="printCartonCardBtn" title="Print a scannable card — scan it to start a new carton without touching the mouse">&#128424;</button>
           <button class="btn-print-carton-card" id="printCartonSlipBtn" title="Print this carton's packing list — order no., carton no. and contents, for taping onto the box">&#128203;</button>
+          <button class="btn-print-carton-card" id="scanSerialsBtn" title="Record serial numbers shipped on this order">&#128290;</button>
           <button class="btn-cancel-multi-carton hidden" id="cancelMultiCartonBtn" title="Actually, it all fits in one box — merge every carton back into one">&#8634; 1 Box</button>
         </div>
         <div class="scan-pieces-left" id="scanPiecesLeft">
@@ -361,6 +362,7 @@
           <button class="btn-new-carton" id="inboundNewCartonBtn" title="Box is full — start scanning the next carton">+ New Carton</button>
           <button class="btn-cancel-multi-carton hidden" id="inboundCancelMultiCartonBtn" title="Actually, it all fits in one box — merge every carton back into one">&#8634; 1 Box</button>
           <button class="btn-secondary btn-sm" id="inboundGeneralPhotoBtn" title="Add a general photo of the shipment/box (not tied to one SKU)">&#128247; Add Photo</button>
+          <button class="btn-secondary btn-sm" id="inboundSerialsBtn" title="Register serial numbers received for a serial-tracked SKU">&#128290; Serials</button>
           <input type="file" id="inboundGeneralPhotoInput" accept="image/*" capture="environment" hidden />
         </div>
       </div>
@@ -2448,8 +2450,44 @@
             </table>
           </div>
         </div>
+
+        <!-- 🔢 Serial numbers -->
+        <div class="panel" style="margin-top:1.25rem;margin-bottom:1rem">
+          <div><b>🔢 Serial numbers</b>
+            <div class="hint" style="margin:.2rem 0 .6rem">Register serials received into stock and look up where any serial is. Serials are captured at receive (Inbound) and marked shipped at pick automatically too.</div>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin-bottom:.6rem">
+            <span style="font-size:.82rem;font-weight:600">🔍 Look up serial:</span>
+            <input id="serLookup" placeholder="scan / type a serial" style="flex:1;min-width:160px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+            <button class="btn-secondary btn-sm" id="serLookupBtn">Look up</button>
+          </div>
+          <div id="serLookupResult" class="hidden" style="margin-bottom:.6rem;font-size:.85rem"></div>
+          <div style="border-top:1px dashed #e2e8f0;padding-top:.6rem">
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end">
+              <div style="flex:1;min-width:120px"><label style="display:block;font-size:.72rem;color:#64748b;font-weight:600">SKU</label><input id="serSku" list="invSkuList" placeholder="SKU" style="width:100%;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"></div>
+              <div style="flex:2;min-width:180px"><label style="display:block;font-size:.72rem;color:#64748b;font-weight:600">Serials (one per line / comma-separated)</label><textarea id="serList" rows="2" placeholder="SN001&#10;SN002" style="width:100%;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px;font-family:monospace"></textarea></div>
+              <button class="btn-primary btn-sm" id="serAddBtn">Register received</button>
+            </div>
+            <div id="serMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+          </div>
+        </div>
       </div>
     </section>
+
+    <!-- Shared serials capture modal (Inbound receive / Outbound ship) -->
+    <div id="serialsModal" class="modal-overlay hidden">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-title" id="serialsModalTitle">🔢 Serials</div>
+        <p class="modal-desc" id="serialsModalDesc"></p>
+        <div class="form-group"><label>SKU</label><input type="text" id="serModalSku" placeholder="SKU" autocomplete="off" /></div>
+        <div class="form-group"><label>Serial numbers (one per line, or comma-separated)</label><textarea id="serModalList" rows="5" placeholder="SN001&#10;SN002&#10;SN003" style="font-family:monospace"></textarea></div>
+        <div id="serModalMsg" class="status-bar hidden" style="margin-bottom:.6rem"></div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="serModalCancel">Cancel</button>
+          <button class="btn-primary" id="serModalSubmit">Save</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Define/edit bundle modal -->
     <div id="bundleModal" class="modal-overlay hidden">

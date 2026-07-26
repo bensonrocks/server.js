@@ -2278,6 +2278,50 @@
     return { r, d };
   }
 
+  // Shared serials capture modal — mode 'receive' (add to stock) or 'ship'.
+  let _serialsMode = 'receive', _serialsCtx = {};
+  function openSerialsModal(mode, ctx) {
+    _serialsMode = mode; _serialsCtx = ctx || {};
+    const title = document.getElementById('serialsModalTitle');
+    const desc = document.getElementById('serialsModalDesc');
+    const sub = document.getElementById('serModalSubmit');
+    if (mode === 'ship') { title.textContent = '🔢 Serials shipped'; desc.textContent = `Record the serial numbers going out on ${_serialsCtx.ref || 'this order'}.`; sub.textContent = 'Mark shipped'; }
+    else { title.textContent = '🔢 Serials received'; desc.textContent = `Register serial numbers received into stock${_serialsCtx.ref ? ' (' + _serialsCtx.ref + ')' : ''}.`; sub.textContent = 'Register received'; }
+    document.getElementById('serModalSku').value = _serialsCtx.sku || '';
+    document.getElementById('serModalList').value = '';
+    document.getElementById('serModalMsg').classList.add('hidden');
+    document.getElementById('serialsModal').classList.remove('hidden');
+  }
+  async function submitSerialsModal() {
+    const sku = document.getElementById('serModalSku').value.trim();
+    const serials = document.getElementById('serModalList').value.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+    const msg = document.getElementById('serModalMsg');
+    const clientId = _serialsCtx.clientId || '';
+    if (!clientId) { msg.className = 'status-bar error'; msg.textContent = 'No client on this record.'; msg.classList.remove('hidden'); return; }
+    if (!serials.length) { msg.className = 'status-bar error'; msg.textContent = 'Paste at least one serial.'; msg.classList.remove('hidden'); return; }
+    try {
+      let r, d;
+      if (_serialsMode === 'ship') {
+        r = await fetch('/api/inventory/serials/ship', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, serials, shipped_ref: _serialsCtx.ref || '' }) });
+        d = await r.json();
+        if (!r.ok) { msg.className = 'status-bar error'; msg.textContent = d.error || 'Failed'; msg.classList.remove('hidden'); return; }
+        msg.className = 'status-bar success'; msg.textContent = `✓ ${d.shipped} marked shipped${d.notFound && d.notFound.length ? `, ${d.notFound.length} unknown/already shipped` : ''}.`;
+      } else {
+        if (!sku) { msg.className = 'status-bar error'; msg.textContent = 'SKU required.'; msg.classList.remove('hidden'); return; }
+        r = await fetch('/api/inventory/serials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, serials, received_ref: _serialsCtx.ref || '' }) });
+        d = await r.json();
+        if (!r.ok) { msg.className = 'status-bar error'; msg.textContent = d.error || 'Failed'; msg.classList.remove('hidden'); return; }
+        msg.className = 'status-bar success'; msg.textContent = `✓ ${d.added} registered${d.skipped && d.skipped.length ? `, ${d.skipped.length} already existed` : ''}.`;
+      }
+      msg.classList.remove('hidden');
+      document.getElementById('serModalList').value = '';
+    } catch (e) { msg.className = 'status-bar error'; msg.textContent = e.message; msg.classList.remove('hidden'); }
+  }
+  setTimeout(() => {
+    document.getElementById('serModalCancel')?.addEventListener('click', () => document.getElementById('serialsModal').classList.add('hidden'));
+    document.getElementById('serModalSubmit')?.addEventListener('click', submitSerialsModal);
+  }, 0);
+
   // ── Putaway — direct received inbound goods into warehouse bins ─────────────
   // received_totals (sku->qty) comes from the inbound record; state.putaway is the
   // list of placements already done. "Remaining" = received − placed, per SKU.
@@ -5938,6 +5982,10 @@
   document.getElementById('inboundGeneralPhotoBtn').addEventListener('click', () => {
     document.getElementById('inboundGeneralPhotoInput').click();
   });
+  document.getElementById('inboundSerialsBtn')?.addEventListener('click', () => {
+    if (!activeInbound) return;
+    openSerialsModal('receive', { clientId: activeInbound.client_name || '', ref: activeInbound.serial || activeInbound.reference || '' });
+  });
   document.getElementById('inboundGeneralPhotoInput').addEventListener('change', e => {
     const file = e.target.files[0];
     e.target.value = '';
@@ -6980,6 +7028,10 @@
     }
   }
   document.getElementById('printCartonSlipBtn')?.addEventListener('click', printCartonSlip);
+  document.getElementById('scanSerialsBtn')?.addEventListener('click', () => {
+    if (!activeOrder) return;
+    openSerialsModal('ship', { clientId: activeOrder.client_name || '', ref: activeOrder.order_number || '' });
+  });
 
   // ── Timer ──────────────────────────────────────────────────────────────────
   function startTimer(startISO) {
@@ -11326,9 +11378,44 @@
           <td>${esc(x.supplier || '—')}</td></tr>`).join('');
       } catch { /* keep prior */ }
     }
+    // ── Serial numbers (Inventory panel) ──────────────────────────────────────
+    async function serialLookup() {
+      const serial = ($('serLookup').value || '').trim();
+      const el = $('serLookupResult');
+      if (!clientId) { alert('Load a client first.'); return; }
+      if (!serial) { el.classList.add('hidden'); return; }
+      try {
+        const r = await fetch(`/api/inventory/serials/lookup?clientId=${encodeURIComponent(clientId)}&serial=${encodeURIComponent(serial)}`);
+        const d = await r.json();
+        if (!r.ok) { el.innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Not found')}</span>`; el.classList.remove('hidden'); return; }
+        const status = d.status === 'shipped'
+          ? `<span style="color:#dc2626;font-weight:700">SHIPPED</span> on ${d.shipped_at ? new Date(d.shipped_at).toLocaleString() : '—'}${d.shipped_ref ? ' (order ' + esc(d.shipped_ref) + ')' : ''}`
+          : `<span style="color:#059669;font-weight:700">IN STOCK</span>`;
+        el.innerHTML = `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:.6rem;background:#f8fafc">
+          <b>${esc(d.serial)}</b> — SKU <code>${esc(d.sku)}</code><br>${status}<br>
+          <span class="hint">Received ${d.received_at ? new Date(d.received_at).toLocaleString() : '—'}${d.received_ref ? ' (' + esc(d.received_ref) + ')' : ''}</span></div>`;
+        el.classList.remove('hidden');
+      } catch (e) { el.innerHTML = `<span style="color:#dc2626">${esc(e.message)}</span>`; el.classList.remove('hidden'); }
+    }
+    async function serialAdd() {
+      if (!clientId) { alert('Load a client first.'); return; }
+      const sku = ($('serSku').value || '').trim();
+      const serials = ($('serList').value || '').split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+      if (!sku || !serials.length) { wmsMsg('serMsg', 'error', 'SKU and at least one serial required.'); return; }
+      try {
+        const r = await fetch('/api/inventory/serials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, sku, serials, received_ref: 'manual' }) });
+        const d = await r.json();
+        if (!r.ok) { wmsMsg('serMsg', 'error', d.error || 'Failed'); return; }
+        wmsMsg('serMsg', 'success', `✓ ${d.added} serial(s) registered${d.skipped && d.skipped.length ? `, ${d.skipped.length} already existed` : ''}.`);
+        $('serList').value = '';
+      } catch (e) { wmsMsg('serMsg', 'error', e.message); }
+    }
 
     setTimeout(() => {
       $('locAddBtn')?.addEventListener('click', createLocation);
+      $('serLookupBtn')?.addEventListener('click', serialLookup);
+      $('serLookup')?.addEventListener('keydown', e => { if (e.key === 'Enter') serialLookup(); });
+      $('serAddBtn')?.addEventListener('click', serialAdd);
       $('locManageBtn')?.addEventListener('click', () => { const w = $('locManageWrap'); w.classList.toggle('hidden'); if (!w.classList.contains('hidden')) renderManageBins(); });
       $('binLookupBtn')?.addEventListener('click', binLookup);
       $('binLookup')?.addEventListener('keydown', e => { if (e.key === 'Enter') binLookup(); });
