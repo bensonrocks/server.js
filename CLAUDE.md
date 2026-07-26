@@ -426,6 +426,32 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
 - Webhook/UpdateWebhook exists in the API — a future push-based
   alternative to polling, not yet used.
 
+## Client Portal — read-only self-service for 3PL clients (/portal)
+
+`public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture
+as the Driver App: its OWN login (`POST /api/portal/login` {client, password})
+against tenant-scoped records (portal credentials live on the client's
+onboarding profile: `clientProfiles[].portal = {enabled, email, salt,
+passwordHash}`), sessions namespaced `portal:<tenantId>:<client>` in the SAME
+activeSessions map, and `requirePortalAuthMiddleware` re-establishing the right
+tenant context per request. `/api/portal/` prefix is exempt from the global
+requireAuth (like `/api/driver/`).
+
+- STRICTLY read-only; every endpoint scoped to the logged-in client:
+  `/api/portal/overview` (stock stats, open/done orders, inbound, quarantine),
+  `/stock`, `/orders`, `/inbound`, `/grn/:id` (ownership-checked 404 for any
+  other client's receipt).
+- SECURITY — privilege-bleed guard: `requireAuth` SKIPS sessions whose key
+  starts with `driver:` or `portal:` — a portal/driver token must NEVER unlock
+  staff APIs (this was a real pre-existing hole for driver tokens, found and
+  fixed when the portal's isolation test caught it). Never remove that skip.
+- Admin management: Administrator → 🎉 Onboard Client → "🌐 Client Portal
+  access" (enable, client email, set password — blank keeps current, min 6
+  chars). Credentials are MASKED in `GET /api/master/client-profiles`
+  (enabled/email/hasPassword only). Client name at login is case-insensitive.
+- GRN emails: `sendInboundGrnAlert` also sends to the profile's portal email
+  when set, so clients receive their proof-of-receipt directly.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the

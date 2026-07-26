@@ -2359,7 +2359,11 @@ function clientProfiles(db) { return db.clientProfiles || (db.clientProfiles = [
 
 app.get('/api/master/client-profiles', (req, res) => {
   if (!checkMaster(req, res)) return;
-  res.json(clientProfiles(readDb()));
+  // Portal credentials are MASKED — only enabled/email/hasPassword go to the UI.
+  res.json(clientProfiles(readDb()).map(p => ({
+    ...p,
+    portal: p.portal ? { enabled: !!p.portal.enabled, email: p.portal.email || '', hasPassword: !!p.portal.passwordHash } : undefined,
+  })));
 });
 app.post('/api/master/client-profiles', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
@@ -2385,6 +2389,157 @@ app.delete('/api/master/client-profiles/:client', (req, res) => {
   writeDb(db);
   logAudit('client_profile_deleted', { client: req.params.client, by: req.userId || '' });
   res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CLIENT PORTAL — read-only self-service for the 3PL's clients at /portal.
+//  Same architecture as the Driver App: its own login against tenant-scoped
+//  records (client profiles), sessions namespaced `portal:<tenant>:<client>` in
+//  the SAME activeSessions map, and a middleware that re-establishes the right
+//  tenant context per request. Everything is scoped to the logged-in client and
+//  STRICTLY read-only — a client can see their stock/orders/receipts, never
+//  touch them.
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin: enable portal access / set credentials on a client profile.
+app.post('/api/master/client-profiles/:client/portal', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  p.portal = p.portal || {};
+  if (req.body.enabled !== undefined) p.portal.enabled = !!req.body.enabled;
+  if (req.body.email !== undefined) p.portal.email = String(req.body.email || '').trim().slice(0, 160);
+  const pw = String(req.body.password || '');
+  if (pw) { // blank = keep current (same convention as ZORT store secrets)
+    if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    p.portal.salt = uuidv4().slice(0, 8);
+    p.portal.passwordHash = hashPass(pw, p.portal.salt);
+  }
+  writeDb(db);
+  logAudit('client_portal_updated', { client: p.client, enabled: !!p.portal.enabled, by: req.userId || '' });
+  res.json({ ok: true, portal: { enabled: !!p.portal.enabled, email: p.portal.email || '', hasPassword: !!p.portal.passwordHash } });
+});
+
+function _findClientAcrossTenants(clientNorm) {
+  for (const t of tenantStore.listTenants()) {
+    const found = tenantContext.run(t.id, () => (readDb().clientProfiles || []).find(p => String(p.client).trim().toLowerCase() === clientNorm));
+    if (found) return { tenantId: t.id, profile: found };
+  }
+  return null;
+}
+app.post('/api/portal/login', express.json(), (req, res) => {
+  const { client, password } = req.body || {};
+  if (!String(client || '').trim() || !String(password || '').trim()) return res.status(400).json({ error: 'Client name and password required' });
+  const found = _findClientAcrossTenants(String(client).trim().toLowerCase());
+  const p = found?.profile;
+  if (!p || !p.portal || !p.portal.enabled || !p.portal.passwordHash) {
+    return res.status(401).json({ error: 'Portal access is not enabled for this client — contact IdealOne.' });
+  }
+  if (hashPass(String(password), p.portal.salt) !== p.portal.passwordHash) {
+    tenantContext.run(found.tenantId, () => logAudit('portal_login_failed', { client: p.client }));
+    return res.status(401).json({ error: 'Invalid password' });
+  }
+  const token = uuidv4();
+  activeSessions.set(`portal:${found.tenantId}:${p.client}`, token);
+  persistSessions();
+  tenantContext.run(found.tenantId, () => logAudit('portal_login', { client: p.client }));
+  res.json({ token, client: p.client });
+});
+function requirePortalAuthMiddleware(req, res, next) {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  if (!token) { res.status(401).json({ error: 'Unauthorised' }); return; }
+  for (const [sessionKey, t] of activeSessions) {
+    if (t !== token || !sessionKey.startsWith('portal:')) continue;
+    const rest = sessionKey.slice(7);
+    const sep = rest.indexOf(':');
+    const tenantId = sep >= 0 ? rest.slice(0, sep) : tenantStore.DEFAULT_TENANT_ID;
+    req.portalClient = sep >= 0 ? rest.slice(sep + 1) : rest;
+    req.portalSessionKey = sessionKey;
+    tenantContext.run(tenantId, () => next());
+    return;
+  }
+  res.status(401).json({ error: 'Session expired' });
+}
+app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
+  activeSessions.delete(req.portalSessionKey);
+  persistSessions();
+  res.json({ ok: true });
+});
+// Overview — headline numbers for the client's dashboard.
+app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient;
+  const cid = invClientId(client);
+  const db = readDb();
+  let stock = { skus: 0, onHand: 0, reserved: 0, available: 0 };
+  try {
+    const rows = inventory.getAll({ clientId: cid });
+    stock = { skus: rows.length, onHand: rows.reduce((s, r) => s + r.stock_qty, 0), reserved: rows.reduce((s, r) => s + r.reserved_qty, 0), available: rows.reduce((s, r) => s + r.available_qty, 0) };
+  } catch (_) {}
+  let openOrders = 0, doneOrders = 0;
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== client.trim().toLowerCase()) continue;
+    for (const o of b.orders || []) {
+      const st = b.orderStates?.[o.order_number]?.status || 'pending';
+      if (st === 'done') doneOrders++; else if (st !== 'unprocessed') openOrders++;
+    }
+  }
+  const inboundOpen = (db.inbound || []).filter(r => String(r.client_name || '').trim().toLowerCase() === client.trim().toLowerCase() && (r.state?.status || 'pending') !== 'done').length;
+  const quarantineOpen = (db.quarantine || []).filter(q => q.clientId === cid && q.status === 'open').reduce((s, q) => s + q.qty, 0);
+  res.json({ client, stock, openOrders, doneOrders, inboundOpen, quarantineOpen });
+});
+// Stock — the client's own inventory, read-only.
+app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
+  const cid = invClientId(req.portalClient);
+  let rows = [];
+  try { rows = inventory.getAll({ clientId: cid }).map(r => ({ sku: r.sku, name: r.name, barcode: r.barcode || '', on_hand: r.stock_qty, reserved: r.reserved_qty, available: r.available_qty })); } catch (_) {}
+  res.json(rows);
+});
+// Orders — the client's outbound orders, newest first.
+app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient.trim().toLowerCase();
+  const db = readDb();
+  const out = [];
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
+    for (const o of b.orders || []) {
+      const st = b.orderStates?.[o.order_number] || {};
+      out.push({
+        order_number: o.order_number, date: o.date || b.uploaded_at,
+        status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+        lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
+      });
+    }
+  }
+  out.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  res.json(out.slice(0, 300));
+});
+// Inbound — the client's receipts, incl. discrepancy/damage counts + GRN link.
+app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient.trim().toLowerCase();
+  const db = readDb();
+  const out = (db.inbound || [])
+    .filter(r => String(r.client_name || '').trim().toLowerCase() === client)
+    .map(rec => {
+      const state = rec.state || {};
+      const ct = state.conditionTotals || {};
+      const damaged = Object.values(ct).reduce((s, c) => s + (Number(c?.damaged) || 0) + (Number(c?.kiv) || 0), 0);
+      return {
+        id: rec.id, serial: rec.serial || '', reference: rec.reference || '', type: rec.type,
+        status: state.status || 'pending', received_at: state.endTime || null,
+        expected: (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
+        received: Object.values(state.scanned || {}).reduce((s, q) => s + q, 0),
+        damaged, discrepancies: (rec.discrepancies || []).length,
+      };
+    });
+  res.json(out.slice(0, 200));
+});
+// GRN for one of THEIR receipts — strict ownership check.
+app.get('/api/portal/grn/:id', requirePortalAuthMiddleware, (req, res) => {
+  const rec = findInbound(readDb(), req.params.id);
+  if (!rec || String(rec.client_name || '').trim().toLowerCase() !== req.portalClient.trim().toLowerCase()) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  res.json(grnData(rec));
 });
 
 // Add a special-handling instruction. Config-type (recognised) instructions
@@ -4062,7 +4217,7 @@ app.get('/api/master/system-errors/health', (req, res) => {
 });
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
-  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')) return next();
+  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/') || req.path.startsWith('/api/portal/')) return next();
   // Allow master key access to /api/master/* and /api/transport/import/* endpoints
   if ((req.path.startsWith('/api/master/') || req.path === '/api/transport/import') && req.headers['x-master-key'] === MASTER_PASS) return next();
   requireAuth(req, res, next);
@@ -5945,7 +6100,11 @@ app.get('/api/inbound/:id/grn', (req, res) => {
 async function sendInboundGrnAlert(rec) {
   const transporter = buildTransporter();
   const fromEmail = getFromEmail();
-  const toEmail = getDefaultRecipient();
+  let toEmail = getDefaultRecipient();
+  // If the client has a portal email on their onboarding profile, they get the
+  // GRN directly too — their proof of receipt, without asking us for it.
+  const prof = (readDb().clientProfiles || []).find(p => String(p.client).trim().toLowerCase() === String(rec.client_name || '').trim().toLowerCase());
+  if (prof?.portal?.email) toEmail = toEmail ? `${toEmail}, ${prof.portal.email}` : prof.portal.email;
   if (!transporter || !fromEmail || !toEmail) return { sent: false, reason: 'not_configured' };
   const g = grnData(rec);
   const rows = g.lines.map(l => `<tr><td>${l.sku}</td><td>${l.expected ?? '—'}</td><td>${l.received}</td><td>${l.good}</td><td>${l.damaged || ''}</td><td>${l.kiv || ''}</td><td>${l.diff === null ? 'unlisted' : (l.diff === 0 ? '' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td></tr>`).join('');
@@ -7404,6 +7563,9 @@ function requireAuth(req, res, next) {
   const token = req.headers['x-auth-token'];
   if (!token) return res.status(401).json({ error: 'Unauthorised' });
   for (const [userId, t] of activeSessions) {
+    // Namespaced sessions (driver app / client portal) are NOT staff — their
+    // tokens must never unlock staff APIs. Each has its own middleware.
+    if (userId.startsWith('driver:') || userId.startsWith('portal:')) continue;
     if (t === token) { req.userId = userId; return next(); }
   }
   res.status(401).json({ error: 'Session expired' });
@@ -10427,6 +10589,11 @@ app.post('/api/driver/jobs/:id/deliver', requireDriverAuthMiddleware, express.js
 // GET /driver — Serve the driver portal
 app.get('/driver', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'driver.html'));
+});
+
+// GET /portal — the read-only Client Portal (own login, see the portal block).
+app.get('/portal', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'portal.html'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -8801,6 +8801,14 @@
       $('obItemCount').textContent = p.itemCount ? `${p.itemCount} items loaded` : 'no items yet';
       $('obItemStatus').classList.add('hidden'); $('obTestResult').textContent = ''; $('obSaveStatus').textContent = '';
       renderInstr(p.instructions || []);
+      // Portal access state (credentials are masked server-side)
+      const pt = p.portal || {};
+      $('obPortalEnabled').checked = !!pt.enabled;
+      $('obPortalEmail').value = pt.email || '';
+      $('obPortalPass').value = '';
+      $('obPortalStatus').innerHTML = pt.enabled
+        ? `✅ Portal ON — login at <b>${location.origin}/portal</b> with client name "<b>${esc(p.client)}</b>"${pt.hasPassword ? '' : ' — <span style="color:#dc2626">no password set yet!</span>'}`
+        : 'Portal off.';
     }
     function renderInstr(list) {
       $('obInstrList').innerHTML = list.length ? list.map(i => {
@@ -8874,6 +8882,16 @@
       $('obTestCode')?.addEventListener('keydown', e => { if (e.key === 'Enter') testCode(); });
       $('obInstrAddBtn')?.addEventListener('click', addInstr);
       $('obInstrText')?.addEventListener('keydown', e => { if (e.key === 'Enter') addInstr(); });
+      $('obPortalSaveBtn')?.addEventListener('click', async () => {
+        if (!current) { alert('Save the client first.'); return; }
+        const body = { enabled: $('obPortalEnabled').checked, email: $('obPortalEmail').value.trim(), password: $('obPortalPass').value };
+        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal`, { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) { $('obPortalStatus').innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Failed')}</span>`; return; }
+        $('obPortalPass').value = '';
+        await load(); select(current);
+        $('obPortalStatus').innerHTML += ' <b style="color:#059669">✓ saved</b>';
+      });
       $('obDeleteBtn')?.addEventListener('click', remove);
     }, 0);
 

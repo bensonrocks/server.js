@@ -673,6 +673,19 @@
                 <div id="obInstrList" style="margin-top:.6rem"></div>
               </div>
 
+              <!-- Client Portal access -->
+              <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">
+                <b>🌐 Client Portal access</b>
+                <div class="hint" style="margin:.2rem 0 .5rem">Self-service login at <code>/portal</code> — the client sees their own stock, orders, inbound receipts and GRNs (read-only). GRN emails also go to the email below.</div>
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+                  <label style="display:flex;gap:.35rem;align-items:center;font-size:.85rem"><input type="checkbox" id="obPortalEnabled"> Enabled</label>
+                  <input type="email" id="obPortalEmail" placeholder="client email (for GRNs)" style="flex:1;min-width:170px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+                  <input type="text" id="obPortalPass" placeholder="set password (blank = keep)" autocomplete="new-password" style="flex:1;min-width:170px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+                  <button class="btn-secondary btn-sm" id="obPortalSaveBtn">Save portal</button>
+                </div>
+                <div id="obPortalStatus" class="hint" style="margin-top:.4rem"></div>
+              </div>
+
               <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">
                 <button class="btn-danger btn-sm" id="obDeleteBtn">🗑 Remove client</button>
               </div>
