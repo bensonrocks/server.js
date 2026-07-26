@@ -303,6 +303,10 @@
         <input type="text" id="inboundPoClient" placeholder="e.g. Glowverse" autocomplete="off" />
       </div>
       <div class="form-group">
+        <label>Expected arrival <span class="hint-inline">(optional — powers the "arriving" list)</span></label>
+        <input type="date" id="inboundPoEta" />
+      </div>
+      <div class="form-group">
         <label>File</label>
         <input type="file" id="inboundPoFileInput" accept=".xlsx,.xls,.csv,.pdf" />
       </div>
@@ -322,6 +326,10 @@
       <div class="form-group">
         <label>Reference / RMA <span class="hint-inline">(optional)</span></label>
         <input type="text" id="inboundReturnReference" placeholder="e.g. RMA-4021" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Original order no. <span class="hint-inline">(optional — links the RMA to the outbound order and prefills its items)</span></label>
+        <input type="text" id="inboundReturnOrder" placeholder="e.g. GV-ORD-1023" autocomplete="off" />
       </div>
       <div class="form-group">
         <label>Customer / Source <span class="hint-inline">(optional)</span></label>
@@ -1628,6 +1636,7 @@
           <button class="btn-primary" id="inboundNewReturnBtn">+ New Return</button>
         </div>
       </div>
+      <div id="inboundArriving" class="hidden" style="margin:0 0 .8rem;padding:.7rem .9rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;font-size:.85rem"></div>
       <div id="inboundEmpty" class="empty-state hidden">No inbound jobs yet.</div>
       <div id="inboundList"></div>
     </section>

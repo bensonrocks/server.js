@@ -2210,6 +2210,16 @@
     } catch { inboundJobs = []; }
     const empty = document.getElementById('inboundEmpty');
     const list  = document.getElementById('inboundList');
+    // 📅 Arriving strip — pending jobs with an expected-arrival date, soonest
+    // first; overdue in red. Answers "what's landing on the dock this week?".
+    const arr = document.getElementById('inboundArriving');
+    if (arr) {
+      const today = new Date().toISOString().slice(0, 10);
+      const upcoming = inboundJobs.filter(j => j.eta && j.status !== 'done').sort((a, b) => a.eta.localeCompare(b.eta));
+      arr.classList.toggle('hidden', !upcoming.length);
+      if (upcoming.length) arr.innerHTML = '📅 <b>Arriving:</b> ' + upcoming.slice(0, 6).map(j =>
+        `<span style="margin-right:.7rem;${j.eta < today ? 'color:#dc2626;font-weight:700' : ''}">${esc(j.reference || j.serial)} — ${esc(j.eta)}${j.eta < today ? ' ⚠ overdue' : ''}</span>`).join('');
+    }
     if (!inboundJobs.length) {
       empty.classList.remove('hidden');
       list.innerHTML = '';
@@ -5836,6 +5846,7 @@
     fd.append('reference',   document.getElementById('inboundPoReference').value.trim());
     fd.append('source_name', document.getElementById('inboundPoSource').value.trim());
     fd.append('client_name', document.getElementById('inboundPoClient').value.trim());
+    fd.append('eta',         document.getElementById('inboundPoEta')?.value || '');
     try {
       const resp = await fetch('/api/inbound/upload', { method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: fd });
       const data = await resp.json();
@@ -5852,6 +5863,7 @@
     document.getElementById('inboundReturnReference').value = '';
     document.getElementById('inboundReturnSource').value = '';
     document.getElementById('inboundReturnClient').value = '';
+    const rmaEl = document.getElementById('inboundReturnOrder'); if (rmaEl) rmaEl.value = '';
     document.getElementById('inboundReturnOverlay').classList.remove('hidden');
   });
   document.getElementById('inboundReturnCancelBtn').addEventListener('click', () => {
@@ -5865,6 +5877,7 @@
           reference:   document.getElementById('inboundReturnReference').value.trim(),
           source_name: document.getElementById('inboundReturnSource').value.trim(),
           client_name: document.getElementById('inboundReturnClient').value.trim(),
+          order_number: document.getElementById('inboundReturnOrder')?.value.trim() || '',
         }),
       });
       const data = await resp.json();
@@ -6025,6 +6038,10 @@
           lastScannedInboundSku = data.sku;
           document.getElementById('inboundScanPhotoInput').click();
         });
+      } else if (data.crossdock) {
+        // ⚡ CROSS-DOCK: outbound orders are waiting on this SKU — stage it for
+        // packing instead of shelving it.
+        showFeedback(feedback, 'error', `${data.sku}: ${data.scanned_qty} received — ⚡ ${data.crossdock.needed} pc(s) NEEDED by ${data.crossdock.orders.join(', ')} — stage for packing, don't shelve`);
       } else showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
       if (inboundCondition !== 'straight_to_inventory') setInboundCondition('straight_to_inventory');
     } catch (err) {

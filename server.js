@@ -5641,6 +5641,8 @@ app.get('/api/inbound', (req, res) => {
       id:                rec.id,
       serial:            rec.serial || '',
       type:              rec.type,
+      eta:               rec.eta || null,
+      linked_order:      rec.linked_order || null,
       reference:         rec.reference || '',
       source_name:       rec.source_name || '',
       client_name:       rec.client_name || '',
@@ -5733,6 +5735,7 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
       id:          uuidv4(),
       serial:      nextInboundCode(db),
       type:        'po',
+      eta:         String(req.body?.eta || '').slice(0, 10) || null,  // expected arrival (YYYY-MM-DD)
       reference:   (req.body?.reference   || '').trim(),
       source_name: (req.body?.source_name || '').trim(),
       client_name: (req.body?.client_name || '').trim(),
@@ -5752,26 +5755,42 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
 });
 
 app.post('/api/inbound/return', (req, res) => {
-  const { reference, source_name, client_name } = req.body || {};
+  const { reference, source_name, client_name, order_number } = req.body || {};
   const db = readDb();
   db.inbound = db.inbound || [];
+  // RMA: a return can be LINKED to the original outbound order — client and
+  // expected lines prefill from the order (max returnable = what was shipped),
+  // and the link is kept for traceability (GRN, portal, reports).
+  let linked = null, lines = [], clientFromOrder = '';
+  const ordNo = String(order_number || '').trim();
+  if (ordNo) {
+    const batch = findBatchForOrder(db, ordNo);
+    const ord = batch && (batch.orders || []).find(o => o.order_number === ordNo);
+    if (!ord) return res.status(404).json({ error: `Order ${ordNo} not found — check the order number.` });
+    const st = batch.orderStates?.[ordNo] || {};
+    if ((st.status || 'pending') !== 'done') return res.status(409).json({ error: `Order ${ordNo} hasn't shipped (status: ${st.status || 'pending'}) — an RMA links to a completed order.` });
+    linked = ordNo;
+    clientFromOrder = batch.client_name || ord.client_name || '';
+    lines = (ord.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, description: l.description || '', expected_qty: Number(l.qty) || 0 }));
+  }
   const rec = {
     id:          uuidv4(),
     serial:      nextInboundCode(db),
     type:        'return',
-    reference:   String(reference   || '').trim(),
+    linked_order: linked,
+    reference:   String(reference || '').trim() || (linked ? `RMA-${linked}` : ''),
     source_name: String(source_name || '').trim(),
-    client_name: String(client_name || '').trim(),
+    client_name: String(client_name || '').trim() || clientFromOrder,
     uploaded_at: new Date().toISOString(),
     uploaded_by: req.userId || '',
     filename:    null,
-    lines:       [],
+    lines,
     state:       { status: 'pending', scanned: {}, conditionTotals: {}, scanLog: [] },
   };
   db.inbound.unshift(rec);
   writeDb(db);
-  logAudit('inbound_return_created', { id: rec.id, reference: rec.reference, by: req.userId || '' });
-  res.json({ ok: true, id: rec.id });
+  logAudit('inbound_return_created', { id: rec.id, reference: rec.reference, linkedOrder: linked || '', by: req.userId || '' });
+  res.json({ ok: true, id: rec.id, linked_order: linked, lines: lines.length, client_name: rec.client_name });
 });
 
 const INBOUND_CONDITIONS = new Set(['straight_to_inventory', 'damaged', 'kiv']);
@@ -5784,6 +5803,11 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
   if (state.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended — no further scans can be logged.' });
+  // One receiver per job — same claim rule as outbound packing (stale claims
+  // auto-expire, so a walked-away session never locks a job forever).
+  const claimHolder0 = claimBlocker(state, req.userId);
+  if (claimHolder0) return res.status(409).json({ error: `This receipt is being worked by ${claimHolder0} at another station.` });
+  refreshClaim(state, req.userId);
 
   const inc = Math.max(1, parseInt(qty, 10) || 1);
   const raw = String(code).trim();
@@ -5816,7 +5840,16 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   writeDb(db);
 
   const carton = activeCarton(state);
-  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], condition: cond, condition_totals: state.conditionTotals[sku], cartonNum: carton.num, cartonCount: state.cartons.length });
+  // CROSS-DOCK alert: if outbound orders are WAITING on this SKU (open
+  // backorders for this client), tell the receiver — those units should be
+  // staged for packing, not shelved.
+  let crossdock = null;
+  try {
+    const cid = invClientId(rec.client_name);
+    const waiting = (db.backorders || []).filter(b => b.client_id === cid && b.sku === sku && b.status === 'open');
+    if (waiting.length) crossdock = { needed: waiting.reduce((s, b) => s + b.remaining, 0), orders: waiting.slice(0, 3).map(b => b.order_number) };
+  } catch (_) {}
+  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], condition: cond, condition_totals: state.conditionTotals[sku], crossdock, cartonNum: carton.num, cartonCount: state.cartons.length });
 });
 
 app.post('/api/inbound/:id/new-carton', (req, res) => {
@@ -5912,6 +5945,8 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const state = rec.state = rec.state || {};
   if (state.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended.' });
+  const endHolder = claimBlocker(state, req.userId);
+  if (endHolder) return res.status(409).json({ error: `This receipt is being worked by ${endHolder} at another station.` });
 
   // Expected-vs-received discrepancies — computed for BOTH the confirm gate and
   // (below, once ending is confirmed) PERSISTED on the record, so short/over
@@ -11215,6 +11250,29 @@ function runDailyReplenishment() {
 setTimeout(runDailyReplenishment, 120 * 1000);        // shortly after boot
 setInterval(runDailyReplenishment, 6 * 3600 * 1000);  // re-check every 6h (rolls over at the SGT day boundary)
 
+// Photo retention — inbound photos for jobs ENDED more than 12 months ago are
+// deleted from disk (metadata keeps a purged flag, so the GRN still shows how
+// many photos existed). Mirrors the 12-month retention every other record uses.
+function runInboundPhotoPurge() {
+  try {
+    const cutoff = new Date(Date.now() - 365 * 86400000).toISOString();
+    const db = readDb();
+    let purged = 0;
+    for (const rec of db.inbound || []) {
+      const ended = rec.state?.endTime;
+      if (!ended || ended >= cutoff || !(rec.photos || []).length || rec.photos_purged) continue;
+      try { fs.rmSync(path.join(INBOUND_PHOTO_DIR, rec.id), { recursive: true, force: true }); } catch (_) {}
+      purged += rec.photos.length;
+      rec.photo_count_before_purge = rec.photos.length;
+      rec.photos = [];
+      rec.photos_purged = true;
+    }
+    if (purged) { writeDb(db); console.log(`[IdealScan] Inbound photo purge: removed ${purged} photo(s) older than 12 months`); }
+  } catch (e) { console.error('[IdealScan] photo purge failed:', e.message); }
+}
+setTimeout(runInboundPhotoPurge, 180 * 1000);
+setInterval(runInboundPhotoPurge, 24 * 3600 * 1000);
+
 // Today's replenishment run for a client (generates it on first access of the day
 // if the scheduler hasn't yet). daysCover query overrides the default for the day.
 app.get('/api/inventory/replenishment/run', requireAuth, (req, res) => {
@@ -11378,12 +11436,15 @@ app.get('/api/inventory/bin/:locationId', requireAuth, (req, res) => {
   const occupied = contents.reduce((s, c) => s + c.qty, 0);
   res.json({ location: loc, occupied, capacity: Number(loc.capacity) || 0, contents });
 });
-// Suggest the bin where a SKU already lives (co-location) — for putaway.
+// Suggest a putaway bin: co-location (where the SKU already lives) first, else
+// SLOTTING — the best available empty/most-headroom pick bin for a NEW SKU.
 app.get('/api/inventory/suggest-location', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   const sku = String(req.query.sku || '').trim();
   if (!clientId || !sku) return res.status(400).json({ error: 'clientId and sku required' });
-  res.json({ location_id: inventory.suggestLocationForSku(clientId, sku) });
+  const home = inventory.suggestLocationForSku(clientId, sku);
+  if (home) return res.json({ location_id: home, reason: 'co-location' });
+  res.json({ location_id: inventory.suggestSlotForNewSku(), reason: 'new-slot' });
 });
 app.get('/api/inventory/:sku/locations', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
