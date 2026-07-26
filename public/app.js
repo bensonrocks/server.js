@@ -6651,9 +6651,23 @@
   }
 
   // ── Items phase ────────────────────────────────────────────────────────────
+  // Bin-verify at pick: scanning a printed BIN LABEL (QR of the bin id) in the
+  // item-scan input records "I'm at this bin" instead of erroring as an unknown
+  // SKU; a following item scan that belongs to a DIFFERENT bin per the pick plan
+  // gets a non-blocking warning. Loaded lazily per scan session.
+  let _binIdSet = null;
+  let _lastScannedBin = '';
+  function _loadBinIds() {
+    fetch('/api/inventory/locations').then(r => r.ok ? r.json() : []).then(list => {
+      _binIdSet = new Set((list || []).map(l => String(l.location_id).toUpperCase()));
+    }).catch(() => {});
+  }
+
   function enterItemsPhase(order) {
     activeOrder      = order;
     currentMismatches = [];
+    _lastScannedBin  = '';
+    _loadBinIds();
 
     // Show unprocessed banner when re-opening a previously cancelled order
     const banner = document.getElementById('unprocessedBanner');
@@ -7537,6 +7551,14 @@
   let   _scanBusy  = false;
 
   function handleItemScan(sku) {
+    // A scanned BIN LABEL is a location confirmation, not a product — record it
+    // and tell the packer, instead of failing the value as an unknown SKU.
+    const asBin = String(sku).trim().toUpperCase();
+    if (_binIdSet && _binIdSet.has(asBin)) {
+      _lastScannedBin = asBin;
+      showFeedback(document.getElementById('itemScanFeedback'), 'success', `📍 At bin ${asBin} — now scan the item`);
+      return;
+    }
     // The eventId is minted HERE, at scan time, and rides along on the very
     // first request — not just on offline replays. If the server processes
     // the scan but the response outlives the 8s fetch timeout, the queued
@@ -7758,12 +7780,21 @@
         if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
 
         const overBy = data.scanned_qty - data.ordered_qty;
-        showFeedback(feedback, overBy > 0 ? 'error' : 'success',
-          overBy > 0
+        // Bin-verify: if the packer confirmed a bin (scanned its label) and this
+        // item's pick plan says a DIFFERENT bin, warn — non-blocking, the count
+        // still stands, but wrong-bin picks are exactly what breeds discrepancies.
+        let binWarn = '';
+        if (_lastScannedBin) {
+          const ln = (activeOrder.lines || []).find(x => x.sku === data.sku && x.pick_locations && x.pick_locations.length);
+          const bins = ln ? ln.pick_locations.filter(p => p.location_id !== 'STAGING').map(p => String(p.location_id).toUpperCase()) : [];
+          if (bins.length && !bins.includes(_lastScannedBin)) binWarn = ` — ⚠ you're at ${_lastScannedBin}, plan says ${bins.join(', ')}`;
+        }
+        showFeedback(feedback, (overBy > 0 || binWarn) ? 'error' : 'success',
+          (overBy > 0
             ? `${data.sku}: OVER by ${overBy} (scanned ${data.scanned_qty}, ordered ${data.ordered_qty})`
             : data.scanned_qty === data.ordered_qty
               ? `${data.sku}: ✓ Complete (${data.scanned_qty}/${data.ordered_qty})`
-              : `${data.sku}: ${data.scanned_qty}/${data.ordered_qty} scanned`
+              : `${data.sku}: ${data.scanned_qty}/${data.ordered_qty} scanned`) + binWarn
         );
       } catch (err) {
         // Network failure (dead Wi-Fi hangs or refuses) — save the scan
@@ -11053,14 +11084,25 @@
       const tb = $('invTbody'); if (!tb) return;
       const q = ($('invSearch')?.value || '').toLowerCase();
       const rows = items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q));
-      if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
       tb.innerHTML = rows.map(r => `<tr>
         <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
         <td>${esc(r.name || '')}</td>
         <td style="text-align:right">${r.stock_qty}</td>
         <td style="text-align:right;color:#d97706">${r.reserved_qty}</td>
         <td style="text-align:right;font-weight:700;color:${r.available_qty <= 0 ? '#dc2626' : '#059669'}">${r.available_qty}</td>
+        <td style="text-align:right"><span class="inv-upc-edit" data-sku="${esc(r.sku)}" title="Units per carton — click to edit (powers carton-aware picking)" style="cursor:pointer;border-bottom:1px dashed #94a3b8">${Number(r.units_per_carton) > 1 ? r.units_per_carton : '—'}</span></td>
       </tr>`).join('');
+      tb.querySelectorAll('.inv-upc-edit').forEach(el => el.addEventListener('click', async () => {
+        const sku = el.dataset.sku;
+        const cur = (items.find(x => x.sku === sku) || {}).units_per_carton || '';
+        const v = prompt(`Units per carton for ${sku}?\n(1 or empty = no carton size — picks in pieces)`, cur > 1 ? String(cur) : '');
+        if (v === null) return;
+        const n = Math.max(1, parseInt(v, 10) || 1);
+        const row = items.find(x => x.sku === sku) || {};
+        const r2 = await fetch('/api/inventory/' + encodeURIComponent(sku), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, name: row.name || sku, units_per_carton: n }) });
+        if (r2.ok) load(); else { const e = await r2.json().catch(() => ({})); alert(e.error || 'Update failed'); }
+      }));
     }
 
     function pickFile() {
@@ -11312,14 +11354,51 @@
         loadLocationStock();
       } catch (e) { wmsMsg('trMsg', 'error', e.message); }
     }
+    // Print scannable QR labels for every bin — stick them on the shelves.
+    // Scanning one in the pick screen verifies the packer is at the right bin.
+    function printBinLabels() {
+      if (!locations.length) { alert('No bins to print — create bins first.'); return; }
+      if (!window.qrcode) { alert('QR library not loaded.'); return; }
+      const cards = locations.map(l => {
+        const q = qrcode(0, 'M'); q.addData(l.location_id); q.make();
+        const svg = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+        return `<div class="card"><div class="qr">${svg}</div><div class="bid">${l.location_id}</div><div class="meta">${l.kind === 'bulk' ? 'BULK' : 'PICK FACE'} · ${(l.environment || 'dry').toUpperCase()}${l.capacity ? ' · max ' + l.capacity : ''}</div></div>`;
+      }).join('');
+      const win = window.open('', '_blank');
+      win.document.write(`<html><head><title>Bin Labels</title><style>
+        body{font-family:sans-serif;margin:10mm}
+        .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8mm}
+        .card{border:1px solid #000;border-radius:4mm;padding:5mm;text-align:center;page-break-inside:avoid}
+        .qr svg{width:32mm;height:32mm}
+        .bid{font-family:monospace;font-weight:800;font-size:7mm;margin-top:2mm}
+        .meta{font-size:3.2mm;color:#444;margin-top:1mm}
+        @media print{.noprint{display:none}}
+      </style></head><body>
+        <div class="noprint" style="margin-bottom:6mm"><button onclick="window.print()">🖨 Print</button> ${locations.length} label(s)</div>
+        <div class="grid">${cards}</div></body></html>`);
+      win.document.close();
+    }
+    // Counts due — stale / never-counted / repeat-discrepancy bins.
+    async function loadCountsDue() {
+      const el = $('ccDue'); if (!el || !clientId) return;
+      try {
+        const r = await fetch('/api/inventory/count-suggestions?clientId=' + encodeURIComponent(clientId));
+        const d = r.ok ? await r.json() : { suggestions: [] };
+        const s = d.suggestions || [];
+        el.innerHTML = s.length
+          ? `📋 <b>Counts due:</b> ${s.map(x => `<span style="background:#fef3c7;color:#92400e;border-radius:4px;padding:.05rem .35rem;margin-right:.25rem;font-family:monospace">${esc(x.location_id)}</span><span style="margin-right:.6rem">(${x.reasons.map(esc).join(', ')})</span>`).join('')}`
+          : '✓ No counts due — every stocked bin counted recently, no repeat discrepancies.';
+      } catch { /* keep prior */ }
+    }
     function ccRender() {
       const tb = $('ccTbody'); if (!tb) return;
+      const blind = $('ccBlind')?.checked;
       if (!ccLines.length) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:#94a3b8">No lines counted yet.</td></tr>'; return; }
       tb.innerHTML = ccLines.map(l => `<tr>
         <td style="font-family:monospace;font-weight:600">${esc(l.sku)}</td>
-        <td style="text-align:right">${l.expected}</td>
+        <td style="text-align:right">${blind ? '—' : l.expected}</td>
         <td style="text-align:right">${l.counted}</td>
-        <td style="text-align:right;font-weight:700;color:${l.variance === 0 ? '#059669' : (l.variance > 0 ? '#0369a1' : '#dc2626')}">${l.variance > 0 ? '+' : ''}${l.variance}</td></tr>`).join('');
+        <td style="text-align:right;font-weight:700;color:${blind ? '#94a3b8' : (l.variance === 0 ? '#059669' : (l.variance > 0 ? '#0369a1' : '#dc2626'))}">${blind ? '—' : (l.variance > 0 ? '+' : '') + l.variance}</td></tr>`).join('');
     }
     async function ccStart() {
       if (!clientId) { alert('Load a client first.'); return; }
@@ -11522,6 +11601,8 @@
       $('serLookup')?.addEventListener('keydown', e => { if (e.key === 'Enter') serialLookup(); });
       $('serAddBtn')?.addEventListener('click', serialAdd);
       $('locManageBtn')?.addEventListener('click', () => { const w = $('locManageWrap'); w.classList.toggle('hidden'); if (!w.classList.contains('hidden')) renderManageBins(); });
+      $('locPrintLabelsBtn')?.addEventListener('click', printBinLabels);
+      $('ccBlind')?.addEventListener('change', ccRender);
       $('binLookupBtn')?.addEventListener('click', binLookup);
       $('binLookup')?.addEventListener('keydown', e => { if (e.key === 'Enter') binLookup(); });
       $('putBtn')?.addEventListener('click', placeStock);
@@ -11548,6 +11629,7 @@
       loadReorder();
       loadReplenishment();
       loadDiscrepancies();
+      loadCountsDue();
     };
 
     return { init, load, renderList, pickFile, loadBundles };

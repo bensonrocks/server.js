@@ -2311,9 +2311,9 @@
           <table class="tbl" style="width:100%">
             <thead><tr>
               <th style="text-align:left">SKU</th><th style="text-align:left">Name</th>
-              <th style="text-align:right">On hand</th><th style="text-align:right">Reserved</th><th style="text-align:right">Available</th>
+              <th style="text-align:right">On hand</th><th style="text-align:right">Reserved</th><th style="text-align:right">Available</th><th style="text-align:right" title="Units per carton — powers carton-aware picking. Click a value to edit.">Ctn</th>
             </tr></thead>
-            <tbody id="invTbody"><tr><td colspan="5" style="text-align:center;padding:2rem;color:#94a3b8">Load a client to see stock.</td></tr></tbody>
+            <tbody id="invTbody"><tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8">Load a client to see stock.</td></tr></tbody>
           </table>
         </div>
 
@@ -2355,6 +2355,7 @@
             <input id="locCap" type="number" placeholder="Max units" title="Max unit capacity" style="width:84px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <button class="btn-secondary btn-sm" id="locAddBtn">+ Create bin</button>
             <button class="btn-secondary btn-sm" id="locManageBtn" title="Edit bin dimensions / capacity">⚙ Manage bins</button>
+            <button class="btn-secondary btn-sm" id="locPrintLabelsBtn" title="Print scannable QR labels for the bins — stick them on the shelves; scanning one in the pick screen verifies the packer is at the right bin">🏷 Print labels</button>
           </div>
           <div id="locManageWrap" class="hidden" style="margin-bottom:.6rem;border:1px solid #e2e8f0;border-radius:8px;padding:.5rem;overflow-x:auto">
             <table class="tbl" style="width:100%">
@@ -2446,8 +2447,12 @@
             <div><b>🧮 Cycle count</b>
               <div class="hint" style="margin:.2rem 0 0">Count physical stock, record counted quantities, then post — variances update on-hand automatically (and sync to ZORT).</div>
             </div>
-            <button class="btn-secondary btn-sm" id="ccStartBtn">▶ Start count</button>
+            <div style="display:flex;gap:.6rem;align-items:center">
+              <label style="display:flex;gap:.3rem;align-items:center;font-size:.82rem" title="Blind count: the counter doesn't see the expected quantity or variance until the count is posted — the industry-standard way to keep counts honest."><input type="checkbox" id="ccBlind"> Blind</label>
+              <button class="btn-secondary btn-sm" id="ccStartBtn">▶ Start count</button>
+            </div>
           </div>
+          <div id="ccDue" class="hint" style="margin-top:.5rem"></div>
           <div id="ccActive" class="hidden" style="margin-top:.7rem;border-top:1px dashed #e2e8f0;padding-top:.7rem">
             <div class="hint" style="margin-bottom:.5rem">Count <b id="ccId"></b> — in progress</div>
             <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem">

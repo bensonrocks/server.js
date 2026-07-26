@@ -10982,6 +10982,38 @@ app.post('/api/inventory/replenishment/apply', requireAuth, express.json(), (req
     res.json({ ...result, run });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+// Counts due — bins worth cycle-counting: never/staly counted, or repeat
+// bin-empty discrepancies in the last 30 days (a repeat offender usually means
+// a process problem at that location).
+app.get('/api/inventory/count-suggestions', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const bins = inventory.countDueBins(clientId, Number(req.query.staleDays) || 30);
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const discCount = {};
+  for (const d of (readDb().stockDiscrepancies || [])) {
+    if (d.clientId === clientId && (d.reportedAt || '') >= cutoff) discCount[d.location] = (discCount[d.location] || 0) + 1;
+  }
+  const out = [];
+  const covered = new Set();
+  for (const b of bins) {
+    covered.add(b.location_id);
+    const reasons = [];
+    if ((discCount[b.location_id] || 0) >= 2) reasons.push(`${discCount[b.location_id]} bin-empty reports in 30d`);
+    if (!b.last_counted) reasons.push('never counted');
+    else if (b.stale) reasons.push(`last counted ${String(b.last_counted).slice(0, 10)}`);
+    if (reasons.length) out.push({ location_id: b.location_id, qty: b.qty, reasons });
+  }
+  // Repeat-offender bins that currently hold NO stock (often BECAUSE a bin-empty
+  // report just zeroed them) are exactly the ones to verify — include them too.
+  for (const [loc, n] of Object.entries(discCount)) {
+    if (n >= 2 && !covered.has(loc)) out.push({ location_id: loc, qty: 0, reasons: [`${n} bin-empty reports in 30d`] });
+  }
+  // Repeat-discrepancy bins first, then never-counted, then stale.
+  out.sort((a, b) => (discCount[b.location_id] || 0) - (discCount[a.location_id] || 0));
+  res.json({ suggestions: out.slice(0, 30) });
+});
+
 // ── Stock discrepancies — every bin-empty report must be resolved ───────────
 app.get('/api/inventory/discrepancies', requireAuth, (req, res) => {
   const list = readDb().stockDiscrepancies || [];
