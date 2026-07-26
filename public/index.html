@@ -2385,6 +2385,23 @@
           </div>
         </div>
 
+        <!-- ⚠ Stock discrepancies -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div><b>⚠ Stock discrepancies</b> <span id="discBadge" class="nav-badge hidden">0</span>
+              <div class="hint" style="margin:.2rem 0 0">Every "🚫 bin empty" report lands here and must be resolved: <b>Found</b> (stock was located / recounted — records already corrected) or <b>Write off</b> (units genuinely gone — deducts the sellable total and updates ZORT so channels stop selling ghosts).</div>
+            </div>
+            <button class="btn-secondary btn-sm" id="discRefreshBtn">Refresh</button>
+          </div>
+          <div id="discMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+          <div style="overflow-x:auto;margin-top:.6rem">
+            <table class="tbl" style="width:100%">
+              <thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Bin</th><th style="text-align:right">Missing</th><th style="text-align:left">Order</th><th style="text-align:left">Reported</th><th></th></tr></thead>
+              <tbody id="discTbody"><tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">No open discrepancies. 🎉</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- 🔀 Stock transfer -->
         <div class="panel" style="margin-top:1.25rem">
           <div><b>🔀 Stock transfer</b>

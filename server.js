@@ -7045,6 +7045,18 @@ app.post('/api/scan/report-bin-empty', (req, res) => {
     const st = batch.orderStates && batch.orderStates[orderNumber];
     if (st && st.bin_plan) delete st.bin_plan[sku];
   }
+  // A bin that READ stock but was physically empty is a real discrepancy: the
+  // sellable total (stock_qty) may now overstate reality → overselling risk on
+  // ZORT. Open a discrepancy so someone must investigate and resolve it
+  // (recount / found elsewhere / write off) — it never dies quietly in a log.
+  if (removed > 0) {
+    (db.stockDiscrepancies = db.stockDiscrepancies || []).unshift({
+      id: uuidv4().slice(0, 8), clientId: cid, sku, location: location_id,
+      qty: removed, order: orderNumber, reportedBy: req.userId || '',
+      reportedAt: new Date().toISOString(), status: 'open',
+    });
+    if (db.stockDiscrepancies.length > 500) db.stockDiscrepancies.length = 500;
+  }
   writeDb(db);
   logAudit('bin_reported_empty', { order: orderNumber, sku, location: location_id, removed, by: req.userId || '' });
   res.json({ ok: true, removed, lines: lines.map(l => ({ sku: l.sku, pick_locations: l.pick_locations || [], pick_shortfall: l.pick_shortfall || 0 })) });
@@ -10969,6 +10981,39 @@ app.post('/api/inventory/replenishment/apply', requireAuth, express.json(), (req
     writeDb(db);
     res.json({ ...result, run });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// ── Stock discrepancies — every bin-empty report must be resolved ───────────
+app.get('/api/inventory/discrepancies', requireAuth, (req, res) => {
+  const list = readDb().stockDiscrepancies || [];
+  const status = req.query.status || 'open';
+  res.json({
+    open: list.filter(d => d.status === 'open').length,
+    discrepancies: (status === 'all' ? list : list.filter(d => d.status === status)).slice(0, 200),
+  });
+});
+// Resolve one: 'found' (stock located/recounted — bin records were corrected by
+// hand, sellable total is fine) or 'write_off' (units are genuinely gone —
+// deduct them from the sellable total so ZORT stops offering ghosts).
+app.post('/api/inventory/discrepancies/:id/resolve', requireAuth, express.json(), (req, res) => {
+  const db = readDb();
+  const d = (db.stockDiscrepancies || []).find(x => x.id === req.params.id);
+  if (!d) return res.status(404).json({ error: 'Not found' });
+  if (d.status !== 'open') return res.status(409).json({ error: 'Already resolved' });
+  const action = String(req.body?.action || '').toLowerCase();
+  const note = String(req.body?.note || '').slice(0, 500);
+  if (!['found', 'write_off'].includes(action)) return res.status(400).json({ error: "action must be 'found' or 'write_off'" });
+  const qty = Math.min(Number(req.body?.qty) || d.qty, d.qty); // allow partial write-off
+  if (action === 'write_off') {
+    try {
+      inventory.adjust(d.sku, d.clientId, -qty, 'write_off', `Discrepancy ${d.id}: bin ${d.location} empty${note ? ' — ' + note : ''}`);
+      zortNotifyStockChange(db, d.clientId, [d.sku]); // channels stop selling the ghosts
+    } catch (e) { return res.status(400).json({ error: 'Write-off failed: ' + e.message }); }
+  }
+  d.status = 'resolved'; d.resolution = action; d.resolvedQty = action === 'write_off' ? qty : 0;
+  d.note = note; d.resolvedBy = req.userId || ''; d.resolvedAt = new Date().toISOString();
+  writeDb(db);
+  logAudit('stock_discrepancy_resolved', { id: d.id, sku: d.sku, location: d.location, action, qty: d.resolvedQty, note, by: req.userId || '' });
+  res.json(d);
 });
 // Bin lookup / physical audit — scan a bin, see everything in it (all clients).
 app.get('/api/inventory/bin/:locationId', requireAuth, (req, res) => {

@@ -11018,6 +11018,7 @@
       // empty and the functions seemed missing.)
       $('invBody')?.classList.remove('hidden');
       refreshLocations();          // global bins → dropdowns + Manage-bins list
+      loadDiscrepancies();         // open bin-empty reports (all clients until one is loaded)
       if (!clientId) {
         $('invNoClientHint')?.classList.remove('hidden');
         ['inv-s-total', 'inv-s-onhand', 'inv-s-res', 'inv-s-avail'].forEach(id => { const e = $(id); if (e) e.textContent = '0'; });
@@ -11393,6 +11394,47 @@
           <td>${esc(x.supplier || '—')}</td></tr>`).join('');
       } catch { /* keep prior */ }
     }
+    // ── Stock discrepancies (bin-empty reports needing resolution) ────────────
+    async function loadDiscrepancies() {
+      const tb = $('discTbody'); if (!tb) return;
+      try {
+        const r = await fetch('/api/inventory/discrepancies?status=open');
+        const d = r.ok ? await r.json() : { open: 0, discrepancies: [] };
+        const badge = $('discBadge');
+        if (badge) { if (d.open > 0) { badge.textContent = d.open; badge.classList.remove('hidden'); } else badge.classList.add('hidden'); }
+        const rows = (d.discrepancies || []).filter(x => !clientId || x.clientId === clientId);
+        if (!rows.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.2rem;color:#94a3b8">No open discrepancies. 🎉</td></tr>'; return; }
+        tb.innerHTML = rows.map(x => `<tr data-id="${esc(x.id)}" data-qty="${x.qty}">
+          <td style="font-family:monospace;font-weight:600">${esc(x.sku)}</td>
+          <td style="font-family:monospace">${esc(x.location)}</td>
+          <td style="text-align:right;font-weight:700;color:#dc2626">${x.qty}</td>
+          <td class="hint">${esc(x.order || '—')}</td>
+          <td class="hint">${esc(x.reportedBy || '')} · ${x.reportedAt ? new Date(x.reportedAt).toLocaleString() : ''}</td>
+          <td style="white-space:nowrap">
+            <button class="btn-secondary btn-sm disc-found" title="Stock was located / recounted — no change to sellable total">✓ Found</button>
+            <button class="btn-danger btn-sm disc-wo" title="Units genuinely missing — deduct sellable total and update ZORT">✗ Write off</button>
+          </td></tr>`).join('');
+        tb.querySelectorAll('.disc-found').forEach(btn => btn.addEventListener('click', async () => {
+          const tr = btn.closest('tr');
+          const note = prompt('Where was it / what happened? (note, optional)') || '';
+          const r2 = await fetch(`/api/inventory/discrepancies/${encodeURIComponent(tr.dataset.id)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'found', note }) });
+          if (r2.ok) { wmsMsg('discMsg', 'success', '✓ Resolved as found.'); loadDiscrepancies(); }
+          else { const e = await r2.json().catch(() => ({})); wmsMsg('discMsg', 'error', e.error || 'Failed'); }
+        }));
+        tb.querySelectorAll('.disc-wo').forEach(btn => btn.addEventListener('click', async () => {
+          const tr = btn.closest('tr');
+          const maxQ = Number(tr.dataset.qty);
+          const v = prompt(`Write off how many units? (missing: ${maxQ})\nThis deducts the sellable total and updates ZORT.`, String(maxQ));
+          if (v === null) return;
+          const qty = Number(v);
+          if (!(qty > 0)) { alert('Enter a positive number.'); return; }
+          const note = prompt('Reason / note (optional)') || '';
+          const r2 = await fetch(`/api/inventory/discrepancies/${encodeURIComponent(tr.dataset.id)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'write_off', qty, note }) });
+          if (r2.ok) { wmsMsg('discMsg', 'success', `✓ Wrote off ${Math.min(qty, maxQ)} — sellable total adjusted, ZORT updated.`); loadDiscrepancies(); load(); }
+          else { const e = await r2.json().catch(() => ({})); wmsMsg('discMsg', 'error', e.error || 'Failed'); }
+        }));
+      } catch { /* keep prior */ }
+    }
     // ── Replenishment (daily run) ─────────────────────────────────────────────
     function renderRepStatus(run) {
       const el = $('repStatus'); if (!el) return;
@@ -11491,6 +11533,7 @@
       $('ccCancelBtn')?.addEventListener('click', ccCancel);
       $('supAddBtn')?.addEventListener('click', addSupplier);
       $('repRefreshBtn')?.addEventListener('click', () => loadReplenishment(true));
+      $('discRefreshBtn')?.addEventListener('click', loadDiscrepancies);
     }, 0);
 
     // load bundles + WMS panels whenever a client is loaded
@@ -11504,6 +11547,7 @@
       loadSuppliers();
       loadReorder();
       loadReplenishment();
+      loadDiscrepancies();
     };
 
     return { init, load, renderList, pickFile, loadBundles };
