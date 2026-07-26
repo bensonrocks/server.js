@@ -2348,6 +2348,7 @@
             <input id="locShelf" placeholder="Shelf (02)" style="width:70px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <input id="locBin" placeholder="Bin (03)" style="width:70px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <select id="locEnv" style="padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"><option value="dry">Dry</option><option value="cold">Cold</option><option value="frozen">Frozen</option></select>
+            <select id="locKind" title="Pick face = shelf kept stocked; Bulk = overflow/reserve that feeds pick faces" style="padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px"><option value="pick">Pick face</option><option value="bulk">Bulk</option></select>
             <input id="locLen" type="number" placeholder="L cm" title="Length (cm)" style="width:64px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <input id="locWid" type="number" placeholder="B cm" title="Breadth (cm)" style="width:64px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
             <input id="locHt" type="number" placeholder="H cm" title="Height (cm)" style="width:64px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
@@ -2357,7 +2358,7 @@
           </div>
           <div id="locManageWrap" class="hidden" style="margin-bottom:.6rem;border:1px solid #e2e8f0;border-radius:8px;padding:.5rem;overflow-x:auto">
             <table class="tbl" style="width:100%">
-              <thead><tr><th style="text-align:left">Bin</th><th>Env</th><th style="text-align:right">L</th><th style="text-align:right">B</th><th style="text-align:right">H</th><th style="text-align:right">Max units</th><th></th></tr></thead>
+              <thead><tr><th style="text-align:left">Bin</th><th>Env</th><th>Role</th><th style="text-align:right">L</th><th style="text-align:right">B</th><th style="text-align:right">H</th><th style="text-align:right">Max units</th><th></th></tr></thead>
               <tbody id="locManageTbody"></tbody>
             </table>
           </div>
@@ -2398,6 +2399,27 @@
             <button class="btn-primary btn-sm" id="trBtn">Transfer</button>
           </div>
           <div id="trMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+        </div>
+
+        <!-- 🔁 Replenishment -->
+        <div class="panel" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div><b>🔁 Replenishment</b>
+              <div class="hint" style="margin:.2rem 0 0">Keeps <b>pick faces</b> stocked. Suggests moving stock from <b>bulk</b> bins to pick faces so each SKU's shelf holds about the chosen days of demand (based on recent shipping velocity).</div>
+            </div>
+            <div style="display:flex;gap:.4rem;align-items:center">
+              <label style="font-size:.82rem">Days of cover</label>
+              <input id="repDays" type="number" value="7" min="1" style="width:60px;padding:.4rem .5rem;border:1px solid #e2e8f0;border-radius:6px">
+              <button class="btn-secondary btn-sm" id="repRefreshBtn">Refresh</button>
+            </div>
+          </div>
+          <div id="repMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+          <div style="overflow-x:auto;margin-top:.6rem">
+            <table class="tbl" style="width:100%">
+              <thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Name</th><th style="text-align:right">Daily</th><th style="text-align:right">Target</th><th style="text-align:right">On shelf</th><th style="text-align:right">Move</th><th style="text-align:left">From → To</th><th></th></tr></thead>
+              <tbody id="repTbody"><tr><td colspan="8" style="text-align:center;padding:1.2rem;color:#94a3b8">Tap Refresh — pick faces at/above target won't appear.</td></tr></tbody>
+            </table>
+          </div>
         </div>
 
         <!-- 🧮 Cycle count -->

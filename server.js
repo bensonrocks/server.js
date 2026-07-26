@@ -10768,13 +10768,13 @@ app.get('/api/inventory/locations', requireAuth, (req, res) => {
 });
 app.post('/api/inventory/locations', requireAuth, express.json(), (req, res) => {
   try {
-    const { zone, aisle, shelf, bin, capacity, environment, length_cm, width_cm, height_cm } = req.body || {};
+    const { zone, aisle, shelf, bin, capacity, environment, length_cm, width_cm, height_cm, kind } = req.body || {};
     if (!zone || !aisle || !shelf || !bin) return res.status(400).json({ error: 'zone, aisle, shelf, bin required' });
     let loc = inventory.createLocation(zone, aisle, shelf, bin, capacity, environment);
-    // Physical dimensions (optional) are set via updateLocation so createLocation's
-    // signature stays stable.
-    if (length_cm || width_cm || height_cm || capacity) {
-      loc = inventory.updateLocation(loc.location_id, { length_cm, width_cm, height_cm, capacity, environment });
+    // Physical dimensions + role (optional) are set via updateLocation so
+    // createLocation's signature stays stable.
+    if (length_cm || width_cm || height_cm || capacity || kind) {
+      loc = inventory.updateLocation(loc.location_id, { length_cm, width_cm, height_cm, capacity, environment, kind });
     }
     logAudit('warehouse_location_created', { location: `${zone}-${aisle}-${shelf}-${bin}`, capacity, environment, by: req.userId || '' });
     res.status(201).json(loc);
@@ -10825,6 +10825,32 @@ app.get('/api/inventory/serials', requireAuth, (req, res) => {
   const sku = String(req.query.sku || '').trim();
   if (!cid || !sku) return res.status(400).json({ error: 'clientId and sku required' });
   res.json({ counts: inventory.serialCounts(cid, sku), serials: inventory.serialsForSku(cid, sku, { status: req.query.status }) });
+});
+// Replenishment — which pick faces are below ~N days of demand and can be topped
+// up from bulk. Read-only suggestions; the client applies each move via transfer.
+app.get('/api/inventory/replenishment', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  res.json({
+    daysCover: Number(req.query.daysCover) || 7,
+    suggestions: inventory.replenishmentSuggestions(clientId, { daysCover: Number(req.query.daysCover) || 7, lookbackDays: Number(req.query.lookbackDays) || 28 }),
+  });
+});
+// Apply one replenishment move (bulk → pick face). A transfer with an audit tag;
+// capacity on the destination pick face still applies (override supported).
+app.post('/api/inventory/replenishment/apply', requireAuth, express.json(), (req, res) => {
+  try {
+    const { sku, from_location, to_location, qty, clientId } = req.body || {};
+    const cid = String(clientId || '').trim();
+    if (!cid || !sku || !from_location || !to_location || !qty) return res.status(400).json({ error: 'clientId, sku, from_location, to_location, qty required' });
+    const cap = inventory.binCapacityCheck(to_location, Number(qty));
+    if (cap.exceeds && req.body?.override !== true) {
+      return res.status(409).json({ needsCapacityOverride: true, location: to_location, ...cap, message: `${to_location} holds ${cap.occupied}/${cap.capacity}; adding ${cap.adding} exceeds by ${cap.over}.` });
+    }
+    const result = inventory.transferStock(cid, sku, from_location, to_location, Number(qty), req.userId || '');
+    logAudit('replenishment', { sku, clientId: cid, from: from_location, to: to_location, qty: Number(qty), by: req.userId || '' });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 // Bin lookup / physical audit — scan a bin, see everything in it (all clients).
 app.get('/api/inventory/bin/:locationId', requireAuth, (req, res) => {

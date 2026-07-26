@@ -11213,7 +11213,7 @@
     async function createLocation() {
       const zone = $('locZone').value.trim(), aisle = $('locAisle').value.trim(), shelf = $('locShelf').value.trim(), bin = $('locBin').value.trim();
       if (!zone || !aisle || !shelf || !bin) { wmsMsg('locMsg', 'error', 'Zone, aisle, shelf and bin are all required.'); return; }
-      const body = { zone, aisle, shelf, bin, environment: $('locEnv').value,
+      const body = { zone, aisle, shelf, bin, environment: $('locEnv').value, kind: $('locKind').value,
         length_cm: $('locLen').value || 0, width_cm: $('locWid').value || 0, height_cm: $('locHt').value || 0, capacity: $('locCap').value || 0 };
       try {
         const r = await fetch('/api/inventory/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -11231,12 +11231,13 @@
       tb.innerHTML = locations.map(l => `<tr data-loc="${esc(l.location_id)}">
         <td style="font-family:monospace">${esc(l.location_id)}</td>
         <td><select class="lm-env" style="padding:.25rem;border:1px solid #e2e8f0;border-radius:5px">${['dry', 'cold', 'frozen'].map(e => `<option value="${e}" ${l.environment === e ? 'selected' : ''}>${e}</option>`).join('')}</select></td>
+        <td><select class="lm-kind" style="padding:.25rem;border:1px solid #e2e8f0;border-radius:5px">${[['pick', 'Pick face'], ['bulk', 'Bulk']].map(([v, t]) => `<option value="${v}" ${(l.kind || 'pick') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
         <td class="lm-len">${num(l.length_cm)}</td><td class="lm-wid">${num(l.width_cm)}</td><td class="lm-ht">${num(l.height_cm)}</td><td class="lm-cap">${num(l.capacity)}</td>
         <td><button class="btn-secondary btn-sm lm-save">Save</button></td></tr>`).join('');
       tb.querySelectorAll('.lm-save').forEach(btn => btn.addEventListener('click', async () => {
         const tr = btn.closest('tr'); const id = tr.dataset.loc;
         const body = {
-          environment: tr.querySelector('.lm-env').value,
+          environment: tr.querySelector('.lm-env').value, kind: tr.querySelector('.lm-kind').value,
           length_cm: tr.querySelector('.lm-len input').value, width_cm: tr.querySelector('.lm-wid input').value,
           height_cm: tr.querySelector('.lm-ht input').value, capacity: tr.querySelector('.lm-cap input').value,
         };
@@ -11378,6 +11379,39 @@
           <td>${esc(x.supplier || '—')}</td></tr>`).join('');
       } catch { /* keep prior */ }
     }
+    // ── Replenishment ─────────────────────────────────────────────────────────
+    async function loadReplenishment() {
+      const tb = $('repTbody'); if (!tb || !clientId) return;
+      const days = Number($('repDays').value) || 7;
+      try {
+        const r = await fetch(`/api/inventory/replenishment?clientId=${encodeURIComponent(clientId)}&daysCover=${days}`);
+        const d = r.ok ? await r.json() : { suggestions: [] };
+        const rows = d.suggestions || [];
+        if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:1.2rem;color:#94a3b8">✓ All pick faces at/above target (or no shipping history yet).</td></tr>'; return; }
+        tb.innerHTML = rows.map(x => {
+          const canMove = x.from_bin && x.to_bin;
+          const route = x.from_bin ? `${esc(x.from_bin)} → ${x.to_bin ? esc(x.to_bin) : '<span style="color:#b45309">no pick face — set one</span>'}` : '—';
+          return `<tr data-sku="${esc(x.sku)}" data-from="${esc(x.from_bin || '')}" data-to="${esc(x.to_bin || '')}" data-move="${x.move_qty}">
+            <td style="font-family:monospace;font-weight:600">${esc(x.sku)}</td>
+            <td>${esc(x.name || '')}</td>
+            <td style="text-align:right">${x.daily_rate}</td>
+            <td style="text-align:right">${x.target}</td>
+            <td style="text-align:right;color:${x.pick_qty <= 0 ? '#dc2626' : '#d97706'}">${x.pick_qty}</td>
+            <td style="text-align:right;font-weight:700">${x.move_qty}</td>
+            <td style="font-size:.82rem">${route}</td>
+            <td>${canMove ? '<button class="btn-primary btn-sm rep-go">Replenish</button>' : ''}</td></tr>`;
+        }).join('');
+        tb.querySelectorAll('.rep-go').forEach(btn => btn.addEventListener('click', async () => {
+          const tr = btn.closest('tr');
+          const body = { clientId, sku: tr.dataset.sku, from_location: tr.dataset.from, to_location: tr.dataset.to, qty: Number(tr.dataset.move) };
+          const { r, d, cancelled } = await postWithCapacityOverride('/api/inventory/replenishment/apply', body);
+          if (cancelled) return;
+          if (!r.ok) { wmsMsg('repMsg', 'error', d.error || 'Failed'); return; }
+          wmsMsg('repMsg', 'success', `✓ Moved ${body.qty} × ${body.sku}: ${body.from_location} → ${body.to_location}.`);
+          loadReplenishment(); loadLocationStock();
+        }));
+      } catch { /* keep prior */ }
+    }
     // ── Serial numbers (Inventory panel) ──────────────────────────────────────
     async function serialLookup() {
       const serial = ($('serLookup').value || '').trim();
@@ -11427,6 +11461,7 @@
       $('ccCompleteBtn')?.addEventListener('click', ccComplete);
       $('ccCancelBtn')?.addEventListener('click', ccCancel);
       $('supAddBtn')?.addEventListener('click', addSupplier);
+      $('repRefreshBtn')?.addEventListener('click', loadReplenishment);
     }, 0);
 
     // load bundles + WMS panels whenever a client is loaded
@@ -11439,6 +11474,7 @@
       loadLocationStock();
       loadSuppliers();
       loadReorder();
+      loadReplenishment();
     };
 
     return { init, load, renderList, pickFile, loadBundles };
