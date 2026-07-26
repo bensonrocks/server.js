@@ -10338,7 +10338,22 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
       try {
         const upc = Number((inventory.get(l.sku, clientId) || {}).units_per_carton) || 1;
         l.units_per_carton = upc;
-        const a = inventory.allocatePick(clientId, l.sku, Number(l.qty) || 0, strategy, upc);
+        const lineQty = Number(l.qty) || 0;
+        // CASE-BREAK: if the order's LOOSE-piece need exceeds what's on the pick
+        // face, bring whole carton(s) down from bulk to the shelf FIRST — the
+        // picker collects the carton, takes the X pieces the order needs, and the
+        // remainder stays on the shelf (replenished in the same trip). The eaches
+        // below then allocate from the topped-up shelf.
+        if (upc > 1 && lineQty > 0) {
+          const looseNeed = lineQty >= upc ? (lineQty % upc) : lineQty;
+          if (looseNeed > 0) {
+            try {
+              const br = inventory.caseBreakReplenish(clientId, l.sku, looseNeed, upc);
+              if (br) l.case_break = { from: br.from, to: br.to, cartons: br.cartons, qty: br.qty, take: looseNeed, leave: Math.max(0, br.left_on_shelf) };
+            } catch (_) { /* fall back to normal allocation */ }
+          }
+        }
+        const a = inventory.allocatePick(clientId, l.sku, lineQty, strategy, upc);
         // Aggregate the lot-level picks into one row per bin (preserving plan order:
         // bulk case-picks first, then pick-face eaches).
         const byLoc = []; const idx = {};

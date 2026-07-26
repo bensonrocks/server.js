@@ -7171,6 +7171,11 @@
           };
           const locs = binPicks.map(pl => `${esc(pl.location_id)}&nbsp;${qtyLabel(pl.qty)}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
           lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
+          // Case-break instruction: collect a carton from bulk, take X, leave the rest on the shelf.
+          if (item.case_break) {
+            const cb = item.case_break;
+            lotParts.push(`<span class="lot-badge lot-cbreak" title="Collect the carton(s) from bulk, take what this order needs, leave the rest on the pick-face shelf (replenishes it in the same trip)" style="background:#fef3c7;color:#92400e">&#128230; Break ${cb.cartons}&nbsp;ctn ${esc(cb.from)} &#8594; ${esc(cb.to)}: take ${cb.take}, leave ${cb.leave}</span>`);
+          }
           lotParts.push(`<span class="lot-badge bin-empty-btn" data-sku="${esc(item.sku)}" title="Bin empty? Re-pick this SKU from another bin" style="cursor:pointer;background:#fee2e2;color:#991b1b">&#128683; empty?</span>`);
         }
         const stageQty = stagePicks.reduce((s, p) => s + p.qty, 0);
