@@ -39,6 +39,22 @@ let Tesseract;
 try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
 let sharp;
 try { sharp = require('sharp'); } catch { sharp = null; }
+// Pure-JS PDF rasterizer (pdfjs-dist + @napi-rs/canvas) — fallback for label
+// OCR when the system `pdftoppm` binary isn't on the deploy image. npm-only,
+// so it survives ANY build system (Nixpacks, Docker, buildpacks) unchanged.
+let pdfjsLib = null, napiCanvas = null;
+try {
+  napiCanvas = require('@napi-rs/canvas');
+  // pdfjs's Node polyfills expect the `canvas` package; @napi-rs/canvas
+  // provides the same globals — install them before pdfjs loads.
+  for (const k of ['DOMMatrix', 'Path2D', 'ImageData']) {
+    if (!globalThis[k] && napiCanvas[k]) globalThis[k] = napiCanvas[k];
+  }
+  pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+} catch (e) {
+  console.error('[label-ocr] JS rasterizer unavailable:', e.message);
+  pdfjsLib = null; napiCanvas = null;
+}
 
 // Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
 // Returns the processed PNG buffer, or the original buffer if sharp is unavailable.
@@ -1248,13 +1264,18 @@ function _matchLabelPage(db, tiers, importId, pg, rawText, userId) {
   return false;
 }
 
-// Rasterize a single-page PDF to PNG (via the system `pdftoppm`, part of
-// poppler-utils) then OCR it. For shipping labels with no text layer at all
-// (scanned/rasterized label templates — common for some carrier exports),
-// this is the only way to read the tracking number off the page. Returns ''
-// on any failure (missing pdftoppm, OCR engine unavailable, timeout, etc.) —
-// callers treat that exactly like "no text found", never a hard error.
-function _rasterizePdfPage(pdfBuffer) {
+// Rasterize a single-page PDF to PNG, then OCR it. For shipping labels with
+// no text layer at all (scanned/rasterized label templates — common for some
+// carrier exports), this is the only way to read the tracking number off the
+// page. Two rasterizers, tried in order:
+//   1. system `pdftoppm` (poppler-utils) — fastest, but only present if the
+//      deploy image installed it (nixpacks.toml), which is NOT guaranteed;
+//   2. pure-JS pdfjs-dist + @napi-rs/canvas — plain npm deps, present on any
+//      deploy that ran `npm install`, so OCR keeps working even when the
+//      build system ignored the poppler package.
+// Returns null/'' on failure — callers treat that exactly like "no text
+// found", never a hard error.
+function _popplerRasterizePdfPage(pdfBuffer) {
   return new Promise(resolve => {
     const tmpBase = path.join(os.tmpdir(), `label-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const srcPdf  = tmpBase + '.pdf';
@@ -1269,6 +1290,47 @@ function _rasterizePdfPage(pdfBuffer) {
       } catch { resolve(null); }
     });
   });
+}
+
+// pdfjs's built-in Node canvas factory hardcodes the `canvas` package; this
+// one backs it with @napi-rs/canvas (prebuilt binaries, no system deps).
+class _NapiCanvasFactory {
+  create(width, height) {
+    const canvas = napiCanvas.createCanvas(Math.max(1, Math.ceil(width)), Math.max(1, Math.ceil(height)));
+    return { canvas, context: canvas.getContext('2d') };
+  }
+  reset(cw, w, h) { cw.canvas.width = Math.max(1, Math.ceil(w)); cw.canvas.height = Math.max(1, Math.ceil(h)); }
+  destroy(cw) { cw.canvas = null; cw.context = null; }
+}
+
+async function _jsRasterizePdfPage(pdfBuffer) {
+  if (!pdfjsLib || !napiCanvas) return null;
+  let doc;
+  try {
+    doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(pdfBuffer),
+      disableFontFace: true,
+      verbosity: 0,
+      canvasFactory: new _NapiCanvasFactory(),
+      standardFontDataUrl: path.join(__dirname, 'node_modules', 'pdfjs-dist', 'standard_fonts') + path.sep,
+    }).promise;
+    const page     = await doc.getPage(1);
+    const viewport = page.getViewport({ scale: 250 / 72 }); // match pdftoppm -r 250
+    const canvas   = napiCanvas.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+    const ctx      = canvas.getContext('2d');
+    ctx.fillStyle  = '#fff';                                // labels assume a white page
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return canvas.toBuffer('image/png');
+  } catch {
+    return null;
+  } finally {
+    try { await doc?.destroy(); } catch {}
+  }
+}
+
+async function _rasterizePdfPage(pdfBuffer) {
+  return (await _popplerRasterizePdfPage(pdfBuffer)) || (await _jsRasterizePdfPage(pdfBuffer));
 }
 async function _ocrLabelPage(pdfBuffer) {
   if (!Tesseract) return '';
@@ -2815,6 +2877,7 @@ app.get('/api/master/ocr-status', async (req, res) => {
       resolve({ found: true, version: String(stderr || stdout || '').split('\n')[0] });
     });
   });
+  out.jsRasterizer = { loaded: !!(pdfjsLib && napiCanvas), pdfjsVersion: pdfjsLib ? pdfjsLib.version : null };
 
   // Live round trip: build a one-page PDF with drawn (not embedded-font-file)
   // text and NO text layer for our OCR path to cheat off, rasterize it via
@@ -2830,10 +2893,12 @@ app.get('/api/master/ocr-status', async (req, res) => {
     const testPdfBuf = Buffer.from(await testDoc.save());
 
     const rasterStart = Date.now();
-    const png = await _rasterizePdfPage(testPdfBuf);
+    let png = await _popplerRasterizePdfPage(testPdfBuf);
+    let via = png ? 'pdftoppm' : null;
+    if (!png) { png = await _jsRasterizePdfPage(testPdfBuf); if (png) via = 'js (pdfjs + napi-canvas)'; }
     out.rasterize = png
-      ? { ok: true, pngBytes: png.length, ms: Date.now() - rasterStart }
-      : { ok: false, reason: 'pdftoppm returned no image — see pdftoppm field above for the underlying error' };
+      ? { ok: true, via, pngBytes: png.length, ms: Date.now() - rasterStart }
+      : { ok: false, reason: 'both rasterizers failed — see pdftoppm and jsRasterizer fields above' };
 
     if (png) {
       const ocrStart = Date.now();
@@ -2847,9 +2912,9 @@ app.get('/api/master/ocr-status', async (req, res) => {
   }
 
   out.verdict = (out.rasterize && out.rasterize.ok && out.ocr && out.ocr.ok && out.ocr.matchesExpected)
-    ? 'OCR pipeline fully working on this deployment'
-    : !out.pdftoppm.found
-      ? 'pdftoppm (poppler-utils) is NOT installed on this deployment — nixpacks.toml is not taking effect on the build'
+    ? `OCR pipeline fully working on this deployment (rasterizer: ${out.rasterize.via})`
+    : (!out.pdftoppm.found && !out.jsRasterizer.loaded)
+      ? 'NO rasterizer available: pdftoppm not installed AND the JS fallback failed to load — check server startup logs for [label-ocr]'
       : (!out.tessdata.exists)
         ? 'Tesseract language data file is missing from the deployed image'
         : 'Pipeline reached the round trip but did not produce correct text — see rasterize/ocr fields';
