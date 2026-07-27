@@ -94,6 +94,10 @@ async function runOcr(buffer, extraParams = {}) {
       // runtime network dependency altogether, on Railway or anywhere else.
       worker = await Tesseract.createWorker('eng', 1, {
         langPath: path.join(__dirname, 'lib', 'tessdata'),
+        // cachePath must point at the same dir — otherwise tesseract.js
+        // re-writes a 23MB eng.traineddata copy into the process cwd on
+        // every worker start.
+        cachePath: path.join(__dirname, 'lib', 'tessdata'),
         gzip: false,
         logger: m => { if (m.status === 'error') reject(m); }
       });
