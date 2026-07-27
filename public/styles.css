@@ -539,6 +539,38 @@ tr:hover td { background: var(--surface-2); }
 .chip-waybill { background: var(--success-bg); color: #15803d; border: 1px solid var(--success-border); font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; white-space: nowrap; display: inline-block; }
 .chip-waybill-missing { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; white-space: nowrap; display: inline-block; }
 .dash-order-date { font-size: .73rem; color: var(--muted, #64748b); white-space: nowrap; }
+
+/* ── Orders table layout ── */
+.ot-show-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: .6rem 0 .4rem; }
+.ot-range-inputs { display: inline-flex; align-items: center; gap: .35rem; }
+.ot-range-inputs input[type="date"] { border: 1px solid #d1d5db; border-radius: 8px; padding: .25rem .45rem; font-size: .8rem; }
+.ot-view-tabs { display: flex; gap: .5rem; margin: .5rem 0 .75rem; }
+.ot-view-tab { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 12px; padding: .5rem 1.1rem; font-size: .95rem; font-weight: 700; cursor: pointer; }
+.ot-view-tab.active { background: var(--primary, #2563eb); border-color: var(--primary, #2563eb); color: #fff; }
+.ot-view-tab .ot-tab-count { display: inline-block; margin-left: .4rem; background: rgba(0,0,0,.12); border-radius: 99px; padding: .05rem .55rem; font-size: .8rem; }
+.ot-view-tab.active .ot-tab-count { background: rgba(255,255,255,.25); }
+.ot-wrap { overflow-x: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; }
+.orders-table { width: 100%; border-collapse: collapse; font-size: .87rem; min-width: 860px; }
+.orders-table thead th { text-align: left; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; color: #6b7280; background: #f8fafc; padding: .65rem .75rem; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+.orders-table td { padding: .6rem .75rem; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.ot-row:hover td { background: #f8fafc; }
+.ot-row td:first-child { box-shadow: inset 3px 0 0 transparent; }
+.ot-row.st-pending td:first-child    { box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
+.ot-row.st-processing td:first-child { box-shadow: inset 3px 0 0 #f59e0b; }
+.ot-row.st-done td:first-child       { box-shadow: inset 3px 0 0 #16a34a; }
+.ot-row.pending-delete td { opacity: .55; }
+.ot-no { font-weight: 700; color: var(--primary, #2563eb); font-size: .95rem; white-space: nowrap; }
+.ot-client { color: var(--primary, #2563eb); font-weight: 700; }
+.ot-wb-no { font-family: monospace; font-weight: 600; color: var(--primary, #2563eb); white-space: nowrap; }
+.ot-wb-ok { color: #15803d; font-size: .8rem; }
+.ot-wb-none { color: #b45309; font-size: .8rem; }
+.ot-items-n { color: #6b7280; }
+.ot-prog { color: #94a3b8; font-size: .8rem; margin-left: .2rem; }
+.chip-carrier-outline { background: #f0fdf4; color: #15803d; border: 1px solid #86efac; font-size: .72rem; font-weight: 600; border-radius: 99px; padding: .1em .6em; white-space: nowrap; display: inline-block; }
+.ot-done-meta { font-size: .72rem; color: #6b7280; margin-top: .15rem; white-space: nowrap; }
+.ot-date { white-space: nowrap; color: #374151; }
+.ot-actions { white-space: nowrap; }
+.ot-actions .btn-scan-now { margin: 0; }
 .chip-done    { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .chip-unproc  { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
 .chip-inprog  { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }

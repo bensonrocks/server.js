@@ -29,6 +29,10 @@
   let defaultRecipientEmail = '';
   let activeClientFilter  = 'all';
   let activeCarrierFilter = 'all';
+  let ordersView          = 'active';   // 'active' | 'completed'
+  let activeDateFilter    = 'today';    // 'today' | 'yesterday' | '7d' | 'all' | 'range'
+  let dateRangeFrom       = null;       // 'YYYY-MM-DD' when activeDateFilter === 'range'
+  let dateRangeTo         = null;
   let printWaybillTimer   = null;
   let pendingOrderFile    = null;
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
@@ -1083,19 +1087,59 @@
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
     const isAdminView = (currentUser?.role || 'admin') === 'admin';
 
-    // Build select-all + delete button header
-    const headerHtml = orders.length ? `
+    // ── View split — PACKER RULE ─────────────────────────────────────────────
+    // Active always shows EVERY not-done order regardless of the date chips
+    // (backlog must never be hidden); the chips slice only the Completed view
+    // (by completion date, falling back to upload date).
+    const localDay = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? String(v).slice(0, 10) : d.toLocaleDateString('en-CA'); };
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    const yestStr  = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
+    const inDateWindow = ord => {
+      if (activeDateFilter === 'all') return true;
+      const day = localDay(ord.endTime || ord.uploaded_at || ord.date);
+      if (!day) return true;
+      if (activeDateFilter === 'today')     return day === todayStr;
+      if (activeDateFilter === 'yesterday') return day === yestStr;
+      if (activeDateFilter === '7d')        return day >= new Date(Date.now() - 7 * 86400000).toLocaleDateString('en-CA');
+      if (activeDateFilter === 'range') {
+        if (dateRangeFrom && day < dateRangeFrom) return false;
+        if (dateRangeTo   && day > dateRangeTo)   return false;
+        return true;
+      }
+      return true;
+    };
+    const activeSet    = orders.filter(o => o.scan_status !== 'done');
+    const completedSet = orders.filter(o => o.scan_status === 'done').filter(inDateWindow);
+    const shown        = ordersView === 'completed' ? completedSet : activeSet;
+
+    const showChips = [
+      ['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 Days'], ['all', 'All'], ['range', 'Date Range…'],
+    ].map(([k, lbl]) =>
+      `<button class="filter-chip ot-show-chip ${activeDateFilter === k ? 'active' : ''}" data-show="${k}">${lbl}</button>`
+    ).join('');
+    const rangeInputs = activeDateFilter === 'range' ? `
+      <span class="ot-range-inputs">
+        <input type="date" id="otRangeFrom" value="${esc(dateRangeFrom || '')}" />
+        <span>→</span>
+        <input type="date" id="otRangeTo" value="${esc(dateRangeTo || '')}" />
+        <button id="otRangeApply" class="filter-chip">Apply</button>
+      </span>` : '';
+
+    const toolbarHtml = `
+      <div class="ot-show-row"><span class="filter-label">Show:</span>${showChips}${rangeInputs}</div>
+      <div class="ot-view-tabs">
+        <button class="ot-view-tab ${ordersView === 'active' ? 'active' : ''}" data-view="active">Active <span class="ot-tab-count">${activeSet.length}</span></button>
+        <button class="ot-view-tab ${ordersView === 'completed' ? 'active' : ''}" data-view="completed">&#10003; Completed <span class="ot-tab-count">${completedSet.length}</span></button>
+      </div>
       <div class="order-list-header">
-        <label class="select-all-label">
-          <input type="checkbox" id="selectAllOrders" class="select-all-checkbox" />
-          <span>Select All</span>
-        </label>
         <button id="deletSelectedBtn" class="btn-delete-selected hidden" title="Delete selected orders">
           &#128465; Delete Selected (<span id="selectedCount">0</span>)
         </button>
-      </div>` : '';
+      </div>`;
 
-    document.getElementById('ordersDashList').innerHTML = headerHtml + (orders.length ? orders.map(ord => {
+    const shortDate = v => { const d = new Date(v); return isNaN(d) ? esc(String(v || '').slice(0, 10)) : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
+
+    const rowsHtml = shown.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
       const canScan      = ord.scan_status !== 'done';
       const elapsed      = fmtElapsed(ord.startTime, ord.endTime);
@@ -1105,48 +1149,72 @@
         : null;
       const emailIndicator = isDone && isAdminView && ord.alert_email_sent !== null
         ? ord.alert_email_sent
-          ? `<span class="alert-email-ok" title="Completion alert sent">&#128231; Sent</span>`
-          : `<span class="alert-email-fail" title="${esc(ord.alert_email_error || 'Email failed')}">&#9888; Email failed</span>
+          ? `<span class="alert-email-ok" title="Completion alert sent">&#128231;</span>`
+          : `<span class="alert-email-fail" title="${esc(ord.alert_email_error || 'Email failed')}">&#9888;</span>
              <button class="btn-resend-alert" data-order="${esc(ord.order_number)}" title="Resend completion alert">Resend</button>`
         : '';
       const kfBtn = isDone && isAdminView
         ? ord.keyfields_closed
-          ? `<span class="kf-closed-badge">&#10003; Keyfields closed</span>`
-          : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Acknowledge closed in Keyfields WMS">Close in Keyfields</button>`
+          ? `<span class="kf-closed-badge" title="Closed in Keyfields WMS">&#10003; KF</span>`
+          : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Acknowledge closed in Keyfields WMS">Close KF</button>`
         : '';
-      const pendingDeletePill = ord.pending_delete ? `<span class="pill-pending-delete" title="Pending admin approval for deletion">🗑 Pending Delete</span>` : '';
+      const pendingDeletePill = ord.pending_delete ? `<span class="pill-pending-delete" title="Pending admin approval for deletion">&#128465; Pending Delete</span>` : '';
+      const nItems = (ord.lines || []).length;
+      const wbState = ord.has_waybill_pdf
+        ? `<span class="ot-wb-ok" title="Waybill page matched — click Waybill in Actions to download">&#128196;&#10003;</span>`
+        : `<span class="ot-wb-none" title="No waybill page matched to this order">&#9888;</span>`;
+      const dateVal = isDone ? (ord.endTime || ord.uploaded_at || ord.date) : (ord.date || ord.uploaded_at);
       return `
-        <div class="dash-order-card status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}${ord.pending_delete ? ' pending-delete' : ''}" data-order="${esc(ord.order_number)}">
-          <div class="dash-order-checkbox">
-            <input type="checkbox" class="order-checkbox" data-order="${esc(ord.order_number)}" ${ord.pending_delete ? 'disabled' : ''} />
-          </div>
-          <div class="dash-order-left">
-            <span class="dash-order-no">${esc(ord.order_number)}</span>
-            ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
-            <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
-            ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
-            ${fmtOrderDate(ord) ? `<span class="dash-order-date">&#128197; ${esc(fmtOrderDate(ord))}</span>` : ''}
-            ${ord.has_waybill_pdf
-              ? `<span class="chip chip-waybill" title="A waybill page was matched to this order">&#128196; Waybill &#10003;</span>`
-              : `<span class="chip chip-waybill-missing" title="No waybill page matched to this order">&#9888; No waybill</span>`}
-            ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
-            ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
-            ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
-            ${emailIndicator}
-            ${pendingDeletePill}
-          </div>
-          <div class="dash-order-right">
-            ${ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : ''}
-            <span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
-            <span class="dash-order-prog">${scannedTotal}/${ord.total_qty}</span>
+        <tr class="ot-row st-${ord.scan_status}${ord.pending_delete ? ' pending-delete' : ''}" data-order="${esc(ord.order_number)}">
+          <td class="ot-check"><input type="checkbox" class="order-checkbox" data-order="${esc(ord.order_number)}" ${ord.pending_delete ? 'disabled' : ''} /></td>
+          <td class="ot-orderno"><span class="ot-no">${esc(ord.order_number)}</span>${pendingDeletePill}</td>
+          <td class="ot-client">${esc(ord.client_name || '') || '&mdash;'}</td>
+          <td class="ot-cust">${esc(ord.customer_name || '') || '&mdash;'}</td>
+          <td class="ot-waybill">${ord.waybill_number ? `<span class="ot-wb-no">${esc(ord.waybill_number)}</span>` : '&mdash;'} ${wbState}</td>
+          <td class="ot-items"><span class="ot-items-n">${nItems} item${nItems === 1 ? '' : 's'}</span> <span class="ot-prog">${scannedTotal}/${ord.total_qty}</span>${ord.carrier ? ` <span class="chip chip-carrier-outline">${esc(ord.carrier)}</span>` : ''}</td>
+          <td class="ot-status"><span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span>
+            ${isDone && ord.operator ? `<div class="ot-done-meta">&#128100; ${esc(ord.operator)}${elapsed ? ` &middot; &#8987; ${esc(elapsed)}` : ''}</div>` : ''}
+            ${emailIndicator}</td>
+          <td class="ot-date">${dateVal ? shortDate(dateVal) : '&mdash;'}</td>
+          <td class="ot-actions">
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
-            ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438; Label</button>` : ''}
             ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" data-auth-dl="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" data-auth-dl-name="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
+            ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438;</button>` : ''}
             ${kfBtn}
-          </div>
-        </div>`;
-    }).join('') : '<p class="empty-state" style="padding:1.5rem">No orders match the selected filters.</p>');
+          </td>
+        </tr>`;
+    }).join('');
+
+    const tableHtml = shown.length ? `
+      <div class="ot-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th class="ot-check"><input type="checkbox" id="selectAllOrders" class="select-all-checkbox" title="Select all" /></th>
+              <th>Order No</th><th>Client</th><th>Customer</th><th>Waybill</th>
+              <th>Items</th><th>Status</th><th>Date</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`
+      : `<p class="empty-state" style="padding:1.5rem">${ordersView === 'completed' ? 'No completed orders in the selected date range.' : 'No active orders match the selected filters.'}</p>`;
+
+    document.getElementById('ordersDashList').innerHTML = toolbarHtml + tableHtml;
+
+    // Toolbar wiring — tabs + date chips re-render this list
+    document.querySelectorAll('.ot-view-tab').forEach(btn =>
+      btn.addEventListener('click', () => { ordersView = btn.dataset.view; renderOrdersList(); })
+    );
+    document.querySelectorAll('.ot-show-chip').forEach(btn =>
+      btn.addEventListener('click', () => { activeDateFilter = btn.dataset.show; renderOrdersList(); })
+    );
+    document.getElementById('otRangeApply')?.addEventListener('click', () => {
+      dateRangeFrom = document.getElementById('otRangeFrom')?.value || null;
+      dateRangeTo   = document.getElementById('otRangeTo')?.value   || null;
+      renderOrdersList();
+    });
 
 
 
