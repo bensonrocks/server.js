@@ -2876,3 +2876,17 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .drv-id-chip { font-size: .78rem; font-weight: 700; background: var(--surface-2, #f1f5f9); border: 1px solid var(--border, #e2e8f0); border-radius: 4px; padding: .12rem .4rem; }
 .drv-pin-yes { font-size: .74rem; font-weight: 700; color: #15803d; white-space: nowrap; }
 .drv-pin-no  { font-size: .74rem; font-weight: 700; color: #b45309; white-space: nowrap; cursor: help; }
+
+/* ── Inventory: sub-views + overview dashboard ───────────────────────────── */
+.inv-view.hidden { display: none; }
+.inv-ov-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; }
+.inv-ov-tile { background: var(--surface, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: .85rem 1rem; }
+.inv-ov-tile .ovt-label { font-size: .68rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.inv-ov-tile .ovt-value { font-size: 1.5rem; font-weight: 800; line-height: 1.15; margin-top: .15rem; }
+.inv-ov-tile .ovt-sub   { font-size: .7rem; color: #94a3b8; margin-top: .1rem; }
+/* occupancy meter — colour tracks how full the shed is, so a full warehouse is obvious */
+.ov-meter { height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; margin-top: .35rem; min-width: 70px; }
+.ov-meter > span { display: block; height: 100%; border-radius: 3px; background: #22c55e; }
+.ov-meter.warn > span { background: #f59e0b; }
+.ov-meter.full > span { background: #ef4444; }
+.inv-sub.active { background: rgba(255,255,255,.14); font-weight: 700; }

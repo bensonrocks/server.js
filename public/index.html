@@ -1443,6 +1443,19 @@
       <button class="tab-btn" data-tab="waves"><span class="tab-icon">&#128737;</span>Wave Pick</button>
       <button class="tab-btn" data-tab="inbound"><span class="tab-icon">&#128230;</span>Inbound</button>
       <button class="tab-btn" data-tab="inventory"><span class="tab-icon">&#128451;</span>Inventory</button>
+      <div style="padding-left:2rem;display:none" id="inventorySubMenu">
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="overview">📊 Overview</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="stock">📦 Stock &amp; SKUs</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="locations">📍 Bin Locations</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="transfer">🔀 Stock Transfer</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="replen">🔁 Replenishment</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="count">🧮 Cycle Count</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="discrepancies">⚠ Discrepancies</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="quarantine">🚧 Quarantine</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="bundles">🎁 Bundles</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="serials">🔢 Serial Numbers</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="suppliers">🚚 Suppliers &amp; Reorder</button>
+      </div>
       <button class="tab-btn" data-tab="transport"><span class="tab-icon">&#128666;</span>Transport</button>
       <div style="padding-left:2rem;display:none" id="transportSubMenu">
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="uploadJobsBtn">📦 Upload Jobs</button>
@@ -2297,8 +2310,9 @@
         <h2>📦 Inventory <span style="font-weight:400;color:#64748b;font-size:.85rem">— client-owned stock (3PL)</span></h2>
       </div>
 
-      <!-- Client picker: all stock is client-owned, so pick whose stock first -->
-      <div class="panel" style="margin-bottom:1rem">
+      <!-- Client picker: all stock is client-owned, so pick whose stock first.
+           Hidden on the warehouse Overview view, which spans every client. -->
+      <div class="panel" id="invClientPicker" style="margin-bottom:1rem">
         <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
           <div style="flex:1;min-width:200px">
             <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">CLIENT (whose stock)</label>
@@ -2309,6 +2323,43 @@
         </div>
       </div>
 
+      <!-- ══ VIEW: Overview — warehouse-wide, all clients (default landing) ══ -->
+      <div class="inv-view" data-inv-view="overview">
+        <div id="invOvLoading" class="hint" style="padding:.5rem">Loading warehouse overview…</div>
+        <div id="invOvBody" class="hidden">
+          <div class="inv-ov-tiles" id="invOvTiles"></div>
+          <div class="panel" style="margin-top:1rem">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+              <b>🏢 Occupancy by client</b>
+              <span class="hint" id="invOvClientHint"></span>
+            </div>
+            <div class="dcs-wrap" style="margin-top:.6rem">
+              <table class="dcs-table">
+                <thead><tr><th>Client</th><th>SKUs</th><th>On hand</th><th>Reserved</th><th>Available</th><th>Bins</th><th>Share of stored units</th><th></th></tr></thead>
+                <tbody id="invOvClientBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem;margin-top:1rem">
+            <div class="panel">
+              <b>📦 Stock by commodity</b>
+              <div class="dcs-wrap" style="margin-top:.6rem">
+                <table class="dcs-table"><thead><tr><th>Commodity</th><th>SKUs</th><th>Units</th><th>Clients</th></tr></thead>
+                <tbody id="invOvCommodityBody"></tbody></table>
+              </div>
+            </div>
+            <div class="panel">
+              <b>📍 Capacity by zone</b>
+              <div class="dcs-wrap" style="margin-top:.6rem">
+                <table class="dcs-table"><thead><tr><th>Zone</th><th>Bins</th><th>Used</th><th>Units</th><th>Capacity</th><th>Occupancy</th></tr></thead>
+                <tbody id="invOvZoneBody"></tbody></table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ══ VIEW: Stock & SKUs ══ -->
+      <div class="inv-view hidden" data-inv-view="stock">
       <div id="invBody" class="hidden">
         <div id="invNoClientHint" class="hidden" style="margin-bottom:1rem;padding:.7rem .9rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:.85rem;color:#9a3412">
           👤 Enter a client above and tap <b>Load stock</b> to see and act on their inventory (stock, transfers, cycle counts, bundles). <b>Warehouse bin setup below</b> (create bins, dimensions, capacity) is shared across all clients and ready to use now.
@@ -2351,6 +2402,10 @@
           </table>
         </div>
 
+      </div>
+      </div>
+      <!-- ══ VIEW: bundles ══ -->
+      <div class="inv-view hidden" data-inv-view="bundles">
         <!-- Bundles / BOM -->
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
@@ -2371,6 +2426,9 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: locations ══ -->
+      <div class="inv-view hidden" data-inv-view="locations">
         <!-- 📍 Bin locations & putaway -->
         <div class="panel" style="margin-top:1.25rem">
           <div><b>📍 Bin locations &amp; putaway</b>
@@ -2420,6 +2478,9 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: discrepancies ══ -->
+      <div class="inv-view hidden" data-inv-view="discrepancies">
         <!-- ⚠ Stock discrepancies -->
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
@@ -2437,6 +2498,9 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: quarantine ══ -->
+      <div class="inv-view hidden" data-inv-view="quarantine">
         <!-- 🚧 Quarantine -->
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
@@ -2454,6 +2518,9 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: transfer ══ -->
+      <div class="inv-view hidden" data-inv-view="transfer">
         <!-- 🔀 Stock transfer -->
         <div class="panel" style="margin-top:1.25rem">
           <div><b>🔀 Stock transfer</b>
@@ -2470,6 +2537,9 @@
           <div id="trMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: replen ══ -->
+      <div class="inv-view hidden" data-inv-view="replen">
         <!-- 🔁 Replenishment -->
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
@@ -2492,6 +2562,9 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: count ══ -->
+      <div class="inv-view hidden" data-inv-view="count">
         <!-- 🧮 Cycle count -->
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
@@ -2525,6 +2598,9 @@
           <div id="ccMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: suppliers ══ -->
+      <div class="inv-view hidden" data-inv-view="suppliers">
         <!-- 🚚 Suppliers & reorder -->
         <div class="panel" style="margin-top:1.25rem;margin-bottom:1rem">
           <div><b>🚚 Suppliers &amp; reorder</b>
@@ -2547,6 +2623,9 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: serials ══ -->
+      <div class="inv-view hidden" data-inv-view="serials">
         <!-- 🔢 Serial numbers -->
         <div class="panel" style="margin-top:1.25rem;margin-bottom:1rem">
           <div><b>🔢 Serial numbers</b>

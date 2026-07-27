@@ -11389,6 +11389,16 @@ app.get('/api/inventory/stats', requireAuth, (req, res) => {
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   res.json(inventory.getStats({ clientId }));
 });
+// Warehouse-wide landing view of the Inventory tab — capacity/occupancy,
+// who's storing what, and by commodity. NOT client-scoped on purpose (every
+// other inventory read requires a clientId); this is the 3PL operator's own
+// view of their shed, so it deliberately spans all clients.
+app.get('/api/inventory/overview', requireAuth, (req, res) => {
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  const data = inventory.warehouseOverview();
+  if (!data) return res.status(503).json({ error: 'Inventory store unavailable' });
+  res.json(data);
+});
 app.get('/api/inventory/velocity', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });

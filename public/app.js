@@ -724,6 +724,10 @@
       (name === 'orders' && (currentUser?.role || 'admin') !== 'warehouse') ? 'block' : 'none';
     if (name === 'inbound') { renderInboundTab(); }
     if (name === 'inventory') { renderInventory(); }
+    // Inventory's functions live in a sidebar sub-menu (same pattern as
+    // Transport) instead of stacked on one very long page.
+    document.getElementById('inventorySubMenu').style.display = (name === 'inventory') ? 'block' : 'none';
+    if (name === 'inventory') setInventoryView(_invView || 'overview');
     if (name === 'waves') { waveUI.load(); }
     if (name === 'transport') {
       document.getElementById('transportSubMenu').style.display = 'block';
@@ -11515,6 +11519,102 @@
 
   // ── INVENTORY UI — client-owned stock (3PL). Pick a client, load/upload their
   // stock; uploads ADD to on-hand and (optionally) sync levels up to ZORT. ────
+  // ── Inventory sub-views ────────────────────────────────────────────────────
+  // The Inventory tab used to stack every function (bundles, bins, transfers,
+  // cycle counts, quarantine, serials…) on one page. Each is now its own view
+  // reached from the sidebar sub-menu; the DOM is untouched, so all existing
+  // wiring keeps working — only which view is visible changes. The landing
+  // view is a warehouse-wide overview (all clients), NOT client-scoped.
+  let _invView = 'overview';
+  function setInventoryView(view) {
+    _invView = view || 'overview';
+    document.querySelectorAll('#tab-inventory .inv-view').forEach(el => {
+      el.classList.toggle('hidden', el.dataset.invView !== _invView);
+    });
+    document.querySelectorAll('#inventorySubMenu .inv-sub').forEach(b => {
+      b.classList.toggle('active', b.dataset.invView === _invView);
+    });
+    // The client picker only makes sense for client-scoped views; the
+    // warehouse overview spans every client, so it's hidden there.
+    const picker = document.getElementById('invClientPicker');
+    if (picker) picker.classList.toggle('hidden', _invView === 'overview');
+    if (_invView === 'overview') loadInventoryOverview();
+  }
+  document.getElementById('inventorySubMenu')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.inv-sub');
+    if (btn) setInventoryView(btn.dataset.invView);
+  });
+
+  async function loadInventoryOverview() {
+    const loading = document.getElementById('invOvLoading');
+    const body    = document.getElementById('invOvBody');
+    if (!loading || !body) return;
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const n = v => (Number(v) || 0).toLocaleString();
+    const meter = pct => {
+      const cls = pct >= 90 ? 'ov-meter full' : pct >= 70 ? 'ov-meter warn' : 'ov-meter';
+      return `<div class="${cls}" title="${pct}%"><span style="width:${Math.min(100, pct)}%"></span></div>`;
+    };
+    loading.classList.remove('hidden');
+    body.classList.add('hidden');
+    let d;
+    try {
+      const r = await fetch('/api/inventory/overview');
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not load overview');
+      d = await r.json();
+    } catch (err) {
+      loading.textContent = '⚠ ' + err.message;
+      return;
+    }
+    const L = d.locations || {}, T = d.totals || {};
+    document.getElementById('invOvTiles').innerHTML = [
+      ['Bin locations', n(L.total), `${n(L.active)} active · ${n(L.binsEmpty)} empty`],
+      ['Capacity (units)', n(L.capacity), `${n(L.storedQty)} stored`],
+      ['Occupancy', (L.occupancyPct || 0) + '%', meter(L.occupancyPct || 0)],
+      ['Clients storing', n(T.clients), `${n(L.binsUsed)} bins in use`],
+      ['SKUs held', n(T.skus), `${n(d.commodities ? d.commodities.length : 0)} commodities`],
+      ['Units on hand', n(T.onHand), `${n(T.reserved)} reserved · ${n(T.available)} free`],
+    ].map(([label, value, sub]) => `
+      <div class="inv-ov-tile">
+        <div class="ovt-label">${esc(label)}</div>
+        <div class="ovt-value">${esc(value)}</div>
+        <div class="ovt-sub">${String(sub).startsWith('<div') ? sub : esc(sub)}</div>
+      </div>`).join('');
+
+    const cl = d.clients || [];
+    document.getElementById('invOvClientHint').textContent =
+      cl.length ? `${cl.length} client(s) with stock on hand` : '';
+    document.getElementById('invOvClientBody').innerHTML = cl.length ? cl.map(c => `
+      <tr>
+        <td><b>${esc(c.clientId)}</b></td>
+        <td>${n(c.skus)}</td><td>${n(c.onHand)}</td><td>${n(c.reserved)}</td><td>${n(c.available)}</td>
+        <td>${n(c.bins)}</td>
+        <td style="min-width:110px">${meter(c.sharePct)}<span class="hint">${c.sharePct}%</span></td>
+        <td><button class="btn-secondary btn-sm inv-ov-open" data-client="${esc(c.clientId)}">Open stock →</button></td>
+      </tr>`).join('')
+      : '<tr><td colspan="8" style="padding:1rem;color:#64748b">No client stock recorded yet.</td></tr>';
+
+    document.getElementById('invOvCommodityBody').innerHTML = (d.commodities || []).length
+      ? d.commodities.map(c => `<tr><td>${esc(c.commodity)}</td><td>${n(c.skus)}</td><td>${n(c.units)}</td><td>${n(c.clients)}</td></tr>`).join('')
+      : '<tr><td colspan="4" style="padding:1rem;color:#64748b">No commodities yet.</td></tr>';
+
+    document.getElementById('invOvZoneBody').innerHTML = (d.zones || []).length
+      ? d.zones.map(z => `<tr><td><b>${esc(z.zone)}</b></td><td>${n(z.bins)}</td><td>${n(z.binsUsed)}</td><td>${n(z.units)}</td><td>${n(z.capacity)}</td>
+          <td style="min-width:110px">${meter(z.occupancyPct)}<span class="hint">${z.occupancyPct}%</span></td></tr>`).join('')
+      : '<tr><td colspan="6" style="padding:1rem;color:#64748b">No bin locations created yet — add them under <b>Bin Locations</b>.</td></tr>';
+
+    // "Open stock →" jumps straight into that client's stock view, pre-filled
+    document.querySelectorAll('.inv-ov-open').forEach(b => b.addEventListener('click', () => {
+      const inp = document.getElementById('invClient');
+      if (inp) inp.value = b.dataset.client;
+      setInventoryView('stock');
+      document.getElementById('invLoadBtn')?.click();
+    }));
+
+    loading.classList.add('hidden');
+    body.classList.remove('hidden');
+  }
+
   function renderInventory() { invUI.init(); }
   const invUI = (function () {
     let clientId = '';
