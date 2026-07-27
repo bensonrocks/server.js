@@ -47,6 +47,14 @@ let Tesseract;
 try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
 let sharp;
 try { sharp = require('sharp'); } catch { sharp = null; }
+// Full-page PDF rasterization for label OCR — see renderPdfPageToPng() below
+// for why this is needed (pulling just the largest embedded image is not
+// enough: many carrier labels draw the human-readable order ID/tracking
+// number as vector text laid over SEPARATE barcode/QR/logo image XObjects).
+let pdfjsLib;
+try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); } catch { pdfjsLib = null; }
+let napiCanvas;
+try { napiCanvas = require('@napi-rs/canvas'); } catch { napiCanvas = null; }
 
 // Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
 // Returns the processed PNG buffer, or the original buffer if sharp is unavailable.
@@ -3106,14 +3114,77 @@ function extractLargestPageImage(pdfDoc, pageIndex) {
   return null; // JPX/CCITT etc. — unsupported
 }
 
+// pdfjs-dist's Node canvas factory hardcodes require('canvas') — swap in
+// @napi-rs/canvas (prebuilt binaries, no native build step) via the factory
+// interface it expects (create/reset/destroy).
+class _NapiCanvasFactory {
+  create(width, height) {
+    const canvas = napiCanvas.createCanvas(width, height);
+    return { canvas, context: canvas.getContext('2d') };
+  }
+  reset(canvasAndContext, width, height) {
+    canvasAndContext.canvas.width  = width;
+    canvasAndContext.canvas.height = height;
+  }
+  destroy(canvasAndContext) {
+    canvasAndContext.canvas.width  = 0;
+    canvasAndContext.canvas.height = 0;
+  }
+}
+
+// Renders a full PDF page — text, images, and barcodes composited exactly as
+// a viewer would show it — to a PNG buffer. Many carrier labels (confirmed on
+// a real SPX/Shopee label: order ID and tracking number) draw their
+// human-readable identifiers as vector TEXT laid over SEPARATE barcode/QR/
+// logo image XObjects, so no single embedded image contains the whole label —
+// extractLargestPageImage() alone can land on a purely decorative element
+// (e.g. a brand watermark) and OCR never sees the real identifiers. This is
+// the primary path; extractLargestPageImage() is the fallback when either
+// optional dependency (pdfjs-dist / @napi-rs/canvas) is missing or the render
+// fails, so labels that ARE one single bitmap keep working either way.
+async function renderPdfPageToPng(buffer, pageIndex = 0, scale = 3) {
+  if (!pdfjsLib || !napiCanvas) return null;
+  let doc = null;
+  try {
+    const factory = new _NapiCanvasFactory();
+    // canvasFactory must go to BOTH getDocument() (used internally for
+    // pattern/soft-mask/image compositing while parsing) and page.render()
+    // (used for the actual page canvas) — passing it to only one still
+    // leaves pdfjs-dist falling back to its hardcoded require('canvas') for
+    // the other and crashing on a page that uses either feature.
+    doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableFontFace: true, canvasFactory: factory }).promise;
+    const page      = await doc.getPage(pageIndex + 1); // pdfjs pages are 1-indexed
+    const viewport  = page.getViewport({ scale });
+    const { canvas, context } = factory.create(Math.ceil(viewport.width), Math.ceil(viewport.height));
+    await page.render({ canvasContext: context, viewport, canvasFactory: factory }).promise;
+    return await canvas.encode('png');
+  } catch (e) {
+    console.error('[pdf-render] page', pageIndex, e.message);
+    return null;
+  } finally {
+    if (doc) doc.destroy().catch(() => {});
+  }
+}
+
 // OCR one stored single-page label PDF. Returns text ('' if nothing readable).
 async function ocrLabelPageFile(filePath, worker) {
-  const pageDoc = await PDFDocument.load(fs.readFileSync(filePath));
-  const img = extractLargestPageImage(pageDoc, 0);
-  if (!img) return '';
-  let buf = img.buf;
-  if (img.rotate && sharp) {
-    try { buf = await sharp(buf).rotate(img.rotate).png().toBuffer(); } catch {}
+  const fileBuf = fs.readFileSync(filePath);
+
+  let baseBuf = await renderPdfPageToPng(fileBuf, 0, 3);
+  let rotate  = 0;
+  if (!baseBuf) {
+    // Fallback: pull the single largest embedded raster image — still correct
+    // when the whole label really is one bitmap (the common case).
+    const pageDoc = await PDFDocument.load(fileBuf);
+    const img = extractLargestPageImage(pageDoc, 0);
+    if (!img) return '';
+    baseBuf = img.buf;
+    rotate  = img.rotate;
+  }
+
+  let buf = baseBuf;
+  if (rotate && sharp) {
+    try { buf = await sharp(baseBuf).rotate(rotate).png().toBuffer(); } catch {}
   }
   let text = await runOcr(buf, {}, worker) || '';
   // A label always carries long alphanumeric codes — almost none means the
@@ -3121,7 +3192,7 @@ async function ocrLabelPageFile(filePath, worker) {
   const density = t => t.replace(/[^A-Z0-9]/gi, '').length;
   if (density(text) < 12 && sharp) {
     try {
-      const t2 = await runOcr(await sharp(img.buf).rotate(90).png().toBuffer(), {}, worker) || '';
+      const t2 = await runOcr(await sharp(baseBuf).rotate(90).png().toBuffer(), {}, worker) || '';
       if (density(t2) > density(text)) text = t2;
     } catch {}
   }

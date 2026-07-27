@@ -10,6 +10,7 @@
     "audit:report": "npm audit --omit=dev --json > audit-report.json || true"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.2",
     "better-sqlite3": "^11.10.0",
     "bwip-js": "^4.11.1",
     "csv-parse": "^5.5.3",
@@ -25,6 +26,7 @@
     "nodemailer": "^9.0.1",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^3.11.174",
     "pizzip": "^3.1.7",
     "qrcode-generator": "^2.0.4",
     "sharp": "^0.33.5",
