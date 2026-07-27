@@ -1113,6 +1113,50 @@ function _allOrdersMatchIndex(db) {
   return { byWaybill, byCustRef, byOrder, byIssueNo, byPickTicket };
 }
 
+function _labelMatchTiers(db) {
+  const idx = _allOrdersMatchIndex(db);
+  return [
+    ['waybill',      idx.byWaybill,    4],
+    ['customer_ref', idx.byCustRef,    6],
+    ['order_no',     idx.byOrder,      4],
+    ['issue_no',     idx.byIssueNo,    4],
+    ['pick_ticket',  idx.byPickTicket, 4],
+  ];
+}
+
+// Try every tier against one page's text. Mutates pg + db.orderLabels.
+// Returns true when the page ended up matched.
+function _matchLabelPage(db, tiers, importId, pg, rawText, userId) {
+  const normText = String(rawText || '').replace(/[\s\-_]/g, '');
+  if (!normText) return false;
+  for (const [method, map, minLen] of tiers) {
+    for (const [key, orderNo] of map) {
+      if (key.length >= minLen && normText.includes(key)) {
+        const held = db.orderLabels[orderNo];
+        const isSelf = held && held.importId === importId && held.pageIndex === pg.pageIndex;
+        if (held && !isSelf) {
+          pg.matchStatus = 'duplicate'; pg.matchedOrderNumber = orderNo; pg.matchMethod = method;
+          return false;
+        }
+        pg.matchStatus = 'matched'; pg.matchedOrderNumber = orderNo; pg.matchMethod = method;
+        db.orderLabels[orderNo] = {
+          importId, pageIndex: pg.pageIndex, pageFile: pg.pageFile,
+          attachedAt: new Date().toISOString(), attachedBy: userId || '',
+        };
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Identifier-looking tokens on a label page — shown for unmatched pages so an
+// admin can see what the label carries vs what the orders hold.
+function _labelCandidates(rawText) {
+  const toks = String(rawText || '').toUpperCase().match(/[A-Z0-9][A-Z0-9\-]{7,}/g) || [];
+  return [...new Set(toks.map(t => t.replace(/[^A-Z0-9]/g, '')).filter(t => /\d/.test(t) && t.length >= 8))].slice(0, 8);
+}
+
 app.post('/api/label-imports', upload.single('file'), async (req, res) => {
   if (!_requireAdminRole(req, res)) return;
   if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
@@ -1126,14 +1170,7 @@ app.post('/api/label-imports', upload.single('file'), async (req, res) => {
     const dir      = path.join(LABEL_IMPORT_DIR, importId);
     fs.mkdirSync(dir, { recursive: true });
 
-    const idx   = _allOrdersMatchIndex(db);
-    const tiers = [
-      ['waybill',      idx.byWaybill,    4],
-      ['customer_ref', idx.byCustRef,    6],
-      ['order_no',     idx.byOrder,      4],
-      ['issue_no',     idx.byIssueNo,    4],
-      ['pick_ticket',  idx.byPickTicket, 4],
-    ];
+    const tiers = _labelMatchTiers(db);
 
     // Per-page text in ONE parse of the original upload — re-parsing each
     // re-saved single page trips pdf-parse on some encoders ("unknown
@@ -1154,9 +1191,9 @@ app.post('/api/label-imports', upload.single('file'), async (req, res) => {
 
     const pages = [];
     for (let i = 0; i < numPages; i++) {
-      const single = await PDFDocument.create();
-      const [pg]   = await single.copyPages(pdfDoc, [i]);
-      single.addPage(pg);
+      const single    = await PDFDocument.create();
+      const [copied]  = await single.copyPages(pdfDoc, [i]);
+      single.addPage(copied);
       const buf      = Buffer.from(await single.save());
       const pageFile = `page_${i + 1}.pdf`;
       fs.writeFileSync(path.join(dir, pageFile), buf);
@@ -1168,25 +1205,13 @@ app.post('/api/label-imports', upload.single('file'), async (req, res) => {
         try { rawText = String((await pdfParse(buf)).text || '').toUpperCase(); }
         catch { pageParseFailed = true; }
       }
-      let matchStatus = (!rawText && (wholeParseFailed || pageParseFailed)) ? 'error' : 'unmatched';
-      let matchedOrderNumber = null, matchMethod = null;
-      if (rawText) {
-        const normText = rawText.replace(/[\s\-_]/g, '');
-        outer:
-        for (const [method, map, minLen] of tiers) {
-          for (const [key, orderNo] of map) {
-            if (key.length >= minLen && normText.includes(key)) {
-              if (db.orderLabels[orderNo]) { matchStatus = 'duplicate'; matchedOrderNumber = orderNo; matchMethod = method; }
-              else {
-                matchStatus = 'matched'; matchedOrderNumber = orderNo; matchMethod = method;
-                db.orderLabels[orderNo] = { importId, pageIndex: i, pageFile, attachedAt: new Date().toISOString(), attachedBy: req.userId || '' };
-              }
-              break outer;
-            }
-          }
-        }
-      }
-      pages.push({ pageIndex: i, pageFile, rawText: rawText.slice(0, 2000), matchStatus, matchedOrderNumber, matchMethod });
+      const pg = {
+        pageIndex: i, pageFile, rawText: rawText.slice(0, 2000),
+        matchStatus: (!rawText && (wholeParseFailed || pageParseFailed)) ? 'error' : 'unmatched',
+        matchedOrderNumber: null, matchMethod: null,
+      };
+      if (rawText) _matchLabelPage(db, tiers, importId, pg, rawText, req.userId);
+      pages.push(pg);
     }
 
     const importRecord = {
@@ -1219,8 +1244,54 @@ app.get('/api/label-imports/:id', (req, res) => {
   const db  = readDb();
   const imp = (db.labelImports || []).find(i => i.id === req.params.id);
   if (!imp) return res.status(404).json({ error: 'Import not found' });
-  // rawText is bulky and internal — strip it from the detail payload
-  res.json({ ...imp, pages: (imp.pages || []).map(({ rawText, extracted, ...p }) => p) });
+  // rawText is bulky and internal — replace it with the identifier-looking
+  // tokens found on unmatched/error pages so the reason is visible in the UI.
+  res.json({
+    ...imp,
+    pages: (imp.pages || []).map(({ rawText, extracted, ...p }) => ({
+      ...p,
+      candidates: p.matchStatus === 'matched' ? [] : _labelCandidates(rawText),
+      noText: !String(rawText || '').trim(),
+    })),
+  });
+});
+
+// Re-run matching for pages that never matched — labels uploaded BEFORE their
+// orders (or before an order file was re-uploaded with more identifiers) can
+// only match on a second pass. Already-matched pages are left untouched.
+app.post('/api/label-imports/:id/rematch', async (req, res) => {
+  if (!_requireAdminRole(req, res)) return;
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  if (!db.orderLabels) db.orderLabels = {};
+  const tiers = _labelMatchTiers(db);
+  let newly = 0, recovered = 0, stillBlank = 0;
+  for (const pg of imp.pages || []) {
+    if (pg.matchStatus === 'matched') continue;
+    let rawText = String(pg.rawText || '');
+    // No stored text (older import, or a page that failed to parse) → re-read
+    // the stored page PDF now.
+    if (!rawText.trim() && pdfParse) {
+      const filePath = path.join(LABEL_IMPORT_DIR, imp.id, pg.pageFile);
+      if (fs.existsSync(filePath)) {
+        try {
+          rawText = String((await pdfParse(fs.readFileSync(filePath))).text || '').toUpperCase();
+          if (rawText.trim()) { pg.rawText = rawText.slice(0, 2000); recovered++; }
+        } catch { /* leave as-is */ }
+      }
+    }
+    if (!rawText.trim()) { pg.matchStatus = 'error'; stillBlank++; continue; }
+    if (pg.matchStatus === 'error') pg.matchStatus = 'unmatched';
+    if (_matchLabelPage(db, tiers, imp.id, pg, rawText, req.userId)) newly++;
+  }
+  writeDb(db);
+  res.json({
+    ok: true, newlyMatched: newly, textRecovered: recovered, noTextPages: stillBlank,
+    matched:   (imp.pages || []).filter(p => p.matchStatus === 'matched').length,
+    unmatched: (imp.pages || []).filter(p => p.matchStatus === 'unmatched').length,
+    total:     (imp.pages || []).length,
+  });
 });
 
 app.get('/api/label-imports/:id/pages/:idx/pdf', (req, res) => {

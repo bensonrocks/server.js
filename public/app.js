@@ -2169,6 +2169,7 @@
               ${imp.duplicate ? `<span class="chip li-chip-dup">${imp.duplicate} duplicate</span>` : ''}
               ${imp.error ? `<span class="chip li-chip-err">${imp.error} error</span>` : ''}
               <button class="btn-sm btn-secondary li-toggle" data-import="${esc(imp.id)}">Pages &#9662;</button>
+              ${(imp.unmatched || imp.error) ? `<button class="btn-sm btn-primary-sm li-rematch" data-import="${esc(imp.id)}" title="Re-run matching against all current orders">&#8635; Rematch</button>` : ''}
               <button class="btn-sm btn-danger-sm li-del" data-import="${esc(imp.id)}">&#215; Delete</button>
             </div>
           </div>
@@ -2176,6 +2177,19 @@
         </div>`).join('');
       el.querySelectorAll('.li-toggle').forEach(btn =>
         btn.addEventListener('click', () => toggleImportPages(btn.dataset.import)));
+      el.querySelectorAll('.li-rematch').forEach(btn =>
+        btn.addEventListener('click', async () => {
+          btn.disabled = true; btn.textContent = 'Rematching…';
+          try {
+            const d = await fetch('/api/label-imports/' + btn.dataset.import + '/rematch', { method: 'POST' }).then(r => r.json());
+            const bits = [`${d.newlyMatched} newly matched`];
+            if (d.textRecovered) bits.push(`${d.textRecovered} page(s) re-read`);
+            if (d.noTextPages)   bits.push(`${d.noTextPages} page(s) have no readable text (scanned image — match manually)`);
+            alert(`Rematch complete: ${bits.join(', ')}.\nNow ${d.matched}/${d.total} matched.`);
+          } catch { alert('Rematch failed'); }
+          renderLabelImports();
+          refreshOrders().then(renderOrdersList).catch(() => {});
+        }));
       el.querySelectorAll('.li-del').forEach(btn =>
         btn.addEventListener('click', async () => {
           if (!confirm('Delete this label file and all its page matches?\nOrders and scan progress are NOT affected.')) return;
@@ -2199,11 +2213,18 @@
       const imp = await fetch('/api/label-imports/' + id).then(r => r.json());
       box.innerHTML = ((imp.pages || []).map(p => {
         const [cls, lbl] = LI_PILL[p.matchStatus] || ['li-warn', esc(p.matchStatus || '?')];
+        const why = p.matchStatus === 'matched' ? '' :
+          p.noText
+            ? `<div class="li-why">No readable text on this page (scanned image) — match it manually.</div>`
+            : (p.candidates || []).length
+              ? `<div class="li-why">Label shows: ${p.candidates.map(c => `<code>${esc(c)}</code>`).join(' ')} — none of these matched any order's waybill, order ref or GI number.</div>`
+              : `<div class="li-why">No identifier-like codes found on this page.</div>`;
         return `
         <div class="li-page-row">
           <span class="li-page-no">Page ${p.pageIndex + 1}</span>
           <span class="li-pill ${cls}">${lbl}</span>
           <span class="li-page-order">${p.matchedOrderNumber ? esc(p.matchedOrderNumber) + (p.matchMethod ? ` <em class="li-method">(${esc(p.matchMethod)})</em>` : '') : '&mdash;'}</span>
+          ${why}
           <span class="li-page-actions">
             <a class="btn-sm btn-secondary" data-auth-dl="/api/label-imports/${esc(id)}/pages/${p.pageIndex}/pdf?dl=1" data-auth-dl-name="label_p${p.pageIndex + 1}.pdf">&#8681; PDF</a>
             <button class="btn-sm btn-secondary li-match" data-import="${esc(id)}" data-page="${p.pageIndex}">${p.matchedOrderNumber ? 'Rematch&#8230;' : 'Match&#8230;'}</button>
