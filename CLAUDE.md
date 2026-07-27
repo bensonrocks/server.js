@@ -98,15 +98,22 @@ After qty+UOM, columns follow: `/`, `CARTO`, `Total LHU (= repeated qty)`, `Batc
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
-- **BRANCH POLICY (owner's rule, 2026-07-27): ALL updates happen on this branch
-  only, on THIS branch's own code line.** Other branches in this repo (incl.
-  the IDEALOMS/ecommerce-dashboard line) are unrelated products — never merge
-  from them, never rebase onto them, never "sync" or copy their features into
-  this branch, and never switch the working tree to another branch. A rebase
-  onto the ecommerce-dashboard head was done on 2026-07-27 and REVERTED the
-  same day because it dragged in the IDEALOMS Inventory module — do not repeat
-  it. If the owner wants changes carried between branches, they will do it
-  themselves via an upgrade pack (`/upgrade-pack`).
+- **BRANCH POLICY (owner's rule, 2026-07-27): whatever happens in this branch
+  happens in THIS branch only — and the same isolation applies to every other
+  branch. Nothing crosses between branches unless the owner explicitly says
+  "merge".** Other branches in this repo (incl. the IDEALOMS/ecommerce-
+  dashboard line) are unrelated products — never merge from them, never
+  rebase onto them, never "sync" or copy their features into this branch,
+  and never switch the working tree to another branch. A rebase onto the
+  ecommerce-dashboard head was done on 2026-07-27 and REVERTED the same day
+  because it dragged in the IDEALOMS Inventory module — do not repeat it.
+  For carrying changes out, the owner runs an upgrade pack (`/upgrade-pack`)
+  or says "merge" — those are the ONLY channels.
+- **DEPLOY CAUTION (learned 2026-07-27): the owner's Railway service has, at
+  times, auto-deployed from this branch.** A `git push` here can therefore go
+  STRAIGHT TO THE PRODUCTION WAREHOUSE FLOOR. Before pushing, consider
+  whether the owner has confirmed the deploy trigger is detached from this
+  branch; if unsure, commit locally and ask before pushing.
 - Commit suffix required:
   ```
   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
