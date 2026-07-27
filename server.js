@@ -1957,7 +1957,7 @@ function summarizeOrders(lines) {
       sku:            line.sku,
       description:    line.description || '',
       qty:            line.qty,
-      uom:            'EACH',
+      uom:            line.uom || 'EACH',
       location:       line.location       || '',
       batch_number:   line.batch_number   || '',
       serial_number:  line.serial_number  || '',
