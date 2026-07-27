@@ -377,6 +377,7 @@ function summarizeOrders(lines) {
         waybill_number:   line.waybill_number,
         issue_no:         line.issue_no         || '',
         pick_ticket:      line.pick_ticket       || '',
+        customer_ref:     line.customer_ref      || '',
         platform:         line.platform         || '',
         shop_name:        line.shop_name        || '',
         date:             line.date,
@@ -454,13 +455,18 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
     fs.mkdirSync(dir, { recursive: true });
 
     // Build lookup maps: normalized identifier → orderNumber
-    // Priority 1: waybill number  2: order number  3: issue no  4: pick ticket
+    // Priority 1: waybill number  2: customer/marketplace ref  3: order number
+    // 4: issue no  5: pick ticket
+    // customer_ref matters most for marketplace labels: Shopee/Lazada labels
+    // print the marketplace order number + tracking no, never the GI number.
     const byWaybill    = new Map();
+    const byCustRef    = new Map();
     const byOrder      = new Map();
     const byIssueNo    = new Map();
     const byPickTicket = new Map();
     for (const o of orders) {
       if (o.waybill_number) byWaybill.set(normStr(o.waybill_number),  o.order_number);
+      if (o.customer_ref)   byCustRef.set(normStr(o.customer_ref),    o.order_number);
       if (o.order_number)   byOrder.set(normStr(o.order_number),      o.order_number);
       if (o.issue_no)       byIssueNo.set(normStr(o.issue_no),        o.order_number);
       if (o.pick_ticket)    byPickTicket.set(normStr(o.pick_ticket),   o.order_number);
@@ -474,7 +480,7 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
 
       let assignedOrder = null;
 
-      if (pdfParse && (byWaybill.size || byOrder.size || byIssueNo.size || byPickTicket.size)) {
+      if (pdfParse && (byWaybill.size || byCustRef.size || byOrder.size || byIssueNo.size || byPickTicket.size)) {
         try {
           const parsed   = await pdfParse(buf);
           const rawText  = (parsed.text || '').toUpperCase();
@@ -486,7 +492,17 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
               assignedOrder = orderNo; matched[orderNo] = true; break;
             }
           }
-          // Priority 2: match by order number
+          // Priority 2: match by customer/marketplace order reference — the
+          // number marketplace labels actually print (GI numbers never appear
+          // on carrier labels)
+          if (!assignedOrder) {
+            for (const [key, orderNo] of byCustRef) {
+              if (!matched[orderNo] && key.length >= 6 && normText.includes(key)) {
+                assignedOrder = orderNo; matched[orderNo] = true; break;
+              }
+            }
+          }
+          // Priority 3: match by order number
           if (!assignedOrder) {
             for (const [key, orderNo] of byOrder) {
               if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
@@ -494,7 +510,7 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
               }
             }
           }
-          // Priority 3: match by Issue No (Betime / WMS internal ref)
+          // Priority 4: match by Issue No (Betime / WMS internal ref)
           if (!assignedOrder) {
             for (const [key, orderNo] of byIssueNo) {
               if (!matched[orderNo] && key.length >= 4 && normText.includes(key)) {
