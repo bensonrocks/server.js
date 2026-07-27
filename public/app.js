@@ -1772,10 +1772,28 @@
   // the bottom. The list is PAGINATED (SCAN_PAGE_SIZE per page) so warehouse
   // staff never scroll — after a scan the view snaps to the page holding the
   // next pending item; manual page browsing sticks until the next scan.
+  // An order file can list the SAME SKU on several lines (e.g. 1 pc + 12 pcs)
+  // — each line is a distinct picking unit and closes on its own. Scans are
+  // tallied per SKU, so the SKU total is allocated across its lines in file
+  // order: earlier lines fill first, and any over-scan shows on the last line.
+  // Returns one allocated quantity per line, same order as order.lines.
+  function allocScansToLines(order) {
+    const linesLeft = {};
+    for (const l of order.lines || []) linesLeft[l.sku] = (linesLeft[l.sku] || 0) + 1;
+    const pool = { ...(order.scanned || {}) };
+    return (order.lines || []).map(l => {
+      const have = pool[l.sku] || 0;
+      linesLeft[l.sku]--;
+      const take = linesLeft[l.sku] === 0 ? have : Math.min(have, l.qty || 0);
+      pool[l.sku] = have - take;
+      return take;
+    });
+  }
+
   function renderItemsTable(order) {
-    const scanned = order.scanned || {};
+    const alloc = allocScansToLines(order);
     const decorated = (order.lines || []).map((item, idx) => {
-      const s    = scanned[item.sku] || 0;
+      const s    = alloc[idx];
       const done = s === item.qty && item.qty > 0;
       return { item, s, idx, done };
     });
@@ -1792,7 +1810,7 @@
     scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
     const pageRows = decorated.slice(scanPage * SCAN_PAGE_SIZE, (scanPage + 1) * SCAN_PAGE_SIZE);
 
-    document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s }) => {
+    document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s, idx }) => {
       const rowClass = s === 0 ? '' : s === item.qty ? 'row-ok' : s > item.qty ? 'row-over' : 'row-partial';
       const icon     = s === item.qty && s > 0 ? '&#10003;' : s > item.qty ? '&#10007;' : s > 0 ? '&#8230;' : '';
 
@@ -1805,13 +1823,13 @@
         : '';
 
       return `
-        <tr class="${rowClass}" data-sku="${esc(item.sku)}">
+        <tr class="${rowClass}" data-sku="${esc(item.sku)}" data-line-idx="${idx}">
           <td><code>${esc(item.sku)}</code></td>
           <td>${esc(item.description || '—')}</td>
           <td class="qty-col">${item.qty}</td>
           <td class="qty-col">
             <input type="number" class="qty-input" min="0" value="${s}"
-              data-sku="${esc(item.sku)}" data-ordered="${item.qty}" />
+              data-sku="${esc(item.sku)}" data-line-idx="${idx}" data-ordered="${item.qty}" />
           </td>
           <td class="status-icon">${icon}</td>
         </tr>${lotRow}`;
@@ -1819,7 +1837,16 @@
 
     document.querySelectorAll('.qty-input').forEach(inp => {
       inp.addEventListener('change', async () => {
-        await setItemQty(activeOrder.order_number, inp.dataset.sku, parseInt(inp.value, 10) || 0);
+        // The input edits THIS LINE's count; scans are stored per SKU, so the
+        // new SKU total = the other lines' current shares + the typed value.
+        const lineIdx = parseInt(inp.dataset.lineIdx, 10);
+        const sku     = inp.dataset.sku;
+        const cur     = allocScansToLines(activeOrder);
+        let total = 0;
+        (activeOrder.lines || []).forEach((l, i) => {
+          if (l.sku === sku) total += (i === lineIdx) ? (parseInt(inp.value, 10) || 0) : cur[i];
+        });
+        await setItemQty(activeOrder.order_number, sku, total);
         document.getElementById('itemScanInput').focus();
       });
     });
@@ -1914,25 +1941,26 @@
       ${activeOrder.waybill_number ? `<div>Waybill: ${esc(activeOrder.waybill_number)}</div>` : ''}
       <table>
         <thead><tr><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
-        <tbody>${(activeOrder.lines || []).filter(l => (scanned[l.sku] || 0) > 0).map(l =>
-          `<tr><td>${esc(l.sku)}</td><td>${esc(l.description || '—')}</td><td>${scanned[l.sku]}</td></tr>`
-        ).join('')}</tbody>
+        <tbody>${Object.entries(scanned).filter(([, q]) => q > 0).map(([sku, q]) => {
+          const desc = ((activeOrder.lines || []).find(l => l.sku === sku) || {}).description;
+          return `<tr><td>${esc(sku)}</td><td>${esc(desc || '—')}</td><td>${q}</td></tr>`;
+        }).join('')}</tbody>
       </table>`;
     window.print();
   });
 
   function updateProgress(order) {
-    const scanned   = order.scanned || {};
-    const doneCount = order.lines.filter(l => (scanned[l.sku] || 0) === l.qty).length;
+    const alloc     = allocScansToLines(order);
+    const doneCount = order.lines.filter((l, i) => alloc[i] === l.qty).length;
     const el        = document.getElementById('scanProgress');
     el.textContent  = `${doneCount}/${order.lines.length} items`;
     el.className    = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
 
     // Piece counter — remaining pieces across the whole order, red on over-scan
     const totalOrdered = order.lines.reduce((s, l) => s + (l.qty || 0), 0);
-    const totalScanned = order.lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
+    const totalScanned = alloc.reduce((s, v) => s + v, 0);
     const remaining    = totalOrdered - totalScanned;
-    const hasOver       = order.lines.some(l => (scanned[l.sku] || 0) > l.qty);
+    const hasOver       = order.lines.some((l, i) => alloc[i] > l.qty);
     const piecesEl = document.getElementById('scanPiecesLeft');
     const numEl    = document.getElementById('scanPiecesNum');
     if (piecesEl && numEl) {
@@ -2153,8 +2181,17 @@
   function openTeachBarcodeModal(barcode, resolved) {
     if (!activeOrder) return;
     const modal = ensureTeachBarcodeModal();
+    // One entry per SKU (a barcode teaches a SKU, not a line) with quantities
+    // aggregated across duplicate-SKU lines.
     const scanned = activeOrder.scanned || {};
-    const pending = (activeOrder.lines || []).filter(l => (scanned[l.sku] || 0) < l.qty);
+    const bySku = new Map();
+    for (const l of activeOrder.lines || []) {
+      const e = bySku.get(l.sku) || { sku: l.sku, description: l.description, qty: 0 };
+      e.qty += l.qty || 0;
+      if (!e.description && l.description) e.description = l.description;
+      bySku.set(l.sku, e);
+    }
+    const pending = [...bySku.values()].filter(e => (scanned[e.sku] || 0) < e.qty);
     const feedback = document.getElementById('itemScanFeedback');
     if (!pending.length) {
       showFeedback(feedback, 'error', `Barcode ${barcode} not recognized — and no items are left to count.`);

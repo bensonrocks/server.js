@@ -1873,6 +1873,31 @@ function findScanLine(ord, sku) {
   return item;
 }
 
+// An order file can list the SAME SKU on several lines (e.g. 1 pc + 12 pcs)
+// — each line is a distinct picking unit and must be able to close on its
+// own. Scans are tallied per SKU, so for line-level views the SKU total is
+// allocated across its lines in file order: earlier lines fill first, each
+// line closes when its share is full, and any over-scan lands on the SKU's
+// last line. Returns one allocated quantity per line, same order as ord.lines.
+function allocateScansToLines(ord, scanned) {
+  const linesLeft = {};
+  for (const l of ord.lines || []) linesLeft[l.sku] = (linesLeft[l.sku] || 0) + 1;
+  const pool = { ...(scanned || {}) };
+  return (ord.lines || []).map(l => {
+    const have = pool[l.sku] || 0;
+    linesLeft[l.sku]--;
+    const take = linesLeft[l.sku] === 0 ? have : Math.min(have, l.qty || 0);
+    pool[l.sku] = have - take;
+    return take;
+  });
+}
+
+// Total ordered qty for a SKU across ALL its lines — scan feedback compares
+// the per-SKU scan tally against this, not against whichever line matched.
+function orderedTotalForSku(ord, sku) {
+  return (ord.lines || []).filter(l => l.sku === sku).reduce((s, l) => s + (l.qty || 0), 0);
+}
+
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
   const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
@@ -1902,7 +1927,7 @@ app.post('/api/scan/increment', (req, res) => {
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({
-    sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty,
+    sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: orderedTotalForSku(ord, item.sku),
     cartonNum: activeCarton(state).num, cartonCount: state.cartons.length, cartonScans: { ...activeCarton(state).scans },
   });
 });
@@ -2010,7 +2035,7 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({
-    ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind,
+    ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: orderedTotalForSku(ord, item.sku), barcode: bc, learned: learnedKind,
     cartonNum: activeCarton(state).num, cartonCount: state.cartons.length, cartonScans: { ...activeCarton(state).scans },
   });
 });
@@ -2116,8 +2141,12 @@ app.post('/api/scan/complete', (req, res) => {
   const ord   = batch.orders.find(o => o.order_number === orderNumber);
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
-  const mismatches = ord.lines.map(item => {
-    const s = state.scanned[item.sku] || 0;
+  // Line-by-line check via allocation — duplicate-SKU lines each close on
+  // their own share of the SKU's scan total instead of all comparing
+  // against the same aggregate (which made such orders impossible to complete).
+  const alloc = allocateScansToLines(ord, state.scanned);
+  const mismatches = ord.lines.map((item, i) => {
+    const s = alloc[i];
     return s !== item.qty ? { sku: item.sku, description: item.description, ordered: item.qty, scanned: s, gap: s - item.qty } : null;
   }).filter(Boolean);
 
@@ -3225,11 +3254,14 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
     ['Elapsed',      elapsedStr],
     [],
     ['SKU', 'Description', 'Ordered Qty', 'Scanned Qty', 'Result'],
-    ...ord.lines.map(l => {
-      const s  = (state.scanned || {})[l.sku] || 0;
-      const ok = s === l.qty;
-      return [l.sku, l.description || '', l.qty, s, ok ? 'OK' : s > l.qty ? 'Over-scanned' : 'Short'];
-    }),
+    ...(() => {
+      const alloc = allocateScansToLines(ord, state.scanned || {});
+      return ord.lines.map((l, i) => {
+        const s  = alloc[i];
+        const ok = s === l.qty;
+        return [l.sku, l.description || '', l.qty, s, ok ? 'OK' : s > l.qty ? 'Over-scanned' : 'Short'];
+      });
+    })(),
   ];
 
   const wb = XLSX.utils.book_new();
