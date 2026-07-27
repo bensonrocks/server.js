@@ -1387,8 +1387,45 @@ body.log-open { overflow: hidden; }
 }
 .admin-badge     { background: #eff6ff; color: #1e40af; }
 .warehouse-badge { background: #f0fdf4; color: #166534; }
+.driver-badge    { background: #fffbeb; color: #b45309; }
+.client-badge    { background: #f5f3ff; color: #6d28d9; }
 .about-role-card ul { padding-left: 1.1rem; }
 .about-role-card ul li { font-size: .8rem; color: var(--text-light); margin-bottom: .25rem; }
+
+/* Order flow — numbered pipeline */
+.about-flow { display: grid; gap: .5rem; }
+.about-flow-step {
+  display: flex; gap: .75rem; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .7rem .9rem;
+}
+.about-flow-step .afs-num {
+  flex-shrink: 0; width: 1.55rem; height: 1.55rem; border-radius: 50%;
+  background: var(--primary); color: #fff; font-size: .76rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.about-flow-step strong { font-size: .84rem; display: block; margin-bottom: .12rem; }
+.about-flow-step p { font-size: .78rem; color: var(--text-light); line-height: 1.45; margin: 0; }
+
+/* Operating rules */
+.about-logic { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+.about-logic-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius); padding: .8rem .95rem;
+}
+.about-logic-card strong { font-size: .83rem; display: block; margin-bottom: .3rem; }
+.about-logic-card p { font-size: .78rem; color: var(--text-light); line-height: 1.5; margin: 0; }
+
+/* Tech stack rows */
+.about-stack { display: grid; gap: .4rem; }
+.about-stack-row {
+  display: grid; grid-template-columns: 9.5rem 1fr; gap: .85rem; align-items: baseline;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .62rem .9rem;
+}
+.about-stack-row .ast-key { font-size: .78rem; font-weight: 700; color: var(--text); }
+.about-stack-row .ast-val { font-size: .78rem; color: var(--text-light); line-height: 1.5; }
 
 /* Footer */
 .about-footer {
@@ -1525,6 +1562,8 @@ body.log-open { overflow: hidden; }
   .about-why-grid    { grid-template-columns: 1fr; }
   .about-feature-grid { grid-template-columns: 1fr 1fr; }
   .about-roles       { grid-template-columns: 1fr; }
+  .about-logic       { grid-template-columns: 1fr; }
+  .about-stack-row   { grid-template-columns: 1fr; gap: .2rem; }
   .about-footer      { flex-direction: column; gap: .5rem; text-align: center; }
 
   .log-card { flex-direction: column; align-items: flex-start; padding: .85rem; }
