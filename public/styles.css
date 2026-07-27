@@ -1898,3 +1898,7 @@ body.ls-open { overflow: hidden; }
   .phase-items { height: calc(100vh - var(--bottom-nav-h)); }
 }
 /* On phones/tablets the old top-bar behaviour remains (sidebar styles scoped to ≥901px) */
+
+/* Labels-only Administrator view — opened from the sidebar without the
+   master-key unlock: every admin section except Labels is hidden. */
+.log-overlay.labels-only .admin-nav-btn:not([data-admin-tab="labels"]) { display: none; }

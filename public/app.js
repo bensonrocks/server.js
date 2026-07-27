@@ -2115,9 +2115,29 @@
 
   document.getElementById('logAccessBtn').addEventListener('click', () => requestAdminPanel(null));
 
-  // Sidebar ADMIN shortcuts — same password gate, straight to the section
+  // Labels is open to every admin user WITHOUT the master-key prompt —
+  // the panel opens in labels-only mode (all other admin sections hidden).
+  // The remaining shortcuts stay hidden until the Administrator unlock.
+  function openLabelsPanel() {
+    const ov = document.getElementById('logOverlay');
+    ov.classList.remove('hidden');
+    document.body.classList.add('log-open');
+    document.getElementById('masterActionsSection').classList.remove('hidden');
+    document.getElementById('adminLockedState').classList.add('hidden');
+    ov.classList.toggle('labels-only', !logUnlocked);
+    loadLabelTemplates();
+    loadDocTemplates();
+    switchAdminTab('labels');
+  }
+  function updateSideAdminGates() {
+    document.querySelectorAll('.admin-gated').forEach(b => b.classList.toggle('hidden', !logUnlocked));
+  }
+
   document.querySelectorAll('[data-admin-link]').forEach(btn =>
-    btn.addEventListener('click', () => requestAdminPanel(btn.dataset.adminLink))
+    btn.addEventListener('click', () => {
+      if (btn.dataset.adminLink === 'labels') openLabelsPanel();
+      else requestAdminPanel(btn.dataset.adminLink);
+    })
   );
 
   document.getElementById('logPasswordInput').addEventListener('keydown', e => {
@@ -2128,6 +2148,7 @@
     const val = document.getElementById('logPasswordInput').value;
     if (val === LOG_PASSWORD) {
       logUnlocked = true;
+      updateSideAdminGates();
       document.getElementById('logPasswordOverlay').classList.add('hidden');
       openLogOverlay();
       if (_pendingAdminTab) { switchAdminTab(_pendingAdminTab); _pendingAdminTab = null; }
@@ -2149,6 +2170,7 @@
   async function openLogOverlay() {
     document.getElementById('logOverlay').classList.remove('hidden');
     document.body.classList.add('log-open');
+    if (logUnlocked) document.getElementById('logOverlay').classList.remove('labels-only');
     if (logUnlocked) {
       renderMasterActions();
       await renderLogContent();
