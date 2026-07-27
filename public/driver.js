@@ -107,6 +107,9 @@
   });
 
   function showLogin() {
+    // The install hint is fixed above everything; on a phone it lands right on
+    // top of the Sign In button. Never show it over the login screen.
+    $('installHintBar')?.classList.add('hidden');
     $('loginWrap').classList.remove('hidden');
     $('app').classList.remove('shown');
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
@@ -122,7 +125,13 @@
     $('hdrSub').textContent = [driverInfo?.vehicle, driverInfo?.plate].filter(Boolean).join(' · ') || '';
     loadJobs();
     if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(loadJobs, 30000);
+    refreshTimer = setInterval(() => { loadJobs(); loadNotices(); }, 30000);
+    loadNotices();
+    // Location is required to work a route — ask immediately on entry.
+    ensureLocation();
+    // the install hint is suppressed on the login screen; surface it now that
+    // the job list is up, if it still has something to say
+    if ($('installHintText')?.textContent.trim()) $('installHintBar')?.classList.remove('hidden');
   }
 
   async function doLogout(callServer = true) {
@@ -131,6 +140,7 @@
     }
     driverToken = ''; driverInfo = null;
     localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_DRIVER);
+    stopLocationWatch();   // never keep tracking a driver who has logged out
     showLogin();
   }
   $('logoutBtn').addEventListener('click', () => { if (confirm('Log out?')) doLogout(); });
@@ -140,6 +150,8 @@
     try {
       const data = await api('/api/driver/jobs');
       jobs = data.jobs || [];
+      if (data.driver) driverInfo = { ...driverInfo, ...data.driver };
+      renderStats(data.stats || {});
       renderList();
       $('lastRefreshed').textContent = 'Updated ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
     } catch (err) {
@@ -147,6 +159,22 @@
     }
   }
   $('refreshBtn').addEventListener('click', loadJobs);
+
+  function renderStats(st) {
+    // Header carries who is driving and in what — a plate alone isn't enough
+    // to tell two drivers apart on a shared device.
+    $('hdrName').textContent = driverInfo?.name || driverInfo?.id || 'Driver';
+    $('hdrSub').textContent = [driverInfo?.vehicle, driverInfo?.plate].filter(Boolean).join(' · ')
+      || driverInfo?.id || '';
+    if ('drops' in st)      $('statDrops').textContent = st.drops;
+    if ('distanceKm' in st) $('statDistance').textContent = (st.distanceKm || 0).toFixed(1) + ' km';
+    if ('idleMinutes' in st) {
+      const m = st.idleMinutes || 0;
+      $('statIdle').textContent = m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min';
+      // 10 min+ stationary is the threshold the server logs at — show it red
+      $('statIdleWrap').classList.toggle('idle-alert', !!st.idleAlert);
+    }
+  }
 
   function renderList() {
     const active = jobs.filter(j => j.status !== 'delivered');
@@ -163,7 +191,7 @@
     const cardHtml = j => {
       const isNew = j.status === 'confirmed' && !j.driverAcceptedAt;
       return `
-      <div class="job-card${isNew ? ' job-new' : ''}" style="border-left-color:${isNew ? '#7c3aed' : j.statusColor}" data-id="${esc(j.id)}">
+      <div class="job-card compact${isNew ? ' job-new' : ''}" style="border-left-color:${isNew ? '#7c3aed' : j.statusColor}" data-id="${esc(j.id)}">
         <div class="job-top">
           <div>
             <div class="job-seq">${j.routeNum != null ? 'Stop ' + j.stopSeq + ' · Route ' + j.routeNum : j.id}</div>
@@ -171,18 +199,48 @@
           </div>
           <span class="${isNew ? 'job-pill-new' : 'job-pill'}" style="${isNew ? '' : 'background:' + j.statusColor}">${isNew ? '🆕 New — Tap to Accept' : esc(j.statusLabel)}</span>
         </div>
-        <div class="job-addr">${esc(j.address || 'No address on file')}${j.zip ? ' · ' + esc(j.zip) : ''}</div>
+        <div class="job-addr">${j.address ? esc(j.address) : '<span class="job-noaddr">⚠ No street address — postal only</span>'}${j.zip ? ' · ' + esc(j.zip) : ''}</div>
         <div class="job-meta">
           <span>📦 ${j.packages} carton${j.packages === 1 ? '' : 's'}</span>
           ${j.referenceId ? `<span>PO ${esc(j.referenceId)}</span>` : ''}
         </div>
+        <div class="job-actions">
+          <a class="job-act job-act-nav" href="${navUrl(j)}" target="_blank" rel="noopener" data-noopen>🧭 Navigate</a>
+          ${j.phone ? `<a class="job-act" href="tel:${esc(String(j.phone).replace(/[^\d+]/g, ''))}" data-noopen>📞 Call</a>` : ''}
+        </div>
       </div>`;
     };
-    listEl.innerHTML = [...active, ...done].map(cardHtml).join('');
-    listEl.querySelectorAll('.job-card').forEach(el => el.addEventListener('click', () => openSheet(el.dataset.id)));
+    // Group by route so a 37-stop day reads as a few short runs rather than
+    // one endless identical list.
+    const ordered = [...active, ...done];
+    const groups = [];
+    for (const j of ordered) {
+      const key = j.routeNum != null ? 'Route ' + j.routeNum : 'Unrouted';
+      let g = groups.find(x => x.key === key);
+      if (!g) { g = { key, items: [] }; groups.push(g); }
+      g.items.push(j);
+    }
+    listEl.innerHTML = groups.map(g => {
+      const doneN = g.items.filter(j => j.status === 'delivered').length;
+      return `<div class="route-hd"><span>${esc(g.key)}</span><span>${doneN}/${g.items.length} done</span></div>`
+           + g.items.map(cardHtml).join('');
+    }).join('');
+    listEl.querySelectorAll('.job-card').forEach(el => el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-noopen]')) return;   // Navigate/Call handle themselves
+      openSheet(el.dataset.id);
+    }));
   }
 
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // Deep link into whichever maps app the phone actually uses — Apple Maps on
+  // iOS, Google Maps elsewhere. Both open the installed app, no API key.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function navUrl(j) {
+    const q = encodeURIComponent([j.address, j.zip, 'Singapore'].filter(Boolean).join(', '));
+    return isIOS ? `https://maps.apple.com/?daddr=${q}` : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
+  }
 
   // ── Job detail sheet ─────────────────────────────────────────────────────
   function openSheet(id) {
@@ -197,8 +255,7 @@
     $('sheetRef').textContent = j.referenceId || '—';
     $('sheetPackages').textContent = j.packages;
 
-    const navQuery = encodeURIComponent([j.address, j.zip, 'Singapore'].filter(Boolean).join(', '));
-    $('sheetNavLink').href = `https://www.google.com/maps/search/?api=1&query=${navQuery}`;
+    $('sheetNavLink').href = navUrl(j);
 
     const callLink = $('sheetCallLink');
     if (j.phone) { callLink.href = 'tel:' + j.phone.replace(/[^\d+]/g, ''); callLink.classList.remove('hidden'); }
@@ -333,6 +390,128 @@
     $('deliverBtn').textContent = '✓ Mark Delivered';
   });
 
+  // ── Office notices ───────────────────────────────────────────────────────
+  // Instructions/updates pushed by the office. The app blocks on them one at a
+  // time until acknowledged, so a driver can't scroll past a "don't deliver to
+  // X today" message and later claim they never saw it.
+  let _notices = [];
+  async function loadNotices() {
+    if (!driverToken) return;
+    try { _notices = await api('/api/driver/notices'); } catch { return; }
+    showNextNotice();
+  }
+  function showNextNotice() {
+    const ov = $('noticeOverlay');
+    if (!_notices.length) { ov.classList.add('hidden'); return; }
+    const n = _notices[0];
+    $('noticeMsg').textContent = n.message;
+    $('noticeIcon').textContent = n.priority === 'urgent' ? '\u26A0\uFE0F' : '\uD83D\uDCE2';
+    $('noticeTitle').textContent = n.priority === 'urgent' ? 'Urgent — from the office' : 'Message from the office';
+    $('noticeMeta').textContent = n.createdAt
+      ? new Date(n.createdAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : '';
+    $('noticeCount').textContent = _notices.length > 1 ? `${_notices.length - 1} more message(s) after this` : '';
+    document.querySelector('.notice-box').classList.toggle('urgent', n.priority === 'urgent');
+    ov.classList.remove('hidden');
+  }
+  $('noticeAckBtn')?.addEventListener('click', async () => {
+    const n = _notices[0];
+    if (!n) return;
+    const btn = $('noticeAckBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try { await api(`/api/driver/notices/${encodeURIComponent(n.id)}/ack`, { method: 'POST' }); _notices.shift(); }
+    catch (e) { toast('\u26A0 ' + e.message); }
+    btn.disabled = false; btn.textContent = 'I Understand';
+    showNextNotice();
+  });
+
+  // ── Location tracking ────────────────────────────────────────────────────
+  // The app requires location to be ON and keeps a live watch while it's open,
+  // posting the driver's position to the server so the office can see the
+  // fleet. NOTE: a web app cannot switch the phone's GPS on by itself — no
+  // browser permits that. What it CAN do is refuse to operate without it,
+  // which is what the gate below does: no jobs are shown until permission is
+  // granted, and a persistent banner appears the moment the fix is lost.
+  let _watchId = null;
+  let _lastSentAt = 0;
+  let _lastFix = null;
+  const GPS_MIN_INTERVAL_MS = 30000;   // don't post more than every 30s…
+  const GPS_MIN_MOVE_M = 40;           // …unless the driver actually moved
+
+  function metresBetween(a, b) {
+    const R = 6371000, toRad = d => d * Math.PI / 180;
+    const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+    const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(x));
+  }
+
+  function setGpsBanner(state) {
+    const el = $('gpsBanner');
+    if (!el) return;
+    if (state === 'ok') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = state === 'denied'
+      ? '📍 Location is blocked — deliveries can’t be tracked. Enable it in your phone settings, then tap here.'
+      : '📍 Waiting for GPS signal…';
+    el.className = 'gps-banner' + (state === 'denied' ? ' gps-denied' : '');
+  }
+
+  async function postLocation(pos, force) {
+    const fix = {
+      lat: pos.coords.latitude, lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+      heading: Number.isFinite(pos.coords.heading) ? pos.coords.heading : null,
+      speed: Number.isFinite(pos.coords.speed) ? pos.coords.speed : null,
+    };
+    const now = Date.now();
+    const movedEnough = !_lastFix || metresBetween(_lastFix, fix) >= GPS_MIN_MOVE_M;
+    if (!force && now - _lastSentAt < GPS_MIN_INTERVAL_MS && !movedEnough) return;
+    _lastFix = fix; _lastSentAt = now;
+    try { await api('/api/driver/location', { method: 'POST', body: JSON.stringify(fix) }); }
+    catch { /* a dropped ping is not worth interrupting the driver over */ }
+  }
+
+  function startLocationWatch() {
+    if (_watchId != null || !navigator.geolocation) return;
+    _watchId = navigator.geolocation.watchPosition(
+      pos => { setGpsBanner('ok'); postLocation(pos); },
+      err => { setGpsBanner(err.code === err.PERMISSION_DENIED ? 'denied' : 'searching'); },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 15000 }
+    );
+  }
+  function stopLocationWatch() {
+    if (_watchId != null) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
+  }
+
+  // Gate: ask for location up front. Until it's granted the job list stays
+  // hidden behind an explainer, so "turn location on" is the first thing a
+  // driver deals with — not something discovered at the delivery doorstep.
+  function requestLocationGate() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) { resolve(false); return; }
+      navigator.geolocation.getCurrentPosition(
+        pos => { postLocation(pos, true); startLocationWatch(); resolve(true); },
+        () => resolve(false),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    });
+  }
+
+  async function ensureLocation() {
+    const gate = $('gpsGate');
+    const ok = await requestLocationGate();
+    if (ok) { gate?.classList.add('hidden'); setGpsBanner('ok'); }
+    else    { gate?.classList.remove('hidden'); setGpsBanner('denied'); }
+    return ok;
+  }
+  $('gpsGateBtn')?.addEventListener('click', ensureLocation);
+  $('gpsBanner')?.addEventListener('click', ensureLocation);
+  // Re-check whenever the driver comes back to the app (they may have just
+  // toggled location in settings).
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && driverToken) { startLocationWatch(); ensureLocation(); }
+  });
+
   // ── Offline indicator ────────────────────────────────────────────────────
   function updateOnlineState() { $('offlinePill').classList.toggle('hidden', navigator.onLine); }
   window.addEventListener('online', () => { updateOnlineState(); if (driverToken) loadJobs(); });
@@ -352,6 +531,11 @@
     if (!bar) return;
     const txt = $('installHintText'), actionBtn = $('installHintAction'), closeBtn = $('installHintClose');
     const DISMISS_KEY = 'driver_install_hint_dismissed';
+    // Only ever show over the JOB LIST, never over the login screen — the bar
+    // is fixed above everything and lands on top of the Sign In button on a
+    // phone. beforeinstallprompt can fire long after boot, so every show path
+    // goes through this guard rather than just the one at start-up.
+    const showBar = () => { if (!$('loginWrap').classList.contains('hidden')) return; bar.classList.remove('hidden'); };
 
     const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
       || window.navigator.standalone === true;
@@ -370,14 +554,14 @@
       txt.innerHTML = inSafari
         ? '📲 Install this app: tap <b>Share</b>, then <b>&ldquo;Add to Home Screen&rdquo;</b>.'
         : '📲 To install: open this page in <b>Safari</b>, tap <b>Share</b>, then <b>&ldquo;Add to Home Screen&rdquo;</b>.';
-      bar.classList.remove('hidden');
+      showBar();
       return;
     }
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault();
       txt.innerHTML = '📲 Install <b>IDEALONE Driver</b> on this phone.';
       actionBtn.classList.remove('hidden');
-      bar.classList.remove('hidden');
+      showBar();
       actionBtn.addEventListener('click', () => {
         bar.classList.add('hidden');
         e.prompt();

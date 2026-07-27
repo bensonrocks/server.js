@@ -7485,6 +7485,8 @@ app.post('/api/transport/:id/update', (req, res) => {
   if (updates.notes !== undefined) request.notes = updates.notes;
   if (updates.podRemarks !== undefined) request.podRemarks = String(updates.podRemarks || '');
   if (updates.packages !== undefined) request.packages = Number(updates.packages) || 1;
+  if (updates.routeNum !== undefined) request.routeNum = updates.routeNum === null ? null : Number(updates.routeNum);
+  if (updates.stopSeq  !== undefined) request.stopSeq  = updates.stopSeq  === null ? null : Number(updates.stopSeq);
   // Assigning a driver outside the planner (bulk assign / edit modal) —
   // moves the job to preplanned unless a status was explicitly given,
   // and never regresses a confirmed/delivered job.
@@ -10954,7 +10956,26 @@ app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
         podLocation: t.podLocation || null,
       };
     });
-  res.json({ jobs });
+  // Today's running stats, so the driver sees drops/done/distance/idle
+  // without the app having to derive them.
+  const drv = (db.drivers || []).find(d => d.id === driverId) || {};
+  const t = (drv.today && drv.today.day === todayStr) ? drv.today : {};
+  const idleMin = t.idleSince ? Math.round((Date.now() - new Date(t.idleSince).getTime()) / 60000) : 0;
+  res.json({
+    jobs,
+    driver: {
+      id: drv.id || driverId, name: drv.name || '', vehicle: drv.vehicle || '', plate: drv.plate || '',
+    },
+    stats: {
+      drops:      jobs.length,
+      done:       jobs.filter(j => j.status === 'delivered').length,
+      onRoad:     jobs.filter(j => j.status === 'in-transit').length,
+      distanceKm: Math.round((t.distanceM || 0) / 100) / 10,
+      idleMinutes: idleMin,
+      idleTotalMinutes: Math.round((t.idleTotalMs || 0) / 60000) + idleMin,
+      idleAlert:  idleMin >= 10,
+    },
+  });
 });
 
 // POST /api/driver/jobs/:id/accept — the driver acknowledges a newly
@@ -10984,6 +11005,17 @@ app.post('/api/driver/jobs/:id/accept', requireDriverAuthMiddleware, express.jso
 // (before this, a driver's location was only ever captured at the moment of
 // delivery). Stored on the driver record — one current fix per driver, not a
 // history trail, so it can't grow without bound.
+// Straight-line metres between two fixes (Haversine) — used for the day's
+// distance estimate and to decide whether the driver has actually moved.
+function _metresBetween(a, b) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+const DRIVER_MOVE_THRESHOLD_M = 60;      // below this the driver counts as stationary
+const DRIVER_IDLE_LOG_MS      = 10 * 60 * 1000;  // a stop longer than this gets logged
+
 app.post('/api/driver/location', requireDriverAuthMiddleware, express.json(), (req, res) => {
   const { lat, lng, accuracy, heading, speed } = req.body || {};
   const la = Number(lat), ln = Number(lng);
@@ -10992,16 +11024,147 @@ app.post('/api/driver/location', requireDriverAuthMiddleware, express.json(), (r
   const db = readDb();
   const drv = (db.drivers || []).find(d => d.id === req.driverId);
   if (!drv) return res.status(404).json({ error: 'Driver not found' });
-  drv.lastLocation = {
+
+  const now = new Date();
+  const nowMs = now.getTime();
+  const fix = {
     lat: la, lng: ln,
     accuracy: Number(accuracy) || null,
     heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
     speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
-    at: new Date().toISOString(),
+    at: now.toISOString(),
   };
+
+  // Per-SGT-day rolling stats; a new day starts clean.
+  const day = sgDateStr(now);
+  if (!drv.today || drv.today.day !== day) {
+    drv.today = { day, distanceM: 0, idleSince: null, idleLogged: false, idleTotalMs: 0 };
+  }
+  const t = drv.today;
+  const prev = drv.lastLocation;
+  if (prev && Number.isFinite(prev.lat) && Number.isFinite(prev.lng)) {
+    const moved = _metresBetween(prev, fix);
+    const gapMs = Math.max(0, nowMs - new Date(prev.at || 0).getTime());
+    if (moved >= DRIVER_MOVE_THRESHOLD_M) {
+      // Real movement: bank the distance and close any idle spell.
+      t.distanceM = Math.round((t.distanceM || 0) + moved);
+      if (t.idleSince) {
+        t.idleTotalMs = (t.idleTotalMs || 0) + Math.max(0, nowMs - new Date(t.idleSince).getTime());
+      }
+      t.idleSince = null; t.idleLogged = false;
+    } else {
+      // Stationary — start (or continue) an idle spell. Logged once, when it
+      // crosses the threshold, so one long stop is one entry not hundreds.
+      if (!t.idleSince) t.idleSince = prev.at || now.toISOString();
+      const idleMs = nowMs - new Date(t.idleSince).getTime();
+      if (idleMs >= DRIVER_IDLE_LOG_MS && !t.idleLogged) {
+        t.idleLogged = true;
+        if (!Array.isArray(drv.idleLog)) drv.idleLog = [];
+        drv.idleLog.unshift({
+          at: t.idleSince, lat: la, lng: ln,
+          minutes: Math.round(idleMs / 60000), day,
+        });
+        if (drv.idleLog.length > 200) drv.idleLog.length = 200;
+        logAudit('driver_idle_logged', {
+          driverId: drv.id, minutes: Math.round(idleMs / 60000),
+          lat: la, lng: ln, since: t.idleSince,
+        });
+      }
+      void gapMs;
+    }
+  }
+  drv.lastLocation = fix;
   writeDb(db);
-  // deliberately NOT audit-logged: a position ping every ~30s per driver would
-  // swamp the audit ledger and push real events out of the retention window.
+  // deliberately NOT audit-logged per ping: a fix every ~30s per driver would
+  // swamp the ledger. Only the idle events above are recorded.
+  res.json({
+    ok: true,
+    distanceKm: Math.round((t.distanceM || 0) / 100) / 10,
+    idleMinutes: t.idleSince ? Math.round((nowMs - new Date(t.idleSince).getTime()) / 60000) : 0,
+  });
+});
+
+// ── Driver notices (admin -> drivers, with acknowledgement) ─────────────────
+// An admin posts an instruction or update to every driver or to named ones;
+// the Driver App blocks on it until the driver acknowledges, so "I never saw
+// that" stops being a defence. Stored in db.driverNotices[].
+function driverNotices(db) { return (db.driverNotices ||= []); }
+
+app.get('/api/master/driver-notices', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const roster = db.drivers || [];
+  res.json(driverNotices(db).map(n => {
+    const targets = n.target === 'all' ? roster.map(d => d.id) : (n.driverIds || []);
+    const acked = Object.keys(n.acks || {});
+    return {
+      ...n,
+      targetCount: targets.length,
+      ackedCount: targets.filter(id => acked.includes(id)).length,
+      pending: targets.filter(id => !acked.includes(id)),
+    };
+  }));
+});
+
+app.post('/api/master/driver-notices', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { message, target, driverIds, priority } = req.body || {};
+  const msg = String(message || '').trim();
+  if (!msg) return res.status(400).json({ error: 'message is required' });
+  if (msg.length > 2000) return res.status(400).json({ error: 'message is too long (max 2000 characters)' });
+  const tgt = target === 'selected' ? 'selected' : 'all';
+  const ids = tgt === 'selected' ? (Array.isArray(driverIds) ? driverIds.filter(Boolean) : []) : [];
+  if (tgt === 'selected' && !ids.length) return res.status(400).json({ error: 'Pick at least one driver' });
+  const db = readDb();
+  const notice = {
+    id: 'DN-' + Date.now().toString(36).toUpperCase(),
+    message: msg,
+    target: tgt,
+    driverIds: ids,
+    priority: priority === 'urgent' ? 'urgent' : 'normal',
+    createdAt: new Date().toISOString(),
+    createdBy: req.userId || 'master',
+    acks: {},
+  };
+  driverNotices(db).unshift(notice);
+  if (db.driverNotices.length > 300) db.driverNotices.length = 300;
+  writeDb(db);
+  logAudit('driver_notice_sent', {
+    noticeId: notice.id, target: tgt, driverCount: tgt === 'all' ? (db.drivers || []).length : ids.length,
+    priority: notice.priority, by: req.userId || '',
+  });
+  res.json({ ok: true, notice });
+});
+
+app.delete('/api/master/driver-notices/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const before = driverNotices(db).length;
+  db.driverNotices = driverNotices(db).filter(n => n.id !== req.params.id);
+  if (db.driverNotices.length === before) return res.status(404).json({ error: 'Notice not found' });
+  writeDb(db);
+  logAudit('driver_notice_deleted', { noticeId: req.params.id, by: req.userId || '' });
+  res.json({ ok: true });
+});
+
+// What this driver still has to acknowledge (newest first).
+app.get('/api/driver/notices', requireDriverAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const mine = driverNotices(db).filter(n =>
+    (n.target === 'all' || (n.driverIds || []).includes(req.driverId)) && !(n.acks || {})[req.driverId]);
+  res.json(mine.map(n => ({ id: n.id, message: n.message, priority: n.priority, createdAt: n.createdAt })));
+});
+
+app.post('/api/driver/notices/:id/ack', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  const db = readDb();
+  const n = driverNotices(db).find(x => x.id === req.params.id);
+  if (!n) return res.status(404).json({ error: 'Notice not found' });
+  if (n.target !== 'all' && !(n.driverIds || []).includes(req.driverId)) {
+    return res.status(403).json({ error: 'This notice is not addressed to you' });
+  }
+  (n.acks ||= {})[req.driverId] = new Date().toISOString();
+  writeDb(db);
+  logAudit('driver_notice_acknowledged', { noticeId: n.id, driverId: req.driverId });
   res.json({ ok: true });
 });
 
@@ -11764,6 +11927,80 @@ app.post('/api/inventory/locations/generate', requireAuth, express.json(), (req,
     });
     res.json(result);
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Bin deletion: request -> Administrator approval ────────────────────────
+// Same two-step shape as order/inbound deletion — removing racking is
+// destructive and affects everyone, so it is never a one-click action.
+// Requests live in db.json (workflow state); the bins themselves are in the
+// inventory store and are only touched on approval.
+function locationDeletionRequests(db) { return (db.locationDeletionRequests ||= []); }
+
+app.post('/api/inventory/locations/:id/deletion-request', requireAuth, express.json(), (req, res) => {
+  const locationId = req.params.id;
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to request deletion.' });
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  const loc = inventory.getLocation(locationId);
+  if (!loc) return res.status(404).json({ error: 'Location not found' });
+  const held = inventory.locationOccupancy(locationId);
+  if (held > 0) return res.status(409).json({ error: `${locationId} still holds ${held} unit(s) — move the stock out first.` });
+  const db = readDb();
+  const list = locationDeletionRequests(db);
+  if (list.some(r => r.locationId === locationId && r.status === 'pending')) {
+    return res.status(409).json({ error: 'A deletion request is already pending for this bin.' });
+  }
+  const reqRec = {
+    id: 'LD-' + Date.now().toString(36).toUpperCase(),
+    locationId, zone: loc.zone, aisle: loc.aisle, shelf: loc.shelf, bin: loc.bin,
+    reason, status: 'pending',
+    requestedBy: req.userId || '', requestedAt: new Date().toISOString(),
+  };
+  list.unshift(reqRec);
+  writeDb(db);
+  logAudit('location_deletion_requested', { locationId, reason, by: req.userId || '' });
+  res.json({ ok: true, request: reqRec });
+});
+
+app.get('/api/master/location-pending-deletions', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const names = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+  res.json(locationDeletionRequests(db)
+    .filter(r => r.status === 'pending')
+    .map(r => ({ ...r, requestedByName: names.get(r.requestedBy) || r.requestedBy || '—' })));
+});
+
+app.post('/api/master/location-deletions/:id/approve', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const r = locationDeletionRequests(db).find(x => x.id === req.params.id && x.status === 'pending');
+  if (!r) return res.status(404).json({ error: 'Pending request not found' });
+  try {
+    inventory.deleteLocation(r.locationId);   // refuses if stock reappeared in the meantime
+  } catch (e) {
+    return res.status(409).json({ error: e.message });
+  }
+  r.status = 'approved';
+  r.decidedBy = req.userId || 'master';
+  r.decidedAt = new Date().toISOString();
+  writeDb(db);
+  logAudit('location_deletion_approved', { locationId: r.locationId, reason: r.reason, requestedBy: r.requestedBy, by: req.userId || 'master' });
+  res.json({ ok: true });
+});
+
+app.post('/api/master/location-deletions/:id/reject', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const r = locationDeletionRequests(db).find(x => x.id === req.params.id && x.status === 'pending');
+  if (!r) return res.status(404).json({ error: 'Pending request not found' });
+  r.status = 'rejected';
+  r.decidedBy = req.userId || 'master';
+  r.decidedAt = new Date().toISOString();
+  r.decisionNote = String(req.body?.note || '').trim();
+  writeDb(db);
+  logAudit('location_deletion_rejected', { locationId: r.locationId, note: r.decisionNote, by: req.userId || 'master' });
+  res.json({ ok: true });
 });
 
 // Rack-elevation map of the whole warehouse — every bin with how full it is.

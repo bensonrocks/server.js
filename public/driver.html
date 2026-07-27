@@ -94,6 +94,58 @@
     .job-meta { display: flex; gap: .7rem; margin-top: .5rem; font-size: 11.5px; color: #64748b; }
 
     /* ── Detail sheet ── */
+    /* Second stats row (distance / idle) */
+    .stats-2 { margin-top: -.35rem; }
+    .stats-2 .stat b { font-size: 17px; }
+    .stat.idle-alert b { color: #b91c1c; }
+    .stat.idle-alert span { color: #b91c1c; font-weight: 700; }
+    /* Route grouping + compact cards — a 37-stop day has to stay scannable */
+    .route-hd { font-size: 12px; font-weight: 800; color: #475569; text-transform: uppercase;
+      letter-spacing: .04em; margin: .9rem .15rem .4rem; display: flex; justify-content: space-between; }
+    .job-card.compact { padding: .6rem .75rem; }
+    .job-card.compact .job-top { margin-bottom: .15rem; }
+    .job-card.compact .job-seq { font-size: 11px; }
+    .job-card.compact .job-client { font-size: 15px; }
+    .job-card.compact .job-addr { font-size: 12.5px; margin: .1rem 0 0; }
+    .job-card.compact .job-meta { font-size: 11.5px; margin-top: .2rem; }
+    .job-card.compact .job-actions { margin-top: .5rem; }
+    .job-card.compact .job-act { min-height: 40px; font-size: 13px; }
+    .job-noaddr { color: #b45309; font-weight: 600; }
+    /* Notice modal */
+    .notice-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.72); z-index: 2000;
+      display: flex; align-items: center; justify-content: center; padding: 1.2rem; }
+    .notice-box { background: #fff; border-radius: 16px; padding: 1.5rem 1.25rem; width: 100%; max-width: 380px; text-align: center;
+      max-height: 86vh; overflow-y: auto; }
+    .notice-icon { font-size: 36px; line-height: 1; }
+    .notice-title { font-size: 17px; font-weight: 800; margin: .5rem 0 .6rem; }
+    .notice-msg { font-size: 15px; line-height: 1.55; text-align: left; white-space: pre-wrap;
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: .8rem .9rem; }
+    .notice-box.urgent .notice-msg { background: #fef2f2; border-color: #fecaca; }
+    .notice-meta { font-size: 11.5px; color: #94a3b8; margin-top: .55rem; }
+    .notice-btn { margin-top: 1.1rem; width: 100%; min-height: 50px; border: 0; border-radius: 12px;
+      background: #0ea5e9; color: #fff; font-size: 16px; font-weight: 800; cursor: pointer; }
+    .notice-btn:active { background: #0284c7; }
+    .notice-count { font-size: 11.5px; color: #94a3b8; margin-top: .5rem; }
+    /* Location gate + banner */
+    .gps-banner { margin: 0 0 .7rem; padding: .7rem .85rem; border-radius: 10px; font-size: 13px; font-weight: 600;
+      background: #fef3c7; color: #92400e; border: 1px solid #fde68a; cursor: pointer; }
+    .gps-banner.gps-denied { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+    .gps-gate { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.6rem 1.2rem; text-align: center; margin-bottom: .8rem; }
+    .gps-gate-icon { font-size: 40px; line-height: 1; }
+    .gps-gate-title { font-size: 18px; font-weight: 800; margin: .5rem 0 .35rem; }
+    .gps-gate-text { font-size: 13.5px; color: #475569; line-height: 1.5; }
+    .gps-gate-btn { margin-top: 1rem; width: 100%; min-height: 50px; border: none; border-radius: 12px;
+      background: #0ea5e9; color: #fff; font-size: 16px; font-weight: 800; cursor: pointer; }
+    .gps-gate-btn:active { background: #0284c7; }
+    .gps-gate-hint { font-size: 11.5px; color: #94a3b8; margin-top: .7rem; line-height: 1.45; }
+    /* Per-card quick actions — 44px+ tall so they're reliable thumb targets */
+    .job-actions { display: flex; gap: .5rem; margin-top: .7rem; }
+    .job-act { flex: 1; display: flex; align-items: center; justify-content: center; gap: .3rem;
+      min-height: 44px; border-radius: 10px; font-size: 14px; font-weight: 700; text-decoration: none;
+      background: #f1f5f9; color: #0f172a; border: 1px solid #e2e8f0; }
+    .job-act:active { background: #e2e8f0; }
+    .job-act-nav { background: #0ea5e9; color: #fff; border-color: #0ea5e9; }
+    .job-act-nav:active { background: #0284c7; }
     .sheet-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: flex; align-items: flex-end; z-index: 500; }
     .sheet {
       background: #fff; width: 100%; max-height: 88vh; border-radius: 16px 16px 0 0; padding: 1.3rem 1.2rem calc(1.3rem + env(safe-area-inset-bottom));
@@ -139,7 +191,11 @@
        fires an install prompt, so it gets step-by-step text; Android/
        desktop Chrome gets a real Install button) ── */
     .install-hint {
-      position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1200;
+      /* sits above everything, so it MUST get out of the way of the login
+         screen — it was covering the Sign In button on phone-sized viewports,
+         making the app unusable until dismissed. Also respects the home-bar
+         inset so it isn't half off-screen on notched phones. */
+      position: fixed; left: 50%; bottom: calc(12px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 1200;
       display: flex; align-items: center; gap: .6rem; max-width: min(94vw, 380px);
       background: #0f172a; color: #f1f5f9; border-radius: 12px; padding: .6rem .8rem;
       font-size: 12px; line-height: 1.35; box-shadow: 0 6px 24px rgba(0,0,0,.35);
@@ -186,7 +242,7 @@
   <!-- ── App shell ── -->
   <div id="app" class="app">
     <div class="hdr">
-      <div>
+      <div style="min-width:0">
         <div class="hdr-name" id="hdrName">—</div>
         <div class="hdr-sub" id="hdrSub">—</div>
       </div>
@@ -195,11 +251,26 @@
     <div class="stats">
       <div class="stat"><b id="statRemaining">—</b><span>To Do</span></div>
       <div class="stat"><b id="statOnRoad">—</b><span>On Road</span></div>
-      <div class="stat"><b id="statDone">—</b><span>Done Today</span></div>
+      <div class="stat"><b id="statDone">—</b><span>Done</span></div>
+      <div class="stat"><b id="statDrops">—</b><span>Drops</span></div>
+    </div>
+    <div class="stats stats-2">
+      <div class="stat"><b id="statDistance">—</b><span>Est. Distance</span></div>
+      <div class="stat" id="statIdleWrap"><b id="statIdle">—</b><span>Idle Now</span></div>
     </div>
     <div class="refresh-row">
       <span id="lastRefreshed">—</span>
       <button class="refresh-btn" id="refreshBtn">&#8635; Refresh</button>
+    </div>
+    <!-- Shown whenever the GPS fix is lost or blocked; tapping re-requests it -->
+    <div id="gpsBanner" class="gps-banner hidden"></div>
+    <!-- Location gate: no jobs until location is granted -->
+    <div id="gpsGate" class="gps-gate hidden">
+      <div class="gps-gate-icon">&#128205;</div>
+      <div class="gps-gate-title">Turn on Location</div>
+      <p class="gps-gate-text">Your deliveries are tracked while you're on the road, so the office can see your progress and prove each drop-off. The app needs location switched on to work.</p>
+      <button class="gps-gate-btn" id="gpsGateBtn">Enable Location</button>
+      <p class="gps-gate-hint">If you already said No, open your phone&#39;s Settings &rarr; this app &rarr; Location, allow it, then come back and tap the button.</p>
     </div>
     <div class="list" id="jobsList"></div>
   </div>
@@ -244,6 +315,18 @@
       </div>
       <button class="action-btn action-deliver hidden" id="deliverBtn" disabled>&#10003; Mark Delivered</button>
       <div class="sheet-done hidden" id="sheetDoneNote"></div>
+    </div>
+  </div>
+
+  <!-- Admin notice — blocks the app until the driver acknowledges -->
+  <div id="noticeOverlay" class="notice-overlay hidden">
+    <div class="notice-box">
+      <div class="notice-icon" id="noticeIcon">&#128226;</div>
+      <div class="notice-title" id="noticeTitle">Message from the office</div>
+      <div class="notice-msg" id="noticeMsg"></div>
+      <div class="notice-meta" id="noticeMeta"></div>
+      <button class="notice-btn" id="noticeAckBtn">I Understand</button>
+      <div class="notice-count" id="noticeCount"></div>
     </div>
   </div>
 
