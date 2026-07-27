@@ -4,9 +4,11 @@ const { parse }  = require('csv-parse/sync');
 const { v4: uuidv4 } = require('uuid');
 const path       = require('path');
 const fs         = require('fs');
+const os         = require('os');
 const crypto     = require('crypto');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
+const { execFile } = require('child_process');
 const { PDFDocument } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
@@ -69,7 +71,14 @@ async function runOcr(buffer, extraParams = {}) {
     }, 55000);
 
     try {
+      // Language model is bundled in the repo (lib/tessdata/eng.traineddata) —
+      // Tesseract's default behaviour is to fetch it from a CDN on first use,
+      // which hangs/fails under network policies that block that CDN (this
+      // was why OCR was disabled entirely before). Bundling removes the
+      // runtime network dependency altogether, on Railway or anywhere else.
       worker = await Tesseract.createWorker('eng', 1, {
+        langPath: path.join(__dirname, 'lib', 'tessdata'),
+        gzip: false,
         logger: m => { if (m.status === 'error') reject(m); }
       });
       await worker.setParameters({
@@ -953,7 +962,20 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
 // ── OCR preview — photo → text → order parse (no save) ──────────────────────
 app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
-  res.json({ rowCount: 0, orderCount: 0, errors: ['OCR is not available in this environment. The required Tesseract language models cannot be downloaded due to network policy restrictions (proxy blocks cdn.jsdelivr.net). Please upload order data as CSV/Excel files instead.'], converted: false });
+  if (!Tesseract) {
+    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
+  }
+  try {
+    const text   = await runOcr(req.file.buffer);
+    const rows   = parseOcrPicklist(text);
+    const orders = summarizeOrders(rows);
+    if (!rows.length) {
+      return res.json({ rowCount: 0, orderCount: 0, errors: ['No order items detected in photo. Ensure the picking list is clearly visible and in focus.'], converted: false, ocrText: text.slice(0, 500) });
+    }
+    res.json({ rowCount: rows.length, orderCount: orders.length, errors: [], converted: true, clientName: '', customerNames: [], ocrRows: rows });
+  } catch (err) {
+    res.json({ rowCount: 0, orderCount: 0, errors: [`OCR error: ${err.message}`], converted: false });
+  }
 });
 
 // ── OCR upload — submit parsed photo rows as a batch ───────────────────────
@@ -1034,7 +1056,19 @@ function parseLabelLines(text) {
 
 app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
-  res.status(501).json({ error: 'OCR is unavailable (network policy blocks model download). Manually enter product data instead.', sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
+  if (!Tesseract) {
+    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
+  }
+  try {
+    const text   = await runOcr(req.file.buffer, {
+      tessedit_pageseg_mode: '6',  // PSM_SINGLE_BLOCK — compact product labels
+      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -_./:()&',
+    });
+    const result = parseLabelLines(text);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message, sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
+  }
 });
 
 const uploadFields = upload.fields([
@@ -1214,6 +1248,40 @@ function _matchLabelPage(db, tiers, importId, pg, rawText, userId) {
   return false;
 }
 
+// Rasterize a single-page PDF to PNG (via the system `pdftoppm`, part of
+// poppler-utils) then OCR it. For shipping labels with no text layer at all
+// (scanned/rasterized label templates — common for some carrier exports),
+// this is the only way to read the tracking number off the page. Returns ''
+// on any failure (missing pdftoppm, OCR engine unavailable, timeout, etc.) —
+// callers treat that exactly like "no text found", never a hard error.
+function _rasterizePdfPage(pdfBuffer) {
+  return new Promise(resolve => {
+    const tmpBase = path.join(os.tmpdir(), `label-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const srcPdf  = tmpBase + '.pdf';
+    try { fs.writeFileSync(srcPdf, pdfBuffer); } catch { return resolve(null); }
+    execFile('pdftoppm', ['-png', '-r', '250', '-singlefile', srcPdf, tmpBase], { timeout: 15000 }, (err) => {
+      try { fs.unlinkSync(srcPdf); } catch {}
+      if (err) return resolve(null);
+      try {
+        const png = fs.readFileSync(tmpBase + '.png');
+        fs.unlinkSync(tmpBase + '.png');
+        resolve(png);
+      } catch { resolve(null); }
+    });
+  });
+}
+async function _ocrLabelPage(pdfBuffer) {
+  if (!Tesseract) return '';
+  try {
+    const png = await _rasterizePdfPage(pdfBuffer);
+    if (!png) return '';
+    const text = await runOcr(png, { tessedit_pageseg_mode: '3' }); // PSM_AUTO — labels mix a big tracking no. with small print
+    return text || '';
+  } catch {
+    return '';
+  }
+}
+
 // Identifier-looking tokens on a label page — shown for unmatched pages so an
 // admin can see what the label carries vs what the orders hold.
 function _labelCandidates(rawText) {
@@ -1286,6 +1354,22 @@ app.post('/api/label-imports', upload.single('file'), async (req, res) => {
     db.labelImports.push(importRecord);
     writeDb(db);
     res.json({ ok: true, importId, pageCount: numPages, matched: pages.filter(p => p.matchStatus === 'matched').length });
+
+    // Image-only pages (no text layer — e.g. certain carrier label templates)
+    // can't match yet at this point. Kick off a background OCR pass so
+    // they're matched by the time anyone opens the Labels tab, without
+    // making the upload request itself wait on slow OCR.
+    if (pages.some(p => p.matchStatus !== 'matched' && !p.rawText.trim())) {
+      setImmediate(async () => {
+        try {
+          const db2  = readDb();
+          const imp2 = (db2.labelImports || []).find(i => i.id === importId);
+          if (!imp2) return;
+          await _rematchImportPages(db2, imp2, req.userId);
+          writeDb(db2);
+        } catch (e) { console.error('[label-ocr-bg]', e.message); }
+      });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1431,35 +1515,51 @@ app.get('/api/label-imports/:id/pages/:idx/suggestions', (req, res) => {
 // Re-run matching for pages that never matched — labels uploaded BEFORE their
 // orders (or before an order file was re-uploaded with more identifiers) can
 // only match on a second pass. Already-matched pages are left untouched.
+// Shared by the manual "↻ Rematch" button AND the automatic background pass
+// kicked off right after upload (see /api/label-imports POST).
+async function _rematchImportPages(db, imp, userId) {
+  if (!db.orderLabels) db.orderLabels = {};
+  const tiers = _labelMatchTiers(db);
+  let newly = 0, recovered = 0, ocrRecovered = 0, stillBlank = 0;
+  for (const pg of imp.pages || []) {
+    if (pg.matchStatus === 'matched') continue;
+    let rawText = String(pg.rawText || '');
+    const filePath = path.join(LABEL_IMPORT_DIR, imp.id, pg.pageFile);
+    // No stored text (older import, or a page that failed to parse) → re-read
+    // the stored page PDF now.
+    if (!rawText.trim() && pdfParse && fs.existsSync(filePath)) {
+      try {
+        rawText = String((await pdfParse(fs.readFileSync(filePath))).text || '').toUpperCase();
+        if (rawText.trim()) { pg.rawText = rawText.slice(0, 2000); recovered++; }
+      } catch { /* leave as-is */ }
+    }
+    // Still nothing — this page has NO text layer at all (a scanned/rasterized
+    // label template). Last resort: rasterize the page to an image and OCR it.
+    if (!rawText.trim() && fs.existsSync(filePath)) {
+      const ocrText = await _ocrLabelPage(fs.readFileSync(filePath));
+      if (ocrText.trim()) {
+        rawText = ocrText.toUpperCase();
+        pg.rawText = rawText.slice(0, 2000);
+        pg.textSource = 'ocr';
+        ocrRecovered++;
+      }
+    }
+    if (!rawText.trim()) { pg.matchStatus = 'error'; stillBlank++; continue; }
+    if (pg.matchStatus === 'error') pg.matchStatus = 'unmatched';
+    if (_matchLabelPage(db, tiers, imp.id, pg, rawText, userId)) newly++;
+  }
+  return { newly, recovered, ocrRecovered, stillBlank };
+}
+
 app.post('/api/label-imports/:id/rematch', async (req, res) => {
   if (!_requireAdminRole(req, res)) return;
   const db  = readDb();
   const imp = (db.labelImports || []).find(i => i.id === req.params.id);
   if (!imp) return res.status(404).json({ error: 'Import not found' });
-  if (!db.orderLabels) db.orderLabels = {};
-  const tiers = _labelMatchTiers(db);
-  let newly = 0, recovered = 0, stillBlank = 0;
-  for (const pg of imp.pages || []) {
-    if (pg.matchStatus === 'matched') continue;
-    let rawText = String(pg.rawText || '');
-    // No stored text (older import, or a page that failed to parse) → re-read
-    // the stored page PDF now.
-    if (!rawText.trim() && pdfParse) {
-      const filePath = path.join(LABEL_IMPORT_DIR, imp.id, pg.pageFile);
-      if (fs.existsSync(filePath)) {
-        try {
-          rawText = String((await pdfParse(fs.readFileSync(filePath))).text || '').toUpperCase();
-          if (rawText.trim()) { pg.rawText = rawText.slice(0, 2000); recovered++; }
-        } catch { /* leave as-is */ }
-      }
-    }
-    if (!rawText.trim()) { pg.matchStatus = 'error'; stillBlank++; continue; }
-    if (pg.matchStatus === 'error') pg.matchStatus = 'unmatched';
-    if (_matchLabelPage(db, tiers, imp.id, pg, rawText, req.userId)) newly++;
-  }
+  const { newly, recovered, ocrRecovered, stillBlank } = await _rematchImportPages(db, imp, req.userId);
   writeDb(db);
   res.json({
-    ok: true, newlyMatched: newly, textRecovered: recovered, noTextPages: stillBlank,
+    ok: true, newlyMatched: newly, textRecovered: recovered, ocrRecovered, noTextPages: stillBlank,
     matched:   (imp.pages || []).filter(p => p.matchStatus === 'matched').length,
     unmatched: (imp.pages || []).filter(p => p.matchStatus === 'unmatched').length,
     total:     (imp.pages || []).length,

@@ -1,0 +1,6 @@
+# Adds poppler-utils (pdftoppm) to the deploy image — required to rasterize
+# shipping-label PDF pages that have no text layer at all (scanned/rasterized
+# carrier label templates), so they can be read via OCR and matched to orders.
+# See server.js: _rasterizePdfPage() / _ocrLabelPage().
+[phases.setup]
+nixPkgs = ["poppler_utils"]

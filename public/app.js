@@ -2462,7 +2462,8 @@
             const d = await fetch('/api/label-imports/' + btn.dataset.import + '/rematch', { method: 'POST' }).then(r => r.json());
             const bits = [`${d.newlyMatched} newly matched`];
             if (d.textRecovered) bits.push(`${d.textRecovered} page(s) re-read`);
-            if (d.noTextPages)   bits.push(`${d.noTextPages} page(s) have no readable text (scanned image — match manually)`);
+            if (d.ocrRecovered)  bits.push(`${d.ocrRecovered} page(s) read via OCR (scanned label, no text layer)`);
+            if (d.noTextPages)   bits.push(`${d.noTextPages} page(s) still unreadable — match manually`);
             alert(`Rematch complete: ${bits.join(', ')}.\nNow ${d.matched}/${d.total} matched.`);
           } catch { alert('Rematch failed'); }
           renderLabelImports();
@@ -2501,7 +2502,7 @@
         <div class="li-page-row">
           <span class="li-page-no">Page ${p.pageIndex + 1}</span>
           <span class="li-pill ${cls}">${lbl}</span>
-          <span class="li-page-order">${p.matchedOrderNumber ? esc(p.matchedOrderNumber) + (p.matchMethod ? ` <em class="li-method">(${esc(p.matchMethod)})</em>` : '') : '&mdash;'}</span>
+          <span class="li-page-order">${p.matchedOrderNumber ? esc(p.matchedOrderNumber) + (p.matchMethod ? ` <em class="li-method">(${esc(p.matchMethod)}${p.textSource === 'ocr' ? ' · OCR' : ''})</em>` : '') : '&mdash;'}</span>
           ${why}
           <span class="li-page-actions">
             <a class="btn-sm btn-secondary" data-auth-dl="/api/label-imports/${esc(id)}/pages/${p.pageIndex}/pdf?dl=1" data-auth-dl-name="label_p${p.pageIndex + 1}.pdf">&#8681; PDF</a>
