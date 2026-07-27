@@ -1965,12 +1965,26 @@
     _scanBuf  = '';
     const inp = document.getElementById('itemScanInput');
     inp.value = '';
+    // A flush landing while a dialog is up means the scan was interrupted
+    // mid-stream — a fragment, not a code. Discard it; the packer rescans.
+    if (document.querySelector('.modal-overlay:not(.hidden)')) return;
     if (val && activeOrder) handleItemScan(val);
   }
 
   function _globalScanKeydown(e) {
-    // Never intercept while any modal dialog is visible
-    if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+    // Never intercept while any modal dialog is visible — and don't let the
+    // keystroke quietly land in the background scan input either. Fragments
+    // left there used to concatenate with the next scan into one bogus
+    // "barcode" (e.g. "8414002" + "8414002078059").
+    if (document.querySelector('.modal-overlay:not(.hidden)')) {
+      _scanBuf = ''; clearTimeout(_scanFlushTimer); _scanFlushTimer = null;
+      const inp = document.getElementById('itemScanInput');
+      if (inp) {
+        inp.value = '';
+        if (document.activeElement === inp) e.preventDefault();
+      }
+      return;
+    }
 
     // Let normal input inside qty fields or modal inputs work uninterrupted
     const tag = document.activeElement?.tagName;
@@ -2038,6 +2052,23 @@
     if (!_scanBusy) _drainScanQueue();
   }
 
+  // A double-fired scan can submit "fragment + full code" as one token
+  // (e.g. "8414002" + "8414002078059" → 20 digits). Only consulted AFTER the
+  // token failed to resolve, so a legitimate code is never rewritten: for an
+  // unresolved all-digit token, if its tail is a standard barcode length
+  // (GTIN-14 / EAN-13 / UPC-A / EAN-8) and the leading fragment is exactly
+  // how that tail starts, the tail is the real code.
+  function _stripDoubleScan(val) {
+    if (!/^\d{9,}$/.test(val)) return val;
+    for (const n of [14, 13, 12, 8]) {
+      if (val.length > n) {
+        const code = val.slice(-n), frag = val.slice(0, val.length - n);
+        if (frag.length <= n && code.startsWith(frag)) return code;
+      }
+    }
+    return val;
+  }
+
   async function _drainScanQueue() {
     if (_scanBusy || !_scanQueue.length) return;
     _scanBusy = true;
@@ -2052,6 +2083,10 @@
         const data = await resp.json();
         if (!resp.ok) {
           if (data.teachable && data.barcode) {
+            // Before asking the packer, check if this unknown token is a
+            // double-scan artifact — if so, retry with the real code.
+            const undoubled = _stripDoubleScan(data.barcode);
+            if (undoubled !== data.barcode) { _scanQueue.unshift(undoubled); continue; }
             openTeachBarcodeModal(data.barcode, data.resolved);
             continue;
           }
