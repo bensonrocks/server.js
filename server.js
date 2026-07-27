@@ -8307,7 +8307,7 @@ app.get('/api/master/dashboard/station-throughput', (req, res) => {
 function buildBackupObject() {
   const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
   return {
-    kind:       'idealscan-backup',
+    kind:       'idealone-backup',
     version:    1,
     created_at: new Date().toISOString(),
     db:         readDb(),
@@ -8323,7 +8323,7 @@ function buildBackupObject() {
 app.get('/api/master/backup', (req, res) => {
   if (!checkMaster(req, res)) return;
   try {
-    const name = `idealscan-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const name = `idealone-backup-${new Date().toISOString().slice(0, 10)}.json`;
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     res.send(JSON.stringify(buildBackupObject()));
@@ -8353,12 +8353,23 @@ function sgHour(d = new Date()) {
 }
 async function runNightlyBackup(reason) {
   const day  = sgDateStr();
-  const file = path.join(BACKUP_DIR, `idealscan-backup-${day}.json.gz`);
+  const file = path.join(BACKUP_DIR, `idealone-backup-${day}.json.gz`);
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const gz = zlib.gzipSync(Buffer.from(JSON.stringify(buildBackupObject())));
   fs.writeFileSync(file, gz);
-  // prune: keep the newest 14
-  const old = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith('idealscan-backup-')).sort().slice(0, -14);
+  // prune: keep the newest 14. Matches both the current prefix and the old
+  // 'idealscan-backup-' one (renamed — that name collided with another
+  // branch) so any leftover pre-rename files on the volume still age out
+  // instead of sitting there unpruned forever. Sort by the embedded
+  // YYYY-MM-DD date, NOT the raw filename — 'idealone' sorts before
+  // 'idealscan' alphabetically regardless of date, so a plain string sort
+  // would rank every idealone-named file as "older" than every idealscan-
+  // named one and could prune brand-new backups while keeping stale ones.
+  const backupDate = f => (f.match(/(\d{4}-\d{2}-\d{2})/) || [''])[0];
+  const old = fs.readdirSync(BACKUP_DIR)
+    .filter(f => f.startsWith('idealone-backup-') || f.startsWith('idealscan-backup-'))
+    .sort((a, b) => backupDate(a).localeCompare(backupDate(b)))
+    .slice(0, -14);
   for (const f of old) { try { fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch {} }
   console.log(`[IdealScan] Nightly backup written (${reason}): ${file} (${(gz.length / 1024).toFixed(0)} KB)`);
 
@@ -8370,7 +8381,7 @@ async function runNightlyBackup(reason) {
         from: getFromEmail(), to,
         subject: `IDEALONE nightly backup — ${day}`,
         text: `Automatic nightly backup attached.\n\nRestore: Administrator → System → Download Backup holds the same format; keep this file safe.\nGenerated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT.`,
-        attachments: [{ filename: `idealscan-backup-${day}.json.gz`, content: gz }],
+        attachments: [{ filename: `idealone-backup-${day}.json.gz`, content: gz }],
       });
       console.log(`[IdealScan] Nightly backup emailed to ${to}`);
     } else {
@@ -8383,7 +8394,7 @@ async function runNightlyBackup(reason) {
 function nightlyBackupDue() {
   const day = sgDateStr();
   if (sgHour() < 2) return false; // wait for the quiet window after 2am SGT
-  try { return !fs.existsSync(path.join(BACKUP_DIR, `idealscan-backup-${day}.json.gz`)); }
+  try { return !fs.existsSync(path.join(BACKUP_DIR, `idealone-backup-${day}.json.gz`)); }
   catch { return true; }
 }
 setInterval(() => {
