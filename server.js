@@ -2353,6 +2353,18 @@ app.get('/api/public/config', (_req, res) => {
   res.json({ default_email: conf.to_email || '' });
 });
 
+// Which build is actually running — Railway injects the commit SHA at build
+// time; shown in the sidebar footer so "what's deployed?" is answerable at a
+// glance from the app itself (and distinguishes IDEALSCAN from lookalikes).
+app.get('/api/public/version', (_req, res) => {
+  res.json({
+    app:    'IDEALSCAN',
+    commit: (process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 7) || 'dev',
+    branch: process.env.RAILWAY_GIT_BRANCH || '',
+    startedAt: _serverStartedAt,
+  });
+});
+
 // ── Master endpoints (password-protected) ───────────────────────────────────
 const MASTER_PASS = process.env.MASTER_KEY || '201432547E';
 
@@ -3274,4 +3286,5 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+const _serverStartedAt = new Date().toISOString();
 app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`));

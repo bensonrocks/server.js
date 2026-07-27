@@ -1008,6 +1008,7 @@ body.log-open { overflow: hidden; }
 .footer-divider   { color: var(--border); }
 .log-access-link  { background: none; border: none; color: var(--text-muted); font-size: .72rem; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; padding: .25rem .4rem; }
 .log-access-link:hover { color: var(--primary); }
+.sidebar-version { font-size: .62rem; color: var(--text-muted); opacity: .7; padding: .15rem .4rem; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
 
 /* ================================================================
    ABOUT TAB

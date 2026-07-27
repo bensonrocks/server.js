@@ -19,6 +19,12 @@
     });
   };
 
+  // ── Build marker — sidebar footer shows exactly which build is running ─────
+  fetch('/api/public/version').then(r => r.json()).then(v => {
+    const el = document.getElementById('sidebarVersion');
+    if (el) el.textContent = `${v.app || 'IDEALSCAN'} · build ${v.commit || 'dev'}`;
+  }).catch(() => {});
+
   // ── State ──────────────────────────────────────────────────────────────────
   let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
   let loadedOrders = [];
