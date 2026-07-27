@@ -26,8 +26,8 @@ try {
   Docxtemplater   = require('docxtemplater');
   PizZip          = require('pizzip');
   DocxImageModule = require('docxtemplater-image-module-free');
-} catch (e) { console.warn('[IdealScan] docxtemplater not available:', e.message); }
-try { bwipjs = require('bwip-js'); } catch (e) { console.warn('[IdealScan] bwip-js not available:', e.message); }
+} catch (e) { console.warn('[IdealOne] docxtemplater not available:', e.message); }
+try { bwipjs = require('bwip-js'); } catch (e) { console.warn('[IdealOne] bwip-js not available:', e.message); }
 
 // Keyfields WMS format — edit lib/keyfields.js to change column mappings or output
 const {
@@ -53,10 +53,10 @@ try { sharp = require('sharp'); } catch { sharp = null; }
 // number as vector text laid over SEPARATE barcode/QR/logo image XObjects).
 let pdfjsLib;
 try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); }
-catch (e) { pdfjsLib = null; console.warn('[IdealScan] pdfjs-dist not available — label OCR will fall back to single-image extraction:', e.message); }
+catch (e) { pdfjsLib = null; console.warn('[IdealOne] pdfjs-dist not available — label OCR will fall back to single-image extraction:', e.message); }
 let napiCanvas;
 try { napiCanvas = require('@napi-rs/canvas'); }
-catch (e) { napiCanvas = null; console.warn('[IdealScan] @napi-rs/canvas not available — label OCR will fall back to single-image extraction:', e.message); }
+catch (e) { napiCanvas = null; console.warn('[IdealOne] @napi-rs/canvas not available — label OCR will fall back to single-image extraction:', e.message); }
 
 // require() succeeding is NOT proof the native addon actually works — a
 // missing shared library or a mismatched platform binary (the real risk with
@@ -73,12 +73,12 @@ try {
     LABEL_OCR_RENDER_AVAILABLE = !!pdfjsLib;
   }
 } catch (e) {
-  console.warn('[IdealScan] @napi-rs/canvas failed its boot self-test — label OCR will fall back to single-image extraction:', e.message);
+  console.warn('[IdealOne] @napi-rs/canvas failed its boot self-test — label OCR will fall back to single-image extraction:', e.message);
 }
 if (napiCanvas && pdfjsLib && !LABEL_OCR_RENDER_AVAILABLE) {
-  console.warn('[IdealScan] Full-page label OCR rendering unavailable after self-test — check the boot log above for the actual error.');
+  console.warn('[IdealOne] Full-page label OCR rendering unavailable after self-test — check the boot log above for the actual error.');
 } else if (LABEL_OCR_RENDER_AVAILABLE) {
-  console.log('[IdealScan] Full-page label OCR rendering: available.');
+  console.log('[IdealOne] Full-page label OCR rendering: available.');
 }
 
 // Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
@@ -767,7 +767,7 @@ app.get('/vendor/jsqr.js', (_req, res) =>
 const _railwayVolumePath = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
 const DATA_DIR    = process.env.DATA_DIR || _railwayVolumePath || path.join(__dirname, 'data');
 if (!process.env.DATA_DIR && _railwayVolumePath) {
-  console.log(`[IdealScan] Using Railway Volume at ${_railwayVolumePath} for persistent storage (auto-detected via RAILWAY_VOLUME_MOUNT_PATH).`);
+  console.log(`[IdealOne] Using Railway Volume at ${_railwayVolumePath} for persistent storage (auto-detected via RAILWAY_VOLUME_MOUNT_PATH).`);
 }
 
 // SAFETY NET — on Railway (and similar platforms), the container filesystem
@@ -986,7 +986,7 @@ function hashPass(password, salt) {
           passwordHash: hashPass(String(seed.password), salt),
         });
         changed = true;
-        console.log(`[IdealScan] Seeded user: ${seed.id} (${seed.role || 'admin'})`);
+        console.log(`[IdealOne] Seeded user: ${seed.id} (${seed.role || 'admin'})`);
       }
     }
     if (changed) writeUsers(users);
@@ -1103,7 +1103,7 @@ let _shuttingDown = false;
 function gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;
-  console.log(`[IdealScan] ${signal} received — shutting down cleanly`);
+  console.log(`[IdealOne] ${signal} received — shutting down cleanly`);
   const done = () => {
     // Final safety flush of the global store (users/sessions) before exit.
     try { _persistGlobalDbSync(); } catch {}
@@ -1485,7 +1485,7 @@ function replayScanJournal() {
   }
   if (recovered > 0) {
     writeDb(db);
-    console.log(`[IdealScan] Scan journal: recovered ${recovered} order state(s) lost in an unclean shutdown`);
+    console.log(`[IdealOne] Scan journal: recovered ${recovered} order state(s) lost in an unclean shutdown`);
   }
   try { fs.truncateSync(SCAN_JOURNAL_FILE, 0); } catch {}
 }
@@ -1585,13 +1585,13 @@ try {
   } catch {}
   _beTimeCode2Map = JSON.parse(fs.readFileSync(src, 'utf8'));
   _rebuildCode2Lengths();
-  console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries (${src === BETIME_CODE2_VOLUME_FILE ? 'volume' : 'built-in'})`);
+  console.log(`[IdealOne] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries (${src === BETIME_CODE2_VOLUME_FILE ? 'volume' : 'built-in'})`);
 } catch (e) {
-  console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
+  console.warn('[IdealOne] betime-code2.json not found — CODE2 barcode translation disabled');
 }
 try {
   _skuDescMap = JSON.parse(fs.readFileSync(SKU_DESC_FILE, 'utf8'));
-  console.log(`[IdealScan] SKU description map loaded: ${Object.keys(_skuDescMap).length} entries`);
+  console.log(`[IdealOne] SKU description map loaded: ${Object.keys(_skuDescMap).length} entries`);
 } catch (e) { /* no desc file yet — populated on first CODE2 upload */ }
 // Repo-shipped description seed fills any SKUs the volume file doesn't have
 // (explicit UI uploads keep priority for SKUs they cover)
@@ -1602,7 +1602,7 @@ try {
     if (!_skuDescMap[sku]) { _skuDescMap[sku] = desc; added++; }
   }
   if (added > 0) {
-    console.log(`[IdealScan] SKU descriptions seeded from repo: +${added} (total ${Object.keys(_skuDescMap).length})`);
+    console.log(`[IdealOne] SKU descriptions seeded from repo: +${added} (total ${Object.keys(_skuDescMap).length})`);
     fs.writeFile(SKU_DESC_FILE, JSON.stringify(_skuDescMap, null, 2), () => {});
   }
 } catch (e) { /* no seed shipped — fine */ }
@@ -1622,7 +1622,7 @@ try {
   }
   if (added > 0) {
     writeDb(db);
-    console.log(`[IdealScan] No-barcode SKUs seeded: +${added} (total ${Object.keys(db.noBarcodeSkus).length})`);
+    console.log(`[IdealOne] No-barcode SKUs seeded: +${added} (total ${Object.keys(db.noBarcodeSkus).length})`);
   }
 } catch (e) { /* no seed shipped — fine */ }
 
@@ -1653,12 +1653,12 @@ try {
     db.auditLog.sort((a, b2) => new Date(a.at) - new Date(b2.at));
     db.auditBackfilled = true;
     writeDb(db);
-    console.log(`[IdealScan] Audit ledger backfilled: ${n} events`);
-  } catch (e) { console.error('[IdealScan] audit backfill failed:', e.message); }
+    console.log(`[IdealOne] Audit ledger backfilled: ${n} events`);
+  } catch (e) { console.error('[IdealOne] audit backfill failed:', e.message); }
 })();
 
 // Recover any scan progress that a crash prevented from reaching db.json
-try { replayScanJournal(); } catch (e) { console.error('[IdealScan] scan journal replay failed:', e.message); }
+try { replayScanJournal(); } catch (e) { console.error('[IdealOne] scan journal replay failed:', e.message); }
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
@@ -1729,7 +1729,7 @@ try {
   _learnedBarcodeMap = _db0.learnedBarcodes  || {};
   _learnedSkuAliases = _db0.learnedSkuAliases || [];
   const n = Object.keys(_learnedBarcodeMap).length + _learnedSkuAliases.length;
-  if (n) console.log(`[IdealScan] Learned barcode mappings loaded: ${Object.keys(_learnedBarcodeMap).length} barcodes, ${_learnedSkuAliases.length} aliases`);
+  if (n) console.log(`[IdealOne] Learned barcode mappings loaded: ${Object.keys(_learnedBarcodeMap).length} barcodes, ${_learnedSkuAliases.length} aliases`);
 } catch {}
 
 // Per-order scan history — every count action is recorded so the completed
@@ -1838,13 +1838,13 @@ async function sendCompletionAlert(orderNumber, ord, operator) {
   const fromEmail   = getFromEmail();
   const toEmail     = getDefaultRecipient();
   if (!transporter || !fromEmail || !toEmail) {
-    console.warn(`[IdealScan] Completion alert for ${orderNumber} skipped — email not configured.`);
+    console.warn(`[IdealOne] Completion alert for ${orderNumber} skipped — email not configured.`);
     return { sent: false, reason: 'not_configured' };
   }
   const opLine = operator ? `Operator: ${operator}\n` : '';
   await transporter.sendMail({
     from: fromEmail, to: toEmail,
-    subject: `[IdealScan] Order ${orderNumber} completed — please close in Keyfields`,
+    subject: `[IdealOne] Order ${orderNumber} completed — please close in Keyfields`,
     text: [
       `Order ${orderNumber} has been fully scanned and marked completed.`,
       '',
@@ -1853,10 +1853,10 @@ async function sendCompletionAlert(orderNumber, ord, operator) {
       opLine,
       'Please log into Keyfields WMS and close this order.',
       '',
-      'Once closed, acknowledge it in IdealScan under the Orders tab.',
+      'Once closed, acknowledge it in IdealOne under the Orders tab.',
     ].join('\n'),
   });
-  console.log(`[IdealScan] Completion alert sent to ${toEmail} for order ${orderNumber}.`);
+  console.log(`[IdealOne] Completion alert sent to ${toEmail} for order ${orderNumber}.`);
   return { sent: true };
 }
 
@@ -2120,8 +2120,8 @@ function nextWaveCode(db) {
     }
     db.jobCodesBackfilled = true;
     writeDb(db);
-    if (n) console.log(`[IdealScan] Job codes backfilled on ${n} existing batch(es)`);
-  } catch (e) { console.error('[IdealScan] job code backfill failed:', e.message); }
+    if (n) console.log(`[IdealOne] Job codes backfilled on ${n} existing batch(es)`);
+  } catch (e) { console.error('[IdealOne] job code backfill failed:', e.message); }
 })();
 
 // Mirrors nextIdealscanCode() for IdealInbound — its own per-day sequence
@@ -2158,8 +2158,8 @@ function nextInboundCode(db) {
     }
     db.inboundCodesBackfilled = true;
     writeDb(db);
-    if (n) console.log(`[IdealScan] Inbound serials backfilled on ${n} existing record(s)`);
-  } catch (e) { console.error('[IdealScan] inbound serial backfill failed:', e.message); }
+    if (n) console.log(`[IdealOne] Inbound serials backfilled on ${n} existing record(s)`);
+  } catch (e) { console.error('[IdealOne] inbound serial backfill failed:', e.message); }
 })();
 
 // Find which batch holds a given order number (newest batch first).
@@ -2219,9 +2219,9 @@ function runAutoArchive() {
     db.batches = keep;
     writeDb(db);
     logAudit('batches_archived', { count: move.length, months: Object.keys(byMonth).sort() });
-    console.log(`[IdealScan] Auto-archive: moved ${move.length} settled batch(es) → ${Object.keys(byMonth).sort().join(', ')}`);
+    console.log(`[IdealOne] Auto-archive: moved ${move.length} settled batch(es) → ${Object.keys(byMonth).sort().join(', ')}`);
   } catch (e) {
-    console.error('[IdealScan] auto-archive failed:', e.message);
+    console.error('[IdealOne] auto-archive failed:', e.message);
   }
 }
 setTimeout(runAutoArchive, 60 * 1000);           // shortly after boot
@@ -2260,9 +2260,9 @@ function runAuditLogArchive() {
     }
     db.auditLog = keep;
     writeDb(db);
-    console.log(`[IdealScan] Audit log archive: moved ${move.length} event(s) → ${Object.keys(byMonth).sort().join(', ')}`);
+    console.log(`[IdealOne] Audit log archive: moved ${move.length} event(s) → ${Object.keys(byMonth).sort().join(', ')}`);
   } catch (e) {
-    console.error('[IdealScan] audit log archive failed:', e.message);
+    console.error('[IdealOne] audit log archive failed:', e.message);
   }
 }
 setTimeout(runAuditLogArchive, 90 * 1000);          // shortly after boot (staggered from batch archive)
@@ -2327,11 +2327,11 @@ function runMarketplaceDataPurge(overrideDays) {
 
     if (orders || events) {
       logAudit('marketplace_data_purged', { retentionDays: days, orders, auditEvents: events });
-      console.log(`[IdealScan] Marketplace data purge: redacted PII on ${orders} order(s) + ${events} audit event(s) older than ${days}d`);
+      console.log(`[IdealOne] Marketplace data purge: redacted PII on ${orders} order(s) + ${events} audit event(s) older than ${days}d`);
     }
     return { orders, auditEvents: events, retentionDays: days };
   } catch (e) {
-    console.error('[IdealScan] marketplace data purge failed:', e.message);
+    console.error('[IdealOne] marketplace data purge failed:', e.message);
     return { error: e.message };
   }
 }
@@ -7817,7 +7817,7 @@ app.post('/api/scan/complete', (req, res) => {
         writeDb(db2);
       }
     }).catch(err => {
-      console.error(`[IdealScan] Completion alert FAILED for order ${orderNumber}:`, err.message);
+      console.error(`[IdealOne] Completion alert FAILED for order ${orderNumber}:`, err.message);
       const db2    = readDb();
       const batch2 = findBatchForOrder(db2, orderNumber);
       if (batch2) {
@@ -7922,7 +7922,7 @@ const activeSessions = new Map(); // userId → token
     for (const [userId, token] of Object.entries(db.sessions || {})) {
       activeSessions.set(userId, token);
     }
-    console.log(`[IdealScan] Restored ${activeSessions.size} session(s) from DB`);
+    console.log(`[IdealOne] Restored ${activeSessions.size} session(s) from DB`);
   } catch {}
 })();
 
@@ -8088,7 +8088,7 @@ app.get('/api/public/config', (_req, res) => {
 const MASTER_KEY_IS_DEFAULT = !process.env.MASTER_KEY;
 const MASTER_PASS = process.env.MASTER_KEY || '201432547E';
 if (MASTER_KEY_IS_DEFAULT) {
-  console.warn('[IdealScan] ⚠ SECURITY: MASTER_KEY is not set — falling back to the built-in default, which is present in the source. Set MASTER_KEY in the deployment environment.');
+  console.warn('[IdealOne] ⚠ SECURITY: MASTER_KEY is not set — falling back to the built-in default, which is present in the source. Set MASTER_KEY in the deployment environment.');
 }
 
 // The inventory store resolves its own DATA_DIR. If it ever disagrees with
@@ -8096,17 +8096,25 @@ if (MASTER_KEY_IS_DEFAULT) {
 // meant inventory.db sat on the container's EPHEMERAL disk while db.json was
 // on the volume, so bin locations and stock silently vanished on every
 // redeploy while orders survived. Assert they match, loudly, at boot.
+// NOTE: the actual check runs in assertInventoryPath(), called immediately
+// after `inventory` is required further down this file — `const inventory`
+// is in its temporal dead zone up here, so checking now would only ever
+// throw and be swallowed, silently disabling the very warning that matters.
 let INVENTORY_PATH_MISMATCH = null;
-try {
-  const invDir = inventory.dataDir && inventory.dataDir();
-  if (invDir && path.resolve(invDir) !== path.resolve(DATA_DIR)) {
-    INVENTORY_PATH_MISMATCH = { server: path.resolve(DATA_DIR), inventory: path.resolve(invDir) };
-    console.error('[IdealScan] ⚠ DATA LOSS RISK: the inventory store is writing to a DIFFERENT directory than the main database.');
-    console.error(`[IdealScan]    main db : ${INVENTORY_PATH_MISMATCH.server}`);
-    console.error(`[IdealScan]    inventory: ${INVENTORY_PATH_MISMATCH.inventory}`);
-    console.error('[IdealScan]    Inventory data (bin locations, stock) will NOT survive a restart. Set DATA_DIR explicitly.');
-  }
-} catch (e) { console.warn('[IdealScan] could not verify inventory store path:', e.message); }
+function assertInventoryPath() {
+  try {
+    const invDir = inventory.dataDir && inventory.dataDir();
+    if (invDir && path.resolve(invDir) !== path.resolve(DATA_DIR)) {
+      INVENTORY_PATH_MISMATCH = { server: path.resolve(DATA_DIR), inventory: path.resolve(invDir) };
+      console.error('[IdealOne] ⚠ DATA LOSS RISK: the inventory store is writing to a DIFFERENT directory than the main database.');
+      console.error(`[IdealOne]    main db  : ${INVENTORY_PATH_MISMATCH.server}`);
+      console.error(`[IdealOne]    inventory: ${INVENTORY_PATH_MISMATCH.inventory}`);
+      console.error('[IdealOne]    Inventory data (bin locations, stock) will NOT survive a restart. Set DATA_DIR explicitly.');
+    } else {
+      console.log(`[IdealOne] Inventory store path verified: ${path.resolve(invDir || DATA_DIR)}`);
+    }
+  } catch (e) { console.warn('[IdealOne] could not verify inventory store path:', e.message); }
+}
 
 function checkMaster(req, res) {
   if (req.headers['x-master-key'] !== MASTER_PASS) {
@@ -8341,6 +8349,10 @@ function buildBackupObject() {
     version:    1,
     created_at: new Date().toISOString(),
     db:         readDb(),
+    // The inventory store is a SEPARATE SQLite database. It was missing from
+    // every backup until now, so bin locations and stock had no backup at
+    // all — the thing this whole feature exists to prevent.
+    inventory:  (() => { try { return inventory.exportAll(); } catch (e) { return { error: e.message }; } })(),
     config: {
       keyfields_template: readJson(KEYFIELDS_TEMPLATE_FILE),
       label_templates:    readJson(LABEL_TEMPLATES_FILE),
@@ -8362,11 +8374,86 @@ app.get('/api/master/backup', (req, res) => {
   }
 });
 
+// Browse / download / restore the archived backups. Every nightly file stays
+// on the volume; this is how an operator gets one onto their own machine.
+app.get('/api/master/backups', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  let files = [];
+  try {
+    files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('idealone-backup-') || f.startsWith('idealscan-backup-'))
+      .map(f => {
+        const st = fs.statSync(path.join(BACKUP_DIR, f));
+        const day = (f.match(/(\d{4}-\d{2}-\d{2})/) || [''])[0];
+        return { file: f, day, bytes: st.size, modified: st.mtime.toISOString() };
+      })
+      .sort((a, b) => b.day.localeCompare(a.day));
+  } catch { /* directory may not exist until the first backup runs */ }
+  // flag which ones are the permanent month-end archives
+  const byMonth = {};
+  for (const f of [...files].sort((a, b) => a.day.localeCompare(b.day))) if (f.day) byMonth[f.day.slice(0, 7)] = f.file;
+  const perm = new Set(Object.values(byMonth));
+  res.json({
+    dir: BACKUP_DIR,
+    dailyKeep: BACKUP_DAILY_KEEP,
+    files: files.map(f => ({ ...f, permanent: perm.has(f.file) })),
+  });
+});
+
+app.get('/api/master/backups/:file', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const name = path.basename(String(req.params.file || ''));   // no traversal
+  if (!/^ideal(one|scan)-backup-[\d-]+\.json\.gz$/.test(name)) return res.status(400).json({ error: 'Not a backup file' });
+  const full = path.join(BACKUP_DIR, name);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Backup not found' });
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  fs.createReadStream(full).pipe(res);
+});
+
+// Restore the INVENTORY portion of a backup (bin locations, stock, lots,
+// serials, bundles, suppliers, counts). Deliberately scoped to inventory:
+// restoring orders/batches wholesale would clobber live scanning state, so
+// that stays a manual, considered operation.
+app.post('/api/master/backups/:file/restore-inventory', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const name = path.basename(String(req.params.file || ''));
+  if (!/^ideal(one|scan)-backup-[\d-]+\.json\.gz$/.test(name)) return res.status(400).json({ error: 'Not a backup file' });
+  const full = path.join(BACKUP_DIR, name);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Backup not found' });
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  const mode = req.body?.mode === 'replace' ? 'replace' : 'merge';
+  try {
+    const obj = JSON.parse(zlib.gunzipSync(fs.readFileSync(full)).toString());
+    if (!obj.inventory || !obj.inventory.tables) {
+      return res.status(400).json({ error: 'This backup predates inventory backups — it contains no inventory data.' });
+    }
+    const result = inventory.importAll(obj.inventory, { mode });
+    logAudit('inventory_restored_from_backup', { file: name, mode, restored: result.restored, by: req.userId || 'master' });
+    res.json({ ok: true, mode, ...result });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Force today's archive backup now instead of waiting for the 02:00 SGT run —
+// the thing to press before a risky change. Writes the same immutable
+// per-day file the scheduler writes (so the scheduler then skips the night).
+app.post('/api/master/backups/run-now', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  runNightlyBackup('manual')
+    .then(() => res.json({ ok: true, file: `idealone-backup-${sgDateStr()}.json.gz` }))
+    .catch(e => res.status(500).json({ error: e.message }));
+});
+
 // ── Nightly automatic backup ─────────────────────────────────────────────────
 // Every night (after 02:00 Singapore time) the full backup is gzipped to the
 // volume (last 14 kept) and emailed to the configured recipient. The manual
 // Download Backup button remains; this just removes the "remembering" part.
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+// Keep this many recent DAILY backups; on top of that the last backup of
+// every month is retained permanently (see runNightlyBackup).
+const BACKUP_DAILY_KEEP = 30;
+// Most mail servers cap attachments around 25 MB; stay well under it.
+const BACKUP_EMAIL_MAX_BYTES = 15 * 1024 * 1024;
 // PERF: toLocaleDateString/toLocaleString with a timeZone option builds a fresh
 // Intl formatter on EVERY call (~0.18ms each). sgDateStr is the day-bucketing
 // primitive for /api/stats, the /api/orders range filter, delivery history,
@@ -8387,38 +8474,56 @@ async function runNightlyBackup(reason) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const gz = zlib.gzipSync(Buffer.from(JSON.stringify(buildBackupObject())));
   fs.writeFileSync(file, gz);
-  // prune: keep the newest 14. Matches both the current prefix and the old
-  // 'idealscan-backup-' one (renamed — that name collided with another
-  // branch) so any leftover pre-rename files on the volume still age out
-  // instead of sitting there unpruned forever. Sort by the embedded
-  // YYYY-MM-DD date, NOT the raw filename — 'idealone' sorts before
-  // 'idealscan' alphabetically regardless of date, so a plain string sort
-  // would rank every idealone-named file as "older" than every idealscan-
-  // named one and could prune brand-new backups while keeping stale ones.
+  // RETENTION — daily backups are never overwritten (one immutable file per
+  // day) and the MONTH-END one is kept forever, so history is not lost to a
+  // rolling window. Only mid-month dailies older than the window are pruned.
+  // Anything an operator has downloaded is theirs regardless.
   const backupDate = f => (f.match(/(\d{4}-\d{2}-\d{2})/) || [''])[0];
-  const old = fs.readdirSync(BACKUP_DIR)
+  const all = fs.readdirSync(BACKUP_DIR)
     .filter(f => f.startsWith('idealone-backup-') || f.startsWith('idealscan-backup-'))
-    .sort((a, b) => backupDate(a).localeCompare(backupDate(b)))
-    .slice(0, -14);
+    .sort((a, b) => backupDate(a).localeCompare(backupDate(b)));
+  // the newest file in each month is that month's permanent archive
+  const keepForever = new Set();
+  const byMonth = {};
+  for (const f of all) { const d = backupDate(f); if (d) byMonth[d.slice(0, 7)] = f; }
+  Object.values(byMonth).forEach(f => keepForever.add(f));
+  const recent = new Set(all.slice(-BACKUP_DAILY_KEEP));
+  const old = all.filter(f => !keepForever.has(f) && !recent.has(f));
   for (const f of old) { try { fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch {} }
-  console.log(`[IdealScan] Nightly backup written (${reason}): ${file} (${(gz.length / 1024).toFixed(0)} KB)`);
+  console.log(`[IdealOne] Nightly backup written (${reason}): ${file} (${(gz.length / 1024).toFixed(0)} KB)`
+    + `; kept ${all.length - old.length} (${keepForever.size} permanent), pruned ${old.length}`);
 
   try {
     const transporter = buildTransporter();
     const to = getDefaultRecipient();
     if (transporter && to) {
+      // Backups now include the whole inventory store (a real site is 10k+
+      // bins), so the file can outgrow what a mail server will accept. Rather
+      // than have the send fail — and take the notification down with it —
+      // drop the attachment past the limit and point at the download page,
+      // where the file is waiting either way.
+      const tooBig = gz.length > BACKUP_EMAIL_MAX_BYTES;
+      const when = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' });
       await transporter.sendMail({
         from: getFromEmail(), to,
-        subject: `IDEALONE nightly backup — ${day}`,
-        text: `Automatic nightly backup attached.\n\nRestore: Administrator → System → Download Backup holds the same format; keep this file safe.\nGenerated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT.`,
-        attachments: [{ filename: `idealone-backup-${day}.json.gz`, content: gz }],
+        subject: `IDEALONE nightly backup — ${day}${tooBig ? ' (on server, too large to email)' : ''}`,
+        text: tooBig
+          ? `The nightly backup for ${day} completed successfully (${(gz.length / 1048576).toFixed(1)} MB).\n\n`
+            + `It is too large to email, so it was NOT attached. It is saved on the server and can be downloaded at any time:\n`
+            + `  Administrator → System → Archived backups → Download\n\n`
+            + `Nothing is lost — every day is kept as its own file and month-end backups are kept permanently.\n`
+            + `Generated ${when} SGT.`
+          : `Automatic nightly backup attached — includes warehouse locations and all inventory.\n\n`
+            + `More copies: Administrator → System → Archived backups.\n`
+            + `Generated ${when} SGT.`,
+        attachments: tooBig ? [] : [{ filename: `idealone-backup-${day}.json.gz`, content: gz }],
       });
-      console.log(`[IdealScan] Nightly backup emailed to ${to}`);
+      console.log(`[IdealOne] Nightly backup ${tooBig ? 'notification (attachment too large)' : 'emailed'} to ${to}`);
     } else {
-      console.log('[IdealScan] Nightly backup email skipped — email not configured');
+      console.log('[IdealOne] Nightly backup email skipped — email not configured');
     }
   } catch (e) {
-    console.error('[IdealScan] Nightly backup email FAILED:', e.message);
+    console.error('[IdealOne] Nightly backup email FAILED:', e.message);
   }
 }
 function nightlyBackupDue() {
@@ -8428,11 +8533,11 @@ function nightlyBackupDue() {
   catch { return true; }
 }
 setInterval(() => {
-  if (nightlyBackupDue()) runNightlyBackup('scheduled').catch(e => console.error('[IdealScan] nightly backup failed:', e.message));
+  if (nightlyBackupDue()) runNightlyBackup('scheduled').catch(e => console.error('[IdealOne] nightly backup failed:', e.message));
 }, 30 * 60 * 1000);
 // also check shortly after boot — covers redeploys that skip the 2am window
 setTimeout(() => {
-  if (nightlyBackupDue()) runNightlyBackup('startup catch-up').catch(e => console.error('[IdealScan] nightly backup failed:', e.message));
+  if (nightlyBackupDue()) runNightlyBackup('startup catch-up').catch(e => console.error('[IdealOne] nightly backup failed:', e.message));
 }, 2 * 60 * 1000);
 
 app.post('/api/master/reset', (req, res) => {
@@ -9196,7 +9301,7 @@ async function generateLabelDoc(templateBuf, order) {
         bcid: 'code128', text: String(order.waybill_number),
         scale: 2, height: 12, includetext: true, textxalign: 'center',
       });
-    } catch (e) { console.warn('[IdealScan] barcode gen failed:', e.message); }
+    } catch (e) { console.warn('[IdealOne] barcode gen failed:', e.message); }
   }
 
   const modules = [];
@@ -10433,7 +10538,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   const aoa = [
     ['IDEALONE Completion Slip'],
     [],
-    ['IdealScan Job', batch.idealscan_code || '—'],
+    ['IdealOne Job', batch.idealscan_code || '—'],
     ['Order Number', orderNumber],
     ['Customer',     ord.customer_name || '—'],
     ['Client',       ord.client_name   || '—'],
@@ -11383,6 +11488,7 @@ app.get('/portal', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const inventory = require('./lib/inventory-store');
 inventory.init();
+assertInventoryPath();   // must run here — see the note next to its definition
 
 // 3PL model: ALL stock is client-owned. Orders/batches carry only a free-text
 // client_name, while the inventory store keys on client_id — so we derive a
@@ -12169,8 +12275,8 @@ function runDailyReplenishment() {
     for (const cid of clients) { try { generateReplenishmentRun(db, cid, day, 7); } catch (_) {} }
     db.lastReplenishDay = day;
     writeDb(db);
-    console.log(`[IdealScan] Daily replenishment runs generated for ${clients.length} client(s) — ${day}`);
-  } catch (e) { console.error('[IdealScan] daily replenishment failed:', e.message); }
+    console.log(`[IdealOne] Daily replenishment runs generated for ${clients.length} client(s) — ${day}`);
+  } catch (e) { console.error('[IdealOne] daily replenishment failed:', e.message); }
 }
 setTimeout(runDailyReplenishment, 120 * 1000);        // shortly after boot
 setInterval(runDailyReplenishment, 6 * 3600 * 1000);  // re-check every 6h (rolls over at the SGT day boundary)
@@ -12192,8 +12298,8 @@ function runInboundPhotoPurge() {
       rec.photos = [];
       rec.photos_purged = true;
     }
-    if (purged) { writeDb(db); console.log(`[IdealScan] Inbound photo purge: removed ${purged} photo(s) older than 12 months`); }
-  } catch (e) { console.error('[IdealScan] photo purge failed:', e.message); }
+    if (purged) { writeDb(db); console.log(`[IdealOne] Inbound photo purge: removed ${purged} photo(s) older than 12 months`); }
+  } catch (e) { console.error('[IdealOne] photo purge failed:', e.message); }
 }
 setTimeout(runInboundPhotoPurge, 180 * 1000);
 setInterval(runInboundPhotoPurge, 24 * 3600 * 1000);
@@ -13024,7 +13130,7 @@ app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`))
   .on('error', err => {
     if (err.code === 'EADDRINUSE') {
       // A second copy is already running — exit cleanly instead of crashing
-      console.error(`[IdealScan] Port ${PORT} is already in use — another instance is running. Exiting.`);
+      console.error(`[IdealOne] Port ${PORT} is already in use — another instance is running. Exiting.`);
       process.exit(1);
     }
     throw err;

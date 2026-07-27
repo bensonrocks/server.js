@@ -8903,6 +8903,7 @@
       if (btn.dataset.adminTab === 'comms') loadCommunication();
       if (btn.dataset.adminTab === 'onboarding') obUI.load();
       if (btn.dataset.adminTab === 'outages') outagesUI.load();
+      if (btn.dataset.adminTab === 'danger') loadBackupArchive();
     });
   });
 
@@ -10390,7 +10391,7 @@
       const blob = await resp.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
-      a.href = url; a.download = `IDEALSCAN_Status_${new Date().toISOString().slice(0,10)}.xlsx`;
+      a.href = url; a.download = `IDEALONE_Status_${new Date().toISOString().slice(0,10)}.xlsx`;
       a.click(); URL.revokeObjectURL(url);
     } catch (err) { alert(err.message); }
   });
@@ -10439,6 +10440,77 @@
   })();
 
   // Master: download full backup (db + settings) as a JSON file
+  // ── Archived backups: list, download to desktop, restore inventory ─────────
+  async function loadBackupArchive() {
+    const el = document.getElementById('backupList');
+    if (!el) return;
+    el.innerHTML = '<p class="hint">Loading…</p>';
+    let d;
+    try {
+      const r = await fetch('/api/master/backups', { headers: { 'x-master-key': LOG_PASSWORD } });
+      d = await r.json();
+    } catch (e) { el.innerHTML = '<p class="hint">Could not load backups.</p>'; return; }
+    if (!d.files?.length) {
+      el.innerHTML = '<p class="hint">No backups yet — the first one runs tonight (or hit “Download Backup Now” for an immediate copy).</p>';
+      return;
+    }
+    const kb = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
+    el.innerHTML = `
+      <div class="dcs-wrap"><table class="dcs-table">
+        <thead><tr><th>Date</th><th>Size</th><th>Kept</th><th style="text-align:right">Actions</th></tr></thead>
+        <tbody>${d.files.map(f => `
+          <tr>
+            <td><b>${esc(f.day || f.file)}</b></td>
+            <td>${kb(f.bytes)}</td>
+            <td>${f.permanent ? '<span title="Last backup of its month — never deleted">🔒 permanent</span>' : `daily (last ${d.dailyKeep})`}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn-secondary btn-sm bk-dl" data-f="${esc(f.file)}">⬇ Download</button>
+              <button class="btn-secondary btn-sm bk-rs" data-f="${esc(f.file)}" title="Restore warehouse locations & inventory from this backup">↺ Restore inventory</button>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table></div>
+      <p class="hint" style="margin-top:.4rem">Stored on the server at <code>${esc(d.dir)}</code>. Downloading saves a copy to your own computer.</p>`;
+    el.querySelectorAll('.bk-dl').forEach(b => b.addEventListener('click', () =>
+      authDownload(`/api/master/backups/${encodeURIComponent(b.dataset.f)}`, b.dataset.f)));
+    el.querySelectorAll('.bk-rs').forEach(b => b.addEventListener('click', async () => {
+      const replace = confirm(
+        `Restore warehouse locations and inventory from ${b.dataset.f}?\n\n` +
+        `OK = REPLACE — wipe current inventory and restore exactly as at that backup.\n` +
+        `Cancel = you'll then be asked about merging instead.`);
+      let mode = 'replace';
+      if (!replace) {
+        if (!confirm('Merge instead? This ADDS anything missing and leaves current data untouched.')) return;
+        mode = 'merge';
+      }
+      const msg = (k, t) => { const e = document.getElementById('backupMsg'); e.className = 'status-bar ' + k; e.textContent = t; e.classList.remove('hidden'); };
+      msg('progress', 'Restoring inventory…');
+      try {
+        const r = await fetch(`/api/master/backups/${encodeURIComponent(b.dataset.f)}/restore-inventory`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+          body: JSON.stringify({ mode }),
+        });
+        const d2 = await r.json();
+        if (!r.ok) return msg('error', d2.error || 'Restore failed');
+        const tot = Object.entries(d2.restored || {}).filter(([, n]) => n > 0).map(([t, n]) => `${t}: ${n}`).join(', ');
+        msg('success', `✓ Restored (${d2.mode}) — ${tot || 'nothing to restore'}`);
+      } catch (e) { msg('error', e.message); }
+    }));
+  }
+  document.getElementById('backupRefreshBtn')?.addEventListener('click', loadBackupArchive);
+  document.getElementById('backupRunNowBtn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget, orig = btn.innerHTML;
+    const msg = (k, t) => { const el = document.getElementById('backupMsg'); el.className = 'status-bar ' + k; el.textContent = t; el.classList.remove('hidden'); };
+    btn.disabled = true; btn.textContent = 'Backing up…';
+    msg('progress', 'Writing today’s archive backup…');
+    try {
+      const r = await fetch('/api/master/backups/run-now', { method: 'POST', headers: { 'x-master-key': LOG_PASSWORD } });
+      const d = await r.json();
+      if (!r.ok) msg('error', d.error || 'Backup failed');
+      else { msg('success', `✓ Saved ${d.file} to the archive`); loadBackupArchive(); }
+    } catch (err) { msg('error', err.message); }
+    btn.disabled = false; btn.innerHTML = orig;
+  });
+
   document.getElementById('masterBackupBtn').addEventListener('click', async () => {
     const btn  = document.getElementById('masterBackupBtn');
     const orig = btn.textContent;

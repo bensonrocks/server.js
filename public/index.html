@@ -825,7 +825,7 @@
         <div class="admin-section-header">
           <div>
             <div class="admin-section-title">System Users</div>
-            <div class="admin-section-sub">Manage who can access IdealScan and their role.</div>
+            <div class="admin-section-sub">Manage who can access IdealOne and their role.</div>
           </div>
         </div>
         <div id="userList" class="user-list-wrap"></div>
@@ -1425,9 +1425,20 @@
         <div class="admin-section-header">
           <div>
             <div class="admin-section-title">&#128190; Backup</div>
-            <div class="admin-section-sub">Download a full backup of the database — all batches, orders, scan states, users, and settings. Keep a copy somewhere safe; it survives even if the server storage is lost.</div>
+            <div class="admin-section-sub">A full backup runs automatically every night and is kept on the server — including <b>warehouse locations and all inventory</b>. Each day is its own file (never overwritten), and the last backup of every month is kept permanently. Download any of them here to keep a copy on your own computer.</div>
           </div>
-          <button class="btn-primary btn-sm" id="masterBackupBtn">&#8681; Download Backup</button>
+          <button class="btn-primary btn-sm" id="masterBackupBtn">&#8681; Download Backup Now</button>
+        </div>
+        <div id="backupArchiveWrap" style="margin-top:.6rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <b style="font-size:.88rem">&#128451; Archived backups</b>
+            <span style="display:flex;gap:.4rem">
+              <button class="btn-secondary btn-sm" id="backupRunNowBtn" title="Write today's archive backup now instead of waiting for tonight">&#128190; Back Up Now</button>
+              <button class="btn-secondary btn-sm" id="backupRefreshBtn">&#8635; Refresh</button>
+            </span>
+          </div>
+          <div id="backupList" style="margin-top:.5rem"></div>
+          <div id="backupMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
         </div>
         <div class="admin-section-divider"></div>
         <div class="danger-zone-card">
