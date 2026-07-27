@@ -4553,7 +4553,7 @@
         </div>
         ${counts.courier ? `
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #94a3b8;border-radius:4px;padding:.5rem .7rem;font-size:11.5px;color:#475569;margin-bottom:.6rem">
-          <strong>${counts.courier} of these look like courier tracking numbers</strong> (SPX / Shopee / Lazada), not shops —
+          <strong>${counts.courier} of these look like courier tracking numbers</strong>, not shops —
           the buyer's address sits with the courier, who collects these parcels. They usually don't need
           a postal code or your own driver at all. Leave them unticked and skip.
         </div>` : ''}
@@ -9154,7 +9154,7 @@
       const r = await fetch('/api/master/zort/stores', { headers: { 'x-master-key': LOG_PASSWORD } });
       const stores = await r.json();
       if (!stores.length) {
-        tbody.innerHTML = '<tr><td colspan="8" style="padding:1rem;color:#64748b">No ZORT stores connected yet. Click “+ Connect Store” and paste the client\'s API credentials from their ZORT settings page.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:1rem;color:#64748b">No stores connected yet. Click “+ Connect Store” and paste the client\'s API credentials from their store settings page.</td></tr>';
         return;
       }
       const actLbl = { none: 'nothing', pack: 'Pack', readytoship: 'Ready to ship', status: 'status code' };
@@ -9172,10 +9172,10 @@
           <td>${stockBadge}</td>
           <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>` : 'never'}</td>
           <td style="white-space:nowrap">
-            <button class="btn-secondary btn-sm z-channels" title="Marketplaces this client has linked inside their ZORT account">Channels</button>
+            <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
-            ${s.stockSync ? '<button class="btn-secondary btn-sm z-pushstock" title="Enqueue current stock levels for every SKU to ZORT">⇪ Push Stock</button>' : ''}
+            ${s.stockSync ? '<button class="btn-secondary btn-sm z-pushstock" title="Enqueue current stock levels for every SKU to the store">⇪ Push Stock</button>' : ''}
             <button class="btn-secondary btn-sm z-edit">&#9998;</button>
             <button class="btn-danger btn-sm z-del">&#128465;</button>
           </td>
@@ -9216,7 +9216,7 @@
           e.target.disabled = false;
         });
         tr.querySelector('.z-pushstock')?.addEventListener('click', async e => {
-          if (!confirm(`Push current stock levels for every SKU owned by ${store.clientName} to ZORT?\n\nThis enqueues an absolute available-quantity update per SKU; the background sync sends them with retry.`)) return;
+          if (!confirm(`Push current stock levels for every SKU owned by ${store.clientName} to their store?\n\nThis enqueues an absolute available-quantity update per SKU; the background sync sends them with retry.`)) return;
           e.target.disabled = true;
           zortStatus('progress', `Enqueuing stock for ${store.clientName}…`);
           try {
@@ -9229,7 +9229,7 @@
         });
         tr.querySelector('.z-edit').addEventListener('click', () => openZortForm(store));
         tr.querySelector('.z-del').addEventListener('click', async () => {
-          if (!confirm(`Disconnect ZORT store for "${store.clientName}"?\n\nAlready-imported orders stay; new orders will no longer pull and completions will no longer push back.`)) return;
+          if (!confirm(`Disconnect the store connection for "${store.clientName}"?\n\nAlready-imported orders stay; new orders will no longer pull and completions will no longer push back.`)) return;
           await fetch(`/api/master/zort/stores/${id}`, { method: 'DELETE', headers: zortHdrs() });
           loadZortStores();
         });
@@ -9246,8 +9246,8 @@
     document.getElementById('zfStorename').value = store?.storename || '';
     document.getElementById('zfApikey').value = '';
     document.getElementById('zfApisecret').value = '';
-    document.getElementById('zfApikey').placeholder = store ? `current: ${store.apikeyMasked} — leave blank to keep` : 'API key from ZORT settings';
-    document.getElementById('zfApisecret').placeholder = store ? `current: ${store.apisecretMasked} — leave blank to keep` : 'API secret from ZORT settings';
+    document.getElementById('zfApikey').placeholder = store ? `current: ${store.apikeyMasked} — leave blank to keep` : 'API key from store settings';
+    document.getElementById('zfApisecret').placeholder = store ? `current: ${store.apisecretMasked} — leave blank to keep` : 'API secret from store settings';
     document.getElementById('zfAutoPull').value = store?.autoPullMinutes || 0;
     document.getElementById('zfCompleteAction').value = store?.completeAction || 'none';
     document.getElementById('zfStatusCode').value = store?.completeStatusCode ?? 1;
@@ -9273,7 +9273,7 @@
         <input type="text" data-channel="${esc(n)}" placeholder="client name…" style="flex:1"
           value="${esc((store.channelClients || {})[n] || '')}" />
       </div>`).join('')
-      : '<p class="hint">No sales channels found in this ZORT account yet. Link the client\'s Lazada/Shopee/TikTok/Shopify inside ZORT → Settings → Sales Channels first, then reopen this.</p>';
+      : '<p class="hint">No sales channels found in this account yet. Link the client\'s online shops inside the hub\'s Sales Channels settings first, then reopen this.</p>';
     document.getElementById('zortChannelsModal').classList.remove('hidden');
     document.getElementById('zortChannelsSaveBtn').onclick = async () => {
       const map = {};
@@ -11603,7 +11603,7 @@
         if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
         let msg = `✓ Added stock for ${d.applied} SKU(s)`;
         if (d.skipped) msg += `, skipped ${d.skipped}`;
-        if (d.pushedToZort) msg += ` · ${d.enqueued} update(s) queued to ZORT`;
+        if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
         st.className = 'status-bar success'; st.textContent = msg;
         load(); // refresh totals + table
@@ -11967,7 +11967,7 @@
           <td class="hint">${esc(x.source || '')}</td>
           <td class="hint">${x.createdAt ? new Date(x.createdAt).toLocaleDateString() : ''}</td>
           <td style="white-space:nowrap">
-            <button class="btn-secondary btn-sm q-rel" title="Passed inspection — add to sellable stock (updates ZORT)">✓ Release</button>
+            <button class="btn-secondary btn-sm q-rel" title="Passed inspection — add to sellable stock (updates the sales channels)">✓ Release</button>
             <button class="btn-danger btn-sm q-disp" title="Scrap — close without adding stock">🗑 Dispose</button>
             <button class="btn-secondary btn-sm q-ret" title="Hand back to the client — close without adding stock">↩ Return</button>
           </td></tr>`).join('');
@@ -11977,7 +11977,7 @@
           if (maxQ > 1) { const v = prompt(`${action === 'release' ? 'Release' : action === 'dispose' ? 'Dispose' : 'Return'} how many? (in quarantine: ${maxQ})`, String(maxQ)); if (v === null) return; qty = Number(v); if (!(qty > 0)) { alert('Enter a positive number.'); return; } }
           const note = prompt('Note (optional)') || '';
           const r2 = await fetch(`/api/inventory/quarantine/${encodeURIComponent(tr.dataset.id)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, qty, note }) });
-          if (r2.ok) { wmsMsg('quarMsg', 'success', `✓ ${action === 'release' ? 'Released to stock (ZORT updated)' : action === 'dispose' ? 'Disposed' : 'Returned to client'}.`); loadQuarantine(); if (action === 'release') load(); }
+          if (r2.ok) { wmsMsg('quarMsg', 'success', `✓ ${action === 'release' ? 'Released to stock (channels updated)' : action === 'dispose' ? 'Disposed' : 'Returned to client'}.`); loadQuarantine(); if (action === 'release') load(); }
           else { const e = await r2.json().catch(() => ({})); wmsMsg('quarMsg', 'error', e.error || 'Failed'); }
         };
         tb.querySelectorAll('.q-rel').forEach(b => b.addEventListener('click', () => resolve(b.closest('tr'), 'release')));
@@ -12003,7 +12003,7 @@
           <td class="hint">${esc(x.reportedBy || '')} · ${x.reportedAt ? new Date(x.reportedAt).toLocaleString() : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm disc-found" title="Stock was located / recounted — no change to sellable total">✓ Found</button>
-            <button class="btn-danger btn-sm disc-wo" title="Units genuinely missing — deduct sellable total and update ZORT">✗ Write off</button>
+            <button class="btn-danger btn-sm disc-wo" title="Units genuinely missing — deduct sellable total and update the sales channels">✗ Write off</button>
           </td></tr>`).join('');
         tb.querySelectorAll('.disc-found').forEach(btn => btn.addEventListener('click', async () => {
           const tr = btn.closest('tr');
@@ -12015,13 +12015,13 @@
         tb.querySelectorAll('.disc-wo').forEach(btn => btn.addEventListener('click', async () => {
           const tr = btn.closest('tr');
           const maxQ = Number(tr.dataset.qty);
-          const v = prompt(`Write off how many units? (missing: ${maxQ})\nThis deducts the sellable total and updates ZORT.`, String(maxQ));
+          const v = prompt(`Write off how many units? (missing: ${maxQ})\nThis deducts the sellable total and updates the sales channels.`, String(maxQ));
           if (v === null) return;
           const qty = Number(v);
           if (!(qty > 0)) { alert('Enter a positive number.'); return; }
           const note = prompt('Reason / note (optional)') || '';
           const r2 = await fetch(`/api/inventory/discrepancies/${encodeURIComponent(tr.dataset.id)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'write_off', qty, note }) });
-          if (r2.ok) { wmsMsg('discMsg', 'success', `✓ Wrote off ${Math.min(qty, maxQ)} — sellable total adjusted, ZORT updated.`); loadDiscrepancies(); load(); }
+          if (r2.ok) { wmsMsg('discMsg', 'success', `✓ Wrote off ${Math.min(qty, maxQ)} — sellable total adjusted, channels updated.`); loadDiscrepancies(); load(); }
           else { const e = await r2.json().catch(() => ({})); wmsMsg('discMsg', 'error', e.error || 'Failed'); }
         }));
       } catch { /* keep prior */ }

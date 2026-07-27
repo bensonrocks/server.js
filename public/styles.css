@@ -2853,7 +2853,9 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 #tab-connections { padding: 1.2rem; overflow-y: auto; }
 .conn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .8rem; margin-bottom: 1.4rem; }
 .conn-card { position: relative; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 1rem; background: var(--surface, #fff); }
-.conn-card-name { font-weight: 800; font-size: 1.05rem; margin-bottom: .25rem; }
+/* padding-right keeps a longer card title clear of the absolutely-positioned
+   status badge in the top-right instead of running underneath it */
+.conn-card-name { font-weight: 800; font-size: 1.05rem; margin-bottom: .25rem; padding-right: 4.2rem; }
 .conn-card-desc { font-size: .78rem; color: #64748b; line-height: 1.35; }
 .conn-badge { position: absolute; top: .7rem; right: .7rem; font-size: .6rem; font-weight: 800; letter-spacing: .05em; padding: .2rem .5rem; border-radius: 999px; }
 .conn-badge.live { background: #dcfce7; color: #15803d; }

@@ -169,11 +169,11 @@
     </div>
   </div>
 
-  <!-- ── ZORT channel → client mapping ── -->
+  <!-- ── Sales channel → client mapping ── -->
   <div id="zortChannelsModal" class="modal-overlay hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-title">&#128268; Sales Channels &rarr; Clients</div>
-      <p class="modal-desc">Each sales channel in the ZORT account belongs to a client. Orders from a channel are batched under the client name you set here; unmapped channels fall back to the account label.</p>
+      <p class="modal-desc">Each sales channel in the hub account belongs to a client. Orders from a channel are batched under the client name you set here; unmapped channels fall back to the account label.</p>
       <div id="zortChannelsList" style="max-height:50vh;overflow-y:auto"></div>
       <div style="display:flex;gap:.6rem;margin-top:1rem;justify-content:flex-end">
         <button class="btn-secondary btn-sm" id="zortChannelsCancelBtn">Cancel</button>
@@ -1650,25 +1650,31 @@
     <section id="tab-connections" class="tab">
       <div class="conn-intro">
         <h2 style="margin:0 0 .2rem">&#128268; Connections</h2>
-        <p class="hint" style="margin:0 0 1rem">Connect YOUR ZORT account once. Your clients' Lazada / Shopee / TikTok / Shopify shops are linked into it as sales channels (inside ZORT &rarr; Settings &rarr; Sales Channels); use the <b>Channels</b> button below to map each channel to its client &mdash; pulled orders are then batched per client automatically.</p>
+        <p class="hint" style="margin:0 0 1rem">Connect your sales-channel hub account once. Each client's online shops are linked into it as sales channels; use the <b>Channels</b> button below to map each channel to its client &mdash; pulled orders are then batched per client automatically.</p>
       </div>
       <div class="conn-cards">
         <div class="conn-card conn-live">
-          <div class="conn-card-name">ZORT</div>
-          <div class="conn-card-desc">Thai/SEA order &amp; inventory OMS — pull client orders, push pack/ship status back.</div>
+          <div class="conn-card-name">Sales Channel Hub</div>
+          <div class="conn-card-desc">Pull client orders in automatically and push pack / ship status back once the scan completes.</div>
           <span class="conn-badge live">ACTIVE</span>
         </div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">Lazada</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">Shopee</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">TikTok Shop</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
-        <div class="conn-card conn-soon"><div class="conn-card-name">Shopify</div><div class="conn-card-desc">Link the client's shop into your ZORT account (ZORT &rarr; Settings &rarr; Sales Channels), then map the channel to its client via the Channels button below.</div><span class="conn-badge via">VIA ZORT</span></div>
+        <div class="conn-card conn-live">
+          <div class="conn-card-name">Stock Sync</div>
+          <div class="conn-card-desc">Receiving, shipping, adjustments and cycle counts push each client's live available quantity back to their channels, with automatic retry.</div>
+          <span class="conn-badge live">ACTIVE</span>
+        </div>
+        <div class="conn-card conn-live">
+          <div class="conn-card-name">Per-Client Channels</div>
+          <div class="conn-card-desc">Map every sales channel to the client that owns it &mdash; pulled orders are batched under that client's name automatically.</div>
+          <span class="conn-badge live">ACTIVE</span>
+        </div>
       </div>
 
       <div id="connZortPanel">
         <div class="admin-section-header">
           <div>
-            <div class="admin-section-title">ZORT Merchant Connections</div>
-            <div class="admin-section-sub">Each fulfillment client connects their own ZORT store. Their paid orders pull in as normal batches under the client's name; completing the scan can push the status back to their store.</div>
+            <div class="admin-section-title">Channel Connections</div>
+            <div class="admin-section-sub">Each fulfillment client connects their own store account. Their paid orders pull in as normal batches under the client's name; completing the scan can push the status back to their store.</div>
           </div>
           <button class="btn-primary btn-sm" id="zortAddStoreBtn">+ Connect Store</button>
         </div>
@@ -1680,18 +1686,18 @@
           </table>
         </div>
         <div id="zortStoreForm" class="hidden" style="margin-top:1rem;max-width:520px">
-          <div class="admin-section-title" id="zortFormTitle" style="font-size:.95rem">Connect ZORT account</div>
+          <div class="admin-section-title" id="zortFormTitle" style="font-size:.95rem">Connect store account</div>
           <input type="hidden" id="zfId" />
-          <div class="form-group"><label>Account label / default client (used when a sales channel has no client mapping yet)</label><input type="text" id="zfClient" placeholder="e.g. IDEALONE ZORT" autocomplete="off" /></div>
-          <div class="form-group"><label>ZORT storename</label><input type="text" id="zfStorename" placeholder="store email / name from ZORT API settings" autocomplete="off" /></div>
+          <div class="form-group"><label>Account label / default client (used when a sales channel has no client mapping yet)</label><input type="text" id="zfClient" placeholder="e.g. IDEALONE Main" autocomplete="off" /></div>
+          <div class="form-group"><label>Store name</label><input type="text" id="zfStorename" placeholder="store email / name from the channel API settings" autocomplete="off" /></div>
           <div class="form-group"><label>API key</label><input type="text" id="zfApikey" placeholder="leave blank to keep current" autocomplete="off" /></div>
           <div class="form-group"><label>API secret</label><input type="text" id="zfApisecret" placeholder="leave blank to keep current" autocomplete="off" /></div>
           <div class="form-group"><label>Auto-pull every (minutes, 0 = manual only)</label><input type="number" id="zfAutoPull" min="0" max="1440" value="0" /></div>
           <div class="form-group"><label>When scan completes</label>
             <select id="zfCompleteAction">
               <option value="none">Do nothing (pull only)</option>
-              <option value="pack">Mark PACKED in ZORT (PackOrder)</option>
-              <option value="readytoship">Mark READY TO SHIP in ZORT</option>
+              <option value="pack">Mark PACKED at the store</option>
+              <option value="readytoship">Mark READY TO SHIP at the store</option>
               <option value="status">Set order status code&hellip;</option>
             </select>
           </div>
@@ -1699,9 +1705,9 @@
           <div class="form-group" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:.6rem .8rem">
             <label style="display:flex;align-items:center;gap:.5rem;margin:0;cursor:pointer">
               <input type="checkbox" id="zfStockSync" style="width:16px;height:16px" />
-              <span><b>📦 Sync stock levels to ZORT</b></span>
+              <span><b>📦 Sync stock levels to the store</b></span>
             </label>
-            <div class="hint" style="margin:.3rem 0 0">When on, receiving, shipping, adjustments and cycle counts push this client's live available quantity back to ZORT (with retry). Verify the ZORT product endpoint on the first live push.</div>
+            <div class="hint" style="margin:.3rem 0 0">When on, receiving, shipping, adjustments and cycle counts push this client's live available quantity back to their store (with retry). Verify the product endpoint on the first live push.</div>
           </div>
           <div style="display:flex;gap:.6rem">
             <button class="btn-primary btn-sm" id="zortSaveStoreBtn">Save</button>
@@ -2296,7 +2302,7 @@
         <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
           <div style="flex:1;min-width:200px">
             <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">CLIENT (whose stock)</label>
-            <input id="invClient" list="invClientList" placeholder="e.g. LazadaClient — same name as on their orders" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+            <input id="invClient" list="invClientList" placeholder="e.g. Acme Beauty — same name as on their orders" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
             <datalist id="invClientList"></datalist>
           </div>
           <button class="btn-primary btn-sm" id="invLoadBtn" style="padding:.55rem 1rem">Load stock</button>
@@ -2323,7 +2329,7 @@
               <div class="hint" style="margin:.2rem 0 0">CSV or Excel with columns <code>sku</code>, <code>name</code>, <code>stock_qty</code>. <b>Adds to</b> existing on-hand (a receiving/restock).</div>
             </div>
             <div style="display:flex;gap:.6rem;align-items:center">
-              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem"><input type="checkbox" id="invPushZort" checked /> Sync to ZORT after</label>
+              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem"><input type="checkbox" id="invPushZort" checked /> Sync to sales channels after</label>
               <input type="file" id="invFileInput" accept=".csv,.txt,.xlsx,.xls" hidden />
               <button class="btn-primary btn-sm" id="invUploadBtn">Choose file…</button>
             </div>
@@ -2350,7 +2356,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
             <div>
               <b>🎁 Bundles (BOM)</b>
-              <div class="hint" style="margin:.2rem 0 0">A bundle SKU = component SKUs × qty. Availability is <b>computed from components</b> and synced to ZORT. When a bundle is ordered it auto-explodes into components for picking.</div>
+              <div class="hint" style="margin:.2rem 0 0">A bundle SKU = component SKUs × qty. Availability is <b>computed from components</b> and synced to the sales channels. When a bundle is ordered it auto-explodes into components for picking.</div>
             </div>
             <button class="btn-secondary btn-sm" id="invBundleAddBtn">+ Define bundle</button>
           </div>
@@ -2418,7 +2424,7 @@
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
             <div><b>⚠ Stock discrepancies</b> <span id="discBadge" class="nav-badge hidden">0</span>
-              <div class="hint" style="margin:.2rem 0 0">Every "🚫 bin empty" report lands here and must be resolved: <b>Found</b> (stock was located / recounted — records already corrected) or <b>Write off</b> (units genuinely gone — deducts the sellable total and updates ZORT so channels stop selling ghosts).</div>
+              <div class="hint" style="margin:.2rem 0 0">Every "🚫 bin empty" report lands here and must be resolved: <b>Found</b> (stock was located / recounted — records already corrected) or <b>Write off</b> (units genuinely gone — deducts the sellable total and updates the sales channels so they stop selling ghosts).</div>
             </div>
             <button class="btn-secondary btn-sm" id="discRefreshBtn">Refresh</button>
           </div>
@@ -2435,7 +2441,7 @@
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
             <div><b>🚧 Quarantine</b> <span id="quarBadge" class="nav-badge hidden">0</span>
-              <div class="hint" style="margin:.2rem 0 0">Damaged / KIV units from receiving — held out of sellable stock until dispositioned: <b>Release</b> (passed inspection → sellable, ZORT updated), <b>Dispose</b>, or <b>Return to client</b>.</div>
+              <div class="hint" style="margin:.2rem 0 0">Damaged / KIV units from receiving — held out of sellable stock until dispositioned: <b>Release</b> (passed inspection → sellable, channels updated), <b>Dispose</b>, or <b>Return to client</b>.</div>
             </div>
             <button class="btn-secondary btn-sm" id="quarRefreshBtn">Refresh</button>
           </div>
@@ -2490,7 +2496,7 @@
         <div class="panel" style="margin-top:1.25rem">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
             <div><b>🧮 Cycle count</b>
-              <div class="hint" style="margin:.2rem 0 0">Count physical stock, record counted quantities, then post — variances update on-hand automatically (and sync to ZORT).</div>
+              <div class="hint" style="margin:.2rem 0 0">Count physical stock, record counted quantities, then post — variances update on-hand automatically (and sync to the sales channels).</div>
             </div>
             <div style="display:flex;gap:.6rem;align-items:center">
               <label style="display:flex;gap:.3rem;align-items:center;font-size:.82rem" title="Blind count: the counter doesn't see the expected quantity or variance until the count is posted — the industry-standard way to keep counts honest."><input type="checkbox" id="ccBlind"> Blind</label>
@@ -2772,7 +2778,7 @@
             <div class="about-feature">
               <div class="about-feature-icon">&#128268;</div>
               <div class="about-feature-name">Connections</div>
-              <div class="about-feature-desc">Marketplace orders pulled in through ZORT (Shopee, Lazada, TikTok, Shopify) and stock levels pushed back out, with a retry queue so nothing is lost.</div>
+              <div class="about-feature-desc">Marketplace and webstore orders pulled in automatically, and stock levels pushed back out, with a retry queue so nothing is lost.</div>
             </div>
             <div class="about-feature">
               <div class="about-feature-icon">&#127760;</div>
