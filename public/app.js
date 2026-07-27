@@ -10841,10 +10841,38 @@
         unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
         matched   ? `<button class="btn-secondary btn-sm" id="lriRematchAllBtn" style="margin-left:.5rem">&#8635; Rematch All</button>` : '',
         `<button class="btn-secondary btn-sm" id="lriExportCsvBtn" style="margin-left:.5rem">&#11015; Export CSV</button>`,
+        `<button class="btn-secondary btn-sm" id="lriImportMatchesBtn" style="margin-left:.5rem">&#11014; Import Matches CSV</button>`,
+        `<input type="file" id="lriImportMatchesInput" accept=".csv" class="hidden" />`,
       ].filter(Boolean).join('');
 
       document.getElementById('lriExportCsvBtn')?.addEventListener('click', () =>
         authDownload(`/api/label-imports/${importId}/export.csv`, `${imp.filename.replace(/\.pdf$/i, '')}_ocr_results.csv`));
+
+      // Round-trip half of Export CSV: download, fill in "Matched Order" for
+      // rows Auto Match couldn't resolve, re-upload here. Blank rows are left
+      // untouched — this can only add/change matches, never remove one.
+      document.getElementById('lriImportMatchesBtn')?.addEventListener('click', () =>
+        document.getElementById('lriImportMatchesInput').click());
+      document.getElementById('lriImportMatchesInput')?.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        const btn = document.getElementById('lriImportMatchesBtn');
+        btn.disabled = true; btn.textContent = 'Importing…';
+        try {
+          const fd = new FormData();
+          fd.append('matchesCsv', file);
+          const r = await fetch(`/api/label-imports/${importId}/import-matches`, { method: 'POST', body: fd });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Import failed');
+          let msg = `Applied ${d.applied} match${d.applied !== 1 ? 'es' : ''}. ${d.skipped} row(s) had no Matched Order and were left alone.`;
+          if (d.errors.length) msg += `\n\n${d.errors.length} row(s) could not be applied:\n` + d.errors.slice(0, 20).map(er => `Row ${er.row}: ${er.reason}`).join('\n');
+          alert(msg);
+          await refreshOrders();
+          openLabelReview(importId);
+        } catch (err) { alert(err.message); }
+        finally { btn.disabled = false; btn.textContent = '⬆ Import Matches CSV'; }
+      });
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
         const btn = document.getElementById('lriAutoMatchBtn');

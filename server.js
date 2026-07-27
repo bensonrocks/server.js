@@ -3542,6 +3542,71 @@ app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
   res.json({ ok: true, page });
 });
 
+// Bulk counterpart to the single-page manual match above — the round-trip
+// half of the OCR-results CSV export: download, fill in "Matched Order" for
+// whatever Auto Match couldn't resolve (misread tracking numbers, no-text
+// labels a human can still read off the page image), re-upload. Resolves a
+// dozen stragglers in one pass instead of clicking "Match to Order" once per
+// page. Rows with a blank Matched Order are left exactly as they were —
+// this can never UN-match a page, only add/change matches.
+app.post('/api/label-imports/:id/import-matches', requireAuth, labelImportUpload.single('matchesCsv'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No CSV file received' });
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+
+  let records;
+  try {
+    records = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true, bom: true });
+  } catch (e) {
+    return res.status(400).json({ error: `Could not parse CSV: ${e.message}` });
+  }
+
+  const orders = globalOrdersWithState();
+  if (!db.orderLabels) db.orderLabels = {};
+
+  let applied = 0, skipped = 0;
+  const errors = [];
+  const usedInThisImport = new Set(); // guard against the same order number appearing on two rows of one file
+
+  for (let i = 0; i < records.length; i++) {
+    const row = records[i];
+    const n = {};
+    for (const k of Object.keys(row)) n[normalizeKey(k)] = row[k];
+    const rawPage        = n.page;
+    const rawMatchedOrder = n.matched_order;
+    if (!rawMatchedOrder || !String(rawMatchedOrder).trim()) { skipped++; continue; } // not filled in — leave alone
+
+    const excelRow = i + 2;
+    const pageIdx  = parseInt(rawPage, 10) - 1; // CSV "Page" column is 1-indexed for humans
+    const page     = Number.isFinite(pageIdx) ? imp.pages[pageIdx] : undefined;
+    if (!page) { errors.push({ row: excelRow, reason: `Page "${rawPage}" not found in this import` }); continue; }
+
+    const orderNumber = String(rawMatchedOrder).trim();
+    if (usedInThisImport.has(orderNumber)) { errors.push({ row: excelRow, reason: `Order ${orderNumber} already assigned to another row in this file` }); continue; }
+    const order = orders.find(o => o.order_number === orderNumber);
+    if (!order) { errors.push({ row: excelRow, reason: `Order ${orderNumber} not found` }); continue; }
+
+    if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === imp.id
+        && db.orderLabels[page.matchedOrderNumber]?.pageIndex === pageIdx) {
+      delete db.orderLabels[page.matchedOrderNumber];
+    }
+    page.matchedOrderNumber = orderNumber;
+    page.matchStatus        = 'matched';
+    page.matchMethod        = 'csv_import';
+    db.orderLabels[orderNumber] = {
+      importId: imp.id, pageIndex: pageIdx, pageFile: page.pageFile,
+      attachedAt: new Date().toISOString(), attachedBy: req.userId,
+    };
+    usedInThisImport.add(orderNumber);
+    applied++;
+  }
+
+  writeDb(db);
+  logAudit('label_import_matches_bulk_applied', { importId: imp.id, filename: imp.filename, applied, skipped, errorCount: errors.length, by: req.userId || '' });
+  res.json({ ok: true, applied, skipped, errors });
+});
+
 app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
   const { id, idx } = req.params;
   const db  = readDb();
