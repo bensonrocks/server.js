@@ -3442,6 +3442,15 @@ app.get('/api/label-imports/:id/pages/:idx/pdf', requireAuthOrToken, (req, res) 
   const disp = req.query.dl === '1' ? 'attachment' : 'inline';
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${disp}; filename="label_page_${parseInt(idx) + 1}.pdf"`);
+  // The blanket security middleware sends frame-ancestors 'none' + X-Frame-
+  // Options: DENY on every response — enforced by the browser reading THIS
+  // response's own headers, so it blocks the label review screen's preview
+  // iframe and lightbox from embedding it even though they're same-origin
+  // (the CSP's frame-src 'self' on the PARENT page is not enough to override
+  // it). Narrow the exception to just this route: same-origin framing only,
+  // never third-party — still meaningfully more restrictive than no policy.
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   fs.createReadStream(filePath).pipe(res);
 });
 
