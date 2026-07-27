@@ -4547,6 +4547,7 @@ app.get('/api/master/system-errors/health', (req, res) => {
     ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
     masterKeyDefault: MASTER_KEY_IS_DEFAULT,
     labelOcrRenderAvailable: LABEL_OCR_RENDER_AVAILABLE,
+    inventoryPathMismatch: INVENTORY_PATH_MISMATCH,
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortStores: (db.zortStores || []).length,
     zortOutboxPending: ob.filter(e => !e.stalled).length,
@@ -4576,6 +4577,7 @@ app.get('/api/system-health', (req, res) => {
     at: new Date().toISOString(),
     masterKeyDefault: MASTER_KEY_IS_DEFAULT,   // security warning banner
     labelOcrRenderAvailable: LABEL_OCR_RENDER_AVAILABLE,
+    inventoryPathMismatch: INVENTORY_PATH_MISMATCH,
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortOutboxStalled: ob.filter(e => e.stalled).length,
     storagePersistent: PERSISTENCE.survivedRestart,
@@ -8088,6 +8090,23 @@ const MASTER_PASS = process.env.MASTER_KEY || '201432547E';
 if (MASTER_KEY_IS_DEFAULT) {
   console.warn('[IdealScan] ⚠ SECURITY: MASTER_KEY is not set — falling back to the built-in default, which is present in the source. Set MASTER_KEY in the deployment environment.');
 }
+
+// The inventory store resolves its own DATA_DIR. If it ever disagrees with
+// this file's, its SQLite database lands somewhere else — on Railway that
+// meant inventory.db sat on the container's EPHEMERAL disk while db.json was
+// on the volume, so bin locations and stock silently vanished on every
+// redeploy while orders survived. Assert they match, loudly, at boot.
+let INVENTORY_PATH_MISMATCH = null;
+try {
+  const invDir = inventory.dataDir && inventory.dataDir();
+  if (invDir && path.resolve(invDir) !== path.resolve(DATA_DIR)) {
+    INVENTORY_PATH_MISMATCH = { server: path.resolve(DATA_DIR), inventory: path.resolve(invDir) };
+    console.error('[IdealScan] ⚠ DATA LOSS RISK: the inventory store is writing to a DIFFERENT directory than the main database.');
+    console.error(`[IdealScan]    main db : ${INVENTORY_PATH_MISMATCH.server}`);
+    console.error(`[IdealScan]    inventory: ${INVENTORY_PATH_MISMATCH.inventory}`);
+    console.error('[IdealScan]    Inventory data (bin locations, stock) will NOT survive a restart. Set DATA_DIR explicitly.');
+  }
+} catch (e) { console.warn('[IdealScan] could not verify inventory store path:', e.message); }
 
 function checkMaster(req, res) {
   if (req.headers['x-master-key'] !== MASTER_PASS) {
