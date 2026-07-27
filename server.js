@@ -11653,6 +11653,92 @@ app.post('/api/inventory/locations', requireAuth, express.json(), (req, res) => 
     res.status(201).json(loc);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+// ── Warehouse setup: bulk bin locations ─────────────────────────────────────
+// Blank spreadsheet for setting up (or re-mapping) racking. Downloading,
+// filling in and re-uploading is the round trip; re-uploading an edited copy
+// UPDATES the bins it names, so this doubles as a bulk edit.
+app.get('/api/inventory/locations/template', requireAuth, (req, res) => {
+  const headers = ['zone', 'aisle', 'shelf', 'bin', 'capacity', 'environment', 'kind', 'length_cm', 'width_cm', 'height_cm', 'active'];
+  const sample = [
+    ['A', '01', '01', '01', 1000, 'dry',    'pick', 120, 80, 150, 'yes'],
+    ['A', '01', '01', '02', 1000, 'dry',    'pick', 120, 80, 150, 'yes'],
+    ['B', '01', '01', '01', 5000, 'dry',    'bulk', 240, 120, 200, 'yes'],
+    ['C', '01', '01', '01', 800,  'chilled','pick', 120, 80, 150, 'yes'],
+  ];
+  const notes = [
+    ['Bin locations — upload guide'], [],
+    ['zone / aisle / shelf / bin', 'Together these form the bin id (e.g. A-01-01-01). All four required.'],
+    ['capacity', 'Max units the bin holds. Blank keeps the current value (default 1000 for new bins).'],
+    ['environment', 'dry / chilled / frozen — whatever your site uses.'],
+    ['kind', 'pick = pick face, bulk = reserve/overstock. Defaults to pick.'],
+    ['length_cm / width_cm / height_cm', 'Physical bin size. Optional.'],
+    ['active', 'yes/no. Blank keeps the current setting; new bins default to active.'], [],
+    ['Re-uploading an edited sheet UPDATES existing bins (matched on the bin id) and creates any new ones.'],
+    ['Nothing is ever deleted by an upload — deactivate a bin with active = no instead.'],
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers, ...sample]), 'Locations');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(notes), 'Instructions');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="IDEALONE_Bin_Locations_Template.xlsx"');
+  res.send(buf);
+});
+
+// multer strips the tenant context (see the note on every other multipart
+// route), so tenantMiddleware is re-applied after upload.single().
+app.post('/api/inventory/locations/import-file', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  try {
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    let records;
+    if (ext === '.csv') {
+      records = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true, bom: true });
+    } else {
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      records = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    }
+    // normalise header names ("Zone", "AISLE ", "Length (cm)" → zone/aisle/length_cm)
+    const rows = records.map(r => {
+      const o = {};
+      for (const k of Object.keys(r)) {
+        let n = normalizeKey(k);
+        if (n === 'length' || n === 'length_cm' || n === 'l_cm') n = 'length_cm';
+        if (n === 'width'  || n === 'width_cm'  || n === 'w_cm' || n === 'breadth' || n === 'b_cm') n = 'width_cm';
+        if (n === 'height' || n === 'height_cm' || n === 'h_cm') n = 'height_cm';
+        if (n === 'max_units' || n === 'cap') n = 'capacity';
+        if (n === 'env' || n === 'temperature' || n === 'temp') n = 'environment';
+        if (n === 'type' || n === 'bin_kind') n = 'kind';
+        o[n] = r[k];
+      }
+      return o;
+    }).filter(r => String(r.zone || '').trim() || String(r.aisle || '').trim() || String(r.bin || '').trim());
+    if (!rows.length) return res.status(400).json({ error: 'No location rows found — the sheet needs zone, aisle, shelf and bin columns.' });
+    const result = inventory.bulkUpsertLocations(rows);
+    logAudit('warehouse_locations_imported', {
+      filename: req.file.originalname || '', created: result.created, updated: result.updated,
+      skipped: result.skipped, by: req.userId || '',
+    });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Fast path for regular racking: generate a block of bins from ranges instead
+// of a spreadsheet. Never overwrites a bin that already exists.
+app.post('/api/inventory/locations/generate', requireAuth, express.json(), (req, res) => {
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  try {
+    const result = inventory.generateLocations(req.body || {});
+    logAudit('warehouse_locations_generated', {
+      zone: String(req.body?.zone || ''), created: result.created,
+      alreadyExisted: result.alreadyExisted, by: req.userId || '',
+    });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // Admin: set a bin's dimensions (L×B×H) + max unit capacity + environment/active.
 app.put('/api/inventory/locations/:id', requireAuth, express.json(), (req, res) => {
   const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';

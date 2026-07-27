@@ -2449,6 +2449,40 @@
             <button class="btn-secondary btn-sm" id="locManageBtn" title="Edit bin dimensions / capacity">⚙ Manage bins</button>
             <button class="btn-secondary btn-sm" id="locPrintLabelsBtn" title="Print scannable QR labels for the bins — stick them on the shelves; scanning one in the pick screen verifies the packer is at the right bin">🏷 Print labels</button>
           </div>
+
+          <!-- Warehouse setup: build racking in bulk instead of one bin at a time -->
+          <div style="margin:.75rem 0;padding:.7rem .85rem;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+              <b style="font-size:.88rem">🏗 Set up racking in bulk</b>
+              <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                <button class="btn-secondary btn-sm" id="locTemplateBtn" title="Download a spreadsheet template to map out your racking">⬇ Template</button>
+                <button class="btn-secondary btn-sm" id="locImportBtn" title="Upload a filled-in sheet — creates new bins and updates existing ones">⬆ Import sheet</button>
+                <input type="file" id="locImportFile" accept=".xlsx,.xls,.csv" class="hidden" />
+                <button class="btn-secondary btn-sm" id="locGenToggleBtn" title="Generate a regular block of racking from ranges">⚙ Generate range…</button>
+              </div>
+            </div>
+            <div class="hint" style="margin:.35rem 0 0">Import updates bins it names and adds new ones — nothing is ever deleted (set <code>active = no</code> to retire a bin).</div>
+
+            <div id="locGenWrap" class="hidden" style="margin-top:.6rem;padding-top:.6rem;border-top:1px dashed #cbd5e1">
+              <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:flex-end">
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Zone</label><input id="genZone" placeholder="A" style="width:70px;padding:.35rem .5rem;border:1px solid #e2e8f0;border-radius:6px" /></div>
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Aisles</label>
+                  <span style="display:inline-flex;gap:.2rem;align-items:center"><input id="genAisleFrom" placeholder="1" style="width:50px;padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px" />→<input id="genAisleTo" placeholder="10" style="width:50px;padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px" /></span></div>
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Shelves</label>
+                  <span style="display:inline-flex;gap:.2rem;align-items:center"><input id="genShelfFrom" placeholder="1" style="width:50px;padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px" />→<input id="genShelfTo" placeholder="4" style="width:50px;padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px" /></span></div>
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Bins</label>
+                  <span style="display:inline-flex;gap:.2rem;align-items:center"><input id="genBinFrom" placeholder="1" style="width:50px;padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px" />→<input id="genBinTo" placeholder="6" style="width:50px;padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px" /></span></div>
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Capacity</label><input id="genCap" type="number" placeholder="1000" style="width:80px;padding:.35rem .5rem;border:1px solid #e2e8f0;border-radius:6px" /></div>
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Env</label>
+                  <select id="genEnv" style="padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px"><option value="dry">dry</option><option value="chilled">chilled</option><option value="frozen">frozen</option></select></div>
+                <div><label style="display:block;font-size:.7rem;color:#64748b;font-weight:600">Kind</label>
+                  <select id="genKind" style="padding:.35rem .4rem;border:1px solid #e2e8f0;border-radius:6px"><option value="pick">pick</option><option value="bulk">bulk</option></select></div>
+                <button class="btn-primary btn-sm" id="genRunBtn">Generate</button>
+              </div>
+              <div class="hint" id="genPreview" style="margin-top:.4rem"></div>
+            </div>
+            <div id="locBulkMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+          </div>
           <div id="locManageWrap" class="hidden" style="margin-bottom:.6rem;border:1px solid #e2e8f0;border-radius:8px;padding:.5rem;overflow-x:auto">
             <table class="tbl" style="width:100%">
               <thead><tr><th style="text-align:left">Bin</th><th>Env</th><th>Role</th><th style="text-align:right">L</th><th style="text-align:right">B</th><th style="text-align:right">H</th><th style="text-align:right">Max units</th><th></th></tr></thead>

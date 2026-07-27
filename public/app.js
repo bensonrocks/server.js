@@ -12222,6 +12222,67 @@
       $('serAddBtn')?.addEventListener('click', serialAdd);
       $('locManageBtn')?.addEventListener('click', () => { const w = $('locManageWrap'); w.classList.toggle('hidden'); if (!w.classList.contains('hidden')) renderManageBins(); });
       $('locPrintLabelsBtn')?.addEventListener('click', printBinLabels);
+      // ── Bulk racking setup ──────────────────────────────────────────────
+      $('locTemplateBtn')?.addEventListener('click', () =>
+        authDownload('/api/inventory/locations/template', 'IDEALONE_Bin_Locations_Template.xlsx'));
+      $('locImportBtn')?.addEventListener('click', () => $('locImportFile')?.click());
+      $('locImportFile')?.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        wmsMsg('locBulkMsg', 'progress', `Importing ${file.name}…`);
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const r = await fetch('/api/inventory/locations/import-file', { method: 'POST', body: fd });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Import failed');
+          let msg = `✓ ${d.created} bin(s) created, ${d.updated} updated`;
+          if (d.skipped) msg += `, ${d.skipped} skipped`;
+          if (d.errors?.length) msg += ` — ${d.errors.slice(0, 5).map(x => `row ${x.row}: ${x.error}`).join('; ')}`;
+          wmsMsg('locBulkMsg', d.skipped ? 'error' : 'success', msg);
+          await refreshLocations();   // refresh the bin dropdowns too
+          renderManageBins();
+        } catch (err) { wmsMsg('locBulkMsg', 'error', err.message); }
+      });
+      $('locGenToggleBtn')?.addEventListener('click', () => $('locGenWrap')?.classList.toggle('hidden'));
+      // live "this will create N bins" preview so a fat-fingered range is
+      // obvious BEFORE it generates thousands of bins
+      const genPreview = () => {
+        const num = id => parseInt($(id)?.value, 10);
+        const span = (a, b) => (Number.isFinite(num(a)) && Number.isFinite(num(b))) ? (num(b) - num(a) + 1) : 0;
+        const n = span('genAisleFrom', 'genAisleTo') * span('genShelfFrom', 'genShelfTo') * span('genBinFrom', 'genBinTo');
+        const el = $('genPreview');
+        if (el) el.textContent = n > 0 ? `Will create up to ${n.toLocaleString()} bin(s) — existing ones are left untouched.` : '';
+      };
+      ['genAisleFrom','genAisleTo','genShelfFrom','genShelfTo','genBinFrom','genBinTo']
+        .forEach(id => $(id)?.addEventListener('input', genPreview));
+      $('genRunBtn')?.addEventListener('click', async () => {
+        const val = id => ($(id)?.value || '').trim();
+        const body = {
+          zone: val('genZone'),
+          aisleFrom: val('genAisleFrom'), aisleTo: val('genAisleTo'),
+          shelfFrom: val('genShelfFrom'), shelfTo: val('genShelfTo'),
+          binFrom: val('genBinFrom'),     binTo: val('genBinTo'),
+          capacity: parseInt(val('genCap'), 10) || 1000,
+          environment: val('genEnv') || 'dry',
+          kind: val('genKind') || 'pick',
+        };
+        if (!body.zone) { wmsMsg('locBulkMsg', 'error', 'Zone is required.'); return; }
+        wmsMsg('locBulkMsg', 'progress', 'Generating racking…');
+        try {
+          const r = await fetch('/api/inventory/locations/generate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Generate failed');
+          wmsMsg('locBulkMsg', 'success',
+            `✓ ${d.created} bin(s) created in zone ${body.zone}` +
+            (d.alreadyExisted ? ` · ${d.alreadyExisted} already existed (left as-is)` : ''));
+          await refreshLocations();   // refresh the bin dropdowns too
+          renderManageBins();
+        } catch (err) { wmsMsg('locBulkMsg', 'error', err.message); }
+      });
       $('ccBlind')?.addEventListener('change', ccRender);
       $('binLookupBtn')?.addEventListener('click', binLookup);
       $('binLookup')?.addEventListener('keydown', e => { if (e.key === 'Enter') binLookup(); });
