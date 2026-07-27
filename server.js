@@ -3166,6 +3166,12 @@ async function renderPdfPageToPng(buffer, pageIndex = 0, scale = 3) {
   }
 }
 
+// Bump this whenever ocrLabelPageFile's approach changes meaningfully — it
+// invalidates old `page.ocrFailed` markers in rematchLabelImport() so a page
+// that failed under a WEAKER strategy gets one retry under a stronger one,
+// instead of being stuck "unmatched" forever regardless of future fixes.
+const OCR_LABEL_STRATEGY = 'full-page-render-v1';
+
 // OCR one stored single-page label PDF. Returns text ('' if nothing readable).
 async function ocrLabelPageFile(filePath, worker) {
   const fileBuf = fs.readFileSync(filePath);
@@ -3539,22 +3545,34 @@ async function rematchLabelImport(id, rematchAll) {
 
     // Image-only page (no text layer): pull the embedded bitmap and OCR it.
     // Done once per page — the text is stored so later rematches are instant.
-    if (!rawText.trim() && Tesseract && !page.ocrFailed && ocrCount < OCR_PAGE_CAP) {
+    // `ocrFailed` is only a permanent skip when it failed under the CURRENT
+    // strategy (OCR_LABEL_STRATEGY) — a page marked failed by an OLDER,
+    // weaker strategy (e.g. one that only OCR'd the largest embedded image,
+    // which on some labels is a decorative watermark rather than the actual
+    // text) must get one retry once the strategy improves (e.g. to full-page
+    // rendering), or it would be stuck "unmatched" forever no matter how many
+    // times Auto Match / Rematch is clicked, even after the underlying bug is
+    // fixed. Bump OCR_LABEL_STRATEGY whenever the OCR approach changes again.
+    const staleFailure = page.ocrFailed && page.ocrStrategy !== OCR_LABEL_STRATEGY;
+    if (!rawText.trim() && Tesseract && (!page.ocrFailed || staleFailure) && ocrCount < OCR_PAGE_CAP) {
       try {
         if (!ocrWorker) ocrWorker = await createOcrWorker();
         const text = await ocrLabelPageFile(path.join(LABEL_IMPORT_DIR, id, page.pageFile), ocrWorker);
         ocrCount++;
+        page.ocrStrategy = OCR_LABEL_STRATEGY;
         if (text.trim()) {
-          rawText       = text;
-          page.rawText  = text.slice(0, 4000);
-          page.ocr      = true;
+          rawText         = text;
+          page.rawText    = text.slice(0, 4000);
+          page.ocr        = true;
+          page.ocrFailed  = false;
           if (extractLabelFields) page.extracted = extractLabelFields(text);
         } else {
-          page.ocrFailed = true; // don't burn OCR time on this page again
+          page.ocrFailed = true; // don't burn OCR time on this page again — until the strategy next improves
         }
       } catch (e) {
         console.error(`[label-ocr] page ${page.pageIndex + 1}:`, e.message);
-        page.ocrFailed = true;
+        page.ocrFailed   = true;
+        page.ocrStrategy = OCR_LABEL_STRATEGY;
       }
     }
 
