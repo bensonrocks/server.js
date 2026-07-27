@@ -1082,8 +1082,8 @@ body.log-open { overflow: hidden; }
 .role-badge { display: inline-block; font-size: .64rem; font-weight: 700; padding: .14em .5em; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
 .role-badge.admin     { background: var(--primary-light); color: #1d4ed8; border: 1px solid var(--primary-border); }
 .role-badge.warehouse { background: var(--success-bg); color: #15803d; border: 1px solid var(--success-border); }
-.btn-role-toggle { background: none; border: 1px solid var(--border); border-radius: 4px; padding: .22rem .55rem; font-size: .72rem; cursor: pointer; color: var(--text-light); transition: background .12s; }
-.btn-role-toggle:hover { background: var(--bg); }
+.role-badge.driver    { background: var(--warning-bg); color: #b45309; border: 1px solid var(--warning-border); }
+.role-select { border: 1px solid var(--border); border-radius: 4px; padding: .2rem .4rem; font-size: .72rem; color: var(--text-light); background: var(--surface); cursor: pointer; }
 .user-add-row  { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .user-add-row input { flex: 1; min-width: 100px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: .38rem .6rem; font-size: .82rem; background: #fff; color: var(--text); }
 .user-add-row input:focus { outline: none; border-color: var(--primary); }

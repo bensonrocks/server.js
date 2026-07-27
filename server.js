@@ -7976,6 +7976,15 @@ app.post('/api/auth/login', (req, res) => {
     logAudit('login_failed', { user: String(id).trim().slice(0, 60), ...clientInfo(req) });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
+  // Defense in depth: a 'driver' row should never exist in db.users[] at all
+  // (see POST /api/master/users and PUT .../role — driver rows only ever go
+  // to db.drivers[]), so this should be unreachable in practice. Still
+  // refused explicitly rather than trusting that invariant blindly — a
+  // driver must only ever reach /driver on mobile, never this desktop app.
+  if (user.role === 'driver') {
+    logAudit('login_failed', { user: user.id, reason: 'driver_role_desktop_blocked', ...clientInfo(req) });
+    return res.status(403).json({ error: 'Drivers use the Driver App at /driver — this login is for office/warehouse staff only.' });
+  }
   loginSuccess(req, idNorm);
   const token = uuidv4();
   const kickedOther = activeSessions.has(user.id);
@@ -9289,6 +9298,27 @@ app.post('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
   const { id, name, password, role, tenant_id } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
+  // Driver rows never get a staff Users account — same rule the bulk CSV
+  // import already enforces (see importUserRows): the Driver App
+  // authenticates against db.drivers[].pinHash, never db.users[], so a
+  // driver has no desktop/TMS login at all, only /driver on mobile. The
+  // "password" field here IS their Driver App PIN.
+  if (role === 'driver') {
+    if (!/^\d{4,8}$/.test(String(password))) return res.status(400).json({ error: 'Driver PIN must be 4-8 digits' });
+    const idTrim = String(id).trim();
+    const db = readDb();
+    if (!db.drivers) db.drivers = [];
+    if (db.drivers.find(d => d.id === idTrim)) return res.status(409).json({ error: `Driver "${idTrim}" already exists` });
+    const pinSalt = crypto.randomBytes(16).toString('hex');
+    db.drivers.push({
+      id: idTrim, name: String(name || idTrim).trim(),
+      phone: '', vehicle: 'Van', plate: '', capacity: 0, capacityM3: 0, status: 'active',
+      pinSalt, pinHash: hashPass(String(password), pinSalt),
+    });
+    writeDb(db);
+    logAudit('driver_upsert', { driverId: idTrim, name: String(name || idTrim).trim(), pinChanged: true, by: req.userId || '' });
+    return res.json({ ok: true, driver: true });
+  }
   if (String(password).length < 5) return res.status(400).json({ error: 'Password must be at least 5 characters' });
   const users = readUsers();
   if (users.find(u => u.id === id)) return res.status(409).json({ error: `User "${id}" already exists` });
@@ -9462,7 +9492,33 @@ app.put('/api/master/users/:id/role', (req, res) => {
   const idx   = users.findIndex(u => u.id === req.params.id);
   if (idx < 0) return res.status(404).json({ error: 'User not found' });
   const { role } = req.body;
-  if (!['admin', 'warehouse'].includes(role)) return res.status(400).json({ error: 'Role must be admin or warehouse' });
+  if (!['admin', 'warehouse', 'driver'].includes(role)) return res.status(400).json({ error: 'Role must be admin, warehouse, or driver' });
+  // Converting an existing staff account TO driver: per the standing rule
+  // (see importUserRows / POST /api/master/users), a driver has no users[]
+  // account at all — desktop/TMS access, only /driver on mobile. Migrate
+  // instead of just relabeling: link (or create) their db.drivers[] profile
+  // with the same id so route planning/the Driver App can find them, remove
+  // the now-obsolete staff account, and kick any live staff session so the
+  // restriction takes effect immediately rather than at next login.
+  if (role === 'driver') {
+    const user = users[idx];
+    const db = readDb();
+    if (!db.drivers) db.drivers = [];
+    if (!db.drivers.find(d => d.id === user.id)) {
+      db.drivers.push({
+        id: user.id, name: user.name || user.id,
+        phone: '', vehicle: 'Van', plate: '', capacity: 0, capacityM3: 0, status: 'active',
+      }); // no PIN yet — set one in Administrator → Drivers before they can log into the Driver App
+      writeDb(db);
+      logAudit('driver_upsert', { driverId: user.id, name: user.name || user.id, pinChanged: false, by: req.userId || '' });
+    }
+    users.splice(idx, 1);
+    writeUsers(users);
+    activeSessions.delete(user.id);
+    persistSessions();
+    logAudit('user_converted_to_driver', { userId: user.id, by: req.userId || '' });
+    return res.json({ ok: true, converted: true });
+  }
   users[idx].role = role;
   writeUsers(users);
   res.json({ ok: true });
@@ -11566,7 +11622,10 @@ app.post('/api/inventory/locations', requireAuth, express.json(), (req, res) => 
 // Admin: set a bin's dimensions (L×B×H) + max unit capacity + environment/active.
 app.put('/api/inventory/locations/:id', requireAuth, express.json(), (req, res) => {
   const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
-  if (role === 'warehouse') return res.status(403).json({ error: 'Administrator access required.' });
+  // Explicit admin-only allowlist — was a "deny only warehouse" check, which
+  // silently granted this to ANY other role value (an oversight this session's
+  // addition of a third 'driver' role would otherwise have quietly exploited).
+  if (role !== 'admin') return res.status(403).json({ error: 'Administrator access required.' });
   try {
     const loc = inventory.updateLocation(req.params.id, req.body || {});
     logAudit('warehouse_location_updated', { location: req.params.id, by: req.userId || '' });

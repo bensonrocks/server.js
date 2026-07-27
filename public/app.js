@@ -9257,33 +9257,55 @@
         return;
       }
       const roleLabel = { warehouse: 'Warehouse', driver: 'Driver' };
-      listEl.innerHTML = users.map(u => `
+      listEl.innerHTML = users.map(u => {
+        const role = u.role || 'admin';
+        // A 'driver' row should never actually appear here (see the server
+        // side — driver rows live in db.drivers[] only), but render it
+        // sanely rather than assume, in case of any legacy data.
+        return `
         <div class="user-row" data-id="${esc(u.id)}">
           <span class="user-id">${esc(u.id)}</span>
           <span class="user-name">${esc(u.name || u.id)}</span>
-          <span class="role-badge ${esc(u.role || 'admin')}">${roleLabel[u.role] || 'Admin'}</span>
+          <span class="role-badge ${esc(role)}">${roleLabel[role] || 'Admin'}</span>
           <div class="user-row-actions">
-            ${u.role === 'driver' ? '' : `
-            <button class="btn-role-toggle" data-id="${esc(u.id)}" data-role="${esc(u.role || 'admin')}" title="Toggle role">
-              ${u.role === 'warehouse' ? '&#8593; Make Admin' : '&#8595; Warehouse'}
-            </button>`}
+            <select class="role-select" data-id="${esc(u.id)}" data-current="${esc(role)}" title="Change this user's role">
+              <option value="admin"     ${role === 'admin'     ? 'selected' : ''}>Admin</option>
+              <option value="warehouse" ${role === 'warehouse' ? 'selected' : ''}>Warehouse</option>
+              <option value="driver"    ${role === 'driver'    ? 'selected' : ''}>Driver</option>
+            </select>
             <button class="btn-chpass" data-id="${esc(u.id)}" title="Change password">&#128273; Password</button>
             <button class="btn-user-features" data-id="${esc(u.id)}" title="Toggle which functions this user sees">&#9881; Features</button>
             <button class="btn-del-user" data-id="${esc(u.id)}" title="Delete user">&#128465;</button>
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
 
-      listEl.querySelectorAll('.btn-role-toggle').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const newRole = btn.dataset.role === 'warehouse' ? 'admin' : 'warehouse';
-          const r = await fetch(`/api/master/users/${encodeURIComponent(btn.dataset.id)}/role`, {
+      listEl.querySelectorAll('.role-select').forEach(sel => {
+        sel.addEventListener('change', async () => {
+          const newRole = sel.value;
+          const id      = sel.dataset.id;
+          if (newRole === sel.dataset.current) return;
+          if (newRole === 'driver') {
+            const ok = confirm(
+              `Convert "${id}" to a Driver?\n\n` +
+              `This REMOVES their staff login (username/password) — they will no ` +
+              `longer be able to sign into this desktop app at all, only the ` +
+              `Driver App on mobile. A linked driver profile will be created in ` +
+              `Transport → Driver Details; set a Driver App PIN there before they ` +
+              `can log in.\n\nContinue?`
+            );
+            if (!ok) { sel.value = sel.dataset.current; return; }
+          }
+          const r = await fetch(`/api/master/users/${encodeURIComponent(id)}/role`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
             body: JSON.stringify({ role: newRole }),
           });
           const d = await r.json();
-          if (!r.ok) { alert(d.error); return; }
-          showUserStatus(`Role updated to ${newRole}.`, 'success');
+          if (!r.ok) { alert(d.error); sel.value = sel.dataset.current; return; }
+          showUserStatus(d.converted
+            ? `"${id}" converted to Driver — set their Driver App PIN in Transport → Driver Details.`
+            : `Role updated to ${newRole}.`, 'success');
           loadUserList();
         });
       });
@@ -9378,13 +9400,32 @@
     });
   }
 
+  // A "Driver" row never gets a staff Users account at all — it goes
+  // straight to db.drivers[] with the password field treated as their
+  // Driver App PIN (4-8 digits), same rule the bulk CSV import already
+  // uses. The field label/placeholder switches to make that obvious.
+  document.getElementById('newUserRole').addEventListener('change', (e) => {
+    const passInput = document.getElementById('newUserPass');
+    if (e.target.value === 'driver') {
+      passInput.placeholder = 'Driver App PIN (4-8 digits)';
+      passInput.setAttribute('inputmode', 'numeric');
+    } else {
+      passInput.placeholder = 'Password';
+      passInput.removeAttribute('inputmode');
+    }
+  });
+
   document.getElementById('addUserBtn').addEventListener('click', async () => {
     const id   = document.getElementById('newUserId').value.trim();
     const name = document.getElementById('newUserName').value.trim();
     const pass = document.getElementById('newUserPass').value.trim();
     const role = document.getElementById('newUserRole').value;
     if (!id || !pass) { showUserStatus('User ID and password are required.', 'error'); return; }
-    if (pass.length < 5) { showUserStatus('Password must be at least 5 characters.', 'error'); return; }
+    if (role === 'driver') {
+      if (!/^\d{4,8}$/.test(pass)) { showUserStatus('Driver PIN must be 4-8 digits.', 'error'); return; }
+    } else if (pass.length < 5) {
+      showUserStatus('Password must be at least 5 characters.', 'error'); return;
+    }
     try {
       const r = await fetch('/api/master/users', {
         method: 'POST',
@@ -9396,7 +9437,9 @@
       document.getElementById('newUserId').value   = '';
       document.getElementById('newUserName').value = '';
       document.getElementById('newUserPass').value = '';
-      showUserStatus(`User "${id}" added as ${role}.`, 'success');
+      showUserStatus(role === 'driver'
+        ? `"${id}" added as a Driver — mobile Driver App only, no desktop/TMS access.`
+        : `User "${id}" added as ${role}.`, 'success');
       loadUserList();
     } catch (err) { showUserStatus(err.message, 'error'); }
   });
