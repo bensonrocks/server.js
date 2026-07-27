@@ -7582,6 +7582,12 @@
     _scanBuf  = '';
     const inp = document.getElementById(_scanInputId());
     if (inp) inp.value = '';
+    // A flush interrupted by an open modal (e.g. the idle-timeout auto-flush
+    // firing mid-dialog) submits nothing rather than a fragment scooped up
+    // while the dialog was covering the scan input — same reasoning as the
+    // modal guard in _globalScanKeydown.
+    const openModal = document.querySelector('.modal-overlay:not(.hidden)');
+    if (openModal && !openModal.contains(document.activeElement)) return;
     if (!val) return;
     if (_scanTarget === 'inbound') {
       if (!activeInbound) return;
@@ -7616,8 +7622,28 @@
   }
 
   function _globalScanKeydown(e) {
-    // Never intercept while any modal dialog is visible
-    if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+    // While any modal dialog is visible: if focus is genuinely inside that
+    // modal (a search box, a password confirm, etc.) let it type normally.
+    // Otherwise this keystroke is a STRAY scanner burst leaking into the
+    // still-focused (but now hidden-behind-the-modal) scan input — a real
+    // production bug found this way: a scan gun firing while e.g. an
+    // inventory-confirm dialog was open left its characters sitting in
+    // #itemScanInput's raw value, unseen, and the packer's NEXT real scan
+    // got glued onto that leftover fragment ("Unrecognized barcode
+    // 84140028414002078059" — a 7-char fragment + the real 13-digit EAN).
+    // Merely `return`ing here (the old behaviour) stops THIS function's own
+    // buffer logic but does nothing to stop the browser's default typing
+    // behaviour on the still-focused input — block it outright and wipe
+    // anything already accumulated so it can never reach the next scan.
+    const openModal = document.querySelector('.modal-overlay:not(.hidden)');
+    if (openModal) {
+      if (openModal.contains(document.activeElement)) return; // legit typing inside the modal
+      const inp = document.getElementById(_scanInputId());
+      if (inp) inp.value = '';
+      _scanBuf = '';
+      e.preventDefault();
+      return;
+    }
 
     const scanInputId = _scanInputId();
     const ae    = document.activeElement;
@@ -7895,6 +7921,26 @@
   if (_offlineQueue.length) scheduleOfflineSync(2500); // queue survived a reload
   updateOfflinePill();
 
+  // Un-doubling safety net: a stray scanner burst that leaked in before the
+  // real scan (e.g. from behind a modal — see the _globalScanKeydown guard
+  // above, which now prevents this at the source) can still glue a leftover
+  // fragment onto the front of a real barcode. If an unresolved all-digit
+  // token's TAIL is a standard barcode length (GTIN-14/EAN-13/UPC-A/EAN-8)
+  // and starts with exactly the leading fragment, it's almost certainly
+  // <fragment><real code> — retry with just the tail. Only ever called AFTER
+  // the original already failed to resolve, so a legitimate code already
+  // known to the order is never rewritten.
+  function _stripDoubleScan(val) {
+    if (!/^\d{9,}$/.test(val)) return val;
+    for (const n of [14, 13, 12, 8]) {
+      if (val.length > n) {
+        const code = val.slice(-n), frag = val.slice(0, val.length - n);
+        if (frag.length <= n && code.startsWith(frag)) return code;
+      }
+    }
+    return val;
+  }
+
   async function _drainScanQueue() {
     if (_scanBusy || !_scanQueue.length) return;
     _scanBusy = true;
@@ -7913,12 +7959,31 @@
           // Unknown product barcode → teach-on-scan: packer confirms which
           // line it is, mapping is remembered everywhere from then on
           if (data.teachable && data.barcode) {
-            openTeachBarcodeModal(data.barcode, data.resolved);
-            continue;
-          }
-          // Same SKU already sitting in a different (closed) carton — easy
-          // to do by accident, so confirm before it's split across boxes.
-          if (data.crossCartonConfirm) {
+            const stripped = _stripDoubleScan(data.barcode);
+            if (stripped === data.barcode) {
+              openTeachBarcodeModal(data.barcode, data.resolved);
+              continue;
+            }
+            // Looks like <leftover fragment><real code> — silently retry with
+            // just the tail before ever bothering the packer with a dialog.
+            const retryId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+            const retry = await fetchT('/api/scan/increment', {
+              method: 'POST', headers: hdrs(),
+              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku: stripped, eventId: retryId }),
+            });
+            const retryData = await retry.json();
+            if (retry.ok) {
+              data = retryData;
+            } else if (retryData.teachable) {
+              openTeachBarcodeModal(retryData.barcode || stripped, retryData.resolved);
+              continue;
+            } else {
+              showFeedback(feedback, 'error', retryData.error || `SKU not in this order: ${stripped}`);
+              continue;
+            }
+          } else if (data.crossCartonConfirm) {
+            // Same SKU already sitting in a different (closed) carton — easy
+            // to do by accident, so confirm before it's split across boxes.
             const ok = confirm(`${data.sku} is already packed in Carton ${data.existingCartonNums.join(', ')}.\n\nAdd it to Carton ${data.activeCartonNum} too?`);
             if (!ok) { continue; }
             const retry = await fetchT('/api/scan/increment', {
