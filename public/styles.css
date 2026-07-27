@@ -1838,3 +1838,57 @@ body.ls-open { overflow: hidden; }
   .dock-actions .btn-success { padding: .9rem .5rem; font-size: 1rem; }
   .clf-capture-btn { padding: .85rem 2rem; font-size: 1rem; }
 }
+
+/* ── Dark left sidebar layout (desktop) ─────────────────────────────────── */
+@media (min-width: 901px) {
+  header {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 232px; height: auto;
+    background: #0f172a; border-bottom: none; border-right: 1px solid #1e293b;
+    box-shadow: none; overflow-y: auto;
+  }
+  .header-inner {
+    max-width: none; margin: 0; padding: 1rem .8rem;
+    display: flex; flex-direction: column; align-items: stretch; gap: .4rem;
+    height: 100%;
+  }
+  header .header-brand-name { color: #fff; }
+  header .header-brand-sub  { color: #64748b; }
+  .side-label {
+    font-size: .62rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: #475569; margin: .9rem .35rem .25rem;
+  }
+  header nav.side-nav { display: flex; flex-direction: column; gap: 2px; }
+  header .tab-btn {
+    display: flex; align-items: center; gap: .6rem;
+    padding: .55rem .7rem; text-align: left;
+    color: #94a3b8; font-size: .88rem; border-radius: 9px;
+  }
+  header .tab-btn .tab-icon { display: inline-block; font-size: 1rem; width: 1.2rem; text-align: center; }
+  header .tab-btn:hover  { background: #1e293b; color: #e2e8f0; }
+  header .tab-btn.active { background: #334155; color: #fff; font-weight: 700; }
+  .nav-badge {
+    margin-left: auto; background: #f59e0b; color: #422006;
+    font-size: .68rem; font-weight: 800; border-radius: 99px; padding: .05rem .5rem;
+  }
+  .side-clients { margin-top: .2rem; }
+  .side-client-row {
+    display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+    width: 100%; background: none; border: none; cursor: pointer;
+    color: #94a3b8; font-size: .84rem; font-weight: 600;
+    padding: .45rem .7rem; border-radius: 9px; text-align: left;
+  }
+  .side-client-row:hover  { background: #1e293b; color: #e2e8f0; }
+  .side-client-row.active { background: #334155; color: #fff; }
+  .side-client-count { background: #1e293b; color: #cbd5e1; font-size: .68rem; border-radius: 99px; padding: .05rem .5rem; }
+  .side-client-row.active .side-client-count { background: rgba(255,255,255,.18); }
+  .sidebar-foot { margin-top: auto; padding-top: .8rem; border-top: 1px solid #1e293b; display: flex; flex-direction: column; gap: .5rem; }
+  .sidebar-user-row { display: flex; align-items: center; gap: .4rem; }
+  header .log-access-link {
+    background: #1e293b; border: 1px solid #334155; color: #cbd5e1;
+    border-radius: 9px; padding: .45rem .7rem; cursor: pointer; font-size: .8rem; text-align: left;
+  }
+  header .log-access-link:hover { background: #334155; color: #fff; }
+  main, .app-footer { margin-left: 232px; }
+}
+/* On phones/tablets the old top-bar behaviour remains (sidebar styles scoped to ≥901px) */

@@ -559,15 +559,23 @@
           <span class="header-brand-sub">United Logistics &amp; Distribution</span>
         </div>
       </a>
-      <nav>
+      <div class="side-label">Navigation</div>
+      <nav class="side-nav">
         <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
-        <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
+        <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders <span id="ordersNavBadge" class="nav-badge hidden"></span></button>
         <button class="tab-btn" data-tab="about"><span class="tab-icon">&#8505;</span>About</button>
       </nav>
-      <div class="header-user">
-        <span id="userDisplay" class="user-chip hidden"></span>
-        <button id="printerSettingsBtn" class="printer-settings-btn hidden" title="Printer settings">&#128438;</button>
-        <button id="lockBtn" class="lock-btn hidden" title="Lock app">&#128274;</button>
+      <div id="sideClientsWrap" class="side-clients hidden">
+        <div class="side-label">Clients</div>
+        <div id="sideClients"></div>
+      </div>
+      <div class="sidebar-foot">
+        <div class="sidebar-user-row">
+          <span id="userDisplay" class="user-chip hidden"></span>
+          <button id="printerSettingsBtn" class="printer-settings-btn hidden" title="Printer settings">&#128438;</button>
+          <button id="lockBtn" class="lock-btn hidden" title="Lock app">&#128274;</button>
+        </div>
+        <button class="log-access-link" id="logAccessBtn">&#9881; Administrator</button>
       </div>
     </div>
   </header>
@@ -805,7 +813,6 @@
         <span class="footer-by">By Benson</span>
       </div>
     </div>
-    <button class="log-access-link" id="logAccessBtn">&#9881; Administrator</button>
   </footer>
 
   <!-- Upload Confirm Modal -->

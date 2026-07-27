@@ -1023,6 +1023,40 @@
       carrierRow.innerHTML = '';
     }
 
+    // Sidebar CLIENTS section — mirrors the client filter with counts
+    const sideWrap = document.getElementById('sideClientsWrap');
+    const sideList = document.getElementById('sideClients');
+    if (sideWrap && sideList) {
+      if (clients.length > 0) {
+        const countFor = c => loadedOrders.filter(o => (o.client_name || '') === c).length;
+        sideWrap.classList.remove('hidden');
+        sideList.innerHTML = [
+          `<button class="side-client-row ${activeClientFilter === 'all' ? 'active' : ''}" data-client="all"><span>All clients</span><span class="side-client-count">${loadedOrders.length}</span></button>`,
+          ...clients.map(c => `<button class="side-client-row ${activeClientFilter === c ? 'active' : ''}" data-client="${esc(c)}"><span>${esc(c)}</span><span class="side-client-count">${countFor(c)}</span></button>`),
+        ].join('');
+        sideList.querySelectorAll('.side-client-row').forEach(btn => {
+          btn.addEventListener('click', () => {
+            activeClientFilter = btn.dataset.client;
+            sideList.querySelectorAll('.side-client-row').forEach(b => b.classList.toggle('active', b === btn));
+            document.querySelectorAll('#clientFilterRow .filter-chip').forEach(b =>
+              b.classList.toggle('active', b.dataset.client === activeClientFilter));
+            renderOrdersList();
+            switchTab('orders');
+          });
+        });
+      } else {
+        sideWrap.classList.add('hidden');
+      }
+    }
+
+    // Orders count badge on the sidebar nav item (active = not yet done)
+    const navBadge = document.getElementById('ordersNavBadge');
+    if (navBadge) {
+      const activeCount = loadedOrders.filter(o => o.scan_status !== 'done').length;
+      navBadge.textContent = activeCount;
+      navBadge.classList.toggle('hidden', activeCount === 0);
+    }
+
     renderOrdersList();
   }
 
