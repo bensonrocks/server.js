@@ -1562,13 +1562,33 @@ app.get('/api/orders', (_req, res) => {
   res.json(globalOrdersWithState());
 });
 
+// Picking lists and labels carry several scannable numbers — accept any of
+// them: GI/order number, waybill, marketplace customer ref, issue no, pick
+// ticket, or PO/shipment number. Leading zeros are stripped for comparison
+// too, since scanners and different upload paths aren't always consistent
+// about them (e.g. "0102030" vs "102030" for the same code).
+//
+// GI number lands in different fields depending on upload path: a PDF
+// picking-list parser may put it straight in order_number, while an XLSX/CSV
+// with an "Issue No" / "iWMS GINo" column maps it into issue_no instead — so
+// issue_no must be checked too, or that upload path's GI barcode never
+// resolves to an order.
 app.post('/api/waybill-lookup', (req, res) => {
   const { waybill } = req.body;
   if (!waybill) return res.status(400).json({ error: 'waybill required' });
-  const order = globalOrdersWithState().find(o =>
-    o.waybill_number && o.waybill_number.trim().toLowerCase() === waybill.trim().toLowerCase()
+  const strip0   = s => s.replace(/^0+(?=.)/, '');
+  const scanned  = normStr(waybill);
+  const scanned0 = strip0(scanned);
+  const orders   = globalOrdersWithState();
+  const hit = (val) => {
+    const v = normStr(val);
+    return v && (v === scanned || strip0(v) === scanned0);
+  };
+  const order = orders.find(o =>
+    hit(o.order_number) || hit(o.waybill_number) || hit(o.customer_ref) ||
+    hit(o.issue_no)     || hit(o.pick_ticket)     || hit(o.po_number)
   );
-  if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });
+  if (!order) return res.status(404).json({ error: `No order found for: ${waybill}` });
   res.json(order);
 });
 
