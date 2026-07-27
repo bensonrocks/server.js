@@ -33,6 +33,14 @@
   let activeDateFilter    = 'today';    // 'today' | 'yesterday' | '7d' | 'all' | 'range'
   let dateRangeFrom       = null;       // 'YYYY-MM-DD' when activeDateFilter === 'range'
   let dateRangeTo         = null;
+
+  // Scan-screen item pagination — never more than 5 SKUs per page so
+  // warehouse staff never scroll. Follows the item just counted while it's
+  // still pending; manual paging sticks until the next scan.
+  const SCAN_PAGE_SIZE = 5;
+  let scanPage        = 0;
+  let scanPageManual   = false;
+  let scanFocusSku     = null;
   let printWaybillTimer   = null;
   let pendingOrderFile    = null;
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
@@ -1665,6 +1673,9 @@
   function enterItemsPhase(order) {
     activeOrder      = order;
     currentMismatches = [];
+    scanPage = 0; scanPageManual = false; scanFocusSku = null;
+    const initCarton = (order.cartons || []).find(c => c.num === order.active_carton_num);
+    activeOrder._activeCartonScans = initCarton ? { ...initCarton.scans } : { ...(order.scanned || {}) };
 
     // Show unprocessed banner when re-opening a previously cancelled order
     const banner = document.getElementById('unprocessedBanner');
@@ -1736,10 +1747,31 @@
   }
 
   // ── Items table ────────────────────────────────────────────────────────────
+  // Pending items float to the top (next one implied); completed rows sink to
+  // the bottom. The list is PAGINATED (SCAN_PAGE_SIZE per page) so warehouse
+  // staff never scroll — after a scan the view snaps to the page holding the
+  // next pending item; manual page browsing sticks until the next scan.
   function renderItemsTable(order) {
     const scanned = order.scanned || {};
-    document.getElementById('scanItemsTbody').innerHTML = order.lines.map(item => {
-      const s        = scanned[item.sku] || 0;
+    const decorated = (order.lines || []).map((item, idx) => {
+      const s    = scanned[item.sku] || 0;
+      const done = s === item.qty && item.qty > 0;
+      return { item, s, idx, done };
+    });
+    decorated.sort((a, b) => (a.done - b.done) || (a.idx - b.idx));
+    const activeSku = decorated.find(d => !d.done)?.item.sku;
+
+    const pageCount = Math.max(1, Math.ceil(decorated.length / SCAN_PAGE_SIZE));
+    if (!scanPageManual) {
+      let focusIdx = -1;
+      if (scanFocusSku) focusIdx = decorated.findIndex(d => d.item.sku === scanFocusSku && !d.done);
+      if (focusIdx < 0) focusIdx = decorated.findIndex(d => d.item.sku === activeSku);
+      scanPage = focusIdx >= 0 ? Math.floor(focusIdx / SCAN_PAGE_SIZE) : 0;
+    }
+    scanPage = Math.min(Math.max(0, scanPage), pageCount - 1);
+    const pageRows = decorated.slice(scanPage * SCAN_PAGE_SIZE, (scanPage + 1) * SCAN_PAGE_SIZE);
+
+    document.getElementById('scanItemsTbody').innerHTML = pageRows.map(({ item, s }) => {
       const rowClass = s === 0 ? '' : s === item.qty ? 'row-ok' : s > item.qty ? 'row-over' : 'row-partial';
       const icon     = s === item.qty && s > 0 ? '&#10003;' : s > item.qty ? '&#10007;' : s > 0 ? '&#8230;' : '';
 
@@ -1770,7 +1802,67 @@
         document.getElementById('itemScanInput').focus();
       });
     });
+
+    // Pager
+    const pager = document.getElementById('scanPager');
+    pager.classList.toggle('hidden', pageCount <= 1);
+    document.getElementById('scanPagerInfo').textContent =
+      `Page ${scanPage + 1} of ${pageCount} · ${decorated.filter(d => !d.done).length} item(s) to go`;
+    document.getElementById('scanPagerPrev').disabled = scanPage <= 0;
+    document.getElementById('scanPagerNext').disabled = scanPage >= pageCount - 1;
   }
+
+  document.getElementById('scanPagerPrev').addEventListener('click', () => {
+    scanPageManual = true; scanPage--; renderItemsTable(activeOrder);
+  });
+  document.getElementById('scanPagerNext').addEventListener('click', () => {
+    scanPageManual = true; scanPage++; renderItemsTable(activeOrder);
+  });
+
+  // ── Carton splitting ────────────────────────────────────────────────────────
+  document.getElementById('newCartonBtn').addEventListener('click', async () => {
+    if (!activeOrder) return;
+    try {
+      const resp = await fetch('/api/scan/new-carton', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumber: activeOrder.order_number }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error); return; }
+      activeOrder.active_carton_num = data.activeCartonNum;
+      activeOrder.cartons = Array.from({ length: data.cartonCount }, (_, i) => activeOrder.cartons?.[i] || {});
+      activeOrder._activeCartonScans = data.cartonScans || {};
+      updateProgress(activeOrder);
+      showFeedback(document.getElementById('itemScanFeedback'), 'success', `✓ Carton ${data.activeCartonNum} started — scan the next item into this box.`);
+      document.getElementById('itemScanInput').focus();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+
+  document.getElementById('printCartonSlipBtn').addEventListener('click', () => {
+    if (!activeOrder) return;
+    const cartonNum = activeOrder.active_carton_num || 1;
+    // Only THIS carton's contents — not the whole order's cumulative scans
+    const scanned = activeOrder._activeCartonScans || activeOrder.scanned || {};
+    let slip = document.getElementById('cartonPrintSlip');
+    if (!slip) {
+      slip = document.createElement('div');
+      slip.id = 'cartonPrintSlip';
+      document.body.appendChild(slip);
+    }
+    slip.innerHTML = `
+      <h2>${esc(activeOrder.order_number)} &mdash; Carton ${esc(String(cartonNum))}</h2>
+      <div>${esc(activeOrder.client_name || '')}${activeOrder.client_name && activeOrder.customer_name ? ' &middot; ' : ''}${esc(activeOrder.customer_name || '')}</div>
+      ${activeOrder.waybill_number ? `<div>Waybill: ${esc(activeOrder.waybill_number)}</div>` : ''}
+      <table>
+        <thead><tr><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
+        <tbody>${(activeOrder.lines || []).filter(l => (scanned[l.sku] || 0) > 0).map(l =>
+          `<tr><td>${esc(l.sku)}</td><td>${esc(l.description || '—')}</td><td>${scanned[l.sku]}</td></tr>`
+        ).join('')}</tbody>
+      </table>`;
+    window.print();
+  });
 
   function updateProgress(order) {
     const scanned   = order.scanned || {};
@@ -1778,6 +1870,26 @@
     const el        = document.getElementById('scanProgress');
     el.textContent  = `${doneCount}/${order.lines.length} items`;
     el.className    = doneCount === order.lines.length ? 'scan-progress all-done' : 'scan-progress';
+
+    // Piece counter — remaining pieces across the whole order, red on over-scan
+    const totalOrdered = order.lines.reduce((s, l) => s + (l.qty || 0), 0);
+    const totalScanned = order.lines.reduce((s, l) => s + (scanned[l.sku] || 0), 0);
+    const remaining    = totalOrdered - totalScanned;
+    const hasOver       = order.lines.some(l => (scanned[l.sku] || 0) > l.qty);
+    const piecesEl = document.getElementById('scanPiecesLeft');
+    const numEl    = document.getElementById('scanPiecesNum');
+    if (piecesEl && numEl) {
+      const labelEl = piecesEl.querySelector('.spl-label');
+      if (hasOver)            { numEl.textContent = -remaining; if (labelEl) labelEl.textContent = 'over'; }
+      else if (remaining <= 0) { numEl.textContent = '✓';        if (labelEl) labelEl.textContent = 'done'; }
+      else                     { numEl.textContent = remaining;  if (labelEl) labelEl.textContent = 'pcs left'; }
+      piecesEl.className = 'scan-pieces-left' + (hasOver ? ' spl-over' : remaining <= 0 ? ' spl-done' : '');
+    }
+
+    // Carton badge — count/number only shown once an order has actually split
+    const cartonCount = (order.cartons || []).length || 1;
+    const cartonNum   = order.active_carton_num || 1;
+    document.getElementById('scanCartonNum').textContent = cartonCount > 1 ? `${cartonNum}/${cartonCount}` : cartonNum;
   }
 
   // ── Global barcode capture ─────────────────────────────────────────────────
@@ -1892,6 +2004,12 @@
         if (!activeOrder.scanned) activeOrder.scanned = {};
         activeOrder.scanned[data.sku] = data.scanned_qty;
         activeOrder.scan_status = 'processing';
+        if (data.cartonNum) {
+          activeOrder.active_carton_num = data.cartonNum;
+          activeOrder.cartons = Array.from({ length: data.cartonCount }, (_, i) => activeOrder.cartons?.[i] || {});
+          activeOrder._activeCartonScans = data.cartonScans || {};
+        }
+        scanFocusSku = data.sku; scanPageManual = false;
         renderItemsTable(activeOrder);
         updateProgress(activeOrder);
 
@@ -1979,6 +2097,12 @@
           if (!activeOrder.scanned) activeOrder.scanned = {};
           activeOrder.scanned[data.sku] = data.scanned_qty;
           activeOrder.scan_status = 'processing';
+          if (data.cartonNum) {
+          activeOrder.active_carton_num = data.cartonNum;
+          activeOrder.cartons = Array.from({ length: data.cartonCount }, (_, i) => activeOrder.cartons?.[i] || {});
+          activeOrder._activeCartonScans = data.cartonScans || {};
+        }
+          scanFocusSku = data.sku; scanPageManual = false;
           renderItemsTable(activeOrder);
           updateProgress(activeOrder);
           const trow = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);

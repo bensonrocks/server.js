@@ -1953,3 +1953,34 @@ body.ls-open { overflow: hidden; }
 .mp-text-snippet { font-family: monospace; font-size: .78rem; background: #f8fafc; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: .5rem .7rem; margin: .3rem 0 .5rem; color: #374151; word-break: break-word; }
 .tb-modal { max-width: 480px; }
 .tb-value { font-family: monospace; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 5px; padding: .05em .4em; font-weight: 700; }
+
+/* ── Carton splitting + item pagination (scan screen) ── */
+.scan-carton-wrap { display: flex; align-items: center; gap: .4rem; }
+.scan-carton-badge { display: flex; flex-direction: column; align-items: center; line-height: 1.05; background: #1e293b; color: #fff; border-radius: 9px; padding: .3rem .65rem; }
+.scan-carton-badge #scanCartonNum { font-size: 1.15rem; font-weight: 800; }
+.scan-carton-badge .scb-label { font-size: .58rem; text-transform: uppercase; letter-spacing: .05em; color: #94a3b8; }
+.btn-new-carton { background: var(--primary-light, #eff6ff); color: var(--primary, #2563eb); border: 1px solid var(--primary-border, #bfdbfe); border-radius: 9px; padding: .4rem .7rem; font-size: .82rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.btn-new-carton:hover { background: var(--primary, #2563eb); color: #fff; }
+.btn-print-carton { background: none; border: 1px solid var(--border, #d1d5db); border-radius: 9px; padding: .4rem .6rem; font-size: 1rem; line-height: 1; cursor: pointer; color: var(--text-light, #6b7280); }
+.btn-print-carton:hover { background: var(--bg, #f8fafc); color: var(--text, #111827); }
+.scan-pieces-left { display: flex; flex-direction: column; align-items: center; line-height: 1.05; background: #dbeafe; color: #1e40af; border-radius: 9px; padding: .3rem .7rem; min-width: 3.5rem; }
+.scan-pieces-left #scanPiecesNum { font-size: 1.15rem; font-weight: 800; }
+.scan-pieces-left .spl-label { font-size: .58rem; text-transform: uppercase; letter-spacing: .05em; }
+.scan-pieces-left.spl-done { background: #dcfce7; color: #15803d; }
+.scan-pieces-left.spl-over { background: #fee2e2; color: #b91c1c; }
+
+.scan-pager { display: flex; align-items: center; justify-content: space-between; gap: .7rem; padding: .5rem 1rem; border-top: 1px solid var(--border, #e5e7eb); background: var(--surface, #fff); }
+.scan-pager.hidden { display: none; }
+.scan-pager-btn { background: var(--bg, #f8fafc); border: 1px solid var(--border, #d1d5db); border-radius: 8px; padding: .4rem .8rem; font-size: .85rem; font-weight: 600; cursor: pointer; color: var(--text, #111827); }
+.scan-pager-btn:disabled { opacity: .4; cursor: default; }
+.scan-pager-info { font-size: .82rem; color: var(--text-light, #6b7280); font-weight: 600; }
+
+/* Printable carton slip (hidden on screen, shown only in the print dialog) */
+#cartonPrintSlip { display: none; }
+@media print {
+  body > *:not(#cartonPrintSlip) { display: none !important; }
+  #cartonPrintSlip { display: block !important; padding: 1rem; font-family: Arial, sans-serif; }
+  #cartonPrintSlip h2 { margin: 0 0 .3rem; }
+  #cartonPrintSlip table { width: 100%; border-collapse: collapse; margin-top: .6rem; }
+  #cartonPrintSlip th, #cartonPrintSlip td { border: 1px solid #333; padding: .3rem .5rem; text-align: left; font-size: .9rem; }
+}

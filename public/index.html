@@ -101,6 +101,18 @@
       <div class="scan-header-right">
         <a id="scanWaybillPdfBtn" class="btn-scan-waybill hidden" title="Download waybill PDF">&#8681; Waybill</a>
         <span id="scanTimer" class="scan-timer"></span>
+        <div class="scan-carton-wrap">
+          <div class="scan-carton-badge" id="scanCartonBadge" title="Items scanned so far go into this carton">
+            <span id="scanCartonNum">1</span>
+            <span class="scb-label">carton</span>
+          </div>
+          <button class="btn-new-carton" id="newCartonBtn" title="Box is full — start scanning the next carton">+ New Carton</button>
+          <button class="btn-print-carton" id="printCartonSlipBtn" title="Print this carton's packing slip">&#128424;</button>
+        </div>
+        <div class="scan-pieces-left" id="scanPiecesLeft">
+          <span id="scanPiecesNum">&mdash;</span>
+          <span class="spl-label">pcs left</span>
+        </div>
       </div>
     </div>
 
@@ -132,6 +144,12 @@
         </thead>
         <tbody id="scanItemsTbody"></tbody>
       </table>
+    </div>
+
+    <div class="scan-pager" id="scanPager">
+      <button class="scan-pager-btn" id="scanPagerPrev">&#8592; Previous</button>
+      <span class="scan-pager-info" id="scanPagerInfo"></span>
+      <button class="scan-pager-btn" id="scanPagerNext">Next &#8594;</button>
     </div>
 
     <div class="item-scan-dock">

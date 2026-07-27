@@ -529,6 +529,8 @@ function globalOrdersWithState() {
         uploaded_at:      batch.uploaded_at      || null,
         has_waybill_pdf:  fs.existsSync(waybillPath),
         has_order_label:  !!orderLabels[ord.order_number],
+        cartons:          state.cartons || [],
+        active_carton_num: state.activeCartonNum || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
       });
     }
   }
@@ -1654,6 +1656,29 @@ app.post('/api/waybill-lookup', (req, res) => {
   res.json(order);
 });
 
+// ── Carton splitting ─────────────────────────────────────────────────────────
+// A big order can take more than one physical box. Every scan lands in the
+// ACTIVE carton's own tally (state.cartons[]) in addition to the order-level
+// state.scanned total (which stays the single source of truth for progress
+// bars, the Orders table, and completion). Orders that never split cartons
+// end up with one implicit carton holding everything — no extra step for
+// the common case.
+function activeCarton(state) {
+  if (!state.cartons || !state.cartons.length) {
+    state.cartons = [{ num: 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null }];
+    state.activeCartonNum = 1;
+  }
+  const found = state.cartons.find(c => c.num === state.activeCartonNum);
+  if (found) return found;
+  const last = state.cartons[state.cartons.length - 1];
+  state.activeCartonNum = last.num;
+  return last;
+}
+function addToActiveCarton(state, sku, delta) {
+  const carton = activeCarton(state);
+  carton.scans[sku] = Math.max(0, (carton.scans[sku] || 0) + delta);
+}
+
 // Find the order line a scanned/resolved SKU belongs to. Tries: exact match,
 // then Betime's "NP" suffix exception (8006NP and 8006 are the same product —
 // exact matches always win, NP is only tried when nothing else matched),
@@ -1706,10 +1731,40 @@ app.post('/api/scan/increment', (req, res) => {
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  addToActiveCarton(state, item.sku, 1);
   state.updated_at = new Date().toISOString();
   batch.orderStates[orderNumber] = state;
   writeDb(db);
-  res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
+  res.json({
+    sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty,
+    cartonNum: activeCarton(state).num, cartonCount: state.cartons.length, cartonScans: { ...activeCarton(state).scans },
+  });
+});
+
+// Big orders can take more than one physical box. The packer marks the
+// current carton full and starts the next one; every scan from here on
+// tallies against the new carton until the order completes.
+app.post('/api/scan/new-carton', (req, res) => {
+  const { orderNumber } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state   = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const current = activeCarton(state);
+  const currentCount = Object.values(current.scans).reduce((s, v) => s + v, 0);
+  if (currentCount === 0) {
+    return res.status(400).json({ error: 'Scan at least one item into this carton before starting a new one.' });
+  }
+  current.closedAt = new Date().toISOString();
+  const next = { num: Math.max(...state.cartons.map(c => c.num)) + 1, scans: {}, startedAt: new Date().toISOString(), closedAt: null };
+  state.cartons.push(next);
+  state.activeCartonNum = next.num;
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
+  res.json({ ok: true, cartonCount: state.cartons.length, activeCartonNum: next.num, cartonScans: {} });
 });
 
 // Packer confirms which order line an unrecognized barcode belongs to.
@@ -1762,10 +1817,14 @@ app.post('/api/scan/learn-barcode', (req, res) => {
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
   state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  addToActiveCarton(state, item.sku, 1);
   state.updated_at = new Date().toISOString();
   batch.orderStates[orderNumber] = state;
   writeDb(db);
-  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind });
+  res.json({
+    ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind,
+    cartonNum: activeCarton(state).num, cartonCount: state.cartons.length, cartonScans: { ...activeCarton(state).scans },
+  });
 });
 
 // ── Master: learned barcode mappings (view / export / delete) ───────────────
