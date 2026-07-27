@@ -8900,6 +8900,7 @@
       if (btn.dataset.adminTab === 'tms') renderTmsTab();
       if (btn.dataset.adminTab === 'drivers') loadDriverList();
       if (btn.dataset.adminTab === 'users') loadUserList();
+      if (btn.dataset.adminTab === 'comms') loadCommunication();
       if (btn.dataset.adminTab === 'onboarding') obUI.load();
       if (btn.dataset.adminTab === 'outages') outagesUI.load();
     });
@@ -9394,6 +9395,172 @@
 
     document.getElementById('stpEmpty').classList.toggle('hidden', stations.length > 0);
   }
+
+  // Staff side of Communication: an unacknowledged message from the office
+  // blocks the app the same way it does in the Driver App, so a warehouse
+  // user can't miss it either.
+  let _staffNotices = [];
+  async function loadStaffNotices() {
+    if (!localStorage.getItem('wms_token')) return;
+    try { const r = await fetch('/api/notices'); _staffNotices = r.ok ? await r.json() : []; }
+    catch { return; }
+    showNextStaffNotice();
+  }
+  function showNextStaffNotice() {
+    let ov = document.getElementById('staffNoticeOverlay');
+    if (!_staffNotices.length) { ov?.classList.add('hidden'); return; }
+    const n = _staffNotices[0];
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'staffNoticeOverlay';
+      ov.className = 'modal-overlay';
+      ov.innerHTML = `
+        <div class="modal" style="max-width:440px;text-align:center">
+          <div class="modal-icon" id="snIcon">📢</div>
+          <div class="modal-title" id="snTitle">Message from the office</div>
+          <div id="snMsg" style="white-space:pre-wrap;text-align:left;background:var(--surface-2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:.8rem .9rem;font-size:.9rem;line-height:1.55;margin-top:.4rem"></div>
+          <div class="hint" id="snMeta" style="margin-top:.5rem"></div>
+          <div class="modal-actions" style="margin-top:1rem">
+            <button class="btn-primary" id="snAckBtn" style="width:100%">I Understand</button>
+          </div>
+          <div class="hint" id="snCount" style="margin-top:.5rem"></div>
+        </div>`;
+      document.body.appendChild(ov);
+      ov.querySelector('#snAckBtn').addEventListener('click', async () => {
+        const cur = _staffNotices[0]; if (!cur) return;
+        const btn = ov.querySelector('#snAckBtn');
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try { await fetch(`/api/notices/${encodeURIComponent(cur.id)}/ack`, { method: 'POST' }); _staffNotices.shift(); }
+        catch {}
+        btn.disabled = false; btn.textContent = 'I Understand';
+        showNextStaffNotice();
+      });
+    }
+    ov.querySelector('#snMsg').textContent = n.message;
+    ov.querySelector('#snIcon').textContent = n.priority === 'urgent' ? '⚠️' : '📢';
+    ov.querySelector('#snTitle').textContent = n.priority === 'urgent' ? 'Urgent — from the office' : 'Message from the office';
+    ov.querySelector('#snMeta').textContent = n.createdAt ? new Date(n.createdAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    ov.querySelector('#snCount').textContent = _staffNotices.length > 1 ? `${_staffNotices.length - 1} more message(s) after this` : '';
+    ov.classList.remove('hidden');
+  }
+  setTimeout(loadStaffNotices, 3000);
+  setInterval(loadStaffNotices, 60000);
+
+  // ── Communication (Administrator → 📢) ─────────────────────────────────────
+  // One composer for both audiences: drivers and warehouse/office staff.
+  // "All" is stored as the literal 'all' rather than a snapshot of ids, so a
+  // driver hired after the message was sent still has to acknowledge it.
+  const cmSel = { drv: new Set(), usr: new Set(), drvAll: false, usrAll: false };
+  let _cmAudience = { drivers: [], users: [] };
+
+  function cmRenderPickers() {
+    const row = (grp, id, label, sub, checked) => `
+      <label class="cm-row">
+        <input type="checkbox" data-grp="${grp}" value="${esc(id)}" ${checked ? 'checked' : ''} />
+        <span>${esc(label)}</span><span class="cm-sub">${esc(sub || '')}</span>
+      </label>`;
+    document.getElementById('cmDriverList').innerHTML = _cmAudience.drivers.length
+      ? _cmAudience.drivers.map(d => row('drv', d.id, d.name || d.id,
+          [d.vehicle, d.plate].filter(Boolean).join(' · '), cmSel.drvAll || cmSel.drv.has(d.id))).join('')
+      : '<div class="cm-row"><span class="hint">No drivers yet.</span></div>';
+    document.getElementById('cmUserList').innerHTML = _cmAudience.users.length
+      ? _cmAudience.users.map(u => row('usr', u.id, u.name || u.id, u.role,
+          cmSel.usrAll || cmSel.usr.has(u.id))).join('')
+      : '<div class="cm-row"><span class="hint">No users yet.</span></div>';
+    cmUpdateCount();
+  }
+  function cmUpdateCount() {
+    const d = cmSel.drvAll ? _cmAudience.drivers.length : cmSel.drv.size;
+    const u = cmSel.usrAll ? _cmAudience.users.length   : cmSel.usr.size;
+    document.getElementById('cmCount').textContent =
+      `${d + u} recipient(s) selected — ${d} driver(s), ${u} staff`;
+  }
+  async function loadCommunication() {
+    try {
+      const r = await fetch('/api/master/notice-audience', { headers: { 'x-master-key': LOG_PASSWORD } });
+      _cmAudience = r.ok ? await r.json() : { drivers: [], users: [] };
+    } catch { _cmAudience = { drivers: [], users: [] }; }
+    cmRenderPickers();
+    cmLoadSent();
+  }
+  async function cmLoadSent() {
+    const el = document.getElementById('cmSentList');
+    if (!el) return;
+    let list = [];
+    try {
+      const r = await fetch('/api/master/notices', { headers: { 'x-master-key': LOG_PASSWORD } });
+      list = r.ok ? await r.json() : [];
+    } catch {}
+    if (!list.length) { el.innerHTML = '<p class="hint">Nothing sent yet.</p>'; return; }
+    el.innerHTML = list.map(n => {
+      const pct = n.total ? Math.round((n.ackedCount / n.total) * 100) : 0;
+      const who = [
+        n.toDrivers === 'all' ? 'all drivers' : (n.toDrivers || []).length ? `${n.toDrivers.length} driver(s)` : '',
+        n.toUsers   === 'all' ? 'all staff'   : (n.toUsers   || []).length ? `${n.toUsers.length} staff` : '',
+      ].filter(Boolean).join(' + ');
+      return `
+      <div class="cm-sent${n.priority === 'urgent' ? ' urgent' : ''}">
+        <div class="cm-sent-msg">${n.priority === 'urgent' ? '⚠ ' : ''}${esc(n.message)}</div>
+        <div class="cm-sent-meta">
+          <span>${esc(new Date(n.createdAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }))}</span>
+          <span>to ${esc(who || '—')}</span>
+          <span class="cm-ackbar" title="${n.ackedCount}/${n.total} acknowledged"><span style="width:${pct}%"></span></span>
+          <span><b>${n.ackedCount}/${n.total}</b> acknowledged</span>
+          ${n.pendingNames?.length ? `<span title="${esc(n.pendingNames.join(', '))}">waiting on ${esc(n.pendingNames.slice(0, 3).join(', '))}${n.pendingNames.length > 3 ? ` +${n.pendingNames.length - 3}` : ''}</span>` : '<span>✓ everyone</span>'}
+          <button class="btn-ghost btn-sm cm-del" data-id="${esc(n.id)}" style="margin-left:auto">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.cm-del').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('Delete this message? Recipients who have not acknowledged it will simply stop seeing it.')) return;
+      await fetch(`/api/master/notices/${encodeURIComponent(b.dataset.id)}`, { method: 'DELETE', headers: { 'x-master-key': LOG_PASSWORD } });
+      cmLoadSent();
+    }));
+  }
+  document.getElementById('cmDriverList')?.addEventListener('change', e => {
+    const cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
+    cmSel.drvAll = false;
+    cb.checked ? cmSel.drv.add(cb.value) : cmSel.drv.delete(cb.value);
+    cmUpdateCount();
+  });
+  document.getElementById('cmUserList')?.addEventListener('change', e => {
+    const cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
+    cmSel.usrAll = false;
+    cb.checked ? cmSel.usr.add(cb.value) : cmSel.usr.delete(cb.value);
+    cmUpdateCount();
+  });
+  document.querySelectorAll('.cm-all').forEach(b => b.addEventListener('click', () => {
+    const g = b.dataset.grp;
+    if (g === 'drv') { cmSel.drvAll = true; cmSel.drv.clear(); } else { cmSel.usrAll = true; cmSel.usr.clear(); }
+    cmRenderPickers();
+  }));
+  document.querySelectorAll('.cm-none').forEach(b => b.addEventListener('click', () => {
+    const g = b.dataset.grp;
+    if (g === 'drv') { cmSel.drvAll = false; cmSel.drv.clear(); } else { cmSel.usrAll = false; cmSel.usr.clear(); }
+    cmRenderPickers();
+  }));
+  document.getElementById('cmRefreshBtn')?.addEventListener('click', cmLoadSent);
+  document.getElementById('cmSendBtn')?.addEventListener('click', async () => {
+    const msg = document.getElementById('cmMessage').value.trim();
+    const st = (kind, t) => { const e = document.getElementById('cmStatus'); e.className = 'status-bar ' + kind; e.textContent = t; e.classList.remove('hidden'); };
+    if (!msg) return st('error', 'Type a message first.');
+    const toDrivers = cmSel.drvAll ? 'all' : [...cmSel.drv];
+    const toUsers   = cmSel.usrAll ? 'all' : [...cmSel.usr];
+    if (toDrivers !== 'all' && !toDrivers.length && toUsers !== 'all' && !toUsers.length) return st('error', 'Pick at least one recipient.');
+    st('progress', 'Sending…');
+    try {
+      const r = await fetch('/api/master/notices', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ message: msg, priority: document.getElementById('cmUrgent').checked ? 'urgent' : 'normal', toDrivers, toUsers }),
+      });
+      const d = await r.json();
+      if (!r.ok) return st('error', d.error || 'Send failed');
+      document.getElementById('cmMessage').value = '';
+      document.getElementById('cmUrgent').checked = false;
+      st('success', '✓ Message sent — recipients must acknowledge it.');
+      cmLoadSent();
+    } catch (e) { st('error', e.message); }
+  });
 
   // ── User Management ─────────────────────────────────────────────────────────
   async function loadUserList() {

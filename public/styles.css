@@ -2912,3 +2912,17 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .map-bin.b-warn  { background: #fcd34d; } .map-bin.b-full { background: #fca5a5; }
 .map-bin.b-off   { background: repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#cbd5e1 3px,#cbd5e1 6px); color: #64748b; }
 .map-bin.b-bulk  { border-style: dashed; border-width: 2px; }
+
+/* Communication — recipient pickers */
+.cm-picker { margin-top: .4rem; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; max-height: 210px; overflow-y: auto; background: var(--surface, #fff); }
+.cm-row { display: flex; align-items: center; gap: .5rem; padding: .38rem .6rem; font-size: .82rem; cursor: pointer; border-bottom: 1px solid #f1f5f9; }
+.cm-row:last-child { border-bottom: 0; }
+.cm-row:hover { background: #f8fafc; }
+.cm-row input { width: 15px; height: 15px; }
+.cm-row .cm-sub { color: #94a3b8; font-size: .72rem; margin-left: auto; }
+.cm-sent { border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: .7rem .85rem; margin-bottom: .55rem; background: var(--surface, #fff); }
+.cm-sent.urgent { border-left: 4px solid #ef4444; }
+.cm-sent-msg { font-size: .88rem; white-space: pre-wrap; }
+.cm-sent-meta { font-size: .72rem; color: #94a3b8; margin-top: .35rem; display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
+.cm-ackbar { height: 5px; border-radius: 3px; background: #e2e8f0; overflow: hidden; min-width: 90px; }
+.cm-ackbar > span { display: block; height: 100%; background: #22c55e; }

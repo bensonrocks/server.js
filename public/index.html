@@ -568,6 +568,7 @@
         <button class="admin-nav-btn" data-admin-tab="deletions">&#128465; Pending Deletions <span id="pendingDelBadge" class="admin-nav-badge hidden">0</span></button>
         <button class="admin-nav-btn" data-admin-tab="batches">&#128196; Upload History</button>
         <button class="admin-nav-btn" data-admin-tab="users">&#128100; Users</button>
+        <button class="admin-nav-btn" data-admin-tab="comms">&#128226; Communication</button>
         <button class="admin-nav-btn" data-admin-tab="drivers">🚗 Drivers</button>
         <button class="admin-nav-btn" data-admin-tab="wms">&#9881; WMS Template</button>
         <button class="admin-nav-btn" data-admin-tab="labels">&#127981; Labels</button>
@@ -858,6 +859,57 @@
       </div>
 
       <!-- Tab: Drivers -->
+      <div class="admin-tab hidden" id="adminTab-comms">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">&#128226; Communication</div>
+            <div class="admin-section-sub">Send instructions or updates to drivers and warehouse/office staff. Every recipient must acknowledge before the message clears from their screen.</div>
+          </div>
+        </div>
+
+        <div class="admin-add-card">
+          <div class="admin-add-title">New message</div>
+          <textarea id="cmMessage" rows="3" placeholder="e.g. Jurong East loading bay is closed today — use the rear gate on Venture Ave." style="width:100%;padding:.6rem .7rem;border:1px solid #e2e8f0;border-radius:8px;font:inherit"></textarea>
+          <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.5rem">
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:600;cursor:pointer">
+              <input type="checkbox" id="cmUrgent" /> &#9888; Mark urgent
+            </label>
+            <span class="hint" id="cmCount">0 recipient(s) selected</span>
+            <button class="btn-primary btn-sm" id="cmSendBtn" style="margin-left:auto">&#128228; Send</button>
+          </div>
+          <div id="cmStatus" class="status-bar hidden" style="margin-top:.6rem"></div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem;margin-top:.9rem">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b style="font-size:.85rem">&#128666; Drivers</b>
+                <span style="display:flex;gap:.4rem">
+                  <button class="btn-secondary btn-sm cm-all" data-grp="drv">All</button>
+                  <button class="btn-secondary btn-sm cm-none" data-grp="drv">None</button>
+                </span>
+              </div>
+              <div id="cmDriverList" class="cm-picker"></div>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b style="font-size:.85rem">&#127981; Warehouse &amp; office staff</b>
+                <span style="display:flex;gap:.4rem">
+                  <button class="btn-secondary btn-sm cm-all" data-grp="usr">All</button>
+                  <button class="btn-secondary btn-sm cm-none" data-grp="usr">None</button>
+                </span>
+              </div>
+              <div id="cmUserList" class="cm-picker"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-section-header" style="margin-top:1.2rem">
+          <div><div class="admin-section-title" style="font-size:.95rem">Sent messages</div></div>
+          <button class="btn-secondary btn-sm" id="cmRefreshBtn">&#8635; Refresh</button>
+        </div>
+        <div id="cmSentList"></div>
+      </div>
+
       <div class="admin-tab hidden" id="adminTab-drivers">
         <div class="admin-section-header">
           <div>

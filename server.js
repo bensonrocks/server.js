@@ -11084,89 +11084,152 @@ app.post('/api/driver/location', requireDriverAuthMiddleware, express.json(), (r
   });
 });
 
-// ── Driver notices (admin -> drivers, with acknowledgement) ─────────────────
-// An admin posts an instruction or update to every driver or to named ones;
-// the Driver App blocks on it until the driver acknowledges, so "I never saw
-// that" stops being a defence. Stored in db.driverNotices[].
-function driverNotices(db) { return (db.driverNotices ||= []); }
+// ── Communication: broadcasts to drivers and/or warehouse & office staff ────
+// One store for both audiences. A notice names its recipients explicitly —
+// every driver, every staff user, or a hand-picked set of either — and each
+// recipient must acknowledge it, so "nobody told me" stops being a defence.
+// Acks are keyed by audience so a driver id can never collide with a user id.
+function noticeStore(db) {
+  // legacy: the first cut of this feature stored driver-only notices under
+  // db.driverNotices. Fold any of those in once, so nothing is lost.
+  if (Array.isArray(db.driverNotices) && db.driverNotices.length) {
+    (db.notices ||= []);
+    for (const n of db.driverNotices) {
+      db.notices.push({
+        id: n.id, message: n.message, priority: n.priority || 'normal',
+        toDrivers: n.target === 'all' ? 'all' : (n.driverIds || []),
+        toUsers: [],
+        createdAt: n.createdAt, createdBy: n.createdBy,
+        acks: Object.fromEntries(Object.entries(n.acks || {}).map(([k, v]) => ['driver:' + k, v])),
+      });
+    }
+    delete db.driverNotices;
+  }
+  return (db.notices ||= []);
+}
+const _isAll = v => v === 'all';
+const _listed = (v, id) => _isAll(v) || (Array.isArray(v) && v.includes(id));
+function noticeRecipients(n, db) {
+  const drivers = _isAll(n.toDrivers) ? (db.drivers || []).map(d => 'driver:' + d.id)
+                : (n.toDrivers || []).map(id => 'driver:' + id);
+  const users   = _isAll(n.toUsers)   ? readUsers().map(u => 'user:' + u.id)
+                : (n.toUsers || []).map(id => 'user:' + id);
+  return [...drivers, ...users];
+}
 
-app.get('/api/master/driver-notices', (req, res) => {
+// Who an admin can send to (for the recipient picker).
+app.get('/api/master/notice-audience', (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
-  const roster = db.drivers || [];
-  res.json(driverNotices(db).map(n => {
-    const targets = n.target === 'all' ? roster.map(d => d.id) : (n.driverIds || []);
+  res.json({
+    drivers: (db.drivers || []).map(d => ({ id: d.id, name: d.name || d.id, vehicle: d.vehicle || '', plate: d.plate || '' })),
+    users:   readUsers().map(u => ({ id: u.id, name: u.name || u.id, role: u.role || 'admin' })),
+  });
+});
+
+app.get('/api/master/notices', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const names = new Map([
+    ...readUsers().map(u => ['user:' + u.id, u.name || u.id]),
+    ...(db.drivers || []).map(d => ['driver:' + d.id, d.name || d.id]),
+  ]);
+  res.json(noticeStore(db).map(n => {
+    const to = noticeRecipients(n, db);
     const acked = Object.keys(n.acks || {});
+    const pending = to.filter(k => !acked.includes(k));
     return {
-      ...n,
-      targetCount: targets.length,
-      ackedCount: targets.filter(id => acked.includes(id)).length,
-      pending: targets.filter(id => !acked.includes(id)),
+      id: n.id, message: n.message, priority: n.priority, createdAt: n.createdAt, createdBy: n.createdBy,
+      toDrivers: n.toDrivers, toUsers: n.toUsers,
+      total: to.length, ackedCount: to.length - pending.length,
+      pendingNames: pending.map(k => names.get(k) || k).slice(0, 40),
+      ackedNames: to.filter(k => acked.includes(k)).map(k => names.get(k) || k).slice(0, 40),
     };
   }));
 });
 
-app.post('/api/master/driver-notices', express.json(), (req, res) => {
+app.post('/api/master/notices', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
-  const { message, target, driverIds, priority } = req.body || {};
+  const { message, priority, toDrivers, toUsers } = req.body || {};
   const msg = String(message || '').trim();
-  if (!msg) return res.status(400).json({ error: 'message is required' });
-  if (msg.length > 2000) return res.status(400).json({ error: 'message is too long (max 2000 characters)' });
-  const tgt = target === 'selected' ? 'selected' : 'all';
-  const ids = tgt === 'selected' ? (Array.isArray(driverIds) ? driverIds.filter(Boolean) : []) : [];
-  if (tgt === 'selected' && !ids.length) return res.status(400).json({ error: 'Pick at least one driver' });
+  if (!msg) return res.status(400).json({ error: 'Message is required' });
+  if (msg.length > 2000) return res.status(400).json({ error: 'Message is too long (max 2000 characters)' });
+  const norm = v => (v === 'all' ? 'all' : (Array.isArray(v) ? v.filter(Boolean) : []));
+  const td = norm(toDrivers), tu = norm(toUsers);
+  if (!_isAll(td) && !td.length && !_isAll(tu) && !tu.length) {
+    return res.status(400).json({ error: 'Pick at least one recipient' });
+  }
   const db = readDb();
   const notice = {
-    id: 'DN-' + Date.now().toString(36).toUpperCase(),
+    id: 'MSG-' + Date.now().toString(36).toUpperCase(),
     message: msg,
-    target: tgt,
-    driverIds: ids,
     priority: priority === 'urgent' ? 'urgent' : 'normal',
-    createdAt: new Date().toISOString(),
-    createdBy: req.userId || 'master',
+    toDrivers: td, toUsers: tu,
+    createdAt: new Date().toISOString(), createdBy: req.userId || 'master',
     acks: {},
   };
-  driverNotices(db).unshift(notice);
-  if (db.driverNotices.length > 300) db.driverNotices.length = 300;
+  const store = noticeStore(db);
+  store.unshift(notice);
+  if (store.length > 300) store.length = 300;
   writeDb(db);
-  logAudit('driver_notice_sent', {
-    noticeId: notice.id, target: tgt, driverCount: tgt === 'all' ? (db.drivers || []).length : ids.length,
-    priority: notice.priority, by: req.userId || '',
+  logAudit('notice_sent', {
+    noticeId: notice.id, priority: notice.priority,
+    recipients: noticeRecipients(notice, db).length, by: req.userId || '',
   });
   res.json({ ok: true, notice });
 });
 
-app.delete('/api/master/driver-notices/:id', (req, res) => {
+app.delete('/api/master/notices/:id', (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
-  const before = driverNotices(db).length;
-  db.driverNotices = driverNotices(db).filter(n => n.id !== req.params.id);
-  if (db.driverNotices.length === before) return res.status(404).json({ error: 'Notice not found' });
+  const before = noticeStore(db).length;
+  db.notices = noticeStore(db).filter(n => n.id !== req.params.id);
+  if (db.notices.length === before) return res.status(404).json({ error: 'Notice not found' });
   writeDb(db);
-  logAudit('driver_notice_deleted', { noticeId: req.params.id, by: req.userId || '' });
+  logAudit('notice_deleted', { noticeId: req.params.id, by: req.userId || '' });
   res.json({ ok: true });
 });
 
-// What this driver still has to acknowledge (newest first).
-app.get('/api/driver/notices', requireDriverAuthMiddleware, (req, res) => {
-  const db = readDb();
-  const mine = driverNotices(db).filter(n =>
-    (n.target === 'all' || (n.driverIds || []).includes(req.driverId)) && !(n.acks || {})[req.driverId]);
-  res.json(mine.map(n => ({ id: n.id, message: n.message, priority: n.priority, createdAt: n.createdAt })));
-});
+// ── Recipient side ──────────────────────────────────────────────────────────
+function unackedFor(db, kind, id) {
+  return noticeStore(db)
+    .filter(n => _listed(kind === 'driver' ? n.toDrivers : n.toUsers, id))
+    .filter(n => !(n.acks || {})[kind + ':' + id])
+    .map(n => ({ id: n.id, message: n.message, priority: n.priority, createdAt: n.createdAt }));
+}
+function ackNotice(db, kind, id, noticeId) {
+  const n = noticeStore(db).find(x => x.id === noticeId);
+  if (!n) return { err: 404, msg: 'Notice not found' };
+  if (!_listed(kind === 'driver' ? n.toDrivers : n.toUsers, id)) return { err: 403, msg: 'This notice is not addressed to you' };
+  (n.acks ||= {})[kind + ':' + id] = new Date().toISOString();
+  return { notice: n };
+}
 
+app.get('/api/driver/notices', requireDriverAuthMiddleware, (req, res) => {
+  res.json(unackedFor(readDb(), 'driver', req.driverId));
+});
 app.post('/api/driver/notices/:id/ack', requireDriverAuthMiddleware, express.json(), (req, res) => {
   const db = readDb();
-  const n = driverNotices(db).find(x => x.id === req.params.id);
-  if (!n) return res.status(404).json({ error: 'Notice not found' });
-  if (n.target !== 'all' && !(n.driverIds || []).includes(req.driverId)) {
-    return res.status(403).json({ error: 'This notice is not addressed to you' });
-  }
-  (n.acks ||= {})[req.driverId] = new Date().toISOString();
+  const r = ackNotice(db, 'driver', req.driverId, req.params.id);
+  if (r.err) return res.status(r.err).json({ error: r.msg });
   writeDb(db);
-  logAudit('driver_notice_acknowledged', { noticeId: n.id, driverId: req.driverId });
+  logAudit('notice_acknowledged', { noticeId: req.params.id, driverId: req.driverId });
   res.json({ ok: true });
 });
+
+// Warehouse / office staff see the same notices inside the main app.
+app.get('/api/notices', requireAuth, (req, res) => {
+  res.json(unackedFor(readDb(), 'user', req.userId));
+});
+app.post('/api/notices/:id/ack', requireAuth, express.json(), (req, res) => {
+  const db = readDb();
+  const r = ackNotice(db, 'user', req.userId, req.params.id);
+  if (r.err) return res.status(r.err).json({ error: r.msg });
+  writeDb(db);
+  logAudit('notice_acknowledged', { noticeId: req.params.id, user: req.userId });
+  res.json({ ok: true });
+});
+
 
 app.post('/api/driver/jobs/:id/pickup', requireDriverAuthMiddleware, express.json(), (req, res) => {
   const driverId = req.driverId;
