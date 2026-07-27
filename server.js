@@ -10979,6 +10979,32 @@ app.post('/api/driver/jobs/:id/accept', requireDriverAuthMiddleware, express.jso
 // POST /api/driver/jobs/:id/pickup — "I've picked this up, heading out."
 // Same transition the office map popup's "Picked Up" button performs, just
 // ownership-scoped so a driver can only move their OWN assigned jobs.
+// Live driver position. The Driver App watches location continuously while
+// it's open and posts here; this is what makes a live fleet view possible
+// (before this, a driver's location was only ever captured at the moment of
+// delivery). Stored on the driver record — one current fix per driver, not a
+// history trail, so it can't grow without bound.
+app.post('/api/driver/location', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  const { lat, lng, accuracy, heading, speed } = req.body || {};
+  const la = Number(lat), ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return res.status(400).json({ error: 'lat and lng are required' });
+  if (la < -90 || la > 90 || ln < -180 || ln > 180) return res.status(400).json({ error: 'lat/lng out of range' });
+  const db = readDb();
+  const drv = (db.drivers || []).find(d => d.id === req.driverId);
+  if (!drv) return res.status(404).json({ error: 'Driver not found' });
+  drv.lastLocation = {
+    lat: la, lng: ln,
+    accuracy: Number(accuracy) || null,
+    heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
+    speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
+    at: new Date().toISOString(),
+  };
+  writeDb(db);
+  // deliberately NOT audit-logged: a position ping every ~30s per driver would
+  // swamp the audit ledger and push real events out of the retention window.
+  res.json({ ok: true });
+});
+
 app.post('/api/driver/jobs/:id/pickup', requireDriverAuthMiddleware, express.json(), (req, res) => {
   const driverId = req.driverId;
   const db = readDb();
@@ -11711,10 +11737,11 @@ app.post('/api/inventory/locations/import-file', upload.single('file'), tenantMi
         if (n === 'max_units' || n === 'cap') n = 'capacity';
         if (n === 'env' || n === 'temperature' || n === 'temp') n = 'environment';
         if (n === 'type' || n === 'bin_kind') n = 'kind';
+        if (n === 'location' || n === 'location_id' || n === 'locationid' || n === 'bin_id') n = 'location_id';
         o[n] = r[k];
       }
       return o;
-    }).filter(r => String(r.zone || '').trim() || String(r.aisle || '').trim() || String(r.bin || '').trim());
+    }).filter(r => String(r.location_id || '').trim() || String(r.zone || '').trim() || String(r.aisle || '').trim() || String(r.bin || '').trim());
     if (!rows.length) return res.status(400).json({ error: 'No location rows found — the sheet needs zone, aisle, shelf and bin columns.' });
     const result = inventory.bulkUpsertLocations(rows);
     logAudit('warehouse_locations_imported', {
