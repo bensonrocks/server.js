@@ -1293,20 +1293,43 @@ app.get('/api/label-imports/:id/pages/:idx/suggestions', (req, res) => {
   const ocrFold = s => String(s || '').toUpperCase()
     .replace(/[O]/g, '0').replace(/[IL]/g, '1').replace(/S/g, '5').replace(/B/g, '8');
 
+  // Many carrier label templates position each barcode-adjacent character as
+  // its own text run, so pdf-parse returns them space-separated
+  // ("L Z S G D 1 0 1 5…") — a naive token regex over the raw text never
+  // finds an 8+ char run even though the tracking number is right there.
+  // Despace the WHOLE page first (same technique the proven upload/rematch
+  // matcher already uses) and test containment — this is the primary check;
+  // token-based OCR-fold scoring below is a secondary net for genuinely
+  // garbled/misread text.
+  const despacedPage = normStr(pg.rawText);
   const cands = _labelCandidates(pg.rawText);
+  const hasText = despacedPage.length > 0;
+
   const scored = free.map(o => {
     let score = 0, why = '';
-    const ids = [o.waybill_number, o.customer_ref, o.order_number].filter(Boolean).map(normStr);
+    const ids = [
+      ['waybill_number', o.waybill_number],
+      ['customer_ref',   o.customer_ref],
+      ['order_number',   o.order_number],
+    ];
+    for (const [field, raw] of ids) {
+      if (!raw) continue;
+      const idNorm = normStr(raw);
+      if (idNorm.length >= 6 && despacedPage.includes(idNorm)) {
+        const s = 90 + Math.min(idNorm.length, 10);
+        if (s > score) { score = s; why = `${field.replace('_', ' ')} "${raw}" found on the label`; }
+      }
+    }
+    // Token-level OCR-fold pass (catches misreads the plain despace can't)
+    const idsFold = [o.waybill_number, o.customer_ref, o.order_number].filter(Boolean).map(normStr);
     for (const c of cands) {
       const cFold = ocrFold(c);
-      for (const id of ids) {
-        if (!id) continue;
+      for (const id of idsFold) {
         const idFold = ocrFold(id);
-        if (id === c)                              { score = Math.max(score, 100); why = `exact match with ${c}`; }
-        else if (id.includes(c) || c.includes(id)) { score = Math.max(score, 85);  why = `contains ${c}`; }
-        else if (idFold === cFold)                 { score = Math.max(score, 80);  why = `matches ${c} allowing for O/0, I/1, S/5, B/8 mix-ups`; }
+        if (id === c)                              { if (score < 100) { score = 100; why = `exact match with ${c}`; } }
+        else if (id.includes(c) || c.includes(id)) { if (score < 85)  { score = 85;  why = `contains ${c}`; } }
+        else if (idFold === cFold)                 { if (score < 80)  { score = 80;  why = `matches ${c} allowing for O/0, I/1, S/5, B/8 mix-ups`; } }
         else {
-          // shared long tail/head after OCR-folding (tolerant of truncation too)
           let n = 0;
           while (n < Math.min(idFold.length, cFold.length) && idFold[idFold.length - 1 - n] === cFold[cFold.length - 1 - n]) n++;
           if (n >= 6) { const s = 40 + n * 3; if (s > score) { score = s; why = `last ${n} characters match ${c} (allowing OCR mix-ups)`; } }
@@ -1316,10 +1339,14 @@ app.get('/api/label-imports/:id/pages/:idx/suggestions', (req, res) => {
     return { ...o, score, why };
   });
 
-  const hasText = cands.length > 0;
+  const textSnippet = String(pg.rawText || '').replace(/\s+/g, ' ').trim().slice(0, 200);
   let suggestions;
-  if (hasText) {
+  if (hasText && scored.some(s => s.score > 0)) {
     suggestions = scored.filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
+  } else if (hasText) {
+    // Real text was read, but it matches no known order — say so plainly
+    // rather than silently guessing by position.
+    suggestions = [];
   } else {
     // Position-based: which unmatched page is this within the import?
     const unlabelledPages = (imp.pages || []).filter(p => p.matchStatus !== 'matched').map(p => p.pageIndex);
@@ -1329,7 +1356,8 @@ app.get('/api/label-imports/:id/pages/:idx/suggestions', (req, res) => {
       .concat(ordered.filter((_, n) => n !== rank).slice(0, 7).map(o => ({ ...o, score: 0, why: '' })));
   }
   res.json({
-    pageIndex: i, candidates: cands, hasText,
+    pageIndex: i, candidates: cands, hasText, textSnippet,
+    noMatchButHasText: hasText && suggestions.length === 0,
     unlabelledCount: free.length,
     suggestions,
     all: free.slice(0, 400),

@@ -2335,11 +2335,24 @@
     try {
       const d = await fetch(`/api/label-imports/${importId}/pages/${pageIndex}/suggestions`).then(r => r.json());
       allFree = d.all || [];
-      if (!d.suggestions || !d.suggestions.length) {
-        suggestList.innerHTML = '<p class="hint">No suggestions — search below.</p>';
+      if (d.noMatchButHasText) {
+        suggestList.innerHTML = `
+          <p class="hint">We read this label but it doesn't match any waiting order:</p>
+          <div class="mp-text-snippet">${esc(d.textSnippet || '(no readable text)')}</div>
+          <p class="hint">The order for this parcel may not be uploaded yet, or its waybill/reference differs from what's printed here. Search below, or upload the missing order file first.</p>`;
+      } else if (!d.suggestions || !d.suggestions.length) {
+        suggestList.innerHTML = d.hasText
+          ? '<p class="hint">No suggestions — search below.</p>'
+          : '<p class="hint">This page has no readable text (scanned image) — search below or use print order.</p>';
       } else {
         suggestList.innerHTML = '';
         d.suggestions.forEach(o => suggestList.appendChild(mpRow(o, pick)));
+        if (!d.hasText) {
+          const note = document.createElement('p');
+          note.className = 'hint';
+          note.textContent = 'This page has no readable text — the top suggestion is a guess based on where it sits among unmatched pages, not a confirmed match. Please verify against the preview above.';
+          suggestList.prepend(note);
+        }
       }
     } catch {
       suggestList.innerHTML = '<p class="hint">Could not load suggestions — search below.</p>';

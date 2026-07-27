@@ -1950,3 +1950,4 @@ body.ls-open { overflow: hidden; }
 .mp-row-sub { display: flex; gap: .6rem; flex-wrap: wrap; font-size: .74rem; color: #6b7280; }
 .mp-row-id { font-family: monospace; }
 .mp-row-why { font-size: .72rem; color: #15803d; font-style: italic; }
+.mp-text-snippet { font-family: monospace; font-size: .78rem; background: #f8fafc; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: .5rem .7rem; margin: .3rem 0 .5rem; color: #374151; word-break: break-word; }
