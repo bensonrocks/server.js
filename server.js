@@ -117,7 +117,17 @@ const DATA_DIR    = process.env.DATA_DIR
   || path.join(__dirname, 'data');
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
-const DB_FILE     = path.join(DATA_DIR, 'db.json');
+// COMPATIBILITY — the other production line migrates the flat db.json into
+// DATA_DIR/tenants/default/db.json (renaming the flat file to
+// .migrated-backup). On a shared volume, use the tenant-store copy whenever
+// it exists so the orders/batches written by that build stay visible here.
+// Same JSON shape for everything this branch touches; collections this
+// branch doesn't know (transport, inbound, …) ride along untouched because
+// writeDb() always writes the whole object back.
+const _TENANT_DB_FILE = path.join(DATA_DIR, 'tenants', 'default', 'db.json');
+const DB_FILE     = fs.existsSync(_TENANT_DB_FILE)
+  ? _TENANT_DB_FILE
+  : path.join(DATA_DIR, 'db.json');
 
 const KEYFIELDS_TEMPLATE_FILE = path.join(DATA_DIR, 'keyfields_template.json');
 const LABEL_TEMPLATES_FILE    = path.join(DATA_DIR, 'label_templates.json');
