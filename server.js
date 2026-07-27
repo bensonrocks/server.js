@@ -136,7 +136,24 @@ fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
 // in one file. On first boot, existing users.json is migrated automatically.
 function readUsers() {
   const db = readDb();
-  return Array.isArray(db.users) ? db.users : [];
+  const users = Array.isArray(db.users) ? [...db.users] : [];
+  // COMPATIBILITY — the other production line stores users in
+  // DATA_DIR/global.json ({users:[...]}, identical salt + scrypt
+  // passwordHash scheme). A shared Railway volume written by that build
+  // must still log in here, so merge those accounts in read-only;
+  // db.users wins on any id clash and writes still go to db.json only.
+  try {
+    const g = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'global.json'), 'utf8'));
+    if (Array.isArray(g.users)) {
+      const have = new Set(users.map(u => String(u.id).trim().toLowerCase()));
+      for (const u of g.users) {
+        if (u && u.id && u.passwordHash && !have.has(String(u.id).trim().toLowerCase())) {
+          users.push(u);
+        }
+      }
+    }
+  } catch {}
+  return users;
 }
 function writeUsers(users) {
   const db = readDb();
@@ -1319,7 +1336,8 @@ function requireAuth(req, res, next) {
 app.post('/api/auth/login', (req, res) => {
   const { id, password } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'User ID and password required' });
-  const user = readUsers().find(u => u.id === String(id).trim());
+  const idNorm = String(id).trim().toLowerCase();
+  const user = readUsers().find(u => String(u.id).trim().toLowerCase() === idNorm);
   if (!user || hashPass(password, user.salt) !== user.passwordHash)
     return res.status(401).json({ error: 'Invalid credentials' });
   const token = uuidv4();
