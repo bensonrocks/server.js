@@ -8116,6 +8116,41 @@ function assertInventoryPath() {
   } catch (e) { console.warn('[IdealOne] could not verify inventory store path:', e.message); }
 }
 
+// Verify an Administrator key WITHOUT the client having to know it in advance.
+// The browser used to hold a hardcoded copy of the default key and compare
+// locally, which meant (a) the key was readable by anyone who opened the page
+// source, and (b) setting a real MASTER_KEY in the deployment BROKE the whole
+// Administrator panel — the unlock prompt still only accepted the old built-in
+// value, and every admin request kept sending it. Now the typed key is checked
+// here and the client simply uses whatever the operator typed, so any
+// MASTER_KEY works and no key ships in the bundle.
+// Logged-in staff only (the global middleware already enforces that); admin
+// role only, so a warehouse login can't sit and guess.
+const _masterVerifyFails = new Map();   // userId -> {n, until}
+app.post('/api/master/verify-key', express.json(), (req, res) => {
+  // A request that already carries a valid master key is trivially verified.
+  const viaHeader = req.headers['x-master-key'] === MASTER_PASS;
+  if (!viaHeader) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin') return res.status(403).json({ error: 'Administrator role required' });
+  }
+
+  const gate = _masterVerifyFails.get(req.userId || 'anon');
+  if (gate && gate.until > Date.now()) {
+    return res.status(429).json({ error: `Too many attempts — try again in ${Math.ceil((gate.until - Date.now()) / 1000)}s` });
+  }
+  const key = String(req.body?.key || '');
+  if (key && key === MASTER_PASS) {
+    _masterVerifyFails.delete(req.userId || 'anon');
+    logAudit('master_unlocked', { by: req.userId || 'master', ...clientInfo(req) });
+    return res.json({ ok: true, isDefaultKey: MASTER_KEY_IS_DEFAULT });
+  }
+  const n = (gate?.n || 0) + 1;
+  _masterVerifyFails.set(req.userId || 'anon', { n, until: n >= 5 ? Date.now() + 60_000 : 0 });
+  logAudit('master_unlock_failed', { by: req.userId || 'master', attempt: n, ...clientInfo(req) });
+  res.status(403).json({ ok: false, error: 'Incorrect Administrator key' });
+});
+
 function checkMaster(req, res) {
   if (req.headers['x-master-key'] !== MASTER_PASS) {
     res.status(403).json({ error: 'Forbidden' }); return false;

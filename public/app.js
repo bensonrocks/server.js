@@ -3118,11 +3118,12 @@
 
       // One unified endpoint — the server detects BETIME / Outright / generic
       // by analysing the column CONTENT, not the file name or a chosen format.
-      const resp = await fetch('/api/transport/import', {
-        method: 'POST',
-        body: fd,
-        headers: { 'x-master-key': atob('MjAxNDMyNTQ3RQ==') } // 201432547E
-      });
+      // No master key needed — the session token is injected automatically by
+      // the fetch wrapper and this route accepts a normal signed-in staff
+      // session. It used to send a hardcoded copy of the built-in default key,
+      // which both leaked the key into the page source and broke this import
+      // outright on any deployment that set a real MASTER_KEY.
+      const resp = await fetch('/api/transport/import', { method: 'POST', body: fd });
       const data = await resp.json();
 
       if (!resp.ok) throw new Error(data.error || 'Import failed');
@@ -8531,7 +8532,15 @@
   });
 
   // ── Log (password-protected, footer link) ─────────────────────────────────
-  const LOG_PASSWORD = atob('MjAxNDMyNTQ3RQ=='); // 201432547E
+  // The Administrator key is NEVER hardcoded here. It used to be (a base64'd
+  // copy of the built-in default), which meant anyone could read it out of the
+  // page source, AND setting a real MASTER_KEY in the deployment broke this
+  // whole panel — the prompt still only accepted the old baked-in value while
+  // the server had moved on. Now the typed key is verified server-side by
+  // /api/master/verify-key and held in memory for this session only, so every
+  // `x-master-key: LOG_PASSWORD` call below sends the operator's real key and
+  // works with whatever MASTER_KEY the deployment is set to.
+  let LOG_PASSWORD = '';
 
   document.getElementById('logAccessBtn').addEventListener('click', () => {
     if (logUnlocked) {
@@ -8548,23 +8557,42 @@
     if (e.key === 'Enter') document.getElementById('logPasswordSubmitBtn').click();
   });
 
-  document.getElementById('logPasswordSubmitBtn').addEventListener('click', () => {
+  document.getElementById('logPasswordSubmitBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('logPasswordSubmitBtn');
+    const err = document.getElementById('logPasswordError');
     const val = document.getElementById('logPasswordInput').value;
-    if (val === LOG_PASSWORD) {
-      logUnlocked = true;
-      document.getElementById('logPasswordOverlay').classList.add('hidden');
-      if (_pendingUnlockTab) {
-        const t = _pendingUnlockTab;
-        _pendingUnlockTab = null;
-        switchTab(t);              // the unlock was for a gated tab, not the panel
-      } else {
-        openLogOverlay();
-      }
-      renderOrdersList(); // Orders tab may be rendered underneath — pick up delete buttons now
-    } else {
-      document.getElementById('logPasswordError').classList.remove('hidden');
+    const fail = (msg) => {
+      err.textContent = msg || 'Incorrect password.';
+      err.classList.remove('hidden');
       document.getElementById('logPasswordInput').select();
+    };
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Checking…';
+    let ok = false, msg = '';
+    try {
+      const r = await fetch('/api/master/verify-key', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: val }),
+      });
+      const d = await r.json().catch(() => ({}));
+      ok = r.ok && d.ok === true;
+      if (!ok) msg = d.error || 'Incorrect password.';
+    } catch (e) { msg = 'Could not reach the server — check your connection.'; }
+    btn.disabled = false; btn.textContent = orig;
+    if (!ok) return fail(msg);
+
+    LOG_PASSWORD = val;            // this session only; never stored
+    logUnlocked = true;
+    err.classList.add('hidden');
+    document.getElementById('logPasswordOverlay').classList.add('hidden');
+    if (_pendingUnlockTab) {
+      const t = _pendingUnlockTab;
+      _pendingUnlockTab = null;
+      switchTab(t);                // the unlock was for a gated tab, not the panel
+    } else {
+      openLogOverlay();
     }
+    renderOrdersList(); // Orders tab may be rendered underneath — pick up delete buttons now
   });
 
   document.getElementById('logPasswordCancelBtn').addEventListener('click', () => {
@@ -11698,7 +11726,7 @@
       } catch { return; }
       const issues = [];
       if (h.inventoryAvailable === false) issues.push({ sev: 'crit', text: 'Inventory store is DOWN — stock levels & reservations are not being tracked.' });
-      if (h.masterKeyDefault) issues.push({ sev: 'warn', text: 'MASTER_KEY is not set — the Administrator key is the built-in default from the source. Set MASTER_KEY in Railway.' });
+      if (h.masterKeyDefault) issues.push({ sev: 'warn', text: 'Administrator key is still the built-in default that ships in the source code — anyone who reads it could use it. Fix: in Railway → Variables, add MASTER_KEY set to a new secret of your choosing, then redeploy. That new value becomes the Administrator key; nothing else needs changing.' });
       if (h.inventoryPathMismatch) issues.push({ sev: 'crit', text: 'DATA LOSS RISK — inventory (bin locations & stock) is being saved to a different, non-persistent folder than the main database. It will be lost on the next restart. Set DATA_DIR in Railway.' });
       if (h.labelOcrRenderAvailable === false) issues.push({ sev: 'warn', text: 'Label OCR rendering is unavailable on this deployment — image-only shipping labels (no text layer) will not auto-match. Check the boot log for the @napi-rs/canvas error.' });
       if (h.zortOutboxStalled > 0) issues.push({ sev: 'warn', text: `ZORT stock sync stalled — ${h.zortOutboxStalled} update(s) repeatedly failing to reach ZORT.` });
