@@ -1951,3 +1951,5 @@ body.ls-open { overflow: hidden; }
 .mp-row-id { font-family: monospace; }
 .mp-row-why { font-size: .72rem; color: #15803d; font-style: italic; }
 .mp-text-snippet { font-family: monospace; font-size: .78rem; background: #f8fafc; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: .5rem .7rem; margin: .3rem 0 .5rem; color: #374151; word-break: break-word; }
+.tb-modal { max-width: 480px; }
+.tb-value { font-family: monospace; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 5px; padding: .05em .4em; font-weight: 700; }

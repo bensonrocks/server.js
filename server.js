@@ -252,19 +252,81 @@ function writeDb(data) {
 // Entries with comma-separated barcodes in the source Excel are split so each
 // barcode is its own key. Empty CODE 2 rows are omitted entirely.
 let _beTimeCode2Map = {};
+let _beTimeCode2Lengths = []; // known map-key lengths, longest first — for prefix matching
+function _rebuildCode2Lengths() {
+  _beTimeCode2Lengths = [...new Set(Object.keys(_beTimeCode2Map).map(k => k.length))].sort((a, b) => b - a);
+}
 try {
   _beTimeCode2Map = JSON.parse(fs.readFileSync(BETIME_CODE2_FILE, 'utf8'));
+  _rebuildCode2Lengths();
   console.log(`[IdealScan] Betime CODE2 map loaded: ${Object.keys(_beTimeCode2Map).length} entries`);
 } catch (e) {
   console.warn('[IdealScan] betime-code2.json not found — CODE2 barcode translation disabled');
 }
 
-// Resolve a scanned barcode to a WMS product code. Returns the original value
-// unchanged when the barcode is not in the Betime CODE 2 map.
+// Official CODE2 listing lookup only (no learned mappings). Returns the WMS
+// product code, or null when the listing doesn't cover this barcode.
+function officialResolveCode2(k) {
+  if (_beTimeCode2Map[k]) return _beTimeCode2Map[k];
+  // Scanner adds/strips a leading zero — try both directions
+  const kStripped = k.replace(/^0+(?=.)/, '');
+  if (kStripped !== k && _beTimeCode2Map[kStripped]) return _beTimeCode2Map[kStripped];
+  // Multi-barcode burst: all-digit input longer than any known key length —
+  // try every known key-length as a prefix, longest first
+  const minLen = _beTimeCode2Lengths[_beTimeCode2Lengths.length - 1] || 8;
+  if (/^\d+$/.test(k) && k.length > minLen) {
+    for (const len of _beTimeCode2Lengths) {
+      if (k.length > len) {
+        const hit = _beTimeCode2Map[k.slice(0, len)];
+        if (hit) return hit;
+      }
+    }
+  }
+  return null;
+}
+
+// Resolve a scanned barcode to a WMS product code: official listing first,
+// then packer-taught mappings (teach-on-scan, always lower priority so a
+// client's official listing refresh stays authoritative). Returns the
+// original value unchanged when nothing resolves it.
 function resolveBeTimeCode2(scanned) {
   if (!scanned) return scanned;
-  const k = scanned.trim();
-  return _beTimeCode2Map[k] || k;
+  const k = String(scanned).trim();
+  const official = officialResolveCode2(k);
+  if (official) return official;
+  const kStripped = k.replace(/^0+(?=.)/, '');
+  if (_learnedBarcodeMap[k]) return _learnedBarcodeMap[k].sku;
+  if (kStripped !== k && _learnedBarcodeMap[kStripped]) return _learnedBarcodeMap[kStripped].sku;
+  if (/^\d+$/.test(k)) {
+    for (const key of Object.keys(_learnedBarcodeMap)) {
+      if (k.length > key.length && k.startsWith(key)) return _learnedBarcodeMap[key].sku;
+    }
+  }
+  return k;
+}
+
+// ── Teach-on-scan: packer-confirmed barcode → SKU mappings ───────────────────
+// When a scanned product barcode isn't in the CODE2 listing (item master not
+// yet updated for new products), the packer confirms which order line it is;
+// the mapping is stored here and applies everywhere from then on.
+let _learnedBarcodeMap = {}; // barcode → { sku, description, learnedBy, learnedAt, order }
+let _learnedSkuAliases = []; // [{ a, b, learnedBy, learnedAt, order }] — a=official code, b=order-file code
+try {
+  const _db0 = readDb();
+  _learnedBarcodeMap = _db0.learnedBarcodes   || {};
+  _learnedSkuAliases = _db0.learnedSkuAliases || [];
+  const n = Object.keys(_learnedBarcodeMap).length + _learnedSkuAliases.length;
+  if (n) console.log(`[IdealScan] Learned barcode mappings loaded: ${Object.keys(_learnedBarcodeMap).length} barcodes, ${_learnedSkuAliases.length} aliases`);
+} catch {}
+
+// Only offer teach-on-scan for things that plausibly ARE product barcodes —
+// not location codes, not garbage from a mis-scan.
+function isTeachableBarcode(s) {
+  const v = String(s || '').trim();
+  if (v.length < 8 || v.length > 30) return false;
+  if ((v.match(/\d/g) || []).length < 6) return false;
+  if (/^[A-Z]{1,4}(-\d{1,6}){1,3}(-[A-Z]{1,2})?$/i.test(v)) return false; // location code
+  return /^[A-Z0-9]+$/i.test(v);
 }
 
 // ── SKU → description master catalog ────────────────────────────────────────
@@ -1592,6 +1654,34 @@ app.post('/api/waybill-lookup', (req, res) => {
   res.json(order);
 });
 
+// Find the order line a scanned/resolved SKU belongs to. Tries: exact match,
+// then Betime's "NP" suffix exception (8006NP and 8006 are the same product —
+// exact matches always win, NP is only tried when nothing else matched),
+// then packer-taught SKU aliases (the official listing sometimes names a
+// product differently from the order file, e.g. 9005 vs BC010).
+function findScanLine(ord, sku) {
+  const stripLeadZeros = s => s.trim().toLowerCase().replace(/^0+(?=.)/, '');
+  const findBySku = q => {
+    const ql = q.trim().toLowerCase();
+    const qn = stripLeadZeros(ql);
+    return ord.lines.find(l => {
+      const ls = l.sku.trim().toLowerCase();
+      return ls === ql || stripLeadZeros(ls) === qn;
+    });
+  };
+  let item = findBySku(sku);
+  if (!item && /np$/i.test(sku.trim()))  item = findBySku(sku.trim().replace(/np$/i, ''));
+  if (!item && !/np$/i.test(sku.trim())) item = findBySku(sku.trim() + 'NP');
+  if (!item) {
+    for (const al of _learnedSkuAliases) {
+      if (al.a === sku) item = findBySku(al.b);
+      else if (al.b === sku) item = findBySku(al.a);
+      if (item) break;
+    }
+  }
+  return item;
+}
+
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
   const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
@@ -1600,8 +1690,18 @@ app.post('/api/scan/increment', (req, res) => {
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
-  const item = ord.lines.find(l => l.sku.trim().toLowerCase() === sku.trim().toLowerCase());
-  if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
+  const item = findScanLine(ord, sku);
+  if (!item) {
+    // Unknown (or differently-named) product barcode? Offer teach-on-scan:
+    // the packer confirms which line this is and it's remembered for good.
+    const raw = String(req.body.sku || '').trim();
+    return res.status(404).json({
+      error: `SKU "${sku}" not in this order`,
+      teachable: isTeachableBarcode(raw),
+      barcode: raw,
+      resolved: sku !== raw ? sku : null, // official mapping that missed
+    });
+  }
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
   state.status = 'processing';
@@ -1610,6 +1710,120 @@ app.post('/api/scan/increment', (req, res) => {
   batch.orderStates[orderNumber] = state;
   writeDb(db);
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty });
+});
+
+// Packer confirms which order line an unrecognized barcode belongs to.
+// Learns either a new barcode→SKU mapping (barcode wasn't in the official
+// listing) or a SKU alias (the listing maps it to a DIFFERENT code than this
+// order's file uses) — the official listing itself is never modified — then
+// counts the piece the packer is holding, same as a normal scan.
+app.post('/api/scan/learn-barcode', (req, res) => {
+  const { orderNumber, barcode, sku } = req.body;
+  if (!orderNumber || !barcode || !sku) return res.status(400).json({ error: 'orderNumber, barcode and sku required' });
+  const bc = String(barcode).trim();
+  if (!isTeachableBarcode(bc)) return res.status(400).json({ error: 'That scan does not look like a product barcode.' });
+
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  const ord  = batch.orders.find(o => o.order_number === orderNumber);
+  const item = ord.lines.find(l => l.sku === sku);
+  if (!item) return res.status(404).json({ error: `SKU "${sku}" not in this order` });
+
+  const official = officialResolveCode2(bc);
+  let learnedKind;
+  if (official && official !== item.sku) {
+    if (!db.learnedSkuAliases) db.learnedSkuAliases = [];
+    const exists = db.learnedSkuAliases.some(al =>
+      (al.a === official && al.b === item.sku) || (al.a === item.sku && al.b === official));
+    if (!exists) {
+      const alias = { a: official, b: item.sku, learnedBy: req.userId || '', learnedAt: new Date().toISOString(), order: orderNumber };
+      db.learnedSkuAliases.push(alias);
+      _learnedSkuAliases.push(alias);
+    }
+    learnedKind = 'alias';
+  } else if (!official) {
+    if (!db.learnedBarcodes) db.learnedBarcodes = {};
+    const entry = {
+      sku: item.sku,
+      description: item.description || _skuDescMap[item.sku] || '',
+      learnedBy: req.userId || '',
+      learnedAt: new Date().toISOString(),
+      order: orderNumber,
+    };
+    db.learnedBarcodes[bc] = entry;
+    _learnedBarcodeMap[bc] = entry;
+    learnedKind = 'barcode';
+  } else {
+    learnedKind = 'none'; // official mapping already points at this line — just count
+  }
+
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  state.status = 'processing';
+  state.scanned[item.sku] = (state.scanned[item.sku] || 0) + 1;
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
+  res.json({ ok: true, sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, barcode: bc, learned: learnedKind });
+});
+
+// ── Master: learned barcode mappings (view / export / delete) ───────────────
+app.get('/api/master/learned-barcodes', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const barcodes = Object.entries(db.learnedBarcodes || {}).map(([barcode, e]) => ({ barcode, ...e }));
+  barcodes.sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
+  const aliases = [...(db.learnedSkuAliases || [])].sort((a, b) => new Date(b.learnedAt) - new Date(a.learnedAt));
+  res.json({ barcodes, aliases });
+});
+
+// Export so the client (Betime) can correct their official listing at the
+// source — learned entries are meant to be a stop-gap, not a second truth.
+app.get('/api/master/learned-barcodes/export', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const barcodes = Object.entries(db.learnedBarcodes || {}).map(([barcode, e]) => ({ barcode, ...e }));
+  const aliases  = db.learnedSkuAliases || [];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Barcode', 'SKU', 'Description', 'Taught By', 'Taught At', 'On Order'],
+    ...barcodes.map(e => [e.barcode, e.sku, e.description || '', e.learnedBy || '', e.learnedAt || '', e.order || '']),
+  ]), 'Missing Barcodes');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Listing SKU', 'Order-File SKU', 'Taught By', 'Taught At', 'On Order'],
+    ...aliases.map(e => [e.a, e.b, e.learnedBy || '', e.learnedAt || '', e.order || '']),
+  ]), 'SKU Name Differences');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Learned_Barcodes_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.end(buf);
+});
+
+app.delete('/api/master/learned-barcodes/:barcode', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const bc = req.params.barcode;
+  const db = readDb();
+  if (!db.learnedBarcodes?.[bc]) return res.status(404).json({ error: 'Mapping not found' });
+  const removed = db.learnedBarcodes[bc];
+  delete db.learnedBarcodes[bc];
+  delete _learnedBarcodeMap[bc];
+  writeDb(db);
+  res.json({ ok: true, removed });
+});
+
+app.delete('/api/master/learned-aliases/:a/:b', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { a, b } = req.params;
+  const db = readDb();
+  const match = al => (al.a === a && al.b === b) || (al.a === b && al.b === a);
+  const idx = (db.learnedSkuAliases || []).findIndex(match);
+  if (idx < 0) return res.status(404).json({ error: 'Alias not found' });
+  db.learnedSkuAliases.splice(idx, 1);
+  const idx2 = _learnedSkuAliases.findIndex(match);
+  if (idx2 >= 0) _learnedSkuAliases.splice(idx2, 1);
+  writeDb(db);
+  res.json({ ok: true });
 });
 
 app.post('/api/scan/setqty', (req, res) => {
@@ -2612,6 +2826,7 @@ app.post('/api/master/betime-code2', upload.single('file'), (req, res) => {
     });
     fs.writeFileSync(BETIME_CODE2_FILE, JSON.stringify(map, null, 2));
     _beTimeCode2Map = map;  // hot-reload in memory
+    _rebuildCode2Lengths();
     res.json({ ok: true, entries: Object.keys(map).length, skipped });
   } catch (err) {
     res.status(500).json({ error: err.message });

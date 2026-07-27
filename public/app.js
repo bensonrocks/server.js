@@ -1882,6 +1882,10 @@
         });
         const data = await resp.json();
         if (!resp.ok) {
+          if (data.teachable && data.barcode) {
+            openTeachBarcodeModal(data.barcode, data.resolved);
+            continue;
+          }
           showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`);
           continue;
         }
@@ -1908,6 +1912,87 @@
     }
     _scanBusy = false;
     document.getElementById('itemScanInput').focus();
+  }
+
+  // ── Teach-on-scan: unknown barcode → packer picks the matching line ───────
+  function ensureTeachBarcodeModal() {
+    let modal = document.getElementById('teachBarcodeModal');
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'teachBarcodeModal';
+    modal.className = 'modal-overlay hidden';
+    modal.innerHTML = `
+      <div class="modal tb-modal">
+        <div class="modal-title">Unrecognized barcode</div>
+        <p class="hint">Barcode <code id="tbValue" class="tb-value"></code> <span id="tbIntro"></span></p>
+        <p class="hint">Which item on this order is it? Picking one teaches the system — future scans of this barcode count automatically.</p>
+        <div id="tbList" class="mp-list"></div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="tbCancelBtn">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#tbCancelBtn').addEventListener('click', () => {
+      modal.classList.add('hidden');
+      setTimeout(() => document.getElementById('itemScanInput')?.focus(), 50);
+    });
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+    return modal;
+  }
+
+  function openTeachBarcodeModal(barcode, resolved) {
+    if (!activeOrder) return;
+    const modal = ensureTeachBarcodeModal();
+    const scanned = activeOrder.scanned || {};
+    const pending = (activeOrder.lines || []).filter(l => (scanned[l.sku] || 0) < l.qty);
+    const feedback = document.getElementById('itemScanFeedback');
+    if (!pending.length) {
+      showFeedback(feedback, 'error', `Barcode ${barcode} not recognized — and no items are left to count.`);
+      return;
+    }
+    modal.querySelector('#tbValue').textContent = barcode;
+    modal.querySelector('#tbIntro').innerHTML = resolved
+      ? `is listed as <strong>${esc(resolved)}</strong> — but that code is not in this order.`
+      : 'is not in the barcode listing yet.';
+    const list = modal.querySelector('#tbList');
+    list.innerHTML = '';
+    pending.forEach(l => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'mp-row';
+      row.innerHTML = `
+        <span class="mp-row-main">
+          <span class="mp-row-order">${esc(l.sku)}</span>
+          ${l.description && l.description !== l.sku ? `<span class="mp-row-cust">${esc(l.description)}</span>` : ''}
+        </span>
+        <span class="mp-row-sub"><span class="mp-row-items">${scanned[l.sku] || 0}/${l.qty} scanned</span></span>`;
+      row.addEventListener('click', async () => {
+        row.disabled = true;
+        try {
+          const resp = await fetch('/api/scan/learn-barcode', {
+            method: 'POST', headers: hdrs(),
+            body: JSON.stringify({ orderNumber: activeOrder.order_number, barcode, sku: l.sku }),
+          });
+          const data = await resp.json();
+          modal.classList.add('hidden');
+          if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Could not teach that barcode.'); return; }
+          if (!activeOrder.scanned) activeOrder.scanned = {};
+          activeOrder.scanned[data.sku] = data.scanned_qty;
+          activeOrder.scan_status = 'processing';
+          renderItemsTable(activeOrder);
+          updateProgress(activeOrder);
+          const trow = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
+          if (trow) { trow.classList.add('row-flash'); setTimeout(() => trow.classList.remove('row-flash'), 450); }
+          showFeedback(feedback, 'success', `✓ Learned: ${barcode} = ${data.sku} — counted ${data.scanned_qty}/${data.ordered_qty}`);
+        } catch (err) {
+          modal.classList.add('hidden');
+          showFeedback(feedback, 'error', err.message);
+        }
+        document.getElementById('itemScanInput')?.focus();
+      });
+      list.appendChild(row);
+    });
+    modal.classList.remove('hidden');
   }
 
   async function setItemQty(orderNumber, sku, qty) {
