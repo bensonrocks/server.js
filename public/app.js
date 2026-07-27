@@ -5138,17 +5138,25 @@
   function renderDriverList() {
     const tbody = document.getElementById('driverListBody');
     if (!window.drivers.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:#64748b">No drivers yet. Click "Add Driver" to create one.</td></tr>';
       return;
     }
 
+    // Driver ID and "is a PIN set" are shown FIRST because together they are
+    // exactly what decides whether this person can sign into the Driver App —
+    // the app asks for the ID, not the name. Leaving the ID off this table
+    // meant an auto-generated id (DRV-<timestamp>) was invisible, so nobody
+    // could know what to type and every login failed with "Driver not found".
     tbody.innerHTML = window.drivers.map(d => `
       <tr>
+        <td><code class="drv-id-chip">${esc(d.id)}</code></td>
         <td>${esc(d.name)}</td>
-        <td>${esc(d.phone)}</td>
-        <td>${esc(d.vehicle)}</td>
-        <td>${d.plate ? `<code>${esc(d.plate)}</code>` : '—'}</td>
+        <td>${esc(d.phone) || '—'}</td>
+        <td>${esc(d.vehicle)}${d.plate ? ` · <code>${esc(d.plate)}</code>` : ''}</td>
         <td>${[d.capacity ? d.capacity + ' kg' : '', d.capacityM3 ? d.capacityM3 + ' m³' : ''].filter(Boolean).join(' / ') || '—'}</td>
+        <td>${d.hasPin
+              ? '<span class="drv-pin-yes">&#128241; Set</span>'
+              : '<span class="drv-pin-no" title="This driver cannot sign into the Driver App until a PIN is set — click Edit">&#9888; None</span>'}</td>
         <td><span class="status-badge ${d.status || 'active'}">${d.status || 'Active'}</span></td>
         <td style="text-align:center"><strong>${jobsForDriver(d.id).filter(j => j.status !== 'delivered').length}</strong></td>
         <td>

@@ -2871,3 +2871,8 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 [data-inv-tab] { padding: .4rem .8rem; font-size: .85rem; font-weight: 600; background: #f1f5f9; color: #475569; border: none; border-radius: 6px; cursor: pointer; transition: all .2s; }
 [data-inv-tab]:hover { background: #e2e8f0; }
 [data-inv-tab].active { background: #0f172a; color: #fff; }
+
+/* Driver roster — the ID is the Driver App login, so it reads as a credential */
+.drv-id-chip { font-size: .78rem; font-weight: 700; background: var(--surface-2, #f1f5f9); border: 1px solid var(--border, #e2e8f0); border-radius: 4px; padding: .12rem .4rem; }
+.drv-pin-yes { font-size: .74rem; font-weight: 700; color: #15803d; white-space: nowrap; }
+.drv-pin-no  { font-size: .74rem; font-weight: 700; color: #b45309; white-space: nowrap; cursor: help; }
