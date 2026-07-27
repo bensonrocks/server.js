@@ -1676,6 +1676,10 @@
     scanPage = 0; scanPageManual = false; scanFocusSku = null;
     const initCarton = (order.cartons || []).find(c => c.num === order.active_carton_num);
     activeOrder._activeCartonScans = initCarton ? { ...initCarton.scans } : { ...(order.scanned || {}) };
+    // Carton 1 gets labelled from the moment packing starts, not only once a
+    // split makes it necessary — a packer writes it the moment they grab the
+    // first box. Fires once per order; skipped once already confirmed.
+    if (!cartonLabelConfirmed(order, 1)) showCartonLabelPrompt(`${order.order_number}-01`, 1);
 
     // Show unprocessed banner when re-opening a previously cancelled order
     const banner = document.getElementById('unprocessedBanner');
@@ -1820,6 +1824,42 @@
   });
 
   // ── Carton splitting ────────────────────────────────────────────────────────
+  // Tells the packer exactly what to write on the carton (ORDER-01, ORDER-02, …)
+  // and blocks scan capture until they confirm (the global rule at
+  // _globalScanKeydown already ignores keys while any .modal-overlay is open,
+  // so this genuinely pauses scanning, not just a cosmetic reminder).
+  function cartonLabelConfirmed(order, cartonNum) {
+    return !!(order.cartons || []).find(c => c.num === cartonNum)?.labelConfirmed;
+  }
+  function showCartonLabelPrompt(labelText, cartonNum) {
+    return new Promise(resolve => {
+      document.getElementById('cartonLabelText').textContent = labelText;
+      document.getElementById('cartonLabelOverlay').classList.remove('hidden');
+      const confirmLabel = () => {
+        document.getElementById('cartonLabelOverlay').classList.add('hidden');
+        document.removeEventListener('keydown', onKeydown, true);
+        if (activeOrder) {
+          if (!activeOrder.cartons) activeOrder.cartons = [];
+          let c = activeOrder.cartons.find(x => x.num === cartonNum);
+          if (!c) { c = { num: cartonNum, scans: {} }; activeOrder.cartons.push(c); }
+          c.labelConfirmed = true;
+        }
+        fetch('/api/scan/carton/label-confirmed', {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ orderNumber: activeOrder?.order_number, cartonNum }),
+        }).catch(() => {}); // persisted server-side — never block the UI on it
+        setTimeout(() => document.getElementById('itemScanInput')?.focus(), 50);
+        resolve();
+      };
+      // Any key dismisses it — a packer who's written the label and starts
+      // scanning/typing the next SKU shouldn't need to also reach for the
+      // mouse. Still a genuine, intentional action (not a timer).
+      const onKeydown = () => confirmLabel();
+      document.addEventListener('keydown', onKeydown, true);
+      document.getElementById('cartonLabelConfirmBtn').onclick = confirmLabel;
+    });
+  }
+
   document.getElementById('newCartonBtn').addEventListener('click', async () => {
     if (!activeOrder) return;
     try {
@@ -1834,7 +1874,7 @@
       activeOrder._activeCartonScans = data.cartonScans || {};
       updateProgress(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `✓ Carton ${data.activeCartonNum} started — scan the next item into this box.`);
-      document.getElementById('itemScanInput').focus();
+      await showCartonLabelPrompt(`${activeOrder.order_number}-${String(data.activeCartonNum).padStart(2, '0')}`, data.activeCartonNum);
     } catch (err) {
       alert(err.message);
     }

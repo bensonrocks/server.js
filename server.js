@@ -1767,6 +1767,28 @@ app.post('/api/scan/new-carton', (req, res) => {
   res.json({ ok: true, cartonCount: state.cartons.length, activeCartonNum: next.num, cartonScans: {} });
 });
 
+// Records that the packer confirmed they wrote the carton label on the box.
+// Fire-and-forget from the client — this call never blocks the scan UI; the
+// modal pausing scan capture is what enforces the pause, not this request.
+// Can fire before any scan (carton 1 is labelled the moment packing starts).
+app.post('/api/scan/carton/label-confirmed', (req, res) => {
+  const { orderNumber, cartonNum } = req.body;
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db    = readDb();
+  const batch = findBatchForOrder(db, orderNumber);
+  if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (!batch.orderStates) batch.orderStates = {};
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const num = parseInt(cartonNum, 10) || 1;
+  activeCarton(state); // lazily ensures state.cartons exists
+  let carton = state.cartons.find(c => c.num === num);
+  if (!carton) { carton = { num, scans: {}, startedAt: new Date().toISOString(), closedAt: null }; state.cartons.push(carton); }
+  carton.labelConfirmed = true;
+  batch.orderStates[orderNumber] = state;
+  writeDb(db);
+  res.json({ ok: true });
+});
+
 // Packer confirms which order line an unrecognized barcode belongs to.
 // Learns either a new barcode→SKU mapping (barcode wasn't in the official
 // listing) or a SKU alias (the listing maps it to a DIFFERENT code than this
