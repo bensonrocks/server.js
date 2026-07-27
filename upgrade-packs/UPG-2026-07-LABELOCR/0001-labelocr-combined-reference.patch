@@ -1,0 +1,413 @@
+diff --git a/nixpacks.toml b/nixpacks.toml
+new file mode 100644
+index 0000000..9ed1b28
+--- /dev/null
++++ b/nixpacks.toml
+@@ -0,0 +1,6 @@
++# Adds poppler-utils (pdftoppm) to the deploy image — required to rasterize
++# shipping-label PDF pages that have no text layer at all (scanned/rasterized
++# carrier label templates), so they can be read via OCR and matched to orders.
++# See server.js: _rasterizePdfPage() / _ocrLabelPage().
++[phases.setup]
++nixPkgs = ["poppler_utils"]
+diff --git a/package.json b/package.json
+index a120994..bb6c3fd 100644
+--- a/package.json
++++ b/package.json
+@@ -8,6 +8,7 @@
+     "dev": "nodemon server.js"
+   },
+   "dependencies": {
++    "@napi-rs/canvas": "^1.0.2",
+     "bwip-js": "^4.11.1",
+     "csv-parse": "^5.5.3",
+     "csv-stringify": "^6.4.4",
+@@ -19,6 +20,7 @@
+     "nodemailer": "^9.0.1",
+     "pdf-lib": "^1.17.1",
+     "pdf-parse": "^1.1.1",
++    "pdfjs-dist": "^3.11.174",
+     "pizzip": "^3.1.7",
+     "sharp": "^0.33.5",
+     "tesseract.js": "^5.1.1",
+diff --git a/public/app.js b/public/app.js
+index 61e93dc..468c8f1 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -2462,7 +2462,8 @@
+             const d = await fetch('/api/label-imports/' + btn.dataset.import + '/rematch', { method: 'POST' }).then(r => r.json());
+             const bits = [`${d.newlyMatched} newly matched`];
+             if (d.textRecovered) bits.push(`${d.textRecovered} page(s) re-read`);
+-            if (d.noTextPages)   bits.push(`${d.noTextPages} page(s) have no readable text (scanned image — match manually)`);
++            if (d.ocrRecovered)  bits.push(`${d.ocrRecovered} page(s) read via OCR (scanned label, no text layer)`);
++            if (d.noTextPages)   bits.push(`${d.noTextPages} page(s) still unreadable — match manually`);
+             alert(`Rematch complete: ${bits.join(', ')}.\nNow ${d.matched}/${d.total} matched.`);
+           } catch { alert('Rematch failed'); }
+           renderLabelImports();
+@@ -2501,7 +2502,7 @@
+         <div class="li-page-row">
+           <span class="li-page-no">Page ${p.pageIndex + 1}</span>
+           <span class="li-pill ${cls}">${lbl}</span>
+-          <span class="li-page-order">${p.matchedOrderNumber ? esc(p.matchedOrderNumber) + (p.matchMethod ? ` <em class="li-method">(${esc(p.matchMethod)})</em>` : '') : '&mdash;'}</span>
++          <span class="li-page-order">${p.matchedOrderNumber ? esc(p.matchedOrderNumber) + (p.matchMethod ? ` <em class="li-method">(${esc(p.matchMethod)}${p.textSource === 'ocr' ? ' · OCR' : ''})</em>` : '') : '&mdash;'}</span>
+           ${why}
+           <span class="li-page-actions">
+             <a class="btn-sm btn-secondary" data-auth-dl="/api/label-imports/${esc(id)}/pages/${p.pageIndex}/pdf?dl=1" data-auth-dl-name="label_p${p.pageIndex + 1}.pdf">&#8681; PDF</a>
+diff --git a/server.js b/server.js
+index e1091d3..e0d5db3 100644
+--- a/server.js
++++ b/server.js
+@@ -4,10 +4,12 @@ const { parse }  = require('csv-parse/sync');
+ const { v4: uuidv4 } = require('uuid');
+ const path       = require('path');
+ const fs         = require('fs');
++const os         = require('os');
+ const crypto     = require('crypto');
+ const XLSX       = require('xlsx');
+ const nodemailer = require('nodemailer');
+-const { PDFDocument } = require('pdf-lib');
++const { execFile } = require('child_process');
++const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+ let pdfParse;
+ try { pdfParse = require('pdf-parse'); } catch {}
+ 
+@@ -37,6 +39,22 @@ let Tesseract;
+ try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
+ let sharp;
+ try { sharp = require('sharp'); } catch { sharp = null; }
++// Pure-JS PDF rasterizer (pdfjs-dist + @napi-rs/canvas) — fallback for label
++// OCR when the system `pdftoppm` binary isn't on the deploy image. npm-only,
++// so it survives ANY build system (Nixpacks, Docker, buildpacks) unchanged.
++let pdfjsLib = null, napiCanvas = null;
++try {
++  napiCanvas = require('@napi-rs/canvas');
++  // pdfjs's Node polyfills expect the `canvas` package; @napi-rs/canvas
++  // provides the same globals — install them before pdfjs loads.
++  for (const k of ['DOMMatrix', 'Path2D', 'ImageData']) {
++    if (!globalThis[k] && napiCanvas[k]) globalThis[k] = napiCanvas[k];
++  }
++  pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
++} catch (e) {
++  console.error('[label-ocr] JS rasterizer unavailable:', e.message);
++  pdfjsLib = null; napiCanvas = null;
++}
+ 
+ // Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
+ // Returns the processed PNG buffer, or the original buffer if sharp is unavailable.
+@@ -69,7 +87,18 @@ async function runOcr(buffer, extraParams = {}) {
+     }, 55000);
+ 
+     try {
++      // Language model is bundled in the repo (lib/tessdata/eng.traineddata) —
++      // Tesseract's default behaviour is to fetch it from a CDN on first use,
++      // which hangs/fails under network policies that block that CDN (this
++      // was why OCR was disabled entirely before). Bundling removes the
++      // runtime network dependency altogether, on Railway or anywhere else.
+       worker = await Tesseract.createWorker('eng', 1, {
++        langPath: path.join(__dirname, 'lib', 'tessdata'),
++        // cachePath must point at the same dir — otherwise tesseract.js
++        // re-writes a 23MB eng.traineddata copy into the process cwd on
++        // every worker start.
++        cachePath: path.join(__dirname, 'lib', 'tessdata'),
++        gzip: false,
+         logger: m => { if (m.status === 'error') reject(m); }
+       });
+       await worker.setParameters({
+@@ -953,7 +982,20 @@ app.post('/api/preview', upload.single('orderFile'), (req, res) => {
+ // ── OCR preview — photo → text → order parse (no save) ──────────────────────
+ app.post('/api/ocr/preview', upload.single('image'), async (req, res) => {
+   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+-  res.json({ rowCount: 0, orderCount: 0, errors: ['OCR is not available in this environment. The required Tesseract language models cannot be downloaded due to network policy restrictions (proxy blocks cdn.jsdelivr.net). Please upload order data as CSV/Excel files instead.'], converted: false });
++  if (!Tesseract) {
++    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
++  }
++  try {
++    const text   = await runOcr(req.file.buffer);
++    const rows   = parseOcrPicklist(text);
++    const orders = summarizeOrders(rows);
++    if (!rows.length) {
++      return res.json({ rowCount: 0, orderCount: 0, errors: ['No order items detected in photo. Ensure the picking list is clearly visible and in focus.'], converted: false, ocrText: text.slice(0, 500) });
++    }
++    res.json({ rowCount: rows.length, orderCount: orders.length, errors: [], converted: true, clientName: '', customerNames: [], ocrRows: rows });
++  } catch (err) {
++    res.json({ rowCount: 0, orderCount: 0, errors: [`OCR error: ${err.message}`], converted: false });
++  }
+ });
+ 
+ // ── OCR upload — submit parsed photo rows as a batch ───────────────────────
+@@ -1034,7 +1076,19 @@ function parseLabelLines(text) {
+ 
+ app.post('/api/ocr/label', upload.single('image'), async (req, res) => {
+   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+-  res.status(501).json({ error: 'OCR is unavailable (network policy blocks model download). Manually enter product data instead.', sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
++  if (!Tesseract) {
++    return res.status(501).json({ error: 'OCR engine not installed. Run: npm install tesseract.js' });
++  }
++  try {
++    const text   = await runOcr(req.file.buffer, {
++      tessedit_pageseg_mode: '6',  // PSM_SINGLE_BLOCK — compact product labels
++      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -_./:()&',
++    });
++    const result = parseLabelLines(text);
++    res.json(result);
++  } catch (err) {
++    res.status(500).json({ error: err.message, sku: null, batch: null, expiry: null, confidence: 0, needs_review: true });
++  }
+ });
+ 
+ const uploadFields = upload.fields([
+@@ -1214,6 +1268,86 @@ function _matchLabelPage(db, tiers, importId, pg, rawText, userId) {
+   return false;
+ }
+ 
++// Rasterize a single-page PDF to PNG, then OCR it. For shipping labels with
++// no text layer at all (scanned/rasterized label templates — common for some
++// carrier exports), this is the only way to read the tracking number off the
++// page. Two rasterizers, tried in order:
++//   1. system `pdftoppm` (poppler-utils) — fastest, but only present if the
++//      deploy image installed it (nixpacks.toml), which is NOT guaranteed;
++//   2. pure-JS pdfjs-dist + @napi-rs/canvas — plain npm deps, present on any
++//      deploy that ran `npm install`, so OCR keeps working even when the
++//      build system ignored the poppler package.
++// Returns null/'' on failure — callers treat that exactly like "no text
++// found", never a hard error.
++function _popplerRasterizePdfPage(pdfBuffer) {
++  return new Promise(resolve => {
++    const tmpBase = path.join(os.tmpdir(), `label-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
++    const srcPdf  = tmpBase + '.pdf';
++    try { fs.writeFileSync(srcPdf, pdfBuffer); } catch { return resolve(null); }
++    execFile('pdftoppm', ['-png', '-r', '250', '-singlefile', srcPdf, tmpBase], { timeout: 15000 }, (err) => {
++      try { fs.unlinkSync(srcPdf); } catch {}
++      if (err) return resolve(null);
++      try {
++        const png = fs.readFileSync(tmpBase + '.png');
++        fs.unlinkSync(tmpBase + '.png');
++        resolve(png);
++      } catch { resolve(null); }
++    });
++  });
++}
++
++// pdfjs's built-in Node canvas factory hardcodes the `canvas` package; this
++// one backs it with @napi-rs/canvas (prebuilt binaries, no system deps).
++class _NapiCanvasFactory {
++  create(width, height) {
++    const canvas = napiCanvas.createCanvas(Math.max(1, Math.ceil(width)), Math.max(1, Math.ceil(height)));
++    return { canvas, context: canvas.getContext('2d') };
++  }
++  reset(cw, w, h) { cw.canvas.width = Math.max(1, Math.ceil(w)); cw.canvas.height = Math.max(1, Math.ceil(h)); }
++  destroy(cw) { cw.canvas = null; cw.context = null; }
++}
++
++async function _jsRasterizePdfPage(pdfBuffer) {
++  if (!pdfjsLib || !napiCanvas) return null;
++  let doc;
++  try {
++    doc = await pdfjsLib.getDocument({
++      data: new Uint8Array(pdfBuffer),
++      disableFontFace: true,
++      verbosity: 0,
++      canvasFactory: new _NapiCanvasFactory(),
++      standardFontDataUrl: path.join(__dirname, 'node_modules', 'pdfjs-dist', 'standard_fonts') + path.sep,
++    }).promise;
++    const page     = await doc.getPage(1);
++    const viewport = page.getViewport({ scale: 250 / 72 }); // match pdftoppm -r 250
++    const canvas   = napiCanvas.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
++    const ctx      = canvas.getContext('2d');
++    ctx.fillStyle  = '#fff';                                // labels assume a white page
++    ctx.fillRect(0, 0, canvas.width, canvas.height);
++    await page.render({ canvasContext: ctx, viewport }).promise;
++    return canvas.toBuffer('image/png');
++  } catch {
++    return null;
++  } finally {
++    try { await doc?.destroy(); } catch {}
++  }
++}
++
++async function _rasterizePdfPage(pdfBuffer) {
++  return (await _popplerRasterizePdfPage(pdfBuffer)) || (await _jsRasterizePdfPage(pdfBuffer));
++}
++async function _ocrLabelPage(pdfBuffer) {
++  if (!Tesseract) return '';
++  try {
++    const png = await _rasterizePdfPage(pdfBuffer);
++    if (!png) return '';
++    const text = await runOcr(png, { tessedit_pageseg_mode: '3' }); // PSM_AUTO — labels mix a big tracking no. with small print
++    return text || '';
++  } catch {
++    return '';
++  }
++}
++
+ // Identifier-looking tokens on a label page — shown for unmatched pages so an
+ // admin can see what the label carries vs what the orders hold.
+ function _labelCandidates(rawText) {
+@@ -1286,6 +1420,22 @@ app.post('/api/label-imports', upload.single('file'), async (req, res) => {
+     db.labelImports.push(importRecord);
+     writeDb(db);
+     res.json({ ok: true, importId, pageCount: numPages, matched: pages.filter(p => p.matchStatus === 'matched').length });
++
++    // Image-only pages (no text layer — e.g. certain carrier label templates)
++    // can't match yet at this point. Kick off a background OCR pass so
++    // they're matched by the time anyone opens the Labels tab, without
++    // making the upload request itself wait on slow OCR.
++    if (pages.some(p => p.matchStatus !== 'matched' && !p.rawText.trim())) {
++      setImmediate(async () => {
++        try {
++          const db2  = readDb();
++          const imp2 = (db2.labelImports || []).find(i => i.id === importId);
++          if (!imp2) return;
++          await _rematchImportPages(db2, imp2, req.userId);
++          writeDb(db2);
++        } catch (e) { console.error('[label-ocr-bg]', e.message); }
++      });
++    }
+   } catch (err) {
+     res.status(500).json({ error: err.message });
+   }
+@@ -1431,35 +1581,51 @@ app.get('/api/label-imports/:id/pages/:idx/suggestions', (req, res) => {
+ // Re-run matching for pages that never matched — labels uploaded BEFORE their
+ // orders (or before an order file was re-uploaded with more identifiers) can
+ // only match on a second pass. Already-matched pages are left untouched.
+-app.post('/api/label-imports/:id/rematch', async (req, res) => {
+-  if (!_requireAdminRole(req, res)) return;
+-  const db  = readDb();
+-  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+-  if (!imp) return res.status(404).json({ error: 'Import not found' });
++// Shared by the manual "↻ Rematch" button AND the automatic background pass
++// kicked off right after upload (see /api/label-imports POST).
++async function _rematchImportPages(db, imp, userId) {
+   if (!db.orderLabels) db.orderLabels = {};
+   const tiers = _labelMatchTiers(db);
+-  let newly = 0, recovered = 0, stillBlank = 0;
++  let newly = 0, recovered = 0, ocrRecovered = 0, stillBlank = 0;
+   for (const pg of imp.pages || []) {
+     if (pg.matchStatus === 'matched') continue;
+     let rawText = String(pg.rawText || '');
++    const filePath = path.join(LABEL_IMPORT_DIR, imp.id, pg.pageFile);
+     // No stored text (older import, or a page that failed to parse) → re-read
+     // the stored page PDF now.
+-    if (!rawText.trim() && pdfParse) {
+-      const filePath = path.join(LABEL_IMPORT_DIR, imp.id, pg.pageFile);
+-      if (fs.existsSync(filePath)) {
+-        try {
+-          rawText = String((await pdfParse(fs.readFileSync(filePath))).text || '').toUpperCase();
+-          if (rawText.trim()) { pg.rawText = rawText.slice(0, 2000); recovered++; }
+-        } catch { /* leave as-is */ }
++    if (!rawText.trim() && pdfParse && fs.existsSync(filePath)) {
++      try {
++        rawText = String((await pdfParse(fs.readFileSync(filePath))).text || '').toUpperCase();
++        if (rawText.trim()) { pg.rawText = rawText.slice(0, 2000); recovered++; }
++      } catch { /* leave as-is */ }
++    }
++    // Still nothing — this page has NO text layer at all (a scanned/rasterized
++    // label template). Last resort: rasterize the page to an image and OCR it.
++    if (!rawText.trim() && fs.existsSync(filePath)) {
++      const ocrText = await _ocrLabelPage(fs.readFileSync(filePath));
++      if (ocrText.trim()) {
++        rawText = ocrText.toUpperCase();
++        pg.rawText = rawText.slice(0, 2000);
++        pg.textSource = 'ocr';
++        ocrRecovered++;
+       }
+     }
+     if (!rawText.trim()) { pg.matchStatus = 'error'; stillBlank++; continue; }
+     if (pg.matchStatus === 'error') pg.matchStatus = 'unmatched';
+-    if (_matchLabelPage(db, tiers, imp.id, pg, rawText, req.userId)) newly++;
++    if (_matchLabelPage(db, tiers, imp.id, pg, rawText, userId)) newly++;
+   }
++  return { newly, recovered, ocrRecovered, stillBlank };
++}
++
++app.post('/api/label-imports/:id/rematch', async (req, res) => {
++  if (!_requireAdminRole(req, res)) return;
++  const db  = readDb();
++  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
++  if (!imp) return res.status(404).json({ error: 'Import not found' });
++  const { newly, recovered, ocrRecovered, stillBlank } = await _rematchImportPages(db, imp, req.userId);
+   writeDb(db);
+   res.json({
+-    ok: true, newlyMatched: newly, textRecovered: recovered, noTextPages: stillBlank,
++    ok: true, newlyMatched: newly, textRecovered: recovered, ocrRecovered, noTextPages: stillBlank,
+     matched:   (imp.pages || []).filter(p => p.matchStatus === 'matched').length,
+     unmatched: (imp.pages || []).filter(p => p.matchStatus === 'unmatched').length,
+     total:     (imp.pages || []).length,
+@@ -2689,6 +2855,77 @@ async function generateLabelDoc(templateBuf, order) {
+   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+ }
+ 
++// Diagnostic: proves exactly which piece of the image-only-label OCR pipeline
++// is broken on a given deployment (Tesseract worker load, bundled tessdata
++// file, the pdftoppm binary from poppler-utils, or the full rasterize→OCR
++// round trip) instead of guessing from "0 matched / N error" in the Labels
++// tab. Master-key gated like the other /api/master/* routes.
++app.get('/api/master/ocr-status', async (req, res) => {
++  if (!checkMaster(req, res)) return;
++  const out = {
++    tesseractLoaded: !!Tesseract,
++    sharpLoaded: !!sharp,
++  };
++
++  const tessdataPath = path.join(__dirname, 'lib', 'tessdata', 'eng.traineddata');
++  try {
++    const st = fs.statSync(tessdataPath);
++    out.tessdata = { path: tessdataPath, exists: true, sizeBytes: st.size };
++  } catch (e) {
++    out.tessdata = { path: tessdataPath, exists: false, error: e.message };
++  }
++
++  out.pdftoppm = await new Promise(resolve => {
++    execFile('pdftoppm', ['-v'], { timeout: 5000 }, (err, stdout, stderr) => {
++      if (err) return resolve({ found: false, error: err.message, code: err.code });
++      resolve({ found: true, version: String(stderr || stdout || '').split('\n')[0] });
++    });
++  });
++  out.jsRasterizer = { loaded: !!(pdfjsLib && napiCanvas), pdfjsVersion: pdfjsLib ? pdfjsLib.version : null };
++
++  // Live round trip: build a one-page PDF with drawn (not embedded-font-file)
++  // text and NO text layer for our OCR path to cheat off, rasterize it via
++  // pdftoppm, then OCR the resulting image — mirrors exactly what happens to
++  // a real image-only label page. If this succeeds end-to-end, the pipeline
++  // works on this machine; if it fails, the stage-by-stage fields above say
++  // which link broke.
++  try {
++    const testDoc  = await PDFDocument.create();
++    const page     = testDoc.addPage([300, 120]);
++    const font     = await testDoc.embedFont(StandardFonts.HelveticaBold);
++    page.drawText('TEST9988776655', { x: 20, y: 60, size: 22, font, color: rgb(0, 0, 0) });
++    const testPdfBuf = Buffer.from(await testDoc.save());
++
++    const rasterStart = Date.now();
++    let png = await _popplerRasterizePdfPage(testPdfBuf);
++    let via = png ? 'pdftoppm' : null;
++    if (!png) { png = await _jsRasterizePdfPage(testPdfBuf); if (png) via = 'js (pdfjs + napi-canvas)'; }
++    out.rasterize = png
++      ? { ok: true, via, pngBytes: png.length, ms: Date.now() - rasterStart }
++      : { ok: false, reason: 'both rasterizers failed — see pdftoppm and jsRasterizer fields above' };
++
++    if (png) {
++      const ocrStart = Date.now();
++      const text = await runOcr(png, { tessedit_pageseg_mode: '3' });
++      out.ocr = { ok: true, ms: Date.now() - ocrStart, textRead: text.trim(), matchesExpected: /TEST9988776655/i.test(text.replace(/\s+/g, '')) };
++    } else {
++      out.ocr = { ok: false, reason: 'skipped — rasterize step failed' };
++    }
++  } catch (e) {
++    out.roundTripError = e.message;
++  }
++
++  out.verdict = (out.rasterize && out.rasterize.ok && out.ocr && out.ocr.ok && out.ocr.matchesExpected)
++    ? `OCR pipeline fully working on this deployment (rasterizer: ${out.rasterize.via})`
++    : (!out.pdftoppm.found && !out.jsRasterizer.loaded)
++      ? 'NO rasterizer available: pdftoppm not installed AND the JS fallback failed to load — check server startup logs for [label-ocr]'
++      : (!out.tessdata.exists)
++        ? 'Tesseract language data file is missing from the deployed image'
++        : 'Pipeline reached the round trip but did not produce correct text — see rasterize/ocr fields';
++
++  res.json(out);
++});
++
+ // Admin routes — manage stored doc templates
+ app.get('/api/master/label-doc-templates', (req, res) => {
+   if (!checkMaster(req, res)) return;

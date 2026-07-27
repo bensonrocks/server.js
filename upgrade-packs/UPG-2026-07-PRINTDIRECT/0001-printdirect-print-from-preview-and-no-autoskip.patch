@@ -1,0 +1,301 @@
+From cace3b9d063dd1f24c65e7c21c969efe1195e6fc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 27 Jul 2026 06:57:40 +0000
+Subject: [PATCH 1/2] =?UTF-8?q?Print=20label/waybill=20directly=20from=20t?=
+ =?UTF-8?q?he=20completion=20prompt=20=E2=80=94=20no=20download=20step?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "Print Matched Label" / waybill prompt used to save the PDF to the
+desktop, forcing the packer to find and open the file before printing.
+The prompt button now fetches the PDF and opens the browser's print
+dialog straight from the preview via a hidden iframe (falls back to a
+new tab if iframe printing is blocked). Nothing lands on the desktop.
+
+Verified in Chromium: completing an order with a matched label shows
+the prompt with a printer icon, and one click opens the print path
+with no alerts or errors.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DuieZfw6EN7FaZSYKtjtbV
+---
+ public/app.js | 46 +++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 39 insertions(+), 7 deletions(-)
+
+diff --git a/public/app.js b/public/app.js
+index 468c8f1..ff07105 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -69,6 +69,33 @@
+       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+     } catch (e) { alert('Download error: ' + e.message); }
+   }
++  // Fetch a PDF and open the browser's print dialog straight away (hidden
++  // iframe holding the PDF preview) — nothing is saved to the desktop. Falls
++  // back to opening the PDF in a new tab if iframe printing is blocked.
++  let _printFrameUrl = null;
++  async function authPrintPdf(url) {
++    try {
++      const resp = await fetch(url);
++      if (!resp.ok) { alert('Print failed: ' + (await resp.text())); return; }
++      const blob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
++      if (_printFrameUrl) { try { URL.revokeObjectURL(_printFrameUrl); } catch {} }
++      const blobUrl = _printFrameUrl = URL.createObjectURL(blob);
++      const old = document.getElementById('pdfPrintFrame');
++      if (old) old.remove();
++      const frame = document.createElement('iframe');
++      frame.id = 'pdfPrintFrame';
++      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;visibility:hidden;';
++      frame.onload = () => {
++        // Small delay lets the PDF viewer finish rendering before the dialog opens
++        setTimeout(() => {
++          try { frame.contentWindow.focus(); frame.contentWindow.print(); }
++          catch { window.open(blobUrl, '_blank'); }
++        }, 150);
++      };
++      document.body.appendChild(frame);
++      frame.src = blobUrl;
++    } catch (e) { alert('Print error: ' + e.message); }
++  }
+   async function postDownload(url, body, filename) {
+     try {
+       const resp = await fetch(url, {
+@@ -2285,12 +2312,12 @@
+   // used for both a matched shipping LABEL (Labels tab import) and a matched
+   // WAYBILL PDF (waybill-PDF-attached-to-upload). Stays on screen SECONDS
+   // seconds before dismissing itself so the packer doesn't have to click.
+-  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3 }) {
++  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3, print = false }) {
+     clearTimeout(printWaybillTimer);
+     document.getElementById('printModalTitle').textContent = title;
+     document.getElementById('printModalDesc').textContent = desc;
+     document.getElementById('printOrderNo').textContent = order.order_number;
+-    document.getElementById('printNowBtn').innerHTML = `&#8681; ${esc(buttonLabel)}`;
++    document.getElementById('printNowBtn').innerHTML = `${print ? '&#128438;' : '&#8681;'} ${esc(buttonLabel)}`;
+     document.getElementById('printCountdownNum').textContent = String(seconds);
+     document.getElementById('printWaybillOverlay').classList.remove('hidden');
+ 
+@@ -2313,7 +2340,10 @@
+     document.getElementById('printNowBtn').onclick = () => {
+       clearInterval(tick);
+       closePrintWaybillModal();
+-      authDownload(url, filename);
++      // print: open the browser's print dialog directly from the PDF preview —
++      // no file lands on the desktop first.
++      if (print) authPrintPdf(url);
++      else authDownload(url, filename);
+     };
+     document.getElementById('printSkipBtn').onclick = () => {
+       clearInterval(tick);
+@@ -2323,11 +2353,12 @@
+ 
+   function showPrintWaybillModal(order) {
+     showPrintReadyModal(order, {
+-      title: 'Download Waybill?',
++      title: 'Print Waybill?',
+       desc: 'waybill ready',
+-      url: `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`,
++      url: `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}`,
+       filename: `${order.order_number}_waybill.pdf`,
+-      buttonLabel: 'Download Waybill',
++      buttonLabel: 'Print Waybill',
++      print: true,
+     });
+   }
+ 
+@@ -2335,9 +2366,10 @@
+     showPrintReadyModal(order, {
+       title: 'Print Matched Label?',
+       desc: 'a matched shipping label is ready',
+-      url: `/api/order-label/${encodeURIComponent(order.order_number)}/pdf?dl=1`,
++      url: `/api/order-label/${encodeURIComponent(order.order_number)}/pdf`,
+       filename: `${order.order_number}_label.pdf`,
+       buttonLabel: 'Print Matched Label',
++      print: true,
+     });
+   }
+ 
+-- 
+2.43.0
+
+
+From 1487c01484a16014f2f234a5e94070cf1bc6f705 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 27 Jul 2026 07:59:18 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?Remove=20auto-skip=20from=20print=20prompts?=
+ =?UTF-8?q?=20=E2=80=94=20they=20stay=20until=20the=20packer=20decides?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Warehouse feedback: the "Print Matched Label?" prompt auto-dismissed
+after 3 seconds, and once it skipped itself the label was hard to find
+again. The prompt (and the floating print-label toast for orders
+without a matched PDF) now stays on screen until the packer explicitly
+clicks Print or Skip. Countdown bar/text and their styles removed.
+
+Verified in Chromium: prompt still showing 6+ seconds after completion,
+and Print still opens the print dialog directly.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DuieZfw6EN7FaZSYKtjtbV
+---
+ public/app.js     | 48 ++++++++---------------------------------------
+ public/index.html |  8 ++------
+ public/styles.css |  8 --------
+ 3 files changed, 10 insertions(+), 54 deletions(-)
+
+diff --git a/public/app.js b/public/app.js
+index ff07105..6b0b83a 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -41,7 +41,6 @@
+   let scanPage        = 0;
+   let scanPageManual   = false;
+   let scanFocusSku     = null;
+-  let printWaybillTimer   = null;
+   let pendingOrderFile    = null;
+   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
+   let uploadDirection     = 'Outbound';
+@@ -1497,27 +1496,16 @@
+   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
+   document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
+ 
+-  // ── Print label prompt (auto-dismisses after 3 s) ─────────────────────────
+-  let _pltTimer = null;
++  // ── Print label prompt (stays until the packer picks Print or Skip — no
++  // auto-dismiss; an auto-skipped label was hard to find again) ─────────────
+   let _pltOrder = null;
+ 
+   function showPrintLabelPrompt(order) {
+     _pltOrder = order;
+-    clearTimeout(_pltTimer);
+-    const toast     = document.getElementById('printLabelToast');
+-    const countdown = document.getElementById('pltCountdown');
+-    let secs = 3;
+-    countdown.textContent = secs;
+-    toast.classList.remove('hidden');
+-    _pltTimer = setInterval(() => {
+-      secs--;
+-      countdown.textContent = secs;
+-      if (secs <= 0) dismissPrintLabelPrompt();
+-    }, 1000);
++    document.getElementById('printLabelToast').classList.remove('hidden');
+   }
+ 
+   function dismissPrintLabelPrompt() {
+-    clearInterval(_pltTimer);
+     document.getElementById('printLabelToast').classList.add('hidden');
+     _pltOrder = null;
+     focusWaybillInput();
+@@ -2308,37 +2296,18 @@
+   }
+ 
+   // ── Print waybill modal ────────────────────────────────────────────────────
+-  // Generic "download this PDF now, or auto-skip in a few seconds" prompt —
+-  // used for both a matched shipping LABEL (Labels tab import) and a matched
+-  // WAYBILL PDF (waybill-PDF-attached-to-upload). Stays on screen SECONDS
+-  // seconds before dismissing itself so the packer doesn't have to click.
+-  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3, print = false }) {
+-    clearTimeout(printWaybillTimer);
++  // "Print/download this PDF" prompt — used for both a matched shipping LABEL
++  // (Labels tab import) and a matched WAYBILL PDF (waybill-PDF-attached-to-
++  // upload). Stays on screen until the packer chooses Print or Skip — no
++  // auto-dismiss (an auto-skipped label was hard to find again afterwards).
++  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, print = false }) {
+     document.getElementById('printModalTitle').textContent = title;
+     document.getElementById('printModalDesc').textContent = desc;
+     document.getElementById('printOrderNo').textContent = order.order_number;
+     document.getElementById('printNowBtn').innerHTML = `${print ? '&#128438;' : '&#8681;'} ${esc(buttonLabel)}`;
+-    document.getElementById('printCountdownNum').textContent = String(seconds);
+     document.getElementById('printWaybillOverlay').classList.remove('hidden');
+ 
+-    const bar = document.getElementById('printCountdownBar');
+-    bar.style.transition = 'none';
+-    bar.style.width = '100%';
+-    bar.getBoundingClientRect();
+-    bar.style.transition = `width ${seconds}s linear`;
+-    bar.style.width = '0%';
+-
+-    let remaining = seconds;
+-    const numEl = document.getElementById('printCountdownNum');
+-    const tick  = setInterval(() => {
+-      remaining--;
+-      numEl.textContent = remaining;
+-      if (remaining <= 0) { clearInterval(tick); closePrintWaybillModal(); }
+-    }, 1000);
+-    printWaybillTimer = tick;
+-
+     document.getElementById('printNowBtn').onclick = () => {
+-      clearInterval(tick);
+       closePrintWaybillModal();
+       // print: open the browser's print dialog directly from the PDF preview —
+       // no file lands on the desktop first.
+@@ -2346,7 +2315,6 @@
+       else authDownload(url, filename);
+     };
+     document.getElementById('printSkipBtn').onclick = () => {
+-      clearInterval(tick);
+       closePrintWaybillModal();
+     };
+   }
+diff --git a/public/index.html b/public/index.html
+index d82076e..58fc1b7 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -184,12 +184,12 @@
+     </div>
+   </div>
+ 
+-  <!-- Print label prompt — floats over the orders list for 3 s after completion -->
++  <!-- Print label prompt — floats over the orders list after completion,
++       stays until the packer picks Print or Skip -->
+   <div id="printLabelToast" class="print-label-toast hidden">
+     <span class="plt-text">Print waybill label?</span>
+     <button class="plt-btn-print" id="pltPrintBtn">&#128438; Print</button>
+     <button class="plt-btn-skip"  id="pltSkipBtn">Skip</button>
+-    <span class="plt-countdown" id="pltCountdown">3</span>
+   </div>
+ 
+   <!-- ── Printer Settings Modal ── -->
+@@ -957,10 +957,6 @@
+       <div class="modal-icon">&#8681;</div>
+       <div class="modal-title" id="printModalTitle">Download Waybill?</div>
+       <p class="modal-desc">Order <strong id="printOrderNo"></strong> completed — <span id="printModalDesc">waybill ready</span>.</p>
+-      <div class="print-countdown-wrap">
+-        <div class="print-countdown-bar" id="printCountdownBar"></div>
+-      </div>
+-      <p class="hint" style="text-align:center;margin-top:.5rem">Auto-skipping in <span id="printCountdownNum">3</span>s&hellip;</p>
+       <div class="modal-actions" style="margin-top:1rem">
+         <button class="btn-secondary" id="printSkipBtn">Skip</button>
+         <button class="btn-primary" id="printNowBtn">&#8681; Download Waybill</button>
+diff --git a/public/styles.css b/public/styles.css
+index 2d179bb..e1f9fe1 100644
+--- a/public/styles.css
++++ b/public/styles.css
+@@ -699,11 +699,6 @@ body.scan-open { overflow: hidden; }
+   padding: .35rem .7rem; border-radius: var(--radius-sm);
+   font-size: .84rem; cursor: pointer;
+ }
+-.plt-countdown {
+-  font-size: .78rem; color: rgba(255,255,255,.55);
+-  min-width: 1.2em; text-align: right; font-variant-numeric: tabular-nums;
+-}
+-
+ /* Reprint label button on completed order cards */
+ .btn-reprint-label {
+   background: none; border: 1px solid var(--border);
+@@ -755,9 +750,6 @@ body.scan-open { overflow: hidden; }
+ .confirm-big { font-size: 1.1rem; font-weight: 800; color: var(--primary); }
+ .confirm-errors { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--warning); margin-top: .75rem; list-style: disc inside; }
+ 
+-.print-countdown-wrap { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin: .85rem 0 .25rem; }
+-.print-countdown-bar  { height: 100%; background: var(--primary); width: 100%; border-radius: 3px; }
+-
+ .direction-toggle { display: flex; gap: 0; border: 1.5px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; width: fit-content; }
+ .dir-btn { padding: .38rem 1.1rem; font-size: .82rem; font-weight: 500; border: none; background: var(--surface-2); color: var(--text-light); cursor: pointer; transition: background .12s, color .12s; }
+ .dir-btn + .dir-btn { border-left: 1px solid var(--border); }
+-- 
+2.43.0
+
