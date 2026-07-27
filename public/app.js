@@ -1493,6 +1493,7 @@
     clearInterval(_pltTimer);
     document.getElementById('printLabelToast').classList.add('hidden');
     _pltOrder = null;
+    focusWaybillInput();
   }
 
   document.getElementById('pltPrintBtn').addEventListener('click', () => {
@@ -1667,6 +1668,7 @@
     closeScanOverlay();
     await refreshOrders();
     renderOrdersList();
+    focusWaybillInput();
   }
 
   // ── Items phase ────────────────────────────────────────────────────────────
@@ -2208,7 +2210,9 @@
         await refreshOrders();
         renderOrdersDash();
         fetchAndRenderStats();
-        if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
+        if (completedOrder.has_order_label) {
+          showPrintMatchedLabelModal(completedOrder);
+        } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
           showPrintWaybillModal(completedOrder);
         } else {
           showPrintLabelPrompt(completedOrder);
@@ -2272,24 +2276,32 @@
       closeScanOverlay();
       await refreshOrders();
       renderOrdersDash();
+      focusWaybillInput();
     } catch (err) { alert(err.message); }
   }
 
   // ── Print waybill modal ────────────────────────────────────────────────────
-  function showPrintWaybillModal(order) {
+  // Generic "download this PDF now, or auto-skip in a few seconds" prompt —
+  // used for both a matched shipping LABEL (Labels tab import) and a matched
+  // WAYBILL PDF (waybill-PDF-attached-to-upload). Stays on screen SECONDS
+  // seconds before dismissing itself so the packer doesn't have to click.
+  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3 }) {
     clearTimeout(printWaybillTimer);
+    document.getElementById('printModalTitle').textContent = title;
+    document.getElementById('printModalDesc').textContent = desc;
     document.getElementById('printOrderNo').textContent = order.order_number;
-    document.getElementById('printCountdownNum').textContent = '3';
+    document.getElementById('printNowBtn').innerHTML = `&#8681; ${esc(buttonLabel)}`;
+    document.getElementById('printCountdownNum').textContent = String(seconds);
     document.getElementById('printWaybillOverlay').classList.remove('hidden');
 
     const bar = document.getElementById('printCountdownBar');
     bar.style.transition = 'none';
     bar.style.width = '100%';
     bar.getBoundingClientRect();
-    bar.style.transition = 'width 3s linear';
+    bar.style.transition = `width ${seconds}s linear`;
     bar.style.width = '0%';
 
-    let remaining = 3;
+    let remaining = seconds;
     const numEl = document.getElementById('printCountdownNum');
     const tick  = setInterval(() => {
       remaining--;
@@ -2298,14 +2310,10 @@
     }, 1000);
     printWaybillTimer = tick;
 
-    const dlBtn = document.getElementById('printNowBtn');
-    dlBtn.onclick = () => {
+    document.getElementById('printNowBtn').onclick = () => {
       clearInterval(tick);
       closePrintWaybillModal();
-      authDownload(
-        `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`,
-        `${order.order_number}_waybill.pdf`
-      );
+      authDownload(url, filename);
     };
     document.getElementById('printSkipBtn').onclick = () => {
       clearInterval(tick);
@@ -2313,8 +2321,29 @@
     };
   }
 
+  function showPrintWaybillModal(order) {
+    showPrintReadyModal(order, {
+      title: 'Download Waybill?',
+      desc: 'waybill ready',
+      url: `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`,
+      filename: `${order.order_number}_waybill.pdf`,
+      buttonLabel: 'Download Waybill',
+    });
+  }
+
+  function showPrintMatchedLabelModal(order) {
+    showPrintReadyModal(order, {
+      title: 'Print Matched Label?',
+      desc: 'a matched shipping label is ready',
+      url: `/api/order-label/${encodeURIComponent(order.order_number)}/pdf?dl=1`,
+      filename: `${order.order_number}_label.pdf`,
+      buttonLabel: 'Print Matched Label',
+    });
+  }
+
   function closePrintWaybillModal() {
     document.getElementById('printWaybillOverlay').classList.add('hidden');
+    focusWaybillInput();
   }
 
   // ── Mismatch modal ─────────────────────────────────────────────────────────
