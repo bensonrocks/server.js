@@ -69,6 +69,33 @@
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     } catch (e) { alert('Download error: ' + e.message); }
   }
+  // Fetch a PDF and open the browser's print dialog straight away (hidden
+  // iframe holding the PDF preview) — nothing is saved to the desktop. Falls
+  // back to opening the PDF in a new tab if iframe printing is blocked.
+  let _printFrameUrl = null;
+  async function authPrintPdf(url) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) { alert('Print failed: ' + (await resp.text())); return; }
+      const blob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
+      if (_printFrameUrl) { try { URL.revokeObjectURL(_printFrameUrl); } catch {} }
+      const blobUrl = _printFrameUrl = URL.createObjectURL(blob);
+      const old = document.getElementById('pdfPrintFrame');
+      if (old) old.remove();
+      const frame = document.createElement('iframe');
+      frame.id = 'pdfPrintFrame';
+      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;visibility:hidden;';
+      frame.onload = () => {
+        // Small delay lets the PDF viewer finish rendering before the dialog opens
+        setTimeout(() => {
+          try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+          catch { window.open(blobUrl, '_blank'); }
+        }, 150);
+      };
+      document.body.appendChild(frame);
+      frame.src = blobUrl;
+    } catch (e) { alert('Print error: ' + e.message); }
+  }
   async function postDownload(url, body, filename) {
     try {
       const resp = await fetch(url, {
@@ -2285,12 +2312,12 @@
   // used for both a matched shipping LABEL (Labels tab import) and a matched
   // WAYBILL PDF (waybill-PDF-attached-to-upload). Stays on screen SECONDS
   // seconds before dismissing itself so the packer doesn't have to click.
-  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3 }) {
+  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3, print = false }) {
     clearTimeout(printWaybillTimer);
     document.getElementById('printModalTitle').textContent = title;
     document.getElementById('printModalDesc').textContent = desc;
     document.getElementById('printOrderNo').textContent = order.order_number;
-    document.getElementById('printNowBtn').innerHTML = `&#8681; ${esc(buttonLabel)}`;
+    document.getElementById('printNowBtn').innerHTML = `${print ? '&#128438;' : '&#8681;'} ${esc(buttonLabel)}`;
     document.getElementById('printCountdownNum').textContent = String(seconds);
     document.getElementById('printWaybillOverlay').classList.remove('hidden');
 
@@ -2313,7 +2340,10 @@
     document.getElementById('printNowBtn').onclick = () => {
       clearInterval(tick);
       closePrintWaybillModal();
-      authDownload(url, filename);
+      // print: open the browser's print dialog directly from the PDF preview —
+      // no file lands on the desktop first.
+      if (print) authPrintPdf(url);
+      else authDownload(url, filename);
     };
     document.getElementById('printSkipBtn').onclick = () => {
       clearInterval(tick);
@@ -2323,11 +2353,12 @@
 
   function showPrintWaybillModal(order) {
     showPrintReadyModal(order, {
-      title: 'Download Waybill?',
+      title: 'Print Waybill?',
       desc: 'waybill ready',
-      url: `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`,
+      url: `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}`,
       filename: `${order.order_number}_waybill.pdf`,
-      buttonLabel: 'Download Waybill',
+      buttonLabel: 'Print Waybill',
+      print: true,
     });
   }
 
@@ -2335,9 +2366,10 @@
     showPrintReadyModal(order, {
       title: 'Print Matched Label?',
       desc: 'a matched shipping label is ready',
-      url: `/api/order-label/${encodeURIComponent(order.order_number)}/pdf?dl=1`,
+      url: `/api/order-label/${encodeURIComponent(order.order_number)}/pdf`,
       filename: `${order.order_number}_label.pdf`,
       buttonLabel: 'Print Matched Label',
+      print: true,
     });
   }
 
