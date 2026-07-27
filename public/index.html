@@ -124,6 +124,10 @@
     <div class="modal" style="max-width:500px">
       <h2 id="addEditDriverTitle" style="margin:0 0 1rem 0">Add Driver</h2>
       <div class="form-group">
+        <label>Driver ID (login username) <span id="driverIdHint" class="hint" style="font-weight:400"></span></label>
+        <input type="text" id="driverIdInput" placeholder="Leave blank to auto-generate — or set it to match an existing Users username" autocomplete="off" />
+      </div>
+      <div class="form-group">
         <label>Driver Name</label>
         <input type="text" id="driverNameInput" placeholder="e.g. Ahmad Bin Mohamed" />
       </div>

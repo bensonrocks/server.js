@@ -5004,6 +5004,9 @@
   document.getElementById('transportAddDriverBtn')?.addEventListener('click', () => {
     editingDriverId = null;
     document.getElementById('addEditDriverTitle').textContent = 'Add Driver';
+    document.getElementById('driverIdInput').value = '';
+    document.getElementById('driverIdInput').disabled = false;
+    document.getElementById('driverIdHint').textContent = '';
     document.getElementById('driverNameInput').value = '';
     document.getElementById('driverPhoneInput').value = '';
     document.getElementById('driverVehicleInput').value = 'Van';
@@ -5020,6 +5023,12 @@
     if (!driver) return;
     editingDriverId = id;
     document.getElementById('addEditDriverTitle').textContent = 'Edit Driver';
+    // ID is the driver's login identity — changing it here would silently
+    // create a SEPARATE driver record (the API upserts by id) rather than
+    // rename this one, so it's locked to view-only once a driver exists.
+    document.getElementById('driverIdInput').value = driver.id;
+    document.getElementById('driverIdInput').disabled = true;
+    document.getElementById('driverIdHint').textContent = '(set once, at creation — cannot be changed)';
     document.getElementById('driverNameInput').value = driver.name;
     document.getElementById('driverPhoneInput').value = driver.phone;
     document.getElementById('driverVehicleInput').value = driver.vehicle;
@@ -5045,6 +5054,7 @@
   }
 
   document.getElementById('addEditDriverSaveBtn')?.addEventListener('click', async () => {
+    const customId = document.getElementById('driverIdInput').value.trim();
     const name = document.getElementById('driverNameInput').value.trim();
     const phone = document.getElementById('driverPhoneInput').value.trim();
     const vehicle = document.getElementById('driverVehicleInput').value;
@@ -5061,12 +5071,19 @@
       alert('PIN must be 4-8 digits');
       return;
     }
+    // Creating with a custom ID: the API upserts by id, so a typo matching an
+    // EXISTING driver would silently overwrite that driver's details instead
+    // of erroring — catch it here before it ever reaches the server.
+    if (!editingDriverId && customId && (window.drivers || []).some(d => d.id === customId)) {
+      alert(`Driver ID "${customId}" is already in use by another driver. Choose a different ID.`);
+      return;
+    }
 
     try {
       const resp = await fetch('/api/drivers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
-        body: JSON.stringify({ id: editingDriverId || undefined, name, phone, vehicle, plate, capacity, capacityM3, pin: pin || undefined }),
+        body: JSON.stringify({ id: editingDriverId || customId || undefined, name, phone, vehicle, plate, capacity, capacityM3, pin: pin || undefined }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Save failed');
