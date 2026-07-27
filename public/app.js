@@ -7330,7 +7330,9 @@
             if (ea) parts.push(`${ea} ea`);
             return `×${q} (${parts.join(' + ')})`;
           };
-          const locs = binPicks.map(pl => `${esc(pl.location_id)}&nbsp;${qtyLabel(pl.qty)}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}`).join(', ');
+          // Each entry is one atomic nowrap unit so wrapping happens BETWEEN
+          // bins, never inside a bin code or an expiry date.
+          const locs = binPicks.map(pl => `<span class="pick-loc-entry">${esc(pl.location_id)}&nbsp;${qtyLabel(pl.qty)}${pl.expiry_date ? ' <span style="opacity:.7">exp ' + esc(pl.expiry_date) + '</span>' : ''}</span>`).join(', ');
           lotParts.push(`<span class="lot-badge lot-loc" title="Pick from these bins" style="background:#dbeafe;color:#1e40af">&#128205; ${locs}</span>`);
           // Case-break instruction: collect a carton from bulk, take X, leave the rest on the shelf.
           if (item.case_break) {
@@ -11098,8 +11100,18 @@
       const s = document.getElementById('storageWarnBar') || document.getElementById('storageInfoBar');
       return s ? Math.ceil(s.getBoundingClientRect().height) : 0;
     }
+    // Never cover a full-screen WORK surface. The banner is position:fixed with a
+    // z-index above the scan overlay, so while a packer is picking it painted over
+    // the order number, progress and carton badge — exactly the information they
+    // cannot lose. Suppress it while the scan overlay is open; the next poll (or
+    // closing the overlay) brings it back.
+    function workSurfaceOpen() {
+      const scan = document.getElementById('scanOverlay');
+      return !!(scan && !scan.classList.contains('hidden'));
+    }
     function render(issues) {
       let bar = document.getElementById('healthWarnBar');
+      if (workSurfaceOpen()) { if (bar) bar.remove(); return; }
       if (!issues.length) { if (bar) bar.remove(); dismissedSig = ''; return; }
       const sig = issues.map(i => i.sev + ':' + i.text).join('|');
       if (sig === dismissedSig) { if (bar) bar.remove(); return; } // this exact state was dismissed

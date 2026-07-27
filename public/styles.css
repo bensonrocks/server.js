@@ -2383,7 +2383,40 @@ body.ls-open { overflow: hidden; }
 .scan-pager-btn:disabled { opacity: .35; cursor: default; }
 .scan-pager-info { font-size: .95rem; font-weight: 600; color: var(--text-light, #64748b); }
 /* lot badges inside the SKU cell */
-.lot-inline { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .3rem; }
+.lot-inline { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .3rem; max-width: 100%; }
+/* Pick-location and case-break badges carry real sentences ("R-01-1-1 x30
+   (3 ctn) exp 2027-09-30, A-01-1-1 x5 (5 ea)"), so unlike the short lot/expiry
+   chips they MUST be allowed to wrap. Measured on a 412px phone: an unwrapped
+   bin badge was 507px wide and pushed the scan table to 760px, so a packer had
+   to scroll 349px sideways mid-pick to see the Ordered/Scanned columns. */
+/* .lot-badge is inline-flex, whose default is flex-wrap:nowrap — so these
+   multi-entry badges stayed on one line forever and dragged the table wide no
+   matter what white-space said. flex-wrap:wrap is the actual fix; the vw
+   max-width then gives the flex a boundary to wrap against inside an
+   auto-layout table cell (which otherwise expands to fit its content). */
+.lot-badge.lot-loc,
+.lot-badge.lot-cbreak,
+.lot-badge.lot-await,
+.lot-badge.lot-short,
+.lot-badge.lot-stage { white-space: normal; flex-wrap: wrap; max-width: 100%; align-items: flex-start; line-height: 1.35; }
+@media (max-width: 768px) {
+  .lot-badge.lot-loc,
+  .lot-badge.lot-cbreak,
+  .lot-badge.lot-await,
+  .lot-badge.lot-short,
+  .lot-badge.lot-stage { max-width: 46vw; }
+  /* Measured on a 412px phone: SKU 234 + Ordered 96 + Scanned 96 + icon 40 =
+     466, i.e. 54px past the screen. The qty columns were spending 96px each on
+     a two-digit number, so trim their horizontal padding — the numbers stay the
+     same size, they just stop reserving space they don't need. */
+  .scan-items-table td.qty-col,
+  .scan-items-table th.qty-col { padding-left: .3rem; padding-right: .3rem; }
+}
+/* Each bin entry stays ATOMIC — the list wraps between entries, never inside a
+   bin code or a date (overflow-wrap:anywhere shattered "R-01-1-1" into
+   "R-01-1-" / "1" and "2027-03-31" into "202" / "7-", which is unreadable to a
+   picker). */
+.lot-badge .pick-loc-entry { white-space: nowrap; }
 
 /* header details enlarged — bigger than before, smaller than product info */
 .scan-meta-primary .meta-pill { font-size: 1.3rem; padding: .4rem 1rem; }
