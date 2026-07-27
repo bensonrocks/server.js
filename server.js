@@ -566,6 +566,103 @@ const upload = multer({
   limits: { fileSize: UPLOAD_MAX_BYTES },
 });
 
+// ── Security headers ────────────────────────────────────────────────────────
+// Hand-rolled rather than pulling in helmet: no new dependency, and the policy
+// below is tuned to what this app actually loads (verified by auditing public/).
+//   frame-ancestors 'none'  — nothing may frame us (clickjacking on the
+//                             Administrator panel / portal would be nasty).
+//   default-src 'self'      — blocks loading external script/CSS, which is the
+//                             usual XSS payload-delivery route. All vendor libs
+//                             (leaflet, jsbarcode, qrcode, jsqr) are served
+//                             locally from /vendor, so this holds.
+//   'unsafe-inline'         — REQUIRED for now: 600+ inline style attributes,
+//                             a handful of inline onclick handlers, and the
+//                             print windows (GRN / carton slip / bin labels /
+//                             run sheets) which document.write inline <style>
+//                             and an inline print button. Removing it means
+//                             refactoring those first — tracked, not silent.
+//   img-src OSM             — the Transport map's OpenStreetMap tiles.
+//   fonts.googleapis/gstatic— the marketing pages (landing, overview) only.
+//   frame-src 'self' blob:  — the label lightbox iframe shows our own PDFs.
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https://*.tile.openstreetmap.org",
+  "connect-src 'self'",
+  "form-action 'self'",
+  "frame-src 'self' blob:",
+].join('; ');
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');            // legacy belt to CSP's braces
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // Only advertise HSTS when the request actually arrived over TLS (Railway
+  // terminates TLS and forwards x-forwarded-proto) — never on plain local dev.
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  }
+  next();
+});
+
+// ── Login throttling (brute-force / password-spray defence) ─────────────────
+// Audited state before this: 25 wrong passwords in 4 seconds, all clean 401s,
+// no lockout — an unattended spray against /api/auth/login, /api/driver/login
+// or /api/portal/login was unimpeded. In-memory (single process, and a restart
+// clearing counters is acceptable — an attacker can't trigger restarts).
+// TWO counters so neither failure mode is open:
+//   per (ip + identity) — someone hammering one account
+//   per ip              — someone spraying many accounts from one host
+// A SUCCESSFUL login clears that identity's counter, so a legitimate user who
+// mistyped a few times isn't stuck once they get it right.
+const _loginFails = new Map();          // key -> { n, blockedUntil }
+const LOGIN_TIERS = [                   // failures -> lockout after that many
+  { at: 15, ms: 15 * 60 * 1000 },
+  { at: 10, ms: 5 * 60 * 1000 },
+  { at: 5,  ms: 60 * 1000 },
+];
+function _loginKeys(req, identity) {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || 'unknown';
+  return [`ip:${ip}`, `id:${ip}|${String(identity || '').trim().toLowerCase()}`];
+}
+// Returns null if allowed, else seconds the caller must wait.
+function loginBlockedFor(req, identity) {
+  const now = Date.now();
+  let wait = 0;
+  for (const k of _loginKeys(req, identity)) {
+    const e = _loginFails.get(k);
+    if (e && e.blockedUntil > now) wait = Math.max(wait, Math.ceil((e.blockedUntil - now) / 1000));
+  }
+  return wait || null;
+}
+function loginFailure(req, identity) {
+  const now = Date.now();
+  for (const k of _loginKeys(req, identity)) {
+    const e = _loginFails.get(k) || { n: 0, blockedUntil: 0 };
+    e.n += 1;
+    // The ip-only counter is deliberately looser (spraying many accounts trips
+    // it, but a busy shared warehouse IP with a few typos shouldn't be locked).
+    const tiers = k.startsWith('ip:') ? LOGIN_TIERS.map(t => ({ at: t.at * 3, ms: t.ms })) : LOGIN_TIERS;
+    for (const t of tiers) { if (e.n >= t.at) { e.blockedUntil = now + t.ms; break; } }
+    e.seen = now;
+    _loginFails.set(k, e);
+  }
+}
+function loginSuccess(req, identity) {
+  for (const k of _loginKeys(req, identity)) if (k.startsWith('id:')) _loginFails.delete(k);
+}
+// Bounded memory: drop entries untouched for an hour.
+setInterval(() => {
+  const cutoff = Date.now() - 3600 * 1000;
+  for (const [k, e] of _loginFails) if ((e.seen || 0) < cutoff && (e.blockedUntil || 0) < Date.now()) _loginFails.delete(k);
+}, 10 * 60 * 1000).unref?.();
+
 app.use(express.json());
 // ── Tenant resolution ──────────────────────────────────────────────────────
 // Runs on every request, BEFORE any route. Resolves the caller's tenant from
@@ -2440,15 +2537,24 @@ function _findClientAcrossTenants(clientNorm) {
 app.post('/api/portal/login', express.json(), (req, res) => {
   const { client, password } = req.body || {};
   if (!String(client || '').trim() || !String(password || '').trim()) return res.status(400).json({ error: 'Client name and password required' });
-  const found = _findClientAcrossTenants(String(client).trim().toLowerCase());
+  const cNorm = String(client).trim().toLowerCase();
+  const pWait = loginBlockedFor(req, 'ptl:' + cNorm);
+  if (pWait) {
+    res.setHeader('Retry-After', String(pWait));
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${pWait}s.`, retryAfter: pWait });
+  }
+  const found = _findClientAcrossTenants(cNorm);
   const p = found?.profile;
   if (!p || !p.portal || !p.portal.enabled || !p.portal.passwordHash) {
+    loginFailure(req, 'ptl:' + cNorm);
     return res.status(401).json({ error: 'Portal access is not enabled for this client — contact IdealOne.' });
   }
   if (hashPass(String(password), p.portal.salt) !== p.portal.passwordHash) {
+    loginFailure(req, 'ptl:' + cNorm);
     tenantContext.run(found.tenantId, () => logAudit('portal_login_failed', { client: p.client }));
     return res.status(401).json({ error: 'Invalid password' });
   }
+  loginSuccess(req, 'ptl:' + cNorm);
   const token = uuidv4();
   activeSessions.set(`portal:${found.tenantId}:${p.client}`, token);
   persistSessions();
@@ -4219,6 +4325,7 @@ app.get('/api/master/system-errors/health', (req, res) => {
     bootedAt: SERVER_BOOTED_AT,
     storagePersistent: PERSISTENCE.survivedRestart,
     ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
+    masterKeyDefault: MASTER_KEY_IS_DEFAULT,
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortStores: (db.zortStores || []).length,
     zortOutboxPending: ob.filter(e => !e.stalled).length,
@@ -4246,6 +4353,7 @@ app.get('/api/system-health', (req, res) => {
   const ob = db.zortOutbox || [];
   res.json({
     at: new Date().toISOString(),
+    masterKeyDefault: MASTER_KEY_IS_DEFAULT,   // security warning banner
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortOutboxStalled: ob.filter(e => e.stalled).length,
     storagePersistent: PERSISTENCE.survivedRestart,
@@ -7634,11 +7742,19 @@ app.post('/api/auth/login', (req, res) => {
   // Case-insensitive ID match — "MASTER", "Master" and "master" are the same
   // account (passwords remain case-sensitive)
   const idNorm = String(id).trim().toLowerCase();
+  const wait = loginBlockedFor(req, idNorm);
+  if (wait) {
+    logAudit('login_throttled', { user: String(id).trim().slice(0, 60), retryAfter: wait, ...clientInfo(req) });
+    res.setHeader('Retry-After', String(wait));
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.`, retryAfter: wait });
+  }
   const user = readUsers().find(u => String(u.id).trim().toLowerCase() === idNorm);
   if (!user || hashPass(password, user.salt) !== user.passwordHash) {
+    loginFailure(req, idNorm);
     logAudit('login_failed', { user: String(id).trim().slice(0, 60), ...clientInfo(req) });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
+  loginSuccess(req, idNorm);
   const token = uuidv4();
   const kickedOther = activeSessions.has(user.id);
   activeSessions.set(user.id, token); // replaces any existing session for this user
@@ -7728,7 +7844,17 @@ app.get('/api/public/config', (_req, res) => {
 });
 
 // ── Master endpoints (password-protected) ───────────────────────────────────
+// The fallback is DELIBERATELY still here: making MASTER_KEY mandatory would
+// take a running deployment down on the next restart if the env var isn't set
+// yet. Instead we run, but say so loudly at boot and expose it on the health
+// snapshot so it shows up as a warning banner in the Administrator UI until
+// someone sets a real key in Railway. Once MASTER_KEY is set in production the
+// fallback can be deleted safely.
+const MASTER_KEY_IS_DEFAULT = !process.env.MASTER_KEY;
 const MASTER_PASS = process.env.MASTER_KEY || '201432547E';
+if (MASTER_KEY_IS_DEFAULT) {
+  console.warn('[IdealScan] ⚠ SECURITY: MASTER_KEY is not set — falling back to the built-in default, which is present in the source. Set MASTER_KEY in the deployment environment.');
+}
 
 function checkMaster(req, res) {
   if (req.headers['x-master-key'] !== MASTER_PASS) {
@@ -10443,8 +10569,14 @@ app.post('/api/driver/login', express.json(), (req, res) => {
     return res.status(400).json({ error: 'Driver ID and PIN required' });
   }
   const idNorm = String(id).trim().toLowerCase();
+  const dWait = loginBlockedFor(req, 'drv:' + idNorm);
+  if (dWait) {
+    res.setHeader('Retry-After', String(dWait));
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${dWait}s.`, retryAfter: dWait });
+  }
   const found = _findDriverAcrossTenants(idNorm);
   if (!found) {
+    loginFailure(req, 'drv:' + idNorm);
     logAudit('driver_login_failed', { driver: String(id).trim().slice(0, 60), reason: 'not_found' });
     return res.status(401).json({ error: 'Driver not found' });
   }
@@ -10453,9 +10585,11 @@ app.post('/api/driver/login', express.json(), (req, res) => {
     return res.status(401).json({ error: 'No PIN set for this driver yet — ask your dispatcher to set one in Transport → Driver Details.' });
   }
   if (hashPass(String(pin).trim(), driver.pinSalt) !== driver.pinHash) {
+    loginFailure(req, 'drv:' + idNorm);
     tenantContext.run(tenantId, () => logAudit('driver_login_failed', { driver: driver.id, reason: 'bad_pin' }));
     return res.status(401).json({ error: 'Invalid PIN' });
   }
+  loginSuccess(req, 'drv:' + idNorm);
   const token = uuidv4();
   const sessionKey = `driver:${tenantId}:${driver.id}`;
   const kickedOther = activeSessions.has(sessionKey);
