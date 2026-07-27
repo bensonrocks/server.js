@@ -52,9 +52,34 @@ try { sharp = require('sharp'); } catch { sharp = null; }
 // enough: many carrier labels draw the human-readable order ID/tracking
 // number as vector text laid over SEPARATE barcode/QR/logo image XObjects).
 let pdfjsLib;
-try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); } catch { pdfjsLib = null; }
+try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); }
+catch (e) { pdfjsLib = null; console.warn('[IdealScan] pdfjs-dist not available — label OCR will fall back to single-image extraction:', e.message); }
 let napiCanvas;
-try { napiCanvas = require('@napi-rs/canvas'); } catch { napiCanvas = null; }
+try { napiCanvas = require('@napi-rs/canvas'); }
+catch (e) { napiCanvas = null; console.warn('[IdealScan] @napi-rs/canvas not available — label OCR will fall back to single-image extraction:', e.message); }
+
+// require() succeeding is NOT proof the native addon actually works — a
+// missing shared library or a mismatched platform binary (the real risk with
+// prebuilt native modules across deploy environments) often only surfaces on
+// the FIRST real call, not at require time. Exercise it for real right now,
+// once, at boot, so a broken canvas backend is loud in the boot log instead
+// of silently degrading every label import back to the single-image fallback
+// with no visible sign anything is wrong.
+let LABEL_OCR_RENDER_AVAILABLE = false;
+try {
+  if (napiCanvas) {
+    const _c = napiCanvas.createCanvas(8, 8);
+    _c.getContext('2d').fillRect(0, 0, 8, 8);
+    LABEL_OCR_RENDER_AVAILABLE = !!pdfjsLib;
+  }
+} catch (e) {
+  console.warn('[IdealScan] @napi-rs/canvas failed its boot self-test — label OCR will fall back to single-image extraction:', e.message);
+}
+if (napiCanvas && pdfjsLib && !LABEL_OCR_RENDER_AVAILABLE) {
+  console.warn('[IdealScan] Full-page label OCR rendering unavailable after self-test — check the boot log above for the actual error.');
+} else if (LABEL_OCR_RENDER_AVAILABLE) {
+  console.log('[IdealScan] Full-page label OCR rendering: available.');
+}
 
 // Preprocess image before OCR: greyscale → normalize contrast → sharpen text edges
 // Returns the processed PNG buffer, or the original buffer if sharp is unavailable.
@@ -3143,7 +3168,7 @@ class _NapiCanvasFactory {
 // optional dependency (pdfjs-dist / @napi-rs/canvas) is missing or the render
 // fails, so labels that ARE one single bitmap keep working either way.
 async function renderPdfPageToPng(buffer, pageIndex = 0, scale = 3) {
-  if (!pdfjsLib || !napiCanvas) return null;
+  if (!LABEL_OCR_RENDER_AVAILABLE) return null;
   let doc = null;
   try {
     const factory = new _NapiCanvasFactory();
@@ -4424,6 +4449,7 @@ app.get('/api/master/system-errors/health', (req, res) => {
     storagePersistent: PERSISTENCE.survivedRestart,
     ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
     masterKeyDefault: MASTER_KEY_IS_DEFAULT,
+    labelOcrRenderAvailable: LABEL_OCR_RENDER_AVAILABLE,
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortStores: (db.zortStores || []).length,
     zortOutboxPending: ob.filter(e => !e.stalled).length,
@@ -4452,6 +4478,7 @@ app.get('/api/system-health', (req, res) => {
   res.json({
     at: new Date().toISOString(),
     masterKeyDefault: MASTER_KEY_IS_DEFAULT,   // security warning banner
+    labelOcrRenderAvailable: LABEL_OCR_RENDER_AVAILABLE,
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortOutboxStalled: ob.filter(e => e.stalled).length,
     storagePersistent: PERSISTENCE.survivedRestart,

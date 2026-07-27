@@ -11151,6 +11151,7 @@
       const issues = [];
       if (h.inventoryAvailable === false) issues.push({ sev: 'crit', text: 'Inventory store is DOWN — stock levels & reservations are not being tracked.' });
       if (h.masterKeyDefault) issues.push({ sev: 'warn', text: 'MASTER_KEY is not set — the Administrator key is the built-in default from the source. Set MASTER_KEY in Railway.' });
+      if (h.labelOcrRenderAvailable === false) issues.push({ sev: 'warn', text: 'Label OCR rendering is unavailable on this deployment — image-only shipping labels (no text layer) will not auto-match. Check the boot log for the @napi-rs/canvas error.' });
       if (h.zortOutboxStalled > 0) issues.push({ sev: 'warn', text: `ZORT stock sync stalled — ${h.zortOutboxStalled} update(s) repeatedly failing to reach ZORT.` });
       render(issues);
     }
