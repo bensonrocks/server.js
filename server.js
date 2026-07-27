@@ -10816,11 +10816,28 @@ function driverStatusLabel(job) {
 // resolved tenant (driver:<tenantId>:<driverId>) so every later request can
 // re-establish the correct tenant directly from the token, with no repeated
 // search — see requireDriverAuthMiddleware below.
+// Resolves what a driver typed into the Driver App's "Driver ID" box.
+// Accepts EITHER the record id or the driver's name, because a driver added
+// without an explicit id gets an auto-generated one (DRV-<timestamp>) while
+// the label everyone actually knows them by ("DRV001") is the NAME — typing
+// that failed with "Driver not found" and no screen showed the real id.
+// ID always wins so an exact id can never be shadowed by someone else's
+// name; a name matching several drivers is refused rather than guessed at.
 function _findDriverAcrossTenants(idNorm) {
   for (const t of tenantStore.listTenants()) {
     const found = tenantContext.run(t.id, () => (readDb().drivers || []).find(d => String(d.id).trim().toLowerCase() === idNorm));
     if (found) return { tenantId: t.id, driver: found };
   }
+  const byName = [];
+  for (const t of tenantStore.listTenants()) {
+    tenantContext.run(t.id, () => {
+      for (const d of (readDb().drivers || [])) {
+        if (String(d.name || '').trim().toLowerCase() === idNorm) byName.push({ tenantId: t.id, driver: d });
+      }
+    });
+  }
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) return { ambiguous: true };
   return null;
 }
 
@@ -10864,6 +10881,13 @@ app.post('/api/driver/login', express.json(), (req, res) => {
     return res.status(429).json({ error: `Too many failed attempts. Try again in ${dWait}s.`, retryAfter: dWait });
   }
   const found = _findDriverAcrossTenants(idNorm);
+  if (found && found.ambiguous) {
+    // Name typed, but more than one driver answers to it — never guess which
+    // person is signing in; the unique Driver ID disambiguates.
+    loginFailure(req, 'drv:' + idNorm);
+    logAudit('driver_login_failed', { driver: String(id).trim().slice(0, 60), reason: 'ambiguous_name' });
+    return res.status(401).json({ error: 'More than one driver has that name — sign in with your Driver ID instead (ask your dispatcher).' });
+  }
   if (!found) {
     loginFailure(req, 'drv:' + idNorm);
     logAudit('driver_login_failed', { driver: String(id).trim().slice(0, 60), reason: 'not_found' });
