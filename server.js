@@ -9,7 +9,7 @@ const crypto     = require('crypto');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
 const { execFile } = require('child_process');
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
 
@@ -2788,6 +2788,74 @@ async function generateLabelDoc(templateBuf, order) {
 
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
+
+// Diagnostic: proves exactly which piece of the image-only-label OCR pipeline
+// is broken on a given deployment (Tesseract worker load, bundled tessdata
+// file, the pdftoppm binary from poppler-utils, or the full rasterize→OCR
+// round trip) instead of guessing from "0 matched / N error" in the Labels
+// tab. Master-key gated like the other /api/master/* routes.
+app.get('/api/master/ocr-status', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const out = {
+    tesseractLoaded: !!Tesseract,
+    sharpLoaded: !!sharp,
+  };
+
+  const tessdataPath = path.join(__dirname, 'lib', 'tessdata', 'eng.traineddata');
+  try {
+    const st = fs.statSync(tessdataPath);
+    out.tessdata = { path: tessdataPath, exists: true, sizeBytes: st.size };
+  } catch (e) {
+    out.tessdata = { path: tessdataPath, exists: false, error: e.message };
+  }
+
+  out.pdftoppm = await new Promise(resolve => {
+    execFile('pdftoppm', ['-v'], { timeout: 5000 }, (err, stdout, stderr) => {
+      if (err) return resolve({ found: false, error: err.message, code: err.code });
+      resolve({ found: true, version: String(stderr || stdout || '').split('\n')[0] });
+    });
+  });
+
+  // Live round trip: build a one-page PDF with drawn (not embedded-font-file)
+  // text and NO text layer for our OCR path to cheat off, rasterize it via
+  // pdftoppm, then OCR the resulting image — mirrors exactly what happens to
+  // a real image-only label page. If this succeeds end-to-end, the pipeline
+  // works on this machine; if it fails, the stage-by-stage fields above say
+  // which link broke.
+  try {
+    const testDoc  = await PDFDocument.create();
+    const page     = testDoc.addPage([300, 120]);
+    const font     = await testDoc.embedFont(StandardFonts.HelveticaBold);
+    page.drawText('TEST9988776655', { x: 20, y: 60, size: 22, font, color: rgb(0, 0, 0) });
+    const testPdfBuf = Buffer.from(await testDoc.save());
+
+    const rasterStart = Date.now();
+    const png = await _rasterizePdfPage(testPdfBuf);
+    out.rasterize = png
+      ? { ok: true, pngBytes: png.length, ms: Date.now() - rasterStart }
+      : { ok: false, reason: 'pdftoppm returned no image — see pdftoppm field above for the underlying error' };
+
+    if (png) {
+      const ocrStart = Date.now();
+      const text = await runOcr(png, { tessedit_pageseg_mode: '3' });
+      out.ocr = { ok: true, ms: Date.now() - ocrStart, textRead: text.trim(), matchesExpected: /TEST9988776655/i.test(text.replace(/\s+/g, '')) };
+    } else {
+      out.ocr = { ok: false, reason: 'skipped — rasterize step failed' };
+    }
+  } catch (e) {
+    out.roundTripError = e.message;
+  }
+
+  out.verdict = (out.rasterize && out.rasterize.ok && out.ocr && out.ocr.ok && out.ocr.matchesExpected)
+    ? 'OCR pipeline fully working on this deployment'
+    : !out.pdftoppm.found
+      ? 'pdftoppm (poppler-utils) is NOT installed on this deployment — nixpacks.toml is not taking effect on the build'
+      : (!out.tessdata.exists)
+        ? 'Tesseract language data file is missing from the deployed image'
+        : 'Pipeline reached the round trip but did not produce correct text — see rasterize/ocr fields';
+
+  res.json(out);
+});
 
 // Admin routes — manage stored doc templates
 app.get('/api/master/label-doc-templates', (req, res) => {
