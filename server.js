@@ -109,7 +109,12 @@ app.get('/vendor/jsbarcode.min.js', (_req, res) =>
 );
 
 // ── Persistent storage ──────────────────────────────────────────────────────
-const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, 'data');
+// Priority: explicit DATA_DIR → Railway volume mount (auto-detected, so a
+// deploy can never silently ignore the persistent volume and boot with an
+// empty database) → local ./data for development.
+const DATA_DIR    = process.env.DATA_DIR
+  || process.env.RAILWAY_VOLUME_MOUNT_PATH
+  || path.join(__dirname, 'data');
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 const DB_FILE     = path.join(DATA_DIR, 'db.json');
