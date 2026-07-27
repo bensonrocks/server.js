@@ -1665,6 +1665,38 @@ function officialResolveCode2(k) {
   return null;
 }
 
+// ── SKU description auto-learning ───────────────────────────────────────────
+// The _skuDescMap (repo seed + CODE2 listing uploads) fills descriptions at
+// read time. These helpers close the loop for order-file uploads: any upload
+// whose file carries descriptions (e.g. the GI Analysis export) teaches the
+// map new SKUs, and uploads without descriptions get them filled at parse
+// time so the stored snapshot is complete too. The official CODE2 listing
+// stays authoritative — learning never overwrites an existing entry.
+function learnSkuDescriptions(rows) {
+  let learned = 0;
+  for (const r of rows) {
+    const sku  = String(r.sku || '').trim();
+    const desc = String(r.description || '').trim();
+    if (!sku || !desc || desc === sku) continue;   // desc===sku: legacy data bug, never learn
+    if (!_skuDescMap[sku]) { _skuDescMap[sku] = desc; learned++; }
+  }
+  if (learned) fs.writeFile(SKU_DESC_FILE, JSON.stringify(_skuDescMap, null, 2), () => {});
+  return learned;
+}
+
+// Fill blank descriptions from the map (in place). Returns count filled.
+function fillSkuDescriptions(rows) {
+  let filled = 0;
+  for (const r of rows) {
+    const sku = String(r.sku || '').trim();
+    if (sku && !String(r.description || '').trim() && _skuDescMap[sku]) {
+      r.description = _skuDescMap[sku];
+      filled++;
+    }
+  }
+  return filled;
+}
+
 function resolveBeTimeCode2(scanned) {
   if (!scanned) return scanned;
   const k = scanned.trim();
@@ -4169,12 +4201,25 @@ function parsePicklistText(text) {
 }
 
 // ── File parsing ────────────────────────────────────────────────────────────
+// Every uploaded order must carry a unique key: GI No / GI Number,
+// Waybill No, or Order Reference. If the file has item rows but none of
+// them resolved a key, reject with an explicit message instead of silently
+// dropping every row as metadata.
+function _requireOrderKey(mappedRows) {
+  const itemRows = mappedRows.filter(r => r.sku);
+  if (itemRows.length && itemRows.every(r => !r.order_number || r.order_number === 'UNKNOWN')) {
+    throw new Error('No order key found — the file must contain a GI No / GI Number, Waybill No, or Order Reference column.');
+  }
+}
+
 function parseUploadedFile(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.csv') {
     const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
     const detected = detectColumnMap(records);
-    return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const mapped   = records.map(r => mapRow(r, detected));
+    _requireOrderKey(mapped);
+    return mapped.filter(r => r.sku && !isMetadataRow(r));
   }
   if (ext === '.xlsx' || ext === '.xls') {
     const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
@@ -4184,7 +4229,9 @@ function parseUploadedFile(buffer, filename) {
     const finalRecs            = melted || records;
     const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
     const detected             = detectColumnMap(cleanRecs);
-    return cleanRecs.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const mapped               = cleanRecs.map(r => mapRow(r, detected));
+    _requireOrderKey(mapped);
+    return mapped.filter(r => r.sku && !isMetadataRow(r));
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -4388,6 +4435,7 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
       const detected = detectColumnMap(records);
       const all      = records.map(r => mapRow(r, detected));
+      _requireOrderKey(all);
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = all.length - allRows.length;
     } else if (ext === '.xlsx' || ext === '.xls') {
@@ -4399,6 +4447,7 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
       const detected             = detectColumnMap(cleanRecs);
       const all                  = cleanRecs.map(r => mapRow(r, detected));
+      _requireOrderKey(all);
       allRows = all.filter(r => r.sku && !isMetadataRow(r));
       skipped = cleanRecs.length - allRows.length;
     } else {
@@ -4408,6 +4457,7 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
     if (allRows.length > UPLOAD_MAX_ROWS) {
       return res.json({ rowCount: allRows.length, orderCount: 0, errors: [`File has ${allRows.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.`], converted: false });
     }
+    fillSkuDescriptions(allRows);   // preview shows catalog-filled descriptions (no learning on preview)
     const orders     = summarizeOrders(allRows);
     const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     errors.push(...pdfWarnings);
@@ -4515,6 +4565,8 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     const { rows, client_name = '', direction = 'Outbound' } = req.body || {};
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows provided' });
 
+    learnSkuDescriptions(rows);
+    fillSkuDescriptions(rows);      // OCR rows never carry descriptions — fill from catalog
     const orders    = summarizeOrders(rows);
     const wmsRows   = [];
     let vLine = 1;
@@ -4674,6 +4726,8 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     } else {
       mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
     }
+    learnSkuDescriptions(mapped);   // grow the catalog from files that have descriptions
+    fillSkuDescriptions(mapped);    // fill blanks from the catalog for files that don't
     // SAFETY RULE — no picking list may be silently dropped
     const criticalPdf = pdfIssues.filter(i => i.critical);
     if (criticalPdf.length) {
@@ -9982,6 +10036,41 @@ app.post('/api/master/gmail/test', async (req, res) => {
       text: `This is a test email from IDEALSCAN.\n\nSent: ${new Date().toLocaleString()}\nFrom: ${fromEmail}`,
     });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Master: SKU → description catalog (view + bulk-load the _skuDescMap) ────
+app.get('/api/master/sku-catalog', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json({ entries: Object.keys(_skuDescMap).length, map: _skuDescMap });
+});
+
+// POST — bulk-load an XLSX/CSV with SKU + Description columns; merges into the
+// description map. Explicit master uploads overwrite existing entries.
+app.post('/api/master/sku-catalog', upload.single('file'), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb      = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws      = wb.Sheets[wb.SheetNames[0]];
+    const records = XLSX.utils.sheet_to_json(ws, { defval: null });
+    const SKU_KEYS  = ['sku', 'product_code', 'item_code', 'item_no', 'code', 'barcode'];
+    const DESC_KEYS = ['description', 'item_description', 'product_description', 'product_name', 'item_name', 'name', 'desc'];
+    let added = 0, updated = 0, skipped = 0;
+    for (const rec of records) {
+      const n = {};
+      for (const k of Object.keys(rec)) n[normalizeKey(k)] = rec[k];
+      const sku  = String(SKU_KEYS.map(k => n[k]).find(v => v != null) ?? '').trim();
+      const desc = String(DESC_KEYS.map(k => n[k]).find(v => v != null) ?? '').trim();
+      if (!sku || !desc || desc === sku) { skipped++; continue; }
+      if (_skuDescMap[sku] === undefined)      added++;
+      else if (_skuDescMap[sku] !== desc)      updated++;
+      _skuDescMap[sku] = desc;
+    }
+    fs.writeFileSync(SKU_DESC_FILE, JSON.stringify(_skuDescMap, null, 2));
+    res.json({ ok: true, entries: Object.keys(_skuDescMap).length, added, updated, skipped });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
