@@ -11739,6 +11739,13 @@ app.post('/api/inventory/locations/generate', requireAuth, express.json(), (req,
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Rack-elevation map of the whole warehouse — every bin with how full it is.
+// Read-only; the client groups by zone/aisle and draws shelves as rows.
+app.get('/api/inventory/locations/map', requireAuth, (req, res) => {
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  res.json(inventory.locationMap());
+});
+
 // Admin: set a bin's dimensions (L×B×H) + max unit capacity + environment/active.
 app.put('/api/inventory/locations/:id', requireAuth, express.json(), (req, res) => {
   const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';

@@ -11539,7 +11539,105 @@
     const picker = document.getElementById('invClientPicker');
     if (picker) picker.classList.toggle('hidden', _invView === 'overview');
     if (_invView === 'overview') loadInventoryOverview();
+    if (_invView === 'map')      loadWarehouseMap();
   }
+
+  // Rack-elevation schematic of the warehouse. Each aisle is drawn as an
+  // elevation: shelves stacked with the TOP shelf at the top (how you'd face
+  // the rack), bins left→right across each shelf. Colour = how full the bin
+  // is, so a full aisle is obvious at a glance.
+  let _mapBins = null;
+  async function loadWarehouseMap(useCache) {
+    const body = document.getElementById('mapBody');
+    if (!body) return;
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    if (!useCache || !_mapBins) {
+      body.innerHTML = '<p class="hint">Loading map…</p>';
+      try {
+        const r = await fetch('/api/inventory/locations/map');
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not load the map');
+        _mapBins = await r.json();
+      } catch (e) { body.innerHTML = `<p class="hint">⚠ ${esc(e.message)}</p>`; return; }
+    }
+    const bins = _mapBins || [];
+    if (!bins.length) {
+      body.innerHTML = '<p class="hint">No bin locations yet — create them under <b>Bin Locations</b> (the range generator builds a whole rack in one go).</p>';
+      document.getElementById('mapSummary').textContent = '';
+      return;
+    }
+    // zone filter options (built once from the data)
+    const zoneSel = document.getElementById('mapZoneFilter');
+    const zones = [...new Set(bins.map(b => b.zone))].sort();
+    if (zoneSel && zoneSel.options.length <= 1) {
+      zoneSel.innerHTML = '<option value="">All zones</option>' + zones.map(z => `<option value="${esc(z)}">Zone ${esc(z)}</option>`).join('');
+    }
+    const pick = zoneSel ? zoneSel.value : '';
+    const shown = pick ? bins.filter(b => b.zone === pick) : bins;
+
+    const cls = b => {
+      if (!b.active) return 'b-off';
+      const cap = b.capacity || 0, occ = b.occupied || 0;
+      if (occ <= 0) return 'b-empty';
+      const pct = cap > 0 ? (occ / cap) * 100 : 100;
+      return pct >= 100 ? 'b-full' : pct >= 70 ? 'b-warn' : 'b-low';
+    };
+    const byZone = {};
+    for (const b of shown) ((byZone[b.zone] ||= {})[b.aisle] ||= []).push(b);
+
+    body.innerHTML = Object.keys(byZone).sort().map(z => {
+      const aisles = byZone[z];
+      const zBins = Object.values(aisles).flat();
+      const zCap  = zBins.reduce((s, b) => s + (b.capacity || 0), 0);
+      const zOcc  = zBins.reduce((s, b) => s + (b.occupied || 0), 0);
+      return `
+      <div class="map-zone">
+        <div class="map-zone-hd">Zone ${esc(z)}
+          <span class="zpill">${Object.keys(aisles).length} aisle(s)</span>
+          <span class="zpill">${zBins.length} bins</span>
+          <span class="zpill">${zCap ? Math.round((zOcc / zCap) * 100) : 0}% full</span>
+        </div>
+        ${Object.keys(aisles).sort().map(a => {
+          const list = aisles[a];
+          const shelves = [...new Set(list.map(b => b.shelf))].sort().reverse(); // top shelf first
+          const binCols = [...new Set(list.map(b => b.bin))].sort();
+          return `
+          <div class="map-aisle">
+            <div class="map-aisle-hd">Aisle ${esc(a)} <span class="hint">— ${list.length} bins</span></div>
+            ${shelves.map(sh => `
+              <div class="map-row">
+                <span class="map-row-lbl">Shelf ${esc(sh)}</span>
+                ${binCols.map(bn => {
+                  const b = list.find(x => x.shelf === sh && x.bin === bn);
+                  if (!b) return '<span class="map-bin" style="visibility:hidden"></span>';
+                  const pct = b.capacity ? Math.round((b.occupied / b.capacity) * 100) : 0;
+                  const title = `${b.location_id} — ${b.occupied}/${b.capacity} units (${pct}%)`
+                    + `\n${b.kind || 'pick'} · ${b.environment || 'dry'}${b.active ? '' : ' · INACTIVE'}`
+                    + (b.skus ? `\n${b.skus} SKU(s), ${b.clients} client(s)` : '\nEmpty');
+                  return `<span class="map-bin ${cls(b)}${b.kind === 'bulk' ? ' b-bulk' : ''}" title="${esc(title)}" data-bin="${esc(b.location_id)}">${esc(bn)}<small>${pct}%</small></span>`;
+                }).join('')}
+              </div>`).join('')}
+            <div class="map-row"><span class="map-row-lbl"></span>${binCols.map(bn => `<span class="map-row-lbl" style="min-width:46px;text-align:center">${esc(bn)}</span>`).join('')}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('');
+
+    const cap = shown.reduce((s, b) => s + (b.capacity || 0), 0);
+    const occ = shown.reduce((s, b) => s + (b.occupied || 0), 0);
+    const used = shown.filter(b => (b.occupied || 0) > 0).length;
+    document.getElementById('mapSummary').textContent =
+      `${shown.length} bins · ${used} in use · ${occ.toLocaleString()}/${cap.toLocaleString()} units (${cap ? Math.round((occ / cap) * 100) : 0}%)`;
+
+    // clicking a bin runs the existing bin lookup so you can see its contents
+    body.querySelectorAll('.map-bin[data-bin]').forEach(el => el.addEventListener('click', () => {
+      const inp = document.getElementById('binLookup');
+      if (inp) inp.value = el.dataset.bin;
+      setInventoryView('locations');
+      document.getElementById('binLookupBtn')?.click();
+    }));
+  }
+  document.getElementById('mapRefreshBtn')?.addEventListener('click', () => loadWarehouseMap(false));
+  document.getElementById('mapZoneFilter')?.addEventListener('change', () => loadWarehouseMap(true));
   document.getElementById('inventorySubMenu')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.inv-sub');
     if (btn) setInventoryView(btn.dataset.invView);

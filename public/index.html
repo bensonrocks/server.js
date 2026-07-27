@@ -1447,6 +1447,7 @@
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="overview">📊 Overview</button>
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="stock">📦 Stock &amp; SKUs</button>
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="locations">📍 Bin Locations</button>
+        <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="map">🗺 Warehouse Map</button>
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="transfer">🔀 Stock Transfer</button>
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="replen">🔁 Replenishment</button>
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="count">🧮 Cycle Count</button>
@@ -2512,6 +2513,32 @@
           </div>
         </div>
 
+      </div>
+      <!-- ══ VIEW: map — rack elevation of every zone/aisle ══ -->
+      <div class="inv-view hidden" data-inv-view="map">
+        <div class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
+            <div>
+              <b>🗺 Warehouse map</b>
+              <div class="hint" style="margin-top:.15rem">Estimated schematic — each aisle drawn as a rack elevation, shelves stacked with the top shelf highest. Colour shows how full each bin is; click a bin to see what's in it.</div>
+            </div>
+            <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+              <select id="mapZoneFilter" style="padding:.35rem .5rem;border:1px solid #e2e8f0;border-radius:6px"><option value="">All zones</option></select>
+              <button class="btn-secondary btn-sm" id="mapRefreshBtn">↻ Refresh</button>
+            </div>
+          </div>
+          <div class="map-legend" id="mapLegend">
+            <span><i class="mapkey mk-empty"></i> Empty</span>
+            <span><i class="mapkey mk-low"></i> &lt; 70%</span>
+            <span><i class="mapkey mk-warn"></i> 70–99%</span>
+            <span><i class="mapkey mk-full"></i> Full / over</span>
+            <span><i class="mapkey mk-off"></i> Inactive</span>
+            <span class="hint" id="mapSummary"></span>
+          </div>
+          <div id="mapBody" style="margin-top:.8rem">
+            <p class="hint">Loading map…</p>
+          </div>
+        </div>
       </div>
       <!-- ══ VIEW: discrepancies ══ -->
       <div class="inv-view hidden" data-inv-view="discrepancies">

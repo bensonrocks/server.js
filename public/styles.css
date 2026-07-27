@@ -2890,3 +2890,25 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .ov-meter.warn > span { background: #f59e0b; }
 .ov-meter.full > span { background: #ef4444; }
 .inv-sub.active { background: rgba(255,255,255,.14); font-weight: 700; }
+
+/* ── Warehouse map (rack elevation) ──────────────────────────────────────── */
+.map-legend { display: flex; gap: .9rem; align-items: center; flex-wrap: wrap; margin-top: .7rem; font-size: .74rem; color: #64748b; }
+.map-legend .mapkey { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: .25rem; border: 1px solid rgba(0,0,0,.12); }
+.mk-empty { background: #f1f5f9; } .mk-low { background: #86efac; } .mk-warn { background: #fcd34d; }
+.mk-full  { background: #fca5a5; } .mk-off { background: repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#cbd5e1 3px,#cbd5e1 6px); }
+.map-zone { margin-bottom: 1.2rem; }
+.map-zone-hd { font-weight: 800; font-size: .95rem; margin-bottom: .5rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.map-zone-hd .zpill { font-size: .68rem; font-weight: 700; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px; padding: .1rem .5rem; color: #475569; }
+.map-aisle { border: 1px solid #e2e8f0; border-radius: 10px; padding: .6rem .7rem; margin-bottom: .6rem; background: #fff; overflow-x: auto; }
+.map-aisle-hd { font-size: .78rem; font-weight: 700; color: #475569; margin-bottom: .45rem; }
+.map-row { display: flex; align-items: center; gap: .3rem; margin-bottom: .25rem; }
+.map-row-lbl { font-size: .66rem; color: #94a3b8; font-weight: 700; min-width: 46px; text-align: right; flex: 0 0 auto; }
+.map-bin { flex: 0 0 auto; width: 46px; height: 34px; border-radius: 5px; border: 1px solid rgba(0,0,0,.12);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer;
+  font-size: .62rem; font-weight: 700; color: #0f172a; line-height: 1.1; transition: transform .08s, box-shadow .08s; }
+.map-bin:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(15,23,42,.18); }
+.map-bin small { font-weight: 600; font-size: .56rem; opacity: .75; }
+.map-bin.b-empty { background: #f1f5f9; } .map-bin.b-low { background: #86efac; }
+.map-bin.b-warn  { background: #fcd34d; } .map-bin.b-full { background: #fca5a5; }
+.map-bin.b-off   { background: repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#cbd5e1 3px,#cbd5e1 6px); color: #64748b; }
+.map-bin.b-bulk  { border-style: dashed; border-width: 2px; }
