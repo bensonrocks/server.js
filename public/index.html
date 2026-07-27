@@ -426,12 +426,12 @@
     </div>
   </div><!-- /inboundScanOverlay -->
 
-  <!-- Print label prompt — floats over the orders list for 3 s after completion -->
+  <!-- Print label prompt — floats over the orders list after completion,
+       stays until the packer picks Print or Skip -->
   <div id="printLabelToast" class="print-label-toast hidden">
     <span class="plt-text">Print waybill label?</span>
     <button class="plt-btn-print" id="pltPrintBtn">&#128438; Print</button>
     <button class="plt-btn-skip"  id="pltSkipBtn">Skip</button>
-    <span class="plt-countdown" id="pltCountdown">3</span>
   </div>
 
   <!-- ── Printer Settings Modal ── -->
@@ -3080,16 +3080,12 @@
   <!-- Download Waybill Modal (shown after completing an order that has a matched waybill PDF) -->
   <div id="printWaybillOverlay" class="modal-overlay hidden">
     <div class="modal">
-      <div class="modal-icon">&#8681;</div>
-      <div class="modal-title">Download Waybill?</div>
+      <div class="modal-icon">&#128438;</div>
+      <div class="modal-title">Print Waybill?</div>
       <p class="modal-desc">Order <strong id="printOrderNo"></strong> completed — waybill ready.</p>
-      <div class="print-countdown-wrap">
-        <div class="print-countdown-bar" id="printCountdownBar"></div>
-      </div>
-      <p class="hint" style="text-align:center;margin-top:.5rem">Auto-skipping in <span id="printCountdownNum">3</span>s&hellip;</p>
       <div class="modal-actions" style="margin-top:1rem">
         <button class="btn-secondary" id="printSkipBtn">Skip</button>
-        <button class="btn-primary" id="printNowBtn">&#8681; Download Waybill</button>
+        <button class="btn-primary" id="printNowBtn">&#128438; Print Waybill</button>
       </div>
     </div>
   </div>

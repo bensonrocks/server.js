@@ -896,11 +896,6 @@ body.scan-open { overflow: hidden; }
   padding: .35rem .7rem; border-radius: var(--radius-sm);
   font-size: .84rem; cursor: pointer;
 }
-.plt-countdown {
-  font-size: .78rem; color: rgba(255,255,255,.55);
-  min-width: 1.2em; text-align: right; font-variant-numeric: tabular-nums;
-}
-
 /* Reprint label button on completed order cards */
 .btn-reprint-label {
   background: none; border: 1px solid var(--border);
@@ -960,9 +955,6 @@ body.scan-open { overflow: hidden; }
 .confirm-inline-input.needs-input { border-color: var(--danger); background: var(--danger-bg, rgba(220,38,38,.06)); }
 .confirm-client-hint { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: .55rem .85rem; font-size: .78rem; color: var(--warning); margin: 0 0 .1rem; display: flex; flex-direction: column; gap: .35rem; }
 .confirm-noclient-check { display: flex; align-items: center; gap: .4rem; font-size: .78rem; font-weight: 600; cursor: pointer; }
-
-.print-countdown-wrap { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin: .85rem 0 .25rem; }
-.print-countdown-bar  { height: 100%; background: var(--primary); width: 100%; border-radius: 3px; }
 
 .direction-toggle { display: flex; gap: 0; border: 1.5px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; width: fit-content; }
 .dir-btn { padding: .38rem 1.1rem; font-size: .82rem; font-weight: 500; border: none; background: var(--surface-2); color: var(--text-light); cursor: pointer; transition: background .12s, color .12s; }

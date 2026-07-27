@@ -95,7 +95,6 @@
   let ordersDateFilter    = 'today';    // 'today' | 'yesterday' | 'week' | 'all' | 'range'
   let ordersDateFrom      = '';
   let ordersDateTo        = '';
-  let printWaybillTimer   = null;
   let pendingOrderFile    = null;
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
   let uploadDirection     = 'Outbound';
@@ -128,6 +127,35 @@
       a.click();
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     } catch (e) { alert('Download error: ' + e.message); }
+  }
+  // Fetch a PDF and go straight to the browser's print dialog via a hidden
+  // iframe holding the PDF preview — nothing lands on the desktop first, so
+  // the packer never has to go find a downloaded file before printing it.
+  // Falls back to opening the PDF in a new tab if iframe printing is blocked
+  // (e.g. a browser popup-blocker on the print() call itself).
+  let _printFrameUrl = null;
+  async function authPrintPdf(url) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) { alert('Print failed: ' + (await resp.text())); return; }
+      const blob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
+      if (_printFrameUrl) { try { URL.revokeObjectURL(_printFrameUrl); } catch {} }
+      const blobUrl = _printFrameUrl = URL.createObjectURL(blob);
+      const old = document.getElementById('pdfPrintFrame');
+      if (old) old.remove();
+      const frame = document.createElement('iframe');
+      frame.id = 'pdfPrintFrame';
+      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;visibility:hidden;';
+      frame.onload = () => {
+        // Small delay lets the PDF viewer finish rendering before the dialog opens
+        setTimeout(() => {
+          try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+          catch { window.open(blobUrl, '_blank'); }
+        }, 150);
+      };
+      document.body.appendChild(frame);
+      frame.src = blobUrl;
+    } catch (e) { alert('Print error: ' + e.message); }
   }
   async function postDownload(url, body, filename) {
     try {
@@ -6610,27 +6638,17 @@
   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
   document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
 
-  // ── Print label prompt (auto-dismisses after 3 s) ─────────────────────────
-  let _pltTimer = null;
+  // ── Print label prompt (stays on screen until the packer picks Print or
+  // Skip — an earlier auto-dismiss-after-3s made an unprinted label hard to
+  // find again once it skipped itself) ──────────────────────────────────────
   let _pltOrder = null;
 
   function showPrintLabelPrompt(order) {
     _pltOrder = order;
-    clearTimeout(_pltTimer);
-    const toast     = document.getElementById('printLabelToast');
-    const countdown = document.getElementById('pltCountdown');
-    let secs = 3;
-    countdown.textContent = secs;
-    toast.classList.remove('hidden');
-    _pltTimer = setInterval(() => {
-      secs--;
-      countdown.textContent = secs;
-      if (secs <= 0) dismissPrintLabelPrompt();
-    }, 1000);
+    document.getElementById('printLabelToast').classList.remove('hidden');
   }
 
   function dismissPrintLabelPrompt() {
-    clearInterval(_pltTimer);
     document.getElementById('printLabelToast').classList.add('hidden');
     _pltOrder = null;
     focusWaybillInput();
@@ -8311,40 +8329,21 @@
     } catch (err) { alert(err.message); }
   }
 
-  // ── Print waybill modal ────────────────────────────────────────────────────
+  // ── Print waybill modal (stays until the packer picks Print or Skip — an
+  // earlier auto-dismiss-after-3s made an unprinted waybill hard to find
+  // again once it skipped itself) ────────────────────────────────────────────
   function showPrintWaybillModal(order) {
-    clearTimeout(printWaybillTimer);
     document.getElementById('printOrderNo').textContent = order.order_number;
-    document.getElementById('printCountdownNum').textContent = '3';
     document.getElementById('printWaybillOverlay').classList.remove('hidden');
-
-    const bar = document.getElementById('printCountdownBar');
-    bar.style.transition = 'none';
-    bar.style.width = '100%';
-    bar.getBoundingClientRect();
-    bar.style.transition = 'width 3s linear';
-    bar.style.width = '0%';
-
-    let remaining = 3;
-    const numEl = document.getElementById('printCountdownNum');
-    const tick  = setInterval(() => {
-      remaining--;
-      numEl.textContent = remaining;
-      if (remaining <= 0) { clearInterval(tick); closePrintWaybillModal(); }
-    }, 1000);
-    printWaybillTimer = tick;
 
     const dlBtn = document.getElementById('printNowBtn');
     dlBtn.onclick = () => {
-      clearInterval(tick);
       closePrintWaybillModal();
-      authDownload(
-        `/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}?dl=1`,
-        `${order.order_number}_waybill.pdf`
-      );
+      // Straight to the browser's print dialog from the PDF preview — no
+      // file lands on the desktop first.
+      authPrintPdf(`/api/waybill-pdf/${encodeURIComponent(order.batchId)}/${encodeURIComponent(order.order_number)}`);
     };
     document.getElementById('printSkipBtn').onclick = () => {
-      clearInterval(tick);
       closePrintWaybillModal();
     };
   }
@@ -10781,8 +10780,9 @@
 
   document.getElementById('printLabelNowBtn').addEventListener('click', () => {
     const orderNo = document.getElementById('printLabelOrderNo').textContent;
-    const token   = localStorage.getItem('wms_token') || '';
-    window.open(`/api/order-label/${encodeURIComponent(orderNo)}/pdf?token=${encodeURIComponent(token)}`, '_blank');
+    // Straight to the browser's print dialog from the PDF preview — no new
+    // tab to find and no file landing on the desktop first.
+    authPrintPdf(`/api/order-label/${encodeURIComponent(orderNo)}/pdf`);
     document.getElementById('printOrderLabelOverlay').classList.add('hidden');
     focusWaybillInput();
   });
