@@ -1928,3 +1928,25 @@ body.ls-open { overflow: hidden; }
 .li-why code { font-family: monospace; background: #fff; border: 1px solid #fcd34d; border-radius: 4px; padding: 0 .3em; margin-right: .25em; }
 .btn-primary-sm { background: var(--primary, #2563eb); color: #fff; border: 1px solid var(--primary, #2563eb); border-radius: 8px; padding: .25rem .6rem; font-size: .78rem; font-weight: 600; cursor: pointer; }
 .btn-primary-sm:disabled { opacity: .6; cursor: default; }
+
+/* ── Match picker modal ── */
+.mp-modal { max-width: 640px; text-align: left; }
+.mp-modal .modal-title { text-align: left; color: var(--text, #111827); font-size: 1.05rem; margin-bottom: .7rem; }
+.mp-preview-wrap { margin-bottom: .8rem; }
+.mp-preview-frame { width: 100%; height: 220px; border: 1px solid var(--border, #e5e7eb); border-radius: 10px; background: #f8fafc; }
+.mp-section-label { font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b7280; margin-bottom: .35rem; }
+.mp-search { width: 100%; border: 1px solid var(--border, #d1d5db); border-radius: 9px; padding: .5rem .7rem; font-size: .88rem; margin-bottom: .5rem; box-sizing: border-box; }
+.mp-list { display: flex; flex-direction: column; gap: .4rem; max-height: 220px; overflow-y: auto; }
+.mp-row {
+  display: flex; flex-direction: column; gap: .15rem; text-align: left;
+  background: #fff; border: 1px solid var(--border, #e5e7eb); border-radius: 9px;
+  padding: .5rem .7rem; cursor: pointer; width: 100%; font: inherit;
+}
+.mp-row:hover { border-color: var(--primary, #2563eb); background: var(--primary-light, #eff6ff); }
+.mp-row-main { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.mp-row-order { font-weight: 700; color: var(--primary, #2563eb); }
+.mp-row-client { font-size: .74rem; color: #6b7280; font-weight: 600; }
+.mp-row-cust { font-size: .78rem; color: #374151; }
+.mp-row-sub { display: flex; gap: .6rem; flex-wrap: wrap; font-size: .74rem; color: #6b7280; }
+.mp-row-id { font-family: monospace; }
+.mp-row-why { font-size: .72rem; color: #15803d; font-style: italic; }

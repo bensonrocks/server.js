@@ -1256,6 +1256,86 @@ app.get('/api/label-imports/:id', (req, res) => {
   });
 });
 
+// Suggest which orders a label page most likely belongs to.
+// Text pages: score orders whose identifiers resemble codes found on the page.
+// Image-only pages: fall back to print-order position — bulk carrier label
+// PDFs come out in the same sequence as the picklist, so page N most likely
+// belongs to the Nth still-unlabelled order of that upload.
+app.get('/api/label-imports/:id/pages/:idx/suggestions', (req, res) => {
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  const i   = Number(req.params.idx);
+  const pg  = imp && (imp.pages || [])[i];
+  if (!pg) return res.status(404).json({ error: 'Page not found' });
+  const labels = db.orderLabels || {};
+
+  // Every order without a label yet, newest batch first
+  const free = [];
+  for (const batch of db.batches || []) {
+    for (const o of batch.orders || []) {
+      if (labels[o.order_number]) continue;
+      if (free.some(f => f.order_number === o.order_number)) continue;
+      free.push({
+        order_number: o.order_number,
+        client_name:  batch.client_name || '',
+        customer_name: o.customer_name || '',
+        waybill_number: o.waybill_number || '',
+        customer_ref: o.customer_ref || '',
+        carrier: o.carrier || '',
+        date: o.date || batch.uploaded_at || null,
+        items: (o.lines || []).length,
+      });
+    }
+  }
+
+  // Collapse common OCR/scan confusions (O/0, I/L/1, S/5, B/8) so a mangled
+  // label read still lines up against the clean value stored on the order.
+  const ocrFold = s => String(s || '').toUpperCase()
+    .replace(/[O]/g, '0').replace(/[IL]/g, '1').replace(/S/g, '5').replace(/B/g, '8');
+
+  const cands = _labelCandidates(pg.rawText);
+  const scored = free.map(o => {
+    let score = 0, why = '';
+    const ids = [o.waybill_number, o.customer_ref, o.order_number].filter(Boolean).map(normStr);
+    for (const c of cands) {
+      const cFold = ocrFold(c);
+      for (const id of ids) {
+        if (!id) continue;
+        const idFold = ocrFold(id);
+        if (id === c)                              { score = Math.max(score, 100); why = `exact match with ${c}`; }
+        else if (id.includes(c) || c.includes(id)) { score = Math.max(score, 85);  why = `contains ${c}`; }
+        else if (idFold === cFold)                 { score = Math.max(score, 80);  why = `matches ${c} allowing for O/0, I/1, S/5, B/8 mix-ups`; }
+        else {
+          // shared long tail/head after OCR-folding (tolerant of truncation too)
+          let n = 0;
+          while (n < Math.min(idFold.length, cFold.length) && idFold[idFold.length - 1 - n] === cFold[cFold.length - 1 - n]) n++;
+          if (n >= 6) { const s = 40 + n * 3; if (s > score) { score = s; why = `last ${n} characters match ${c} (allowing OCR mix-ups)`; } }
+        }
+      }
+    }
+    return { ...o, score, why };
+  });
+
+  const hasText = cands.length > 0;
+  let suggestions;
+  if (hasText) {
+    suggestions = scored.filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
+  } else {
+    // Position-based: which unmatched page is this within the import?
+    const unlabelledPages = (imp.pages || []).filter(p => p.matchStatus !== 'matched').map(p => p.pageIndex);
+    const rank = Math.max(0, unlabelledPages.indexOf(i));
+    const ordered = free.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.order_number).localeCompare(String(b.order_number)));
+    suggestions = ordered.slice(rank, rank + 1).map(o => ({ ...o, score: 50, why: `print-order position (unmatched page ${rank + 1})` }))
+      .concat(ordered.filter((_, n) => n !== rank).slice(0, 7).map(o => ({ ...o, score: 0, why: '' })));
+  }
+  res.json({
+    pageIndex: i, candidates: cands, hasText,
+    unlabelledCount: free.length,
+    suggestions,
+    all: free.slice(0, 400),
+  });
+});
+
 // Re-run matching for pages that never matched — labels uploaded BEFORE their
 // orders (or before an order file was re-uploaded with more identifiers) can
 // only match on a second pass. Already-matched pages are left untouched.

@@ -2234,17 +2234,7 @@
       }).join('')) || '<p class="hint">No pages.</p>';
       const reload = () => { box.classList.add('hidden'); toggleImportPages(id); renderLabelImports(); };
       box.querySelectorAll('.li-match').forEach(b =>
-        b.addEventListener('click', async () => {
-          const orderNo = prompt('Attach this label page to which order number?');
-          if (!orderNo) return;
-          const r = await fetch(`/api/label-imports/${b.dataset.import}/pages/${b.dataset.page}/match`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderNumber: orderNo.trim() }),
-          });
-          if (!r.ok) alert((await r.json()).error || 'Match failed');
-          reload();
-          refreshOrders().then(renderOrdersList).catch(() => {});
-        }));
+        b.addEventListener('click', () => openMatchPicker(b.dataset.import, Number(b.dataset.page), reload)));
       box.querySelectorAll('.li-unmatch').forEach(b =>
         b.addEventListener('click', async () => {
           const r = await fetch(`/api/label-imports/${b.dataset.import}/pages/${b.dataset.page}/match`, { method: 'DELETE' });
@@ -2255,6 +2245,120 @@
     } catch {
       box.innerHTML = '<p class="hint">Failed to load pages.</p>';
     }
+  }
+
+  // ── Match picker: ranked suggestions + searchable full order list ─────────
+  function ensureMatchPickerModal() {
+    let modal = document.getElementById('matchPickerModal');
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'matchPickerModal';
+    modal.className = 'modal-overlay hidden';
+    modal.innerHTML = `
+      <div class="modal mp-modal">
+        <div class="modal-title">Attach label page to an order</div>
+        <div id="mpPreviewWrap" class="mp-preview-wrap hidden">
+          <iframe id="mpPreviewFrame" class="mp-preview-frame"></iframe>
+        </div>
+        <div id="mpSuggestSection">
+          <div class="mp-section-label">Suggested matches</div>
+          <div id="mpSuggestList" class="mp-list"><p class="hint">Loading…</p></div>
+        </div>
+        <div class="mp-section-label" style="margin-top:.9rem">Or search all unmatched orders</div>
+        <input type="text" id="mpSearchInput" class="mp-search" placeholder="Type an order number, waybill, or customer ref…" autocomplete="off" />
+        <div id="mpSearchList" class="mp-list"></div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="mpCancelBtn">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#mpCancelBtn').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+    return modal;
+  }
+
+  function mpRow(o, onPick) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'mp-row';
+    row.innerHTML = `
+      <span class="mp-row-main">
+        <span class="mp-row-order">${esc(o.order_number)}</span>
+        ${o.client_name ? `<span class="mp-row-client">${esc(o.client_name)}</span>` : ''}
+        ${o.customer_name ? `<span class="mp-row-cust">${esc(o.customer_name)}</span>` : ''}
+      </span>
+      <span class="mp-row-sub">
+        ${o.waybill_number ? `<span class="mp-row-id">WB ${esc(o.waybill_number)}</span>` : ''}
+        ${o.customer_ref ? `<span class="mp-row-id">Ref ${esc(o.customer_ref)}</span>` : ''}
+        ${o.items ? `<span class="mp-row-items">${o.items} item${o.items === 1 ? '' : 's'}</span>` : ''}
+      </span>
+      ${o.why ? `<span class="mp-row-why">${esc(o.why)}</span>` : ''}`;
+    row.addEventListener('click', () => onPick(o.order_number));
+    return row;
+  }
+
+  async function openMatchPicker(importId, pageIndex, onDone) {
+    const modal = ensureMatchPickerModal();
+    modal.classList.remove('hidden');
+    modal.querySelector('.modal-title').textContent = `Attach page ${pageIndex + 1} to an order`;
+    const previewWrap  = modal.querySelector('#mpPreviewWrap');
+    const previewFrame = modal.querySelector('#mpPreviewFrame');
+    previewFrame.src = 'about:blank';
+    previewWrap.classList.remove('hidden');
+    // window.fetch is patched to inject x-auth-token for /api/ URLs, but a
+    // bare iframe src="" isn't — fetch the PDF as a blob and point the frame
+    // at that instead.
+    fetch(`/api/label-imports/${importId}/pages/${pageIndex}/pdf`)
+      .then(r => r.ok ? r.blob() : Promise.reject())
+      .then(blob => { previewFrame.src = URL.createObjectURL(blob); })
+      .catch(() => { previewWrap.classList.add('hidden'); });
+
+    const suggestList = modal.querySelector('#mpSuggestList');
+    const searchList   = modal.querySelector('#mpSearchList');
+    const searchInput  = modal.querySelector('#mpSearchInput');
+    searchInput.value = '';
+    searchList.innerHTML = '';
+    suggestList.innerHTML = '<p class="hint">Loading suggestions…</p>';
+
+    const pick = async orderNo => {
+      const r = await fetch(`/api/label-imports/${importId}/pages/${pageIndex}/match`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderNumber: orderNo }),
+      });
+      if (!r.ok) { alert((await r.json()).error || 'Match failed'); return; }
+      modal.classList.add('hidden');
+      onDone();
+      refreshOrders().then(renderOrdersList).catch(() => {});
+    };
+
+    let allFree = [];
+    try {
+      const d = await fetch(`/api/label-imports/${importId}/pages/${pageIndex}/suggestions`).then(r => r.json());
+      allFree = d.all || [];
+      if (!d.suggestions || !d.suggestions.length) {
+        suggestList.innerHTML = '<p class="hint">No suggestions — search below.</p>';
+      } else {
+        suggestList.innerHTML = '';
+        d.suggestions.forEach(o => suggestList.appendChild(mpRow(o, pick)));
+      }
+    } catch {
+      suggestList.innerHTML = '<p class="hint">Could not load suggestions — search below.</p>';
+    }
+
+    searchInput.oninput = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      searchList.innerHTML = '';
+      if (!q) return;
+      const hits = allFree.filter(o =>
+        o.order_number.toLowerCase().includes(q) ||
+        (o.waybill_number || '').toLowerCase().includes(q) ||
+        (o.customer_ref || '').toLowerCase().includes(q) ||
+        (o.customer_name || '').toLowerCase().includes(q)
+      ).slice(0, 20);
+      if (!hits.length) { searchList.innerHTML = '<p class="hint">No unmatched orders found.</p>'; return; }
+      hits.forEach(o => searchList.appendChild(mpRow(o, pick)));
+    };
+    setTimeout(() => searchInput.focus(), 50);
   }
 
   async function uploadLabelPdf(file) {
