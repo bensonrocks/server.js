@@ -474,6 +474,7 @@
     document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); setTimeout(() => focusWaybillInput(), 300); }
+    if (name === 'labels') renderLabelImports();
   }
 
   function lockTabsForDownload() {
@@ -2134,11 +2135,137 @@
   }
 
   document.querySelectorAll('[data-admin-link]').forEach(btn =>
-    btn.addEventListener('click', () => {
-      if (btn.dataset.adminLink === 'labels') openLabelsPanel();
-      else requestAdminPanel(btn.dataset.adminLink);
-    })
+    btn.addEventListener('click', () => requestAdminPanel(btn.dataset.adminLink))
   );
+
+  // ── Labels tab — bulk label-PDF imports, match review, manual fixes ───────
+  const LI_PILL = {
+    matched:   ['li-ok',   '&#10003; matched'],
+    unmatched: ['li-warn', 'unmatched'],
+    duplicate: ['li-dup',  'duplicate'],
+    error:     ['li-err',  'error'],
+  };
+
+  async function renderLabelImports() {
+    const el = document.getElementById('labelImportsList');
+    if (!el) return;
+    el.innerHTML = '<p class="hint">Loading…</p>';
+    try {
+      const list = await fetch('/api/label-imports').then(r => r.json());
+      if (!Array.isArray(list) || !list.length) {
+        el.innerHTML = '<p class="hint">No label files uploaded yet.</p>';
+        return;
+      }
+      el.innerHTML = list.map(imp => `
+        <div class="li-card">
+          <div class="li-head">
+            <div class="li-meta">
+              <span class="li-fname">&#128196; ${esc(imp.filename)}</span>
+              <span class="li-sub">${new Date(imp.uploadedAt).toLocaleString()}${imp.uploadedBy ? ' &middot; ' + esc(imp.uploadedBy) : ''} &middot; ${imp.pageCount} page${imp.pageCount === 1 ? '' : 's'}</span>
+            </div>
+            <div class="li-stats">
+              <span class="chip chip-waybill">&#10003; ${imp.matched} matched</span>
+              ${imp.unmatched ? `<span class="chip chip-waybill-missing">${imp.unmatched} unmatched</span>` : ''}
+              ${imp.duplicate ? `<span class="chip li-chip-dup">${imp.duplicate} duplicate</span>` : ''}
+              ${imp.error ? `<span class="chip li-chip-err">${imp.error} error</span>` : ''}
+              <button class="btn-sm btn-secondary li-toggle" data-import="${esc(imp.id)}">Pages &#9662;</button>
+              <button class="btn-sm btn-danger-sm li-del" data-import="${esc(imp.id)}">&#215; Delete</button>
+            </div>
+          </div>
+          <div class="li-pages hidden" id="liPages-${esc(imp.id)}"></div>
+        </div>`).join('');
+      el.querySelectorAll('.li-toggle').forEach(btn =>
+        btn.addEventListener('click', () => toggleImportPages(btn.dataset.import)));
+      el.querySelectorAll('.li-del').forEach(btn =>
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this label file and all its page matches?\nOrders and scan progress are NOT affected.')) return;
+          const r = await fetch('/api/label-imports/' + btn.dataset.import, { method: 'DELETE' });
+          if (!r.ok) alert((await r.json()).error || 'Delete failed');
+          renderLabelImports();
+          refreshOrders().then(renderOrdersList).catch(() => {});
+        }));
+    } catch {
+      el.innerHTML = '<p class="hint">Failed to load label imports.</p>';
+    }
+  }
+
+  async function toggleImportPages(id) {
+    const box = document.getElementById('liPages-' + id);
+    if (!box) return;
+    if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    box.innerHTML = '<p class="hint">Loading pages…</p>';
+    try {
+      const imp = await fetch('/api/label-imports/' + id).then(r => r.json());
+      box.innerHTML = ((imp.pages || []).map(p => {
+        const [cls, lbl] = LI_PILL[p.matchStatus] || ['li-warn', esc(p.matchStatus || '?')];
+        return `
+        <div class="li-page-row">
+          <span class="li-page-no">Page ${p.pageIndex + 1}</span>
+          <span class="li-pill ${cls}">${lbl}</span>
+          <span class="li-page-order">${p.matchedOrderNumber ? esc(p.matchedOrderNumber) + (p.matchMethod ? ` <em class="li-method">(${esc(p.matchMethod)})</em>` : '') : '&mdash;'}</span>
+          <span class="li-page-actions">
+            <a class="btn-sm btn-secondary" data-auth-dl="/api/label-imports/${esc(id)}/pages/${p.pageIndex}/pdf?dl=1" data-auth-dl-name="label_p${p.pageIndex + 1}.pdf">&#8681; PDF</a>
+            <button class="btn-sm btn-secondary li-match" data-import="${esc(id)}" data-page="${p.pageIndex}">${p.matchedOrderNumber ? 'Rematch&#8230;' : 'Match&#8230;'}</button>
+            ${p.matchedOrderNumber ? `<button class="btn-sm btn-danger-sm li-unmatch" data-import="${esc(id)}" data-page="${p.pageIndex}">Unmatch</button>` : ''}
+          </span>
+        </div>`;
+      }).join('')) || '<p class="hint">No pages.</p>';
+      const reload = () => { box.classList.add('hidden'); toggleImportPages(id); renderLabelImports(); };
+      box.querySelectorAll('.li-match').forEach(b =>
+        b.addEventListener('click', async () => {
+          const orderNo = prompt('Attach this label page to which order number?');
+          if (!orderNo) return;
+          const r = await fetch(`/api/label-imports/${b.dataset.import}/pages/${b.dataset.page}/match`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderNumber: orderNo.trim() }),
+          });
+          if (!r.ok) alert((await r.json()).error || 'Match failed');
+          reload();
+          refreshOrders().then(renderOrdersList).catch(() => {});
+        }));
+      box.querySelectorAll('.li-unmatch').forEach(b =>
+        b.addEventListener('click', async () => {
+          const r = await fetch(`/api/label-imports/${b.dataset.import}/pages/${b.dataset.page}/match`, { method: 'DELETE' });
+          if (!r.ok) alert((await r.json()).error || 'Unmatch failed');
+          reload();
+          refreshOrders().then(renderOrdersList).catch(() => {});
+        }));
+    } catch {
+      box.innerHTML = '<p class="hint">Failed to load pages.</p>';
+    }
+  }
+
+  async function uploadLabelPdf(file) {
+    const msg = document.getElementById('labelImportMsg');
+    msg.classList.remove('hidden');
+    msg.textContent = 'Uploading & matching…';
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch('/api/label-imports', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) { msg.textContent = '✗ ' + (d.error || 'Upload failed'); return; }
+      msg.textContent = `✓ ${d.pageCount} page(s) processed — ${d.matched} matched automatically.`;
+      renderLabelImports();
+      refreshOrders().then(renderOrdersList).catch(() => {});
+    } catch {
+      msg.textContent = '✗ Upload failed';
+    }
+  }
+
+  {
+    const labelZone  = document.getElementById('labelDropZone');
+    const labelInput = document.getElementById('labelPdfImportInput');
+    if (labelZone && labelInput) {
+      labelZone.addEventListener('click', () => labelInput.click());
+      document.getElementById('labelBrowseLink')?.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); labelInput.click(); });
+      labelInput.addEventListener('change', () => { if (labelInput.files[0]) uploadLabelPdf(labelInput.files[0]); labelInput.value = ''; });
+      labelZone.addEventListener('dragover', e => e.preventDefault());
+      labelZone.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) uploadLabelPdf(f); });
+    }
+    document.getElementById('labelTemplatesBtn')?.addEventListener('click', openLabelsPanel);
+  }
 
   document.getElementById('logPasswordInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('logPasswordSubmitBtn').click();

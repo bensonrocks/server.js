@@ -572,7 +572,7 @@
       <div id="sideAdminWrap" class="side-admin hidden">
         <div class="side-label">Admin</div>
         <nav class="side-nav">
-          <button class="tab-btn" data-admin-link="labels"><span class="tab-icon">&#127981;</span>Labels</button>
+          <button class="tab-btn" data-tab="labels" id="sideLabelsBtn"><span class="tab-icon">&#127981;</span>Labels</button>
           <button class="tab-btn admin-gated hidden" data-admin-link="batches"><span class="tab-icon">&#128196;</span>Upload History</button>
           <button class="tab-btn admin-gated hidden" data-admin-link="users"><span class="tab-icon">&#128100;</span>Users</button>
           <button class="tab-btn admin-gated hidden" data-admin-link="wms"><span class="tab-icon">&#9881;</span>WMS Template</button>
@@ -689,6 +689,26 @@
         </div>
 
         <div id="ordersDashList"></div>
+      </div>
+    </section>
+
+    <!-- ── TAB: Labels — shipping-label PDF imports & matching (admins) ── -->
+    <section id="tab-labels" class="tab">
+      <div class="card">
+        <div class="section-header">
+          <h2>&#127981; Shipping Labels</h2>
+          <button class="btn-sm btn-secondary" id="labelTemplatesBtn" title="Manage label print templates">&#9881; Print Templates</button>
+        </div>
+        <p class="hint">Upload a bulk shipping-label PDF — pages are split and matched to orders by tracking number, marketplace order ref, or GI number. Review matches, fix errors, and attach unmatched pages manually.</p>
+        <div class="upload-area" id="labelDropZone">
+          <input type="file" id="labelPdfImportInput" accept="application/pdf" hidden />
+          <p>&#8679;<br/>Drag &amp; drop labels PDF or <a href="#" id="labelBrowseLink">browse</a></p>
+        </div>
+        <div id="labelImportMsg" class="hint hidden"></div>
+      </div>
+      <div class="card">
+        <h2>Uploaded Label Files</h2>
+        <div id="labelImportsList"><p class="hint">Loading…</p></div>
       </div>
     </section>
 

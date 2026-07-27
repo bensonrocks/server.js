@@ -1902,3 +1902,25 @@ body.ls-open { overflow: hidden; }
 /* Labels-only Administrator view — opened from the sidebar without the
    master-key unlock: every admin section except Labels is hidden. */
 .log-overlay.labels-only .admin-nav-btn:not([data-admin-tab="labels"]) { display: none; }
+
+/* ── Labels tab: import cards & page rows ── */
+.li-card { border: 1px solid var(--border, #e5e7eb); border-radius: 12px; margin-bottom: .8rem; overflow: hidden; }
+.li-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem .9rem; flex-wrap: wrap; }
+.li-meta { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.li-fname { font-weight: 700; color: var(--text, #111827); }
+.li-sub { font-size: .74rem; color: var(--text-muted, #6b7280); }
+.li-stats { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.li-chip-dup { background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd; font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; }
+.li-chip-err { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; }
+.li-pages { border-top: 1px solid var(--border, #e5e7eb); background: #f8fafc; padding: .4rem .9rem; }
+.li-page-row { display: flex; align-items: center; gap: .7rem; padding: .45rem 0; border-bottom: 1px solid #eef2f7; flex-wrap: wrap; }
+.li-page-row:last-child { border-bottom: none; }
+.li-page-no { font-weight: 700; font-size: .8rem; color: #374151; min-width: 4.2rem; }
+.li-pill { font-size: .7rem; font-weight: 700; border-radius: 99px; padding: .12em .6em; }
+.li-pill.li-ok   { background: #dcfce7; color: #15803d; }
+.li-pill.li-warn { background: #fef3c7; color: #92400e; }
+.li-pill.li-dup  { background: #ede9fe; color: #6d28d9; }
+.li-pill.li-err  { background: #fee2e2; color: #b91c1c; }
+.li-page-order { font-family: monospace; font-size: .82rem; color: var(--primary, #2563eb); font-weight: 600; }
+.li-method { color: #94a3b8; font-style: normal; font-size: .72rem; }
+.li-page-actions { margin-left: auto; display: flex; gap: .35rem; }

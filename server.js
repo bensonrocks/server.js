@@ -1082,6 +1082,223 @@ app.get('/api/waybill-pdf/:batchId/:orderNumber', (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
+// ── Label imports — bulk shipping-label PDF management ──────────────────────
+// db.labelImports[] = { id, filename, uploadedAt, uploadedBy, pageCount,
+//   pages: [{ pageIndex, pageFile, rawText, matchStatus, matchedOrderNumber,
+//   matchMethod }] } with page PDFs at label_imports/<id>/page_N.pdf and
+// per-order refs in db.orderLabels. Same shapes the other production line
+// wrote, so its historical imports on the shared volume render here.
+function _requireAdminRole(req, res) {
+  const u = readUsers().find(x => x.id === req.userId);
+  if (!u || u.role === 'warehouse') {
+    res.status(403).json({ error: 'Admin access required' });
+    return false;
+  }
+  return true;
+}
+
+// All orders across every batch → identifier lookup maps for label matching.
+function _allOrdersMatchIndex(db) {
+  const byWaybill = new Map(), byCustRef = new Map(), byOrder = new Map(),
+        byIssueNo = new Map(), byPickTicket = new Map();
+  for (const batch of db.batches || []) {
+    for (const o of batch.orders || []) {
+      if (o.waybill_number) byWaybill.set(normStr(o.waybill_number), o.order_number);
+      if (o.customer_ref)   byCustRef.set(normStr(o.customer_ref),   o.order_number);
+      if (o.order_number)   byOrder.set(normStr(o.order_number),     o.order_number);
+      if (o.issue_no)       byIssueNo.set(normStr(o.issue_no),       o.order_number);
+      if (o.pick_ticket)    byPickTicket.set(normStr(o.pick_ticket), o.order_number);
+    }
+  }
+  return { byWaybill, byCustRef, byOrder, byIssueNo, byPickTicket };
+}
+
+app.post('/api/label-imports', upload.single('file'), async (req, res) => {
+  if (!_requireAdminRole(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
+  try {
+    const db     = readDb();
+    if (!db.labelImports) db.labelImports = [];
+    if (!db.orderLabels)  db.orderLabels  = {};
+    const pdfDoc   = await PDFDocument.load(req.file.buffer);
+    const numPages = pdfDoc.getPageCount();
+    const importId = uuidv4();
+    const dir      = path.join(LABEL_IMPORT_DIR, importId);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const idx   = _allOrdersMatchIndex(db);
+    const tiers = [
+      ['waybill',      idx.byWaybill,    4],
+      ['customer_ref', idx.byCustRef,    6],
+      ['order_no',     idx.byOrder,      4],
+      ['issue_no',     idx.byIssueNo,    4],
+      ['pick_ticket',  idx.byPickTicket, 4],
+    ];
+
+    // Per-page text in ONE parse of the original upload — re-parsing each
+    // re-saved single page trips pdf-parse on some encoders ("unknown
+    // compression method"), and one pass is faster anyway.
+    const pageTexts = [];
+    let wholeParseFailed = false;
+    if (pdfParse) {
+      try {
+        await pdfParse(req.file.buffer, {
+          pagerender: page => page.getTextContent().then(tc => {
+            const t = tc.items.map(it => it.str).join(' ');
+            pageTexts.push(t);
+            return t;
+          }),
+        });
+      } catch (e) { wholeParseFailed = true; }
+    }
+
+    const pages = [];
+    for (let i = 0; i < numPages; i++) {
+      const single = await PDFDocument.create();
+      const [pg]   = await single.copyPages(pdfDoc, [i]);
+      single.addPage(pg);
+      const buf      = Buffer.from(await single.save());
+      const pageFile = `page_${i + 1}.pdf`;
+      fs.writeFileSync(path.join(dir, pageFile), buf);
+
+      let rawText = String(pageTexts[i] || '').toUpperCase();
+      let pageParseFailed = false;
+      if (!rawText && pdfParse) {
+        // Whole-file pass gave nothing for this page — try the split page alone
+        try { rawText = String((await pdfParse(buf)).text || '').toUpperCase(); }
+        catch { pageParseFailed = true; }
+      }
+      let matchStatus = (!rawText && (wholeParseFailed || pageParseFailed)) ? 'error' : 'unmatched';
+      let matchedOrderNumber = null, matchMethod = null;
+      if (rawText) {
+        const normText = rawText.replace(/[\s\-_]/g, '');
+        outer:
+        for (const [method, map, minLen] of tiers) {
+          for (const [key, orderNo] of map) {
+            if (key.length >= minLen && normText.includes(key)) {
+              if (db.orderLabels[orderNo]) { matchStatus = 'duplicate'; matchedOrderNumber = orderNo; matchMethod = method; }
+              else {
+                matchStatus = 'matched'; matchedOrderNumber = orderNo; matchMethod = method;
+                db.orderLabels[orderNo] = { importId, pageIndex: i, pageFile, attachedAt: new Date().toISOString(), attachedBy: req.userId || '' };
+              }
+              break outer;
+            }
+          }
+        }
+      }
+      pages.push({ pageIndex: i, pageFile, rawText: rawText.slice(0, 2000), matchStatus, matchedOrderNumber, matchMethod });
+    }
+
+    const importRecord = {
+      id: importId, filename: req.file.originalname || 'labels.pdf',
+      uploadedAt: new Date().toISOString(), uploadedBy: req.userId || '',
+      pageCount: numPages, pages,
+    };
+    db.labelImports.push(importRecord);
+    writeDb(db);
+    res.json({ ok: true, importId, pageCount: numPages, matched: pages.filter(p => p.matchStatus === 'matched').length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/label-imports', (req, res) => {
+  const db = readDb();
+  const list = (db.labelImports || []).slice().reverse();
+  res.json(list.map(imp => ({
+    id: imp.id, filename: imp.filename, uploadedAt: imp.uploadedAt, uploadedBy: imp.uploadedBy,
+    pageCount: imp.pageCount,
+    matched:   (imp.pages || []).filter(p => p.matchStatus === 'matched').length,
+    unmatched: (imp.pages || []).filter(p => p.matchStatus === 'unmatched').length,
+    duplicate: (imp.pages || []).filter(p => p.matchStatus === 'duplicate').length,
+    error:     (imp.pages || []).filter(p => p.matchStatus === 'error').length,
+  })));
+});
+
+app.get('/api/label-imports/:id', (req, res) => {
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+  // rawText is bulky and internal — strip it from the detail payload
+  res.json({ ...imp, pages: (imp.pages || []).map(({ rawText, extracted, ...p }) => p) });
+});
+
+app.get('/api/label-imports/:id/pages/:idx/pdf', (req, res) => {
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  const pg  = imp && (imp.pages || [])[Number(req.params.idx)];
+  if (!pg) return res.status(404).json({ error: 'Page not found' });
+  const filePath = path.join(LABEL_IMPORT_DIR, imp.id, pg.pageFile);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Label file missing' });
+  const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${disposition}; filename="label_p${Number(req.params.idx) + 1}.pdf"`);
+  fs.createReadStream(filePath).pipe(res);
+});
+
+// Manually attach a page to an order (fix an unmatched/wrong match)
+app.post('/api/label-imports/:id/pages/:idx/match', express.json(), (req, res) => {
+  if (!_requireAdminRole(req, res)) return;
+  const orderNumber = String(req.body?.orderNumber || '').trim();
+  if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  const i   = Number(req.params.idx);
+  const pg  = imp && (imp.pages || [])[i];
+  if (!pg) return res.status(404).json({ error: 'Page not found' });
+  const exists = (db.batches || []).some(b => (b.orders || []).some(o => o.order_number === orderNumber));
+  if (!exists) return res.status(404).json({ error: `Order ${orderNumber} not found` });
+  if (!db.orderLabels) db.orderLabels = {};
+  // Detach whatever this page or this order was previously linked to
+  if (pg.matchedOrderNumber && db.orderLabels[pg.matchedOrderNumber]?.importId === imp.id
+      && db.orderLabels[pg.matchedOrderNumber]?.pageIndex === i) {
+    delete db.orderLabels[pg.matchedOrderNumber];
+  }
+  const prevRef = db.orderLabels[orderNumber];
+  if (prevRef) {
+    const prevImp = (db.labelImports || []).find(x => x.id === prevRef.importId);
+    const prevPg  = prevImp && (prevImp.pages || [])[prevRef.pageIndex];
+    if (prevPg) { prevPg.matchStatus = 'unmatched'; prevPg.matchedOrderNumber = null; prevPg.matchMethod = null; }
+  }
+  pg.matchStatus = 'matched'; pg.matchedOrderNumber = orderNumber; pg.matchMethod = 'manual';
+  db.orderLabels[orderNumber] = { importId: imp.id, pageIndex: i, pageFile: pg.pageFile, attachedAt: new Date().toISOString(), attachedBy: req.userId || '' };
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+app.delete('/api/label-imports/:id/pages/:idx/match', (req, res) => {
+  if (!_requireAdminRole(req, res)) return;
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  const i   = Number(req.params.idx);
+  const pg  = imp && (imp.pages || [])[i];
+  if (!pg) return res.status(404).json({ error: 'Page not found' });
+  if (pg.matchedOrderNumber && db.orderLabels?.[pg.matchedOrderNumber]?.importId === imp.id
+      && db.orderLabels[pg.matchedOrderNumber]?.pageIndex === i) {
+    delete db.orderLabels[pg.matchedOrderNumber];
+  }
+  pg.matchStatus = 'unmatched'; pg.matchedOrderNumber = null; pg.matchMethod = null;
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+// Delete a whole import: removes page files + orderLabels refs only —
+// never touches batches, orders, or scan state.
+app.delete('/api/label-imports/:id', (req, res) => {
+  if (!_requireAdminRole(req, res)) return;
+  const db  = readDb();
+  const idx = (db.labelImports || []).findIndex(i => i.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Import not found' });
+  const imp = db.labelImports[idx];
+  for (const [on, ref] of Object.entries(db.orderLabels || {})) {
+    if (ref?.importId === imp.id) delete db.orderLabels[on];
+  }
+  db.labelImports.splice(idx, 1);
+  writeDb(db);
+  try { fs.rmSync(path.join(LABEL_IMPORT_DIR, imp.id), { recursive: true, force: true }); } catch {}
+  res.json({ ok: true });
+});
+
 // Serve a shipping-label page matched by the other line's Labels module
 // (db.orderLabels + label_imports/<importId>/<pageFile> on the shared volume).
 app.get('/api/order-label/:orderNumber/pdf', (req, res) => {
