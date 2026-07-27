@@ -289,6 +289,9 @@
     const logBtn = document.getElementById('logAccessBtn');
     if (logBtn) logBtn.classList.toggle('hidden', isWarehouse);
 
+    // Sidebar ADMIN section — admin users only
+    document.getElementById('sideAdminWrap')?.classList.toggle('hidden', isWarehouse);
+
     // If warehouse user lands on Upload tab, redirect to Orders
     if (isWarehouse && document.getElementById('tab-upload').classList.contains('active')) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -2092,16 +2095,30 @@
   // ── Log (password-protected, footer link) ─────────────────────────────────
   const LOG_PASSWORD = atob('MjAxNDMyNTQ3RQ=='); // 201432547E
 
-  document.getElementById('logAccessBtn').addEventListener('click', () => {
+  // Which admin section to land on once the panel is open/unlocked
+  let _pendingAdminTab = null;
+  function switchAdminTab(name) {
+    document.querySelector(`.admin-nav-btn[data-admin-tab="${name}"]`)?.click();
+  }
+  function requestAdminPanel(tabName) {
+    _pendingAdminTab = tabName || null;
     if (logUnlocked) {
       openLogOverlay();
+      if (_pendingAdminTab) { switchAdminTab(_pendingAdminTab); _pendingAdminTab = null; }
     } else {
       document.getElementById('logPasswordInput').value = '';
       document.getElementById('logPasswordError').classList.add('hidden');
       document.getElementById('logPasswordOverlay').classList.remove('hidden');
       setTimeout(() => document.getElementById('logPasswordInput').focus(), 100);
     }
-  });
+  }
+
+  document.getElementById('logAccessBtn').addEventListener('click', () => requestAdminPanel(null));
+
+  // Sidebar ADMIN shortcuts — same password gate, straight to the section
+  document.querySelectorAll('[data-admin-link]').forEach(btn =>
+    btn.addEventListener('click', () => requestAdminPanel(btn.dataset.adminLink))
+  );
 
   document.getElementById('logPasswordInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('logPasswordSubmitBtn').click();
@@ -2113,6 +2130,7 @@
       logUnlocked = true;
       document.getElementById('logPasswordOverlay').classList.add('hidden');
       openLogOverlay();
+      if (_pendingAdminTab) { switchAdminTab(_pendingAdminTab); _pendingAdminTab = null; }
     } else {
       document.getElementById('logPasswordError').classList.remove('hidden');
       document.getElementById('logPasswordInput').select();
