@@ -425,6 +425,7 @@ function globalOrdersWithState() {
         alert_email_error: state.alert_email_error  || null,
         batchId:           batch.id,
         client_name:      batch.client_name      || '',
+        uploaded_at:      batch.uploaded_at      || null,
         has_waybill_pdf:  fs.existsSync(waybillPath),
       });
     }

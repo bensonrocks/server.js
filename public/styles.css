@@ -537,6 +537,8 @@ tr:hover td { background: var(--surface-2); }
 .chip-client  { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border); }
 .chip-carrier { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); font-size: .7rem; }
 .chip-waybill { background: var(--success-bg); color: #15803d; border: 1px solid var(--success-border); font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; white-space: nowrap; display: inline-block; }
+.chip-waybill-missing { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; white-space: nowrap; display: inline-block; }
+.dash-order-date { font-size: .73rem; color: var(--muted, #64748b); white-space: nowrap; }
 .chip-done    { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .chip-unproc  { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
 .chip-inprog  { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }

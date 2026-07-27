@@ -108,6 +108,14 @@
     return new Date(iso).toLocaleString();
   }
 
+  // Order date for dashboard cards: file's own date, else batch upload date.
+  function fmtOrderDate(ord) {
+    const v = ord.date || ord.uploaded_at;
+    if (!v) return '';
+    const d = new Date(v);
+    return isNaN(d) ? String(v).slice(0, 10) : d.toLocaleDateString();
+  }
+
   // ── Login ──────────────────────────────────────────────────────────────────
   let _loginCallback = null;
 
@@ -1117,7 +1125,10 @@
             ${ord.client_name ? `<span class="dash-order-client">${esc(ord.client_name)}</span>` : ''}
             <span class="dash-order-customer">${esc(ord.customer_name || '')}</span>
             ${ord.waybill_number ? `<span class="dash-order-waybill">${esc(ord.waybill_number)}</span>` : ''}
-            ${ord.has_waybill_pdf ? `<span class="chip chip-waybill">&#128196; with waybill</span>` : ''}
+            ${fmtOrderDate(ord) ? `<span class="dash-order-date">&#128197; ${esc(fmtOrderDate(ord))}</span>` : ''}
+            ${ord.has_waybill_pdf
+              ? `<span class="chip chip-waybill" title="A waybill page was matched to this order">&#128196; Waybill &#10003;</span>`
+              : `<span class="chip chip-waybill-missing" title="No waybill page matched to this order">&#9888; No waybill</span>`}
             ${isDone && ord.operator ? `<span class="done-meta">&#128100; ${esc(ord.operator)}</span>` : ''}
             ${isDone && elapsed ? `<span class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</span>` : ''}
             ${isDone && ord.endTime ? `<span class="done-meta done-time">${fmtDateTime(ord.endTime)}</span>` : ''}
