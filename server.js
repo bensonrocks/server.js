@@ -2614,34 +2614,156 @@ app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
   persistSessions();
   res.json({ ok: true });
 });
-// Overview — headline numbers for the client's dashboard.
+// Client-facing wording for an internal order status. The portal talks to the
+// CLIENT, not the warehouse floor, so "unprocessed" becomes "Cancelled" and
+// "processing" becomes "Being packed". Shared by the on-screen views and the
+// spreadsheet export so the two can never disagree.
+const PORTAL_STATUS_LABEL = {
+  done: 'Completed', processing: 'Being packed', pending: 'Queued', unprocessed: 'Cancelled',
+};
+// The N most recent SGT calendar days, oldest first, INCLUDING today — the
+// portal's activity chart is "what has been happening", so today counts even
+// though it is still in progress (unlike the admin dashboards, which compare
+// whole finished days).
+function recentSgDays(n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) out.push(sgDateStr(new Date(Date.now() - i * 86400000)));
+  return out;
+}
+// Overview — headline numbers, trend, alerts and activity for the client's
+// dashboard. Everything here is derived from real records: there is no
+// promised-delivery-date anywhere in this system, so there is deliberately NO
+// on-time/SLA figure — inventing one would be worse than omitting it.
 app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient;
   const cid = invClientId(client);
+  const clientNorm = client.trim().toLowerCase();
   const db = readDb();
-  let stock = { skus: 0, onHand: 0, reserved: 0, available: 0 };
+
+  let stock = { skus: 0, onHand: 0, reserved: 0, available: 0, lowStock: 0, outOfStock: 0 };
+  let lowStockList = [];
   try {
     const rows = inventory.getAll({ clientId: cid });
-    stock = { skus: rows.length, onHand: rows.reduce((s, r) => s + r.stock_qty, 0), reserved: rows.reduce((s, r) => s + r.reserved_qty, 0), available: rows.reduce((s, r) => s + r.available_qty, 0) };
+    stock = {
+      skus: rows.length,
+      onHand:    rows.reduce((s, r) => s + r.stock_qty, 0),
+      reserved:  rows.reduce((s, r) => s + r.reserved_qty, 0),
+      available: rows.reduce((s, r) => s + r.available_qty, 0),
+      lowStock:    rows.filter(r => r.available_qty > 0 && r.available_qty <= (r.reorder_point ?? 10)).length,
+      outOfStock:  rows.filter(r => r.available_qty <= 0).length,
+    };
+    lowStockList = rows
+      .filter(r => r.available_qty <= (r.reorder_point ?? 10))
+      .sort((a, b) => a.available_qty - b.available_qty)
+      .slice(0, 8)
+      .map(r => ({ sku: r.sku, name: r.name || '', available: r.available_qty, reorder_point: r.reorder_point ?? 10 }));
   } catch (_) {}
-  let openOrders = 0, doneOrders = 0;
+
+  // Walk this client's orders once, collecting counts, the daily trend and the
+  // recent-activity entries together.
+  const days = recentSgDays(14);
+  const dayIndex = new Map(days.map((d, i) => [d, i]));
+  const trend = days.map(d => ({ day: d, orders: 0, pieces: 0 }));
+  const activity = [];
+  let openOrders = 0, doneOrders = 0, openPieces = 0;
+  let shipped30Orders = 0, shipped30Pieces = 0, shipped30Lines = 0;
+  const since30 = Date.now() - 30 * 86400000;
+
   for (const b of db.batches || []) {
-    if (String(b.client_name || '').trim().toLowerCase() !== client.trim().toLowerCase()) continue;
+    if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
     for (const o of b.orders || []) {
-      const st = b.orderStates?.[o.order_number]?.status || 'pending';
-      if (st === 'done') doneOrders++; else if (st !== 'unprocessed') openOrders++;
+      const st = b.orderStates?.[o.order_number] || {};
+      const status = st.status || 'pending';
+      const qty = o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
+      if (status === 'done') {
+        doneOrders++;
+        if (st.endTime) {
+          const i = dayIndex.get(sgDateStr(new Date(st.endTime)));
+          if (i !== undefined) { trend[i].orders++; trend[i].pieces += qty; }
+          if (new Date(st.endTime).getTime() >= since30) {
+            shipped30Orders++; shipped30Pieces += qty; shipped30Lines += (o.lines || []).length;
+          }
+          activity.push({ kind: 'order_shipped', at: st.endTime, ref: o.order_number, detail: `${qty} pcs · ${(o.lines || []).length} line(s)` });
+        }
+      } else if (status !== 'unprocessed') {
+        openOrders++; openPieces += qty;
+      }
     }
   }
-  const inboundOpen = (db.inbound || []).filter(r => String(r.client_name || '').trim().toLowerCase() === client.trim().toLowerCase() && (r.state?.status || 'pending') !== 'done').length;
+
+  const myInbound = (db.inbound || []).filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm);
+  const inboundOpen = myInbound.filter(r => (r.state?.status || 'pending') !== 'done').length;
+  let openDiscrepancies = 0;
+  for (const rec of myInbound) {
+    openDiscrepancies += (rec.discrepancies || []).length;
+    const end = rec.state?.endTime;
+    if (end) {
+      const received = Object.values(rec.state?.scanned || {}).reduce((s, q) => s + q, 0);
+      activity.push({ kind: 'goods_received', at: end, ref: rec.serial || rec.reference || rec.id, detail: `${received} pcs received`, id: rec.id });
+    }
+  }
+  activity.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+
   const quarantineOpen = (db.quarantine || []).filter(q => q.clientId === cid && q.status === 'open').reduce((s, q) => s + q.qty, 0);
-  res.json({ client, stock, openOrders, doneOrders, inboundOpen, quarantineOpen });
+
+  res.json({
+    client, stock, openOrders, doneOrders, openPieces, inboundOpen, quarantineOpen,
+    openDiscrepancies,
+    lowStockList,
+    trend,                                  // 14 SGT days, oldest first
+    activity: activity.slice(0, 12),
+    last30: {
+      orders: shipped30Orders,
+      pieces: shipped30Pieces,
+      lines:  shipped30Lines,
+      avgLinesPerOrder: shipped30Orders ? Math.round((shipped30Lines / shipped30Orders) * 10) / 10 : 0,
+      avgPiecesPerOrder: shipped30Orders ? Math.round((shipped30Pieces / shipped30Orders) * 10) / 10 : 0,
+    },
+    generatedAt: new Date().toISOString(),
+  });
 });
 // Stock — the client's own inventory, read-only.
 app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
   const cid = invClientId(req.portalClient);
   let rows = [];
-  try { rows = inventory.getAll({ clientId: cid }).map(r => ({ sku: r.sku, name: r.name, barcode: r.barcode || '', on_hand: r.stock_qty, reserved: r.reserved_qty, available: r.available_qty })); } catch (_) {}
+  try {
+    rows = inventory.getAll({ clientId: cid }).map(r => ({
+      sku: r.sku, name: r.name, barcode: r.barcode || '', brand: r.brand || '',
+      on_hand: r.stock_qty, reserved: r.reserved_qty, available: r.available_qty,
+      reorder_point: r.reorder_point ?? 10,
+      uom: r.uom || '', category: r.category || '',
+    }));
+  } catch (_) {}
   res.json(rows);
+});
+// One of THEIR orders in full — the line detail behind an Orders row.
+app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res) => {
+  const clientNorm = req.portalClient.trim().toLowerCase();
+  const wanted = String(req.params.orderNumber);
+  const db = readDb();
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+    const o = (b.orders || []).find(x => String(x.order_number) === wanted);
+    if (!o) continue;
+    const st = b.orderStates?.[o.order_number] || {};
+    const scanned = st.scanned || {};
+    return res.json({
+      order_number: o.order_number,
+      date: o.date || b.uploaded_at,
+      status: st.status || 'pending',
+      completed_at: st.endTime || null,
+      waybill: o.waybill_number || '', po_number: o.po_number || '',
+      issue_no: o.issue_no || '', carrier: o.carrier || '',
+      delivery_address: o.delivery_address || '',
+      cartons: (st.cartons || []).length || (st.status === 'done' ? 1 : 0),
+      lines: (o.lines || []).map(l => ({
+        sku: l.sku, description: l.description || '',
+        qty: l.qty || 0, packed: scanned[l.sku] || 0,
+        batch_number: l.batch_number || '', expiry_date: l.expiry_date || '',
+      })),
+    });
+  }
+  res.status(404).json({ error: 'Order not found' });
 });
 // Orders — the client's outbound orders, newest first.
 app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
@@ -2682,6 +2804,76 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
     });
   res.json(out.slice(0, 200));
 });
+// Download their own data as a spreadsheet. Read-only like everything else
+// here, and scoped to the signed-in client by construction — it reuses the
+// exact same queries the on-screen views use rather than re-deriving them.
+app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient;
+  const clientNorm = client.trim().toLowerCase();
+  const cid = invClientId(client);
+  const kind = String(req.params.kind);
+  const db = readDb();
+  const title = d => [[`${client} — ${d}`], [`Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`], []];
+  let aoa, sheet, name;
+
+  if (kind === 'stock') {
+    let rows = [];
+    try { rows = inventory.getAll({ clientId: cid }); } catch (_) {}
+    aoa = [
+      ...title('Stock on hand'),
+      ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'On hand', 'Reserved', 'Available', 'Reorder point', 'Status'],
+      ...rows.map(r => [r.sku, r.name || '', r.barcode || '', r.brand || '', r.category || '',
+        r.stock_qty, r.reserved_qty, r.available_qty, r.reorder_point ?? 10,
+        r.available_qty <= 0 ? 'Out of stock' : (r.available_qty <= (r.reorder_point ?? 10) ? 'Low' : 'OK')]),
+    ];
+    sheet = 'Stock'; name = 'Stock';
+  } else if (kind === 'orders') {
+    const out = [];
+    for (const b of db.batches || []) {
+      if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+      for (const o of b.orders || []) {
+        const st = b.orderStates?.[o.order_number] || {};
+        out.push([o.order_number, (o.date || b.uploaded_at || '').slice(0, 10),
+          PORTAL_STATUS_LABEL[st.status || 'pending'] || 'Queued',
+          (o.lines || []).length, o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+          o.waybill_number || '', o.po_number || '',
+          st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
+      }
+    }
+    out.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
+    aoa = [...title('Orders'), ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)'], ...out];
+    sheet = 'Orders'; name = 'Orders';
+  } else if (kind === 'inbound') {
+    const out = (db.inbound || [])
+      .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
+      .map(rec => {
+        const state = rec.state || {};
+        const ct = state.conditionTotals || {};
+        const dmg = Object.values(ct).reduce((s, c) => s + (Number(c?.damaged) || 0), 0);
+        const kiv = Object.values(ct).reduce((s, c) => s + (Number(c?.kiv) || 0), 0);
+        // Client-facing wording, matching the portal screens — not the internal
+        // 'po'/'KIV' shorthand the warehouse floor uses.
+        return [rec.serial || '', rec.type === 'po' ? 'Inbound shipment' : 'Return', rec.reference || '',
+          rec.source_name || '', state.status === 'done' ? 'Received' : 'Receiving',
+          (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
+          Object.values(state.scanned || {}).reduce((s, q) => s + q, 0),
+          dmg, kiv, (rec.discrepancies || []).length,
+          state.endTime ? new Date(state.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : ''];
+      });
+    aoa = [...title('Inbound receipts'), ['Receipt', 'Type', 'Reference', 'Source', 'Status', 'Expected', 'Received', 'Damaged', 'Held', 'Discrepancies', 'Received at (SGT)'], ...out];
+    sheet = 'Inbound'; name = 'Inbound';
+  } else {
+    return res.status(400).json({ error: 'Unknown export' });
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheet);
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${name}_${sgDateStr()}.xlsx"`);
+  res.send(buf);
+});
+
 // GRN for one of THEIR receipts — strict ownership check.
 app.get('/api/portal/grn/:id', requirePortalAuthMiddleware, (req, res) => {
   const rec = findInbound(readDb(), req.params.id);

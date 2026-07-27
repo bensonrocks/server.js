@@ -3,88 +3,327 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
 <title>IDEALONE — Client Portal</title>
+<link rel="manifest" href="/portal-manifest.json">
+<link rel="apple-touch-icon" href="/icons/portal-icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="IdealOne Portal">
+<link rel="icon" href="/icons/portal-icon-192.png">
 <style>
-  :root { --bg:#f1f5f9; --surface:#fff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b; --primary:#2563eb; --ok:#059669; --warn:#d97706; --bad:#dc2626; }
-  * { box-sizing:border-box; margin:0; }
-  body { font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  :root {
+    --bg:#f4f6fb; --surface:#fff; --surface-2:#f8fafc; --border:#e4e9f2;
+    --text:#0b1220; --muted:#64748b; --faint:#94a3b8;
+    --brand:#1e3a8a; --brand-2:#2563eb; --accent:#38bdf8;
+    --ok:#059669; --ok-bg:#ecfdf5; --warn:#d97706; --warn-bg:#fffbeb;
+    --bad:#dc2626; --bad-bg:#fef2f2; --info-bg:#eff6ff;
+    --shadow:0 1px 2px rgba(11,18,32,.04), 0 8px 24px rgba(11,18,32,.06);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing:border-box; margin:0; -webkit-tap-highlight-color:transparent; }
+  html { -webkit-text-size-adjust:100%; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,sans-serif;
+         background:var(--bg); color:var(--text); min-height:100vh; line-height:1.45;
+         font-feature-settings:"tnum" 1; }
   .hidden { display:none !important; }
-  /* login */
-  .login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1rem; }
-  .login-box { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:1.6rem 1.3rem; width:100%; max-width:380px; box-shadow:0 8px 30px rgba(2,6,23,.08); }
-  .brand { font-weight:800; letter-spacing:.02em; font-size:1.15rem; }
-  .brand small { display:block; color:var(--muted); font-weight:600; font-size:.78rem; margin-top:.15rem; }
-  label { display:block; font-size:.75rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:.9rem 0 .3rem; }
-  input { width:100%; padding:.8rem .9rem; border:1.5px solid var(--border); border-radius:10px; font-size:1rem; }
-  input:focus { outline:none; border-color:var(--primary); }
-  .btn { width:100%; padding:.9rem; border:0; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .btn-primary { background:var(--primary); color:#fff; margin-top:1.1rem; }
-  .err { color:var(--bad); font-size:.85rem; margin-top:.7rem; min-height:1.2em; }
-  /* app shell */
-  header { position:sticky; top:0; z-index:10; background:var(--surface); border-bottom:1px solid var(--border); padding:.7rem 1rem; display:flex; align-items:center; gap:.6rem; }
-  header .who { flex:1; min-width:0; }
-  header .who b { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  header .who small { color:var(--muted); }
-  .link { background:none; border:0; color:var(--primary); font-weight:700; cursor:pointer; font-size:.85rem; }
-  nav { display:flex; background:var(--surface); border-bottom:1px solid var(--border); position:sticky; top:52px; z-index:9; }
-  nav button { flex:1; padding:.75rem .2rem; background:none; border:0; border-bottom:3px solid transparent; font-weight:700; color:var(--muted); font-size:.86rem; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  nav button.active { color:var(--primary); border-bottom-color:var(--primary); }
-  main { padding: .9rem; max-width:900px; margin:0 auto; }
+  button { font-family:inherit; }
+  .n { font-variant-numeric:tabular-nums; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+
+  /* ── Logo ─────────────────────────────────────────────────────────────── */
+  /* The artwork is dark-on-WHITE (not transparent), so it only ever sits on
+     white surfaces — the header bar and the login card. */
+  .logo { display:flex; align-items:center; gap:.5rem; min-width:0; }
+  .logo img { flex:0 0 auto; display:block; width:32px; height:32px; }
+  .logo-txt { min-width:0; }
+  .logo-txt b { display:block; font-size:.95rem; font-weight:800; letter-spacing:.09em; line-height:1.05; }
+  .logo-txt span { display:block; font-size:.6rem; color:var(--muted); font-weight:700;
+                   letter-spacing:.13em; text-transform:uppercase; margin-top:.12rem; }
+  .who-chip { font-size:.72rem; font-weight:800; color:var(--brand); background:var(--info-bg);
+              padding:.25rem .55rem; border-radius:999px; max-width:9rem; overflow:hidden;
+              text-overflow:ellipsis; white-space:nowrap; }
+  /* On a phone the hero already shows the client name in full, so the chip is
+     dropped there rather than ellipsised down to nothing. */
+  @media (max-width:479px) { .who-chip { display:none; } }
+  .login-logo { width:100%; max-width:186px; height:auto; display:block; margin:0 auto; }
+
+  /* ── Login ────────────────────────────────────────────────────────────── */
+  .login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1.1rem;
+                background:
+                  radial-gradient(1100px 520px at 50% -12%, rgba(56,189,248,.16), transparent 60%),
+                  linear-gradient(170deg,#0b1220 0%, #14264f 46%, #1e3a8a 100%); }
+  .login-box { background:var(--surface); border-radius:20px; padding:1.7rem 1.35rem 1.5rem; width:100%; max-width:400px;
+               box-shadow:0 24px 70px rgba(2,6,23,.42); }
+  .login-head { display:flex; flex-direction:column; align-items:center; text-align:center; gap:.7rem; margin-bottom:.4rem; }
+  .login-head h1 { font-size:1.28rem; font-weight:800; letter-spacing:.03em; }
+  .login-head p { font-size:.86rem; color:var(--muted); max-width:17rem; }
+  label { display:block; font-size:.7rem; font-weight:800; color:var(--muted); text-transform:uppercase;
+          letter-spacing:.07em; margin:1rem 0 .35rem; }
+  input { width:100%; padding:.85rem .9rem; border:1.5px solid var(--border); border-radius:11px;
+          font-size:1rem; background:var(--surface-2); color:var(--text); }
+  input:focus { outline:none; border-color:var(--brand-2); background:#fff;
+                box-shadow:0 0 0 3.5px rgba(37,99,235,.13); }
+  .btn { width:100%; padding:.9rem; border:0; border-radius:11px; font-size:1rem; font-weight:800; cursor:pointer; }
+  .btn-primary { background:linear-gradient(135deg,var(--brand-2),var(--brand)); color:#fff; margin-top:1.2rem;
+                 box-shadow:0 6px 18px rgba(37,99,235,.28); }
+  .btn-primary:active { transform:translateY(1px); }
+  .btn-primary:disabled { opacity:.6; cursor:default; }
+  .err { color:var(--bad); font-size:.85rem; margin-top:.75rem; min-height:1.2em; font-weight:600; }
+  .login-foot { margin-top:1.15rem; padding-top:.95rem; border-top:1px solid var(--border);
+                text-align:center; font-size:.72rem; color:var(--faint); line-height:1.6; }
+
+  /* ── Shell ────────────────────────────────────────────────────────────── */
+  header { position:sticky; top:0; z-index:20; background:rgba(255,255,255,.93);
+           backdrop-filter:saturate(180%) blur(12px); border-bottom:1px solid var(--border);
+           padding:.6rem .85rem; display:flex; align-items:center; gap:.5rem; }
+  .hdr-acts { display:flex; align-items:center; gap:.15rem; margin-left:auto; flex:0 0 auto; }
+  .icon-btn { background:none; border:0; padding:.45rem .5rem; border-radius:9px; cursor:pointer;
+              color:var(--muted); font-size:1.05rem; line-height:1; }
+  .icon-btn:active { background:var(--surface-2); }
+  .icon-btn.spin { animation:sp .7s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .link { background:none; border:0; color:var(--brand-2); font-weight:700; cursor:pointer; font-size:.82rem; padding:0; }
+
+  /* All four tabs must FIT a narrow phone — an off-screen tab is an invisible
+     tab. min-width:0 + flex:1 lets them shrink evenly instead of overflowing. */
+  nav { display:flex; gap:.25rem; background:var(--surface); border-bottom:1px solid var(--border);
+        position:sticky; top:53px; z-index:19; padding:.4rem .45rem; }
+  nav button { flex:1 1 0; min-width:0; padding:.5rem .25rem; background:none; border:0; border-radius:9px;
+               font-weight:700; color:var(--muted); font-size:.79rem; cursor:pointer; white-space:nowrap;
+               display:flex; align-items:center; justify-content:center; gap:.25rem; overflow:hidden; }
+  nav button.active { color:#fff; background:linear-gradient(135deg,var(--brand-2),var(--brand)); }
+  @media (max-width:359px) { nav button { font-size:.72rem; } }
+  main { padding:.85rem .85rem calc(2rem + var(--safe-b)); max-width:960px; margin:0 auto; }
+
+  /* ── Hero ─────────────────────────────────────────────────────────────── */
+  .hero { border-radius:16px; padding:1.05rem 1.1rem; margin-bottom:.75rem; color:#fff;
+          background:radial-gradient(700px 260px at 12% -30%, rgba(56,189,248,.34), transparent 62%),
+                     linear-gradient(135deg,#14264f,#1e3a8a 58%,#2563eb);
+          box-shadow:0 10px 30px rgba(30,58,138,.26); }
+  .hero .greet { font-size:.76rem; font-weight:700; opacity:.82; letter-spacing:.05em; text-transform:uppercase; }
+  .hero h2 { font-size:1.32rem; font-weight:800; margin:.1rem 0 .45rem; letter-spacing:-.01em; word-break:break-word; }
+  .hero p { font-size:.87rem; opacity:.94; }
+  .hero .live { display:inline-flex; align-items:center; gap:.35rem; margin-top:.6rem;
+                font-size:.7rem; opacity:.85; font-weight:600; }
+  .dot { width:6px; height:6px; border-radius:50%; background:#4ade80; box-shadow:0 0 0 3px rgba(74,222,128,.25); }
+
+  /* ── Sections / cards ─────────────────────────────────────────────────── */
+  .sec { margin-bottom:1rem; }
+  .sec-hd { display:flex; align-items:baseline; gap:.5rem; margin:0 .15rem .5rem; }
+  .sec-hd h3 { font-size:.79rem; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+  .sec-hd .sub { font-size:.72rem; color:var(--faint); margin-left:auto; font-weight:600; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:.9rem 1rem;
+          box-shadow:var(--shadow); }
+  .card + .card { margin-top:.55rem; }
+
   .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:.6rem; }
-  .tile { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:.85rem .9rem; }
-  .tile .v { font-size:1.5rem; font-weight:800; }
-  .tile .l { font-size:.7rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
-  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:.8rem .9rem; margin-bottom:.6rem; }
-  .row { display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
+  .tile { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:.8rem .85rem;
+          box-shadow:var(--shadow); position:relative; overflow:hidden; }
+  .tile::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--brand-2); opacity:.85; }
+  .tile.t-ok::before { background:var(--ok); } .tile.t-warn::before { background:var(--warn); }
+  .tile.t-bad::before { background:var(--bad); } .tile.t-mute::before { background:var(--faint); }
+  .tile .ic { font-size:.95rem; line-height:1; }
+  .tile .v { font-size:1.6rem; font-weight:800; letter-spacing:-.02em; margin-top:.15rem; }
+  .tile .l { font-size:.68rem; color:var(--muted); font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+  .tile .x { font-size:.7rem; color:var(--faint); margin-top:.2rem; font-weight:600; }
+
+  /* stat strip */
+  .strip { display:grid; grid-template-columns:repeat(3,1fr); gap:.1rem; }
+  .strip > div { text-align:center; padding:.25rem .2rem; }
+  .strip > div + div { border-left:1px solid var(--border); }
+  .strip .v { font-size:1.16rem; font-weight:800; }
+  .strip .l { font-size:.64rem; color:var(--muted); font-weight:800; text-transform:uppercase;
+              letter-spacing:.04em; margin-top:.1rem; }
+
+  /* chart */
+  /* Bars only — never text; see trendChart() in portal.js for why. */
+  .chart { display:block; width:100%; height:96px; border-bottom:1px solid var(--border); }
+  .chart .bar { fill:url(#bg1); }
+  .chart .bar.z { fill:#e8edf6; }
+  .chart-axis { display:flex; justify-content:space-between; margin-top:.3rem;
+                font-size:.66rem; color:var(--faint); font-weight:700; }
+  .chart-axis span:last-child { color:var(--brand-2); }
+  .chart-legend { display:flex; justify-content:space-between; align-items:center; gap:.5rem;
+                  margin-top:.45rem; padding-top:.45rem; border-top:1px solid var(--surface-2);
+                  font-size:.72rem; color:var(--muted); font-weight:600; }
+
+  /* rows / lists */
+  .row { display:flex; justify-content:space-between; align-items:center; gap:.6rem; }
+  .lrow { display:flex; align-items:center; gap:.7rem; padding:.62rem 0; border-top:1px solid var(--border); }
+  .lrow:first-child { border-top:0; }
+  .lrow .g { flex:1; min-width:0; }
+  .lrow .t { font-weight:700; font-size:.88rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lrow .s { font-size:.75rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lrow .r { text-align:right; white-space:nowrap; flex:0 0 auto; }
+  .avatar { flex:0 0 auto; width:31px; height:31px; border-radius:9px; display:flex; align-items:center;
+            justify-content:center; font-size:.92rem; background:var(--info-bg); }
+  .avatar.a-in { background:var(--ok-bg); } .avatar.a-out { background:var(--info-bg); }
+
   .muted { color:var(--muted); font-size:.8rem; }
-  .pill { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.72rem; font-weight:800; }
-  .p-done { background:#dcfce7; color:#166534; } .p-open { background:#fef3c7; color:#92400e; } .p-bad { background:#fee2e2; color:#991b1b; }
-  .search { width:100%; padding:.7rem .9rem; border:1.5px solid var(--border); border-radius:10px; font-size:.95rem; margin-bottom:.7rem; }
-  .empty { text-align:center; color:var(--muted); padding:2.2rem 0; }
-  .mono { font-family:ui-monospace,Menlo,monospace; }
-  .updated { text-align:center; color:var(--muted); font-size:.72rem; margin:.8rem 0 1.4rem; }
+  .pill { display:inline-block; padding:.16rem .55rem; border-radius:999px; font-size:.69rem; font-weight:800;
+          white-space:nowrap; }
+  .p-done { background:var(--ok-bg); color:#166534; }
+  .p-open { background:var(--warn-bg); color:#92400e; }
+  .p-bad  { background:var(--bad-bg); color:#991b1b; }
+  .p-info { background:var(--info-bg); color:#1e40af; }
+
+  /* alerts */
+  .alert { display:flex; gap:.65rem; align-items:flex-start; border-radius:13px; padding:.75rem .85rem;
+           border:1px solid; font-size:.84rem; }
+  .alert + .alert { margin-top:.45rem; }
+  .alert b { display:block; margin-bottom:.1rem; }
+  .a-warn { background:var(--warn-bg); border-color:#fde68a; color:#78350f; }
+  .a-bad  { background:var(--bad-bg);  border-color:#fecaca; color:#7f1d1d; }
+  .a-ok   { background:var(--ok-bg);   border-color:#a7f3d0; color:#065f46; }
+
+  /* controls */
+  .ctrls { display:flex; gap:.4rem; margin-bottom:.6rem; }
+  .search { flex:1; min-width:0; padding:.7rem .85rem; border:1.5px solid var(--border); border-radius:11px;
+            font-size:.93rem; background:var(--surface); }
+  .search:focus { outline:none; border-color:var(--brand-2); box-shadow:0 0 0 3px rgba(37,99,235,.1); }
+  .btn-sm { flex:0 0 auto; padding:.7rem .8rem; border:1.5px solid var(--border); background:var(--surface);
+            border-radius:11px; font-weight:700; font-size:.83rem; cursor:pointer; color:var(--text); }
+  .btn-sm:active { background:var(--surface-2); }
+  .chips { display:flex; gap:.35rem; overflow-x:auto; padding-bottom:.15rem; margin-bottom:.6rem; scrollbar-width:none; }
+  .chips::-webkit-scrollbar { display:none; }
+  .chip { flex:0 0 auto; padding:.4rem .75rem; border-radius:999px; border:1.5px solid var(--border);
+          background:var(--surface); font-size:.79rem; font-weight:700; color:var(--muted); cursor:pointer; }
+  .chip.on { background:var(--brand); border-color:var(--brand); color:#fff; }
+
+  /* bar meter */
+  .meter { height:5px; border-radius:3px; background:#eef2f8; overflow:hidden; margin-top:.4rem; }
+  .meter > i { display:block; height:100%; border-radius:3px; background:var(--ok); }
+  .meter > i.w { background:var(--warn); } .meter > i.b { background:var(--bad); }
+
+  /* expandable detail */
+  .exp { cursor:pointer; }
+  .detail { margin-top:.6rem; padding-top:.6rem; border-top:1px dashed var(--border); font-size:.82rem; }
+  .dtab { width:100%; border-collapse:collapse; font-size:.78rem; }
+  .dtab th { text-align:left; color:var(--muted); font-weight:800; font-size:.66rem; text-transform:uppercase;
+             letter-spacing:.04em; padding:.3rem .35rem; border-bottom:1px solid var(--border); }
+  .dtab td { padding:.35rem .35rem; border-bottom:1px solid var(--surface-2); vertical-align:top; }
+  .dtab td.r, .dtab th.r { text-align:right; }
+  /* SKUs must stay on one line — "MY-1001" was wrapping mid-code. */
+  .dtab td:first-child { white-space:nowrap; }
+
+  .empty { text-align:center; padding:2.4rem 1rem; }
+  .empty .e-ic { font-size:2rem; opacity:.35; }
+  .empty .e-t { font-weight:800; margin-top:.5rem; font-size:.95rem; }
+  .empty .e-s { color:var(--muted); font-size:.83rem; margin-top:.25rem; max-width:20rem;
+                margin-left:auto; margin-right:auto; }
+  .updated { text-align:center; color:var(--faint); font-size:.71rem; margin:1rem 0 .4rem; }
+  .skel { background:linear-gradient(90deg,#eef2f8 25%,#f8fafc 50%,#eef2f8 75%); background-size:200% 100%;
+          animation:sk 1.3s ease-in-out infinite; border-radius:8px; }
+  @keyframes sk { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+  @media (min-width:620px) {
+    .grid { grid-template-columns:repeat(4,1fr); }
+    .hero h2 { font-size:1.5rem; }
+    main { padding:1.1rem 1.1rem 2.5rem; }
+    /* main is capped at 960px and centred; the sticky header and tab bar stay
+       full-bleed for their background, so pad them to the SAME gutter or the
+       logo and tabs visibly fail to line up with the cards below. */
+    header, nav { padding-left:max(1.1rem, calc((100% - 960px) / 2 + 1.1rem));
+                  padding-right:max(1.1rem, calc((100% - 960px) / 2 + 1.1rem)); }
+    nav button { flex:0 1 auto; min-width:7rem; padding:.5rem 1rem; font-size:.85rem; }
+    nav { gap:.4rem; }
+  }
 </style>
 </head>
 <body>
 
+<!-- ── Login ─────────────────────────────────────────────────────────────── -->
 <div id="loginView" class="login-wrap">
   <div class="login-box">
-    <div class="brand">▮▮ IDEALONE <small>Client Portal — your stock &amp; orders, live</small></div>
-    <label>Client name</label>
-    <input id="liClient" autocomplete="username" placeholder="e.g. Glowverse">
-    <label>Password</label>
+    <div class="login-head">
+      <img class="login-logo" src="/icons/idealone-logo.png" alt="IDEALONE" width="804" height="729">
+      <div>
+        <h1>Client Portal</h1>
+        <p style="margin-top:.35rem">Your stock, orders and receipts — live from the warehouse.</p>
+      </div>
+    </div>
+    <label for="liClient">Client name</label>
+    <input id="liClient" autocomplete="username" autocapitalize="words" placeholder="Your company name">
+    <label for="liPass">Password</label>
     <input id="liPass" type="password" autocomplete="current-password" placeholder="••••••••">
     <button class="btn btn-primary" id="liBtn">Sign in</button>
     <div class="err" id="liErr"></div>
+    <div class="login-foot">
+      Secure, read-only access to your own account.<br>
+      Need a login or forgotten your password? Contact your account manager.
+    </div>
   </div>
 </div>
 
+<!-- ── App ───────────────────────────────────────────────────────────────── -->
 <div id="appView" class="hidden">
   <header>
-    <div class="who"><b id="whoName">—</b><small>Client Portal</small></div>
-    <button class="link" id="refreshBtn">↻ Refresh</button>
-    <button class="link" id="logoutBtn">Sign out</button>
+    <div class="logo">
+      <img src="/icons/idealone-mark.png" alt="IDEALONE" width="728" height="728">
+      <div class="logo-txt"><b>IDEALONE</b><span>Client Portal</span></div>
+    </div>
+    <div class="hdr-acts">
+      <span class="who-chip" id="whoName"></span>
+      <button class="icon-btn" id="refreshBtn" title="Refresh" aria-label="Refresh">&#8635;</button>
+      <button class="link" id="logoutBtn" style="padding:.45rem .3rem">Sign out</button>
+    </div>
   </header>
   <nav>
-    <button data-tab="overview" class="active">Overview</button>
-    <button data-tab="stock">Stock</button>
-    <button data-tab="orders">Orders</button>
-    <button data-tab="inbound">Inbound</button>
+    <button data-tab="overview" class="active">&#128202; Overview</button>
+    <button data-tab="stock">&#128230; Stock</button>
+    <button data-tab="orders">&#128666; Orders</button>
+    <button data-tab="inbound">&#128229; Inbound</button>
   </nav>
   <main>
     <section id="tab-overview">
-      <div class="grid" id="ovTiles"></div>
+      <div id="ovHero"></div>
+      <div id="ovBody"></div>
       <div class="updated" id="ovUpdated"></div>
     </section>
+
     <section id="tab-stock" class="hidden">
-      <input class="search" id="stSearch" placeholder="Search SKU / name…">
+      <div class="ctrls">
+        <input class="search" id="stSearch" placeholder="Search SKU, product or barcode…">
+        <button class="btn-sm" id="stExport" title="Download as Excel">&#8681; Excel</button>
+      </div>
+      <div class="chips" id="stChips">
+        <button class="chip on" data-f="all">All</button>
+        <button class="chip" data-f="low">Low stock</button>
+        <button class="chip" data-f="out">Out of stock</button>
+        <button class="chip" data-f="res">Reserved</button>
+      </div>
+      <div id="stSummary"></div>
       <div id="stList"></div>
     </section>
+
     <section id="tab-orders" class="hidden">
-      <input class="search" id="orSearch" placeholder="Search order no…">
+      <div class="ctrls">
+        <input class="search" id="orSearch" placeholder="Search order no or waybill…">
+        <button class="btn-sm" id="orExport" title="Download as Excel">&#8681; Excel</button>
+      </div>
+      <div class="chips" id="orChips">
+        <button class="chip on" data-f="all">All</button>
+        <button class="chip" data-f="open">In progress</button>
+        <button class="chip" data-f="done">Completed</button>
+        <button class="chip" data-f="cancelled">Cancelled</button>
+      </div>
+      <div id="orSummary"></div>
       <div id="orList"></div>
     </section>
+
     <section id="tab-inbound" class="hidden">
+      <div class="ctrls">
+        <input class="search" id="ibSearch" placeholder="Search receipt or reference…">
+        <button class="btn-sm" id="ibExport" title="Download as Excel">&#8681; Excel</button>
+      </div>
+      <div class="chips" id="ibChips">
+        <button class="chip on" data-f="all">All</button>
+        <button class="chip" data-f="open">Receiving</button>
+        <button class="chip" data-f="done">Received</button>
+        <button class="chip" data-f="issue">With issues</button>
+      </div>
+      <div id="ibSummary"></div>
       <div id="ibList"></div>
     </section>
   </main>

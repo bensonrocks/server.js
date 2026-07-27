@@ -452,6 +452,71 @@ requireAuth (like `/api/driver/`).
 - GRN emails: `sendInboundGrnAlert` also sends to the profile's portal email
   when set, so clients receive their proof-of-receipt directly.
 
+### Portal presentation pass — real branding, dashboard, exports
+
+The portal was originally 244 lines total and rendered as eight zero-tiles
+above a screenful of blank white. It is the CLIENT-facing face of the
+business, so it was rebuilt as a proper dashboard.
+
+- **REAL BRAND ARTWORK, not a drawn substitute.** `public/icons/idealone-logo.png`
+  (full lockup) and `idealone-mark.png` (barcode-in-scan-brackets icon) are
+  extracted from the supplied artwork by `_mklogo` (scratch script; assets are
+  committed, the script is not). The source PNG's "transparency" is a
+  near-white (~247) checkerboard baked in as real pixels, so every pixel
+  ≥228 on all channels is forced to PURE white — otherwise a faint grey box
+  shows against the white card. Consequence: **the logo only ever sits on
+  white surfaces** (login card, header bar, printed receipt note). Do not
+  place it on the dark login background or any coloured panel.
+  `portal-icon-192/512.png` are the installable-app icons (mark on white).
+  Login shows the lockup + "Client Portal"; the header shows the mark +
+  IDEALONE / CLIENT PORTAL, with the signed-in client as a chip that is
+  hidden under 480px (the hero already names them in full there).
+  An earlier hand-drawn SVG mark was removed. Worth remembering why it
+  broke: **a `<linearGradient>` declared inside a `<symbol>` in a
+  `display:none` `<svg>` does not resolve when instantiated via `<use>` in
+  Chromium** — the square painted as nothing, leaving white shapes
+  invisible on white. If a `<symbol>` is ever added here, solid fills only.
+- **Overview is a dashboard**: time-aware greeting + a plain-English summary
+  sentence that still reads correctly when every number is zero; 4 KPI tiles
+  with sub-context; a "Needs attention" block (out-of-stock, low stock,
+  receiving discrepancies, quarantine) that collapses to a single "All
+  clear" line when there is nothing wrong; a 14-day shipping chart; last-30-day
+  figures; a "replenish soon" list; and a recent-activity feed.
+- **NO FABRICATED METRICS.** There is no promised/committed delivery date
+  anywhere in this system, so the portal deliberately shows no on-time or
+  SLA percentage. Same discipline as the driver Time/Avg-Speed tiles that
+  were removed rather than faked. Only add such a figure if a real
+  promised-date field is captured first.
+- **Chart: bars in SVG, every label in HTML.** `trendChart()` draws with
+  `preserveAspectRatio="none"` so bars stretch to the card width — that
+  stretch also distorts SVG *text* (a label rendered several times its
+  intended width and ran off the page). Day labels and the legend are HTML
+  siblings. When the whole 14-day window is empty the chart is replaced by
+  one compact line instead of a tall empty box.
+- **Stock meter honesty**: the per-SKU bar plots available ÷ on-hand, which
+  is 100% whenever nothing is reserved — so a nearly-empty SKU showed a
+  FULL bar reading as healthy. The meter now renders only when
+  `reserved > 0`; stock health is carried by the coloured number and the
+  In stock / Low · min N / Out of stock pill.
+- New endpoints: `/api/portal/order/:orderNumber` (line detail behind an
+  expandable Orders row — ownership-checked 404) and
+  `/api/portal/export/:kind` (`stock|orders|inbound` → XLSX, downloaded via
+  fetch+blob because an `<a href>` cannot send the session-token header).
+  `PORTAL_STATUS_LABEL` is shared by the screens and the export so wording
+  can never diverge; exports use client-facing language ("Inbound shipment",
+  "Held") not floor shorthand ("po", "KIV").
+- Installable: `public/portal-manifest.json` (own `start_url`/`scope`
+  `/portal`), same reasoning as `driver-manifest.json` — sharing the office
+  manifest would put the office app on a client's home screen.
+- Verified with real Playwright runs at Pixel-5 and 1280px: a populated
+  account (43 checks), a brand-new EMPTY account (the state the real client
+  was in — every empty state is written copy, no blank voids), XLSX contents
+  parsed back with the `xlsx` lib, and cross-client isolation (another
+  client's token sees 0 rows, gets 404 on a foreign order/GRN, and 401 on
+  staff APIs). Also asserted: all 4 nav tabs fully on-screen at 393px, no
+  horizontal overflow, and NO third-party/other-branch names anywhere in the
+  rendered DOM.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the
