@@ -1747,6 +1747,13 @@ disconnected driver-management surface (both fixed together — see below).
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
+- **BRANCH POLICY (owner's rule, 2026-07-27): ALL updates happen on this branch
+  only.** Other branches in this repo are unrelated lines — never merge from
+  them, never rebase onto them, never "sync" their changes into this branch,
+  and never switch the working tree to another branch. If the owner wants
+  changes carried to another branch/copy, they will do it themselves via an
+  upgrade pack (`/upgrade-pack`). This branch is based on the production head
+  `4bb7b4d` (table Orders UI) — do not change that base.
 - Commit suffix required:
   ```
   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
