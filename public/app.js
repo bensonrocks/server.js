@@ -41,7 +41,6 @@
   let scanPage        = 0;
   let scanPageManual   = false;
   let scanFocusSku     = null;
-  let printWaybillTimer   = null;
   let pendingOrderFile    = null;
   let pendingOcrRows      = null;   // parsed rows from photo OCR, bypasses file upload
   let uploadDirection     = 'Outbound';
@@ -1497,27 +1496,16 @@
   document.getElementById('backToOrdersBtn').addEventListener('click', pauseAndGoToOrders);
   document.getElementById('pauseOrderBtn').addEventListener('click', pauseAndGoToOrders);
 
-  // ── Print label prompt (auto-dismisses after 3 s) ─────────────────────────
-  let _pltTimer = null;
+  // ── Print label prompt (stays until the packer picks Print or Skip — no
+  // auto-dismiss; an auto-skipped label was hard to find again) ─────────────
   let _pltOrder = null;
 
   function showPrintLabelPrompt(order) {
     _pltOrder = order;
-    clearTimeout(_pltTimer);
-    const toast     = document.getElementById('printLabelToast');
-    const countdown = document.getElementById('pltCountdown');
-    let secs = 3;
-    countdown.textContent = secs;
-    toast.classList.remove('hidden');
-    _pltTimer = setInterval(() => {
-      secs--;
-      countdown.textContent = secs;
-      if (secs <= 0) dismissPrintLabelPrompt();
-    }, 1000);
+    document.getElementById('printLabelToast').classList.remove('hidden');
   }
 
   function dismissPrintLabelPrompt() {
-    clearInterval(_pltTimer);
     document.getElementById('printLabelToast').classList.add('hidden');
     _pltOrder = null;
     focusWaybillInput();
@@ -2308,37 +2296,18 @@
   }
 
   // ── Print waybill modal ────────────────────────────────────────────────────
-  // Generic "download this PDF now, or auto-skip in a few seconds" prompt —
-  // used for both a matched shipping LABEL (Labels tab import) and a matched
-  // WAYBILL PDF (waybill-PDF-attached-to-upload). Stays on screen SECONDS
-  // seconds before dismissing itself so the packer doesn't have to click.
-  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, seconds = 3, print = false }) {
-    clearTimeout(printWaybillTimer);
+  // "Print/download this PDF" prompt — used for both a matched shipping LABEL
+  // (Labels tab import) and a matched WAYBILL PDF (waybill-PDF-attached-to-
+  // upload). Stays on screen until the packer chooses Print or Skip — no
+  // auto-dismiss (an auto-skipped label was hard to find again afterwards).
+  function showPrintReadyModal(order, { title, desc, url, filename, buttonLabel, print = false }) {
     document.getElementById('printModalTitle').textContent = title;
     document.getElementById('printModalDesc').textContent = desc;
     document.getElementById('printOrderNo').textContent = order.order_number;
     document.getElementById('printNowBtn').innerHTML = `${print ? '&#128438;' : '&#8681;'} ${esc(buttonLabel)}`;
-    document.getElementById('printCountdownNum').textContent = String(seconds);
     document.getElementById('printWaybillOverlay').classList.remove('hidden');
 
-    const bar = document.getElementById('printCountdownBar');
-    bar.style.transition = 'none';
-    bar.style.width = '100%';
-    bar.getBoundingClientRect();
-    bar.style.transition = `width ${seconds}s linear`;
-    bar.style.width = '0%';
-
-    let remaining = seconds;
-    const numEl = document.getElementById('printCountdownNum');
-    const tick  = setInterval(() => {
-      remaining--;
-      numEl.textContent = remaining;
-      if (remaining <= 0) { clearInterval(tick); closePrintWaybillModal(); }
-    }, 1000);
-    printWaybillTimer = tick;
-
     document.getElementById('printNowBtn').onclick = () => {
-      clearInterval(tick);
       closePrintWaybillModal();
       // print: open the browser's print dialog directly from the PDF preview —
       // no file lands on the desktop first.
@@ -2346,7 +2315,6 @@
       else authDownload(url, filename);
     };
     document.getElementById('printSkipBtn').onclick = () => {
-      clearInterval(tick);
       closePrintWaybillModal();
     };
   }
