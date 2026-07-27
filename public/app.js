@@ -4490,6 +4490,16 @@
   });
 
   // ── Unresolved-store resolver — confirm nearest match, learn the alias ─────
+  // A name shaped like a COURIER TRACKING NUMBER (SPXSG…, SHPM…, LZSGD…) is
+  // not a store at all — it's a marketplace parcel the courier collects, so
+  // it has no shop address to look up and does not belong in the Address
+  // Book (adding one would pollute the book with a one-off that never
+  // recurs). Flagged separately so the packer isn't asked to invent a
+  // postal code for a tracking number.
+  function _looksLikeTrackingRef(name) {
+    return /^[A-Z]{2,6}\d{9,}$/i.test(String(name || '').replace(/\s/g, ''));
+  }
+
   async function openUnresolvedResolver() {
     let items = [];
     try {
@@ -4498,53 +4508,138 @@
     } catch { alert('Failed to load suggestions'); return; }
     if (!items.length) { alert('Nothing to resolve — all jobs have postal codes.'); return; }
 
+    // Classify once: confident match / weak match / no match / courier parcel.
+    // Sorting by tier puts the one-click wins at the top and the ones needing
+    // real typing at the bottom, instead of one flat list in arbitrary order.
+    const TIER_ORDER = { high: 0, low: 1, none: 2, courier: 3 };
+    items.forEach((it, i) => {
+      it._idx  = i;
+      it._best = it.suggestions[0] || null;
+      it._tier = _looksLikeTrackingRef(it.clientName) ? 'courier'
+               : !it._best                            ? 'none'
+               : it._best.score >= 70                 ? 'high'
+               : 'low';
+    });
+    const ordered = [...items].sort((a, b) => (TIER_ORDER[a._tier] - TIER_ORDER[b._tier]) || ((b._best?.score || 0) - (a._best?.score || 0)));
+    const counts = ordered.reduce((m, it) => { m[it._tier] = (m[it._tier] || 0) + 1; return m; }, {});
+
+    const TIER_META = {
+      high:    { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', label: 'Likely match' },
+      low:     { color: '#b45309', bg: '#fffbeb', border: '#fde68a', label: 'Check this one' },
+      none:    { color: '#b45309', bg: '#fff',    border: '#e2e8f0', label: 'Not in the Address Book' },
+      courier: { color: '#64748b', bg: '#f8fafc', border: '#e2e8f0', label: 'Courier parcel — not a store' },
+    };
+
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.id = 'resolveStoresModal';
     modal.innerHTML = `
-      <div class="modal" style="width:94%;max-width:760px;max-height:85vh;overflow-y:auto">
+      <div class="modal" style="width:94%;max-width:820px;max-height:88vh;display:flex;flex-direction:column">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
           <h2 style="margin:0">🔍 Match Store Names</h2>
           <button class="btn-close" id="resolveStoresCloseBtn">✕</button>
         </div>
-        <p class="hint" style="font-size:12px;margin-bottom:1rem">
-          These store names didn't exactly match the Address Book. Confirm the nearest correct store for each —
-          the spelling is <strong>learned</strong> into the book, so future uploads resolve automatically.
+        <p class="hint" style="font-size:12px;margin-bottom:.6rem">
+          These deliveries have no postal code yet. Confirm the right store for each — the spelling is
+          <strong>learned</strong>, so future uploads resolve on their own. Apply rows one at a time, or tick several and apply together.
         </p>
-        <div style="display:grid;gap:.6rem;margin-bottom:1rem">
-          ${items.map((it, idx) => `
-            <div style="border:1px solid #e2e8f0;border-radius:6px;padding:.7rem .8rem">
-              <div style="font-weight:600;font-size:13px;margin-bottom:.4rem">"${esc(it.clientName)}"</div>
-              ${it.suggestions.length ? `
-                <select class="resolve-pick" data-idx="${idx}" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
-                  ${it.suggestions.map((sg, si) => `<option value="${esc(sg.name)}" ${si === 0 ? 'selected' : ''}>${esc(sg.name)}${sg.chain ? ` (${esc(sg.chain)})` : ''}${sg.address ? ` — ${esc(sg.address)}` : ''} — 📍 ${esc(sg.zip)} · ${sg.score}% match</option>`).join('')}
-                  <option value="__new__">➕ None of these — key in this store's details</option>
-                  <option value="">— skip for now —</option>
-                </select>
-                <div class="resolve-match-info" data-idx="${idx}" style="margin-top:.35rem;font-size:11px;color:#16a34a"></div>` :
-                `<div class="hint" style="font-size:12px;color:#b45309;margin-bottom:.4rem">Not in the Address Book — key in the store details to add it:</div>`}
-              <div class="resolve-new-store ${it.suggestions.length ? 'hidden' : ''}" data-idx="${idx}" style="margin-top:.5rem;display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
-                <input class="rns-code" placeholder="Store code (optional)" style="padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
-                <input class="rns-zip" placeholder="Postal code * (6 digits)" maxlength="6" style="padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
-                <input class="rns-address" placeholder="Address" style="grid-column:1/-1;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
-                <input class="rns-phone" placeholder="Phone (optional)" style="grid-column:1/-1;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
-              </div>
-            </div>`).join('')}
+        <div style="display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin-bottom:.6rem;font-size:11.5px">
+          ${counts.high    ? `<span style="background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:99px;padding:.15rem .55rem;font-weight:600">${counts.high} likely match</span>` : ''}
+          ${counts.low     ? `<span style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;border-radius:99px;padding:.15rem .55rem;font-weight:600">${counts.low} need checking</span>` : ''}
+          ${counts.none    ? `<span style="background:#fff;color:#b45309;border:1px solid #e2e8f0;border-radius:99px;padding:.15rem .55rem;font-weight:600">${counts.none} not in book</span>` : ''}
+          ${counts.courier ? `<span style="background:#f8fafc;color:#64748b;border:1px solid #e2e8f0;border-radius:99px;padding:.15rem .55rem;font-weight:600">${counts.courier} courier parcel</span>` : ''}
+          <span style="flex:1"></span>
+          <strong id="resolveProgress" style="color:#16a34a">0 of ${ordered.length} resolved</strong>
         </div>
-        <div style="display:flex;gap:.6rem">
-          <button class="btn-primary" id="resolveStoresConfirmBtn" style="flex:1">✓ Confirm &amp; Learn</button>
-          <button class="btn-secondary" id="resolveStoresCancelBtn" style="flex:1">Cancel</button>
+        ${counts.courier ? `
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #94a3b8;border-radius:4px;padding:.5rem .7rem;font-size:11.5px;color:#475569;margin-bottom:.6rem">
+          <strong>${counts.courier} of these look like courier tracking numbers</strong> (SPX / Shopee / Lazada), not shops —
+          the buyer's address sits with the courier, who collects these parcels. They usually don't need
+          a postal code or your own driver at all. Leave them unticked and skip.
+        </div>` : ''}
+        <div style="display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin-bottom:.6rem">
+          <label style="display:flex;align-items:center;gap:.3rem;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="resolveSelectAll" /> Select all
+          </label>
+          ${counts.high ? `<button class="btn-secondary btn-sm" id="resolveSelectHigh">Select ${counts.high} likely match${counts.high === 1 ? '' : 'es'}</button>` : ''}
+          <span style="flex:1"></span>
+          <button class="btn-primary btn-sm" id="resolveApplySelected">✓ Apply Selected (<span id="resolveSelCount">0</span>)</button>
+        </div>
+        <div id="resolveRows" style="display:grid;gap:.5rem;overflow-y:auto;flex:1;padding:.1rem">
+          ${ordered.map(it => {
+            const m = TIER_META[it._tier];
+            const canTick = it._tier !== 'courier';
+            return `
+            <div class="resolve-row" data-idx="${it._idx}" data-tier="${it._tier}"
+                 style="border:1px solid ${m.border};background:${m.bg};border-radius:6px;padding:.6rem .7rem">
+              <div style="display:flex;align-items:flex-start;gap:.5rem">
+                <input type="checkbox" class="resolve-tick" data-idx="${it._idx}" ${canTick ? '' : 'disabled'} style="margin-top:.2rem" />
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+                    <span style="font-weight:600;font-size:13px;word-break:break-all">"${esc(it.clientName)}"</span>
+                    <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:${m.color};border:1px solid ${m.border};border-radius:3px;padding:.05rem .35rem">${m.label}</span>
+                  </div>
+                  <div class="resolve-body" data-idx="${it._idx}" style="margin-top:.45rem">
+                    ${it.suggestions.length ? `
+                      <select class="resolve-pick" data-idx="${it._idx}" style="width:100%;padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;background:#fff">
+                        ${it.suggestions.map((sg, si) => `<option value="${esc(sg.name)}" ${si === 0 ? 'selected' : ''}>${sg.score}% — ${esc(sg.name)}${sg.chain ? ` (${esc(sg.chain)})` : ''}${sg.address ? ` — ${esc(sg.address)}` : ''} — 📍 ${esc(sg.zip)}</option>`).join('')}
+                        <option value="__new__">➕ None of these — key in this store's details</option>
+                        <option value="">— skip for now —</option>
+                      </select>
+                      <div class="resolve-match-info" data-idx="${it._idx}" style="margin-top:.3rem;font-size:11px;color:#16a34a"></div>` :
+                      `<div class="hint" style="font-size:11.5px;color:${m.color};margin-bottom:.35rem">${it._tier === 'courier'
+                        ? 'Looks like a courier tracking number — skip unless your own driver really is delivering this one.'
+                        : 'No match in the Address Book — key in the store details to add it:'}</div>`}
+                    <div class="resolve-new-store ${it.suggestions.length ? 'hidden' : ''}" data-idx="${it._idx}" style="margin-top:.45rem;display:grid;grid-template-columns:1fr 1fr;gap:.35rem">
+                      <input class="rns-code" placeholder="Store code (optional)" style="padding:.4rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                      <input class="rns-zip" placeholder="Postal code * (6 digits)" maxlength="6" inputmode="numeric" style="padding:.4rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                      <input class="rns-address" placeholder="Address" style="grid-column:1/-1;padding:.4rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                      <input class="rns-phone" placeholder="Phone (optional)" style="grid-column:1/-1;padding:.4rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px" />
+                    </div>
+                  </div>
+                </div>
+                <button class="btn-primary btn-sm resolve-apply-one" data-idx="${it._idx}" style="flex-shrink:0">✓ Apply</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="display:flex;gap:.6rem;margin-top:.8rem">
+          <button class="btn-secondary" id="resolveStoresCancelBtn" style="flex:1">Done</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
-    modal.querySelector('#resolveStoresCloseBtn').addEventListener('click', () => modal.remove());
-    modal.querySelector('#resolveStoresCancelBtn').addEventListener('click', () => modal.remove());
-    // "None of these" reveals the key-in fields; the green line under each
-    // dropdown displays the MATCHED ADDRESS the job will be pointed at.
+
+    let resolvedCount = 0, totalFixed = 0, learnedCount = 0, addedCount = 0;
+    const byIdx = i => items.find(x => x._idx === i);
+
+    const close = async () => {
+      modal.remove();
+      if (resolvedCount) {
+        await renderTransportTab();
+        if (!document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
+      }
+    };
+    modal.querySelector('#resolveStoresCloseBtn').addEventListener('click', close);
+    modal.querySelector('#resolveStoresCancelBtn').addEventListener('click', close);
+
+    const updateSelCount = () => {
+      const n = modal.querySelectorAll('.resolve-tick:checked').length;
+      // Null-guarded: the counter lives INSIDE the Apply-Selected button, and
+      // that button's label is swapped to "Applying…" for the duration of a
+      // bulk run — which removes this span while applyRow() is still calling
+      // back into here for each row.
+      const el = modal.querySelector('#resolveSelCount');
+      if (el) el.textContent = n;
+    };
+    const updateProgress = () => {
+      modal.querySelector('#resolveProgress').textContent = `${resolvedCount} of ${ordered.length} resolved`;
+    };
+
+    // Green line under each dropdown shows the ADDRESS the job will point at
     const updateMatchInfo = (sel) => {
-      const it = items[parseInt(sel.dataset.idx)];
+      const it = byIdx(parseInt(sel.dataset.idx));
       const info = modal.querySelector(`.resolve-match-info[data-idx="${sel.dataset.idx}"]`);
-      if (!info) return;
+      if (!info || !it) return;
       const sg = it.suggestions.find(x => x.name === sel.value);
       info.textContent = sg
         ? `→ will deliver to: ${[sg.chain, sg.name].filter(Boolean).join(' ')}${sg.address ? ', ' + sg.address : ''}, S${sg.zip}`
@@ -4558,65 +4653,110 @@
         updateMatchInfo(sel);
       });
     });
-    modal.querySelector('#resolveStoresConfirmBtn').addEventListener('click', async () => {
-      // Validate any keyed-in stores first — postal is mandatory there
-      const newForms = [...modal.querySelectorAll('.resolve-new-store:not(.hidden)')];
-      for (const f of newForms) {
-        const zip = f.querySelector('.rns-zip').value.trim();
+
+    modal.querySelectorAll('.resolve-tick').forEach(cb => cb.addEventListener('change', updateSelCount));
+    modal.querySelector('#resolveSelectAll').addEventListener('change', (e) => {
+      modal.querySelectorAll('.resolve-tick:not(:disabled)').forEach(cb => {
+        if (!cb.closest('.resolve-row').dataset.done) cb.checked = e.target.checked;
+      });
+      updateSelCount();
+    });
+    modal.querySelector('#resolveSelectHigh')?.addEventListener('click', () => {
+      modal.querySelectorAll('.resolve-row[data-tier="high"] .resolve-tick').forEach(cb => {
+        if (!cb.closest('.resolve-row').dataset.done) cb.checked = true;
+      });
+      updateSelCount();
+    });
+
+    // Applies ONE row. Returns null when the row can't be applied yet (bad or
+    // missing postal on a keyed-in store) so bulk-apply can report it rather
+    // than silently skipping.
+    async function applyRow(idx, { silent = false } = {}) {
+      const row = modal.querySelector(`.resolve-row[data-idx="${idx}"]`);
+      const it  = byIdx(idx);
+      if (!row || !it || row.dataset.done) return null;
+      const sel  = row.querySelector('.resolve-pick');
+      const form = row.querySelector('.resolve-new-store');
+      const keyingIn = !sel || sel.value === '__new__';
+
+      let ok = false, fixed = 0, err = null;
+      if (keyingIn) {
+        const zip = form.querySelector('.rns-zip').value.trim();
         if (!/^\d{6}$/.test(zip)) {
-          alert(`"${items[parseInt(f.dataset.idx)].clientName}": enter a valid 6-digit postal code (or switch that row back to skip).`);
-          f.querySelector('.rns-zip').focus();
-          return;
+          err = 'needs a valid 6-digit postal code';
+          if (!silent) { alert(`"${it.clientName}": enter a valid 6-digit postal code.`); form.querySelector('.rns-zip').focus(); }
+          return { ok: false, err };
         }
-      }
-
-      const btn = modal.querySelector('#resolveStoresConfirmBtn');
-      btn.disabled = true; btn.textContent = 'Saving...';
-      let learned = 0, added = 0, fixed = 0;
-
-      // Fuzzy confirmations → learn as aliases
-      for (const sel of modal.querySelectorAll('.resolve-pick')) {
-        const target = sel.value;
-        if (!target || target === '__new__') continue;
-        const it = items[parseInt(sel.dataset.idx)];
-        try {
-          const r = await fetch('/api/address-book/learn-alias', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ alias: it.clientName, targetName: target }),
-          });
-          const d = await r.json();
-          if (r.ok) { learned++; fixed += d.jobsFixed || 0; }
-        } catch {}
-      }
-
-      // Keyed-in stores → brand-new Address Book entries (name = the exact
-      // spelling the orders use, so they resolve immediately and forever)
-      for (const f of newForms) {
-        const it = items[parseInt(f.dataset.idx)];
         try {
           const r = await fetch('/api/address-book', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: it.clientName,
-              code: f.querySelector('.rns-code').value.trim(),
-              address: f.querySelector('.rns-address').value.trim(),
-              zip: f.querySelector('.rns-zip').value.trim(),
-              phone: f.querySelector('.rns-phone').value.trim(),
+              code: form.querySelector('.rns-code').value.trim(),
+              address: form.querySelector('.rns-address').value.trim(),
+              zip,
+              phone: form.querySelector('.rns-phone').value.trim(),
             }),
           });
           const d = await r.json();
-          if (r.ok) { added++; fixed += d.jobsFixed || 0; }
-        } catch {}
+          if (r.ok) { ok = true; fixed = d.jobsFixed || 0; addedCount++; }
+          else err = d.error || 'save failed';
+        } catch (e) { err = e.message; }
+      } else {
+        if (!sel.value) { err = 'skipped'; return { ok: false, err }; }
+        try {
+          const r = await fetch('/api/address-book/learn-alias', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ alias: it.clientName, targetName: sel.value }),
+          });
+          const d = await r.json();
+          if (r.ok) { ok = true; fixed = d.jobsFixed || 0; learnedCount++; }
+          else err = d.error || 'save failed';
+        } catch (e) { err = e.message; }
       }
 
-      modal.remove();
-      await renderTransportTab();
-      // If the planner is open, re-plan so the newly-fixed jobs join the routes
-      if (!document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
-      const parts = [];
-      if (learned) parts.push(`${learned} spelling(s) learned`);
-      if (added) parts.push(`${added} new store(s) added`);
-      alert(`✓ ${parts.join(', ') || 'Nothing changed'} — ${fixed} job(s) now have postal codes.\nFuture uploads with these names resolve automatically.`);
+      if (ok) {
+        resolvedCount++; totalFixed += fixed;
+        row.dataset.done = '1';
+        row.style.background = '#f0fdf4';
+        row.style.borderColor = '#bbf7d0';
+        row.style.opacity = '.75';
+        row.querySelector('.resolve-body').innerHTML =
+          `<div style="font-size:11.5px;color:#16a34a;font-weight:600">✓ Resolved${fixed ? ` — ${fixed} job(s) now have a postal code` : ''}</div>`;
+        const tick = row.querySelector('.resolve-tick');
+        if (tick) { tick.checked = false; tick.disabled = true; }
+        row.querySelector('.resolve-apply-one')?.remove();
+        updateProgress(); updateSelCount();
+      } else if (!silent) {
+        alert(`"${it.clientName}": ${err || 'could not be saved'}`);
+      }
+      return { ok, err };
+    }
+
+    modal.querySelectorAll('.resolve-apply-one').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true; btn.textContent = '…';
+        const res = await applyRow(parseInt(btn.dataset.idx));
+        if (res && !res.ok) { btn.disabled = false; btn.textContent = '✓ Apply'; }
+      });
+    });
+
+    modal.querySelector('#resolveApplySelected').addEventListener('click', async () => {
+      const ticked = [...modal.querySelectorAll('.resolve-tick:checked')].map(cb => parseInt(cb.dataset.idx));
+      if (!ticked.length) { alert('Tick the rows you want to apply first.'); return; }
+      const btn = modal.querySelector('#resolveApplySelected');
+      btn.disabled = true; btn.textContent = 'Applying…';
+      const failed = [];
+      for (const idx of ticked) {
+        const res = await applyRow(idx, { silent: true });
+        if (res && !res.ok) failed.push(`${byIdx(idx).clientName} — ${res.err}`);
+      }
+      btn.disabled = false; btn.innerHTML = '✓ Apply Selected (<span id="resolveSelCount">0</span>)';
+      updateSelCount();
+      modal.querySelector('#resolveSelectAll').checked = false;
+      if (failed.length) {
+        alert(`${ticked.length - failed.length} applied.\n\nStill needs attention:\n• ${failed.slice(0, 10).join('\n• ')}`);
+      }
     });
   }
 
