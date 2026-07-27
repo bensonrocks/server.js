@@ -1194,9 +1194,10 @@
         : '';
       const pendingDeletePill = ord.pending_delete ? `<span class="pill-pending-delete" title="Pending admin approval for deletion">&#128465; Pending Delete</span>` : '';
       const nItems = (ord.lines || []).length;
-      const wbState = ord.has_waybill_pdf
-        ? `<span class="ot-wb-ok" title="Waybill page matched — click Waybill in Actions to download">&#128196;&#10003;</span>`
-        : `<span class="ot-wb-none" title="No waybill page matched to this order">&#9888;</span>`;
+      const hasLabel = ord.has_waybill_pdf || ord.has_order_label;
+      const wbState = hasLabel
+        ? `<span class="ot-wb-ok" title="Waybill/label matched — download from Actions">&#128196;&#10003;</span>`
+        : `<span class="ot-wb-none" title="No waybill or label matched to this order">&#9888;</span>`;
       const dateVal = isDone ? (ord.endTime || ord.uploaded_at || ord.date) : (ord.date || ord.uploaded_at);
       return `
         <tr class="ot-row st-${ord.scan_status}${ord.pending_delete ? ' pending-delete' : ''}" data-order="${esc(ord.order_number)}">
@@ -1214,7 +1215,8 @@
             ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
             ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download completion slip">&#128196; Slip</a>` : ''}
             ${ord.has_waybill_pdf && ord.batchId ? `<a class="btn-waybill-pdf" data-auth-dl="/api/waybill-pdf/${esc(ord.batchId)}/${esc(ord.order_number)}?dl=1" data-auth-dl-name="${esc(ord.order_number)}_waybill.pdf" title="Download matched waybill">&#8681; Waybill</a>` : ''}
-            ${isDone && !ord.has_waybill_pdf ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438;</button>` : ''}
+            ${!ord.has_waybill_pdf && ord.has_order_label ? `<a class="btn-waybill-pdf" data-auth-dl="/api/order-label/${encodeURIComponent(ord.order_number)}/pdf?dl=1" data-auth-dl-name="${esc(ord.order_number)}_label.pdf" title="Download matched shipping label">&#8681; Label</a>` : ''}
+            ${isDone && !hasLabel ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint IDEALSCAN label">&#128438;</button>` : ''}
             ${kfBtn}
           </td>
         </tr>`;

@@ -117,6 +117,11 @@ const DATA_DIR    = process.env.DATA_DIR
   || path.join(__dirname, 'data');
 const WMS_DIR     = path.join(DATA_DIR, 'wms');
 const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
+// Split shipping-label pages matched to orders by the other production line's
+// Labels module — db.orderLabels[orderNumber] = { importId, pageFile, … } with
+// the page PDFs under label_imports/<importId>/. Read-only compatibility so
+// historical matches stay visible and downloadable here.
+const LABEL_IMPORT_DIR = path.join(DATA_DIR, 'label_imports');
 // COMPATIBILITY — the other production line migrates the flat db.json into
 // DATA_DIR/tenants/default/db.json (renaming the flat file to
 // .migrated-backup). On a shared volume, use the tenant-store copy whenever
@@ -438,6 +443,7 @@ function globalOrdersWithState() {
   const db   = readDb();
   const seen = new Set();
   const out  = [];
+  const orderLabels = db.orderLabels || {};
   for (const batch of db.batches) {
     const states = batch.orderStates || {};
     for (const ord of (batch.orders || [])) {
@@ -460,6 +466,7 @@ function globalOrdersWithState() {
         client_name:      batch.client_name      || '',
         uploaded_at:      batch.uploaded_at      || null,
         has_waybill_pdf:  fs.existsSync(waybillPath),
+        has_order_label:  !!orderLabels[ord.order_number],
       });
     }
   }
@@ -1072,6 +1079,21 @@ app.get('/api/waybill-pdf/:batchId/:orderNumber', (req, res) => {
   const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${disposition}; filename="${orderNumber}_waybill.pdf"`);
+  fs.createReadStream(filePath).pipe(res);
+});
+
+// Serve a shipping-label page matched by the other line's Labels module
+// (db.orderLabels + label_imports/<importId>/<pageFile> on the shared volume).
+app.get('/api/order-label/:orderNumber/pdf', (req, res) => {
+  const { orderNumber } = req.params;
+  const db       = readDb();
+  const labelRef = (db.orderLabels || {})[orderNumber];
+  if (!labelRef) return res.status(404).json({ error: 'No label matched to this order' });
+  const filePath = path.join(LABEL_IMPORT_DIR, String(labelRef.importId || ''), String(labelRef.pageFile || ''));
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Label file missing' });
+  const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${orderNumber}_label.pdf"`);
   fs.createReadStream(filePath).pipe(res);
 });
 

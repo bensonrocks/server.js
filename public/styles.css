@@ -1890,5 +1890,11 @@ body.ls-open { overflow: hidden; }
   }
   header .log-access-link:hover { background: #334155; color: #fff; }
   main, .app-footer { margin-left: 232px; }
+  /* Full-screen overlays were laid out below the old TOP bar (top: var(--header-h)).
+     With the header now a left rail, pin them to the top and start them right
+     of the sidebar so the rail stays visible and no page content peeks through. */
+  .scan-overlay, .log-overlay { top: 0; left: 232px; }
+  .admin-nav { top: 0; }
+  .phase-items { height: calc(100vh - var(--bottom-nav-h)); }
 }
 /* On phones/tablets the old top-bar behaviour remains (sidebar styles scoped to ≥901px) */
