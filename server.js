@@ -1854,7 +1854,7 @@ function batchWaybillSet(batchId) {
 }
 function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 
-function globalOrdersWithState() {
+function globalOrdersWithState(keep) {
   const db          = readDb();
   const orderLabels = db.orderLabels || {};
   // Orders currently inside a LIVE wave (not yet completed/cancelled) — the
@@ -1885,6 +1885,16 @@ function globalOrdersWithState() {
       if (seen.has(ord.order_number)) continue; // newest batch wins
       seen.add(ord.order_number);
       const state       = states[ord.order_number] || { status: 'pending', scanned: {} };
+      // CHEAP PRE-FILTER: callers that only want a slice (e.g. the Orders tab's
+      // date range) pass `keep` so we skip the expensive per-line enrichment and
+      // object spreads for orders that would be discarded anyway. Building all
+      // orders to return ~20 of them cost seconds on a large live window.
+      if (keep && !keep({
+        order_number: ord.order_number,
+        scan_status:  state.status || 'pending',
+        endTime:      state.endTime || null,
+        uploadedAt:   batch.uploaded_at,
+      })) continue;
       const enrichedLines = (ord.lines || []).map(l => {
         const stored = l.description || '';
         // Ignore stored description if it equals the SKU (legacy data bug)
@@ -4082,7 +4092,8 @@ const AUTH_PUBLIC = new Set([
   '/api/auth/login',
   '/api/auth/logout',
   '/api/stats',
-  '/api/public/orders',
+  // '/api/public/orders' REMOVED from the public list — it leaked every order's
+  // customer PII to unauthenticated callers. It now requires auth (see below).
   '/api/public/config',
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
@@ -5044,7 +5055,34 @@ app.get('/api/stats', (_req, res) => {
 // orders on completion date.
 app.get('/api/orders', (req, res) => {
   const { range, from, to } = req.query;
-  let orders = globalOrdersWithState();
+  // Build the range predicate FIRST and hand it to globalOrdersWithState so
+  // out-of-window orders are skipped before enrichment (the Orders tab asks for
+  // one day; enriching a full 12-month window to throw it away cost seconds).
+  let keep = null;
+  if (range && range !== 'all') {
+    // SGT calendar days — see /api/stats note; UTC slicing shifted anything
+    // before 08:00 SGT onto the previous day.
+    const dayOf    = v => v ? sgDateStr(new Date(v)) : '';
+    const todayStr = sgDateStr();
+    const yestStr  = sgDateStr(new Date(Date.now() - 86400000));
+    const weekStr  = sgDateStr(new Date(Date.now() - 6 * 86400000));
+    keep = o => {
+      // Unfinished work is NEVER hidden by the date window: the Active list
+      // always shows today's orders PLUS the pending/in-progress balance
+      // carried over from earlier days — so it tallies with the sidebar
+      // badge. The date filter effectively applies to settled orders
+      // (done/unprocessed) only.
+      if (o.scan_status === 'pending' || o.scan_status === 'processing') return true;
+      const d = dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
+      if (!d) return true; // never hide records with no usable date
+      if (range === 'today')     return d === todayStr;
+      if (range === 'yesterday') return d === yestStr;
+      if (range === 'week')      return d >= weekStr;
+      if (range === 'range')     return (!from || d >= from) && (!to || d <= to);
+      return true;
+    };
+  }
+  let orders = globalOrdersWithState(keep);
   // Cross-reference: show which Transport job (TR-...) each order is linked
   // to. Linked by order number → referenceId/clientId, the same match the
   // scan-completion confirm uses. Purely informational on the order row.
@@ -5062,31 +5100,7 @@ app.get('/api/orders', (req, res) => {
       });
     }
   }
-  if (range && range !== 'all') {
-    // SGT calendar days — see /api/stats note; UTC slicing shifted anything
-    // before 08:00 SGT onto the previous day.
-    const dayOf    = v => v ? sgDateStr(new Date(v)) : '';
-    const todayStr = sgDateStr();
-    const yestStr  = sgDateStr(new Date(Date.now() - 86400000));
-    const weekStr  = sgDateStr(new Date(Date.now() - 6 * 86400000));
-    const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
-    orders = orders.filter(o => {
-      // Unfinished work is NEVER hidden by the date window: the Active list
-      // always shows today's orders PLUS the pending/in-progress balance
-      // carried over from earlier days — so it tallies with the sidebar
-      // badge. The date filter effectively applies to settled orders
-      // (done/unprocessed) only.
-      if (o.scan_status === 'pending' || o.scan_status === 'processing') return true;
-      const d = orderDay(o);
-      if (!d) return true; // never hide records with no usable date
-      if (range === 'today')     return d === todayStr;
-      if (range === 'yesterday') return d === yestStr;
-      if (range === 'week')     return d >= weekStr;
-      if (range === 'range')    return (!from || d >= from) && (!to || d <= to);
-      return true;
-    });
-  }
-  res.json(orders);
+  res.json(orders); // range already applied via the pre-enrichment `keep` filter
 });
 
 // Completed-tab search across ARCHIVED orders (older than 60 days)
@@ -7700,8 +7714,12 @@ app.put('/api/profile/printer', requireAuth, (req, res) => {
 // ── Public stats (no auth needed) ──────────────────────────────────────────
 // /api/stats already has no auth — it's used on page load before login.
 
-// /api/public/orders — same as /api/orders, kept for backward compat
-app.get('/api/public/orders', (_req, res) => res.json(globalOrdersWithState()));
+// /api/public/orders — legacy alias of /api/orders. It is NO LONGER PUBLIC:
+// it returned every order with customer name, phone, delivery address, waybill
+// and client name to any unauthenticated caller (a PDPA/PII breach, and it was
+// referenced by nothing in the front-end). Kept only as an authenticated alias
+// so any old integration still works after adding a token.
+app.get('/api/public/orders', requireAuth, (_req, res) => res.json(globalOrdersWithState()));
 
 // Public: non-sensitive config (default recipient address only — no credentials)
 app.get('/api/public/config', (_req, res) => {
@@ -7971,11 +7989,19 @@ app.get('/api/master/backup', (req, res) => {
 // volume (last 14 kept) and emailed to the configured recipient. The manual
 // Download Backup button remains; this just removes the "remembering" part.
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+// PERF: toLocaleDateString/toLocaleString with a timeZone option builds a fresh
+// Intl formatter on EVERY call (~0.18ms each). sgDateStr is the day-bucketing
+// primitive for /api/stats, the /api/orders range filter, delivery history,
+// audit-log report buckets and the daily jobs — so on a large live window it was
+// costing >1.4s per 8k orders. Reusing one cached formatter is ~60x faster and
+// produces byte-identical 'YYYY-MM-DD' output.
+const _SG_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit' });
+const _SG_HOUR_FMT = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hour12: false });
 function sgDateStr(d = new Date()) {
-  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }); // YYYY-MM-DD
+  return _SG_DATE_FMT.format(d); // YYYY-MM-DD
 }
 function sgHour(d = new Date()) {
-  return parseInt(d.toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hour12: false }), 10);
+  return parseInt(_SG_HOUR_FMT.format(d), 10);
 }
 async function runNightlyBackup(reason) {
   const day  = sgDateStr();
