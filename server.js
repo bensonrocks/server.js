@@ -3431,6 +3431,38 @@ app.get('/api/label-imports/:id', requireAuth, (req, res) => {
   res.json(imp);
 });
 
+function csvCell(v) {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+// OPTIONAL, on-demand review export — matching itself always runs off the
+// same page.extracted fields this reads (buildLabelMatchIndex/matchLabelPage
+// never wait for or depend on this file existing). Lets an admin see exactly
+// what OCR read off every page — tracking/order number, match outcome — in
+// one glance instead of clicking through pages one at a time in Review,
+// which is what made a genuine one-page-in-eighty-five anomaly slow to spot.
+app.get('/api/label-imports/:id/export.csv', requireAuth, (req, res) => {
+  const db  = readDb();
+  const imp = (db.labelImports || []).find(i => i.id === req.params.id);
+  if (!imp) return res.status(404).json({ error: 'Import not found' });
+
+  const headers = ['Page', 'Match Status', 'Match Method', 'Matched Order', 'Tracking Number', 'Order Number', 'Recipient', 'Sender', 'Address', 'Postal Code', 'Read By OCR'];
+  const rows = imp.pages.map(p => {
+    const f = p.extracted || {};
+    return [
+      p.pageIndex + 1, p.matchStatus || '', p.matchMethod || '', p.matchedOrderNumber || '',
+      f.trackingNumber || '', f.orderNumber || '', f.recipientName || '', f.senderName || '',
+      f.address || '', f.postalCode || '', p.ocr ? 'yes' : 'no',
+    ];
+  });
+  const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${imp.filename.replace(/\.pdf$/i, '')}_ocr_results.csv"`);
+  res.send('﻿' + csv); // BOM so Excel opens UTF-8 recipient names/addresses correctly
+});
+
 // Deletes a whole label-PDF import: only removes the label attachment
 // references (db.orderLabels) and the stored page PDFs — never touches
 // batches, orders, or scan state, so it's safe regardless of order status.

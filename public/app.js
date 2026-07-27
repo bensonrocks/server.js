@@ -10840,7 +10840,11 @@
         errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
         unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
         matched   ? `<button class="btn-secondary btn-sm" id="lriRematchAllBtn" style="margin-left:.5rem">&#8635; Rematch All</button>` : '',
+        `<button class="btn-secondary btn-sm" id="lriExportCsvBtn" style="margin-left:.5rem">&#11015; Export CSV</button>`,
       ].filter(Boolean).join('');
+
+      document.getElementById('lriExportCsvBtn')?.addEventListener('click', () =>
+        authDownload(`/api/label-imports/${importId}/export.csv`, `${imp.filename.replace(/\.pdf$/i, '')}_ocr_results.csv`));
 
       document.getElementById('lriAutoMatchBtn')?.addEventListener('click', async () => {
         const btn = document.getElementById('lriAutoMatchBtn');
