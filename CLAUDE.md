@@ -944,6 +944,27 @@ original layout with the separate full-screen camera overlay
 - The ADD button submits the typed input through the same
   `_flushScanBuf()` path (not a separate code path).
 
+### `e.key` is not guaranteed — normalise it before reading `.length`
+
+A live crash from the floor: `TypeError: Cannot read properties of undefined
+(reading 'length')` at `_globalScanKeydown`. Android soft keyboards, some
+scanner keyboard apps and IME composition all deliver a `keydown` with NO `key`
+property, and `e.key.length === 1` threw on it — which popped the full-screen
+tech-error dialog at a packer mid-scan.
+
+The handler now normalises ONCE at the top
+(`const key = typeof e.key === 'string' ? e.key : ''`) and uses `key`
+everywhere, so a keyless event is simply nothing to buffer. For a real
+KeyboardEvent `key === e.key`, so there is no behavioural change to scanning.
+It also stops the literal string "undefined" being appended to `_scanBuf`.
+
+Proven both ways with the scan overlay genuinely OPEN (the capture is only
+attached then — an earlier version of the test silently proved nothing because
+the listener was not even installed): the pre-fix code throws exactly the
+reported TypeError and shows the dialog; the fixed code does neither, real
+keystrokes still buffer ("5603"), and a keyless event fired MID-scan leaves the
+scan intact ("56" + stray + "03" = "5603").
+
 ## Scan buffer — Enter handler (public/app.js `_globalScanKeydown`/`_scanBuf`)
 
 `_scanBuf` is mirrored from `#itemScanInput`'s value on every keystroke while

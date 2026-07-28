@@ -7907,6 +7907,13 @@
       return;
     }
 
+    // `e.key` is NOT guaranteed. Android soft keyboards, some scanner keyboard
+    // apps and IME composition all deliver keydown events with no `key` at
+    // all, and reading `.length` on undefined threw here — which popped the
+    // full-screen error dialog at a packer mid-scan. Normalise once and treat
+    // a keyless event as nothing to buffer.
+    const key = typeof e.key === 'string' ? e.key : '';
+
     const scanInputId = _scanInputId();
     const ae    = document.activeElement;
     const tag   = ae?.tagName;
@@ -7917,7 +7924,7 @@
       if (ae.id !== scanInputId && !isQty) return;
     }
 
-    if (e.key === 'Enter') {
+    if (key === 'Enter') {
       if (isQty) {
         if (_qtyBurst?.scanner) { e.preventDefault(); _qtyBurstToScan(); }
         // else: manual qty entry — let Enter commit via the change event
@@ -7937,12 +7944,12 @@
     }
 
     // Qty field: watch typing speed to tell gun from human
-    if (isQty && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (isQty && key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       const now = Date.now();
       if (!_qtyBurst || _qtyBurst.el !== ae || now - _qtyBurst.last > QTY_BURST_GAP_MS) {
         _qtyBurst = { el: ae, chars: [], last: 0, base: ae.value, scanner: false };
       }
-      _qtyBurst.chars.push(e.key);
+      _qtyBurst.chars.push(key);
       _qtyBurst.last = now;
       if (_qtyBurst.scanner) {
         e.preventDefault();
@@ -7959,12 +7966,13 @@
       return;
     }
 
-    // Printable characters only — ignore modifier-only, arrow, Escape, Tab, etc.
-    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    // Printable characters only — ignore modifier-only, arrow, Escape, Tab and
+    // any event that arrived without a usable key at all.
+    if (key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // If focus is NOT on the scan input, redirect the character there
       if (document.activeElement?.id !== scanInputId) {
         document.getElementById(scanInputId)?.focus();
-        _scanBuf += e.key;
+        _scanBuf += key;
         // Keep the visible input in sync so user can see what the scanner typed
         const inp = document.getElementById(scanInputId);
         if (inp) inp.value = _scanBuf;
