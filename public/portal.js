@@ -552,16 +552,24 @@
   // nothing to judge yet.
   function slaPill(sla) {
     if (!sla) return '';
+    // What the 2-working-day clock ran from, so a verdict is never a mystery.
+    const from = sla.basis === 'arrival' ? `actual arrival ${fmtDay(sla.basisDay)}`
+               : sla.basis === 'eta'     ? `expected arrival ${fmtDay(sla.basisDay)}`
+               :                           `submission ${fmtDay(sla.basisDay)}`;
     if (sla.status === 'closed') {
       const d = sla.workingDaysEarly;
       const detail = d > 0 ? `${d} day${d === 1 ? '' : 's'} early` : d === 0 ? 'on time' : `${-d} day${d === -1 ? '' : 's'} late`;
+      const tip = `2 working days from ${from} → due ${sla.dueDay}; received ${sla.doneDay}`;
       return sla.met
-        ? `<span class="pill p-sla-met" title="Due ${sla.dueDay}, received ${sla.doneDay}">&#10003; SLA met · ${detail}</span>`
-        : `<span class="pill p-sla-miss" title="Due ${sla.dueDay}, received ${sla.doneDay}">SLA missed · ${detail}</span>`;
+        ? `<span class="pill p-sla-met" title="${esc(tip)}">&#10003; SLA met · ${detail}</span>`
+        : `<span class="pill p-sla-miss" title="${esc(tip)}">SLA missed · ${detail}</span>`;
     }
     const n = sla.workingDaysLeft;
-    if (sla.overdue) return `<span class="pill p-overdue" title="Was due ${sla.dueDay}">Overdue by ${-n} working day${n === -1 ? '' : 's'}</span>`;
-    return `<span class="pill p-due">Due ${fmtDay(sla.dueDay)}${n === 0 ? ' · today' : ` · in ${n} working day${n === 1 ? '' : 's'}`}</span>`;
+    const tip = `2 working days from ${from}`;
+    // Before the goods are even due to land there is nothing to be late for.
+    if (sla.notYetDue) return `<span class="pill p-due" title="${esc(tip)}">Awaiting arrival · due ${fmtDay(sla.dueDay)}</span>`;
+    if (sla.overdue) return `<span class="pill p-overdue" title="${esc(tip)} — was due ${sla.dueDay}">Overdue by ${-n} working day${n === -1 ? '' : 's'}</span>`;
+    return `<span class="pill p-due" title="${esc(tip)}">Due ${fmtDay(sla.dueDay)}${n === 0 ? ' · today' : ` · in ${n} working day${n === 1 ? '' : 's'}`}</span>`;
   }
 
   function renderInbound() {
@@ -672,7 +680,12 @@
       const d = await r.json();
       if (!r.ok) { asnMsg('err', esc(d.error || 'That file could not be read.')); return; }
       asnMsg('', `&#10003; ASN <b>${esc(d.serial)}</b> received — ${num(d.lines)} line(s), ${num(d.pieces)} pieces.`
-        + `<br>We aim to have it checked in by <b>${fmtDay(d.due)}</b>. You'll see the status update here.`);
+        + (d.due
+            ? `<br>Based on ${d.eta ? `an expected arrival of <b>${fmtDay(d.eta)}</b>` : 'today'}, `
+              + `we aim to have it checked in by <b>${fmtDay(d.due)}</b>.`
+              + (d.eta ? ' If it lands later, that target moves with it.' : '')
+            : '')
+        + `<br>You'll see the status update here.`);
       toggleAsnFields(false);
       loadAll();
     } catch (e) {

@@ -549,11 +549,26 @@ narrow: submitting an ASN, and setting their own aging threshold.
   GOTCHA fixed: `initPokes()` runs at script-parse time, before login, so a
   plain `setInterval` left the badge blank for a full minute after signing
   in — it now polls every 2s until a token exists, then settles to 60s.
-- **Inbound SLA — D+2 WORKING days** (`INBOUND_SLA_WORKING_DAYS`,
-  `addWorkingDays`, `workingDaysBetween`, `inboundSla`). Clock starts at
-  `asn_submitted_at`; the due day is **stamped** on the record
-  (`sla_due_day`) rather than recomputed, so changing the rule later cannot
-  retroactively move work already promised. Pills, per the user's spec:
+- **Inbound SLA — D+2 WORKING days from ARRIVAL, not submission**
+  (`INBOUND_SLA_WORKING_DAYS`, `addWorkingDays`, `workingDaysBetween`,
+  `inboundSlaBasis`, `inboundSla`). Per the user: *"expected inbound date + 2
+  working days is the SLA, subject to arrival date of actual inbound."*
+  `inboundSlaBasis()` picks what the clock runs from, in order:
+  1. **actual arrival** (`arrived_at`) when it is LATER than expected — we
+     cannot receive what has not turned up, so a late shipment moves the
+     promise with it;
+  2. **expected arrival** (`eta` on the ASN) — the normal case;
+  3. **submission date**, only when neither is known (nothing better exists,
+     and it is the tightest option so it never flatters us).
+  The asymmetry in (1) is deliberate: actual arrival can only push the due day
+  LATER. Goods arriving early do not shorten the promise, and our own slowness
+  starting a receipt can never excuse a miss, because `arrived_at` records when
+  the goods landed — set explicitly via `POST /api/inbound/:id/arrival` (which
+  can also correct the ETA), NEVER inferred from when we began scanning.
+  The due day is DERIVED, not stamped, so giving or correcting an ETA moves the
+  target honestly instead of leaving a stale date behind. `sla.basis` is
+  returned so both the portal and the office can say what the clock ran from,
+  and `sla.notYetDue` suppresses "overdue" before the goods are even expected. Pills, per the user's spec:
   **GREEN = met, BLUE = missed** (not red — deliberate). While open the pill
   shows the due date instead of a verdict; there is nothing to judge yet.
   `inboundSla()` returns null when there is no `asn_submitted_at` (office-

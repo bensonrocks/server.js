@@ -2775,21 +2775,52 @@ function workingDaysBetween(fromDay, toDay) {
 // inbound record. Returns null when the record carries no submission date
 // (i.e. it predates this feature or was keyed in by the office) — an SLA can
 // only be judged against a clock that actually started.
+// WHAT THE CLOCK STARTS FROM — the day the goods are due to be WITH US, not the
+// day the client told us about them. A client who sends an ASN three weeks
+// ahead must not burn their own service level waiting for their own shipment.
+//
+// Basis, in order:
+//   1. ACTUAL arrival, when it is later than the expected date — we cannot
+//      receive what has not turned up, so a shipment that arrives late moves
+//      the promise with it ("subject to actual arrival").
+//   2. EXPECTED arrival (the ETA on the ASN) — the normal case.
+//   3. Submission date, ONLY when neither is known. Stated rather than hidden:
+//      with no arrival information at all there is nothing better to measure
+//      from, and it is the tighter of the options so it never flatters us.
+//
+// Note the asymmetry, deliberately: actual arrival can only ever push the due
+// day LATER, never earlier. Goods that turn up early do not shorten the
+// promise, and — importantly — our own slowness in starting a receipt can
+// never be used to excuse a miss, because `arrived_at` records when the goods
+// landed, not when we got round to them.
+function inboundSlaBasis(rec) {
+  const eta = /^\d{4}-\d{2}-\d{2}$/.test(String(rec.eta || '')) ? rec.eta : null;
+  const arrived = rec.arrived_at ? sgDateStr(new Date(rec.arrived_at)) : null;
+  if (eta && arrived) {
+    return arrived > eta ? { day: arrived, source: 'arrival' } : { day: eta, source: 'eta' };
+  }
+  if (eta) return { day: eta, source: 'eta' };
+  if (arrived) return { day: arrived, source: 'arrival' };
+  if (rec.asn_submitted_at) return { day: sgDateStr(new Date(rec.asn_submitted_at)), source: 'submission' };
+  return null;
+}
 function inboundSla(rec) {
-  const startedAt = rec.asn_submitted_at || null;
-  if (!startedAt) return null;
-  const startDay = sgDateStr(new Date(startedAt));
-  const dueDay   = rec.sla_due_day || addWorkingDays(startDay, INBOUND_SLA_WORKING_DAYS);
-  const endTime  = rec.state?.endTime || null;
-  const today    = sgDateStr();
+  const basis = inboundSlaBasis(rec);
+  if (!basis) return null;
+  const dueDay  = addWorkingDays(basis.day, INBOUND_SLA_WORKING_DAYS);
+  const endTime = rec.state?.endTime || null;
+  const today   = sgDateStr();
+  const common  = { startDay: basis.day, basisDay: basis.day, basis: basis.source, dueDay };
   if (endTime) {
     const doneDay = sgDateStr(new Date(endTime));
     const diff = workingDaysBetween(doneDay, dueDay);   // >0 = finished early
-    return { startDay, dueDay, doneDay, met: doneDay <= dueDay, workingDaysEarly: diff, status: 'closed' };
+    return { ...common, doneDay, met: doneDay <= dueDay, workingDaysEarly: diff, status: 'closed' };
   }
   const left = workingDaysBetween(today, dueDay);       // <0 = already overdue
-  return { startDay, dueDay, doneDay: null, met: null, workingDaysLeft: left,
-           overdue: left < 0, status: 'open' };
+  // Nothing is overdue before the goods are even due to arrive.
+  const notYetDue = today < basis.day;
+  return { ...common, doneDay: null, met: null, workingDaysLeft: left,
+           overdue: !notYetDue && left < 0, notYetDue, status: 'open' };
 }
 
 // ── Pokes — "there is new work for you" nudges for the office front end ──────
@@ -3255,7 +3286,9 @@ app.get('/api/portal/asn-template', requirePortalAuthMiddleware, (req, res) => {
     ['Notes'],
     ['• The same SKU may appear on several rows (for example one row per batch) — we add them up.'],
     ['• A blank barcode is fine. We can receive against the SKU alone.'],
-    [`• Our receiving service level is D+${INBOUND_SLA_WORKING_DAYS} working days from submission.`],
+    [`• Our receiving service level is D+${INBOUND_SLA_WORKING_DAYS} working days from the EXPECTED ARRIVAL date`],
+    ['  you give us — not from when you send this file. If the shipment lands later than expected,'],
+    ['  the target moves with it. Tell us the arrival date on the upload form.'],
     ['• Your portal shows the status of every submitted ASN and a printable receipt note once it is checked in.'],
   ]);
   notes['!cols'] = [{ wch: 16 }, { wch: 78 }];
@@ -3320,7 +3353,11 @@ app.post('/api/portal/asn', upload.single('file'), (req, res) => {
         // can never silently move the goalposts on work already promised.
         submitted_by_client: true,
         asn_submitted_at: now,
-        sla_due_day: addWorkingDays(submittedDay, INBOUND_SLA_WORKING_DAYS),
+        // No stamped due day: it is derived from the arrival basis (ETA, or
+        // actual arrival when that is later) by inboundSla(), so giving or
+        // correcting an ETA moves the promise honestly instead of leaving a
+        // stale submission-based date behind.
+        arrived_at: null,
         state:       { status: 'pending', scanned: {}, scanLog: [] },
       };
       db.inbound.unshift(rec);
@@ -3334,18 +3371,19 @@ app.post('/api/portal/asn', upload.single('file'), (req, res) => {
         recordId: rec.id,
         lines: lines.length,
         pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
-        due: rec.sla_due_day,
+        due: (inboundSla(rec) || {}).dueDay,
         eta: rec.eta,
       });
       writeDb(db);
       logAudit('portal_asn_submitted', {
         client: req.portalClient, serial: rec.serial, lines: lines.length,
         pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
-        filename: rec.filename, due: rec.sla_due_day,
+        filename: rec.filename, due: (inboundSla(rec) || {}).dueDay, eta: rec.eta || null,
       });
       res.json({ ok: true, serial: rec.serial, lines: lines.length,
                  pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
-                 due: rec.sla_due_day });
+                 due: (inboundSla(rec) || {}).dueDay, eta: rec.eta || null,
+                 slaBasis: (inboundSla(rec) || {}).basis });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }
@@ -7028,6 +7066,36 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+// Record when the goods ACTUALLY turned up, and/or correct the expected date.
+// This is what makes the service level fair in both directions: a shipment that
+// arrives later than the client said moves the promise with it, and our own
+// slowness in starting the receipt can never do the same — this records when
+// the goods landed, not when we got to them.
+app.post('/api/inbound/:id/arrival', express.json(), (req, res) => {
+  const db  = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Record not found' });
+  const day = d => (/^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) ? String(d) : null);
+  const arrived = day(req.body?.arrived_at);
+  const eta     = day(req.body?.eta);
+  if (req.body?.arrived_at !== undefined) {
+    if (req.body.arrived_at && !arrived) return res.status(400).json({ error: 'Arrival date must be YYYY-MM-DD.' });
+    rec.arrived_at = arrived;   // null clears it
+  }
+  if (req.body?.eta !== undefined) {
+    if (req.body.eta && !eta) return res.status(400).json({ error: 'Expected arrival must be YYYY-MM-DD.' });
+    rec.eta = eta;
+  }
+  writeDb(db);
+  const sla = inboundSla(rec);
+  logAudit('inbound_arrival_set', {
+    id: rec.id, serial: rec.serial || '', client: rec.client_name || '',
+    eta: rec.eta || null, arrived_at: rec.arrived_at || null,
+    slaBasis: sla && sla.basis, slaDue: sla && sla.dueDay, by: req.userId || '',
+  });
+  res.json({ ok: true, eta: rec.eta || null, arrived_at: rec.arrived_at || null, sla });
 });
 
 app.post('/api/inbound/return', (req, res) => {
