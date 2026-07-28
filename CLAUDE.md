@@ -715,6 +715,21 @@ Real inbound lists carry only `SKU Code *`, `Barcode (EAN/UPC) *`,
    `TOTALIZER-99` is untouched.
 3. **Quantities came through as 0** because the qty header did not match.
 
+DESCRIPTIONS ARE ALSO FILLED ON READ (`fillInboundDescriptions`), not only at
+upload: the receiving screen showed a blank Description column for a job whose
+item master was loaded AFTERWARDS — a completely ordinary order of events
+during onboarding — and upload-time enrichment alone can never recover from
+that. The read-time pass touches only lines still missing a description and
+loads each client's catalogue once per request. It also means jobs created
+before this feature existed heal themselves.
+
+`unmatched_lines` is returned per job and shown as an amber
+"⚠ N not in item master" pill on the receiving screen, so a blank description
+is always EXPLAINED. The usual cause is the master sitting under a different
+client name — `MAYER` and `Mayer(Mistral)` are genuinely different clients
+(case folding does not help here), so the item master must be loaded against
+the same client name the inbound job carries.
+
 `enrichInboundLines(lines, clientName)` is the STANDARD now, on both the office
 upload and the portal ASN: for every line it fills from that client's item
 master — SKU from barcode, barcode from SKU, and description from the product

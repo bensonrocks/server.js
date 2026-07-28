@@ -6223,6 +6223,11 @@
         ${job.serial ? `<span class="meta-pill">${esc(job.serial)}</span>` : ''}
         ${job.source_name ? `<span class="meta-pill">${esc(job.source_name)}</span>` : ''}
         ${job.client_name ? `<span class="meta-pill">${esc(job.client_name)}</span>` : ''}
+        ${job.unmatched_lines > 0
+          ? `<span class="meta-pill" style="background:#fffbeb;color:#92400e;border-color:#fde68a"
+               title="These SKUs are not in ${esc(job.client_name || 'this client')}'s item master, so we have no product name for them. Receiving still works — check the Product Master is loaded for THIS client name.">
+               &#9888; ${job.unmatched_lines} not in item master</span>`
+          : ''}
       </div>`;
     setInboundCondition('straight_to_inventory'); // condition buttons show for ALL types now
     updateInboundCartonBadge(job);

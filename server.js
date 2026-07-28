@@ -6807,6 +6807,44 @@ async function parseInboundFile(buffer, filename) {
 // master is left exactly as supplied and flagged `unknown_product` — an item
 // we have never been told about is still received (that is routine), it just
 // cannot be described.
+// Fill blank descriptions when a job is READ, not only when it was uploaded.
+// Upload-time enrichment alone leaves two very ordinary cases showing blanks
+// forever on the receiving screen:
+//   • the inbound list was uploaded BEFORE the client's item master (a normal
+//     order of events during onboarding);
+//   • the job predates the enrichment existing at all.
+// Only lines actually missing a description are touched, and the client's
+// catalogue is loaded ONCE per client per request rather than per line.
+// Returns how many lines could not be matched so the UI can say why.
+function fillInboundDescriptions(rec, cache) {
+  const lines = rec && rec.lines;
+  if (!Array.isArray(lines) || !lines.length) return 0;
+  const blank = lines.filter(l => !String(l.description || '').trim());
+  if (!blank.length) return 0;
+  const cid = invClientId(rec.client_name);
+  let cat = cache && cache.get(cid);
+  if (!cat) {
+    cat = { bySku: new Map(), byBc: new Map() };
+    try {
+      for (const r of inventory.getAll({ clientId: cid })) {
+        cat.bySku.set(String(r.sku).trim().toLowerCase(), r);
+        if (r.barcode) cat.byBc.set(String(r.barcode).trim().toLowerCase(), r);
+      }
+    } catch (_) { /* inventory down — leave descriptions blank rather than fail */ }
+    if (cache) cache.set(cid, cat);
+  }
+  let unmatched = 0;
+  for (const l of blank) {
+    const sku = String(l.sku || '').trim().toLowerCase();
+    const bc  = String(l.barcode || '').trim().toLowerCase();
+    const hit = cat.bySku.get(sku) || (bc && cat.byBc.get(bc)) || (sku && cat.byBc.get(sku));
+    if (!hit) { unmatched++; continue; }
+    if (hit.name) l.description = hit.name;
+    if (!l.barcode && hit.barcode) l.barcode = hit.barcode;
+  }
+  return unmatched;
+}
+
 function enrichInboundLines(lines, clientName) {
   const cid = invClientId(clientName);
   let matched = 0, unknown = 0;
@@ -6850,7 +6888,12 @@ app.post('/api/pokes/ack', express.json(), (req, res) => {
 
 app.get('/api/inbound', (req, res) => {
   const db = readDb();
+  // Descriptions are filled from the client's item master AT READ TIME, so a
+  // job uploaded before the master existed still shows product names. One
+  // catalogue load per client per request, shared via this cache.
+  const _catCache = new Map();
   const list = (db.inbound || []).map(rec => {
+    const unmatchedLines = fillInboundDescriptions(rec, _catCache);
     const state = rec.state || {};
     const expectedTotal = (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0);
     const scannedTotal  = Object.values(state.scanned || {}).reduce((s, q) => s + q, 0);
@@ -6874,6 +6917,9 @@ app.get('/api/inbound', (req, res) => {
       filename:          rec.filename || null,
       lines:             rec.lines || [],
       line_count:        (rec.lines || []).length,
+      // How many lines are not in this client's item master — the reason a
+      // description would still be blank on the receiving screen.
+      unmatched_lines:   unmatchedLines,
       expected_total:    expectedTotal,
       scanned_total:     scannedTotal,
       status:            state.status || 'pending',
