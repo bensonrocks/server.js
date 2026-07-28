@@ -717,10 +717,27 @@ Three layers, all case-insensitive now:
   (profile's if there is one, else the most common). Audit-logged as
   `client_names_normalised`; a no-op once everything agrees.
 
-NOT DONE, deliberately: inventory.db rows already written under a different
-`client_id` casing are NOT merged automatically — moving stock between client
-accounts on live data is destructive if wrong. If a client's stock looks split,
-merge it as a considered one-off.
+- **Inventory** — `inventory.mergeClientCasing(canonicalNames)` folds duplicate
+  stock accounts, called by `mergeInventoryClientCasing()` right after
+  `inventory.init()`. It must run THERE, not with the db.json pass at the top of
+  the file: `const inventory` is still in its temporal dead zone up there, so
+  the call would throw into a catch and be silently skipped (a trap this file
+  has hit twice — see `assertInventoryPath`).
+  - Quantities are **summed, never overwritten**, in ONE transaction, so a merge
+    cannot lose stock. `inventory` and `stock_by_location` sum on collision;
+    `bundles`/`serials` keep one row (a duplicate serial is the same physical
+    unit); everything else is a straight re-key.
+  - The winner is the spelling the REST OF THE APP uses, even when no inventory
+    row currently carries that exact casing. Getting this wrong is subtle and
+    was caught by the test: stock ended up filed under "ACME PTE LTD" while
+    orders said "Acme Pte Ltd", so `invClientId()` looked in the wrong account
+    and found nothing.
+  - Idempotent: a second run is a no-op.
+
+Verified clean-slate: 5 batches across 3 spellings of 2 clients folded to 2,
+their split stock merged (60+15=75, 30+12=42), no leftover accounts, and a
+focused unit test proving sum-not-overwrite, move, untouched-third-party,
+zero loss, preserved movement history and idempotency.
 
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 

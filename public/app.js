@@ -12245,7 +12245,13 @@
 
     function init() {
       // Populate the client suggestions from orders already in the app.
-      const names = [...new Set((loadedOrders || []).map(o => o.client_name).filter(Boolean))].sort();
+      // Dedupe case-insensitively so "BETIME" and "Betime" offer ONE suggestion.
+      const seenLc = new Map();
+      (loadedOrders || []).forEach(o => {
+        const n = String(o.client_name || '').trim();
+        if (n && !seenLc.has(n.toLowerCase())) seenLc.set(n.toLowerCase(), n);
+      });
+      const names = [...seenLc.values()].sort();
       const dl = $('invClientList');
       if (dl) dl.innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join('');
       // Show the function panels IMMEDIATELY — bin setup is global and works with

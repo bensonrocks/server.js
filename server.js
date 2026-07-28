@@ -1713,6 +1713,28 @@ try {
   if (_cnn) { writeDb(_cndb); console.log(`[IdealOne] Client names: folded ${_cnn} record(s) onto a single spelling`); }
 } catch (e) { console.error('[IdealOne] client name normalise failed:', e.message); }
 
+// The inventory store keys stock by the client NAME, so the same casing split
+// gave one client TWO stock accounts with half the stock invisible from each
+// side. Folding those needs the inventory module, which is required much later
+// in this file — calling it from up here would sit in its temporal dead zone
+// and be silently swallowed by a catch (a trap this file has hit before). So
+// it is a hoisted function, invoked right after `inventory.init()`.
+function mergeInventoryClientCasing() {
+  try {
+    const db = readDb();
+    const names = new Set();
+    for (const p of db.clientProfiles || []) if (p.client) names.add(String(p.client).trim());
+    for (const b of db.batches || []) if (b.client_name) names.add(String(b.client_name).trim());
+    for (const r of db.inbound || []) if (r.client_name) names.add(String(r.client_name).trim());
+    const m = inventory.mergeClientCasing([...names]);
+    if (m && m.merged && m.merged.length) {
+      console.log(`[IdealOne] Inventory: merged ${m.merged.length} duplicate client account(s) `
+        + `(${m.merged.map(j => `${j.loser} → ${j.winner}`).join(', ')}), ${m.moved} row(s) moved`);
+      logAudit('inventory_client_casing_merged', { merged: m.merged, rows: m.moved });
+    }
+  } catch (e) { console.error('[IdealOne] inventory client merge failed:', e.message); }
+}
+
 // One-off catch-up for backorders that outlived their orders before the
 // reconcile existed. Harmless to run every boot — it is a no-op once clean.
 try {
@@ -2468,7 +2490,7 @@ function gatherBillingMetrics(db, clientName, from, to) {
   }
   let inboundUnits = 0;
   for (const rec of db.inbound || []) {
-    if (rec.client_name !== clientName) continue;
+    if (String(rec.client_name || '').trim().toLowerCase() !== String(clientName || '').trim().toLowerCase()) continue;
     const st = rec.state || {};
     if (st.status !== 'done' || !inRange(st.endTime)) continue;
     inboundUnits += Object.values(st.scanned || {}).reduce((s, q) => s + (Number(q) || 0), 0);
@@ -12414,7 +12436,8 @@ app.get('/portal', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const inventory = require('./lib/inventory-store');
 inventory.init();
-assertInventoryPath();   // must run here — see the note next to its definition
+assertInventoryPath();          // must run here — see the note next to its definition
+mergeInventoryClientCasing();   // likewise: needs `inventory` to exist first
 
 // 3PL model: ALL stock is client-owned. Orders/batches carry only a free-text
 // client_name, while the inventory store keys on client_id — so we derive a
