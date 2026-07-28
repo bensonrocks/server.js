@@ -695,6 +695,30 @@ Verified by seeding 335 orphans plus 5 genuine rows: boot cleared exactly the
 335, deleting an order took its row with it, deleting a batch took all four of
 its rows, and rows on live orders were untouched.
 
+### Transport jobs die with their order too
+
+Exactly the same shape as the backorder orphan bug, and found the same way:
+the Transport tab showed **124 jobs against 3 live orders**. A job created from
+an uploaded order (`channel: 'order-upload'`, `referenceId` = order number) is
+downstream of that order, but nothing removed it when the order was deleted.
+
+`pruneOrphanTransportJobs(db)` reconciles against the live order list — same
+reasoning as `pruneOrphanBackorders`, and called from the same three places:
+`GET /api/transport`, every order/batch deletion site, and boot.
+
+TWO exclusions, both deliberate and both tested:
+- **Any other `channel`** — a TMS import or a manually keyed delivery has no
+  source order and must never be judged against one.
+- **`delivered` or `in-transit`** (`TRANSPORT_PRUNE_KEEP_STATUS`) — a delivery
+  that happened is real history and lives in Delivery History; one on the road
+  is on a van with a driver. Removing either would erase or strand real work.
+  Same standing rule as completed orders.
+
+Verified with the reported shape: 124 jobs → 9. The 115 orphaned outstanding
+jobs went; both delivered jobs, the on-road job, the TMS-imported job, the
+manual job and all four jobs for still-existing orders stayed. Deleting an
+order then removed its delivery in tandem.
+
 ### One client, one spelling — case-insensitive client identity
 
 Files arrive from different sources spelling the same client differently

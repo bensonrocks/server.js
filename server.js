@@ -1263,6 +1263,44 @@ function applyAddressBookToTransport(db) {
 // uploading the same order twice never duplicates jobs. Scanning completion
 // then flips these to 'confirmed' via updateTransportOnOrderCompletion()
 // (matcher already checks referenceId === order_number).
+// A transport job created FROM an uploaded order is downstream of that order —
+// delete the order and the delivery should go with it, or the Transport tab
+// fills with jobs for orders that no longer exist (124 jobs against 3 live
+// orders, in the case this was written for).
+//
+// Same reconcile-don't-hook approach as pruneOrphanBackorders: orders vanish
+// down many routes, so rather than trust every one to remember, compare
+// against the live order list.
+//
+// TWO things are deliberately never touched:
+//   • jobs with any other `channel` — a TMS import or a manually keyed
+//     delivery has no source order and must not be judged against one;
+//   • jobs already `delivered` or `in-transit` — a delivery that happened is
+//     real history (it is in Delivery History), and one on the road right now
+//     is on a van with a driver. Removing either would erase or strand real
+//     work. They stay, orphaned or not, exactly like completed orders do.
+const TRANSPORT_PRUNE_KEEP_STATUS = new Set(['delivered', 'in-transit']);
+function pruneOrphanTransportJobs(db) {
+  const list = db.transport;
+  if (!Array.isArray(list) || !list.length) return 0;
+  const live = new Set();
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) live.add(String(o.order_number));
+  }
+  const doomed = list.filter(t =>
+    String(t.channel || '') === 'order-upload'
+    && !TRANSPORT_PRUNE_KEEP_STATUS.has(String(t.status || ''))
+    && !live.has(String(t.referenceId || t.clientId || '')));
+  if (!doomed.length) return 0;
+  const ids = new Set(doomed.map(t => t.id));
+  db.transport = list.filter(t => !ids.has(t.id));
+  logAudit('transport_jobs_pruned_orphaned', {
+    count: doomed.length,
+    jobs: doomed.slice(0, 200).map(t => ({ id: t.id, ref: t.referenceId, status: t.status })),
+  });
+  return doomed.length;
+}
+
 function createTransportJobsFromOrders(db, orders, clientName, batchId) {
   if (!Array.isArray(orders) || !orders.length) return 0;
   if (!db.transport) db.transport = [];
@@ -1740,7 +1778,12 @@ function mergeInventoryClientCasing() {
 try {
   const _bodb = readDb();
   const _bon = pruneOrphanBackorders(_bodb);
-  if (_bon) { writeDb(_bodb); console.log(`[IdealOne] Backorders: cleared ${_bon} row(s) whose order no longer exists`); }
+  const _ton = pruneOrphanTransportJobs(_bodb);
+  if (_bon || _ton) {
+    writeDb(_bodb);
+    if (_bon) console.log(`[IdealOne] Backorders: cleared ${_bon} row(s) whose order no longer exists`);
+    if (_ton) console.log(`[IdealOne] Transport: cleared ${_ton} job(s) whose order no longer exists (delivered / on-road jobs kept)`);
+  }
 } catch (e) { console.error('[IdealOne] backorder reconcile failed:', e.message); }
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
@@ -3407,6 +3450,7 @@ app.post('/api/portal/delete', express.json(), requirePortalAuthMiddleware, (req
 
   if (deleted.length) {
     pruneOrphanBackorders(db);          // their backorders go with them
+    pruneOrphanTransportJobs(db);       // and their deliveries
     // Tell the office. A client removing 50 orders must show up as an event,
     // not just as rows quietly missing from the floor's list.
     addPoke(db, {
@@ -7455,6 +7499,9 @@ const tmsImporter = require('./lib/tms-importer.js');
 
 app.get('/api/transport', (req, res) => {
   const db = readDb();
+  // Reconcile before answering: a job whose source order has been deleted must
+  // not still be shown as work to do. Delivered / on-the-road jobs are kept.
+  if (pruneOrphanTransportJobs(db)) writeDb(db);
   const transportRequests = (db.transport || []).map(req => ({
     id: req.id,
     referenceId: req.referenceId || req.clientId || '',
@@ -9724,6 +9771,7 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
     }
     db.batches.splice(idx, 1);
     pruneOrphanBackorders(db);          // every order in it took its backorders too
+    pruneOrphanTransportJobs(db);       // and their deliveries
     writeDb(db);
     logAudit('batch_deleted', {
       batchId, filename: victim.filename || '', client: victim.client_name || '',
@@ -9766,6 +9814,7 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     }
     if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
     pruneOrphanBackorders(db);          // the order's backorders go with it
+    pruneOrphanTransportJobs(db);       // and its delivery
     writeDb(db);
     logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master', reason });
     res.json({ ok: true });
@@ -9951,7 +10000,7 @@ app.post('/api/master/pending-deletions/bulk', express.json(), (req, res) => {
     });
     done.push(orderNumber);
   }
-  if (done.length) { pruneOrphanBackorders(db); writeDb(db); }
+  if (done.length) { pruneOrphanBackorders(db); pruneOrphanTransportJobs(db); writeDb(db); }
   logAudit(action === 'approve' ? 'order_deletions_bulk_approved' : 'order_deletions_bulk_rejected', {
     count: done.length, failedCount: failed.length, by: req.userId || 'master', note,
     orders: done.slice(0, 200),
@@ -9971,6 +10020,7 @@ app.post('/api/master/pending-deletions/:batchId/:orderNumber/approve', (req, re
     const pending = state.pending_deletion;
     if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
     pruneOrphanBackorders(db);          // the order's backorders go with it
+    pruneOrphanTransportJobs(db);       // and its delivery
     writeDb(db);
     logAudit('order_deleted', {
       order: orderNumber, batchId, client: batch.client_name || '',
