@@ -643,6 +643,34 @@ Verified: 30 API checks + 20 browser checks, including cross-client isolation,
 the completed-after-request race, part-picked refusal, the poke firing, and
 that a tick never expands the order card it sits on.
 
+### NO warning banners at the top of the screen — System Outages only
+
+Per the user, explicitly: *"do not put error messages on the top banner. only
+under Administrator, system outages"*. Three fixed bars used to pin themselves
+to `top:0` — `#healthWarnBar`, `#storageWarnBar`, `#storageInfoBar`. All three
+are GONE. Do not reintroduce a top banner for any warning.
+
+- `deriveHealthIssues(h, storage)` turns the `/api/system-health` snapshot plus
+  the boot storage snapshot into `{sev:'crit'|'warn', title, text}` rows.
+- `renderSystemHealth()` paints them into `#sysHealthBlock`, which sits at the
+  top of Administrator → System Outages, ABOVE the recorded-errors list. When
+  nothing is wrong it says so in green.
+- `refreshSystemHealth()` polls every 60s (first check 4s after load) and is
+  also called by `outagesUI.load()`, so the panel is never stale when someone
+  opens it.
+- Discoverability without a banner: the **System Outages nav badge counts open
+  recorded errors PLUS current health issues** (`outagesUI.refreshBadge()`), so
+  an admin still sees a number and knows to look. `showStorageBanner()` is now
+  just a setter that stashes the boot snapshot for the panel.
+- Why this matters beyond tidiness: the amber bar ate two lines of every page
+  on a phone, and being `position:fixed` above the scan overlay it painted over
+  the order number, progress and carton badge while a packer was mid-pick.
+
+TRADE-OFF STATED HONESTLY: the data-loss warning ("storage does not survive
+restarts") is now also only in that panel, so nobody sees it unless they open
+Administrator. The boot log still prints it loudly, and `/api/version` still
+reports `storage.dataLostOnLastRestart` for an external check.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the

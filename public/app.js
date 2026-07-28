@@ -9086,17 +9086,26 @@
     const mk = () => ({ 'x-master-key': LOG_PASSWORD });
     const mkJson = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
 
+    let openCount = 0;
     async function load() {
       try {
         const r = await fetch('/api/master/system-errors', { headers: mk() });
         const d = r.ok ? await r.json() : { errors: [], open: 0 };
         errors = d.errors || [];
-        updateBadge(d.open || 0);
+        openCount = d.open || 0;
       } catch { errors = []; }
+      updateBadge();
       render();
+      // Live subsystem health is shown in this same panel — refresh it whenever
+      // the panel is opened so it is never stale when someone comes looking.
+      refreshSystemHealth();
     }
-    function updateBadge(open) {
+    // The badge covers recorded errors PLUS current health issues, because the
+    // top-of-screen banner that used to announce health problems is gone.
+    function refreshBadge() { updateBadge(); }
+    function updateBadge() {
       const b = $('outagesBadge'); if (!b) return;
+      const open = openCount + (typeof _healthIssues !== 'undefined' ? _healthIssues.length : 0);
       if (open > 0) { b.textContent = open; b.classList.remove('hidden'); } else b.classList.add('hidden');
     }
     function render() {
@@ -9170,7 +9179,7 @@
       $('outageCloseBtn')?.addEventListener('click', () => $('outageModal').classList.add('hidden'));
     }, 0);
 
-    return { load };
+    return { load, refreshBadge };
   })();
 
   // ── Client onboarding module ─────────────────────────────────────────────
@@ -11852,126 +11861,81 @@
     }).catch(() => {});
   })();
 
-  // Storage-persistence banner — the definitive answer to "why does my data
-  // disappear?". Three states:
-  //   RED   dataLostOnLastRestart — Railway, no volume/DATA_DIR: data IS being lost.
-  //   (none) persistent OR not-at-risk — storage is proven safe: stay silent.
-  //   BLUE  configured (volume/DATA_DIR detected) but first boot, not yet proven —
-  //         reassure, don't alarm; it confirms itself after the next restart.
-  function showStorageBanner(storage) {
-    if (!storage) return;
-    if (storage.persistent) return;                 // proven safe — say nothing
-    if (!storage.ephemeralRisk) return;             // not on Railway / not at risk
+  // Storage-persistence state. This used to paint a fixed bar across the top of
+  // every screen; per the user's instruction NO warnings appear on the top
+  // banner any more — everything surfaces under Administrator → System Outages
+  // instead (see systemHealthIssues / renderSystemHealth below). Kept as a
+  // stash of the boot snapshot so the panel can report it.
+  let _storageSnapshot = null;
+  function showStorageBanner(storage) { _storageSnapshot = storage || null; }
 
-    const lost = storage.dataLostOnLastRestart;     // the unambiguous broken case
-    const configured = storage.dataDirExplicit;     // a volume or DATA_DIR is set
+  // ── Subsystem health → Administrator → System Outages ONLY ────────────────
+  // These warnings deliberately do NOT appear as a banner on the top of the
+  // screen: on a phone the amber bar ate two lines of every page, and it also
+  // painted over the scan overlay's order number while a packer was picking.
+  // They are reported in one place — Administrator → System Outages — and
+  // counted in that tab's nav badge so an admin still knows to look.
+  let _healthIssues = [];
 
-    // Volume/DATA_DIR is set and there's simply been no restart yet to prove it —
-    // this is the CORRECT setup mid-confirmation. Don't scream about it.
-    if (configured && !lost) {
-      let info = document.getElementById('storageInfoBar');
-      if (!info) {
-        info = document.createElement('div');
-        info.id = 'storageInfoBar';
-        info.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:.55rem 1rem;font-size:.8rem;font-weight:600;text-align:center;background:#1d4ed8;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)';
-        document.body.appendChild(info);
-      }
-      info.innerHTML = '💾 Persistent storage detected — it will be confirmed automatically after the next restart. Your data is being saved to the volume.'
-        + ' <span id="storageInfoClose" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>';
-      document.getElementById('storageInfoClose')?.addEventListener('click', () => info.remove());
-      return;
-    }
-
-    // Genuinely dangerous: no persistent storage configured on Railway.
-    let bar = document.getElementById('storageWarnBar');
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.id = 'storageWarnBar';
-      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:.7rem 1rem;font-size:.85rem;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.2)';
-      document.body.appendChild(bar);
-    }
-    bar.style.background = '#b91c1c';
-    bar.style.color = '#fff';
-    bar.innerHTML = '⚠ DATA IS BEING LOST: this server\'s storage does NOT survive restarts. '
-      + 'Fix in Railway → this service → <b>Volumes</b>: add a Volume (mount path e.g. <code>/data</code>) and redeploy. '
-      + 'The app now uses a mounted volume automatically — no extra env var needed.'
-      + ' <span id="storageWarnClose" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>';
-    document.getElementById('storageWarnClose')?.addEventListener('click', () => bar.remove());
+  function deriveHealthIssues(h, storage) {
+    const out = [];
+    if (!h) return out;
+    if (h.inventoryAvailable === false) out.push({ sev: 'crit',
+      title: 'Inventory store is DOWN',
+      text: 'Stock levels and reservations are not being tracked. Bin locations and quantities cannot be read or written until this recovers.' });
+    if (h.inventoryPathMismatch) out.push({ sev: 'crit',
+      title: 'DATA LOSS RISK — inventory is on a different disk',
+      text: 'Bin locations and stock are being saved to a different, non-persistent folder than the main database, so they will be lost on the next restart. Set DATA_DIR in Railway so both use the same volume.' });
+    if (storage && storage.dataLostOnLastRestart) out.push({ sev: 'crit',
+      title: 'DATA WAS LOST ON THE LAST RESTART',
+      text: 'This server\'s storage does not survive restarts. In Railway → this service → Volumes, add a Volume (mount path e.g. /data) and redeploy. The app picks up a mounted volume automatically.' });
+    else if (storage && storage.ephemeralRisk && !storage.persistent && !storage.dataDirExplicit) out.push({ sev: 'crit',
+      title: 'No persistent storage configured',
+      text: 'Running on Railway with no Volume or DATA_DIR — data will not survive the next redeploy. Add a Volume in Railway and redeploy.' });
+    if (h.masterKeyDefault) out.push({ sev: 'warn',
+      title: 'Administrator key is still the built-in default',
+      text: 'The key that ships in the source code is in use, so anyone who can read the code could open the Administrator panel. In Railway → Variables, add MASTER_KEY set to a new secret, then redeploy. That value becomes the Administrator key; nothing else needs changing.' });
+    if (h.labelOcrRenderAvailable === false) out.push({ sev: 'warn',
+      title: 'Label OCR rendering unavailable',
+      text: 'Image-only shipping labels (ones with no text layer) will not auto-match on this deployment. Check the boot log for the @napi-rs/canvas error.' });
+    if (h.zortOutboxStalled > 0) out.push({ sev: 'warn',
+      title: `Stock sync stalled — ${h.zortOutboxStalled} update(s) failing`,
+      text: 'Stock updates are repeatedly failing to reach the connected store. Check the store connection under Connections.' });
+    return out;
   }
 
-  // Proactive subsystem-health banner — shown to ALL internal staff (admin AND
-  // warehouse), never to client/driver portals (this code only runs in the office
-  // app, and the endpoint sits behind a staff-session gate). The storage banner
-  // above answers "is my data safe?" from /api/version at boot. THIS one polls the
-  // live health snapshot on a timer so a RUNTIME problem — inventory store down,
-  // ZORT stock-sync stalled — shows up on screen the moment it happens, BEFORE any
-  // packer hits an error and has to report it. Silent when everything is healthy.
-  (function initHealthBanner() {
-    let dismissedSig = '';                 // the exact unhealthy state the admin dismissed
-    function topOffset() {
-      // Stack below whichever storage banner (if any) is already pinned to the top.
-      const s = document.getElementById('storageWarnBar') || document.getElementById('storageInfoBar');
-      return s ? Math.ceil(s.getBoundingClientRect().height) : 0;
+  function renderSystemHealth() {
+    const el = document.getElementById('sysHealthBlock');
+    if (!el) return;
+    if (!_healthIssues.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:1rem;color:#059669;border-left:4px solid #059669">'
+        + '&#10003; System health: all subsystems nominal.</div>';
+      return;
     }
-    // Never cover a full-screen WORK surface. The banner is position:fixed with a
-    // z-index above the scan overlay, so while a packer is picking it painted over
-    // the order number, progress and carton badge — exactly the information they
-    // cannot lose. Suppress it while the scan overlay is open; the next poll (or
-    // closing the overlay) brings it back.
-    function workSurfaceOpen() {
-      const scan = document.getElementById('scanOverlay');
-      return !!(scan && !scan.classList.contains('hidden'));
-    }
-    function render(issues) {
-      let bar = document.getElementById('healthWarnBar');
-      if (workSurfaceOpen()) { if (bar) bar.remove(); return; }
-      if (!issues.length) { if (bar) bar.remove(); dismissedSig = ''; return; }
-      const sig = issues.map(i => i.sev + ':' + i.text).join('|');
-      if (sig === dismissedSig) { if (bar) bar.remove(); return; } // this exact state was dismissed
-      const crit = issues.some(i => i.sev === 'crit');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'healthWarnBar';
-        document.body.appendChild(bar);
-      }
-      bar.style.cssText = `position:fixed;top:${topOffset()}px;left:0;right:0;z-index:9998;`
-        + `padding:.6rem 1rem;font-size:.82rem;font-weight:600;text-align:center;`
-        + `background:${crit ? '#b91c1c' : '#d97706'};color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)`;
-      const lines = issues.map(i => `${i.sev === 'crit' ? '⛔' : '⚠'} ${i.text}`).join(' &nbsp;·&nbsp; ');
-      // Only admins can open the Administrator → System Outages panel; warehouse
-      // staff just see the warning (and are told to notify their admin).
-      const isAdmin = (currentUser?.role || 'admin') === 'admin';
-      const action = isAdmin
-        ? `<span class="hb-open" style="cursor:pointer;text-decoration:underline">Open System Outages</span>`
-        : `<span style="opacity:.85">Please notify your Administrator / IdealOne Tech team.</span>`;
-      bar.innerHTML = `${lines} &nbsp; ${action}`
-        + ` <span class="hb-close" style="cursor:pointer;margin-left:.6rem;padding:0 .4rem;border:1px solid rgba(255,255,255,.5);border-radius:4px">✕</span>`;
-      bar.querySelector('.hb-open')?.addEventListener('click', () => {
-        try { document.getElementById('logAccessBtn')?.click(); } catch {}
-      });
-      bar.querySelector('.hb-close')?.addEventListener('click', () => { dismissedSig = sig; bar.remove(); });
-    }
-    async function poll() {
-      // Every signed-in internal user (admin or warehouse) sees outage warnings.
-      // Client/driver portals don't run this code and can't reach the endpoint.
-      if (!currentUser) { render([]); return; }
-      let h;
-      try {
-        const r = await fetch('/api/system-health'); // staff-session gated, no master key
-        if (!r.ok) return;
-        h = await r.json();
-      } catch { return; }
-      const issues = [];
-      if (h.inventoryAvailable === false) issues.push({ sev: 'crit', text: 'Inventory store is DOWN — stock levels & reservations are not being tracked.' });
-      if (h.masterKeyDefault) issues.push({ sev: 'warn', text: 'Administrator key is still the built-in default that ships in the source code — anyone who reads it could use it. Fix: in Railway → Variables, add MASTER_KEY set to a new secret of your choosing, then redeploy. That new value becomes the Administrator key; nothing else needs changing.' });
-      if (h.inventoryPathMismatch) issues.push({ sev: 'crit', text: 'DATA LOSS RISK — inventory (bin locations & stock) is being saved to a different, non-persistent folder than the main database. It will be lost on the next restart. Set DATA_DIR in Railway.' });
-      if (h.labelOcrRenderAvailable === false) issues.push({ sev: 'warn', text: 'Label OCR rendering is unavailable on this deployment — image-only shipping labels (no text layer) will not auto-match. Check the boot log for the @napi-rs/canvas error.' });
-      if (h.zortOutboxStalled > 0) issues.push({ sev: 'warn', text: `ZORT stock sync stalled — ${h.zortOutboxStalled} update(s) repeatedly failing to reach ZORT.` });
-      render(issues);
-    }
-    setTimeout(poll, 4000);          // let login settle, then first check
-    setInterval(poll, 60000);        // and re-check every minute
-  })();
+    el.innerHTML = _healthIssues.map(i => {
+      const crit = i.sev === 'crit';
+      return `<div class="user-row" style="display:block;border-left:4px solid ${crit ? '#dc2626' : '#d97706'};background:${crit ? '#fef2f2' : '#fffbeb'}">
+        <div style="font-weight:800;font-size:.85rem;color:${crit ? '#991b1b' : '#92400e'}">
+          ${crit ? '&#9940;' : '&#9888;'} ${esc(i.title)}</div>
+        <div style="font-size:.8rem;color:#475569;margin-top:.2rem">${esc(i.text)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  async function refreshSystemHealth() {
+    if (!currentUser) { _healthIssues = []; return; }
+    try {
+      const r = await fetch('/api/system-health');   // staff-session gated
+      if (!r.ok) return;
+      _healthIssues = deriveHealthIssues(await r.json(), _storageSnapshot);
+    } catch { return; }
+    renderSystemHealth();
+    // Roll health into the System Outages nav badge so an admin still notices
+    // there is something to look at without a banner shouting on every page.
+    try { outagesUI.refreshBadge(); } catch {}
+  }
+  setTimeout(refreshSystemHealth, 4000);      // let login settle
+  setInterval(refreshSystemHealth, 60000);
 
   // ── Install-app helper ─────────────────────────────────────────────────────
   // iOS NEVER fires an install prompt — installing means Safari → Share →
