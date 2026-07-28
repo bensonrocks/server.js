@@ -695,6 +695,38 @@ Verified by seeding 335 orphans plus 5 genuine rows: boot cleared exactly the
 335, deleting an order took its row with it, deleting a batch took all four of
 its rows, and rows on live orders were untouched.
 
+### Inbound files: tolerant headers, summary rows skipped, catalogue lookup
+
+Real inbound lists carry only `SKU Code *`, `Barcode (EAN/UPC) *`,
+`Inbound Quantity` — and a client's actual file exposed three bugs at once in
+`parseInboundFile()`:
+
+1. **It was rejected outright.** Header matching was exact-set only, so
+   `skucode`, `barcodeeanupc` and `inboundquantity` matched nothing and the
+   upload died on "Could not find a SKU column". Matching is now exact-first
+   with a substring fallback (`pick()`), and a **barcode column is recognised**
+   — a file identifying products by barcode alone is now usable, the SKU being
+   resolved from the item master.
+2. **A summary row became a product.** The sheet ended `["Total", "", 186]`,
+   which was parsed as a line: the floor would have been asked to receive 186
+   units of an item called "Total", and the shipment's expected total read
+   **372 instead of 186** — a huge phantom shortfall at receipt.
+   `SUMMARY_ROW_PAT` skips exact summary words only, so a real SKU like
+   `TOTALIZER-99` is untouched.
+3. **Quantities came through as 0** because the qty header did not match.
+
+`enrichInboundLines(lines, clientName)` is the STANDARD now, on both the office
+upload and the portal ASN: for every line it fills from that client's item
+master — SKU from barcode, barcode from SKU, and description from the product
+name. A line with no match is kept and flagged `unknown_product` (an item we
+were never told about is still received — routine — it just cannot be
+described), and the upload response reports `matched`/`unknown` so the receiver
+is told before they start counting.
+
+Verified with the client's own two files: Product Master (254 rows) then their
+inbound list — 36 product lines, all 36 matched, every line carrying SKU +
+barcode + description, expected total exactly 186.
+
 ### Transport jobs die with their order too
 
 Exactly the same shape as the backorder orphan bug, and found the same way:

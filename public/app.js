@@ -6103,6 +6103,15 @@
       const resp = await fetch('/api/inbound/upload', { method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: fd });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      // Say how many lines were matched to the client's item master. An item we
+      // have never been told about is still received — it just has no name to
+      // show, and the receiver should know that BEFORE they start counting.
+      if (data.unknown > 0) {
+        alert(`${data.lines} line(s) loaded.\n\n`
+          + `${data.matched} matched your item master and show a product name.\n`
+          + `${data.unknown} ${data.unknown === 1 ? 'is' : 'are'} NOT in the item master, so ${data.unknown === 1 ? 'it has' : 'they have'} no description — `
+          + `still receivable, but worth adding to the client's Product Master.`);
+      }
       document.getElementById('inboundUploadOverlay').classList.add('hidden');
       await renderInboundTab();
       openInboundReceiving(data.id);

@@ -3284,14 +3284,18 @@ app.post('/api/portal/asn', upload.single('file'), (req, res) => {
       }
       // Same SKU across several rows (one per batch, say) merges into one
       // expected line, exactly as the office upload path does.
+      // Same standard enrichment as the office upload path.
+      enrichInboundLines(rows, req.portalClient);
       const merged = new Map();
       for (const r of rows) {
-        const cur = merged.get(r.sku) || { sku: r.sku, description: r.description, expected_qty: 0, expiry_date: '', lot_number: '' };
+        const key = r.sku || r.barcode;
+        const cur = merged.get(key) || { sku: r.sku, barcode: r.barcode || '', description: r.description, expected_qty: 0, expiry_date: '', lot_number: '', unknown_product: !!r.unknown_product };
         cur.expected_qty += r.qty;
         if (!cur.description && r.description) cur.description = r.description;
+        if (!cur.barcode && r.barcode) cur.barcode = r.barcode;
         if (!cur.expiry_date && r.expiry_date) cur.expiry_date = r.expiry_date;
         if (!cur.lot_number && r.lot_number) cur.lot_number = r.lot_number;
-        merged.set(r.sku, cur);
+        merged.set(key, cur);
       }
       const lines = [...merged.values()];
       const now = new Date().toISOString();
@@ -6732,18 +6736,37 @@ async function parseInboundFile(buffer, filename) {
   }
   if (!rows.length) return [];
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Summary rows an exporter appends at the bottom of the sheet — never products.
+  const SUMMARY_ROW_PAT = /^(total|totals|grand\s*total|sub\s*total|subtotal|sum|count)$/i;
   const SKU_KEYS  = new Set(['sku', 'productcode', 'itemcode', 'code']);
   const DESC_KEYS = new Set(['description', 'productdescription', 'itemdescription', 'productname', 'name']);
   const QTY_KEYS  = new Set(['qty', 'quantity', 'expectedqty', 'orderedqty', 'expectedquantity']);
   const EXP_KEYS  = new Set(['expiry', 'expirydate', 'expdate', 'exp', 'bestbefore', 'bbd']);
   const LOT_KEYS  = new Set(['lot', 'lotno', 'lotnumber', 'batch', 'batchno', 'batchnumber']);
   const headerKeys = Object.keys(rows[0]);
-  const skuKey  = headerKeys.find(k => SKU_KEYS.has(norm(k)));
-  const descKey = headerKeys.find(k => DESC_KEYS.has(norm(k)));
-  const qtyKey  = headerKeys.find(k => QTY_KEYS.has(norm(k)));
-  const expKey  = headerKeys.find(k => EXP_KEYS.has(norm(k)));
-  const lotKey  = headerKeys.find(k => LOT_KEYS.has(norm(k)));
-  if (!skuKey) throw new Error('Could not find a SKU column. Expected a header like "SKU" or "Product Code".');
+  // Exact match first (precise), then a substring fallback — real files label
+  // these columns every which way: "SKU Code *", "Barcode (EAN/UPC) *",
+  // "Inbound Quantity". Matching only exact names rejected the client's own
+  // inbound list outright with "Could not find a SKU column".
+  const pick = (exact, ...contains) => {
+    const hit = headerKeys.find(k => exact.has(norm(k)));
+    if (hit) return hit;
+    return headerKeys.find(k => { const n = norm(k); return contains.some(c => n.includes(c)); });
+  };
+  const skuKey  = pick(SKU_KEYS, 'skucode', 'sku');
+  // Barcode is matched BEFORE description so "Barcode (EAN/UPC)" can never be
+  // mistaken for a name column, and is excluded from the SKU match above by
+  // ordering (nothing containing 'sku' also contains 'barcode').
+  const bcKey   = headerKeys.find(k => { const n = norm(k); return n.includes('barcode') || n === 'ean' || n === 'upc' || n.includes('eanupc'); });
+  const descKey = pick(DESC_KEYS, 'description', 'productname');
+  const qtyKey  = pick(QTY_KEYS, 'qty', 'quantity');
+  const expKey  = pick(EXP_KEYS, 'expiry');
+  const lotKey  = pick(LOT_KEYS, 'lotno', 'batchno');
+  // A file may identify products by barcode alone — that is still usable, the
+  // SKU is resolved from the item master at enrichment time.
+  if (!skuKey && !bcKey) {
+    throw new Error('Could not find a SKU or Barcode column. Expected a header like "SKU", "SKU Code" or "Barcode".');
+  }
   const fmtDate = v => {
     if (!v) return '';
     if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
@@ -6751,16 +6774,57 @@ async function parseInboundFile(buffer, filename) {
   };
   const out = [];
   for (const r of rows) {
-    const sku = String(r[skuKey] || '').trim();
-    if (!sku) continue;
+    const sku = skuKey ? String(r[skuKey] || '').trim() : '';
+    // Skip a summary/total row. Real inbound sheets often end with
+    // ["Total", "", 186]; parsing that as a product asked the floor to receive
+    // 186 units of an item called "Total" AND doubled the expected quantity
+    // for the whole shipment (372 instead of 186), which would then read as a
+    // huge shortfall at receipt. No real SKU is literally "Total".
+    if (SUMMARY_ROW_PAT.test(sku)) continue;
+    // Barcode arrives as a number in XLSX (9557496057373), so stringify without
+    // scientific notation and keep any leading zeros the sheet preserved.
+    const barcode = bcKey ? String(r[bcKey] ?? '').trim() : '';
+    if (!sku && !barcode) continue;
     const qty = qtyKey ? Math.max(0, parseInt(r[qtyKey], 10) || 0) : 0;
     out.push({
-      sku, description: descKey ? String(r[descKey] || '').trim() : '', qty,
+      sku, barcode,
+      description: descKey ? String(r[descKey] || '').trim() : '', qty,
       expiry_date: expKey ? fmtDate(r[expKey]) : '',   // FEFO capture from ASN when the column exists
       lot_number:  lotKey ? String(r[lotKey] || '').trim() : '',
     });
   }
   return out;
+}
+
+// STANDARD ENRICHMENT for every inbound line: fill in whatever the file left
+// out by looking the product up in that client's item master (the Product
+// Master they onboarded with).
+//   • SKU missing but barcode given   → resolve the SKU
+//   • barcode missing but SKU given   → fill the barcode
+//   • description missing             → take the product name
+// Inbound files routinely carry only "SKU Code, Barcode, Quantity", which left
+// the floor receiving against blank descriptions. Anything not in the item
+// master is left exactly as supplied and flagged `unknown_product` — an item
+// we have never been told about is still received (that is routine), it just
+// cannot be described.
+function enrichInboundLines(lines, clientName) {
+  const cid = invClientId(clientName);
+  let matched = 0, unknown = 0;
+  for (const l of lines || []) {
+    let rec = null;
+    try {
+      if (l.sku) rec = inventory.get(l.sku, cid);
+      if (!rec && l.barcode) rec = inventory.getByBarcode(l.barcode, cid);
+      // A file can put the barcode in the SKU column (and vice versa).
+      if (!rec && l.sku) rec = inventory.getByBarcode(l.sku, cid);
+    } catch (_) { rec = null; }
+    if (!rec) { l.unknown_product = true; unknown++; continue; }
+    if (!l.sku) l.sku = rec.sku;
+    if (!l.barcode && rec.barcode) l.barcode = rec.barcode;
+    if (!l.description && rec.name) l.description = rec.name;
+    matched++;
+  }
+  return { matched, unknown };
 }
 
 // ── Pokes — the office's "new work has arrived" feed ────────────────────────
@@ -6875,17 +6939,22 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const rows = await parseInboundFile(req.file.buffer, req.file.originalname);
     if (!rows.length) return res.status(400).json({ error: 'No valid SKU rows found in file' });
+    // Standard: fill SKU / barcode / description from the client's item master
+    // before anything is stored, so the floor never receives against a blank.
+    const enriched = enrichInboundLines(rows, (req.body?.client_name || '').trim());
 
     // Same SKU can legitimately appear on multiple rows (split across lots,
     // etc.) — merge into one expected line so scanning matches cleanly.
     const merged = new Map();
     for (const r of rows) {
-      const cur = merged.get(r.sku) || { sku: r.sku, description: r.description, expected_qty: 0, expiry_date: '', lot_number: '' };
+      const key = r.sku || r.barcode;
+      const cur = merged.get(key) || { sku: r.sku, barcode: r.barcode || '', description: r.description, expected_qty: 0, expiry_date: '', lot_number: '', unknown_product: !!r.unknown_product };
       cur.expected_qty += r.qty;
       if (!cur.description && r.description) cur.description = r.description;
+      if (!cur.barcode && r.barcode) cur.barcode = r.barcode;
       if (!cur.expiry_date && r.expiry_date) cur.expiry_date = r.expiry_date; // ASN-carried expiry → putaway prefill
       if (!cur.lot_number && r.lot_number) cur.lot_number = r.lot_number;
-      merged.set(r.sku, cur);
+      merged.set(key, cur);
     }
 
     const db = readDb();
@@ -6906,8 +6975,10 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
     };
     db.inbound.unshift(rec);
     writeDb(db);
-    logAudit('inbound_upload', { id: rec.id, reference: rec.reference, by: req.userId || '', lines: rec.lines.length });
-    res.json({ ok: true, id: rec.id });
+    logAudit('inbound_upload', { id: rec.id, reference: rec.reference, by: req.userId || '',
+      lines: rec.lines.length, matched: enriched.matched, unknown: enriched.unknown });
+    res.json({ ok: true, id: rec.id, lines: rec.lines.length,
+               matched: enriched.matched, unknown: enriched.unknown });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
