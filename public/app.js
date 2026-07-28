@@ -13158,7 +13158,11 @@
     function print() {
       const w = currentWave;
       const binText = p => (p.bins && p.bins.length) ? p.bins.map(b => `${b.location_id} ×${b.qty}${b.expiry_date ? ' exp ' + b.expiry_date : ''}`).join(' / ') : (p.location || '—');
-      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.05rem">${esc(binText(p))}</td><td style="font-weight:600">${esc(p.sku)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.1rem">${p.total_qty}</td><td>${p.orders.map(o => esc(o.order_number) + ' (' + o.qty + ')').join(', ')}</td><td style="width:2rem;border:1px solid #999"></td></tr>`).join('');
+      // NO order-number column. A wave is picked BY SKU — one consolidated
+      // quantity per product, sorted to orders afterwards through Scan & Check —
+      // so order numbers are not something the picker acts on, and on a printed
+      // sheet they squeezed the Location, SKU and Description columns that are.
+      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.05rem">${esc(binText(p))}</td><td style="font-weight:600">${esc(p.sku)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.15rem;font-weight:700">${p.total_qty}</td><td style="width:2.2rem;border:1px solid #999"></td></tr>`).join('');
       const win = window.open('', '_blank');
       win.document.write(`<html><head><title>Wave Pick — ${esc(w.name)}</title><style>
         body{font-family:sans-serif;padding:20px} h1{font-size:1.3rem}
@@ -13167,7 +13171,7 @@
       </style></head><body>
         <h1>Wave Pick Sheet — ${esc(w.name)}</h1>
         <div>${w.order_numbers.length} order(s) &middot; ${w.stats.lineCount} line(s) &middot; ${w.stats.totalUnits} unit(s)</div>
-        <table><thead><tr><th>Location</th><th>SKU</th><th>Description</th><th>Qty</th><th>Order(s)</th><th>&#10003;</th></tr></thead><tbody>${rows}</tbody></table>
+        <table><thead><tr><th>Location</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th><th>&#10003;</th></tr></thead><tbody>${rows}</tbody></table>
       </body></html>`);
       win.document.close();
       win.onload = () => setTimeout(() => win.print(), 300);
