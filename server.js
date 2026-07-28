@@ -1659,6 +1659,13 @@ try {
 
 // Recover any scan progress that a crash prevented from reaching db.json
 try { replayScanJournal(); } catch (e) { console.error('[IdealOne] scan journal replay failed:', e.message); }
+// One-off catch-up for backorders that outlived their orders before the
+// reconcile existed. Harmless to run every boot — it is a no-op once clean.
+try {
+  const _bodb = readDb();
+  const _bon = pruneOrphanBackorders(_bodb);
+  if (_bon) { writeDb(_bodb); console.log(`[IdealOne] Backorders: cleared ${_bon} row(s) whose order no longer exists`); }
+} catch (e) { console.error('[IdealOne] backorder reconcile failed:', e.message); }
 
 // Resolve a scanned barcode to a WMS product code. Returns the original value
 // unchanged when the barcode is not in the Betime CODE 2 map.
@@ -3323,6 +3330,7 @@ app.post('/api/portal/delete', express.json(), requirePortalAuthMiddleware, (req
   }
 
   if (deleted.length) {
+    pruneOrphanBackorders(db);          // their backorders go with them
     // Tell the office. A client removing 50 orders must show up as an event,
     // not just as rows quietly missing from the floor's list.
     addPoke(db, {
@@ -9639,6 +9647,7 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
       });
     }
     db.batches.splice(idx, 1);
+    pruneOrphanBackorders(db);          // every order in it took its backorders too
     writeDb(db);
     logAudit('batch_deleted', {
       batchId, filename: victim.filename || '', client: victim.client_name || '',
@@ -9680,6 +9689,7 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
       return res.status(403).json({ error: 'This order is completed and can no longer be deleted.' });
     }
     if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
+    pruneOrphanBackorders(db);          // the order's backorders go with it
     writeDb(db);
     logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master', reason });
     res.json({ ok: true });
@@ -9865,7 +9875,7 @@ app.post('/api/master/pending-deletions/bulk', express.json(), (req, res) => {
     });
     done.push(orderNumber);
   }
-  if (done.length) writeDb(db);
+  if (done.length) { pruneOrphanBackorders(db); writeDb(db); }
   logAudit(action === 'approve' ? 'order_deletions_bulk_approved' : 'order_deletions_bulk_rejected', {
     count: done.length, failedCount: failed.length, by: req.userId || 'master', note,
     orders: done.slice(0, 200),
@@ -9884,6 +9894,7 @@ app.post('/api/master/pending-deletions/:batchId/:orderNumber/approve', (req, re
     if (!state || !state.pending_deletion) return res.status(404).json({ error: 'No pending deletion request for this order.' });
     const pending = state.pending_deletion;
     if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
+    pruneOrphanBackorders(db);          // the order's backorders go with it
     writeDb(db);
     logAudit('order_deleted', {
       order: orderNumber, batchId, client: batch.client_name || '',
@@ -12515,6 +12526,37 @@ function stagingDemand(clientId, orders, strategy) {
 // picking (a packer can still grab whatever is on the shelf) and never changes the
 // reservation math the ZORT stock-sync depends on.
 function backorders(db) { return db.backorders || (db.backorders = []); }
+
+// A backorder is a tracking row hung off an ORDER. If that order goes away the
+// backorder is meaningless and must go with it — otherwise the queue fills with
+// rows pointing at nothing, which is exactly what happened: an uploaded batch
+// was deleted and 335 backorders outlived their orders.
+//
+// Orders can disappear down several routes — Master delete, bulk approve of a
+// deletion request, a client cancelling from the portal, a duplicate-order
+// overwrite, a whole-batch delete, the Master reset, and the 12-month
+// auto-archive. Hooking each one individually is how the gap appeared in the
+// first place, so instead this RECONCILES against the live order list: any
+// backorder whose order no longer exists is dropped, whatever removed it.
+// Cheap (one Set build) and called on every read of the queue, so the list can
+// never show a stale row again even if a future removal path forgets.
+function pruneOrphanBackorders(db) {
+  const list = db.backorders;
+  if (!Array.isArray(list) || !list.length) return 0;
+  const live = new Set();
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) live.add(String(o.order_number));
+  }
+  const before = list.length;
+  const dropped = list.filter(bo => !live.has(String(bo.order_number)));
+  if (!dropped.length) return 0;
+  db.backorders = list.filter(bo => live.has(String(bo.order_number)));
+  logAudit('backorders_pruned_orphaned', {
+    count: dropped.length,
+    orders: [...new Set(dropped.map(b => b.order_number))].slice(0, 200),
+  });
+  return before - db.backorders.length;
+}
 function recordBackorders(db, clientName, orderNumber, batchId, reserveResults) {
   const cid = invClientId(clientName);
   const list = backorders(db);
@@ -12747,10 +12789,16 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
 // ── Backorders — the "awaiting stock" queue ──────────────────────────────────
 // Read by any signed-in internal user (warehouse cares "what am I waiting on").
 app.get('/api/backorders', requireAuth, (req, res) => {
-  const list = backorders(readDb());
+  const db = readDb();
+  backorders(db);
+  // Reconcile before answering, so the queue can never show a row whose order
+  // has been deleted — whichever route removed it.
+  const pruned = pruneOrphanBackorders(db);
+  if (pruned) writeDb(db);
+  const list = db.backorders;
   const status = req.query.status || 'open';
   const rows = (status === 'all' ? list : list.filter(b => b.status === status)).slice(0, 500);
-  res.json({ open: list.filter(b => b.status === 'open').length, backorders: rows });
+  res.json({ open: list.filter(b => b.status === 'open').length, backorders: rows, pruned });
 });
 // Manually clear a backorder (e.g. the order was cancelled, or resolved offline).
 app.post('/api/backorders/:id/resolve', express.json(), requireAuth, (req, res) => {

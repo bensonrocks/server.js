@@ -671,6 +671,30 @@ restarts") is now also only in that panel, so nobody sees it unless they open
 Administrator. The boot log still prints it loudly, and `/api/version` still
 reports `storage.dataLostOnLastRestart` for an external check.
 
+### Backorders die with their order — `pruneOrphanBackorders()`
+
+A `db.backorders[]` row is a tracking record hung off an ORDER ("awaiting
+stock"). When the order goes away the row is meaningless, but nothing removed
+it — a deleted upload left **335 backorders pointing at orders that no longer
+existed**, all showing as open work.
+
+Orders disappear down at least seven routes: Master direct delete, single
+approve of a deletion request, bulk approve, client self-cancel from the
+portal, duplicate-order overwrite, whole-batch delete, the Master reset, and
+the 12-month auto-archive. Hooking each one is precisely how the gap appeared,
+so the fix RECONCILES instead: `pruneOrphanBackorders(db)` builds a Set of
+every live order number and drops any backorder not in it, whatever removed
+the order. Audit-logged as `backorders_pruned_orphaned`.
+
+Called from: `GET /api/backorders` (so the queue can never render a stale row
+even if a future removal path forgets), each deletion site (so other screens
+are correct immediately), and once at boot (which is what cleared the original
+335 — harmless to repeat, it is a no-op when clean).
+
+Verified by seeding 335 orphans plus 5 genuine rows: boot cleared exactly the
+335, deleting an order took its row with it, deleting a batch took all four of
+its rows, and rows on live orders were untouched.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the
