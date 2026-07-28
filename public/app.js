@@ -8724,12 +8724,128 @@
       renderPendingDeletions(await r.json());
     } catch { /* silent — next poll retries */ }
   }
+  // Select-all + bulk approve/reject. Shared by both Pending Deletions tables:
+  // each passes its own element ids, the key it selects by, and the endpoint.
+  // Approving is IRREVERSIBLE, so a bulk approve needs a typed confirmation —
+  // the same guard the "Clear All Jobs" action uses.
+  function wireBulkDeletions(cfg) {
+    const bar = document.getElementById(cfg.bar);
+    const all = document.getElementById(cfg.selectAll);
+    if (!bar || !all) return null;
+
+    const ticks = () => [...document.querySelectorAll(`#${cfg.body} .pd-tick`)];
+    const picked = () => ticks().filter(t => t.checked);
+    // The table re-renders on a 15s poll, which replaces every row — so the
+    // selection is held HERE by key, not in the DOM, and re-applied after each
+    // render. Without this, ticking 100 rows then waiting a few seconds
+    // silently cleared the lot.
+    const sel = new Set();
+    const keyOf = ds => cfg.payloadKey === 'ids' ? ds.id : `${ds.batchid}|${ds.order}`;
+
+    function sync() {
+      // Re-apply the remembered selection to whatever rows are on screen now,
+      // and drop keys for rows that no longer exist (already actioned).
+      const rows = ticks();
+      const present = new Set(rows.map(t => keyOf(t.dataset)));
+      [...sel].forEach(k => { if (!present.has(k)) sel.delete(k); });
+      rows.forEach(t => { t.checked = sel.has(keyOf(t.dataset)); });
+
+      const n = sel.size, total = rows.length;
+      document.getElementById(cfg.count).textContent = `${n} selected`;
+      bar.classList.toggle('hidden', n === 0);
+      all.checked = total > 0 && n === total;
+      all.indeterminate = n > 0 && n < total;
+    }
+    all.addEventListener('change', () => {
+      ticks().forEach(t => {
+        const k = keyOf(t.dataset);
+        if (all.checked) sel.add(k); else sel.delete(k);
+      });
+      sync();
+    });
+    document.getElementById(cfg.body).addEventListener('change', e => {
+      if (!e.target.classList.contains('pd-tick')) return;
+      const k = keyOf(e.target.dataset);
+      if (e.target.checked) sel.add(k); else sel.delete(k);
+      sync();
+    });
+
+    async function run(action) {
+      // NB: named `chosen`, not `sel` — `sel` is the outer selection Set and
+      // shadowing it here broke sel.clear() in the finally block below.
+      const chosen = picked();
+      if (!chosen.length) return;
+      const n = chosen.length;
+      if (action === 'approve') {
+        const word = 'DELETE';
+        const typed = prompt(
+          `Approve deletion of ${n} ${cfg.noun}${n === 1 ? '' : 's'}?\n\n`
+          + `This permanently removes them and CANNOT be undone.\n`
+          + `Anything already completed will be skipped automatically.\n\n`
+          + `Type ${word} to confirm:`);
+        if (typed === null) return;
+        if (typed.trim().toUpperCase() !== word) { alert('Not confirmed — nothing was deleted.'); return; }
+      } else {
+        const note = prompt(`Reject ${n} request${n === 1 ? '' : 's'}? Optional note for the requester:`, '');
+        if (note === null) return;
+        cfg._note = note;
+      }
+      const btns = [document.getElementById(cfg.approve), document.getElementById(cfg.reject)];
+      btns.forEach(b => { if (b) b.disabled = true; });
+      try {
+        const payload = { action, note: cfg._note || '' };
+        payload[cfg.payloadKey] = chosen.map(t => cfg.toTarget(t.dataset));
+        const r = await fetch(cfg.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Request failed');
+        const failed = d.failed || [];
+        let msg = `${action === 'approve' ? 'Deleted' : 'Rejected'} ${d.processed} ${cfg.noun}${d.processed === 1 ? '' : 's'}.`;
+        if (failed.length) {
+          const byReason = {};
+          failed.forEach(f => { byReason[f.error] = (byReason[f.error] || 0) + 1; });
+          msg += `\n\n${failed.length} skipped:\n` + Object.entries(byReason).map(([e, c]) => `  • ${c} × ${e}`).join('\n');
+        }
+        alert(msg);
+        cfg.reload();
+        if (cfg.alsoRefreshOrders) { await refreshOrders(); renderOrdersList(); }
+      } catch (err) { alert(err.message); }
+      finally {
+        cfg._note = '';
+        sel.clear();                       // actioned — start clean
+        btns.forEach(b => { if (b) b.disabled = false; });
+      }
+    }
+    document.getElementById(cfg.approve)?.addEventListener('click', () => run('approve'));
+    document.getElementById(cfg.reject)?.addEventListener('click', () => run('reject'));
+    return sync;
+  }
+
+  const _pdSync = wireBulkDeletions({
+    bar: 'pdBulkBar', count: 'pdBulkCount', selectAll: 'pdSelectAll', body: 'pendingDelBody',
+    approve: 'pdBulkApprove', reject: 'pdBulkReject', noun: 'order',
+    endpoint: '/api/master/pending-deletions/bulk', payloadKey: 'targets',
+    toTarget: ds => ({ orderNumber: ds.order, batchId: ds.batchid }),
+    reload: () => loadPendingDeletions(), alsoRefreshOrders: true,
+  });
+  const _ibdSync = wireBulkDeletions({
+    bar: 'ibdBulkBar', count: 'ibdBulkCount', selectAll: 'ibdSelectAll', body: 'pendingInboundDelBody',
+    approve: 'ibdBulkApprove', reject: 'ibdBulkReject', noun: 'record',
+    endpoint: '/api/master/inbound-pending-deletions/bulk', payloadKey: 'ids',
+    toTarget: ds => ds.id,
+    reload: () => loadInboundPendingDeletions(),
+  });
+
   function renderPendingDeletions(list) {
     _pendingOrderDelCount = list.length;
     updatePendingDelBadge();
 
     document.getElementById('pendingDelBody').innerHTML = list.map(p => `
       <tr>
+        <td class="pd-col-tick"><input type="checkbox" class="pd-tick" data-order="${esc(p.orderNumber)}" data-batchid="${esc(p.batchId)}"></td>
         <td class="dcs-name">${esc(p.orderNumber)}</td>
         <td class="pd-col-client">${esc(p.client) || '—'}</td>
         <td>${esc(p.reason)}</td>
@@ -8741,6 +8857,7 @@
         </td>
       </tr>`).join('');
     document.getElementById('pendingDelEmpty').classList.toggle('hidden', list.length > 0);
+    if (_pdSync) _pdSync();
 
     document.querySelectorAll('.pd-approve-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -8789,6 +8906,7 @@
 
     document.getElementById('pendingInboundDelBody').innerHTML = list.map(p => `
       <tr>
+        <td class="pd-col-tick"><input type="checkbox" class="pd-tick" data-id="${esc(p.id)}"></td>
         <td class="dcs-name">${esc(p.reference || p.id.slice(0, 8))}</td>
         <td class="pd-col-client">${esc(p.client) || '—'}</td>
         <td>${esc(p.reason)}</td>
@@ -8800,6 +8918,7 @@
         </td>
       </tr>`).join('');
     document.getElementById('pendingInboundDelEmpty').classList.toggle('hidden', list.length > 0);
+    if (_ibdSync) _ibdSync();
 
     document.querySelectorAll('.pid-approve-btn').forEach(btn => {
       btn.addEventListener('click', async () => {

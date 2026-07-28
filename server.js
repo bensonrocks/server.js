@@ -2934,6 +2934,10 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
+        // Whether the client may cancel this themselves — same rule the delete
+        // endpoint enforces, so the UI can never offer something the server
+        // will refuse.
+        can_delete: portalDeletable('orders', st) === null,
       });
     }
   }
@@ -2971,6 +2975,7 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
         expected: (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
         received: Object.values(state.scanned || {}).reduce((s, q) => s + q, 0),
         damaged, discrepancies: (rec.discrepancies || []).length,
+        can_delete: portalDeletable('inbound', rec) === null,
       };
     })
     .sort((a, b) => String(b.submitted_at || b.received_at || '').localeCompare(String(a.submitted_at || a.received_at || '')));
@@ -3232,6 +3237,105 @@ app.post('/api/portal/settings', express.json(), requirePortalAuthMiddleware, (r
   writeDb(db);
   logAudit('portal_aging_days_set', { client: req.portalClient, agingDays: n });
   res.json({ ok: true, agingDays: n });
+});
+
+// ── Client self-service deletion ────────────────────────────────────────────
+// A client may cancel their OWN records without waiting for us — but ONLY while
+// nothing has been worked on. "Processed" is judged on the actual state, not on
+// a flag someone could forget to set:
+//   • status 'done'                    → finished work, never deletable
+//   • status 'processing'              → we have started, not deletable
+//   • any scanned/received quantity    → someone has physically touched it
+//   • an existing pending_deletion     → already in our approval queue
+// Everything that passes is genuinely untouched paperwork, so removing it costs
+// nothing. Every deletion is audit-logged against the client, and the office is
+// POKED — work must never silently vanish off the floor's list.
+// NOTE on `unprocessed`: that status means the order was cancelled/set aside,
+// not worked on — so it IS deletable here. Deliberate: a client clearing out
+// something we already agreed not to process is exactly the tidy-up this
+// feature is for, and the audit log plus nightly backup keep the history.
+function portalDeletable(kind, rec) {
+  const state = (kind === 'inbound' ? rec.state : rec) || {};
+  const status = state.status || 'pending';
+  if (status === 'done') return 'already completed';
+  if (status === 'processing') return 'already being worked on';
+  const moved = Object.values(state.scanned || {}).reduce((s, q) => s + (Number(q) || 0), 0);
+  if (moved > 0) return 'already partly processed';
+  if (rec.pending_deletion || state.pending_deletion) return 'already awaiting our approval';
+  return null;   // deletable
+}
+
+app.post('/api/portal/delete', express.json(), requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient;
+  const clientNorm = client.trim().toLowerCase();
+  const kind = req.body?.kind === 'inbound' ? 'inbound' : 'orders';
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  const reason = String(req.body?.reason || '').trim().slice(0, 300);
+  if (!items.length) return res.status(400).json({ error: 'Nothing selected.' });
+  if (items.length > 2000) return res.status(400).json({ error: 'Too many records in one request.' });
+
+  const db = readDb();
+  const deleted = [], refused = [];
+
+  if (kind === 'inbound') {
+    for (const raw of items) {
+      const id = String(raw);
+      const rec = (db.inbound || []).find(x => x.id === id);
+      // Ownership is checked FIRST and reported as not-found, so a client can
+      // never probe for another client's record ids.
+      if (!rec || String(rec.client_name || '').trim().toLowerCase() !== clientNorm) {
+        refused.push({ ref: id, error: 'Not found' }); continue;
+      }
+      const why = portalDeletable('inbound', rec);
+      const label = rec.serial || rec.reference || id;
+      if (why) { refused.push({ ref: label, error: why }); continue; }
+      logAudit('portal_inbound_deleted', {
+        client, id, serial: rec.serial || '', reference: rec.reference || '',
+        lines: (rec.lines || []).length,
+        expected: (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
+        reason, by: `portal:${client}`,
+      });
+      removeInboundRecord(db, id);
+      deleted.push(label);
+    }
+  } else {
+    for (const raw of items) {
+      const orderNumber = String(raw);
+      let found = null;
+      for (const b of db.batches || []) {
+        if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+        if ((b.orders || []).some(o => String(o.order_number) === orderNumber)) { found = b; break; }
+      }
+      if (!found) { refused.push({ ref: orderNumber, error: 'Not found' }); continue; }
+      const order = found.orders.find(o => String(o.order_number) === orderNumber);
+      const state = (found.orderStates || {})[orderNumber] || {};
+      const why = portalDeletable('orders', state);
+      if (why) { refused.push({ ref: orderNumber, error: why }); continue; }
+      logAudit('portal_order_deleted', {
+        client, order: orderNumber, batchId: found.id,
+        lines: (order.lines || []).length,
+        qty: order.total_qty || (order.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+        reason, by: `portal:${client}`,
+      });
+      removeOrderFromBatch(found, orderNumber);
+      deleted.push(orderNumber);
+    }
+  }
+
+  if (deleted.length) {
+    // Tell the office. A client removing 50 orders must show up as an event,
+    // not just as rows quietly missing from the floor's list.
+    addPoke(db, {
+      kind: 'client_deleted',
+      client, direction: kind === 'inbound' ? 'inbound' : 'outbound',
+      channel: clientChannel(db, client),
+      ref: deleted.slice(0, 3).join(', ') + (deleted.length > 3 ? ` +${deleted.length - 3} more` : ''),
+      cancelled: deleted.length,
+      reason,
+    });
+    writeDb(db);
+  }
+  res.json({ ok: true, deleted: deleted.length, refused });
 });
 
 // GRN for one of THEIR receipts — strict ownership check.
@@ -7186,6 +7290,45 @@ app.get('/api/master/inbound-pending-deletions', (req, res) => {
   res.json(out);
 });
 
+// Bulk approve / reject for inbound, mirroring the orders bulk route above so
+// all three Pending Deletions tables behave identically.
+app.post('/api/master/inbound-pending-deletions/bulk', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const action = req.body?.action === 'reject' ? 'reject' : 'approve';
+  const note = String(req.body?.note || '').trim();
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+  if (!ids.length) return res.status(400).json({ error: 'Nothing selected.' });
+  const db = readDb();
+  const done = [], failed = [];
+  for (const id of ids) {
+    const rec = findInbound(db, id);
+    if (!rec || !rec.pending_deletion) { failed.push({ id, error: 'No longer pending' }); continue; }
+    const pending = rec.pending_deletion;
+    const label = rec.serial || rec.reference || id;
+    if (action === 'reject') {
+      delete rec.pending_deletion;
+      logAudit('inbound_deletion_rejected', { id, reference: rec.reference || '', jobType: rec.type,
+        client: rec.client_name || '', by: req.userId || 'master', requestedBy: pending.requestedBy,
+        reason: pending.reason, note, bulk: true });
+      done.push(label);
+      continue;
+    }
+    // Same standing rule as orders: a receipt finished since the request was
+    // raised is completed work and is not deleted.
+    if ((rec.state?.status || 'pending') === 'done') { failed.push({ id: label, error: 'Received since the request — not deleted' }); continue; }
+    removeInboundRecord(db, id);
+    logAudit('inbound_deleted', { id, reference: rec.reference || '', jobType: rec.type,
+      client: rec.client_name || '', by: req.userId || 'master', reason: pending.reason,
+      requestedBy: pending.requestedBy, bulk: true });
+    done.push(label);
+  }
+  if (done.length) writeDb(db);
+  logAudit(action === 'approve' ? 'inbound_deletions_bulk_approved' : 'inbound_deletions_bulk_rejected', {
+    count: done.length, failedCount: failed.length, by: req.userId || 'master', note, records: done.slice(0, 200),
+  });
+  res.json({ ok: true, action, processed: done.length, failed });
+});
+
 app.post('/api/master/inbound-pending-deletions/:id/approve', (req, res) => {
   if (!checkMaster(req, res)) return;
   const { id } = req.params;
@@ -9678,6 +9821,56 @@ app.get('/api/master/pending-deletions', (req, res) => {
   }
   out.sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt))); // oldest-waiting first
   res.json(out);
+});
+
+// Bulk approve / reject. A Master facing 143 queued requests should not have to
+// click 143 times, so the Pending Deletions table has select-all. Approving is
+// IRREVERSIBLE, so this route does the work once, atomically (a single writeDb),
+// and reports what actually happened per order rather than assuming success.
+app.post('/api/master/pending-deletions/bulk', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const action = req.body?.action === 'reject' ? 'reject' : 'approve';
+  const note = String(req.body?.note || '').trim();
+  const targets = Array.isArray(req.body?.targets) ? req.body.targets : [];
+  if (!targets.length) return res.status(400).json({ error: 'Nothing selected.' });
+  if (targets.length > 5000) return res.status(400).json({ error: 'Too many in one request.' });
+
+  const db = readDb();
+  const done = [], failed = [];
+  for (const t of targets) {
+    const orderNumber = String(t?.orderNumber || '');
+    const batchId = String(t?.batchId || '');
+    const batch = db.batches.find(b => b.id === batchId);
+    if (!batch) { failed.push({ orderNumber, error: 'Batch no longer exists' }); continue; }
+    const state = (batch.orderStates || {})[orderNumber];
+    if (!state || !state.pending_deletion) { failed.push({ orderNumber, error: 'No longer pending' }); continue; }
+    const pending = state.pending_deletion;
+    if (action === 'reject') {
+      delete state.pending_deletion;
+      logAudit('order_deletion_rejected', {
+        order: orderNumber, batchId, client: batch.client_name || '',
+        by: req.userId || 'master', requestedBy: pending.requestedBy, reason: pending.reason, note, bulk: true,
+      });
+      done.push(orderNumber);
+      continue;
+    }
+    // Completed work is never deleted — the standing rule, re-checked HERE and
+    // not only at request time, because an order can be finished in the window
+    // between the request and the approval.
+    if (state.status === 'done') { failed.push({ orderNumber, error: 'Completed since the request — not deleted' }); continue; }
+    if (!removeOrderFromBatch(batch, orderNumber)) { failed.push({ orderNumber, error: 'Order not found in batch' }); continue; }
+    logAudit('order_deleted', {
+      order: orderNumber, batchId, client: batch.client_name || '',
+      by: req.userId || 'master', reason: pending.reason, requestedBy: pending.requestedBy, bulk: true,
+    });
+    done.push(orderNumber);
+  }
+  if (done.length) writeDb(db);
+  logAudit(action === 'approve' ? 'order_deletions_bulk_approved' : 'order_deletions_bulk_rejected', {
+    count: done.length, failedCount: failed.length, by: req.userId || 'master', note,
+    orders: done.slice(0, 200),
+  });
+  res.json({ ok: true, action, processed: done.length, failed });
 });
 
 app.post('/api/master/pending-deletions/:batchId/:orderNumber/approve', (req, res) => {

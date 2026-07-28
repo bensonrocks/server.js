@@ -761,9 +761,18 @@
             <div class="admin-section-sub">Admin-requested order deletions awaiting your approval. Nothing is removed until you approve it here.</div>
           </div>
         </div>
+        <div class="pd-bulkbar hidden" id="pdBulkBar">
+          <span id="pdBulkCount">0 selected</span>
+          <button class="btn-sm btn-primary" id="pdBulkApprove">&#10003; Approve selected</button>
+          <button class="btn-sm btn-danger-sm" id="pdBulkReject">&#215; Reject selected</button>
+        </div>
         <div id="pendingDelWrap" class="dcs-wrap">
           <table class="dcs-table">
-            <thead><tr><th>Order</th><th class="pd-col-client">Client</th><th>Reason</th><th>Requested By</th><th class="pd-col-progress">Progress</th><th>Actions</th></tr></thead>
+            <thead><tr>
+              <th class="pd-col-tick"><input type="checkbox" id="pdSelectAll" title="Select all"></th>
+              <th>Order</th><th class="pd-col-client">Client</th><th>Reason</th><th>Requested By</th>
+              <th class="pd-col-progress">Progress</th><th>Actions</th>
+            </tr></thead>
             <tbody id="pendingDelBody"></tbody>
           </table>
           <div id="pendingDelEmpty" class="empty-state hidden">No pending deletion requests.</div>
@@ -773,9 +782,18 @@
         <div class="admin-section-header">
           <div class="admin-section-title" style="font-size:.8rem">Inbound Deletion Requests</div>
         </div>
+        <div class="pd-bulkbar hidden" id="ibdBulkBar">
+          <span id="ibdBulkCount">0 selected</span>
+          <button class="btn-sm btn-primary" id="ibdBulkApprove">&#10003; Approve selected</button>
+          <button class="btn-sm btn-danger-sm" id="ibdBulkReject">&#215; Reject selected</button>
+        </div>
         <div id="pendingInboundDelWrap" class="dcs-wrap">
           <table class="dcs-table">
-            <thead><tr><th>Reference</th><th class="pd-col-client">Client</th><th>Reason</th><th>Requested By</th><th class="pd-col-progress">Progress</th><th>Actions</th></tr></thead>
+            <thead><tr>
+              <th class="pd-col-tick"><input type="checkbox" id="ibdSelectAll" title="Select all"></th>
+              <th>Reference</th><th class="pd-col-client">Client</th><th>Reason</th><th>Requested By</th>
+              <th class="pd-col-progress">Progress</th><th>Actions</th>
+            </tr></thead>
             <tbody id="pendingInboundDelBody"></tbody>
           </table>
           <div id="pendingInboundDelEmpty" class="empty-state hidden">No pending inbound deletion requests.</div>

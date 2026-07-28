@@ -594,6 +594,55 @@ pill, aging flags a 40-day and a 20-day idle SKU but not a 5-day one and
 follows the threshold when changed, and the 365-day report limit is enforced
 on both sides. Pill colours asserted by computed style, not by class name.
 
+### Bulk deletion approval (Master) + client self-cancel (portal)
+
+Two separate paths, deliberately different in who needs whose permission.
+
+**MASTER BULK APPROVE** — `POST /api/master/pending-deletions/bulk` and
+`/api/master/inbound-pending-deletions/bulk`, both `{action:'approve'|'reject',
+targets|ids, note}`. The Pending Deletions tables gained a select-all tick
+column and a bulk bar. One call, one `writeDb`, per-record outcomes returned
+so genuine per-record refusals are reported while the rest still go through.
+- **The done-check is re-run at APPROVAL time, not just at request time** — an
+  order can be completed in the window between the two, and completed work is
+  never deleted. Such a request is SKIPPED and deliberately LEFT in the queue
+  (reported as "Completed since the request") rather than silently dropped;
+  the Master rejects it. Verified with exactly that race.
+- Bulk approve needs a typed `DELETE` confirmation (same guard as "Clear All
+  Jobs"); cancelling or mistyping deletes nothing.
+- SELECTION SURVIVES THE 15s POLL. The tables re-render on a timer, which
+  replaces every row — so `wireBulkDeletions()` holds the selection in a Set
+  keyed by `batchId|orderNumber` (or inbound id) and re-applies it after each
+  render, dropping keys whose rows are gone. Without this, ticking 100 rows
+  and pausing silently cleared the lot. Regression-tested by waiting out a
+  real refresh.
+- GOTCHA fixed: `const sel = picked()` inside `run()` shadowed the outer
+  selection Set, so `sel.clear()` threw. The local is `chosen` now.
+
+**CLIENT SELF-CANCEL** — `POST /api/portal/delete` `{kind:'orders'|'inbound',
+items[], reason}`. Per the user: a client may select all and delete their own
+records with NO administrator approval — *unless the job has been processed*.
+- "Processed" is judged on ACTUAL STATE, never a flag someone could forget to
+  set (`portalDeletable()`): status `done` → refused; status `processing` →
+  refused; any scanned/received qty > 0 → refused; already in our approval
+  queue → refused. `unprocessed` (cancelled) IS deletable — that is tidy-up of
+  something we already agreed not to process, and is a deliberate choice.
+- The SAME function drives the `can_delete` flag on `/api/portal/orders` and
+  `/api/portal/inbound`, so the UI only ever offers a tick where the server
+  has already said yes — it cannot show an action that would then be refused.
+- Ownership is checked FIRST and reported as "Not found", so a client can
+  never probe for another client's record ids.
+- Every deletion is audit-logged (`portal_order_deleted` /
+  `portal_inbound_deleted`, with client, lines and qty) AND fires a
+  `client_deleted` poke — work must never silently vanish off the floor's
+  list. Requires a typed `CANCEL` confirmation plus an optional reason.
+- This makes the portal write-capable in a THIRD narrow place (after ASN
+  submit and the aging threshold). It is still read-only for everything else.
+
+Verified: 30 API checks + 20 browser checks, including cross-client isolation,
+the completed-after-request race, part-picked refusal, the poke firing, and
+that a tick never expands the order card it sits on.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the

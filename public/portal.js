@@ -487,6 +487,9 @@
       const d = orderDetail.get(o.order_number);
       return `<div class="card exp" data-order="${esc(o.order_number)}" style="margin-bottom:.5rem">
         <div class="row">
+          ${o.can_delete
+            ? `<input type="checkbox" class="pick" data-k="${esc(o.order_number)}" title="Select to cancel">`
+            : '<span class="no-pick"></span>'}
           <div style="min-width:0;flex:1">
             <div class="mono" style="font-weight:800;font-size:.9rem">${esc(o.order_number)}</div>
             <div class="muted" style="font-size:.76rem">
@@ -502,6 +505,7 @@
         ${isOpen ? `<div class="detail">${d ? orderDetailHtml(d) : '<div class="skel" style="height:58px"></div>'}</div>` : ''}
       </div>`;
     }).join('');
+    syncSel('orders');
   }
 
   function orderDetailHtml(d) {
@@ -611,6 +615,9 @@
       ].filter(Boolean).join(' · ');
       return `<div class="card" style="margin-bottom:.5rem">
         <div class="row">
+          ${r.can_delete
+            ? `<input type="checkbox" class="pick" data-k="${esc(r.id)}" title="Select to cancel">`
+            : '<span class="no-pick"></span>'}
           <div style="min-width:0;flex:1">
             <div class="mono" style="font-weight:800;font-size:.9rem">${esc(r.serial || r.reference || '—')}</div>
             <div class="muted" style="font-size:.76rem">${meta}</div>
@@ -634,6 +641,7 @@
     }).join('');
     document.querySelectorAll('.ib-grn').forEach(b =>
       b.addEventListener('click', e => { e.stopPropagation(); openGrn(b.dataset.id); }));
+    syncSel('inbound');
   }
 
   // ── ASN submission ────────────────────────────────────────────────────────
@@ -772,6 +780,89 @@
   }
   function closeDownload() { $('dlModal').classList.add('hidden'); dlKind = null; }
 
+  // ── Self-cancel: pick your own untouched records and remove them ──────────
+  // No approval needed — but ONLY for records nothing has happened to yet. The
+  // server decides that (`can_delete`); this UI only ever offers a tick where
+  // the server has already said yes, so a client can't be shown an action that
+  // will then be refused.
+  const orSel = new Set(), ibSel = new Set();
+
+  function syncSel(which) {
+    const isOrders = which === 'orders';
+    const sel = isOrders ? orSel : ibSel;
+    const rows = isOrders ? orders : inbound;
+    const idOf = r => isOrders ? r.order_number : r.id;
+    // Drop anything that has since been picked/received, or has vanished.
+    const eligible = new Set(rows.filter(r => r.can_delete).map(idOf));
+    [...sel].forEach(k => { if (!eligible.has(k)) sel.delete(k); });
+
+    const pre = isOrders ? 'or' : 'ib';
+    document.querySelectorAll(`#${pre}List .pick`).forEach(cb => { cb.checked = sel.has(cb.dataset.k); });
+    $(pre + 'SelCount').textContent = `${sel.size} selected`;
+    $(pre + 'SelBar').classList.toggle('hidden', sel.size === 0);
+    $(pre + 'PickAllWrap').classList.toggle('hidden', eligible.size === 0);
+    const allBox = $(pre + 'PickAll');
+    allBox.checked = eligible.size > 0 && sel.size === eligible.size;
+    allBox.indeterminate = sel.size > 0 && sel.size < eligible.size;
+  }
+
+  function wireSel(which) {
+    const isOrders = which === 'orders';
+    const pre = isOrders ? 'or' : 'ib';
+    const sel = isOrders ? orSel : ibSel;
+    const idOf = r => isOrders ? r.order_number : r.id;
+
+    $(pre + 'List').addEventListener('change', e => {
+      if (!e.target.classList.contains('pick')) return;
+      if (e.target.checked) sel.add(e.target.dataset.k); else sel.delete(e.target.dataset.k);
+      syncSel(which);
+    });
+    $(pre + 'PickAll').addEventListener('change', e => {
+      const rows = (isOrders ? orders : inbound).filter(r => r.can_delete);
+      rows.forEach(r => { if (e.target.checked) sel.add(idOf(r)); else sel.delete(idOf(r)); });
+      syncSel(which);
+    });
+    $(pre + 'SelClear').addEventListener('click', () => { sel.clear(); syncSel(which); });
+    $(pre + 'SelDelete').addEventListener('click', async e => {
+      const n = sel.size;
+      if (!n) return;
+      const noun = isOrders ? 'order' : 'shipment';
+      const typed = prompt(
+        `Cancel ${n} ${noun}${n === 1 ? '' : 's'}?\n\n`
+        + `They will be removed and we will not process them. This cannot be undone.\n`
+        + `Anything we have already started is left untouched.\n\n`
+        + `Type CANCEL to confirm:`);
+      if (typed === null) return;
+      if (typed.trim().toUpperCase() !== 'CANCEL') { alert('Not confirmed — nothing was cancelled.'); return; }
+      const reason = prompt('Reason (optional) — this is recorded and visible to us:', '') || '';
+
+      const btn = e.currentTarget, orig = btn.innerHTML;
+      btn.disabled = true; btn.textContent = 'Cancelling…';
+      try {
+        const r = await fetch('/api/portal/delete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': token },
+          body: JSON.stringify({ kind: isOrders ? 'orders' : 'inbound', items: [...sel], reason }),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || 'Could not cancel those records.'); return; }
+        sel.clear();
+        let msg = `Cancelled ${d.deleted} ${noun}${d.deleted === 1 ? '' : 's'}.`;
+        const ref = d.refused || [];
+        if (ref.length) {
+          const byReason = {};
+          ref.forEach(f => { byReason[f.error] = (byReason[f.error] || 0) + 1; });
+          msg += `\n\n${ref.length} could not be cancelled:\n`
+            + Object.entries(byReason).map(([er, c]) => `  • ${c} × ${er}`).join('\n');
+        }
+        alert(msg);
+        loadAll();
+      } catch (err) { alert('Could not reach the server — please try again.'); }
+      finally { btn.disabled = false; btn.innerHTML = orig; }
+    });
+  }
+  wireSel('orders');
+  wireSel('inbound');
+
   // ── Wiring ────────────────────────────────────────────────────────────────
   document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
@@ -876,6 +967,8 @@
 
   // Order cards expand to show their contents.
   $('orList').addEventListener('click', e => {
+    // Ticking the cancel checkbox must not also expand the card.
+    if (e.target.classList.contains('pick')) return;
     const card = e.target.closest('.card[data-order]');
     if (card) toggleOrder(card.dataset.order);
   });

@@ -2949,3 +2949,11 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .poke-row .pk-when { font-size: .7rem; color: #94a3b8; white-space: nowrap; flex: 0 0 auto; }
 .poke-chan { display: inline-block; padding: .05rem .35rem; border-radius: 5px; font-size: .64rem;
              font-weight: 800; background: #e0e7ff; color: #3730a3; margin-left: .3rem; }
+
+/* ── Pending Deletions: select-all + bulk approve/reject ─────────────────── */
+.pd-col-tick { width: 2.2rem; text-align: center; }
+.pd-col-tick input { width: 16px; height: 16px; cursor: pointer; }
+.pd-bulkbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+              margin: 0 0 .6rem; padding: .55rem .7rem; border-radius: 9px;
+              background: #eff6ff; border: 1px solid #bfdbfe; }
+.pd-bulkbar > span { font-weight: 800; font-size: .82rem; color: #1e40af; margin-right: auto; }
