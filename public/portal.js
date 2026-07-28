@@ -13,6 +13,7 @@
   let clientName = localStorage.getItem('portal_client') || '';
   let overview = null, stock = [], orders = [], inbound = [];
   let stFilter = 'all', orFilter = 'all', ibFilter = 'all';
+  let agingDays = 15, screenDays = 90, exportMaxDays = 365, slaWorkingDays = 2;
   const openOrder = new Set();      // order numbers expanded on screen
   const orderDetail = new Map();    // order_number -> line detail (lazy loaded)
 
@@ -28,6 +29,13 @@
   const fmtDate = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { ...SGT, day: '2-digit', month: 'short', year: 'numeric' }); };
   const fmtDateTime = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('en-GB', { ...SGT, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); };
   const sgToday = () => new Date().toLocaleDateString('en-CA', SGT);
+  // A bare YYYY-MM-DD day string (SLA due dates, ETAs) — already a calendar
+  // day, so it must NOT be pushed through a timezone conversion again.
+  const fmtDay = s => {
+    if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return s || '';
+    const [y, m, d] = s.split('-');
+    return `${d} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1]}`;
+  };
   function relative(v) {
     if (!v) return '';
     const ms = Date.now() - new Date(v).getTime();
@@ -103,10 +111,22 @@
       ]);
       if ([ov, st, or, ib].some(r => r.status === 401)) { logout(); return; }
       if (ov.ok) overview = await ov.json();
-      if (st.ok) stock = await st.json();
+      if (st.ok) {
+        const d = await st.json();
+        stock = d.rows || [];
+        if (Number.isFinite(d.agingDays)) agingDays = d.agingDays;
+      }
       if (or.ok) orders = await or.json();
-      if (ib.ok) inbound = await ib.json();
+      if (ib.ok) {
+        const d = await ib.json();
+        inbound = d.rows || [];
+        if (Number.isFinite(d.screenDays)) screenDays = d.screenDays;
+        if (Number.isFinite(d.exportMaxDays)) exportMaxDays = d.exportMaxDays;
+        if (Number.isFinite(d.slaWorkingDays)) slaWorkingDays = d.slaWorkingDays;
+      }
       orderDetail.clear();
+      $('agingInput').value = agingDays;
+      $('asnSlaText').textContent = `${slaWorkingDays} working day${slaWorkingDays === 1 ? '' : 's'}`;
       renderOverview(); renderStock(); renderOrders(); renderInbound();
     } catch (e) {
       if (!overview) {
@@ -189,6 +209,12 @@
     if (o.quarantineOpen > 0) alerts.push(`<div class="alert a-bad"><span>&#128683;</span><div>
       <b>${num(o.quarantineOpen)} unit${o.quarantineOpen === 1 ? '' : 's'} in quarantine</b>
       Held aside as damaged or pending inspection — not available to sell.</div></div>`);
+    if (s.aging > 0) alerts.push(`<div class="alert a-warn"><span>&#9203;</span><div>
+      <b>${num(s.aging)} SKU${s.aging === 1 ? '' : 's'} not moving${s.agingPieces ? ` (${num(s.agingPieces)} pcs)` : ''}</b>
+      No movement for more than ${o.agingDays} days. Open the Stock tab and tap “Aging” to see which.</div></div>`);
+    if (o.inboundSlaSummary?.overdue > 0) alerts.push(`<div class="alert a-warn"><span>&#128340;</span><div>
+      <b>${num(o.inboundSlaSummary.overdue)} inbound shipment${o.inboundSlaSummary.overdue === 1 ? '' : 's'} past our service level</b>
+      We're behind on receiving these. Your account manager has been notified.</div></div>`);
     if (alerts.length) {
       parts.push(`<div class="sec"><div class="sec-hd"><h3>Needs attention</h3></div>${alerts.join('')}</div>`);
     } else if (s.skus > 0) {
@@ -213,6 +239,42 @@
             <div><div class="v n">${num(t30.pieces)}</div><div class="l">Pieces shipped</div></div>
             <div><div class="v n">${t30.avgLinesPerOrder}</div><div class="l">Avg lines / order</div></div>
           </div></div>
+        </div>`);
+    }
+
+    // ── Receiving performance against our promise (only once there is history)
+    const sl = o.inboundSlaSummary || {};
+    if ((sl.met || 0) + (sl.missed || 0) > 0) {
+      const total = sl.met + sl.missed;
+      const pct = Math.round((sl.met / total) * 100);
+      parts.push(`
+        <div class="sec">
+          <div class="sec-hd"><h3>Receiving service level</h3><span class="sub">D+${sl.workingDays} working days</span></div>
+          <div class="card">
+            <div class="row">
+              <div><div style="font-size:1.5rem;font-weight:800" class="n">${pct}%</div>
+                <div class="muted" style="font-size:.76rem">${num(sl.met)} of ${num(total)} shipments received within our promise</div></div>
+              <div style="text-align:right">
+                <span class="pill p-sla-met">${num(sl.met)} met</span>
+                ${sl.missed ? `<div style="margin-top:.3rem"><span class="pill p-sla-miss">${num(sl.missed)} missed</span></div>` : ''}
+              </div>
+            </div>
+            <div class="meter" style="height:7px;margin-top:.6rem"><i style="width:${pct}%"></i></div>
+          </div>
+        </div>`);
+    }
+
+    // ── Aging stock detail
+    if ((o.agingList || []).length) {
+      parts.push(`
+        <div class="sec">
+          <div class="sec-hd"><h3>Not moving</h3><span class="sub">Longest first</span></div>
+          <div class="card">${o.agingList.map(r => `
+            <div class="lrow">
+              <div class="g"><div class="t mono">${esc(r.sku)}</div><div class="s">${esc(r.name || '—')}</div></div>
+              <div class="r"><span class="pill p-aging">${r.days}d</span>
+                <div class="s">${num(r.on_hand)} on hand</div></div>
+            </div>`).join('')}</div>
         </div>`);
     }
 
@@ -314,6 +376,7 @@
     let rows = stock.filter(r => {
       if (stFilter === 'low') { if (!(r.available > 0 && r.available <= (r.reorder_point ?? 10))) return false; }
       else if (stFilter === 'out') { if (r.available > 0) return false; }
+      else if (stFilter === 'aging') { if (!r.aging) return false; }
       else if (stFilter === 'res') { if (!(r.reserved > 0)) return false; }
       if (!q) return true;
       return String(r.sku).toLowerCase().includes(q)
@@ -364,11 +427,16 @@
           </div>
         </div>
         ${showMeter ? `<div class="meter" title="${num(r.available)} of ${num(r.on_hand)} free to pick"><i style="width:${pct}%"></i></div>` : ''}
-        <div class="row" style="margin-top:.35rem">
-          <span class="muted" style="font-size:.75rem">${num(r.on_hand)} on hand${r.reserved > 0 ? ` · ${num(r.reserved)} reserved` : ''}</span>
-          ${out ? '<span class="pill p-bad">Out of stock</span>'
-            : low ? `<span class="pill p-open">Low · min ${num(r.reorder_point ?? 10)}</span>`
-                  : '<span class="pill p-done">In stock</span>'}
+        <div class="row" style="margin-top:.35rem;flex-wrap:wrap;gap:.3rem">
+          <span class="muted" style="font-size:.75rem">${num(r.on_hand)} on hand${r.reserved > 0 ? ` · ${num(r.reserved)} reserved` : ''}${
+            r.days_since_movement !== null && r.days_since_movement !== undefined
+              ? ` · last moved ${r.days_since_movement === 0 ? 'today' : r.days_since_movement + 'd ago'}` : ''}</span>
+          <span style="display:flex;gap:.3rem;flex-wrap:wrap">
+            ${r.aging ? `<span class="pill p-aging" title="No movement for ${r.days_since_movement} days (your threshold is ${agingDays})">&#9203; Aging ${r.days_since_movement}d</span>` : ''}
+            ${out ? '<span class="pill p-bad">Out of stock</span>'
+              : low ? `<span class="pill p-open">Low · min ${num(r.reorder_point ?? 10)}</span>`
+                    : '<span class="pill p-done">In stock</span>'}
+          </span>
         </div>
       </div>`;
     }).join('');
@@ -475,31 +543,53 @@
   }
 
   // ── Inbound ───────────────────────────────────────────────────────────────
+  // SLA pill: GREEN when the promise was met, BLUE when it was not. While a job
+  // is still open the pill shows the due date instead of a verdict — there is
+  // nothing to judge yet.
+  function slaPill(sla) {
+    if (!sla) return '';
+    if (sla.status === 'closed') {
+      const d = sla.workingDaysEarly;
+      const detail = d > 0 ? `${d} day${d === 1 ? '' : 's'} early` : d === 0 ? 'on time' : `${-d} day${d === -1 ? '' : 's'} late`;
+      return sla.met
+        ? `<span class="pill p-sla-met" title="Due ${sla.dueDay}, received ${sla.doneDay}">&#10003; SLA met · ${detail}</span>`
+        : `<span class="pill p-sla-miss" title="Due ${sla.dueDay}, received ${sla.doneDay}">SLA missed · ${detail}</span>`;
+    }
+    const n = sla.workingDaysLeft;
+    if (sla.overdue) return `<span class="pill p-overdue" title="Was due ${sla.dueDay}">Overdue by ${-n} working day${n === -1 ? '' : 's'}</span>`;
+    return `<span class="pill p-due">Due ${fmtDay(sla.dueDay)}${n === 0 ? ' · today' : ` · in ${n} working day${n === 1 ? '' : 's'}`}</span>`;
+  }
+
   function renderInbound() {
     const q = ($('ibSearch').value || '').trim().toLowerCase();
     const rows = inbound.filter(r => {
       if (ibFilter === 'done' && r.status !== 'done') return false;
       if (ibFilter === 'open' && r.status === 'done') return false;
       if (ibFilter === 'issue' && !(r.discrepancies || r.damaged)) return false;
+      if (ibFilter === 'late' && !(r.sla && (r.sla.met === false || r.sla.overdue))) return false;
       if (!q) return true;
       return String(r.serial || '').toLowerCase().includes(q)
         || String(r.reference || '').toLowerCase().includes(q);
     });
 
+    $('ibWindowNote').textContent = inbound.length
+      ? `Showing the last ${screenDays} days plus anything still in progress · download up to ${exportMaxDays} days as a report`
+      : '';
+
     if (!inbound.length) {
       $('ibSummary').innerHTML = '';
-      $('ibList').innerHTML = emptyState('&#128229;', 'No shipments received yet',
-        'When your goods arrive we check them in piece by piece. Each receipt appears here with a printable goods received note.');
+      $('ibList').innerHTML = emptyState('&#128229;', 'No shipments yet',
+        'Submit an ASN above to tell us what you are sending. Once it arrives we check it in piece by piece, and each receipt appears here with a printable receipt note.');
       return;
     }
-    // Count ALL receipts here, not just completed ones — the tile sits directly
-    // above the list, so a completed-only count read as if cards were missing.
     const pcs = inbound.reduce((s, r) => s + (r.received || 0), 0);
-    const iss = inbound.filter(r => r.discrepancies || r.damaged).length;
+    const closed = inbound.filter(r => r.sla && r.sla.status === 'closed');
+    const met = closed.filter(r => r.sla.met).length;
     $('ibSummary').innerHTML = `<div class="card" style="margin-bottom:.6rem"><div class="strip">
       <div><div class="v n">${num(inbound.length)}</div><div class="l">Receipts</div></div>
       <div><div class="v n">${num(pcs)}</div><div class="l">Pieces in</div></div>
-      <div><div class="v n" style="color:${iss ? 'var(--warn)' : 'var(--ok)'}">${num(iss)}</div><div class="l">With issues</div></div>
+      <div><div class="v n" style="color:${closed.length && met === closed.length ? 'var(--ok)' : closed.length ? 'var(--brand-2)' : 'inherit'}">${closed.length ? met + '/' + closed.length : '—'}</div>
+        <div class="l">SLA met</div></div>
     </div></div>`;
 
     if (!rows.length) {
@@ -509,22 +599,32 @@
     $('ibList').innerHTML = rows.map(r => {
       const pct = r.expected > 0 ? Math.min(100, Math.round((r.received / r.expected) * 100)) : (r.received > 0 ? 100 : 0);
       const short = r.expected > 0 && r.received < r.expected;
+      const stage = r.status === 'done' ? '<span class="pill p-done">Received</span>'
+                  : r.status === 'processing' ? '<span class="pill p-open">Being checked in</span>'
+                  : '<span class="pill p-info">Awaiting arrival</span>';
+      const meta = [
+        r.type === 'po' ? 'Inbound shipment' : 'Return',
+        r.reference ? esc(r.reference) : '',
+        r.submitted_at ? 'submitted ' + fmtDate(r.submitted_at) : '',
+        r.eta ? 'ETA ' + fmtDay(r.eta) : '',
+        r.received_at ? 'received ' + fmtDate(r.received_at) : '',
+      ].filter(Boolean).join(' · ');
       return `<div class="card" style="margin-bottom:.5rem">
         <div class="row">
           <div style="min-width:0;flex:1">
             <div class="mono" style="font-weight:800;font-size:.9rem">${esc(r.serial || r.reference || '—')}</div>
-            <div class="muted" style="font-size:.76rem">
-              ${r.type === 'po' ? 'Inbound shipment' : 'Return'}${r.reference ? ' · ' + esc(r.reference) : ''}${r.received_at ? ' · ' + fmtDate(r.received_at) : ''}
-            </div>
+            <div class="muted" style="font-size:.76rem">${meta}</div>
           </div>
-          <div>${r.status === 'done' ? '<span class="pill p-done">Received</span>' : '<span class="pill p-open">Receiving</span>'}</div>
+          <div>${stage}</div>
         </div>
         ${r.expected > 0 ? `<div class="meter"><i class="${short ? 'w' : ''}" style="width:${pct}%"></i></div>` : ''}
         <div class="row" style="margin-top:.4rem;flex-wrap:wrap;gap:.35rem">
           <span class="muted" style="font-size:.75rem">
             ${r.expected ? `${num(r.received)} of ${num(r.expected)} expected` : `${num(r.received)} pieces received`}
+            ${r.line_count ? ` · ${num(r.line_count)} line${r.line_count === 1 ? '' : 's'}` : ''}
           </span>
           <span style="display:flex;gap:.3rem;align-items:center;flex-wrap:wrap">
+            ${slaPill(r.sla)}
             ${r.damaged ? `<span class="pill p-bad">${num(r.damaged)} damaged / held</span>` : ''}
             ${r.discrepancies ? `<span class="pill p-open">${num(r.discrepancies)} discrepanc${r.discrepancies === 1 ? 'y' : 'ies'}</span>` : ''}
             ${r.status === 'done' ? `<button class="link ib-grn" data-id="${esc(r.id)}">&#128196; Receipt note</button>` : ''}
@@ -534,6 +634,42 @@
     }).join('');
     document.querySelectorAll('.ib-grn').forEach(b =>
       b.addEventListener('click', e => { e.stopPropagation(); openGrn(b.dataset.id); }));
+  }
+
+  // ── ASN submission ────────────────────────────────────────────────────────
+  const asnMsg = (kind, text) => {
+    const el = $('asnMsg');
+    el.className = 'asn-msg' + (kind ? ' ' + kind : '');
+    el.innerHTML = text;
+    el.classList.remove('hidden');
+  };
+  function toggleAsnFields(show) {
+    $('asnFields').classList.toggle('hidden', !show);
+    $('asnUploadBtn').classList.toggle('hidden', show);
+    if (!show) { $('asnFile').value = ''; $('asnRef').value = ''; $('asnEta').value = ''; }
+  }
+  async function submitAsn() {
+    const f = $('asnFile').files[0];
+    if (!f) { asnMsg('err', 'Choose your filled-in ASN file first.'); return; }
+    const btn = $('asnSubmitBtn');
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    asnMsg('busy', 'Reading your ASN…');
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('reference', $('asnRef').value.trim());
+      fd.append('eta', $('asnEta').value);
+      // No Content-Type header — the browser must set the multipart boundary.
+      const r = await fetch('/api/portal/asn', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const d = await r.json();
+      if (!r.ok) { asnMsg('err', esc(d.error || 'That file could not be read.')); return; }
+      asnMsg('', `&#10003; ASN <b>${esc(d.serial)}</b> received — ${num(d.lines)} line(s), ${num(d.pieces)} pieces.`
+        + `<br>We aim to have it checked in by <b>${fmtDay(d.due)}</b>. You'll see the status update here.`);
+      toggleAsnFields(false);
+      loadAll();
+    } catch (e) {
+      asnMsg('err', 'Could not reach the server — please try again.');
+    } finally { btn.disabled = false; btn.textContent = 'Submit'; }
   }
 
   // GRN — printable goods received note, same figures the warehouse produced.
@@ -596,12 +732,16 @@
   // ── Export ────────────────────────────────────────────────────────────────
   // fetch + blob rather than a plain link, because the download needs the
   // session token header that an <a href> cannot send.
-  async function download(kind, btn) {
-    const orig = btn.innerHTML;
-    btn.disabled = true; btn.textContent = '…';
+  async function download(kind, btn, range) {
+    const orig = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
     try {
-      const r = await api('/api/portal/export/' + kind);
-      if (!r.ok) throw new Error('Export failed');
+      const qs = range ? `?from=${range.from}&to=${range.to}` : '';
+      const r = await api('/api/portal/export/' + kind + qs);
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || 'Export failed');
+      }
       const blob = await r.blob();
       const cd = r.headers.get('content-disposition') || '';
       const m = cd.match(/filename="([^"]+)"/);
@@ -611,10 +751,26 @@
       a.download = m ? m[1] : `${kind}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return { ok: true };
     } catch (e) {
-      alert('Could not prepare the download. Please try again.');
-    } finally { btn.disabled = false; btn.innerHTML = orig; }
+      return { ok: false, error: e.message };
+    } finally { if (btn) { btn.disabled = false; btn.innerHTML = orig; } }
   }
+
+  // Dated report picker. Stock is a live position so it downloads immediately;
+  // orders and inbound are period reports and get the date window.
+  let dlKind = null;
+  function openDownload(kind) {
+    dlKind = kind;
+    $('dlTitle').textContent = kind === 'orders' ? 'Download orders report' : 'Download inbound report';
+    $('dlHint').textContent = `Pick any period up to ${exportMaxDays} days. The screen shows the last ${screenDays} days — reports can reach further back.`;
+    const to = sgToday();
+    const from = new Date(Date.now() - 89 * 86400000).toLocaleDateString('en-CA', SGT);
+    $('dlFrom').value = from; $('dlTo').value = to; $('dlTo').max = to; $('dlFrom').max = to;
+    $('dlErr').classList.add('hidden');
+    $('dlModal').classList.remove('hidden');
+  }
+  function closeDownload() { $('dlModal').classList.add('hidden'); dlKind = null; }
 
   // ── Wiring ────────────────────────────────────────────────────────────────
   document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
@@ -644,9 +800,79 @@
   $('stSearch').addEventListener('input', renderStock);
   $('orSearch').addEventListener('input', renderOrders);
   $('ibSearch').addEventListener('input', renderInbound);
-  $('stExport').addEventListener('click', e => download('stock', e.currentTarget));
-  $('orExport').addEventListener('click', e => download('orders', e.currentTarget));
-  $('ibExport').addEventListener('click', e => download('inbound', e.currentTarget));
+  // Stock is a live position — straight download, no date window.
+  $('stExport').addEventListener('click', async e => {
+    const r = await download('stock', e.currentTarget);
+    if (!r.ok) alert(r.error || 'Could not prepare the download.');
+  });
+  $('orExport').addEventListener('click', () => openDownload('orders'));
+  $('ibExport').addEventListener('click', () => openDownload('inbound'));
+  $('dlCancel').addEventListener('click', closeDownload);
+  $('dlModal').addEventListener('click', e => { if (e.target === $('dlModal')) closeDownload(); });
+  $('dlModal').querySelectorAll('.chip[data-days]').forEach(c => c.addEventListener('click', () => {
+    const n = parseInt(c.dataset.days, 10);
+    $('dlTo').value = sgToday();
+    $('dlFrom').value = new Date(Date.now() - (n - 1) * 86400000).toLocaleDateString('en-CA', SGT);
+    $('dlModal').querySelectorAll('.chip[data-days]').forEach(x => x.classList.toggle('on', x === c));
+  }));
+  $('dlGo').addEventListener('click', async e => {
+    const from = $('dlFrom').value, to = $('dlTo').value;
+    const err = $('dlErr');
+    err.classList.add('hidden');
+    if (!from || !to) { err.textContent = 'Choose both dates.'; err.classList.remove('hidden'); return; }
+    if (from > to) { err.textContent = 'The start date is after the end date.'; err.classList.remove('hidden'); return; }
+    const span = Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
+    if (span > exportMaxDays) {
+      err.textContent = `That is ${span} days. The most you can download at once is ${exportMaxDays} days.`;
+      err.classList.remove('hidden'); return;
+    }
+    const r = await download(dlKind, e.currentTarget, { from, to });
+    if (!r.ok) { err.textContent = r.error || 'Could not prepare the download.'; err.classList.remove('hidden'); return; }
+    closeDownload();
+  });
+
+  // ── ASN + aging controls ──────────────────────────────────────────────────
+  $('asnTemplateBtn').addEventListener('click', async e => {
+    const btn = e.currentTarget, orig = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await api('/api/portal/asn-template');
+      if (!r.ok) throw new Error('Could not prepare the template');
+      const blob = await r.blob();
+      const cd = r.headers.get('content-disposition') || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = m ? m[1] : 'ASN_Template.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      asnMsg('busy', 'Template downloaded. Fill in one row per SKU, then tap <b>Submit ASN</b>.');
+    } catch (err) { asnMsg('err', 'Could not download the template — please try again.'); }
+    finally { btn.disabled = false; btn.innerHTML = orig; }
+  });
+  $('asnUploadBtn').addEventListener('click', () => { $('asnMsg').classList.add('hidden'); toggleAsnFields(true); });
+  $('asnCancelBtn').addEventListener('click', () => { toggleAsnFields(false); $('asnMsg').classList.add('hidden'); });
+  $('asnSubmitBtn').addEventListener('click', submitAsn);
+
+  $('agingSave').addEventListener('click', async e => {
+    const btn = e.currentTarget, orig = btn.textContent;
+    const n = parseInt($('agingInput').value, 10);
+    const msg = (k, t) => { const el = $('agingMsg'); el.className = 'asn-msg' + (k ? ' ' + k : ''); el.textContent = t; el.classList.remove('hidden'); };
+    if (!Number.isFinite(n) || n < 1 || n > 365) { msg('err', 'Enter a number of days between 1 and 365.'); return; }
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await fetch('/api/portal/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': token },
+        body: JSON.stringify({ agingDays: n }),
+      });
+      const d = await r.json();
+      if (!r.ok) { msg('err', d.error || 'Could not save.'); return; }
+      agingDays = d.agingDays;
+      msg('', `✓ Anything with no movement for more than ${d.agingDays} days is now flagged.`);
+      loadAll();
+    } catch (err) { msg('err', 'Could not reach the server.'); }
+    finally { btn.disabled = false; btn.textContent = orig; }
+  });
 
   // Order cards expand to show their contents.
   $('orList').addEventListener('click', e => {

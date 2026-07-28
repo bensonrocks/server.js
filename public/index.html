@@ -1457,6 +1457,19 @@
     </div>
   </div>
 
+  <!-- ── New Work (pokes) ── -->
+  <div id="pokeOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:560px">
+      <div class="modal-title">&#128276; New Work In</div>
+      <p class="hint" style="margin:.2rem 0 .7rem">Jobs that have arrived from a client portal or an order upload. Tap one to open it.</p>
+      <div id="pokeList" style="max-height:58vh;overflow:auto"></div>
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="pokeCloseBtn">Close</button>
+        <button class="btn-primary" id="pokeAckBtn">&#10003; Mark all seen</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Administrator Access Modal ── -->
   <div id="logPasswordOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:340px">
@@ -1546,6 +1559,10 @@
           <button id="lockBtn" class="sb-icon-btn hidden" title="Lock app">&#128274;</button>
         </div>
       </div>
+      <!-- New work arriving from outside (client ASN, uploaded orders) -->
+      <button class="sb-admin-btn poke-btn" id="pokeBtn" title="New work that has come in">
+        &#128276; New Work <span class="poke-count hidden" id="pokeCount">0</span>
+      </button>
       <button class="sb-admin-btn" id="logAccessBtn">&#9881; Administrator</button>
       <div id="buildStamp" class="sb-build-stamp" title="Deployed build — compare with the latest commit to confirm a deploy went live"></div>
     </div>

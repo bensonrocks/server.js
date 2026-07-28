@@ -11628,6 +11628,101 @@
 
   // Deployed-build stamp in the sidebar — /api/version is public (no data),
   // so this runs even before login and never trips the 401 force-reload.
+  // ── "New Work In" pokes ───────────────────────────────────────────────────
+  // Work that arrives from OUTSIDE the office — a client submitting an ASN
+  // through their portal, or a batch of outbound orders landing — surfaces here
+  // so nobody has to keep refreshing the Inbound/Orders tabs to notice it.
+  (function initPokes() {
+    const btn = document.getElementById('pokeBtn');
+    if (!btn) return;
+    const countEl = document.getElementById('pokeCount');
+    let rows = [], unread = 0;
+
+    const rel = at => {
+      const ms = Date.now() - new Date(at).getTime();
+      if (!isFinite(ms)) return '';
+      const m = Math.floor(ms / 60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    };
+
+    async function load() {
+      if (!localStorage.getItem('wms_token')) return;   // never call /api before login
+      try {
+        const d = await (await fetch('/api/pokes')).json();
+        rows = d.rows || []; unread = d.unread || 0;
+        countEl.textContent = unread;
+        countEl.classList.toggle('hidden', unread === 0);
+        btn.classList.toggle('has-new', unread > 0);
+      } catch (_) { /* offline — leave the last state */ }
+    }
+
+    function render() {
+      const el = document.getElementById('pokeList');
+      if (!rows.length) {
+        el.innerHTML = '<p class="hint" style="text-align:center;padding:1.6rem 0">Nothing new has come in. '
+          + 'Client ASNs and uploaded order batches will appear here.</p>';
+        return;
+      }
+      el.innerHTML = rows.map(p => {
+        const out = p.direction === 'outbound';
+        const chan = p.channel ? `<span class="poke-chan">${esc(p.channel)}</span>` : '';
+        const what = out
+          ? `${p.orders || 0} order(s) · ${p.lines || 0} line(s)${p.pieces ? ` · ${p.pieces} pcs` : ''}`
+          : `${p.lines || 0} line(s)${p.pieces ? ` · ${p.pieces} pcs` : ''}${p.due ? ` · due ${esc(p.due)}` : ''}`;
+        return `<div class="poke-row ${p.read ? '' : 'unread'}" data-dir="${out ? 'outbound' : 'inbound'}">
+          <div class="pk-ic ${out ? 'out' : ''}">${out ? '&#128666;' : '&#128229;'}</div>
+          <div class="pk-b">
+            <div class="pk-t">${esc(p.client || 'Unknown client')}${chan}
+              <span style="font-weight:600;color:#64748b"> — ${out ? 'orders to pick' : 'shipment to receive'}</span></div>
+            <div class="pk-s">${what}${p.ref ? ` · ${esc(p.ref)}` : ''}</div>
+          </div>
+          <div class="pk-when">${rel(p.at)}</div>
+        </div>`;
+      }).join('');
+      // Tapping a row jumps to the tab that work lives on.
+      el.querySelectorAll('.poke-row').forEach(r => r.addEventListener('click', () => {
+        document.getElementById('pokeOverlay').classList.add('hidden');
+        switchTab(r.dataset.dir === 'outbound' ? 'orders' : 'inbound');
+      }));
+    }
+
+    btn.addEventListener('click', async () => {
+      await load(); render();
+      document.getElementById('pokeOverlay').classList.remove('hidden');
+    });
+    document.getElementById('pokeCloseBtn').addEventListener('click', () =>
+      document.getElementById('pokeOverlay').classList.add('hidden'));
+    document.getElementById('pokeAckBtn').addEventListener('click', async () => {
+      try {
+        await fetch('/api/pokes/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      } catch (_) {}
+      await load(); render();
+      // Close after acknowledging — there is nothing left to act on in here,
+      // and leaving a modal open blocks the sidebar behind it.
+      document.getElementById('pokeOverlay').classList.add('hidden');
+    });
+
+    // This runs at script-parse time, BEFORE the user has signed in, so the
+    // first load() would find no token and bail — leaving the badge blank for a
+    // whole polling interval after login. Poll quickly until a session exists,
+    // then settle to the normal cadence.
+    let pokeTimer = null;
+    function schedule(ms) {
+      clearTimeout(pokeTimer);
+      pokeTimer = setTimeout(tick, ms);
+    }
+    async function tick() {
+      if (!localStorage.getItem('wms_token')) { schedule(2000); return; }  // waiting for login
+      await load();
+      schedule(60000);   // a minute is plenty for "new work has arrived"
+    }
+    tick();
+  })();
+
   (function initBuildStamp() {
     const el = document.getElementById('buildStamp');
     if (!el) return;

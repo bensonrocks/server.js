@@ -207,6 +207,30 @@
   /* SKUs must stay on one line — "MY-1001" was wrapping mid-code. */
   .dtab td:first-child { white-space:nowrap; }
 
+  /* ── ASN submit card ──────────────────────────────────────────────────── */
+  .asn-card { margin-bottom:.7rem; border-color:#c7d7f5; background:linear-gradient(180deg,#f7faff,#fff); }
+  .asn-actions { display:flex; gap:.4rem; margin-top:.7rem; flex-wrap:wrap; }
+  .asn-actions .btn-sm { flex:1 1 auto; }
+  .asn-primary { background:linear-gradient(135deg,var(--brand-2),var(--brand)); color:#fff; border-color:transparent; }
+  .asn-fields input[type=file] { padding:.6rem; background:var(--surface); }
+  .asn-msg { margin-top:.7rem; padding:.6rem .75rem; border-radius:10px; font-size:.82rem; font-weight:600;
+             background:var(--ok-bg); color:#065f46; border:1px solid #a7f3d0; }
+  .asn-msg.err { background:var(--bad-bg); color:#7f1d1d; border-color:#fecaca; }
+  .asn-msg.busy { background:var(--info-bg); color:#1e40af; border-color:#bfdbfe; }
+
+  /* SLA pills — GREEN when we met the promise, BLUE when we did not. */
+  .p-sla-met  { background:#dcfce7; color:#166534; }
+  .p-sla-miss { background:#dbeafe; color:#1e40af; }
+  .p-aging    { background:#fef9c3; color:#854d0e; }
+  .p-due      { background:var(--surface-2); color:var(--muted); }
+  .p-overdue  { background:#ffedd5; color:#9a3412; }
+
+  /* ── Modal ────────────────────────────────────────────────────────────── */
+  .modal-bg { position:fixed; inset:0; z-index:60; background:rgba(11,18,32,.5); display:flex;
+              align-items:center; justify-content:center; padding:1rem; }
+  .modal-box { background:var(--surface); border-radius:16px; padding:1.1rem 1.15rem; width:100%; max-width:400px;
+               box-shadow:0 24px 60px rgba(2,6,23,.35); max-height:90vh; overflow:auto; }
+
   .empty { text-align:center; padding:2.4rem 1rem; }
   .empty .e-ic { font-size:2rem; opacity:.35; }
   .empty .e-t { font-weight:800; margin-top:.5rem; font-size:.95rem; }
@@ -291,7 +315,23 @@
         <button class="chip on" data-f="all">All</button>
         <button class="chip" data-f="low">Low stock</button>
         <button class="chip" data-f="out">Out of stock</button>
+        <button class="chip" data-f="aging">Aging</button>
         <button class="chip" data-f="res">Reserved</button>
+      </div>
+      <div class="card" style="margin-bottom:.6rem;padding:.7rem .85rem">
+        <div class="row" style="gap:.6rem;flex-wrap:wrap">
+          <div style="min-width:0;flex:1">
+            <b style="font-size:.83rem">&#9203; Aging stock</b>
+            <div class="muted" style="font-size:.75rem">Flag anything that hasn't moved for longer than</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.35rem">
+            <input id="agingInput" type="number" min="1" max="365" inputmode="numeric"
+                   style="width:4.6rem;padding:.5rem .55rem;text-align:center;font-weight:800">
+            <span class="muted" style="font-size:.78rem">days</span>
+            <button class="btn-sm asn-primary" id="agingSave">Save</button>
+          </div>
+        </div>
+        <div id="agingMsg" class="asn-msg hidden" style="margin-top:.55rem"></div>
       </div>
       <div id="stSummary"></div>
       <div id="stList"></div>
@@ -300,7 +340,7 @@
     <section id="tab-orders" class="hidden">
       <div class="ctrls">
         <input class="search" id="orSearch" placeholder="Search order no or waybill…">
-        <button class="btn-sm" id="orExport" title="Download as Excel">&#8681; Excel</button>
+        <button class="btn-sm" id="orExport" title="Download a dated report">&#8681; Report</button>
       </div>
       <div class="chips" id="orChips">
         <button class="chip on" data-f="all">All</button>
@@ -313,19 +353,71 @@
     </section>
 
     <section id="tab-inbound" class="hidden">
+      <!-- Send us an ASN: download our template, fill it, upload it. -->
+      <div class="card asn-card">
+        <div class="row" style="align-items:flex-start;gap:.7rem">
+          <div style="flex:1;min-width:0">
+            <b style="font-size:.93rem">&#128228; Sending us stock?</b>
+            <div class="muted" style="font-size:.79rem;margin-top:.15rem">
+              Tell us what's coming with an Advance Shipping Notice. We aim to have it
+              received and on your shelves within <b id="asnSlaText">2 working days</b> of submission.
+            </div>
+          </div>
+        </div>
+        <div class="asn-actions">
+          <button class="btn-sm" id="asnTemplateBtn">&#8681; ASN template</button>
+          <button class="btn-sm asn-primary" id="asnUploadBtn">&#8593; Submit ASN</button>
+        </div>
+        <div class="asn-fields hidden" id="asnFields">
+          <label for="asnRef" style="margin:.6rem 0 .3rem">Your reference <span style="font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label>
+          <input id="asnRef" placeholder="e.g. PO-4471 or your shipment no" maxlength="60">
+          <label for="asnEta" style="margin:.7rem 0 .3rem">Expected arrival <span style="font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label>
+          <input id="asnEta" type="date">
+          <label style="margin:.7rem 0 .3rem">ASN file (.xlsx or .csv)</label>
+          <input id="asnFile" type="file" accept=".xlsx,.xls,.csv">
+          <div class="asn-actions" style="margin-top:.7rem">
+            <button class="btn-sm" id="asnCancelBtn">Cancel</button>
+            <button class="btn-sm asn-primary" id="asnSubmitBtn">Submit</button>
+          </div>
+        </div>
+        <div id="asnMsg" class="asn-msg hidden"></div>
+      </div>
+
       <div class="ctrls">
         <input class="search" id="ibSearch" placeholder="Search receipt or reference…">
-        <button class="btn-sm" id="ibExport" title="Download as Excel">&#8681; Excel</button>
+        <button class="btn-sm" id="ibExport" title="Download a dated report">&#8681; Report</button>
       </div>
       <div class="chips" id="ibChips">
         <button class="chip on" data-f="all">All</button>
-        <button class="chip" data-f="open">Receiving</button>
+        <button class="chip" data-f="open">In progress</button>
         <button class="chip" data-f="done">Received</button>
         <button class="chip" data-f="issue">With issues</button>
+        <button class="chip" data-f="late">Missed SLA</button>
       </div>
       <div id="ibSummary"></div>
       <div id="ibList"></div>
+      <div class="muted" id="ibWindowNote" style="text-align:center;font-size:.72rem;margin-top:.8rem"></div>
     </section>
+
+    <!-- Dated report download (used by every tab's Report button) -->
+    <div class="modal-bg hidden" id="dlModal">
+      <div class="modal-box">
+        <b style="font-size:.95rem" id="dlTitle">Download report</b>
+        <div class="muted" style="font-size:.78rem;margin-top:.25rem" id="dlHint"></div>
+        <label for="dlFrom">From</label><input id="dlFrom" type="date">
+        <label for="dlTo">To</label><input id="dlTo" type="date">
+        <div class="chips" style="margin-top:.7rem">
+          <button class="chip" data-days="30">Last 30 days</button>
+          <button class="chip" data-days="90">Last 90 days</button>
+          <button class="chip" data-days="365">Last 365 days</button>
+        </div>
+        <div id="dlErr" class="asn-msg err hidden"></div>
+        <div class="asn-actions" style="margin-top:.8rem">
+          <button class="btn-sm" id="dlCancel">Cancel</button>
+          <button class="btn-sm asn-primary" id="dlGo">&#8681; Download Excel</button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
 

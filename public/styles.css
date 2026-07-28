@@ -2926,3 +2926,26 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .cm-sent-meta { font-size: .72rem; color: #94a3b8; margin-top: .35rem; display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
 .cm-ackbar { height: 5px; border-radius: 3px; background: #e2e8f0; overflow: hidden; min-width: 90px; }
 .cm-ackbar > span { display: block; height: 100%; background: #22c55e; }
+
+/* ── "New Work In" poke bell + list (sidebar) ──────────────────────────────
+   Fires when work arrives from OUTSIDE the office: a client submitting an ASN
+   through their portal, or a batch of outbound orders landing. */
+.poke-btn { position: relative; }
+.poke-btn.has-new { background: #1e40af; color: #fff; border-color: #1e40af; }
+.poke-count { display: inline-block; min-width: 1.15rem; padding: 0 .3rem; margin-left: .35rem;
+              border-radius: 999px; background: #ef4444; color: #fff; font-size: .68rem;
+              font-weight: 800; text-align: center; line-height: 1.15rem; }
+.poke-row { display: flex; gap: .65rem; align-items: flex-start; padding: .7rem .2rem;
+            border-top: 1px solid var(--border, #e2e8f0); cursor: pointer; }
+.poke-row:first-child { border-top: 0; }
+.poke-row.unread { background: #eff6ff; margin: 0 -.4rem; padding-left: .6rem; padding-right: .6rem;
+                   border-radius: 8px; border-top-color: transparent; }
+.poke-row .pk-ic { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px; display: flex;
+                   align-items: center; justify-content: center; background: #e0e7ff; font-size: .95rem; }
+.poke-row .pk-ic.out { background: #dbeafe; }
+.poke-row .pk-b { flex: 1; min-width: 0; }
+.poke-row .pk-t { font-weight: 700; font-size: .88rem; }
+.poke-row .pk-s { font-size: .76rem; color: var(--muted, #64748b); }
+.poke-row .pk-when { font-size: .7rem; color: #94a3b8; white-space: nowrap; flex: 0 0 auto; }
+.poke-chan { display: inline-block; padding: .05rem .35rem; border-radius: 5px; font-size: .64rem;
+             font-weight: 800; background: #e0e7ff; color: #3730a3; margin-left: .3rem; }

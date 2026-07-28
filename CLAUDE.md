@@ -517,6 +517,83 @@ business, so it was rebuilt as a proper dashboard.
   horizontal overflow, and NO third-party/other-branch names anywhere in the
   rendered DOM.
 
+### Client-submitted ASNs, the "New Work In" poke, inbound SLA, aging stock
+
+Four connected features that make the portal two-way. NOTE: the portal is
+otherwise strictly read-only — these add exactly TWO client writes, both
+narrow: submitting an ASN, and setting their own aging threshold.
+
+- **ASN template + upload.** `GET /api/portal/asn-template` builds an XLSX
+  whose headers are EXACTLY the ones `parseInboundFile()` recognises
+  (`ASN_TEMPLATE_HEADERS` — SKU / Description / Expected Qty / Batch No /
+  Expiry Date) plus an Instructions sheet. Change one and you must change
+  the other, or the file we hand out stops parsing when it comes back.
+  `POST /api/portal/asn` (multipart) reuses `parseInboundFile` + the same
+  same-SKU merge as the office upload path, then creates a normal
+  `db.inbound[]` record — `type:'po'`, `status:'pending'`,
+  `submitted_by_client:true`, `uploaded_by:'portal:<client>'`. It moves no
+  stock; the floor still receives it through the existing flow. An
+  unparseable file is refused loudly (never a silent empty job).
+  `requirePortalAuthMiddleware` is invoked INSIDE the handler, after multer,
+  for the usual reason (multer does not carry the AsyncLocalStorage tenant
+  context, and this route sits outside the global auth middleware).
+- **Pokes — `db.pokes[]`, `GET /api/pokes`, `POST /api/pokes/ack`.** "New
+  work has arrived from outside." Written by `addPoke()` on a client ASN and
+  by `addOutboundPoke()` at all THREE batch-creation sites (file upload,
+  photo scan, store sync). Each carries client, direction, B2B/B2C
+  (`clientChannel()`, from the onboarding profile — blank when unknown
+  rather than guessed), line/piece counts and the SLA due day. Capped at
+  `POKE_CAP` — this is a notification feed, `db.auditLog` remains the
+  permanent record. UI: 🔔 New Work button in the office sidebar with an
+  unread badge, `#pokeOverlay` list, tap a row to jump to Orders/Inbound.
+  GOTCHA fixed: `initPokes()` runs at script-parse time, before login, so a
+  plain `setInterval` left the badge blank for a full minute after signing
+  in — it now polls every 2s until a token exists, then settles to 60s.
+- **Inbound SLA — D+2 WORKING days** (`INBOUND_SLA_WORKING_DAYS`,
+  `addWorkingDays`, `workingDaysBetween`, `inboundSla`). Clock starts at
+  `asn_submitted_at`; the due day is **stamped** on the record
+  (`sla_due_day`) rather than recomputed, so changing the rule later cannot
+  retroactively move work already promised. Pills, per the user's spec:
+  **GREEN = met, BLUE = missed** (not red — deliberate). While open the pill
+  shows the due date instead of a verdict; there is nothing to judge yet.
+  `inboundSla()` returns null when there is no `asn_submitted_at` (office-
+  keyed or pre-feature records) — an SLA can't be judged against a clock
+  that never started. Exposed to the client AND on the office
+  `/api/inbound` list so the floor sees what's due. **No public-holiday
+  calendar exists**, so a SG public holiday counts as a working day here:
+  the promise is measured slightly tighter than reality, and adding a
+  holiday list later only ever moves due dates later.
+- **Aging stock.** `inventory.lastMovementBySku(clientId)` — ONE grouped
+  query over `stock_movements`, deliberately EXCLUDING `reserve`/`release`
+  (allocating stock to an order and releasing it moves no physical piece, so
+  counting them would reset the aging clock on stock that never left the
+  shelf). Threshold defaults to `PORTAL_AGING_DAYS_DEFAULT` = 15 calendar
+  days and each client can set their own (`clientProfiles[].aging_days`, via
+  `POST /api/portal/settings`, clamped 1–365). Yellow pill + "Aging" filter
+  on Stock, an alert and a "Not moving" list on Overview, and columns in the
+  stock export. A SKU with **zero** stock is never flagged — that is
+  discontinued, not stagnant. The `inventory` table has a `last_moved_at`
+  column but NOTHING writes it; `stock_movements` is the real source.
+  Never-moved SKUs measure from `first_added_at` so a brand-new item is not
+  instantly branded aging.
+- **90 days on screen, 365 days by report.** `PORTAL_SCREEN_DAYS` /
+  `PORTAL_EXPORT_MAX_DAYS`, both enforced server-side. Anything still OPEN
+  bypasses the 90-day cut — a job we haven't finished must never fall off
+  the client's screen. `/api/portal/export/:kind` takes `from`/`to` and
+  REFUSES a wider span rather than silently clipping it (a partial file the
+  client believes is complete is worse than an error). Stock is a live
+  position so it ignores the range. The inbound report carries Submitted /
+  SLA due / SLA / SLA detail columns.
+
+Verified end to end against a running server plus real browser runs: the
+template round-trips (download → fill → upload → parses), duplicate SKUs
+merge, junk is refused, the office is poked with the right client/channel/
+workload, the job sits pending with the same due day on both sides,
+receiving it yields a green met pill, a backdated one yields a blue missed
+pill, aging flags a 40-day and a 20-day idle SKU but not a 5-day one and
+follows the threshold when changed, and the 365-day report limit is enforced
+on both sides. Pill colours asserted by computed style, not by class name.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the
