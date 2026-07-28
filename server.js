@@ -1659,6 +1659,60 @@ try {
 
 // Recover any scan progress that a crash prevented from reaching db.json
 try { replayScanJournal(); } catch (e) { console.error('[IdealOne] scan journal replay failed:', e.message); }
+// Fold client names that differ only by capitalisation onto ONE spelling, so a
+// client uploaded as "BETIME" by one source and "Betime" by another stops
+// showing up as two clients with their orders, stock and reports split. The
+// winning spelling is the onboarding profile's if there is one (that is the
+// deliberate, human-entered form), otherwise whichever spelling appears on the
+// most records. Runs every boot; a no-op once everything already agrees.
+function normaliseClientNameCasing(db) {
+  const groups = new Map();     // lowercase -> { counts: Map(spelling->n), profile: string|null }
+  const bump = (v, isProfile) => {
+    const t = String(v || '').trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    const g = groups.get(k) || { counts: new Map(), profile: null };
+    g.counts.set(t, (g.counts.get(t) || 0) + 1);
+    if (isProfile) g.profile = t;
+    groups.set(k, g);
+  };
+  for (const p of db.clientProfiles || []) bump(p.client, true);
+  for (const b of db.batches || []) bump(b.client_name, false);
+  for (const r of db.inbound || []) bump(r.client_name, false);
+  for (const b of db.backorders || []) bump(b.client_name, false);
+
+  const winner = new Map();
+  for (const [k, g] of groups) {
+    if (g.counts.size < 2 && !g.profile) continue;          // only one spelling — nothing to fold
+    const best = g.profile || [...g.counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    if (g.counts.size > 1 || [...g.counts.keys()][0] !== best) winner.set(k, best);
+  }
+  if (!winner.size) return 0;
+
+  let changed = 0;
+  const fix = (obj, field) => {
+    const cur = String(obj[field] || '').trim();
+    if (!cur) return;
+    const want = winner.get(cur.toLowerCase());
+    if (want && want !== cur) { obj[field] = want; changed++; }
+  };
+  for (const b of db.batches || []) fix(b, 'client_name');
+  for (const r of db.inbound || []) fix(r, 'client_name');
+  for (const b of db.backorders || []) fix(b, 'client_name');
+  if (changed) {
+    logAudit('client_names_normalised', {
+      changed,
+      merged: [...winner.entries()].map(([, v]) => v).slice(0, 50),
+    });
+  }
+  return changed;
+}
+try {
+  const _cndb = readDb();
+  const _cnn = normaliseClientNameCasing(_cndb);
+  if (_cnn) { writeDb(_cndb); console.log(`[IdealOne] Client names: folded ${_cnn} record(s) onto a single spelling`); }
+} catch (e) { console.error('[IdealOne] client name normalise failed:', e.message); }
+
 // One-off catch-up for backorders that outlived their orders before the
 // reconcile existed. Harmless to run every boot — it is a no-op once clean.
 try {
@@ -5423,7 +5477,7 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',
-      client_name: client_name.trim(),
+      client_name: canonicalClientName(db, client_name),   // fold "BETIME" into an existing "Betime"
       order_count: orders.length,
       row_count:   rows.length,
       orderStates: {},
@@ -5832,7 +5886,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',
-      client_name: clientName,
+      client_name: canonicalClientName(db, clientName),    // fold "BETIME" into an existing "Betime"
       order_count: orders.length, row_count: mapped.length,
       orderStates: {},
       orders,
@@ -6777,7 +6831,7 @@ app.post('/api/inbound/upload', upload.single('inboundFile'), tenantMiddleware, 
       eta:         String(req.body?.eta || '').slice(0, 10) || null,  // expected arrival (YYYY-MM-DD)
       reference:   (req.body?.reference   || '').trim(),
       source_name: (req.body?.source_name || '').trim(),
-      client_name: (req.body?.client_name || '').trim(),
+      client_name: canonicalClientName(db, req.body?.client_name),
       uploaded_at: new Date().toISOString(),
       uploaded_by: req.userId || '',
       filename:    req.file.originalname,
@@ -10736,7 +10790,7 @@ async function pullZortStore(db, store) {
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: new Date().toISOString(),
       uploaded_by: 'zort-sync',
-      client_name: clientName,
+      client_name: canonicalClientName(db, clientName),    // fold "BETIME" into an existing "Betime"
       order_count: clientOrders.length,
       row_count:   clientOrders.reduce((n, o) => n + o.lines.length, 0),
       orderStates: {},
@@ -12368,6 +12422,35 @@ assertInventoryPath();   // must run here — see the note next to its definitio
 // empty/blank name falls back to 'GENERAL' so nothing is ever silently
 // unscoped.
 function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
+
+// The same client spelled with different capitalisation is ONE client. Files
+// arrive from different sources — one writes "BETIME", another "Betime" — and
+// each new spelling used to create a SEPARATE client: its own row in the
+// sidebar, and (because invClientId is case-sensitive) its own inventory
+// account, splitting one client's stock in two.
+//
+// Rather than force a house style, adopt whatever spelling this client is
+// ALREADY known by: look for a case-insensitive match across existing batches,
+// inbound records and onboarding profiles, and reuse that exact string. New
+// clients keep the spelling they arrive with. Everything downstream — stock,
+// backorders, billing, portal scoping — then lands on one identity.
+function canonicalClientName(db, name) {
+  const raw = String(name || '').trim();
+  if (!raw) return raw;
+  const k = raw.toLowerCase();
+  const seen = new Map();   // lowercase -> [spellings, most recent first]
+  const note = v => {
+    const t = String(v || '').trim();
+    if (!t) return;
+    const lk = t.toLowerCase();
+    if (!seen.has(lk)) seen.set(lk, t);
+  };
+  // Onboarding profiles win — that is the deliberate, human-entered spelling.
+  for (const p of db.clientProfiles || []) note(p.client);
+  for (const b of db.batches || []) note(b.client_name);
+  for (const r of db.inbound || []) note(r.client_name);
+  return seen.get(k) || raw;
+}
 
 // Allocate physical bin locations to every order line via FEFO/FIFO, stamping
 // l.pick_locations (what the pick list shows) + l.pick_shortfall (units with no

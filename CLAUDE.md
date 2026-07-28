@@ -695,6 +695,33 @@ Verified by seeding 335 orphans plus 5 genuine rows: boot cleared exactly the
 335, deleting an order took its row with it, deleting a batch took all four of
 its rows, and rows on live orders were untouched.
 
+### One client, one spelling — case-insensitive client identity
+
+Files arrive from different sources spelling the same client differently
+("BETIME" from one, "Betime" from another). Each spelling used to create a
+SEPARATE client: its own sidebar row with its own count, its own orders
+filter, and — because `invClientId()` is case-sensitive — potentially its own
+inventory account, splitting one client's stock in two.
+
+Three layers, all case-insensitive now:
+- **Display** — `renderSidebarClients()` groups by lowercase key and shows the
+  spelling that appears on the MOST orders, with the combined count.
+- **Filtering** — `renderOrdersList()` compares lowercased, so picking
+  "Betime" also returns orders filed as "BETIME".
+- **Ingest** — `canonicalClientName(db, name)` adopts the spelling this client
+  is already known by (onboarding profile first, then existing batches/inbound)
+  rather than imposing a house style. Applied at all four record-creation
+  sites: file upload, photo scan, store sync, inbound upload.
+- **Existing data** — `normaliseClientNameCasing(db)` runs at boot and rewrites
+  `client_name` across batches, inbound and backorders onto one spelling
+  (profile's if there is one, else the most common). Audit-logged as
+  `client_names_normalised`; a no-op once everything agrees.
+
+NOT DONE, deliberately: inventory.db rows already written under a different
+`client_id` casing are NOT merged automatically — moving stock between client
+accounts on live data is destructive if wrong. If a client's stock looks split,
+merge it as a considered one-off.
+
 ## Betime scanning exceptions (server.js — `/api/scan/increment`)
 
 1. **NP suffix**: product barcodes with a trailing `NP` are the same product as the

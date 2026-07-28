@@ -1610,15 +1610,35 @@
   }
 
   // ── Sidebar client list ────────────────────────────────────────────────────
+  // The same client keyed with different capitalisation ("BETIME" vs "Betime")
+  // is ONE client, not two — files arrive from different sources that spell it
+  // differently. Group case-insensitively and show the spelling that appears on
+  // the most orders, so the list reads the way the team writes it.
   function renderSidebarClients(orders) {
-    const clients = [...new Set(orders.map(o => o.client_name || '').filter(Boolean))];
     const lbl     = document.getElementById('sidebarClientsLabel');
     const list    = document.getElementById('sidebarClientList');
     if (!list) return;
-    if (!clients.length) { if (lbl) lbl.style.display = 'none'; list.innerHTML = ''; return; }
+    const groups = new Map();                       // lowercase key -> {counts by spelling, total}
+    orders.forEach(o => {
+      const raw = (o.client_name || '').trim();
+      if (!raw) return;
+      const k = raw.toLowerCase();
+      const g = groups.get(k) || { total: 0, spellings: new Map() };
+      g.total++;
+      g.spellings.set(raw, (g.spellings.get(raw) || 0) + 1);
+      groups.set(k, g);
+    });
+    if (!groups.size) { if (lbl) lbl.style.display = 'none'; list.innerHTML = ''; return; }
     if (lbl) lbl.style.display = '';
+    // Display the most common spelling of each client.
+    const clients = [];
     const counts = {};
-    orders.forEach(o => { const c = o.client_name || ''; if (c) counts[c] = (counts[c] || 0) + 1; });
+    for (const [, g] of groups) {
+      const best = [...g.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      clients.push(best);
+      counts[best] = g.total;
+    }
+    clients.sort((a, b) => a.localeCompare(b));
     list.innerHTML = `
       <button class="sb-client-btn ${activeClientFilter === 'all' ? 'active' : ''}" data-sb-client="all">All clients <span class="sb-client-count">${orders.length}</span></button>
       ${clients.map(c => `<button class="sb-client-btn ${activeClientFilter === c ? 'active' : ''}" data-sb-client="${esc(c)}">${esc(c)} <span class="sb-client-count">${counts[c]||0}</span></button>`).join('')}`;
@@ -1830,7 +1850,12 @@
 
   function renderOrdersList() {
     let orders = loadedOrders;
-    if (activeClientFilter  !== 'all') orders = orders.filter(o => (o.client_name || '') === activeClientFilter);
+    // Case-insensitive: picking "Betime" must also bring in orders filed as
+    // "BETIME" — same client, different capitalisation from a different source.
+    if (activeClientFilter !== 'all') {
+      const want = activeClientFilter.trim().toLowerCase();
+      orders = orders.filter(o => (o.client_name || '').trim().toLowerCase() === want);
+    }
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
 
     // Date filter — default TODAY, sliced in SGT calendar days (naive UTC
