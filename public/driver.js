@@ -29,8 +29,19 @@
     } catch (_) { alert('Something went wrong. Please send this to the IdealOne Tech team:\n\n' + String(detail)); }
   }
   window.showTechError = showTechError;
-  window.addEventListener('error', e => showTechError(e.error || e.message, 'Uncaught error'));
-  window.addEventListener('unhandledrejection', e => showTechError(e.reason, 'Unhandled async error'));
+  // Same rule as the office app: an opaque cross-origin "Script error." carries
+  // no file, line or stack and is almost always a browser extension or the
+  // browser's own injected script — not our code. Drivers are on their OWN
+  // phones with whatever browser features enabled, so they hit this most; never
+  // alarm them over something undiagnosable.
+  window.addEventListener('error', e => {
+    if (e instanceof ErrorEvent && !e.error && !e.filename && !e.lineno) return;
+    showTechError(e.error || e.message, 'Uncaught error');
+  });
+  window.addEventListener('unhandledrejection', e => {
+    if (e.reason === undefined || e.reason === null) return;
+    showTechError(e.reason, 'Unhandled async error');
+  });
 
   const LS_TOKEN = 'driver_token';
   const LS_DRIVER = 'driver_info';

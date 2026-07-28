@@ -55,8 +55,37 @@
     }
   }
   window.showTechError = showTechError;
-  window.addEventListener('error', e => { showTechError(e.error || e.message, 'Uncaught error'); });
-  window.addEventListener('unhandledrejection', e => { showTechError(e.reason, 'Unhandled async error'); });
+  // OPAQUE CROSS-ORIGIN ERRORS ARE IGNORED. When a script the browser considers
+  // cross-origin throws, it deliberately sanitises the event for security: the
+  // message becomes the literal "Script error.", `error` is null, and filename
+  // and lineno are blank. There is nothing in it to act on — no file, no line,
+  // no stack — and in this app every script is served same-origin, so a fault in
+  // OUR code always arrives with full detail. In practice these come from
+  // outside the page: a browser extension, a password manager, or the browser's
+  // own translate/reader feature injecting script. Showing a full-screen "'
+  // something went wrong" dialog to a packer for that, and logging it as an
+  // open outage nobody can ever close, is pure noise — worse now that System
+  // Outages is the only place warnings surface at all.
+  function isOpaqueForeignError(e) {
+    return !e.error && !e.filename && !e.lineno;
+  }
+  window.addEventListener('error', e => {
+    if (e instanceof ErrorEvent && isOpaqueForeignError(e)) {
+      console.warn('[IdealOne] ignoring an opaque cross-origin script error '
+        + '(no file/line/stack — almost certainly a browser extension, not our code):', e.message);
+      return;
+    }
+    showTechError(e.error || e.message, 'Uncaught error');
+  });
+  window.addEventListener('unhandledrejection', e => {
+    // A rejection with nothing in it would render as the string "undefined",
+    // which tells nobody anything — don't alarm the user over it.
+    if (e.reason === undefined || e.reason === null) {
+      console.warn('[IdealOne] ignoring a promise rejection with no reason attached');
+      return;
+    }
+    showTechError(e.reason, 'Unhandled async error');
+  });
 
   // ── Auth token — injected into every /api/ request automatically ───────────
   const _origFetch = window.fetch.bind(window);
