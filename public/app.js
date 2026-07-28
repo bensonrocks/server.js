@@ -6504,28 +6504,51 @@
     btn.disabled = true;
 
     if (isBulk) {
+      // ONE request for the whole selection. This used to loop the single-order
+      // endpoint, which re-checked the same password once per order — selecting
+      // 143 orders produced 143 identical "Incorrect password" lines in one
+      // alert. The password is now verified once, server-side, and a wrong one
+      // comes back as a single clear message with the dialog still open so it
+      // can just be retyped.
       const targets = _bulkDelTargets;
-      let ok = 0; const fails = [];
-      for (let i = 0; i < targets.length; i++) {
-        btn.textContent = `Requesting… ${i + 1}/${targets.length}`;
-        try {
-          const r = await fetch('/api/scan/order-deletion-request', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderNumber: targets[i].orderNumber, batchId: targets[i].batchId, reason, password }),
-          });
-          const d = await r.json();
-          if (!r.ok) throw new Error(d.error || 'Request failed');
-          ok++;
-        } catch (err) { fails.push(`${targets[i].orderNumber}: ${err.message}`); }
+      btn.textContent = `Requesting… (${targets.length})`;
+      try {
+        const r = await fetch('/api/scan/order-deletion-request-bulk', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targets, reason, password }),
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          // Auth failures keep the dialog open — the reason is still typed in.
+          const err = document.getElementById('delOrderError');
+          err.textContent = d.error || 'Request failed';
+          err.classList.remove('hidden');
+          if (d.authFailed) document.getElementById('delOrderPassword').select();
+          return;
+        }
+        document.getElementById('deleteOrderOverlay').classList.add('hidden');
+        _bulkDelTargets = null;
+        orderSelection.clear();
+        await refreshOrders(); renderOrdersList();
+        const fails = d.failed || [];
+        if (fails.length) {
+          // Group identical reasons instead of listing every order separately.
+          const byReason = {};
+          fails.forEach(f => { byReason[f.error] = (byReason[f.error] || 0) + 1; });
+          alert(`Deletion requested for ${d.requested} order(s). Master approval is required to remove them.\n\n`
+            + `${fails.length} could not be requested:\n`
+            + Object.entries(byReason).map(([e, n]) => `  • ${n} × ${e}`).join('\n'));
+        } else {
+          alert(`Deletion requested for ${d.requested} order(s). Master approval is required to remove them.`);
+        }
+      } catch (err) {
+        const el = document.getElementById('delOrderError');
+        el.textContent = 'Could not reach the server — please try again.';
+        el.classList.remove('hidden');
+      } finally {
+        btn.textContent = '\u{1F5D1} Request Deletion';
+        btn.disabled = !_delOrderFormReady();
       }
-      document.getElementById('deleteOrderOverlay').classList.add('hidden');
-      _bulkDelTargets = null;
-      orderSelection.clear();
-      await refreshOrders(); renderOrdersList();
-      btn.textContent = '\u{1F5D1} Request Deletion';
-      btn.disabled = !_delOrderFormReady();
-      if (fails.length) alert(`Requested deletion for ${ok} order(s).\n${fails.length} failed:\n` + fails.slice(0, 10).join('\n'));
-      else alert(`Deletion requested for ${ok} order(s). Master approval is required to remove them.`);
       return;
     }
 

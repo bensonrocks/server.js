@@ -2614,6 +2614,105 @@ app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
   persistSessions();
   res.json({ ok: true });
 });
+// ── Inbound SLA — D+2 WORKING days ──────────────────────────────────────────
+// Counted from the SGT calendar day the ASN was submitted. Saturdays and
+// Sundays are skipped. NOTE: this system holds no public-holiday calendar, so
+// a Singapore public holiday counts as a working day here — the promise is
+// deliberately measured slightly tighter than reality rather than looser, and
+// adding a holiday list later only ever moves due dates later.
+const INBOUND_SLA_WORKING_DAYS = 2;
+function addWorkingDays(dayStr, n) {
+  const d = new Date(dayStr + 'T00:00:00Z');
+  let added = 0;
+  while (added < n) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const wd = d.getUTCDay();
+    if (wd !== 0 && wd !== 6) added++;
+  }
+  return d.toISOString().slice(0, 10);
+}
+function workingDaysBetween(fromDay, toDay) {
+  // signed count of working days from fromDay to toDay (0 if same day)
+  if (!fromDay || !toDay) return null;
+  const sign = toDay < fromDay ? -1 : 1;
+  const a = new Date((sign > 0 ? fromDay : toDay) + 'T00:00:00Z');
+  const b = new Date((sign > 0 ? toDay : fromDay) + 'T00:00:00Z');
+  let n = 0;
+  while (a < b) {
+    a.setUTCDate(a.getUTCDate() + 1);
+    const wd = a.getUTCDay();
+    if (wd !== 0 && wd !== 6) n++;
+  }
+  return n * sign;
+}
+// Everything the portal and the office need to render an SLA state for one
+// inbound record. Returns null when the record carries no submission date
+// (i.e. it predates this feature or was keyed in by the office) — an SLA can
+// only be judged against a clock that actually started.
+function inboundSla(rec) {
+  const startedAt = rec.asn_submitted_at || null;
+  if (!startedAt) return null;
+  const startDay = sgDateStr(new Date(startedAt));
+  const dueDay   = rec.sla_due_day || addWorkingDays(startDay, INBOUND_SLA_WORKING_DAYS);
+  const endTime  = rec.state?.endTime || null;
+  const today    = sgDateStr();
+  if (endTime) {
+    const doneDay = sgDateStr(new Date(endTime));
+    const diff = workingDaysBetween(doneDay, dueDay);   // >0 = finished early
+    return { startDay, dueDay, doneDay, met: doneDay <= dueDay, workingDaysEarly: diff, status: 'closed' };
+  }
+  const left = workingDaysBetween(today, dueDay);       // <0 = already overdue
+  return { startDay, dueDay, doneDay: null, met: null, workingDaysLeft: left,
+           overdue: left < 0, status: 'open' };
+}
+
+// ── Pokes — "there is new work for you" nudges for the office front end ──────
+// Written whenever work ARRIVES from outside (a client submitting an ASN
+// through the portal, or a new batch of outbound orders landing). Kept in
+// db.json so they ride the existing atomic-write + backup machinery and are
+// tenant-scoped for free. Capped, because this is a notification feed and not
+// an audit trail — db.auditLog remains the permanent record.
+const POKE_CAP = 300;
+function addPoke(db, poke) {
+  db.pokes = db.pokes || [];
+  db.pokes.unshift({
+    id: uuidv4(),
+    at: new Date().toISOString(),
+    read: false,
+    ...poke,
+  });
+  if (db.pokes.length > POKE_CAP) db.pokes.length = POKE_CAP;
+}
+// B2B vs B2C comes from the client's own onboarding profile; unknown stays
+// unlabelled rather than guessed.
+function clientChannel(db, clientName) {
+  const p = (db.clientProfiles || []).find(x => String(x.client).trim().toLowerCase() === String(clientName || '').trim().toLowerCase());
+  const t = String(p?.type || '').toUpperCase();
+  return t === 'B2B' || t === 'B2C' ? t : '';
+}
+// A new batch of outbound orders has landed (file upload, photo scan, or a
+// marketplace pull) — same nudge as an inbound ASN so the floor sees all
+// arriving work in one feed. Never throws: a failed notification must not take
+// an upload down with it.
+function addOutboundPoke(db, batch, source) {
+  try {
+    const orders = batch.orders || [];
+    if (!orders.length) return;
+    addPoke(db, {
+      kind: 'outbound_orders',
+      client: batch.client_name || '',
+      direction: 'outbound',
+      channel: clientChannel(db, batch.client_name),
+      ref: batch.idealscan_code || batch.filename || '',
+      batchId: batch.id,
+      orders: orders.length,
+      lines: orders.reduce((n, o) => n + (o.lines || []).length, 0),
+      pieces: orders.reduce((n, o) => n + (o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0)), 0),
+      source: source || 'upload',
+    });
+  } catch (e) { console.warn('[IdealOne] outbound poke failed:', e.message); }
+}
+
 // Client-facing wording for an internal order status. The portal talks to the
 // CLIENT, not the warehouse floor, so "unprocessed" becomes "Cancelled" and
 // "processing" becomes "Being packed". Shared by the on-screen views and the
@@ -2621,6 +2720,18 @@ app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
 const PORTAL_STATUS_LABEL = {
   done: 'Completed', processing: 'Being packed', pending: 'Queued', unprocessed: 'Cancelled',
 };
+// How much history the portal shows on screen vs how far back a download may
+// reach. Both are enforced SERVER-side, not just in the UI.
+const PORTAL_SCREEN_DAYS = 90;
+const PORTAL_EXPORT_MAX_DAYS = 365;
+// Default "no movement for this long = aging" threshold, in calendar days.
+// Each client can override it for their own view (portal → Stock → Aging).
+const PORTAL_AGING_DAYS_DEFAULT = 15;
+function portalAgingDays(db, clientName) {
+  const p = (db.clientProfiles || []).find(x => String(x.client).trim().toLowerCase() === String(clientName || '').trim().toLowerCase());
+  const n = parseInt(p?.aging_days, 10);
+  return Number.isFinite(n) && n >= 1 && n <= 365 ? n : PORTAL_AGING_DAYS_DEFAULT;
+}
 // The N most recent SGT calendar days, oldest first, INCLUDING today — the
 // portal's activity chart is "what has been happening", so today counts even
 // though it is still in progress (unlike the admin dashboards, which compare
@@ -2640,10 +2751,21 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   const clientNorm = client.trim().toLowerCase();
   const db = readDb();
 
-  let stock = { skus: 0, onHand: 0, reserved: 0, available: 0, lowStock: 0, outOfStock: 0 };
-  let lowStockList = [];
+  const agingDays = portalAgingDays(db, client);
+  let stock = { skus: 0, onHand: 0, reserved: 0, available: 0, lowStock: 0, outOfStock: 0, aging: 0, agingPieces: 0 };
+  let lowStockList = [], agingList = [];
   try {
     const rows = inventory.getAll({ clientId: cid });
+    const lastMove = inventory.lastMovementBySku(cid);
+    const now = Date.now();
+    const ageOf = r => {
+      const last = lastMove.get(r.sku) || r.first_added_at || null;
+      if (!last) return null;
+      const iso = String(last).replace(' ', 'T') + (String(last).endsWith('Z') ? '' : 'Z');
+      return Math.floor((now - new Date(iso).getTime()) / 86400000);
+    };
+    const aged = rows.filter(r => r.stock_qty > 0).map(r => ({ r, d: ageOf(r) }))
+      .filter(x => x.d !== null && x.d > agingDays);
     stock = {
       skus: rows.length,
       onHand:    rows.reduce((s, r) => s + r.stock_qty, 0),
@@ -2651,12 +2773,16 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
       available: rows.reduce((s, r) => s + r.available_qty, 0),
       lowStock:    rows.filter(r => r.available_qty > 0 && r.available_qty <= (r.reorder_point ?? 10)).length,
       outOfStock:  rows.filter(r => r.available_qty <= 0).length,
+      aging:       aged.length,
+      agingPieces: aged.reduce((s, x) => s + x.r.stock_qty, 0),
     };
     lowStockList = rows
       .filter(r => r.available_qty <= (r.reorder_point ?? 10))
       .sort((a, b) => a.available_qty - b.available_qty)
       .slice(0, 8)
       .map(r => ({ sku: r.sku, name: r.name || '', available: r.available_qty, reorder_point: r.reorder_point ?? 10 }));
+    agingList = aged.sort((a, b) => b.d - a.d).slice(0, 8)
+      .map(x => ({ sku: x.r.sku, name: x.r.name || '', on_hand: x.r.stock_qty, days: x.d }));
   } catch (_) {}
 
   // Walk this client's orders once, collecting counts, the daily trend and the
@@ -2693,13 +2819,22 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
 
   const myInbound = (db.inbound || []).filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm);
   const inboundOpen = myInbound.filter(r => (r.state?.status || 'pending') !== 'done').length;
-  let openDiscrepancies = 0;
+  let openDiscrepancies = 0, slaMet = 0, slaMissed = 0, slaOverdue = 0;
   for (const rec of myInbound) {
     openDiscrepancies += (rec.discrepancies || []).length;
+    const sla = inboundSla(rec);
+    if (sla) {
+      if (sla.status === 'closed') { if (sla.met) slaMet++; else slaMissed++; }
+      else if (sla.overdue) slaOverdue++;
+    }
     const end = rec.state?.endTime;
     if (end) {
       const received = Object.values(rec.state?.scanned || {}).reduce((s, q) => s + q, 0);
       activity.push({ kind: 'goods_received', at: end, ref: rec.serial || rec.reference || rec.id, detail: `${received} pcs received`, id: rec.id });
+    }
+    if (rec.asn_submitted_at && rec.submitted_by_client) {
+      activity.push({ kind: 'asn_submitted', at: rec.asn_submitted_at, ref: rec.serial || rec.reference || rec.id,
+                      detail: `${(rec.lines || []).length} line(s) declared`, id: rec.id });
     }
   }
   activity.sort((a, b) => String(b.at).localeCompare(String(a.at)));
@@ -2709,7 +2844,9 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   res.json({
     client, stock, openOrders, doneOrders, openPieces, inboundOpen, quarantineOpen,
     openDiscrepancies,
-    lowStockList,
+    agingDays,
+    inboundSlaSummary: { met: slaMet, missed: slaMissed, overdue: slaOverdue, workingDays: INBOUND_SLA_WORKING_DAYS },
+    lowStockList, agingList,
     trend,                                  // 14 SGT days, oldest first
     activity: activity.slice(0, 12),
     last30: {
@@ -2726,15 +2863,34 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
 app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
   const cid = invClientId(req.portalClient);
   let rows = [];
+  const agingDays = portalAgingDays(readDb(), req.portalClient);
   try {
-    rows = inventory.getAll({ clientId: cid }).map(r => ({
-      sku: r.sku, name: r.name, barcode: r.barcode || '', brand: r.brand || '',
-      on_hand: r.stock_qty, reserved: r.reserved_qty, available: r.available_qty,
-      reorder_point: r.reorder_point ?? 10,
-      uom: r.uom || '', category: r.category || '',
-    }));
+    // One grouped query for the whole catalogue rather than a lookup per SKU.
+    const lastMove = inventory.lastMovementBySku(cid);
+    const today = Date.now();
+    rows = inventory.getAll({ clientId: cid }).map(r => {
+      // No movement row at all means nothing has ever moved for this SKU;
+      // measure from when it entered the catalogue (`first_added_at`) so a
+      // brand-new item is not instantly branded as aging. NB the inventory
+      // table also has a `last_moved_at` column, but nothing ever writes it —
+      // stock_movements is the real source, which is what lastMove holds.
+      const last = lastMove.get(r.sku) || r.first_added_at || null;
+      const lastIso = last ? String(last).replace(' ', 'T') + (String(last).endsWith('Z') ? '' : 'Z') : null;
+      const days = lastIso ? Math.floor((today - new Date(lastIso).getTime()) / 86400000) : null;
+      return {
+        sku: r.sku, name: r.name, barcode: r.barcode || '', brand: r.brand || '',
+        on_hand: r.stock_qty, reserved: r.reserved_qty, available: r.available_qty,
+        reorder_point: r.reorder_point ?? 10,
+        uom: r.uom || '', category: r.category || '',
+        last_movement_at: lastIso,
+        days_since_movement: days,
+        // Only stock actually sitting there can be "aging" — a zero-qty SKU
+        // that hasn't moved is just discontinued, not stagnant inventory.
+        aging: r.stock_qty > 0 && days !== null && days > agingDays,
+      };
+    });
   } catch (_) {}
-  res.json(rows);
+  res.json({ rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT });
 });
 // One of THEIR orders in full — the line detail behind an Orders row.
 app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res) => {
@@ -2784,12 +2940,22 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   out.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   res.json(out.slice(0, 300));
 });
-// Inbound — the client's receipts, incl. discrepancy/damage counts + GRN link.
+// Inbound — the client's receipts, incl. discrepancy/damage counts, SLA state
+// and GRN link. On-screen history is capped at PORTAL_SCREEN_DAYS; anything
+// older is reachable through the dated export (see PORTAL_EXPORT_MAX_DAYS).
 app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
   const db = readDb();
+  const cutoff = Date.now() - PORTAL_SCREEN_DAYS * 86400000;
   const out = (db.inbound || [])
     .filter(r => String(r.client_name || '').trim().toLowerCase() === client)
+    .filter(r => {
+      // Anything still open is ALWAYS visible regardless of age — a job we
+      // have not finished must never fall off the client's screen.
+      if ((r.state?.status || 'pending') !== 'done') return true;
+      const t = new Date(r.state?.endTime || r.uploaded_at || 0).getTime();
+      return !t || t >= cutoff;
+    })
     .map(rec => {
       const state = rec.state || {};
       const ct = state.conditionTotals || {};
@@ -2797,12 +2963,19 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
       return {
         id: rec.id, serial: rec.serial || '', reference: rec.reference || '', type: rec.type,
         status: state.status || 'pending', received_at: state.endTime || null,
+        submitted_at: rec.asn_submitted_at || null,
+        submitted_by_client: !!rec.submitted_by_client,
+        eta: rec.eta || null,
+        sla: inboundSla(rec),
+        line_count: (rec.lines || []).length,
         expected: (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
         received: Object.values(state.scanned || {}).reduce((s, q) => s + q, 0),
         damaged, discrepancies: (rec.discrepancies || []).length,
       };
-    });
-  res.json(out.slice(0, 200));
+    })
+    .sort((a, b) => String(b.submitted_at || b.received_at || '').localeCompare(String(a.submitted_at || a.received_at || '')));
+  res.json({ rows: out.slice(0, 400), screenDays: PORTAL_SCREEN_DAYS, exportMaxDays: PORTAL_EXPORT_MAX_DAYS,
+             slaWorkingDays: INBOUND_SLA_WORKING_DAYS });
 });
 // Download their own data as a spreadsheet. Read-only like everything else
 // here, and scoped to the signed-in client by construction — it reuses the
@@ -2813,18 +2986,50 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   const cid = invClientId(client);
   const kind = String(req.params.kind);
   const db = readDb();
-  const title = d => [[`${client} — ${d}`], [`Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`], []];
+
+  // Optional date window. Defaults to the full retention window; anything
+  // wider than PORTAL_EXPORT_MAX_DAYS is REFUSED rather than silently clipped,
+  // so a client never gets a partial file believing it is complete.
+  const today = sgDateStr();
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from
+             : sgDateStr(new Date(Date.now() - (PORTAL_EXPORT_MAX_DAYS - 1) * 86400000));
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : today;
+  if (from > to) return res.status(400).json({ error: 'Start date is after the end date.' });
+  const spanDays = Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 86400000) + 1;
+  if (spanDays > PORTAL_EXPORT_MAX_DAYS) {
+    return res.status(400).json({ error: `Date range is ${spanDays} days. The most that can be downloaded at once is ${PORTAL_EXPORT_MAX_DAYS} days.` });
+  }
+  const inRange = v => { if (!v) return false; const d = sgDateStr(new Date(v)); return d >= from && d <= to; };
+
+  const title = (d, dated = true) => [[`${client} — ${d}`],
+    [dated ? `Period ${from} to ${to} (Singapore time)` : `Position as at ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`],
+    [`Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`], []];
   let aoa, sheet, name;
 
   if (kind === 'stock') {
+    // Stock is a live position, not a period — no date filter applies.
     let rows = [];
-    try { rows = inventory.getAll({ clientId: cid }); } catch (_) {}
+    const agingDays = portalAgingDays(db, client);
+    try {
+      const lastMove = inventory.lastMovementBySku(cid);
+      const now = Date.now();
+      rows = inventory.getAll({ clientId: cid }).map(r => {
+        const last = lastMove.get(r.sku) || r.first_added_at || null;
+        const iso = last ? String(last).replace(' ', 'T') + (String(last).endsWith('Z') ? '' : 'Z') : null;
+        const days = iso ? Math.floor((now - new Date(iso).getTime()) / 86400000) : null;
+        return { ...r, _days: days, _aging: r.stock_qty > 0 && days !== null && days > agingDays };
+      });
+    } catch (_) {}
     aoa = [
-      ...title('Stock on hand'),
-      ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'On hand', 'Reserved', 'Available', 'Reorder point', 'Status'],
+      ...title('Stock on hand', false),
+      ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'On hand', 'Reserved', 'Available', 'Reorder point', 'Status',
+       'Last movement', 'Days since movement', `Aging (>${agingDays}d)`],
       ...rows.map(r => [r.sku, r.name || '', r.barcode || '', r.brand || '', r.category || '',
         r.stock_qty, r.reserved_qty, r.available_qty, r.reorder_point ?? 10,
-        r.available_qty <= 0 ? 'Out of stock' : (r.available_qty <= (r.reorder_point ?? 10) ? 'Low' : 'OK')]),
+        r.available_qty <= 0 ? 'Out of stock' : (r.available_qty <= (r.reorder_point ?? 10) ? 'Low' : 'OK'),
+        r._days === null ? '' : (r._days === 0 ? 'today' : `${r._days}d ago`),
+        r._days === null ? '' : r._days,
+        r._aging ? 'Yes' : '']),
     ];
     sheet = 'Stock'; name = 'Stock';
   } else if (kind === 'orders') {
@@ -2833,7 +3038,9 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
       if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
       for (const o of b.orders || []) {
         const st = b.orderStates?.[o.order_number] || {};
-        out.push([o.order_number, (o.date || b.uploaded_at || '').slice(0, 10),
+        const when = st.endTime || o.date || b.uploaded_at;
+        if (!inRange(when)) continue;
+        out.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
           PORTAL_STATUS_LABEL[st.status || 'pending'] || 'Queued',
           (o.lines || []).length, o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
           o.waybill_number || '', o.po_number || '',
@@ -2846,11 +3053,13 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   } else if (kind === 'inbound') {
     const out = (db.inbound || [])
       .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
+      .filter(r => inRange(r.asn_submitted_at || r.state?.endTime || r.uploaded_at))
       .map(rec => {
         const state = rec.state || {};
         const ct = state.conditionTotals || {};
         const dmg = Object.values(ct).reduce((s, c) => s + (Number(c?.damaged) || 0), 0);
         const kiv = Object.values(ct).reduce((s, c) => s + (Number(c?.kiv) || 0), 0);
+        const sla = inboundSla(rec);
         // Client-facing wording, matching the portal screens — not the internal
         // 'po'/'KIV' shorthand the warehouse floor uses.
         return [rec.serial || '', rec.type === 'po' ? 'Inbound shipment' : 'Return', rec.reference || '',
@@ -2858,9 +3067,18 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
           (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
           Object.values(state.scanned || {}).reduce((s, q) => s + q, 0),
           dmg, kiv, (rec.discrepancies || []).length,
-          state.endTime ? new Date(state.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : ''];
+          rec.asn_submitted_at ? sgDateStr(new Date(rec.asn_submitted_at)) : '',
+          sla ? sla.dueDay : '',
+          state.endTime ? new Date(state.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
+          !sla ? '' : sla.status !== 'closed' ? (sla.overdue ? 'Overdue' : 'In progress')
+                    : (sla.met ? 'Met' : 'Missed'),
+          !sla || sla.status !== 'closed' ? '' : (sla.workingDaysEarly > 0 ? `${sla.workingDaysEarly} working day(s) early`
+                    : sla.workingDaysEarly === 0 ? 'on the due day' : `${-sla.workingDaysEarly} working day(s) late`)];
       });
-    aoa = [...title('Inbound receipts'), ['Receipt', 'Type', 'Reference', 'Source', 'Status', 'Expected', 'Received', 'Damaged', 'Held', 'Discrepancies', 'Received at (SGT)'], ...out];
+    aoa = [...title('Inbound receipts'),
+      ['Receipt', 'Type', 'Reference', 'Source', 'Status', 'Expected', 'Received', 'Damaged', 'Held', 'Discrepancies',
+       'Submitted', `SLA due (D+${INBOUND_SLA_WORKING_DAYS} working days)`, 'Received at (SGT)', 'SLA', 'SLA detail'],
+      ...out];
     sheet = 'Inbound'; name = 'Inbound';
   } else {
     return res.status(400).json({ error: 'Unknown export' });
@@ -2872,6 +3090,148 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${name}_${sgDateStr()}.xlsx"`);
   res.send(buf);
+});
+
+// ── ASN (advance shipping notice) — the client tells us what is coming ───────
+// The template's headers are EXACTLY the ones parseInboundFile() recognises, so
+// what we hand out is guaranteed to parse when it comes back. Don't change one
+// without the other.
+const ASN_TEMPLATE_HEADERS = ['SKU', 'Description', 'Expected Qty', 'Batch No', 'Expiry Date'];
+app.get('/api/portal/asn-template', requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient;
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ASN_TEMPLATE_HEADERS,
+    ['ABC-1001', 'Example Product 500ml', 120, 'LOT2401', '31/Dec/2027'],
+    ['ABC-1002', 'Example Product 250ml', 60, '', ''],
+  ]);
+  sheet['!cols'] = [{ wch: 20 }, { wch: 40 }, { wch: 13 }, { wch: 16 }, { wch: 14 }];
+  const notes = XLSX.utils.aoa_to_sheet([
+    ['IDEALONE — Advance Shipping Notice (ASN) template'],
+    [`Prepared for: ${client}`],
+    [],
+    ['How to use'],
+    ['1. Fill in one row per SKU on the "ASN" sheet. Delete the two example rows.'],
+    ['2. Keep the header row exactly as it is — the column names are how we read the file.'],
+    ['3. Save as .xlsx (or .csv) and upload it on the Inbound tab of your portal.'],
+    [],
+    ['Columns'],
+    ['SKU', 'Required. Your product code, exactly as it appears on the carton.'],
+    ['Description', 'Optional but helpful — used to identify the item on the floor.'],
+    ['Expected Qty', 'Required. Whole number of pieces you are sending.'],
+    ['Batch No', 'Optional. Lot or batch code, if your product carries one.'],
+    ['Expiry Date', 'Optional. Needed for anything date-controlled so we can pick oldest-first.'],
+    [],
+    ['Notes'],
+    ['• The same SKU may appear on several rows (for example one row per batch) — we add them up.'],
+    ['• A blank barcode is fine. We can receive against the SKU alone.'],
+    [`• Our receiving service level is D+${INBOUND_SLA_WORKING_DAYS} working days from submission.`],
+    ['• Your portal shows the status of every submitted ASN and a printable receipt note once it is checked in.'],
+  ]);
+  notes['!cols'] = [{ wch: 16 }, { wch: 78 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheet, 'ASN');
+  XLSX.utils.book_append_sheet(wb, notes, 'Instructions');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="IDEALONE_ASN_Template_${client.replace(/[^A-Za-z0-9_-]+/g, '_')}.xlsx"`);
+  res.send(buf);
+});
+
+// Client submits an ASN. This is one of only TWO writes the portal allows (the
+// other is their own aging-days preference) — it creates a PENDING inbound job
+// and nothing else; no stock moves until our floor actually receives it.
+app.post('/api/portal/asn', upload.single('file'), (req, res) => {
+  // multer does not reliably carry the AsyncLocalStorage tenant context, and
+  // this route sits outside the global auth middleware, so re-establish the
+  // portal session (and its tenant) after the upload has been parsed.
+  requirePortalAuthMiddleware(req, res, async () => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+      const rows = await parseInboundFile(req.file.buffer, req.file.originalname);
+      if (!rows.length) {
+        return res.status(400).json({ error: 'No product rows were recognised in that file. Please use the ASN template — the header row must include a SKU column.' });
+      }
+      // Same SKU across several rows (one per batch, say) merges into one
+      // expected line, exactly as the office upload path does.
+      const merged = new Map();
+      for (const r of rows) {
+        const cur = merged.get(r.sku) || { sku: r.sku, description: r.description, expected_qty: 0, expiry_date: '', lot_number: '' };
+        cur.expected_qty += r.qty;
+        if (!cur.description && r.description) cur.description = r.description;
+        if (!cur.expiry_date && r.expiry_date) cur.expiry_date = r.expiry_date;
+        if (!cur.lot_number && r.lot_number) cur.lot_number = r.lot_number;
+        merged.set(r.sku, cur);
+      }
+      const lines = [...merged.values()];
+      const now = new Date().toISOString();
+      const submittedDay = sgDateStr(new Date(now));
+
+      const db = readDb();
+      db.inbound = db.inbound || [];
+      const rec = {
+        id:          uuidv4(),
+        serial:      nextInboundCode(db),
+        type:        'po',
+        eta:         String(req.body?.eta || '').slice(0, 10) || null,
+        reference:   String(req.body?.reference || '').trim().slice(0, 60),
+        source_name: req.portalClient,
+        client_name: req.portalClient,
+        uploaded_at: now,
+        uploaded_by: `portal:${req.portalClient}`,
+        filename:    req.file.originalname,
+        lines,
+        // SLA clock starts the moment the client submits, and the due day is
+        // STAMPED rather than recomputed, so a later change to the SLA rule
+        // can never silently move the goalposts on work already promised.
+        submitted_by_client: true,
+        asn_submitted_at: now,
+        sla_due_day: addWorkingDays(submittedDay, INBOUND_SLA_WORKING_DAYS),
+        state:       { status: 'pending', scanned: {}, scanLog: [] },
+      };
+      db.inbound.unshift(rec);
+
+      addPoke(db, {
+        kind: 'inbound_asn',
+        client: req.portalClient,
+        direction: 'inbound',
+        channel: clientChannel(db, req.portalClient),
+        ref: rec.serial,
+        recordId: rec.id,
+        lines: lines.length,
+        pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
+        due: rec.sla_due_day,
+        eta: rec.eta,
+      });
+      writeDb(db);
+      logAudit('portal_asn_submitted', {
+        client: req.portalClient, serial: rec.serial, lines: lines.length,
+        pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
+        filename: rec.filename, due: rec.sla_due_day,
+      });
+      res.json({ ok: true, serial: rec.serial, lines: lines.length,
+                 pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
+                 due: rec.sla_due_day });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+});
+
+// Their own display preference — how many still days count as "aging". The only
+// other portal write besides submitting an ASN; strictly a threshold on their
+// own profile, it changes no operational data.
+app.post('/api/portal/settings', express.json(), requirePortalAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const p = (db.clientProfiles || []).find(x => String(x.client).trim().toLowerCase() === req.portalClient.trim().toLowerCase());
+  if (!p) return res.status(404).json({ error: 'Profile not found' });
+  const n = parseInt(req.body?.agingDays, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 365) {
+    return res.status(400).json({ error: 'Aging threshold must be between 1 and 365 days.' });
+  }
+  p.aging_days = n;
+  writeDb(db);
+  logAudit('portal_aging_days_set', { client: req.portalClient, agingDays: n });
+  res.json({ ok: true, agingDays: n });
 });
 
 // GRN for one of THEIR receipts — strict ownership check.
@@ -4958,6 +5318,7 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       orders,
     };
     db.batches.unshift(batch);
+    addOutboundPoke(db, batch, 'photo-scan');
     // Photo-scanned picking lists also feed the Transport tab — but only when
     // the user answered YES to the delivery-arrangement question.
     if (req.body?.arrange_delivery === 'yes' && req.body?.direction !== 'Inbound') {
@@ -5397,6 +5758,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     }
 
     db.batches.unshift(batch);
+    addOutboundPoke(db, batch, 'file-upload');
     // "Delivery arrangement needed?" — the user answers yes/no in the
     // Confirm-Upload modal. Yes → each order also becomes a Transport job
     // (deduped by order no). No → orders go to scanning only.
@@ -6169,6 +6531,27 @@ async function parseInboundFile(buffer, filename) {
   return out;
 }
 
+// ── Pokes — the office's "new work has arrived" feed ────────────────────────
+// Behind the normal staff auth (every signed-in internal user should see that a
+// client has sent something in). Read-only listing plus an acknowledge.
+app.get('/api/pokes', (req, res) => {
+  const db = readDb();
+  const all = db.pokes || [];
+  res.json({ unread: all.filter(p => !p.read).length, rows: all.slice(0, 60) });
+});
+app.post('/api/pokes/ack', express.json(), (req, res) => {
+  const db = readDb();
+  const ids = Array.isArray(req.body?.ids) ? new Set(req.body.ids.map(String)) : null;
+  let n = 0;
+  for (const p of db.pokes || []) {
+    if (p.read) continue;
+    if (ids && !ids.has(String(p.id))) continue;
+    p.read = true; p.readBy = req.userId || ''; p.readAt = new Date().toISOString(); n++;
+  }
+  writeDb(db);
+  res.json({ ok: true, acknowledged: n, unread: (db.pokes || []).filter(p => !p.read).length });
+});
+
 app.get('/api/inbound', (req, res) => {
   const db = readDb();
   const list = (db.inbound || []).map(rec => {
@@ -6180,6 +6563,12 @@ app.get('/api/inbound', (req, res) => {
       serial:            rec.serial || '',
       type:              rec.type,
       eta:               rec.eta || null,
+      // Client-submitted ASNs carry a promised turnaround; the floor needs to
+      // see what is due (and what is already late) on the same list it works
+      // from, not only in the client's own portal.
+      submitted_by_client: !!rec.submitted_by_client,
+      asn_submitted_at:  rec.asn_submitted_at || null,
+      sla:               inboundSla(rec),
       linked_order:      rec.linked_order || null,
       reference:         rec.reference || '',
       source_name:       rec.source_name || '',
@@ -6755,18 +7144,8 @@ app.post('/api/inbound/:id/deletion-request', (req, res) => {
   const { reason, password } = req.body || {};
   const reasonTrim = String(reason || '').trim();
   if (!reasonTrim) return res.status(400).json({ error: 'A reason is required to request deletion.' });
-  const user = readUsers().find(u => u.id === req.userId);
-  if (!user) return res.status(401).json({ error: 'Session user not found.' });
-  if ((user.role || 'admin') !== 'admin') {
-    return res.status(403).json({ error: 'Only Admin users can request deletion.' });
-  }
-  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
-    // 403, not 401 — the session token is still valid; only this re-entered
-    // password check failed (same reasoning as the outbound order-deletion
-    // request: a 401 here would trip the client's global session-expired
-    // handler and force-reload the page).
-    return res.status(403).json({ error: 'Incorrect password.' });
-  }
+  const auth = verifyAdminReconfirm(req);   // own login password OR the Administrator key
+  if (auth.error) return res.status(auth.code).json({ error: auth.error, authFailed: auth.code === 403 });
   const db  = readDb();
   const rec = findInbound(db, id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
@@ -9172,22 +9551,37 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
 // password as a confirmation step); the order is flagged pending_deletion
 // (visible to everyone as a status) until Master reviews it from the
 // Administrator "Pending Deletions" tab and approves or rejects it.
+// Shared re-confirmation for destructive admin actions: the signed-in admin
+// re-enters THEIR OWN login password. The Administrator key is also accepted —
+// it proves at least as much authority, and "password" in these dialogs was
+// genuinely ambiguous to admins who think of that key as *the* password, which
+// produced a wall of "Incorrect password" with no way to tell which secret was
+// wanted. Returns a 403-shaped error string, never 401: the session token is
+// still valid, and a 401 would trip the client's global "session expired"
+// handler and force-reload the page mid-dialog.
+function verifyAdminReconfirm(req, { role = 'admin' } = {}) {
+  const user = readUsers().find(u => u.id === req.userId);
+  if (!user) return { error: 'Session user not found.', code: 401 };
+  if (role && (user.role || 'admin') !== role) {
+    return { error: `Only ${role === 'admin' ? 'Admin' : role} users can do this.`, code: 403 };
+  }
+  const pw = String(req.body?.password || '');
+  if (!pw) return { error: 'Enter your password to confirm.', code: 403 };
+  if (pw === MASTER_PASS) return { user, viaMaster: true };
+  if (hashPass(pw, user.salt) === user.passwordHash) return { user, viaMaster: false };
+  return {
+    error: `That password does not match. Enter the password you use to sign in as "${user.id}" (or the Administrator key).`,
+    code: 403,
+  };
+}
+
 app.post('/api/scan/order-deletion-request', (req, res) => {
-  const { orderNumber, batchId, reason, password } = req.body || {};
+  const { orderNumber, batchId, reason } = req.body || {};
   const reasonTrim = String(reason || '').trim();
   if (!orderNumber || !batchId) return res.status(400).json({ error: 'orderNumber and batchId required' });
   if (!reasonTrim) return res.status(400).json({ error: 'A reason is required to request deletion.' });
-  const user = readUsers().find(u => u.id === req.userId);
-  if (!user) return res.status(401).json({ error: 'Session user not found.' });
-  if ((user.role || 'admin') !== 'admin') {
-    return res.status(403).json({ error: 'Only Admin users can request order deletion.' });
-  }
-  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
-    // 403, not 401 — the session (x-auth-token) is still valid; only this
-    // re-entered password check failed. A 401 here would trip the client's
-    // global "session expired" handler and force-reload the whole page.
-    return res.status(403).json({ error: 'Incorrect password.' });
-  }
+  const auth = verifyAdminReconfirm(req);
+  if (auth.error) return res.status(auth.code).json({ error: auth.error, authFailed: auth.code === 403 });
   const db    = readDb();
   const batch = db.batches.find(b => b.id === batchId);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
@@ -9207,6 +9601,52 @@ app.post('/api/scan/order-deletion-request', (req, res) => {
   writeDb(db);
   logAudit('order_deletion_requested', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || '', reason: reasonTrim });
   res.json({ ok: true });
+});
+
+// Bulk version. The single-order route used to be called in a LOOP from the
+// client — one HTTP request and one password check per order — so selecting 143
+// orders re-verified the same password 143 times and, when it did not match,
+// produced 143 identical "Incorrect password" lines in one alert with no clue
+// which secret was wanted. Here the password is checked ONCE up front and a
+// failure returns a single clear message; only then are the orders processed,
+// each with its own per-order outcome so genuine per-order refusals (already
+// completed, already pending) are still reported individually.
+app.post('/api/scan/order-deletion-request-bulk', express.json(), (req, res) => {
+  const reasonTrim = String(req.body?.reason || '').trim();
+  const targets = Array.isArray(req.body?.targets) ? req.body.targets : [];
+  if (!targets.length) return res.status(400).json({ error: 'No orders selected.' });
+  if (!reasonTrim) return res.status(400).json({ error: 'A reason is required to request deletion.' });
+  if (targets.length > 2000) return res.status(400).json({ error: 'Too many orders in one request.' });
+
+  const auth = verifyAdminReconfirm(req);
+  if (auth.error) return res.status(auth.code).json({ error: auth.error, authFailed: auth.code === 403 });
+
+  const db = readDb();
+  const requested = [], failed = [];
+  for (const t of targets) {
+    const orderNumber = String(t?.orderNumber || '');
+    const batchId = String(t?.batchId || '');
+    const batch = db.batches.find(b => b.id === batchId);
+    if (!batch) { failed.push({ orderNumber, error: 'Batch not found' }); continue; }
+    if (!(batch.orders || []).some(o => o.order_number === orderNumber)) {
+      failed.push({ orderNumber, error: 'Order not found in batch' }); continue;
+    }
+    if (!batch.orderStates) batch.orderStates = {};
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    if (state.status === 'done') { failed.push({ orderNumber, error: 'Already completed — cannot be deleted' }); continue; }
+    if (state.pending_deletion) { failed.push({ orderNumber, error: 'Already pending deletion' }); continue; }
+    state.pending_deletion = { reason: reasonTrim, requestedBy: req.userId, requestedAt: new Date().toISOString() };
+    batch.orderStates[orderNumber] = state;
+    requested.push(orderNumber);
+  }
+  // One write for the whole batch of requests, not one per order.
+  if (requested.length) writeDb(db);
+  logAudit('order_deletion_requested_bulk', {
+    count: requested.length, failedCount: failed.length, by: req.userId || '',
+    viaMaster: !!auth.viaMaster, reason: reasonTrim,
+    orders: requested.slice(0, 200),
+  });
+  res.json({ ok: true, requested: requested.length, failed });
 });
 
 app.get('/api/master/pending-deletions', (req, res) => {
@@ -10101,6 +10541,7 @@ async function pullZortStore(db, store) {
       inventory_client: tracked ? cid : undefined,
     };
     db.batches.unshift(batch);
+    addOutboundPoke(db, batch, 'store-sync');
     batchClients.push(`${clientName} (${clientOrders.length})`);
   }
   store.lastPullAt = new Date().toISOString();
@@ -13185,12 +13626,8 @@ app.post('/api/waves/:id/cancel-request', requireAuth, express.json(), (req, res
   const { reason, password } = req.body || {};
   const reasonTrim = String(reason || '').trim();
   if (!reasonTrim) return res.status(400).json({ error: 'A reason is required to request cancellation.' });
-  const user = readUsers().find(u => u.id === req.userId);
-  if (!user) return res.status(401).json({ error: 'Session user not found.' });
-  if ((user.role || 'admin') !== 'admin') return res.status(403).json({ error: 'Only Admin users can request a wave cancellation.' });
-  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
-    return res.status(403).json({ error: 'Incorrect password.' }); // 403 not 401 — see inbound deletion-request for why
-  }
+  const auth = verifyAdminReconfirm(req);   // own login password OR the Administrator key
+  if (auth.error) return res.status(auth.code).json({ error: auth.error, authFailed: auth.code === 403 });
   const db = readDb();
   const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
@@ -13270,15 +13707,8 @@ app.post('/api/master/wave-pending-cancellations/:id/reject', (req, res) => {
 // from the data (Administrator → Pending Deletions → Wave Deletion
 // Requests) — the operational effect never waits on that approval.
 app.post('/api/waves/bulk-cancel', requireAuth, express.json(), (req, res) => {
-  const user = readUsers().find(u => u.id === req.userId);
-  if (!user) return res.status(401).json({ error: 'Session user not found.' });
-  if ((user.role || 'admin') !== 'admin') {
-    return res.status(403).json({ error: 'Only Admin users can cancel waves.' });
-  }
-  const { password } = req.body || {};
-  if (!password || hashPass(String(password), user.salt) !== user.passwordHash) {
-    return res.status(403).json({ error: 'Incorrect password.' }); // 403, not 401 — session token is still valid
-  }
+  const auth = verifyAdminReconfirm(req);   // own login password OR the Administrator key
+  if (auth.error) return res.status(auth.code).json({ error: auth.error, authFailed: auth.code === 403 });
   const db  = readDb();
   const ids = req.body?.all === true
     ? (db.waves || []).filter(w => w.status !== 'cancelled').map(w => w.id)
