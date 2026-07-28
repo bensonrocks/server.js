@@ -22,6 +22,35 @@ If `sharp` is unavailable the original buffer is passed through unchanged (grace
 
 Do NOT revert to bare `Tesseract.recognize()` — always call `runOcr()`.
 
+## GI Analysis exports — "(017) SKU Lottables Issued" (lib/keyfields.js)
+
+A real upload failed with 0 orders / 0 lines / "Conversion failed" /
+"1 row skipped (missing SKU or order number)". The file is a WMS **GI Analysis**
+report: six preamble rows (company, title, Format, Account, Site, Shipped Date)
+then the real header row, then the data. `_detectHeaderRow` found the header
+correctly — the failure was purely unmapped COLUMN NAMES:
+
+- `SKU Code` → `sku_code`, absent from `mapRow`'s sku chain, so every row came
+  out with an empty SKU and was filtered away by
+  `.filter(r => r.sku && ...)`. Hence "row skipped" and zero orders.
+- `SKU Descr` → `sku_descr` (description), `BatchNo/LotNo` → `batchno_lotno`,
+  `ExpiryDate/Lot1` → `expirydate_lot1`. All added.
+- `GI No`, `Tracking No` and the LHU/Loose/Whole qty family already resolved.
+
+CLIENT FROM A ONE-CELL PREAMBLE: `_extractKVMeta` only handled key-in-column-A
+/ value-in-column-B. This report puts the whole thing in ONE cell —
+`"Account :    BETIME - BETIME"` — so nothing was found and the Confirm-Upload
+dialog said "No client/brand name found in this file". It now also splits a
+single cell on its first colon, and collapses an `account` value of the form
+`X - X` (account code + account name, identical) to one name. `account` was
+already in `_KV_MAP`; only the parsing shape was wrong. A plain `Account`
+COLUMN is still never treated as the client — verified, since that could be an
+account number.
+
+Verified with the client's own file: 1 order, 1 line, conversion succeeded, no
+skipped rows, client auto-filled as BETIME. Regression-checked against the
+Keyfields `d-` schema, plain SKU/Quantity, and the Betime picking-list shape.
+
 ## OCR Parsing Rules (lib/ocr-parse.js)
 
 ### Location codes must NEVER become SKUs

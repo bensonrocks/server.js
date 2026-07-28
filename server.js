@@ -4765,13 +4765,34 @@ const _KV_MAP = {
 };
 function _extractKVMeta(aoa, headerIdx) {
   const meta = {};
-  for (let i = 0; i < headerIdx; i++) {
-    const row = aoa[i] || [];
-    const key = row[0] != null ? String(row[0]).trim().toLowerCase() : '';
-    const val = row[1] != null ? String(row[1]).trim() : '';
-    if (!key || !val) continue;
+  const take = (rawKey, rawVal) => {
+    const key = String(rawKey || '').trim().toLowerCase().replace(/\s*:\s*$/, '');
+    const val = String(rawVal || '').trim();
+    if (!key || !val) return;
     const mapped = _KV_MAP[key];
     if (mapped && !meta[mapped]) meta[mapped] = val;
+  };
+  for (let i = 0; i < headerIdx; i++) {
+    const row = aoa[i] || [];
+    // Two-cell form: key in column A, value in column B.
+    take(row[0], row[1]);
+    // ONE-CELL form: the whole thing in a single cell, e.g. a GI Analysis
+    // export whose preamble reads "Account :    BETIME - BETIME". Splitting on
+    // the first colon is what lets the client name be picked up from these
+    // reports at all — previously column B was empty so nothing was found and
+    // the upload dialog said "No client/brand name found in this file".
+    for (const cell of row) {
+      const t = cell != null ? String(cell) : '';
+      const at = t.indexOf(':');
+      if (at > 0 && at < 40) take(t.slice(0, at), t.slice(at + 1));
+    }
+  }
+  // "BETIME - BETIME" is account-code + account-name; either half alone is the
+  // client, so collapse an exact duplicate rather than showing it twice.
+  if (meta.account && !meta.client_name) {
+    const parts = meta.account.split(/\s+-\s+/).map(x => x.trim()).filter(Boolean);
+    meta.client_name = (parts.length === 2 && parts[0].toLowerCase() === parts[1].toLowerCase())
+      ? parts[0] : meta.account;
   }
   return meta;
 }
