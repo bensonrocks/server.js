@@ -554,6 +554,8 @@ tr:hover td { background: var(--surface-2); }
 .orders-table thead th { text-align: left; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; color: #6b7280; background: #f8fafc; padding: .65rem .75rem; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
 .orders-table td { padding: .6rem .75rem; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
 .ot-row:hover td { background: #f8fafc; }
+/* Search-located row — draws the eye to the order the user asked for */
+.ot-row.row-located td { background: #fef3c7; transition: background 1.2s ease; }
 .ot-row td:first-child { box-shadow: inset 3px 0 0 transparent; }
 .ot-row.st-pending td:first-child    { box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
 .ot-row.st-processing td:first-child { box-shadow: inset 3px 0 0 #f59e0b; }

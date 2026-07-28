@@ -1143,7 +1143,12 @@
         return;
       }
       if (ord.scan_status === 'done') {
-        setWaybillMsg('Order already completed.', true);
+        // Completed order — don't dead-end; bring the user TO the order so
+        // they can retrieve its slip / label from the Actions column.
+        const located = locateOrderRow(ord.order_number);
+        setWaybillMsg(located
+          ? `${ord.order_number} is completed — showing it below (Slip / Label under Actions).`
+          : 'Order already completed.', false);
         return;
       }
       setWaybillMsg('', false);
@@ -1152,6 +1157,25 @@
       setWaybillMsg('Lookup failed. Try again.', true);
     }
   });
+
+  // Surface a specific order in the Orders table no matter what view, date
+  // window, or filters are active — used when a search/scan finds an order
+  // that the current view would hide (e.g. completed last week under "Today").
+  function locateOrderRow(orderNumber) {
+    const ord = loadedOrders.find(o => o.order_number === orderNumber);
+    if (!ord) return false;
+    ordersView = ord.scan_status === 'done' ? 'completed' : 'active';
+    if (ord.scan_status === 'done') activeDateFilter = 'all'; // old completions must surface
+    activeClientFilter  = 'all';
+    activeCarrierFilter = 'all';
+    renderOrdersList();
+    const row = document.querySelector(`tr.ot-row[data-order="${CSS.escape(orderNumber)}"]`);
+    if (!row) return false;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('row-located');
+    setTimeout(() => row.classList.remove('row-located'), 3000);
+    return true;
+  }
 
   function renderOrdersList() {
     let orders = loadedOrders;
