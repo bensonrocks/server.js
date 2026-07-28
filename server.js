@@ -132,6 +132,24 @@ const upload = multer({
 });
 
 app.use(express.json());
+
+// index.html is served with no-cache and build-stamped asset URLs so every
+// deploy forces browsers to fetch the matching styles.css/app.js. Without
+// this, floor PCs kept a stale cached app.js against a newer page after a
+// deploy — completed rows rendered half-empty and the Slip button vanished.
+const _BUILD_TAG = (process.env.RAILWAY_GIT_COMMIT_SHA || String(Date.now())).slice(0, 12);
+app.get(['/', '/index.html'], (_req, res) => {
+  try {
+    let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    html = html.replace('href="styles.css"', `href="styles.css?v=${_BUILD_TAG}"`)
+               .replace('src="app.js"', `src="app.js?v=${_BUILD_TAG}"`);
+    res.set('Cache-Control', 'no-cache');
+    res.type('html').send(html);
+  } catch {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
