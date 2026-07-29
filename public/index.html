@@ -231,6 +231,11 @@
       <div class="inline-cam-tabs">
         <button id="inlineCamTabCamera" class="ict-btn active">&#128247; Camera</button>
         <button id="inlineCamTabScanner" class="ict-btn">&#8983; Scanner / Type</button>
+        <!-- Fold the viewfinder away — for a picker using a scan gun the camera
+             is dead weight and the item list wants the room. Lives inside
+             #inlineCamPanel, which is display:none above 768px, so the desktop
+             layout never sees this button. -->
+        <button id="inlineCamCollapse" class="ict-collapse" title="Hide/show the camera">&#9650;</button>
       </div>
       <div class="inline-cam-view" id="inlineCamView">
         <video id="inlineCamVideo" autoplay playsinline muted></video>

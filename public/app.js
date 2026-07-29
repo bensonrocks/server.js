@@ -6773,11 +6773,36 @@
   function whMobileScanLayout() {
     return (currentUser?.role === 'warehouse') && window.matchMedia('(max-width: 768px)').matches;
   }
+  // Camera fold-away. Phone layout only (the panel itself is display:none on
+  // desktop), and the choice is remembered per device — a picker who always
+  // uses a gun should not have to fold it every single order.
+  const INLINE_CAM_COLLAPSE_KEY = 'is_inline_cam_collapsed';
+  function setInlineCamCollapsed(collapsed, remember = true) {
+    const panel = document.getElementById('inlineCamPanel');
+    const btn = document.getElementById('inlineCamCollapse');
+    if (!panel) return;
+    panel.classList.toggle('cam-collapsed', collapsed);
+    if (btn) { btn.innerHTML = collapsed ? '&#9660;' : '&#9650;'; btn.title = collapsed ? 'Show the camera' : 'Hide the camera'; }
+    // Folded away means the stream is genuinely off, not merely hidden — no
+    // point draining a phone battery on a viewfinder nobody is looking at.
+    if (collapsed) stopInlineCam();
+    else if (document.getElementById('inlineCamTabCamera')?.classList.contains('active')) startInlineCam();
+    if (remember) { try { localStorage.setItem(INLINE_CAM_COLLAPSE_KEY, collapsed ? '1' : ''); } catch (_) {} }
+  }
+  function inlineCamCollapsedPref() {
+    try { return localStorage.getItem(INLINE_CAM_COLLAPSE_KEY) === '1'; } catch (_) { return false; }
+  }
+  document.getElementById('inlineCamCollapse')?.addEventListener('click', () => {
+    const panel = document.getElementById('inlineCamPanel');
+    setInlineCamCollapsed(!panel.classList.contains('cam-collapsed'));
+  });
+
   function setInlineCamTab(tab) {
     document.getElementById('inlineCamTabCamera').classList.toggle('active', tab === 'camera');
     document.getElementById('inlineCamTabScanner').classList.toggle('active', tab === 'scanner');
     document.getElementById('inlineCamView').classList.toggle('hidden', tab !== 'camera');
-    if (tab === 'camera') startInlineCam();
+    const folded = document.getElementById('inlineCamPanel')?.classList.contains('cam-collapsed');
+    if (tab === 'camera') { if (!folded) startInlineCam(); }
     else { stopInlineCam(); setTimeout(focusActiveQty, 60); }
   }
   async function startInlineCam() {
@@ -7148,7 +7173,10 @@
       panel.classList.toggle('hidden', !whMobile);
       document.getElementById('scanAddBtn').classList.toggle('hidden', !whMobile);
       document.getElementById('openCameraBtn').classList.toggle('hidden', whMobile);
-      if (whMobile) setInlineCamTab('camera');
+      if (whMobile) {
+        setInlineCamCollapsed(inlineCamCollapsedPref(), false);   // honour this device's choice
+        setInlineCamTab('camera');
+      }
       else stopInlineCam();
     }
 

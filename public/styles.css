@@ -2957,3 +2957,96 @@ tr.row-pendingsync td { background: #fffbeb !important; }
               margin: 0 0 .6rem; padding: .55rem .7rem; border-radius: 9px;
               background: #eff6ff; border: 1px solid #bfdbfe; }
 .pd-bulkbar > span { font-weight: 800; font-size: .82rem; color: #1e40af; margin-right: auto; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PHONE-ONLY WAREHOUSE FIXES
+   Everything below is inside @media (max-width: 768px) and appended LAST, so
+   it wins over the earlier phone rules by source order. Desktop (≥769px) never
+   sees any of it — no desktop rule, class or markup was changed to achieve
+   this, which is the whole point.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── 1. Orders list: table → cards ──────────────────────────────────────
+     The table ran 148px past a 393px screen, which pushed the "Scan →" button
+     134px OFF-SCREEN — the one action a picker needs, unreachable without
+     first scrolling the table sideways. Each row becomes a self-contained card
+     with a full-width Scan button. The markup is untouched; this is purely a
+     different presentation of the same cells. */
+  .orders-table-wrap {
+    overflow-x: visible;          /* nothing to scroll sideways any more */
+    border: 0; background: transparent; box-shadow: none; border-radius: 0;
+  }
+  .orders-table { display: block; width: 100%; font-size: .85rem; }
+  .orders-table > thead { display: none; }        /* column headers are meaningless on a card */
+  .orders-table > tbody { display: block; width: 100%; }
+
+  .orders-table > tbody > tr.orders-tr {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: .3rem .55rem;
+    padding: .7rem .8rem; margin-bottom: .55rem;
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow-sm);
+  }
+  /* Keep the status colour cue that the stripe cell used to carry */
+  .orders-table > tbody > tr.orders-tr.status-pending    { border-left-color: #94a3b8; }
+  .orders-table > tbody > tr.orders-tr.status-processing { border-left-color: #d97706; }
+  .orders-table > tbody > tr.orders-tr.status-done       { border-left-color: #059669; }
+  .orders-table > tbody > tr.orders-tr.status-unprocessed{ border-left-color: #dc2626; }
+
+  .orders-table > tbody > tr.orders-tr > td {
+    display: block; border: 0 !important; padding: 0; white-space: normal;
+  }
+  .orders-tr > .ord-stripe-cell,
+  .orders-tr > .col-customer,
+  .orders-tr > .col-date { display: none !important; }   /* low value on a card */
+
+  .orders-tr > .ord-select-cell { flex: 0 0 auto; margin-right: .1rem; }
+  .orders-tr > .ord-select-cell input { width: 20px; height: 20px; }
+
+  .orders-tr > .col-order { flex: 1 1 100%; font-size: 1.02rem; font-weight: 800; line-height: 1.25; }
+  .orders-tr > .col-order .ord-no-link { font-size: 1.02rem; }
+
+  .orders-tr > .ord-client-cell,
+  .orders-tr > .col-items,
+  .orders-tr > .ord-status-cell { flex: 0 0 auto; font-size: .8rem; color: var(--muted); }
+  .orders-tr > .ord-status-cell .status-badge { font-size: .7rem; }
+
+  .orders-tr > .ord-waybill-cell {
+    flex: 1 1 100%; font-size: .74rem; color: var(--muted);
+    font-family: ui-monospace, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* The primary action gets its own full-width row and a real tap target.
+     NOTE the long selector: the `> td { display: block }` rule above is more
+     specific than a plain `.orders-tr > .ord-actions-cell`, so a short selector
+     lost and the cell never became a flex container — leaving the Scan button
+     at its natural 83px instead of spanning the card. */
+  .orders-table > tbody > tr.orders-tr > td.ord-actions-cell {
+    flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem;
+  }
+  .orders-table > tbody > tr.orders-tr > td.ord-actions-cell .btn-scan-now {
+    flex: 1 1 100%; width: 100%; min-height: 46px; font-size: 1rem; font-weight: 800;
+  }
+  .orders-table > tbody > tr.orders-tr > td.ord-actions-cell > *:not(.btn-scan-now) {
+    flex: 0 0 auto; min-height: 38px;
+  }
+
+  /* ── 2. Scan header: let the right-hand cluster WRAP ────────────────────
+     It ran 33px over, which sliced the Complete button off the screen. */
+  .scan-header-right { flex-wrap: wrap; row-gap: .35rem; justify-content: flex-end; min-width: 0; }
+  .scan-header-right > * { flex: 0 0 auto; }
+
+  /* ── 3. Camera panel: shorter, and collapsible ──────────────────────────
+     It took 39% of the screen, leaving the item list a sliver. Smaller by
+     default, and the picker can fold it away entirely when using a gun. */
+  .inline-cam-view { height: 24vh; max-height: 210px; }
+  .inline-cam-panel.cam-collapsed .inline-cam-view { display: none; }
+  .ict-collapse {
+    flex: 0 0 auto; border: 0; background: #1e293b; color: #94a3b8;
+    font-weight: 800; font-size: .95rem; padding: .55rem .8rem; cursor: pointer;
+  }
+  .ict-collapse:active { background: #334155; }
+}
