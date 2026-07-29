@@ -922,6 +922,104 @@ outbound scanning and IdealInbound receiving. Current state:
 - Per-order scan history: every increment/setqty/teach appends to `state.scanLog`
   (capped 800) — exported as the "Scan Log" sheet of the completion slip.
 
+## Scan durability — the SAME three guards on ALL counted-scan paths
+
+Per the user: every scanning function in IdealOne must be loss-proof, not just
+outbound picking. There are exactly THREE paths where a scan increments a
+count, and losing one means a wrong number on the floor:
+
+| path | endpoint | client fn |
+|---|---|---|
+| outbound picking | `/api/scan/increment` | `handleItemScan` |
+| IdealInbound receiving | `/api/inbound/:id/scan` | `inboundScan` |
+| wave picking | `/api/waves/:id/scan` | `waveUI.scan` |
+
+(The Orders-tab "Scan waybill number…" bar is a LOOKUP, not a count — losing
+one costs nothing, so it is deliberately not in this list.)
+
+All three now carry the three guards outbound had alone:
+
+1. **eventId idempotency.** Minted CLIENT-SIDE at scan time and sent on the
+   very first request — not just on replays. The server remembers the last 100
+   ids per target (`state.scanEventIds` for orders and inbound,
+   `wave.scanEventIds` for waves) and returns `{dedup:true}` for a repeat.
+   Registered ONLY once a piece is actually counted, so a 404/409 refusal never
+   burns the id for its legitimate retry. This is what stops "scan once, get
+   2 pcs" when a response is lost but the write landed.
+2. **Durable offline queue** (`is_offline_scans` in localStorage). ONE queue,
+   three kinds: `{id, kind:'order'|'inbound'|'wave', targetId, raw, extra, at}`.
+   Entries written before `kind` existed have none and are read as `'order'`,
+   so a queue that survived the upgrade still drains. `syncOfflineQueue`
+   dispatches per kind to the right endpoint. Inbound entries carry the
+   `condition` in `extra` — replaying a damaged piece as plain "received"
+   would quietly make it sellable.
+3. **Crash journal** (`scan-journal.ndjson`). db.json persistence is deferred
+   (`setImmediate`), so every counted scan is ALSO appended immediately.
+   `journalInboundState` / `journalWaveState` join `journalOrderState`, each
+   line tagged with `kind`; `replayScanJournal()` replays all three and
+   truncates. Two rules worth keeping: a **completed/cancelled wave is never
+   reopened** by a stale journal line, and wave counts take the HIGHER of
+   (journal, db.json) since `picked_qty` only ever grows while picking.
+   Inbound journal lines carry `conditionTotals` for the same reason as above.
+
+Plus, mirroring the order rule: **End Receipt and Close Wave are refused while
+that target has held scans** — closing over a hole would bank a short count as
+final (and, for a receipt, record the shortfall against the supplier). The job
+stays open and reopenable; the queue drains on its own.
+
+### Two real defects this audit turned up (both were losing pieces)
+
+- **Wave scanning dropped scans silently.** `waveUI.scan` guarded concurrency
+  with `if (_waveScanBusy) return`. A gun fires faster than the round trip, so
+  with the endpoint slowed to 700ms a burst of **5 scans recorded 1**, with no
+  error shown. Now queue-and-drain (`_waveScanQueue`), and on a network failure
+  the whole remaining burst is handed to the durable queue rather than held in
+  a variable a refresh would wipe.
+- **The scan overlay opened without taking focus.** `_globalScanKeydown`
+  deliberately passes keystrokes through when focus is inside some OTHER input
+  (so typing in a search box isn't hijacked). But nothing moved focus when a
+  scan screen opened, and on a phone `focusActiveQty()` skips touch devices on
+  purpose (focusing pops the on-screen keyboard over the list). So a packer who
+  had tapped the waybill lookup bar and then hit "Scan →" had every gun
+  character go into that bar — now hidden behind the overlay — and **the scan
+  was lost with no error**. `attachGlobalScanCapture()` now BLURS a foreign
+  input on attach: blurring dismisses the keyboard instead of summoning it, and
+  with focus on `<body>` the capture's own redirect path takes over. Applies to
+  all three screens at once. Proven load-bearing: removing just this blur makes
+  the order path fail all three of its offline checks again.
+
+### Verified
+
+- **6 idempotency checks**: same eventId twice counts once on all three paths;
+  a different id does count; the damaged/KIV condition survives.
+- **7 crash checks** (`kill -9`, SIGKILL — untrappable, so no graceful flush):
+  the journal captured all three kinds, all three recovered, the recovery was
+  logged, the journal was truncated, and a second restart changed nothing.
+- **6 deterministic replay checks**, because the kill test is racy — the
+  deferred write often lands first, so the journal is never consulted and
+  proves nothing for that path. Journal lines are hand-written with counts
+  ABOVE db.json (exactly what a crash leaves) and replayed: all three kinds
+  recover, a pre-`kind` line still replays, the condition breakdown comes back,
+  and a completed wave is NOT reopened by a stale line.
+- **11 browser checks**: a scan taken with the network down is held on each of
+  the three screens with the operator told, End Receipt and Close Wave are both
+  refused while held, all three kinds are held simultaneously, the queue
+  survives a full page reload, drains by itself afterwards, and each piece
+  lands server-side EXACTLY once.
+- **14 regression checks** on phone and desktop: order scanning still lands
+  (with focus deliberately parked in the waybill bar first), inbound still
+  registers, a wave burst of 4 is fully counted, unknown codes still give an
+  inline error, and the capture is still released on tab change.
+
+TESTING GOTCHAS worth not rediscovering: `pkill -f "PORT=xxxx"` matches its own
+command line and kills itself — kill the spawned process group by pid instead.
+A leftover server from a failed run will happily re-persist over a freshly
+copied data dir and make the next run measure the wrong process; the harness
+asserts `/api/version`'s `bootedAt` moved on every boot. And `page.fill` on the
+login form after a reload times out because the session survives in
+localStorage — the overlay is present but hidden, so check visibility, not
+existence.
+
 ## Data lifecycle (server.js)
 
 - ATOMIC WRITES: db.json persists via tmp+rename (`_persistDb`), serialized. Never

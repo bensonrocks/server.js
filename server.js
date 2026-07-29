@@ -1132,14 +1132,41 @@ process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 // are replayed. The journal is truncated after replay — it only ever needs
 // to cover the gap since the last clean write.
 const SCAN_JOURNAL_FILE = path.join(DATA_DIR, 'scan-journal.ndjson');
+
+// One journal, three kinds of counted work. `kind` was added when IdealInbound
+// receiving and wave picking got the same crash protection outbound already
+// had; entries written before that carry no `kind` and are read as 'order',
+// so a journal left behind by an older build still replays correctly.
+function _journalAppend(obj) {
+  fs.appendFile(SCAN_JOURNAL_FILE, JSON.stringify(obj) + '\n', err => {
+    if (err) console.error('[scan-journal]', err.message);
+  });
+}
 function journalOrderState(orderNumber, state) {
-  const line = JSON.stringify({
+  _journalAppend({
+    kind: 'order',
     at: state.updated_at, order: orderNumber, status: state.status,
     scanned: state.scanned || {}, startTime: state.startTime || null,
     endTime: state.endTime || null, operator: state.operator || null,
   });
-  fs.appendFile(SCAN_JOURNAL_FILE, line + '\n', err => {
-    if (err) console.error('[scan-journal]', err.message);
+}
+// Receiving counts. conditionTotals rides along because a damaged/KIV piece
+// that replayed as a plain "received" would quietly become sellable stock.
+function journalInboundState(id, state) {
+  _journalAppend({
+    kind: 'inbound',
+    at: state.updated_at || new Date().toISOString(), id, status: state.status,
+    scanned: state.scanned || {}, conditionTotals: state.conditionTotals || {},
+  });
+}
+// Wave pick progress. Only (sku, location, picked_qty) is journaled — the rest
+// of a wave is derived from the orders it was built from and never changes
+// while picking, so replaying the counts is enough.
+function journalWaveState(waveId, wave) {
+  _journalAppend({
+    kind: 'wave',
+    at: new Date().toISOString(), id: waveId, status: wave.status,
+    picks: (wave.picks || []).map(p => ({ sku: p.sku, location: p.location || '', picked_qty: p.picked_qty || 0 })),
   });
 }
 
@@ -1498,13 +1525,61 @@ function replayScanJournal() {
   let raw = '';
   try { raw = fs.readFileSync(SCAN_JOURNAL_FILE, 'utf8'); } catch { return; }
   if (!raw.trim()) return;
-  const latest = new Map(); // order → last journal entry (last-wins, idempotent)
+  // last-wins per target, so replay is idempotent however many lines a target
+  // wrote before the crash
+  const latest = new Map();      // order number → entry
+  const latestInbound = new Map(); // inbound id → entry
+  const latestWave = new Map();    // wave id → entry
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    try { const e = JSON.parse(line); if (e.order) latest.set(e.order, e); } catch {}
+    try {
+      const e = JSON.parse(line);
+      const kind = e.kind || 'order';   // pre-`kind` lines are order entries
+      if (kind === 'order' && e.order) latest.set(e.order, e);
+      else if (kind === 'inbound' && e.id) latestInbound.set(e.id, e);
+      else if (kind === 'wave' && e.id) latestWave.set(e.id, e);
+    } catch {}
   }
   const db = readDb();
   let recovered = 0;
+  let recoveredInbound = 0;
+  let recoveredWaves = 0;
+
+  for (const [id, e] of latestInbound) {
+    const rec = (db.inbound || []).find(r => r.id === id);
+    if (!rec) continue;
+    const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
+    if (state.updated_at && e.at && e.at <= state.updated_at) continue; // db already has it
+    state.status = e.status || state.status;
+    state.scanned = e.scanned || state.scanned;
+    if (e.conditionTotals) state.conditionTotals = e.conditionTotals;
+    state.updated_at = e.at || state.updated_at;
+    appendScanLog(state, { kind: 'recovered', raw: '', sku: '(scan journal replay after restart)', qty: '', by: '' });
+    recoveredInbound++;
+  }
+
+  for (const [id, e] of latestWave) {
+    const wave = (db.waves || []).find(w => w.id === id);
+    if (!wave) continue;
+    // A wave that finished or was cancelled after the journal line was written
+    // must not be dragged back to 'picking' — same standing rule as never
+    // overwriting completed work.
+    if (wave.status === 'completed' || wave.status === 'cancelled') continue;
+    let changed = false;
+    for (const je of e.picks || []) {
+      const row = (wave.picks || []).find(p => p.sku === je.sku && (p.location || '') === (je.location || ''));
+      if (!row) continue;
+      // Take the HIGHER count: picked_qty only ever grows while picking, so if
+      // db.json already has more (a write that did land), keep it.
+      const want = Math.min(row.total_qty, Math.max(row.picked_qty || 0, je.picked_qty || 0));
+      if (want !== row.picked_qty) { row.picked_qty = want; changed = true; }
+    }
+    if (changed) {
+      if (wave.status === 'created' && e.status === 'picking') wave.status = 'picking';
+      recoveredWaves++;
+    }
+  }
+
   for (const [orderNumber, e] of latest) {
     const batch = (db.batches || []).find(b => (b.orders || []).some(o => o.order_number === orderNumber));
     if (!batch) continue;
@@ -1521,9 +1596,14 @@ function replayScanJournal() {
     batch.orderStates[orderNumber] = state;
     recovered++;
   }
-  if (recovered > 0) {
+  if (recovered > 0 || recoveredInbound > 0 || recoveredWaves > 0) {
     writeDb(db);
-    console.log(`[IdealOne] Scan journal: recovered ${recovered} order state(s) lost in an unclean shutdown`);
+    const parts = [];
+    if (recovered) parts.push(`${recovered} order state(s)`);
+    if (recoveredInbound) parts.push(`${recoveredInbound} inbound receipt(s)`);
+    if (recoveredWaves) parts.push(`${recoveredWaves} wave pick list(s)`);
+    console.log(`[IdealOne] Scan journal: recovered ${parts.join(', ')} lost in an unclean shutdown`);
+    logAudit('scan_journal_replayed', { orders: recovered, inbound: recoveredInbound, waves: recoveredWaves });
   }
   try { fs.truncateSync(SCAN_JOURNAL_FILE, 0); } catch {}
 }
@@ -7211,6 +7291,21 @@ app.post('/api/inbound/:id/scan', (req, res) => {
     if (line) { sku = line.sku; description = line.description || ''; }
   }
 
+  // Idempotent scans — same rule and same reason as /api/scan/increment: if a
+  // scan reached the server but its response was lost (dead Wi-Fi, or a slow
+  // response outliving the client's fetch timeout), the retry carries the SAME
+  // eventId and must NOT count the piece twice.
+  const eventId = String(req.body.eventId || '').slice(0, 64);
+  if (eventId && state.scanEventIds?.includes(eventId)) {
+    const carton0 = activeCarton(state);
+    return res.json({
+      ok: true, sku, description, scanned_qty: state.scanned?.[sku] || 0,
+      condition: INBOUND_CONDITIONS.has(condition) ? condition : 'straight_to_inventory',
+      condition_totals: state.conditionTotals?.[sku] || null, crossdock: null,
+      cartonNum: carton0.num, cartonCount: (state.cartons || []).length, dedup: true,
+    });
+  }
+
   state.scanned = state.scanned || {};
   state.scanned[sku] = (state.scanned[sku] || 0) + inc;
   addToActiveCarton(state, sku, inc);
@@ -7226,8 +7321,16 @@ app.post('/api/inbound/:id/scan', (req, res) => {
 
   if (state.status === 'pending') { state.status = 'processing'; state.startTime = new Date().toISOString(); }
   state.updated_at = new Date().toISOString();
+  // Registered only now that a piece has actually been counted, so an early
+  // refusal above never burns the id for its legitimate retry.
+  if (eventId) {
+    if (!state.scanEventIds) state.scanEventIds = [];
+    state.scanEventIds.push(eventId);
+    if (state.scanEventIds.length > 100) state.scanEventIds.splice(0, state.scanEventIds.length - 100);
+  }
   rec.state = state;
   writeDb(db);
+  journalInboundState(id, state);   // crash-proof: db.json persistence is deferred
 
   const carton = activeCarton(state);
   // CROSS-DOCK alert: if outbound orders are WAITING on this SKU (open
@@ -7445,6 +7548,9 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   rec.received_by = req.userId || '';
 
   writeDb(db);
+  // Journal the close too, so a crash immediately after ending a receipt can't
+  // reopen it on restart (the replayed entry carries status 'done').
+  journalInboundState(rec.id, rec.state);
   logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, received: receivedSkus.length, discrepancies: mismatches.length, extras: extras.length, by: req.userId || '' });
   // Received stock raised availability → notify ZORT stock-sync stores.
   if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
@@ -14190,6 +14296,7 @@ app.post('/api/waves/:id/pick', requireAuth, express.json(), (req, res) => {
   row.picked_qty = Math.min(row.total_qty, row.picked_qty + pickedQty);
   if (wave.status === 'created') wave.status = 'picking';
   writeDb(db);
+  journalWaveState(wave.id, wave);  // keyed-in quantities are as losable as scans
   res.json(wave);
 });
 
@@ -14227,6 +14334,14 @@ app.post('/api/waves/:id/scan', requireAuth, express.json(), (req, res) => {
     return res.status(409).json({ error: `This wave is ${wave.status} — scanning is closed.`, waveClosed: true });
   }
 
+  // Idempotent scans — same rule and same reason as /api/scan/increment: a
+  // scan whose response was lost is retried with the SAME eventId and must not
+  // count the piece twice.
+  const eventId = String((req.body || {}).eventId || '').slice(0, 64);
+  if (eventId && wave.scanEventIds?.includes(eventId)) {
+    return res.json({ wave, matched: null, dedup: true });
+  }
+
   const sku = resolveBeTimeCode2(raw);
   const clientId = waveClientId(db, wave);
   // picks are already in walk order, so the first row of this product that
@@ -14256,7 +14371,15 @@ app.post('/api/waves/:id/scan', requireAuth, express.json(), (req, res) => {
   row.picked_qty = Math.min(row.total_qty, row.picked_qty + qty);
   const applied = row.picked_qty - before;
   if (wave.status === 'created') wave.status = 'picking';
+  // Registered only now that a piece has actually been counted, so the 404/409
+  // refusals above never burn the id for a legitimate retry.
+  if (eventId) {
+    if (!wave.scanEventIds) wave.scanEventIds = [];
+    wave.scanEventIds.push(eventId);
+    if (wave.scanEventIds.length > 100) wave.scanEventIds.splice(0, wave.scanEventIds.length - 100);
+  }
   writeDb(db);
+  journalWaveState(wave.id, wave);  // crash-proof: db.json persistence is deferred
   logAudit('wave_pick_scanned', {
     id: wave.id, code: raw, sku: row.sku, location: row.location || '',
     qty: applied, by: req.userId || '',

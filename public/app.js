@@ -6279,11 +6279,17 @@
   async function inboundScan(code) {
     if (!activeInbound || activeInbound.status === 'done') return;
     const feedback = document.getElementById('inboundScanFeedback');
+    // Minted HERE, at scan time, and sent on the very first request — not just
+    // on a replay. If the server applies the scan but the response is lost, the
+    // queued retry carries this same id and the server's dedupe absorbs it.
+    // Minting only at enqueue time is what caused "scan 1, get 2 pcs" on the
+    // outbound side; receiving must not repeat it.
+    const eventId = _newEventId();
+    const condition = inboundCondition;
     try {
-      const condition = inboundCondition;
-      const resp = await fetch(`/api/inbound/${activeInbound.id}/scan`, {
+      const resp = await fetchT(`/api/inbound/${activeInbound.id}/scan`, {
         method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ code, qty: 1, condition }),
+        body: JSON.stringify({ code, qty: 1, condition, eventId }),
       });
       const data = await resp.json();
       if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Scan failed'); return; }
@@ -6318,7 +6324,14 @@
       } else showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
       if (inboundCondition !== 'straight_to_inventory') setInboundCondition('straight_to_inventory');
     } catch (err) {
-      showFeedback(feedback, 'error', err.message);
+      // NETWORK DOWN — the piece is in the receiver's hand and must not be
+      // lost. Queue it durably (localStorage, survives a reload and a browser
+      // restart) and count it on screen as pending, exactly like outbound.
+      enqueueOfflineTargetScan('inbound', activeInbound.id, code, eventId, { condition });
+      const held = pendingScansForTarget('inbound', activeInbound.id).length;
+      showFeedback(feedback, 'pending',
+        `⚡ No connection — scan saved (${code}), ${held} waiting to sync automatically`);
+      renderInboundItemsTable(activeInbound);
     }
   }
   // Actual submission is handled by the global scan capture (attached with
@@ -6484,6 +6497,16 @@
   async function endInboundReceipt(force) {
     if (!activeInbound) return;
     const feedback = document.getElementById('inboundScanFeedback');
+    // A receipt must never be closed over a hole: ending it while scans are
+    // still held offline would bank a short count as the final one, and the
+    // discrepancy would be recorded against the supplier. Same rule as
+    // completing an order. The job stays open and reopenable — nothing is lost
+    // by waiting, and the queue drains on its own.
+    const held = pendingScansForTarget('inbound', activeInbound.id).length;
+    if (held) {
+      alert(`${held} scan(s) are still waiting for the connection to return.\n\nThe receipt will be endable as soon as they sync — keep it open.`);
+      return;
+    }
     try {
       const resp = await fetch(`/api/inbound/${activeInbound.id}/end-receipt`, {
         method: 'POST', headers: hdrs(), body: JSON.stringify({ force: !!force }),
@@ -8032,6 +8055,23 @@
   function attachGlobalScanCapture(target = 'outbound') {
     _scanTarget = target;
     _scanBuf = ''; clearTimeout(_scanFlushTimer); _scanFlushTimer = null;
+    // SCAN-LOSS GUARD. _globalScanKeydown deliberately passes keystrokes
+    // through when focus is inside some OTHER input, so a packer typing in a
+    // search box isn't hijacked. But if focus is still sitting in a foreign
+    // input when a scan screen opens — e.g. they had tapped the "Scan waybill
+    // number…" bar on the Orders tab, then hit Scan → — a gun's characters go
+    // into that input, now hidden behind the overlay, and the scan is LOST
+    // with no error. Found while auditing scan durability: on a phone nothing
+    // moved focus, because focusActiveQty() skips touch devices on purpose
+    // (focusing an input there pops the on-screen keyboard over the list).
+    // Blurring is the fix rather than focusing: it DISMISSES the keyboard
+    // instead of summoning it, and with focus on <body> the capture's own
+    // redirect-to-the-scan-input path takes over.
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')
+        && ae.id !== _scanInputId() && !ae.classList?.contains('qty-input')) {
+      try { ae.blur(); } catch {}
+    }
     document.addEventListener('keydown', _globalScanKeydown);
   }
   function detachGlobalScanCapture() {
@@ -8086,7 +8126,20 @@
   let _offSyncing   = false;
   try { _offlineQueue = JSON.parse(localStorage.getItem(OFFQ_KEY) || '[]'); } catch {}
   function _saveOffQ() { try { localStorage.setItem(OFFQ_KEY, JSON.stringify(_offlineQueue)); } catch {} }
-  function pendingScansFor(orderNumber) { return _offlineQueue.filter(e => e.orderNumber === orderNumber); }
+  // ONE queue, three kinds of counted scan: outbound order picking, IdealInbound
+  // receiving, and wave picking. An entry written before `kind` existed has none
+  // and is read as 'order', so a queue that survived an upgrade still drains.
+  //   { id, kind:'order'|'inbound'|'wave', targetId, raw, extra:{}, at }
+  // `orderNumber` is kept on order entries too, purely so anything already
+  // reading that field keeps working.
+  function _evtKind(e) { return e.kind || 'order'; }
+  function _evtTarget(e) { return e.targetId || e.orderNumber; }
+  function pendingScansFor(orderNumber) {
+    return _offlineQueue.filter(e => _evtKind(e) === 'order' && _evtTarget(e) === orderNumber);
+  }
+  function pendingScansForTarget(kind, targetId) {
+    return _offlineQueue.filter(e => _evtKind(e) === kind && _evtTarget(e) === targetId);
+  }
 
   // fetch with a timeout — a dead Wi-Fi link often hangs instead of failing
   function fetchT(url, opts = {}, ms = 8000) {
@@ -8154,9 +8207,30 @@
     pill.classList.remove('hidden');
   }
 
+  function _newEventId() {
+    return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  // Queue a scan for a NON-order target (receiving, wave). Kept separate from
+  // enqueueOfflineScan below because that one also does order-screen things
+  // (resolve the SKU locally, repaint the items table, refocus a line).
+  function enqueueOfflineTargetScan(kind, targetId, raw, eventId, extra) {
+    _offlineQueue.push({
+      id: eventId || _newEventId(),
+      kind, targetId, raw: String(raw).trim(),
+      extra: extra || {},
+      at: new Date().toISOString(),
+    });
+    _saveOffQ();
+    updateOfflinePill();
+    scheduleOfflineSync(4000);
+  }
+
   function enqueueOfflineScan(raw, eventId) {
     const evt = {
-      id: eventId || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+      id: eventId || _newEventId(),
+      kind: 'order',
+      targetId: activeOrder.order_number,
       orderNumber: activeOrder.order_number,
       raw: String(raw).trim(),
       at: new Date().toISOString(),
@@ -8188,12 +8262,22 @@
     try {
       while (_offlineQueue.length) {
         const evt = _offlineQueue[0];
+        const kind = _evtKind(evt);
+        const target = _evtTarget(evt);
+        // Every kind replays with the SAME eventId it was minted with, so a
+        // scan the server already applied (response lost) is absorbed by its
+        // dedupe instead of counting twice.
+        const req = kind === 'inbound'
+          ? { url: `/api/inbound/${encodeURIComponent(target)}/scan`,
+              body: { code: evt.raw, qty: 1, condition: evt.extra?.condition, eventId: evt.id, isReplay: true } }
+          : kind === 'wave'
+          ? { url: `/api/waves/${encodeURIComponent(target)}/scan`,
+              body: { code: evt.raw, eventId: evt.id, isReplay: true } }
+          : { url: '/api/scan/increment',
+              body: { orderNumber: target, sku: evt.raw, eventId: evt.id, isReplay: true } };
         let resp, data;
         try {
-          resp = await fetchT('/api/scan/increment', {
-            method: 'POST', headers: hdrs(),
-            body: JSON.stringify({ orderNumber: evt.orderNumber, sku: evt.raw, eventId: evt.id, isReplay: true }),
-          });
+          resp = await fetchT(req.url, { method: 'POST', headers: hdrs(), body: JSON.stringify(req.body) });
           data = await resp.json();
         } catch {
           scheduleOfflineSync(6000); // still offline — try again shortly
@@ -8202,13 +8286,19 @@
         _offlineQueue.shift();
         _saveOffQ();
         if (resp.ok) {
-          if (activeOrder && activeOrder.order_number === evt.orderNumber) {
+          if (kind === 'order' && activeOrder && activeOrder.order_number === target) {
             if (!activeOrder.scanned) activeOrder.scanned = {};
             activeOrder.scanned[data.sku] = data.scanned_qty;
             if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; activeOrder.cartonCount = data.cartonCount || activeOrder.cartonCount; updateCartonBadge(activeOrder); }
+          } else if (kind === 'inbound' && activeInbound && activeInbound.id === target) {
+            activeInbound.scanned = activeInbound.scanned || {};
+            activeInbound.scanned[data.sku] = data.scanned_qty;
+            renderInboundItemsTable(activeInbound);
+          } else if (kind === 'wave' && data.wave) {
+            window.waveUI?.applySyncedWave(data.wave, target);
           }
         } else {
-          issues.push(`${evt.raw} on ${evt.orderNumber}: ${data.error || resp.status}`);
+          issues.push(`${evt.raw} on ${target}: ${data.error || resp.status}`);
         }
         updateOfflinePill();
       }
@@ -8218,6 +8308,9 @@
       }
       const feedback = document.getElementById('itemScanFeedback');
       if (feedback && activeOrder) showFeedback(feedback, 'success', '✓ Connection restored — all queued scans synced');
+      // say it on whichever screen the user is actually looking at
+      if (activeInbound) showFeedback(document.getElementById('inboundScanFeedback'), 'success', '✓ Connection restored — all queued scans synced');
+      window.waveUI?.syncedNotice();
       if (issues.length) {
         alert(`Some offline scans could not be applied:\n\n${issues.join('\n')}\n\nPlease verify these items and rescan if needed.`);
       }
@@ -13174,39 +13267,48 @@
     // gun works with no typing. The per-row "Pick" button below is kept for
     // keying a whole line at once (a full carton off a pallet).
     //
-    // QUEUE, NEVER DROP. A gun fires faster than the round trip, so a second
-    // piece can be scanned while the first request is still open. An earlier
-    // version of this guarded with a plain `if (busy) return`, which SILENTLY
-    // DISCARDED that piece — the picker sees no error and the count is short
-    // by one. Same queue-and-drain shape as handleItemScan/_scanQueue on the
-    // outbound side: every scan is enqueued and processed in order.
+    // QUEUE, NEVER DROP — in two layers.
+    //
+    // (1) In-memory serialisation. A gun fires faster than the round trip, so a
+    //     second piece can be scanned while the first request is still open. An
+    //     earlier version guarded with a plain `if (busy) return`, which
+    //     SILENTLY DISCARDED that piece — no error, count short by one. Every
+    //     scan is enqueued and processed in order instead.
+    // (2) DURABLE handoff. If the request actually fails (network gone), the
+    //     piece moves into the shared localStorage offline queue, so it
+    //     survives a page reload, a browser restart and a dead battery — the
+    //     same protection outbound order scanning has. Each scan carries an
+    //     eventId minted at scan time, so a replay of a scan the server already
+    //     applied is absorbed by its dedupe rather than counted twice.
     const _waveScanQueue = [];
     let _waveScanBusy = false;
     function scan(code) {
       const val = String(code || '').trim();
       if (!val || !currentWave) return;
-      _waveScanQueue.push(val);
+      _waveScanQueue.push({ raw: val, eventId: _newEventId() });
       if (!_waveScanBusy) _drainWaveScans();
     }
     async function _drainWaveScans() {
       _waveScanBusy = true;
       try {
         while (_waveScanQueue.length) {
-          // Peek, don't shift: a network failure must leave the piece in the
-          // queue for the retry below rather than losing it.
-          const val = _waveScanQueue[0];
+          const evt = _waveScanQueue[0];
+          const waveId = currentWave.id;
           let r, j;
           try {
-            r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/scan`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code: val }),
+            r = await fetchT(`/api/waves/${encodeURIComponent(waveId)}/scan`, {
+              method: 'POST', headers: hdrs(),
+              body: JSON.stringify({ code: evt.raw, eventId: evt.eventId }),
             });
             j = await r.json();
           } catch (e) {
-            // Connection gone. Keep the queue intact, say so plainly, and try
-            // again shortly — the picker does NOT have to remember to rescan.
-            waveScanFeedback(`No connection — ${_waveScanQueue.length} scan(s) held, retrying…`, 'err');
-            setTimeout(() => { if (!_waveScanBusy) _drainWaveScans(); }, 4000);
+            // Connection gone. Hand the WHOLE remaining burst to the durable
+            // queue and clear the in-memory one — nothing is held only in a
+            // variable that a refresh would wipe.
+            for (const q of _waveScanQueue) enqueueOfflineTargetScan('wave', waveId, q.raw, q.eventId);
+            const held = pendingScansForTarget('wave', waveId).length;
+            _waveScanQueue.length = 0;
+            waveScanFeedback(`⚡ No connection — ${held} scan(s) saved, will sync automatically`, 'err');
             return;
           }
           _waveScanQueue.shift();          // the server has now seen it
@@ -13214,6 +13316,7 @@
           currentWave = j.wave;
           renderDetail();
           const m = j.matched;
+          if (!m) continue;                // a deduped replay — nothing new to report
           waveScanFeedback(
             `${m.sku} — ${m.picked_qty}/${m.total_qty}` +
             (m.complete ? ' ✓ line complete' : '') +
@@ -13226,6 +13329,19 @@
         _waveScanBusy = false;
         const inp = document.getElementById('waveScanInput');
         if (inp) { inp.value = ''; inp.focus(); }
+      }
+    }
+
+    // Called by the offline-queue drainer when a held wave scan finally lands,
+    // so the open pick list reflects it without a manual refresh.
+    function applySyncedWave(wave, waveId) {
+      if (!currentWave || currentWave.id !== waveId) return;
+      currentWave = wave;
+      renderDetail();
+    }
+    function syncedNotice() {
+      if (currentWave && !document.getElementById('waveDetailWrap')?.classList.contains('hidden')) {
+        waveScanFeedback('✓ Connection restored — all queued scans synced', 'done');
       }
     }
 
@@ -13257,6 +13373,14 @@
     // sub-picking the pile down to order level is done by opening each order
     // and scanning every piece from zero, exactly like normal scanning.
     async function complete() {
+      // Same rule as ending a receipt or completing an order: never close over
+      // a hole. Closing a wave with pieces still held offline would bank a
+      // short pick as final.
+      const held = pendingScansForTarget('wave', currentWave.id).length + _waveScanQueue.length;
+      if (held) {
+        alert(`${held} scan(s) are still waiting for the connection to return.\n\nThe wave will be closeable as soon as they sync — keep it open.`);
+        return;
+      }
       if (!confirm(`Close wave "${currentWave.name}"?\n\nNext step: scan each order's GI/Waybill to open it, then scan its items from the picked pile — every order is counted piece by piece, like normal scanning.`)) return;
       let r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       let j = await r.json();
@@ -13311,7 +13435,7 @@
       if (!document.getElementById('waveDetailWrap')?.classList.contains('hidden')) detachGlobalScanCapture();
     }
 
-    return { load, newWave, filterPicker, cancelPicker, buildWave, openWave, pick, scan, complete, cancel, print, backToList, leaveDetail };
+    return { load, newWave, filterPicker, cancelPicker, buildWave, openWave, pick, scan, complete, cancel, print, backToList, leaveDetail, applySyncedWave, syncedNotice };
   })();
   window.waveUI = waveUI;
   document.getElementById('waveNewBtn')?.addEventListener('click', () => waveUI.newWave());
