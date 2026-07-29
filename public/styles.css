@@ -3098,4 +3098,80 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   #inboundScanOverlay .item-scan-wrap #inboundScanPhotoBtn::after {
     content: 'Photo'; font-size: .9rem; font-weight: 700; margin-left: .35rem;
   }
+
+  /* ── 6. Wave Pick: table → cards ────────────────────────────────────────
+     Same failure as the Orders list, and worse: the pick table measured
+     546px in a 393px screen with NO horizontal scroll, so the Picked column
+     and the "Pick" button — the only control on the screen a picker uses —
+     were simply unreachable. The wave list had the same problem with its
+     "Open" button (at x = 487).
+
+     These two tables carry no cell classes (they're built from inline-styled
+     <td>s in app.js waveUI), so the columns are addressed by position. That
+     couples this block to the column ORDER declared in index.html
+     #tab-waves — if a column is ever inserted, these nth-child numbers move
+     with it. The header rows in index.html are the reference:
+       list   : Wave | Orders | Lines | Units | Status | Created | (Open)
+       detail : Location | SKU | Description | Qty | Picked | Orders | (Pick) */
+  #tab-waves table.tbl { display: block; width: 100%; }
+  #tab-waves table.tbl > thead { display: none; }
+  #tab-waves table.tbl > tbody { display: block; width: 100%; }
+  #tab-waves table.tbl > tbody > tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .55rem;
+    padding: .7rem .8rem; margin-bottom: .55rem;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow-sm);
+  }
+  #tab-waves table.tbl > tbody > tr > td {
+    display: block; border: 0 !important; padding: 0; white-space: normal;
+    text-align: left !important;    /* beats the inline text-align:right on Qty/Picked */
+  }
+  /* the "no waves yet" / loading placeholder is a single full-width cell */
+  #tab-waves table.tbl > tbody > tr > td[colspan] { flex: 1 1 100%; text-align: center !important; }
+
+  /* — wave LIST card — */
+  #wave-list-tbody > tr > td:nth-child(1) { flex: 1 1 100%; font-size: 1rem; font-weight: 800; }
+  #wave-list-tbody > tr > td:nth-child(2),
+  #wave-list-tbody > tr > td:nth-child(3),
+  #wave-list-tbody > tr > td:nth-child(4),
+  #wave-list-tbody > tr > td:nth-child(6) { flex: 0 0 auto; font-size: .78rem; color: var(--muted); }
+  /* bare numbers mean nothing without their header, which the card hides */
+  #wave-list-tbody > tr > td:nth-child(2)::after { content: ' orders'; }
+  #wave-list-tbody > tr > td:nth-child(3)::after { content: ' lines'; }
+  #wave-list-tbody > tr > td:nth-child(4)::after { content: ' units'; }
+  #wave-list-tbody > tr > td:nth-child(5) { flex: 0 0 auto; }
+  #wave-list-tbody > tr > td:nth-child(7) { flex: 1 1 100%; margin-top: .25rem; }
+  #wave-list-tbody > tr > td:nth-child(7) button {
+    width: 100%; min-height: 44px; font-size: .95rem; font-weight: 800;
+    padding: .2rem .55rem !important;   /* the inline padding is on the button itself */
+  }
+
+  /* — wave DETAIL pick card — */
+  #wave-picks-tbody > tr > td:nth-child(2) { flex: 1 1 100%; font-size: 1.05rem; font-weight: 800; }
+  #wave-picks-tbody > tr > td:nth-child(1) {
+    flex: 0 0 auto; font-size: .8rem; padding: .1rem .5rem !important;
+    background: #eef2f6; border-radius: 99px;
+  }
+  #wave-picks-tbody > tr > td:nth-child(3) { flex: 1 1 100%; font-size: .82rem; color: var(--muted); }
+  #wave-picks-tbody > tr > td:nth-child(4),
+  #wave-picks-tbody > tr > td:nth-child(5) { flex: 0 0 auto; font-size: .95rem; font-weight: 700; }
+  #wave-picks-tbody > tr > td:nth-child(4)::before { content: 'Qty '; font-weight: 600; color: var(--muted); font-size: .78rem; }
+  #wave-picks-tbody > tr > td:nth-child(5)::before { content: 'Picked '; font-weight: 600; color: var(--muted); font-size: .78rem; }
+  /* Which orders the pieces belong to is not what a picker acts on at the
+     shelf — it is the widest column and it is dropped from the card. It is
+     still on screen at desktop width and on the printed pick sheet. */
+  #wave-picks-tbody > tr > td:nth-child(6) { display: none !important; }
+  #wave-picks-tbody > tr > td:nth-child(7) { flex: 1 1 100%; margin-top: .25rem; }
+  #wave-picks-tbody > tr > td:nth-child(7) button {
+    width: 100%; min-height: 46px; font-size: 1rem; font-weight: 800;
+    padding: .2rem .5rem !important;
+  }
+
+  /* The detail header's four actions wrapped into 3-line-tall buttons because
+     "Close Wave — Start Order Scanning" is a long label in a narrow flex item.
+     Give the row real rows instead. */
+  #waveDetailWrap .section-header { flex-wrap: wrap; row-gap: .5rem; }
+  #waveDetailWrap .section-header > div { flex: 1 1 100%; flex-wrap: wrap; gap: .45rem !important; }
+  #waveDetailWrap .section-header > div > button { flex: 1 1 auto; min-height: 42px; font-size: .85rem; }
+  #waveCompleteBtn { flex: 1 1 100% !important; }
 }
