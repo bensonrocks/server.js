@@ -1748,6 +1748,20 @@
           </div>
         </div>
         <div id="waveDetailMeta" style="display:flex;gap:1.5rem;color:#475569;font-size:.85rem;margin-bottom:.75rem"></div>
+        <!-- Scan picking. One scan = one piece, exactly like order scanning;
+             the "Pick" button on each row stays for keying a whole line at
+             once. Hidden once the wave is completed/cancelled. -->
+        <div id="waveScanBar">
+          <div class="item-scan-wrap">
+            <span class="scan-icon-prefix">&#9524;</span>
+            <input type="text" id="waveScanInput" class="big-scan-input"
+              placeholder="Scan item barcode / SKU&#8230;"
+              autocomplete="off" autocorrect="off" spellcheck="false" />
+            <button class="btn-camera-open" id="waveScanAddBtn" title="Add the typed code">ADD</button>
+            <button class="btn-camera-open" id="waveCameraScanBtn" title="Scan barcode with camera">&#128247; Scan</button>
+          </div>
+          <div id="waveScanFeedback" class="scan-feedback hidden"></div>
+        </div>
         <table class="tbl" style="width:100%;border-collapse:collapse">
           <thead><tr><th>Location</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Picked</th><th>Orders</th><th></th></tr></thead>
           <tbody id="wave-picks-tbody"></tbody>

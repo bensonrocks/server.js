@@ -1999,6 +1999,56 @@ through Scan & Check afterward, defeating half the point. Closes the loop:
   `'pending'`. Also clears `state.wave_id` on the reversed order so the
   pill can't reappear for a cancelled wave.
 
+### Scan picking — `POST /api/waves/:id/scan` + `matchScannedSku()`
+
+Wave picking used to be tap-"Pick"-and-key-a-number per line, which is not
+how anyone works a pick face. Now one scan = one piece, the same convention
+as order scanning, so a gun works with no typing at all. The per-row "Pick"
+button stays for keying a whole line at once (a full carton off a pallet).
+
+- **`matchScannedSku(rawInput, sku, items, getSku, clientId)`** (server.js,
+  just above `/api/scan/increment`) is the resolution chain EXTRACTED from
+  that endpoint and now shared with wave scanning. ONE implementation
+  deliberately: a barcode that counts against an order line has to count
+  against the same product on the wave pick list, and two copies would drift
+  the first time either learned something. The STEP ORDER is the documented
+  rule and must not be rearranged — exact SKU (leading-zero tolerant) → NP
+  suffix equivalence → packer-taught aliases → item-master barcode lookup.
+  `resolveBeTimeCode2` still runs BEFORE it (official CODE2 listing, then
+  learned barcodes); `matchScannedSku` takes both the raw and resolved value.
+- `POST /api/waves/:id/scan` `{code, qty?}` — qty defaults to 1. Matches
+  against the rows that still need pieces, **in walk order**, so a SKU
+  stocked at two locations fills in the order the picker walks rather than
+  arbitrarily. Caps at `total_qty` (never overshoots), flips `created` →
+  `picking`, audit-logs `wave_pick_scanned` with BOTH the raw code and the
+  SKU it resolved to.
+- THREE distinct refusals, because they mean different things on the floor:
+  404 `notInWave` (not on this pick list), 409 `alreadyComplete` (an extra
+  piece in hand for a finished line — routine, and must NOT read as an
+  unknown barcode), 409 `waveClosed` (completed/cancelled wave).
+- Client: `#waveScanBar` on the wave detail, hidden once the wave is
+  completed/cancelled. Uses the SAME global scan capture as the order and
+  receiving screens — `_scanTarget` gained a third value `'wave'`
+  (`_SCAN_INPUT_IDS` maps target → input id) so a gun firing while focus has
+  drifted still lands. `openWave()` attaches it; **`backToList()` AND the
+  `switchTab` hook (`waveUI.leaveDetail()`) both detach it** — miss either
+  and the capture leaks into whatever screen opens next. The switchTab guard
+  uses `window.waveUI?.` and not the bare const: `typeof` on a `const` still
+  in its temporal dead zone throws rather than yielding "undefined".
+- Feedback is an inline `.scan-feedback` line, never an `alert()` — a picker
+  holding a gun must not have to dismiss a dialog between pieces.
+- Camera scanning works here too: `openCameraScanner('wave')` +
+  `dispatchCameraScan` routing, same pattern as inbound. Both trigger
+  buttons wrap the call in an arrow function (passing the function directly
+  would hand the click's MouseEvent in as the target argument).
+- Verified: 16 API checks (one scan = one piece, lowercase/NP tolerance,
+  unknown → 404, cap at total, already-complete → 409, closed wave → 409,
+  bad input → 400, auth required, audit type intact, **plus two regression
+  checks that order scanning and teach-on-scan still behave after the
+  matcher was extracted**) and 25 browser checks across phone and desktop
+  (typed scan, gun burst with focus elsewhere, inline error with no dialog,
+  rejected scan changes no count, capture released on tab change).
+
 ## Product Master (lib/product-master.js) — ULD_Product_Master_Template.xlsx
 
 Adopted the client's real onboarding spreadsheet format as the Inventory

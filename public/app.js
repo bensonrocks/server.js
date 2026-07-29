@@ -741,6 +741,13 @@
       setTimeout(() => dlWrap.classList.remove('download-shake'), 400);
       return;
     }
+    // Leaving Wave Pick with its detail view open must release the global
+    // scan capture, or a gun fired on the next tab would still be routed at
+    // the (now hidden) wave scan input.
+    // (window.waveUI, not the bare const — switchTab can run before that
+    // const is initialised, and `typeof` on a const in its temporal dead zone
+    // throws rather than yielding "undefined".)
+    if (name !== 'waves') window.waveUI?.leaveDetail();
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
@@ -7856,10 +7863,12 @@
   let _scanBuf = '';
   let _scanFlushTimer = null;
   // Which screen currently owns the global capture — outbound's scan
-  // overlay or IdealInbound's receiving screen. Only one is ever open at a
-  // time, so a single shared target (set on attach) is enough.
-  let _scanTarget = 'outbound'; // 'outbound' | 'inbound'
-  function _scanInputId() { return _scanTarget === 'inbound' ? 'inboundScanInput' : 'itemScanInput'; }
+  // overlay, IdealInbound's receiving screen, or the Wave Pick detail. Only
+  // one is ever open at a time, so a single shared target (set on attach) is
+  // enough.
+  let _scanTarget = 'outbound'; // 'outbound' | 'inbound' | 'wave'
+  const _SCAN_INPUT_IDS = { inbound: 'inboundScanInput', wave: 'waveScanInput', outbound: 'itemScanInput' };
+  function _scanInputId() { return _SCAN_INPUT_IDS[_scanTarget] || _SCAN_INPUT_IDS.outbound; }
   // 250ms: long enough that a gun pausing mid-code (laggy browser, long
   // barcode) never gets split into two fragments — a split's front half can
   // look like an unknown barcode and wrongly trigger the teach dialog
@@ -7882,6 +7891,10 @@
     if (_scanTarget === 'inbound') {
       if (!activeInbound) return;
       inboundScan(val);
+      return;
+    }
+    if (_scanTarget === 'wave') {
+      waveUI.scan(val);
       return;
     }
     if (!activeOrder) return;
@@ -11215,11 +11228,15 @@
   // outbound's offline-aware queue, or inbound's direct scan call.
   function dispatchCameraScan(val) {
     if (cameraScanTarget === 'inbound') inboundScan(val);
+    else if (cameraScanTarget === 'wave') waveUI.scan(val);
     else handleItemScan(val);
   }
 
+  // NOTE the arrow wrappers: passing openCameraScanner directly would hand the
+  // click's MouseEvent in as the `target` argument and silently break the default.
   document.getElementById('openCameraBtn').addEventListener('click', () => openCameraScanner('outbound'));
   document.getElementById('inboundCameraScanBtn').addEventListener('click', () => openCameraScanner('inbound'));
+  document.getElementById('waveCameraScanBtn').addEventListener('click', () => openCameraScanner('wave'));
   document.getElementById('closeCameraBtn').addEventListener('click', closeCameraScanner);
   document.getElementById('cmodeSingle').addEventListener('click', () => setCameraMode('single'));
   document.getElementById('cmodeBatch').addEventListener('click',  () => setCameraMode('batch'));
@@ -11392,7 +11409,9 @@
     if (cameraStream)    { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
     document.getElementById('cameraScanOverlay').classList.add('hidden');
     batchMap.clear();
-    document.getElementById(cameraScanTarget === 'inbound' ? 'inboundScanInput' : 'itemScanInput').focus();
+    // focus goes back to whichever input opened the camera
+    const backTo = { inbound: 'inboundScanInput', wave: 'waveScanInput' }[cameraScanTarget] || 'itemScanInput';
+    document.getElementById(backTo)?.focus();
   }
 
   function startCameraLoop() {
@@ -13110,6 +13129,12 @@
       document.getElementById('waveListWrap').classList.add('hidden');
       document.getElementById('waveDetailWrap').classList.remove('hidden');
       renderDetail();
+      // Same global capture the order and receiving screens use, so a gun
+      // firing while focus has drifted still lands on the scan input instead
+      // of going nowhere. MUST be detached on every way out of this screen
+      // (backToList, switching tab) or it leaks into whatever opens next.
+      attachGlobalScanCapture('wave');
+      document.getElementById('waveScanInput')?.focus();
     }
 
     function renderDetail() {
@@ -13128,6 +13153,9 @@
       const active = w.status !== 'completed' && w.status !== 'cancelled';
       document.getElementById('waveCompleteBtn').classList.toggle('hidden', !active);
       document.getElementById('waveCancelBtn').classList.toggle('hidden', !active);
+      // Scanning is closed on a completed/cancelled wave (the server refuses
+      // it too — this just stops offering it).
+      document.getElementById('waveScanBar').classList.toggle('hidden', !active);
       document.getElementById('wave-picks-tbody').innerHTML = w.picks.map(p => {
         const done = p.picked_qty >= p.total_qty;
         return `<tr style="${done ? 'background:#f0fdf4' : ''}">
@@ -13140,6 +13168,51 @@
           <td>${done ? '&#10003;' : `<button class="btn-secondary" style="padding:.2rem .5rem" onclick="waveUI.pick('${esc(p.sku)}','${esc(p.location)}')">Pick</button>`}</td>
         </tr>`;
       }).join('');
+    }
+
+    // SCAN PICKING — one scan = one piece, exactly like order scanning, so a
+    // gun works with no typing. The per-row "Pick" button below is kept for
+    // keying a whole line at once (a full carton off a pallet).
+    let _waveScanBusy = false;
+    async function scan(code) {
+      const val = String(code || '').trim();
+      if (!val || !currentWave || _waveScanBusy) return;
+      _waveScanBusy = true;               // a gun can fire faster than the round trip
+      try {
+        const r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/scan`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: val }),
+        });
+        const j = await r.json();
+        if (!r.ok) { waveScanFeedback(j.error || 'Could not record that scan.', 'err'); return; }
+        currentWave = j.wave;
+        renderDetail();
+        const m = j.matched;
+        waveScanFeedback(
+          `${m.sku} — ${m.picked_qty}/${m.total_qty}` +
+          (m.complete ? ' ✓ line complete' : '') +
+          (m.bin_location || m.location ? ` · ${m.bin_location || m.location}` : ''),
+          m.complete ? 'done' : 'ok',
+        );
+      } catch (e) {
+        waveScanFeedback('Network error — that scan was not recorded. Scan it again.', 'err');
+      } finally {
+        _waveScanBusy = false;
+        const inp = document.getElementById('waveScanInput');
+        if (inp) { inp.value = ''; inp.focus(); }
+      }
+    }
+
+    // Deliberately NOT an alert(): a picker holding a gun must not have to
+    // dismiss a dialog between pieces. Errors stay on screen until the next
+    // scan replaces them.
+    function waveScanFeedback(msg, kind) {
+      const el = document.getElementById('waveScanFeedback');
+      if (!el) return;
+      el.textContent = msg;
+      // only the three classes styles.css actually defines
+      el.className = 'scan-feedback ' + (kind === 'err' ? 'error' : 'success');
+      el.classList.remove('hidden');
     }
 
     async function pick(sku, location) {
@@ -13205,12 +13278,35 @@
       win.onload = () => setTimeout(() => win.print(), 300);
     }
 
-    function backToList() { load(); }
+    function backToList() { detachGlobalScanCapture(); load(); }
+    // Leaving the Wave Pick tab entirely is the other way out — see the
+    // switchTab hook that calls this.
+    function leaveDetail() {
+      if (!document.getElementById('waveDetailWrap')?.classList.contains('hidden')) detachGlobalScanCapture();
+    }
 
-    return { load, newWave, filterPicker, cancelPicker, buildWave, openWave, pick, complete, cancel, print, backToList };
+    return { load, newWave, filterPicker, cancelPicker, buildWave, openWave, pick, scan, complete, cancel, print, backToList, leaveDetail };
   })();
   window.waveUI = waveUI;
   document.getElementById('waveNewBtn')?.addEventListener('click', () => waveUI.newWave());
+
+  // ADD submits the typed value through the SAME path a gun takes, rather
+  // than calling waveUI.scan directly — one code path, so manual entry and a
+  // scan can never behave differently.
+  document.getElementById('waveScanAddBtn')?.addEventListener('click', () => {
+    const inp = document.getElementById('waveScanInput');
+    const v = (inp.value || '').trim();
+    if (!v) { inp.focus(); return; }
+    _scanBuf = v;
+    _flushScanBuf();
+    inp.value = '';
+  });
+  // Enter inside the input is handled by the global capture; this listener
+  // only stops the keypress firing through both and double-counting the piece
+  // (same no-op guard as itemScanInput / inboundScanInput).
+  document.getElementById('waveScanInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') e.preventDefault();
+  });
 
   // Clicking an order's "Wave Picked — Needs Closing" pill (admin only —
   // by the time this pill can show, the wave that touched this order is

@@ -3067,27 +3067,35 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   }
   .scan-carton-wrap > * { flex-shrink: 0; }
 
-  /* ── 5. IdealInbound scan row: input gets its own line ──────────────────
-     This row carries TWO buttons (📷 Scan and the per-scan photo 📷) plus the
-     ┤ prefix, which squeezed the input to 105px — the placeholder cut to
-     "Scan item b…" and hand-typing a SKU meant typing into a sliver. The
-     input now spans the full width and the buttons share a second row inside
-     the same bordered box. Deliberately scoped to #inboundScanOverlay: the
-     outbound dock has one button and its input already measures full width,
-     so it is left exactly as it is. */
-  #inboundScanOverlay .item-scan-wrap { flex-wrap: wrap; align-items: center; gap: 0; }
-  #inboundScanOverlay .item-scan-wrap .scan-icon-prefix { flex: 0 0 auto; }
+  /* ── 5. TWO-BUTTON scan rows: input gets its own line ───────────────────
+     Applies to the scan rows that carry TWO buttons plus the ┤ prefix —
+     IdealInbound receiving (📷 Scan + the per-scan photo 📷) and Wave Pick
+     (ADD + 📷 Scan). Either way the input was squeezed to ~105px: the
+     placeholder cut to "Scan item b…" and hand-typing a SKU meant typing
+     into a sliver. The input now spans the full width and the buttons share
+     a second row inside the same bordered box.
+
+     Deliberately NOT applied to the outbound dock: it shows one button at a
+     time and keeps the supplied reference layout (input and ADD side by
+     side, courier pickup-scan style). */
+  #inboundScanOverlay .item-scan-wrap,
+  #waveScanBar .item-scan-wrap { flex-wrap: wrap; align-items: center; gap: 0; }
+  #inboundScanOverlay .item-scan-wrap .scan-icon-prefix,
+  #waveScanBar .item-scan-wrap .scan-icon-prefix { flex: 0 0 auto; }
   /* The percentage bases are what actually force the break: prefix + 65% still
      fits on line 1, but adding a 45% button would need 110%+, so both buttons
      drop to line 2 and grow to fill it (45+45 → 50/50). */
-  #inboundScanOverlay .item-scan-wrap .big-scan-input {
+  #inboundScanOverlay .item-scan-wrap .big-scan-input,
+  #waveScanBar .item-scan-wrap .big-scan-input {
     flex: 1 1 65%; min-width: 0; padding-right: .7rem;
   }
-  #inboundScanOverlay .item-scan-wrap .btn-camera-open {
+  #inboundScanOverlay .item-scan-wrap .btn-camera-open,
+  #waveScanBar .item-scan-wrap .btn-camera-open {
     flex: 1 1 45%; min-width: 0; min-height: 44px; border-top: 1px solid var(--border);
   }
   /* a hairline between the two buttons so they don't read as one wide bar */
-  #inboundScanOverlay .item-scan-wrap .btn-camera-open + .btn-camera-open {
+  #inboundScanOverlay .item-scan-wrap .btn-camera-open + .btn-camera-open,
+  #waveScanBar .item-scan-wrap .btn-camera-open + .btn-camera-open {
     border-left: 1px solid rgba(255,255,255,.35);
   }
   /* At half-row width the per-scan photo button is a bare 📷 sitting next to

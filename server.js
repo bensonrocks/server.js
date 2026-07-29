@@ -6389,6 +6389,66 @@ app.post('/api/scan/release', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Shared "what did they just scan?" matcher ────────────────────────────────
+// Used by BOTH outbound item scanning (/api/scan/increment) and wave pick
+// scanning (/api/waves/:id/scan). ONE implementation deliberately: a barcode
+// that counts against an order line has to count against the same product on
+// the wave pick list, and two copies of this chain would drift apart the first
+// time either one learned something new.
+//
+//   items    — the candidate rows to match against (order lines, wave picks…)
+//   getSku   — how to read the SKU off one of those rows
+//   rawInput — exactly what was scanned
+//   sku      — that value already put through resolveBeTimeCode2 (official
+//              CODE2 listing first, then learned barcodes)
+//   clientId — inventory account for the barcode cross-reference; '' skips it
+//
+// The ORDER of the steps is the documented rule and must not be rearranged:
+// an exact match always wins before the NP-suffix equivalence, which wins
+// before packer-taught aliases, which win before the item-master barcode
+// lookup. Returns the matched row, or null.
+function matchScannedSku(rawInput, sku, items, getSku, clientId) {
+  const stripLeadZeros = s => String(s).trim().toLowerCase().replace(/^0+(?=.)/, '');
+  const findBySku = q => {
+    const ql = String(q).trim().toLowerCase();
+    const qn = stripLeadZeros(ql);
+    return items.find(it => {
+      const ls = String(getSku(it) || '').trim().toLowerCase();
+      return ls === ql || stripLeadZeros(ls) === qn;
+    });
+  };
+  const s = String(sku || '').trim();
+  let item = findBySku(s);
+  // Betime scanning exception: an "NP" suffix on the product barcode is the
+  // same product as the plain code — 8006NP scanned counts against line 8006
+  // (and vice versa). Exact matches always win; the suffix only comes into
+  // play when nothing matched as scanned.
+  if (!item && /np$/i.test(s))  item = findBySku(s.replace(/np$/i, ''));
+  if (!item && !/np$/i.test(s)) item = findBySku(s + 'NP');
+  // Learned SKU aliases: the official listing sometimes names a product
+  // differently from the client's order file (e.g. 9005 vs BC010). Aliases
+  // are packer-taught pairs, tried only after every direct match fails.
+  if (!item) {
+    for (const al of _learnedSkuAliases) {
+      if (al.a === s) item = findBySku(al.b);
+      else if (al.b === s) item = findBySku(al.a);
+      if (item) break;
+    }
+  }
+  // SKU↔barcode inter-search from the client's item master: if the scanned
+  // value is a BARCODE on file for this client, resolve it to its SKU and match
+  // that. This is the onboarding default — a client uploads SKU + Barcode and
+  // both scan interchangeably, no teaching needed.
+  if (!item && clientId && inventory.available()) {
+    try {
+      const raw = String(rawInput || '').trim();
+      const row = inventory.getByBarcode(raw, clientId) || (s !== raw ? inventory.getByBarcode(s, clientId) : null);
+      if (row && row.sku) item = findBySku(row.sku);
+    } catch (_) { /* inventory optional */ }
+  }
+  return item || null;
+}
+
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
   const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
@@ -6397,46 +6457,11 @@ app.post('/api/scan/increment', (req, res) => {
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
-  const stripLeadZeros = s => s.trim().toLowerCase().replace(/^0+(?=.)/, '');
-  const skuNorm = stripLeadZeros(sku);
   const lines = uniqueSkuLines(ord);
-  const findBySku = q => {
-    const ql = q.trim().toLowerCase();
-    const qn = stripLeadZeros(ql);
-    return lines.find(l => {
-      const ls = l.sku.trim().toLowerCase();
-      return ls === ql || stripLeadZeros(ls) === qn;
-    });
-  };
-  let item = findBySku(sku);
-  // Betime scanning exception: an "NP" suffix on the product barcode is the
-  // same product as the plain code — 8006NP scanned counts against line 8006
-  // (and vice versa). Exact matches always win; the suffix only comes into
-  // play when nothing matched as scanned.
-  if (!item && /np$/i.test(sku.trim()))  item = findBySku(sku.trim().replace(/np$/i, ''));
-  if (!item && !/np$/i.test(sku.trim())) item = findBySku(sku.trim() + 'NP');
-  // Learned SKU aliases: the official listing sometimes names a product
-  // differently from the client's order file (e.g. 9005 vs BC010). Aliases
-  // are packer-taught pairs, tried only after every direct match fails.
-  if (!item) {
-    for (const al of _learnedSkuAliases) {
-      if (al.a === sku) item = findBySku(al.b);
-      else if (al.b === sku) item = findBySku(al.a);
-      if (item) break;
-    }
-  }
-  // SKU↔barcode inter-search from the client's item master: if the scanned
-  // value is a BARCODE on file for this client, resolve it to its SKU and match
-  // that against the order. This is the onboarding default — a client uploads
-  // SKU + Barcode and both scan interchangeably, no teaching needed.
-  if (!item && inventory.available()) {
-    const cid = invClientId(batch.client_name || ord.client_name || '');
-    try {
-      const raw = String(req.body.sku || '').trim();
-      const row = inventory.getByBarcode(raw, cid) || (sku !== raw ? inventory.getByBarcode(sku, cid) : null);
-      if (row && row.sku) item = findBySku(row.sku);
-    } catch (_) { /* inventory optional */ }
-  }
+  const item = matchScannedSku(
+    req.body.sku, sku, lines, l => l.sku,
+    invClientId(batch.client_name || ord.client_name || ''),
+  );
   if (!item) {
     // Unknown (or differently-named) product barcode? Offer teach-on-scan:
     // the packer confirms which line this is and it's remembered for good.
@@ -14166,6 +14191,85 @@ app.post('/api/waves/:id/pick', requireAuth, express.json(), (req, res) => {
   if (wave.status === 'created') wave.status = 'picking';
   writeDb(db);
   res.json(wave);
+});
+
+// Which inventory account a wave's products belong to — needed only for the
+// item-master barcode cross-reference in matchScannedSku. Taken from the
+// batch of the wave's first order, the same way enrichWaveWithBins resolves
+// its client. A wave spanning two clients falls back to the first one's
+// catalogue; SKU/alias matching is unaffected either way.
+function waveClientId(db, wave) {
+  const first = (wave.order_numbers || [])[0];
+  if (!first) return '';
+  const b = findBatchForOrder(db, first);
+  return b ? (b.inventory_client || invClientId(b.client_name)) : '';
+}
+
+// SCAN a code against the wave's consolidated pick list. One scan = one piece,
+// the same convention as outbound item scanning, so a gun works with no typing
+// at all — this is what makes wave picking usable on the floor instead of
+// tapping "Pick" and keying a number per line.
+//
+// Deliberately NOT folded into /pick above: that endpoint takes an explicit
+// (sku, location, qty) that the caller already knows, whereas this one has to
+// work out WHICH line an arbitrary barcode belongs to and pick the right one
+// of several. Both funnel into the same picked_qty field.
+app.post('/api/waves/:id/scan', requireAuth, express.json(), (req, res) => {
+  const raw = String((req.body || {}).code || '').trim();
+  if (!raw) return res.status(400).json({ error: 'code required' });
+  const qty = (req.body || {}).qty === undefined ? 1 : Number(req.body.qty);
+  if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'qty must be a positive number' });
+
+  const db = readDb();
+  const wave = findWave(db, req.params.id);
+  if (!wave) return res.status(404).json({ error: 'Wave not found' });
+  if (wave.status === 'completed' || wave.status === 'cancelled') {
+    return res.status(409).json({ error: `This wave is ${wave.status} — scanning is closed.`, waveClosed: true });
+  }
+
+  const sku = resolveBeTimeCode2(raw);
+  const clientId = waveClientId(db, wave);
+  // picks are already in walk order, so the first row of this product that
+  // still needs pieces is the one the picker is standing at. A SKU stocked in
+  // two locations therefore fills in the order they walk, not arbitrarily.
+  const outstanding = (wave.picks || []).filter(p => p.picked_qty < p.total_qty);
+  const row = matchScannedSku(raw, sku, outstanding, p => p.sku, clientId);
+
+  if (!row) {
+    // "Already fully picked" is a different thing from "not on this wave", and
+    // the picker needs to be told which: an extra piece in hand for a finished
+    // line is a routine floor event, not an unknown barcode.
+    const done = matchScannedSku(raw, sku, wave.picks || [], p => p.sku, clientId);
+    if (done) {
+      return res.status(409).json({
+        error: `${done.sku} is already fully picked (${done.picked_qty}/${done.total_qty}).`,
+        alreadyComplete: true, sku: done.sku,
+      });
+    }
+    return res.status(404).json({
+      error: `"${raw}" is not on this wave's pick list.`,
+      notInWave: true, code: raw, resolved: sku !== raw ? sku : null,
+    });
+  }
+
+  const before = row.picked_qty;
+  row.picked_qty = Math.min(row.total_qty, row.picked_qty + qty);
+  const applied = row.picked_qty - before;
+  if (wave.status === 'created') wave.status = 'picking';
+  writeDb(db);
+  logAudit('wave_pick_scanned', {
+    id: wave.id, code: raw, sku: row.sku, location: row.location || '',
+    qty: applied, by: req.userId || '',
+  });
+  res.json({
+    wave,
+    matched: {
+      sku: row.sku, description: row.description || '',
+      location: row.location || '', bin_location: row.bin_location || '',
+      picked_qty: row.picked_qty, total_qty: row.total_qty, applied,
+      complete: row.picked_qty >= row.total_qty,
+    },
+  });
 });
 
 // CLOSING A WAVE WRITES NOTHING INTO THE ORDERS (corrected per user — the
