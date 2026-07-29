@@ -13173,29 +13173,55 @@
     // SCAN PICKING — one scan = one piece, exactly like order scanning, so a
     // gun works with no typing. The per-row "Pick" button below is kept for
     // keying a whole line at once (a full carton off a pallet).
+    //
+    // QUEUE, NEVER DROP. A gun fires faster than the round trip, so a second
+    // piece can be scanned while the first request is still open. An earlier
+    // version of this guarded with a plain `if (busy) return`, which SILENTLY
+    // DISCARDED that piece — the picker sees no error and the count is short
+    // by one. Same queue-and-drain shape as handleItemScan/_scanQueue on the
+    // outbound side: every scan is enqueued and processed in order.
+    const _waveScanQueue = [];
     let _waveScanBusy = false;
-    async function scan(code) {
+    function scan(code) {
       const val = String(code || '').trim();
-      if (!val || !currentWave || _waveScanBusy) return;
-      _waveScanBusy = true;               // a gun can fire faster than the round trip
+      if (!val || !currentWave) return;
+      _waveScanQueue.push(val);
+      if (!_waveScanBusy) _drainWaveScans();
+    }
+    async function _drainWaveScans() {
+      _waveScanBusy = true;
       try {
-        const r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/scan`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: val }),
-        });
-        const j = await r.json();
-        if (!r.ok) { waveScanFeedback(j.error || 'Could not record that scan.', 'err'); return; }
-        currentWave = j.wave;
-        renderDetail();
-        const m = j.matched;
-        waveScanFeedback(
-          `${m.sku} — ${m.picked_qty}/${m.total_qty}` +
-          (m.complete ? ' ✓ line complete' : '') +
-          (m.bin_location || m.location ? ` · ${m.bin_location || m.location}` : ''),
-          m.complete ? 'done' : 'ok',
-        );
-      } catch (e) {
-        waveScanFeedback('Network error — that scan was not recorded. Scan it again.', 'err');
+        while (_waveScanQueue.length) {
+          // Peek, don't shift: a network failure must leave the piece in the
+          // queue for the retry below rather than losing it.
+          const val = _waveScanQueue[0];
+          let r, j;
+          try {
+            r = await fetch(`/api/waves/${encodeURIComponent(currentWave.id)}/scan`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code: val }),
+            });
+            j = await r.json();
+          } catch (e) {
+            // Connection gone. Keep the queue intact, say so plainly, and try
+            // again shortly — the picker does NOT have to remember to rescan.
+            waveScanFeedback(`No connection — ${_waveScanQueue.length} scan(s) held, retrying…`, 'err');
+            setTimeout(() => { if (!_waveScanBusy) _drainWaveScans(); }, 4000);
+            return;
+          }
+          _waveScanQueue.shift();          // the server has now seen it
+          if (!r.ok) { waveScanFeedback(j.error || 'Could not record that scan.', 'err'); continue; }
+          currentWave = j.wave;
+          renderDetail();
+          const m = j.matched;
+          waveScanFeedback(
+            `${m.sku} — ${m.picked_qty}/${m.total_qty}` +
+            (m.complete ? ' ✓ line complete' : '') +
+            (m.bin_location || m.location ? ` · ${m.bin_location || m.location}` : '') +
+            (_waveScanQueue.length ? ` · ${_waveScanQueue.length} queued` : ''),
+            m.complete ? 'done' : 'ok',
+          );
+        }
       } finally {
         _waveScanBusy = false;
         const inp = document.getElementById('waveScanInput');

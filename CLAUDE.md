@@ -2041,6 +2041,19 @@ button stays for keying a whole line at once (a full carton off a pallet).
   `dispatchCameraScan` routing, same pattern as inbound. Both trigger
   buttons wrap the call in an arrow function (passing the function directly
   would hand the click's MouseEvent in as the target argument).
+- **QUEUE, NEVER DROP** (`_waveScanQueue` + `_drainWaveScans`). The first
+  version guarded concurrency with a plain `if (_waveScanBusy) return`, which
+  SILENTLY DISCARDED any piece scanned while the previous request was still
+  open — a gun fires faster than the round trip, so with a 700ms endpoint a
+  burst of 5 scans recorded **1**. No error was shown; the count was simply
+  short. Now every scan is enqueued and drained in order, exactly like
+  `handleItemScan`/`_scanQueue` on the outbound side. The drainer PEEKS rather
+  than shifts, so a network failure leaves the piece in the queue, says
+  "N scan(s) held, retrying…" and retries every 4s — the picker is never told
+  to rescan something the system already has in hand. Proven both ways: the
+  pre-fix code fails all 5 loss checks, the fixed code passes all 5 (5 rapid
+  scans → 5 counted, screen and server agreeing; a failed scan held, not
+  counted, then draining to 6 on its own once the network returns).
 - Verified: 16 API checks (one scan = one piece, lowercase/NP tolerance,
   unknown → 404, cap at total, already-complete → 409, closed wave → 409,
   bad input → 400, auth required, audit type intact, **plus two regression
