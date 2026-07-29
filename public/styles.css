@@ -3049,4 +3049,53 @@ tr.row-pendingsync td { background: #fffbeb !important; }
     font-weight: 800; font-size: .95rem; padding: .55rem .8rem; cursor: pointer;
   }
   .ict-collapse:active { background: #334155; }
+
+  /* ── 4. Carton cluster: let it WRAP too ─────────────────────────────────
+     Fix 2 above made `.scan-header-right` wrap, but `.scan-carton-wrap` is a
+     nested flex row (badge + ◀ ▶ + New Carton + ⟲ 1 Box + Add Photo +
+     Serials) carrying `flex-shrink: 0` and no wrap of its own. On the
+     IdealInbound receiving screen — which hangs the most buttons off it —
+     that row measured 396px inside a 393px screen and, because the parent
+     is right-aligned, the overflow went off the LEFT edge: the carton badge
+     sat at x = -17 and read "ARTON". Wrapping it fixes the clipping without
+     hiding any control. Applies to the outbound scan header too, which has
+     the same structure and the same latent problem once enough buttons show
+     (⟲ 1 Box + the nav arrows all appear on a split order). */
+  .scan-carton-wrap {
+    flex-wrap: wrap; justify-content: flex-end;
+    row-gap: .3rem; flex-shrink: 1; min-width: 0;
+  }
+  .scan-carton-wrap > * { flex-shrink: 0; }
+
+  /* ── 5. IdealInbound scan row: input gets its own line ──────────────────
+     This row carries TWO buttons (📷 Scan and the per-scan photo 📷) plus the
+     ┤ prefix, which squeezed the input to 105px — the placeholder cut to
+     "Scan item b…" and hand-typing a SKU meant typing into a sliver. The
+     input now spans the full width and the buttons share a second row inside
+     the same bordered box. Deliberately scoped to #inboundScanOverlay: the
+     outbound dock has one button and its input already measures full width,
+     so it is left exactly as it is. */
+  #inboundScanOverlay .item-scan-wrap { flex-wrap: wrap; align-items: center; gap: 0; }
+  #inboundScanOverlay .item-scan-wrap .scan-icon-prefix { flex: 0 0 auto; }
+  /* The percentage bases are what actually force the break: prefix + 65% still
+     fits on line 1, but adding a 45% button would need 110%+, so both buttons
+     drop to line 2 and grow to fill it (45+45 → 50/50). */
+  #inboundScanOverlay .item-scan-wrap .big-scan-input {
+    flex: 1 1 65%; min-width: 0; padding-right: .7rem;
+  }
+  #inboundScanOverlay .item-scan-wrap .btn-camera-open {
+    flex: 1 1 45%; min-width: 0; min-height: 44px; border-top: 1px solid var(--border);
+  }
+  /* a hairline between the two buttons so they don't read as one wide bar */
+  #inboundScanOverlay .item-scan-wrap .btn-camera-open + .btn-camera-open {
+    border-left: 1px solid rgba(255,255,255,.35);
+  }
+  /* At half-row width the per-scan photo button is a bare 📷 sitting next to
+     "📷 Scan" — two camera icons, no way to tell them apart. Its tooltip can't
+     help on a phone, so the label is added here rather than in the markup:
+     on desktop the button is 122px wide and adding text would change a layout
+     this change is not allowed to touch. */
+  #inboundScanOverlay .item-scan-wrap #inboundScanPhotoBtn::after {
+    content: 'Photo'; font-size: .9rem; font-weight: 700; margin-left: .35rem;
+  }
 }
