@@ -2400,6 +2400,58 @@ disconnected driver-management surface (both fixed together — see below).
   third driver-management surface whose backend hasn't been audited —
   flagged here so a future pass folds it into `/api/drivers` too.
 
+## The item master is the DEFAULT lookup, in both directions
+
+Per the user: once a client's item master is loaded at onboarding, it applies
+throughout — receiving, orders, inbound — and a client's file need carry only
+ONE of SKU or barcode, with no description at all. The catalogue supplies the
+rest. *"A lookup is always the default. Don't need to rely on the upload file to
+contain both information."*
+
+- **`catalogueLookup(cid, sku, barcode)`** — one lookup used in both directions.
+  Tries SKU, then barcode, then **the SKU field as a barcode** and the reverse
+  (files put them in the wrong column), then `resolveBeTimeCode2` for the
+  official CODE2 listing and learned barcodes.
+- **`enrichLinesFromCatalogue(lines, clientName)`** (aliased as
+  `enrichInboundLines`, the name existing call sites use) fills AND
+  **CANONICALISES**. The re-keying is the part that was missing: it used to fill
+  blanks only (`if (!l.sku) l.sku = rec.sku`), so a file whose SKU column held
+  BARCODES produced barcode-keyed lines, and stock, reservations, reports and
+  the pick list were all filed against a code matching no product.
+- **THE CATALOGUE'S NAME WINS** — it does not merely fill an empty description.
+  Filling-if-blank was not enough: a real file had no description column and the
+  column detector mapped the CLIENT NAME into it, so every pick line read
+  "Mayer2026". Once a line resolves to a catalogue product, the catalogue knows
+  what that product is better than the order file does. The file's own wording is
+  kept as `source_description` — which had to be named explicitly in
+  `summarizeOrders`, since that function drops any field not in its list (the
+  first version of this silently lost it, making the code comment a lie).
+- Call sites: `/api/upload` (after `normalizeOrderRowsToInhouseSku` +
+  `explodeBundleRows`) and **`/api/preview`, which previously did no
+  normalisation at all** — so what an approver saw could differ from what the
+  upload then created. Preview now runs the same calls, and grouping happens
+  AFTER re-keying.
+- CONSEQUENCE WORTH KNOWING: a file listing one product twice — once by SKU,
+  once by barcode — now yields two lines with the SAME real SKU, so the existing
+  duplicate-line safeguard can finally SEE it. Duplicates are still deliberately
+  **not merged** (a genuine split pick vs a data-entry duplicate is a human
+  call); the warning names the SKU and the combined qty.
+- An unlisted line is never dropped: it keeps the file's own description, is
+  flagged `unknown_product`, and `/api/preview` says
+  "⚠ N line(s) are not in this client's item master … check the item master is
+  loaded under the same client name" — which is the usual real cause.
+
+Verified with the client's own 254-row Product Master under `Mayer2026`: an
+order file with BARCODES in the SKU column and no description column produced
+correct SKUs (`9557496058448` → `FJMHV9812DRWXXXXXPHML`), real product names, no
+barcode-shaped SKUs anywhere, and the duplicate warning fired (10 checks). Plus
+6 regression checks on an ordinary file: the catalogue name wins, the client's
+wording survives as `source_description`, an unlisted SKU keeps its own text and
+is reported, and row/order counts are unchanged.
+
+STILL SKU-ONLY (flagged, not done): putaway, serial capture and cycle counts do
+not resolve barcodes.
+
 ## Receiving resolves BARCODES, not just SKUs (`/api/inbound/:id/scan`)
 
 Reported from the floor: a client's Product Master was uploaded (254 rows, every

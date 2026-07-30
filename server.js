@@ -2170,6 +2170,12 @@ function summarizeOrders(lines) {
       serial_number:  line.serial_number  || '',
       expiry_date:    line.expiry_date    || '',
       remarks_betime: line.remarks_betime || '',
+      // What the client's own file called this product, when the item master
+      // supplied a different (authoritative) name. This function drops any
+      // field not listed here, so it has to be named explicitly or the original
+      // wording would be silently lost.
+      ...(line.source_description ? { source_description: line.source_description } : {}),
+      ...(line.barcode ? { barcode: line.barcode } : {}),
     });
     map[key].total_qty += line.qty;
   }
@@ -5603,9 +5609,27 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
     if (allRows.length > UPLOAD_MAX_ROWS) {
       return res.json({ rowCount: allRows.length, orderCount: 0, errors: [`File has ${allRows.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.`], converted: false });
     }
+    // Resolve every line against the client's item master BEFORE grouping, and
+    // do it with the SAME calls /api/upload makes — a barcode in the SKU column
+    // becomes the real SKU, and a missing description is filled in. Preview
+    // previously skipped this entirely, so what an approver saw could differ
+    // from what the upload then created. Grouping AFTER re-keying also means a
+    // file that lists the same product once by SKU and once by barcode merges
+    // into one line instead of two.
+    let previewEnrich = { matched: 0, unknown: 0, rekeyed: 0 };
+    {
+      const _fc = allRows.find(r => r.client_name)?.client_name || '';
+      const _clientForFile = ((req.body?.client_name || '').trim() || _fc).trim();
+      const _cid = invClientId(_clientForFile);
+      normalizeOrderRowsToInhouseSku(allRows, () => _cid);
+      previewEnrich = enrichLinesFromCatalogue(allRows, _clientForFile);
+    }
     const orders     = summarizeOrders(allRows);
     const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
     errors.push(...pdfWarnings);
+    if (previewEnrich.unknown) {
+      errors.push(`⚠ ${previewEnrich.unknown} line(s) are not in this client's item master — they will have no description. Check the item master is loaded under the same client name.`);
+    }
     // Heads-up for AI-detected SKUs shaped like warehouse location codes —
     // the actual include/exclude decision happens at upload time (409
     // needsSkuConfirm), this just makes the doubt visible before Approve.
@@ -5953,9 +5977,17 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // components (IdealOne is the master). The client is file-level.
     {
       const _fc = mapped.find(r => r.client_name)?.client_name || '';
-      const _cid = invClientId(((req.body?.client_name || '').trim() || _fc).trim());
+      const _clientForFile = ((req.body?.client_name || '').trim() || _fc).trim();
+      const _cid = invClientId(_clientForFile);
       mapped = normalizeOrderRowsToInhouseSku(mapped, () => _cid);
       mapped = explodeBundleRows(mapped, () => _cid);
+      // …and fill the REST from the item master. Re-keying alone was not enough:
+      // a client's order file may carry only a code — SKU or barcode — and no
+      // description at all, and the packer still needs to see what the product
+      // IS on the pick list and the scan screen. The catalogue is the source of
+      // truth, so the lookup is the default rather than something that depends
+      // on the file being complete.
+      req._enrich = enrichLinesFromCatalogue(mapped, _clientForFile);
     }
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
@@ -7071,24 +7103,75 @@ function fillInboundDescriptions(rec, cache) {
   return unmatched;
 }
 
-function enrichInboundLines(lines, clientName) {
+// ── ONE catalogue lookup, used in BOTH directions ───────────────────────────
+// A client's file may identify a product by SKU, by barcode, or by a barcode
+// sitting in the SKU column — and need not carry a description at all. The item
+// master is the source of truth, so a LOOKUP IS THE DEFAULT, never a fallback
+// that depends on the file being complete.
+function catalogueLookup(cid, sku, barcode) {
+  if (!cid || !inventory.available()) return null;
+  const s = String(sku || '').trim(), b = String(barcode || '').trim();
+  try {
+    let rec = (s && inventory.get(s, cid))
+           || (b && inventory.getByBarcode(b, cid))
+           || (s && inventory.getByBarcode(s, cid))   // barcode in the SKU column
+           || (b && inventory.get(b, cid))            // …and the reverse
+           || null;
+    if (!rec && s) {                                   // official CODE2 / learned barcodes
+      const alt = resolveBeTimeCode2(s);
+      if (alt !== s) rec = inventory.get(alt, cid) || inventory.getByBarcode(alt, cid) || null;
+    }
+    return rec || null;
+  } catch (_) { return null; }
+}
+
+// Fill (and CANONICALISE) a set of lines against the client's item master.
+// `keyField` is the property holding the product code — 'sku' for both inbound
+// lines and outbound order rows.
+//
+// RE-KEYING is the important part and was missing: this used to fill blanks
+// only (`if (!l.sku) l.sku = rec.sku`), so a file whose SKU column contained
+// BARCODES produced barcode-keyed lines. Everything downstream — stock,
+// reservations, reports, the pick list — was then filed against a code that
+// matches no product. The catalogue's SKU now wins, with whatever the file
+// supplied kept as the barcode.
+function enrichLinesFromCatalogue(lines, clientName) {
   const cid = invClientId(clientName);
-  let matched = 0, unknown = 0;
+  let matched = 0, unknown = 0, rekeyed = 0;
   for (const l of lines || []) {
-    let rec = null;
-    try {
-      if (l.sku) rec = inventory.get(l.sku, cid);
-      if (!rec && l.barcode) rec = inventory.getByBarcode(l.barcode, cid);
-      // A file can put the barcode in the SKU column (and vice versa).
-      if (!rec && l.sku) rec = inventory.getByBarcode(l.sku, cid);
-    } catch (_) { rec = null; }
+    const rec = catalogueLookup(cid, l.sku, l.barcode);
     if (!rec) { l.unknown_product = true; unknown++; continue; }
-    if (!l.sku) l.sku = rec.sku;
+    const given = String(l.sku || '').trim();
+    if (rec.sku && given && String(rec.sku) !== given) {
+      // the file gave us a barcode (or an alias) where the SKU goes
+      if (!l.barcode) l.barcode = given;
+      l.sku = rec.sku;
+      rekeyed++;
+    } else if (!l.sku) {
+      l.sku = rec.sku;
+    }
     if (!l.barcode && rec.barcode) l.barcode = rec.barcode;
-    if (!l.description && rec.name) l.description = rec.name;
+    // THE ITEM MASTER'S NAME WINS, not just fills a blank. Filling only when
+    // empty was not enough: a client's file may have no description column at
+    // all, and the column detector can map something else into it (a real file
+    // put the CLIENT NAME there, so every pick line read "Mayer2026"). Once a
+    // line has resolved to a catalogue product, the catalogue knows what that
+    // product is better than the order file does. Whatever the file said is
+    // kept as source_description so nothing is silently thrown away.
+    if (rec.name) {
+      const given = String(l.description || '').trim();
+      if (given && given !== rec.name) l.source_description = given;
+      l.description = rec.name;
+    }
+    delete l.unknown_product;
     matched++;
   }
-  return { matched, unknown };
+  return { matched, unknown, rekeyed };
+}
+
+// Kept as the inbound-facing name (call sites and CLAUDE.md refer to it).
+function enrichInboundLines(lines, clientName) {
+  return enrichLinesFromCatalogue(lines, clientName);
 }
 
 // ── Pokes — the office's "new work has arrived" feed ────────────────────────
