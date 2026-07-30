@@ -705,7 +705,21 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
 }
 
 /* ---------- Rates ---------- */
-.rates-table-wrap { overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius); }
+.rates-table-wrap { display: flex; flex-direction: column; gap: 24px; }
+.rate-section h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent-strong);
+}
+.rate-section .table-wrap { border: 1px solid var(--border-soft); border-radius: var(--radius); overflow-x: auto; margin-top: 8px; }
+.rate-card-header { display: flex; flex-direction: column; gap: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.rates-total-row td:first-child { font-family: var(--font-body); }
+.rates-total-row td { font-weight: 700; background: var(--bg-alt); }
+.rate-terms { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--fg-muted); }
+.rate-card-footer { font-size: 12px; color: var(--fg-muted); font-family: var(--font-mono); line-height: 1.6; }
 table.rates-table { width: 100%; border-collapse: collapse; min-width: 620px; }
 table.rates-table th {
   text-align: left;

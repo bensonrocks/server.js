@@ -39,6 +39,7 @@ const ntStaffAuth  = require('./lib/nimbustrade-portal/staff-auth');
 const ntStore      = require('./lib/nimbustrade-portal/store');
 const ntTracking   = require('./lib/nimbustrade-portal/tracking');
 const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
+const { seedBWLRateCard } = require('./lib/nimbustrade-portal/rate-card');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
@@ -1231,7 +1232,10 @@ app.get('/client-access/api/orders/:id/tracking', withNTAuth, async (req, res) =
 });
 
 app.get('/client-access/api/rates', withNTAuth, (req, res) => {
-  res.json(ntStore.getRatesForClient(req.ntClientId));
+  const rateCard = ntStore.getRateCardForClient(req.ntClientId);
+  if (rateCard) return res.json({ configured: true, rateCard });
+  // Fall back to the old flat per-DC figures for any client without a full rate card yet.
+  res.json({ configured: false, perLocation: ntStore.getRatesForClient(req.ntClientId) });
 });
 
 app.get('/client-access/api/inbound', withNTAuth, (req, res) => {
@@ -1552,6 +1556,11 @@ async function autoSyncAll() {
       console.log(`  NimbusTrade Client Access: seeded BWL Online demo (${result.ordersSeeded} orders)`);
     } else if (result.backfilledMonths && result.backfilledMonths.length) {
       console.log(`  NimbusTrade Client Access: backfilled months ${result.backfilledMonths.join(', ')} (${result.ordersSeeded} orders total)`);
+    }
+
+    const rateCardResult = seedBWLRateCard();
+    if (!rateCardResult.alreadySeeded) {
+      console.log('  NimbusTrade Client Access: loaded BWL Online rate card');
     }
   } catch (e) {
     console.warn('  NimbusTrade Client Access seed skipped:', e.message);

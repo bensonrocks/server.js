@@ -609,29 +609,77 @@
 
   // ---------- Rates ----------
 
+  function ratesTable(section) {
+    return `
+      <div class="rate-section">
+        <h4>${escapeHtml(section.title)}</h4>
+        ${section.note ? `<p class="panel-sub">${escapeHtml(section.note)}</p>` : ''}
+        <div class="table-wrap">
+          <table class="rates-table">
+            <thead><tr>${section.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${section.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
   async function loadRates() {
     const wrap = $('#rates-table-wrap');
     try {
-      const rates = await api('/rates');
+      const data = await api('/rates');
+      if (!data.configured) {
+        wrap.innerHTML = `
+          <table class="rates-table">
+            <thead><tr><th>DC / Market</th><th>Base handling fee</th><th>Per-unit fee</th><th>Storage fee</th><th>Notes</th></tr></thead>
+            <tbody>
+              ${data.perLocation.map((r) => `
+                <tr>
+                  <td>${escapeHtml(r.country_name)} <span style="color:var(--fg-muted)">(${escapeHtml(r.city)})</span></td>
+                  ${r.configured ? `
+                    <td>${r.currency} ${r.base_fee.toFixed(2)}</td>
+                    <td>${r.currency} ${r.per_unit_fee.toFixed(2)}</td>
+                    <td>${r.currency} ${r.storage_fee.toFixed(2)}</td>
+                    <td>${escapeHtml(r.notes || '—')}</td>
+                  ` : `
+                    <td class="rate-not-set" colspan="4">Not yet configured — contact your NimbusTrade account manager</td>
+                  `}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`;
+        return;
+      }
+
+      const rc = data.rateCard;
       wrap.innerHTML = `
-        <table class="rates-table">
-          <thead><tr><th>DC / Market</th><th>Base handling fee</th><th>Per-unit fee</th><th>Storage fee</th><th>Notes</th></tr></thead>
-          <tbody>
-            ${rates.map((r) => `
-              <tr>
-                <td>${r.country_name} <span style="color:var(--fg-muted)">(${escapeHtml(r.city)})</span></td>
-                ${r.configured ? `
-                  <td>${r.currency} ${r.base_fee.toFixed(2)}</td>
-                  <td>${r.currency} ${r.per_unit_fee.toFixed(2)}</td>
-                  <td>${r.currency} ${r.storage_fee.toFixed(2)}</td>
-                  <td>${escapeHtml(r.notes || '—')}</td>
-                ` : `
-                  <td class="rate-not-set" colspan="4">Not yet configured — contact your NimbusTrade account manager</td>
-                `}
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>`;
+        <div class="rate-card-header">
+          <p class="panel-sub">${escapeHtml(rc.scope)}</p>
+          <p class="panel-sub">${escapeHtml(rc.billingNote)}</p>
+        </div>
+
+        ${rc.sections.map(ratesTable).join('')}
+        ${ratesTable(rc.indicative)}
+        <div class="table-wrap rates-total-wrap">
+          <table class="rates-table rates-total-row">
+            <tbody><tr>${rc.indicative.total.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr></tbody>
+          </table>
+        </div>
+        <p class="panel-sub">${escapeHtml(rc.indicative.footnote)}</p>
+
+        <div class="rate-section">
+          <h4>Commercial terms</h4>
+          <ul class="rate-terms">
+            ${rc.terms.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
+          </ul>
+        </div>
+
+        <p class="rate-card-footer">
+          Prepared by ${escapeHtml(rc.preparedBy)} · ${escapeHtml(rc.preparedTitle)}<br/>
+          Issued ${escapeHtml(rc.issuedDate)}
+        </p>
+      `;
     } catch (err) {
       wrap.innerHTML = `<p class="table-loading">${escapeHtml(err.message)}</p>`;
     }
