@@ -1148,6 +1148,7 @@ app.get('/client-access/api/dashboard', withNTAuth, (req, res) => {
   res.json({
     counts: ntStore.getDashboardCounts(req.ntClientId),
     countries: ntStore.getCountryBreakdown(req.ntClientId),
+    months: ntStore.getMonthlyBreakdown(req.ntClientId),
   });
 });
 
@@ -1549,6 +1550,8 @@ async function autoSyncAll() {
     const result = seedBWLDemo();
     if (!result.alreadySeeded) {
       console.log(`  NimbusTrade Client Access: seeded BWL Online demo (${result.ordersSeeded} orders)`);
+    } else if (result.backfilledMonths && result.backfilledMonths.length) {
+      console.log(`  NimbusTrade Client Access: backfilled months ${result.backfilledMonths.join(', ')} (${result.ordersSeeded} orders total)`);
     }
   } catch (e) {
     console.warn('  NimbusTrade Client Access seed skipped:', e.message);

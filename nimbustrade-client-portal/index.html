@@ -92,7 +92,7 @@
     <div class="app-toolbar" id="panel-overview">
       <div>
         <p class="eyebrow">Operations Dashboard</p>
-        <h2>June order flow across your markets</h2>
+        <h2>Order flow across your markets</h2>
       </div>
       <div class="toolbar-actions">
         <button class="btn btn-ghost-sm" id="open-upload-orders">Upload Orders (CSV)</button>
@@ -125,6 +125,17 @@
         <span class="stat-dot"></span>
         <span class="stat-label">Issues</span>
         <span class="stat-value" id="stat-issue">—</span>
+      </div>
+    </section>
+
+    <!-- Monthly trend -->
+    <section class="panel" id="panel-monthly">
+      <div class="panel-head">
+        <h3>Monthly order volume</h3>
+        <p class="panel-sub">The current month updates live as new orders are dropped.</p>
+      </div>
+      <div class="monthly-bars" id="monthly-bars">
+        <p class="table-loading">Loading…</p>
       </div>
     </section>
 

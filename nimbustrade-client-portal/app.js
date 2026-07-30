@@ -111,13 +111,43 @@
     $('#stat-completed').textContent = data.counts.completed.toLocaleString();
     $('#stat-issue').textContent = data.counts.issue.toLocaleString();
     renderMap(data.countries);
+    renderMonthlyBars(data.months);
+  }
+
+  function monthLabel(yyyyMm) {
+    const [y, m] = yyyyMm.split('-');
+    return new Date(Number(y), Number(m) - 1, 1).toLocaleString('en-US', { month: 'long' });
+  }
+
+  function renderMonthlyBars(months) {
+    const wrap = $('#monthly-bars');
+    if (!months || !months.length) {
+      wrap.innerHTML = '<p class="table-loading">No order history yet.</p>';
+      return;
+    }
+    const max = Math.max(...months.map((m) => m.total), 1);
+    wrap.innerHTML = months.map((m) => {
+      const pct = Math.max(2, Math.round((m.total / max) * 100));
+      return `
+        <div class="month-col">
+          <div class="month-bar-track">
+            <div class="month-bar-fill${m.live ? ' month-bar-live' : ''}" style="height:${pct}%"></div>
+          </div>
+          <div class="month-total">${m.total.toLocaleString()}</div>
+          <div class="month-label${m.live ? ' is-live' : ''}">
+            ${m.live ? '<span class="live-dot" title="Current month — live"></span>' : ''}
+            ${escapeHtml(monthLabel(m.month))}${m.live ? ' · LIVE' : ''}
+          </div>
+        </div>`;
+    }).join('');
   }
 
   function statusOf(c) {
-    // Rate-based, not raw-count-based: a couple of exceptions in a month of
-    // hundreds of orders is normal operations, not a market in trouble.
+    // Rate-based, not raw-count-based: a handful of exceptions across three
+    // months of hundreds of orders per market is normal operations, not a
+    // market in trouble — only flag markets meaningfully above that baseline.
     const issueRate = c.total > 0 ? c.issue / c.total : 0;
-    if (issueRate > 0.02) return 'red';
+    if (issueRate > 0.035) return 'red';
     if (c.processing > 0 || c.dropped > 0) return 'amber';
     return 'green';
   }
