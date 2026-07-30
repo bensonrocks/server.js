@@ -217,7 +217,31 @@ body {
   line-height: 1; transition: background .12s;
 }
 .sb-hamburger:hover { background: var(--bg); }
-.ct-tab-title { font-size: .9rem; font-weight: 700; color: var(--text); flex: 1; }
+/* THE PAGE HEADING. At .9rem/700 this read as a breadcrumb — on a phone at
+   arm's length you could not tell Orders from Inbound without reading the
+   content. It is now the largest thing in the bar, with the tab's own icon and
+   a coloured rule so it registers as "you are here", not as a label.
+   min-width:0 + ellipsis so a long title can never push the bar wide. */
+.ct-tab-title {
+  display: flex; align-items: center; gap: .5rem;
+  margin: 0;                                  /* it's an <h1> now — kill UA margins */
+  font-size: 1.4rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.15;
+  color: var(--text); flex: 1; min-width: 0;
+  padding-left: .8rem; border-left: 4px solid var(--primary);
+}
+.ctt-icon { font-size: 1.15rem; line-height: 1; flex: 0 0 auto; }
+.ctt-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Now that the bar carries a real page heading, an in-page <h2> saying the SAME
+   word is just noise — two titles read worse than one. Only these two are exact
+   duplicates; every other tab's heading says something the bar doesn't
+   ("Upload Jobs", "Import Shipping Labels", "Operational Reports", Inventory's
+   3PL note) and is left alone.
+   DIRECT child selectors on purpose: #tab-waves also has a .section-header
+   deeper inside #waveDetailWrap whose h2 is the WAVE'S OWN NAME, which must
+   stay. The buttons beside these headings are untouched. */
+#tab-waves   > .section-header > h2,
+#tab-inbound > .section-header > h2 { display: none; }
 
 /* Sidebar overlay (mobile) */
 .sb-drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 49; }
@@ -3106,6 +3130,17 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   #inboundScanOverlay .item-scan-wrap #inboundScanPhotoBtn::after {
     content: 'Photo'; font-size: .9rem; font-weight: 700; margin-left: .35rem;
   }
+
+  /* ── 7. Page heading: give it the room to BE a heading ──────────────────
+     At 393px the bar carries hamburger + mark + "IDEALONE" + title, which left
+     the title 182px and forced it small. The wordmark goes (the mark stays, and
+     the sidebar shows the full lockup) — on a phone, knowing which SCREEN
+     you're on matters more than the wordmark, which is the whole point of this
+     change. Slightly smaller than desktop because the bar is only 52px tall. */
+  .content-topbar .brand-corner .bc-word { display: none; }
+  .content-topbar .brand-corner { margin-right: .5rem; }
+  .ct-tab-title { font-size: 1.2rem; padding-left: .6rem; gap: .4rem; }
+  .ctt-icon { font-size: 1.05rem; }
 
   /* ── 6. Wave Pick: table → cards ────────────────────────────────────────
      Same failure as the Orders list, and worse: the pick table measured

@@ -1603,8 +1603,12 @@
     <!-- Topbar (mobile hamburger + tab title) -->
     <div class="content-topbar">
       <button class="sb-hamburger" id="sidebarToggleBtn" aria-label="Toggle sidebar">&#9776;</button>
-      <span class="brand-corner"><img class="is-icon-xs" src="/brand/idealone-mark.png" alt="" />IDEALONE</span>
-      <span class="ct-tab-title" id="ctTabTitle">Upload</span>
+      <span class="brand-corner"><img class="is-icon-xs" src="/brand/idealone-mark.png" alt="" /><span class="bc-word">IDEALONE</span></span>
+      <!-- Which screen am I on? The one thing that must be readable at a
+           glance, on a phone at arm's length as much as on a desktop. The icon
+           is copied from the active sidebar button so the two can never
+           disagree; #ctTabText is what switchTab writes. -->
+      <h1 class="ct-tab-title" id="ctTabTitle"><span class="ctt-icon" id="ctTabIcon" aria-hidden="true"></span><span class="ctt-text" id="ctTabText">Upload</span></h1>
     </div>
 
   <main>

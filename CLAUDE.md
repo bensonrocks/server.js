@@ -1443,6 +1443,41 @@ breaking the default.
     everywhere. Any FUTURE `logAudit()` call anywhere in this file must
     avoid a bare `type` key in its data object for the same reason.
 
+## The topbar page heading — "which screen am I on?" (`#ctTabTitle`)
+
+Per the user: the tab name must be readable at a glance, on phone AND desktop.
+It was `.9rem/700` in the topbar, which read as a breadcrumb — at arm's length
+you could not tell Orders from Inbound without reading the content below.
+
+- `#ctTabTitle` is an `<h1>` (there was no h1 on the page at all) containing
+  `#ctTabIcon` + `#ctTabText`. **`switchTab` writes into `#ctTabText`, never the
+  wrapper** — `ttEl.textContent = …` on the wrapper would delete the icon span
+  with it.
+- The icon is COPIED from the now-active `.tab-btn .tab-icon`, so the heading
+  can never show an icon the sidebar has since changed.
+- 1.4rem/800 on desktop, 1.2rem on phone (the bar is only 52px tall), with a
+  4px `--primary` left rule so it reads as a page heading rather than a label.
+  `min-width: 0` + ellipsis on `.ctt-text` means a long title can never widen
+  the bar.
+- PHONE ONLY: the topbar's `IDEALONE` wordmark is hidden (`.bc-word`) — at 393px
+  the bar was hamburger + mark + wordmark + title, leaving the title 182px. The
+  barcode mark stays, and the sidebar still shows the full lockup. Knowing which
+  SCREEN you're on beats the wordmark on a phone, which is the point of the
+  change. Desktop keeps the wordmark; there is no space pressure there.
+- **Two in-page `<h2>`s that merely repeated the tab name are hidden** —
+  `#tab-inbound` ("Inbound") and `#tab-waves` ("Wave Pick") — because one
+  prominent title reads better than a big one plus a small one. DIRECT-child
+  selectors on purpose: `#tab-waves` has another `.section-header` inside
+  `#waveDetailWrap` whose h2 is `#waveDetailTitle`, **the wave's own name**,
+  which must stay. Every other tab's heading says something the bar doesn't
+  ("Upload Jobs", "Import Shipping Labels", "Operational Reports", Inventory's
+  3PL note) and was left alone. The buttons beside the hidden headings are
+  untouched.
+- Verified 22 checks across all 8 tabs at 393px and 1440px: correct text and
+  icon, ≥19px at weight 800, fully on screen, never ellipsised, no page
+  h-scroll, the two duplicates hidden with their buttons still visible, and the
+  wave detail's own name still rendering.
+
 ## PWA install — iOS has no prompt; the app guides instead (installHintBar)
 
 The PWA plumbing (manifest.json, /icons/*, apple-touch-icon + apple-mobile

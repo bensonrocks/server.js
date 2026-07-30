@@ -752,8 +752,14 @@
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
     document.querySelector(`.tab-btn[data-tab="${name}"]`)?.classList.add('active');
-    const ttEl = document.getElementById('ctTabTitle');
+    // Page title. Write into #ctTabText, NOT the wrapper — setting textContent
+    // on #ctTabTitle would wipe the icon span with it.
+    const ttEl = document.getElementById('ctTabText');
     if (ttEl) ttEl.textContent = TAB_TITLES[name] || name;
+    // Mirror the icon off the sidebar button that is now active, so a tab whose
+    // icon changes never leaves the heading showing the old one.
+    const icEl = document.getElementById('ctTabIcon');
+    if (icEl) icEl.textContent = document.querySelector(`.tab-btn[data-tab="${name}"] .tab-icon`)?.textContent || '';
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
     if (name === 'orders') { renderOrdersDash(); loadBackordersBadge(); setTimeout(() => focusWaybillInput(), 300); }
     document.getElementById('ordersSubMenu').style.display =
