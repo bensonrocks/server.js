@@ -613,26 +613,28 @@
     return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  let currentLiveIndicative = null;
+
   function liveIndicativeTable(li) {
     if (!li) return '';
     return `
       <div class="rate-section">
         <h4>Current month at actual volumes (live)</h4>
-        <p class="panel-sub">Computed from your real ${escapeHtml(monthLabel(li.month))} order data — actual order counts and item quantities — run through the tiered schedule above. Domestic delivery assumes the standard (up to 2.00 kg) band, the same despatch-weight assumption the modelled table above uses.</p>
+        <p class="panel-sub">Computed from your real ${escapeHtml(monthLabel(li.month))} order data — actual order counts and item quantities — run through the tiered schedule above. Domestic delivery assumes the standard (up to 2.00 kg) band, the same despatch-weight assumption the modelled table above uses. Click a row for the full billing breakdown.</p>
         <div class="table-wrap">
           <table class="rates-table">
             <thead>
               <tr><th>Market</th><th>Orders</th><th>Items (qty)</th><th>Avg items/order</th><th>Tier applied</th><th>Indicative fee (USD)</th></tr>
             </thead>
             <tbody>
-              ${li.markets.map((m) => `
-                <tr>
+              ${li.markets.map((m, i) => `
+                <tr class="rate-row-clickable" data-market-idx="${i}" tabindex="0" title="Click for billing detail">
                   <td>${escapeHtml(m.countryName)}</td>
                   <td>${m.orders.toLocaleString()}</td>
                   <td>${m.qty.toLocaleString()}</td>
                   <td>${m.avgItemsPerOrder.toFixed(2)}</td>
                   <td>${escapeHtml(m.tierLabel)}</td>
-                  <td>${fmtUsd(m.total)}</td>
+                  <td>${fmtUsd(m.total)} <span class="rate-row-hint">▸</span></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -645,6 +647,70 @@
         </div>
       </div>`;
   }
+
+  const billingDetailOverlay = $('#billing-detail-overlay');
+
+  function openBillingDetail(m, month) {
+    billingDetailOverlay.hidden = false;
+    $('#billing-detail-title').textContent = `Billing detail — ${m.countryName}`;
+    $('#billing-detail-sub').textContent = `${monthLabel(month)} · Tier ${m.tierLabel} orders/month`;
+
+    const b = m.breakdown;
+    const firstItemFee = m.orders * b.firstItemRate;
+    $('#billing-detail-body').innerHTML = `
+      <div class="billing-detail-grid">
+        <div class="billing-stat"><span>Orders this month</span><strong>${m.orders.toLocaleString()}</strong></div>
+        <div class="billing-stat"><span>Items ordered (qty)</span><strong>${m.qty.toLocaleString()}</strong></div>
+        <div class="billing-stat"><span>Avg items / order</span><strong>${m.avgItemsPerOrder.toFixed(2)}</strong></div>
+        <div class="billing-stat"><span>Despatched (non-dropped)</span><strong>${b.despatched.toLocaleString()}</strong></div>
+      </div>
+
+      <div class="billing-detail-tables">
+        <table class="rates-table billing-breakdown-table">
+          <thead><tr><th>Line item</th><th>Calculation</th><th>Amount (USD)</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Order fulfilment — first item</td>
+              <td>${m.orders.toLocaleString()} orders × ${fmtUsd(b.firstItemRate)}</td>
+              <td>${fmtUsd(firstItemFee)}</td>
+            </tr>
+            <tr>
+              <td>Additional item pick</td>
+              <td>${b.additionalItems.toLocaleString()} items × ${fmtUsd(b.additionalItemRate)}</td>
+              <td>${fmtUsd(b.additionalItems * b.additionalItemRate)}</td>
+            </tr>
+            <tr>
+              <td>Domestic delivery — standard</td>
+              <td>${b.despatched.toLocaleString()} despatched × ${fmtUsd(b.deliveryRate)}</td>
+              <td>${fmtUsd(b.deliveryFee)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <table class="rates-table rates-total-row billing-breakdown-total">
+          <tbody><tr><td>Total estimated fee</td><td></td><td>${fmtUsd(m.total)}</td></tr></tbody>
+        </table>
+      </div>
+      <p class="panel-sub">Tier is set by this market's actual order count this month (${m.orders.toLocaleString()} falls in the ${m.tierLabel} band). Domestic delivery assumes the standard (up to 2.00 kg) despatch-weight band, applied only to orders that have actually been despatched to a carrier.</p>
+    `;
+  }
+
+  $('#close-billing-detail').addEventListener('click', () => { billingDetailOverlay.hidden = true; });
+  billingDetailOverlay.addEventListener('click', (e) => { if (e.target === billingDetailOverlay) billingDetailOverlay.hidden = true; });
+
+  $('#rates-table-wrap').addEventListener('click', (e) => {
+    const row = e.target.closest('.rate-row-clickable');
+    if (!row || !currentLiveIndicative) return;
+    const m = currentLiveIndicative.markets[parseInt(row.dataset.marketIdx, 10)];
+    if (m) openBillingDetail(m, currentLiveIndicative.month);
+  });
+  $('#rates-table-wrap').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest && e.target.closest('.rate-row-clickable');
+    if (!row || !currentLiveIndicative) return;
+    e.preventDefault();
+    const m = currentLiveIndicative.markets[parseInt(row.dataset.marketIdx, 10)];
+    if (m) openBillingDetail(m, currentLiveIndicative.month);
+  });
 
   function ratesTable(section) {
     return `
@@ -667,6 +733,7 @@
     try {
       const data = await api('/rates');
       if (!data.configured) {
+        currentLiveIndicative = null;
         wrap.innerHTML = `
           <table class="rates-table">
             <thead><tr><th>DC / Market</th><th>Base handling fee</th><th>Per-unit fee</th><th>Storage fee</th><th>Notes</th></tr></thead>
@@ -689,6 +756,7 @@
         return;
       }
 
+      currentLiveIndicative = data.liveIndicative;
       const rc = data.rateCard;
       wrap.innerHTML = `
         <div class="rate-card-header">
@@ -720,6 +788,7 @@
         </p>
       `;
     } catch (err) {
+      currentLiveIndicative = null;
       wrap.innerHTML = `<p class="table-loading">${escapeHtml(err.message)}</p>`;
     }
   }
