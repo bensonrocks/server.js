@@ -2552,6 +2552,40 @@ off-PO catalogue barcode resolves to its real SKU (and is still counted as an
 extra), a RETURN resolves barcodes too, and the damaged condition and eventId
 idempotency both still hold through the new path.
 
+## Label PDFs — one pipeline for staff uploads AND client submissions
+
+`processLabelPdf(buffer, filename, uploadedBy)` is the single implementation:
+page split → per-page text extraction → `extractLabelFields` → match against
+`buildLabelMatchIndex()` → first-write-wins attachment into `db.orderLabels`.
+`POST /api/label-imports` is a thin wrapper around it, and approving a
+client-submitted `kind:'labels'` submission calls the same function, so a
+waybill a CLIENT sends through their portal is recognised exactly the way one
+we upload ourselves is.
+
+**The OCR pass belongs inside that function, not after it.** Image-only pages
+(no text layer) can't match on first pass, so `processLabelPdf` ends by kicking
+off `rematchLabelImport(importId, false)` via `setImmediate`, which renders and
+OCRs them (full-page rasterisation when `@napi-rs/canvas` + pdfjs are
+available, else embedded-image extraction) and caches the text so later
+rematches are instant. This used to sit in the ROUTE, where it referenced
+`pages` — a variable the extraction moved out of scope. It threw AFTER
+`res.json` had been sent, so the catch could not respond: no error surfaced
+anywhere and image-only labels silently stopped being OCR'd. Keep it inside the
+function; every caller needs it.
+
+⚠ **NOT YET VERIFIED ON A REAL SCANNED WAYBILL.** The client path is proven to
+match a text-layer PDF (3/3 orders by `order_number_scan`), but the OCR branch
+has only been reasoned about, not exercised. Synthetic fixtures are useless
+here — a `pdf-lib`-generated file used earlier turned out to be unreadable by
+`pdf-parse` standalone, which produced a false "the staff path is broken"
+conclusion before it was traced to the fixture. Test with a genuine scanned
+waybill PDF through BOTH paths before relying on this.
+
+Also worth knowing: `buildLabelMatchIndex`'s `scanKeys` fallback only accepts a
+normalised key of **≥8 chars (10 if all digits)**, so short order numbers can
+never match by text scan. That guard is deliberate — it stops a 4-digit code
+matching random text on a label.
+
 ## Rollback points — named snapshots of a known-good state
 
 Written down HERE, in the repo, because a git tag created in a sandbox is not
