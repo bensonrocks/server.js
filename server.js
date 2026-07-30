@@ -3165,6 +3165,47 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
   res.status(404).json({ error: 'Order not found' });
 });
 // Orders — the client's outbound orders, newest first.
+// ── Delivery status wording — ONE source, office and client see the same ────
+// Per the user: take the wording already used by the TMS and let the client see
+// exactly that. These strings MIRROR tmsStatusLabel() in public/app.js; a test
+// reads both and fails if they ever drift, because two labels for one state is
+// precisely the confusion this is meant to avoid.
+const TMS_STATUS_LABEL = {
+  confirmed:    'Staging',
+  'in-transit': 'On the road',
+  delivered:    'Delivered',
+  cancelled:    'Cancelled',
+  pending:      'Preplanned',
+  preplanned:   'Preplanned',
+};
+function tmsStatusLabelSrv(job) {
+  const s = typeof job === 'string' ? job : job?.status;
+  const remarks = typeof job === 'object' ? String(job?.podRemarks || '').trim() : '';
+  if (s === 'delivered' && remarks) return 'Delivered w/ Remarks';
+  return TMS_STATUS_LABEL[s] || 'Preplanned';
+}
+// The transport job for an order, if delivery was arranged. Matched the same
+// way updateTransportOnOrderCompletion does — transport ids are TR- codes, so
+// the real cross-reference is referenceId/clientId (the order number).
+function transportJobForOrder(db, orderNumber) {
+  const n = String(orderNumber || '').trim();
+  if (!n) return null;
+  const matches = (db.transport || []).filter(j =>
+    String(j.referenceId || '').trim() === n || String(j.clientId || '').trim() === n || String(j.id || '').trim() === n);
+  if (!matches.length) return null;
+  if (matches.length === 1) return matches[0];
+  // More than one job can end up against an order (a re-import, or a job keyed
+  // manually alongside the one the upload created). Taking whichever happened
+  // to be first in the array would show the client an arbitrary one, so prefer
+  // the FURTHEST ALONG — a delivered job is the truth about that order, and a
+  // stale pending duplicate must never mask it. Ties break on the newest.
+  const rank = { delivered: 5, 'in-transit': 4, confirmed: 3, preplanned: 2, pending: 1, cancelled: 0 };
+  return matches.slice().sort((a, b) =>
+    (rank[b.status] ?? 1) - (rank[a.status] ?? 1) ||
+    String(b.deliveredAt || b.createdAt || '').localeCompare(String(a.deliveredAt || a.createdAt || '')),
+  )[0];
+}
+
 app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
   const db = readDb();
@@ -3173,10 +3214,20 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
     if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
     for (const o of b.orders || []) {
       const st = b.orderStates?.[o.order_number] || {};
+      // Delivery, when we are moving it ourselves. Same words the office sees.
+      const job = transportJobForOrder(db, o.order_number);
+      const delivery = job ? {
+        status: job.status || 'pending',
+        label: tmsStatusLabelSrv(job),
+        delivered_at: job.deliveredAt || null,
+        remarks: String(job.podRemarks || '').trim(),
+        driver: job.assignedDriverName || '',
+      } : null;
       out.push({
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
+        delivery,
         // Whether the client may cancel this themselves — same rule the delete
         // endpoint enforces, so the UI can never offer something the server
         // will refuse.

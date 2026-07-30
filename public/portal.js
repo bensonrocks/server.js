@@ -499,6 +499,7 @@
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>
+            ${deliveryPill(o.delivery)}
             <div class="muted" style="font-size:.68rem;margin-top:.3rem">${isOpen ? '▲ hide' : '▼ details'}</div>
           </div>
         </div>
@@ -506,6 +507,25 @@
       </div>`;
     }).join('');
     syncSel('orders');
+  }
+
+  // DELIVERY PILL — only when we are moving it ourselves. The LABEL comes from
+  // the server, which mirrors the TMS wording the office uses, so the client
+  // reads exactly what our own people read. Colours follow the office scheme:
+  // Staging grey, On the road amber, Delivered green, w/ Remarks red.
+  const DELIVERY_PILL = {
+    'Staging':              'p-due',
+    'On the road':          'p-overdue',
+    'Delivered':            'p-sla-met',
+    'Delivered w/ Remarks': 'p-dlv-rem',
+    'Preplanned':           'p-sla-miss',
+    'Cancelled':            'p-due',
+  };
+  function deliveryPill(dv) {
+    if (!dv || !dv.label) return '';
+    const cls = DELIVERY_PILL[dv.label] || 'p-due';
+    const tip = dv.remarks ? ` title="${esc(dv.remarks)}"` : '';
+    return `<div style="margin-top:.25rem"><span class="pill ${cls}"${tip}>&#128666; ${esc(dv.label)}</span></div>`;
   }
 
   function orderDetailHtml(d) {
