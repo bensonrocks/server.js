@@ -7174,6 +7174,257 @@ function enrichInboundLines(lines, clientName) {
   return enrichLinesFromCatalogue(lines, clientName);
 }
 
+// ── CLIENT-SUBMITTED ORDERS — approve before they reach the floor ───────────
+// A client uploads their own order file from the portal. It does NOT become
+// live work: it lands here as a PENDING SUBMISSION, the office is poked, and a
+// human previews and approves it first. Only on approval is a real batch
+// created — so nothing a client sends can put work on the floor unreviewed.
+//
+// The submitted FILE is kept on the volume, and approval re-parses it with the
+// same parser + item-master enrichment the office upload uses, so the batch a
+// client's file produces is the same one the office would have produced from
+// that file by hand.
+const CLIENT_SUB_DIR = path.join(DATA_DIR, 'client_submissions');
+try { fs.mkdirSync(CLIENT_SUB_DIR, { recursive: true }); } catch {}
+function clientSubs(db) { return db.clientSubmissions || (db.clientSubmissions = []); }
+const CLIENT_SUB_APPROVE_SLA_MIN = 15;   // unapproved longer than this = overdue
+
+// What the client and the office both see for one submission.
+function clientSubPublic(db, s) {
+  const orders = [];
+  if (s.batch_id) {
+    const b = (db.batches || []).find(x => x.id === s.batch_id);
+    for (const o of b?.orders || []) {
+      const st = b.orderStates?.[o.order_number] || {};
+      orders.push({ order_number: o.order_number, status: st.status || 'pending', completed_at: st.endTime || null });
+    }
+  }
+  const ageMin = Math.max(0, Math.round((Date.now() - new Date(s.submitted_at).getTime()) / 60000));
+  return {
+    id: s.id, code: s.code, kind: s.kind, filename: s.filename,
+    client_name: s.client_name, submitted_at: s.submitted_at, submitted_by: s.submitted_by,
+    status: s.status,                       // pending | approved | rejected
+    order_count: s.summary?.orderCount || 0,
+    row_count: s.summary?.rowCount || 0,
+    total_qty: s.summary?.totalQty || 0,
+    warnings: s.summary?.warnings || [],
+    approved_at: s.approved_at || null, approved_by: s.approved_by || null,
+    rejected_at: s.rejected_at || null, reject_reason: s.reject_reason || '',
+    batch_id: s.batch_id || null, job_code: s.job_code || '',
+    age_minutes: ageMin,
+    overdue: s.status === 'pending' && ageMin >= CLIENT_SUB_APPROVE_SLA_MIN,
+    orders,                                  // live status, relayed back to the client
+  };
+}
+
+// PORTAL → submit an orders file. Parsed and previewed immediately so the
+// client is told straight away if the file is unusable, but stored as pending.
+app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
+  // multer does not carry the AsyncLocalStorage tenant context, so the portal
+  // session (and its tenant) is re-established after the upload is parsed —
+  // same reason /api/portal/asn does it this way.
+  requirePortalAuthMiddleware(req, res, async () => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+      const client = req.portalClient;
+      const parsed = await parseOrderFileToRows(req.file.buffer, req.file.originalname);
+      if (parsed.unsupported) {
+        return res.status(400).json({ error: 'Unsupported file type. Please upload XLSX, CSV or PDF.' });
+      }
+      const rows = parsed.allRows;
+      if (!rows.length) {
+        return res.status(400).json({ error: 'No order lines were recognised in that file. Each row needs an order number, a SKU (or barcode) and a quantity.' });
+      }
+      // Same normalisation + item-master enrichment the office upload does, so
+      // the preview an approver sees is what approval will create — and so a
+      // file carrying only a barcode still yields real SKUs and descriptions.
+      const cid = invClientId(client);
+      normalizeOrderRowsToInhouseSku(rows, () => cid);
+      const enrich = enrichLinesFromCatalogue(rows, client);
+      const orders = summarizeOrders(rows);
+
+      const warnings = [];
+      if (parsed.skipped) warnings.push(`${parsed.skipped} row(s) skipped (missing SKU or order number)`);
+      warnings.push(...parsed.pdfWarnings);
+      if (enrich.unknown) warnings.push(`${enrich.unknown} line(s) are not in your item master and will have no description.`);
+      warnings.push(...findDuplicateLineWarnings(orders).map(w => w.problem));
+
+      const db = readDb();
+      const id = uuidv4();
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      fs.writeFileSync(path.join(CLIENT_SUB_DIR, id + ext), req.file.buffer);
+
+      const sub = {
+        id, kind: 'orders',
+        code: nextIdealscanCode(db).replace(/^IS-/, 'CS-'),   // CS- = client submission
+        client_name: canonicalClientName(db, client),
+        filename: req.file.originalname,
+        stored_ext: ext,
+        contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+        submitted_at: new Date().toISOString(),
+        submitted_by: `portal:${client}`,
+        status: 'pending',
+        summary: {
+          rowCount: rows.length,
+          orderCount: orders.length,
+          totalQty: orders.reduce((s, o) => s + (o.total_qty || 0), 0),
+          warnings,
+          orders: orders.map(o => ({
+            order_number: o.order_number, total_qty: o.total_qty,
+            lines: (o.lines || []).map(l => ({ sku: l.sku, description: l.description, qty: l.qty })),
+          })),
+        },
+      };
+      clientSubs(db).unshift(sub);
+      // Tell the office. This is work that has arrived from outside and needs a
+      // decision — the same nudge an ASN gives.
+      addPoke(db, {
+        kind: 'client_orders_submitted', client: sub.client_name, direction: 'outbound',
+        channel: clientChannel(db, sub.client_name),
+        lines: rows.length, orders: orders.length, pieces: sub.summary.totalQty,
+        text: `${sub.client_name} submitted ${orders.length} order(s) for approval (${sub.code})`,
+        submissionId: id,
+      });
+      writeDb(db);
+      logAudit('client_orders_submitted', {
+        id, code: sub.code, client: sub.client_name, filename: sub.filename,
+        orders: orders.length, lines: rows.length, by: sub.submitted_by,
+      });
+      res.status(201).json({ ok: true, submission: clientSubPublic(db, sub) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+});
+
+// PORTAL → my submissions and where they got to.
+app.get('/api/portal/submissions', requirePortalAuthMiddleware, (req, res) => {
+  const client = req.portalClient.trim().toLowerCase();
+  const db = readDb();
+  res.json(clientSubs(db)
+    .filter(s => String(s.client_name || '').trim().toLowerCase() === client)
+    .slice(0, 100)
+    .map(s => clientSubPublic(db, s)));
+});
+
+// OFFICE → the approval queue. Behind normal staff auth: any signed-in
+// internal user should be able to see that a client is waiting on us.
+app.get('/api/client-submissions', (req, res) => {
+  const db = readDb();
+  const all = clientSubs(db).map(s => clientSubPublic(db, s));
+  res.json({
+    pending: all.filter(s => s.status === 'pending').length,
+    overdue: all.filter(s => s.overdue).length,
+    slaMinutes: CLIENT_SUB_APPROVE_SLA_MIN,
+    rows: all.slice(0, 100),
+  });
+});
+
+app.get('/api/client-submissions/:id', (req, res) => {
+  const db = readDb();
+  const s = clientSubs(db).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Submission not found' });
+  // full preview, including every line, for the approve screen
+  res.json({ ...clientSubPublic(db, s), preview: s.summary?.orders || [] });
+});
+
+// OFFICE → APPROVE. Re-reads the stored file and builds the batch, so what goes
+// live is derived from the client's actual file, not from a cached summary that
+// could have been tampered with in db.json.
+app.post('/api/client-submissions/:id/approve', express.json(), async (req, res) => {
+  const db0 = readDb();
+  const s0 = clientSubs(db0).find(x => x.id === req.params.id);
+  if (!s0) return res.status(404).json({ error: 'Submission not found' });
+  if (s0.status !== 'pending') return res.status(409).json({ error: `This submission is already ${s0.status}.` });
+
+  let buf;
+  try { buf = fs.readFileSync(path.join(CLIENT_SUB_DIR, s0.id + (s0.stored_ext || ''))); }
+  catch { return res.status(410).json({ error: 'The submitted file is no longer on the volume — ask the client to re-submit.' }); }
+
+  try {
+    const parsed = await parseOrderFileToRows(buf, s0.filename);
+    const rows = parsed.allRows;
+    if (!rows.length) return res.status(400).json({ error: 'The stored file no longer yields any order lines.' });
+    const cid = invClientId(s0.client_name);
+    normalizeOrderRowsToInhouseSku(rows, () => cid);
+    enrichLinesFromCatalogue(rows, s0.client_name);
+    const orders = summarizeOrders(rows);
+
+    const db = readDb();
+    // SAME STANDING RULE as every other path: completed work is never
+    // overwritten, and a duplicate of a live order is a human decision.
+    const clash = [];
+    for (const b of db.batches || []) for (const o of b.orders || []) {
+      if (orders.some(x => x.order_number === o.order_number)) {
+        clash.push({ order: o.order_number, status: b.orderStates?.[o.order_number]?.status || 'pending', job: b.idealscan_code || '' });
+      }
+    }
+    if (clash.length && req.body?.confirm_duplicates !== 'yes') {
+      return res.status(409).json({
+        needsDuplicateConfirm: true, duplicates: clash,
+        message: `${clash.length} order number(s) in this submission already exist. Approve anyway only if these are genuinely new orders.`,
+      });
+    }
+
+    const batchId = uuidv4();
+    const batch = {
+      id: batchId,
+      filename: s0.filename,
+      contentHash: s0.contentHash,
+      idealscan_code: nextIdealscanCode(db),
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: req.userId || '',
+      client_name: canonicalClientName(db, s0.client_name),
+      order_count: orders.length,
+      row_count: rows.length,
+      orderStates: {},
+      orders,
+      // where this work came from — a client submission, not a staff upload
+      source: 'client-portal',
+      client_submission_id: s0.id,
+      client_submission_code: s0.code,
+    };
+    db.batches.unshift(batch);
+    addOutboundPoke(db, batch, 'client-submission-approved');
+    let transportJobsCreated = 0;
+    if (req.body?.arrange_delivery === 'yes') {
+      transportJobsCreated = createTransportJobsFromOrders(db, orders, batch.client_name, batchId);
+    }
+
+    const s = clientSubs(db).find(x => x.id === req.params.id);
+    s.status = 'approved';
+    s.approved_at = new Date().toISOString();
+    s.approved_by = req.userId || '';
+    s.batch_id = batchId;
+    s.job_code = batch.idealscan_code;
+    writeDb(db);
+    logAudit('client_orders_approved', {
+      id: s.id, code: s.code, client: batch.client_name, batchId,
+      job: batch.idealscan_code, orders: orders.length, by: req.userId || '',
+    });
+    res.json({ ok: true, batchId, job: batch.idealscan_code, orderCount: orders.length, transportJobsCreated, submission: clientSubPublic(db, s) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// OFFICE → REJECT, with a reason the client can read in their portal.
+app.post('/api/client-submissions/:id/reject', express.json(), (req, res) => {
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required — the client sees it.' });
+  const db = readDb();
+  const s = clientSubs(db).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Submission not found' });
+  if (s.status !== 'pending') return res.status(409).json({ error: `This submission is already ${s.status}.` });
+  s.status = 'rejected';
+  s.rejected_at = new Date().toISOString();
+  s.reject_reason = reason.slice(0, 500);
+  s.approved_by = req.userId || '';
+  writeDb(db);
+  logAudit('client_orders_rejected', { id: s.id, code: s.code, client: s.client_name, reason: s.reject_reason, by: req.userId || '' });
+  res.json({ ok: true, submission: clientSubPublic(db, s) });
+});
+
 // ── Pokes — the office's "new work has arrived" feed ────────────────────────
 // Behind the normal staff auth (every signed-in internal user should see that a
 // client has sent something in). Read-only listing plus an acknowledge.
