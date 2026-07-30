@@ -1542,6 +1542,36 @@
     </div>
   </div>
 
+  <!-- ── Putaway now, or stage it? — asked the moment a receipt is ended ──── -->
+  <div id="putawayAskOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:480px">
+      <div class="modal-title">&#128230; Receipt <span id="putawayAskRef"></span> is closed</div>
+      <div id="putawayAskChoices">
+        <p style="margin:.3rem 0 .9rem;font-size:.95rem;line-height:1.45">
+          Where are these goods going now? Putting them away needs a real bin scanned or typed.
+          If they are going to a staging area instead, we'll issue a <b>staging ID</b> to print and stick on the cargo.
+        </p>
+        <div class="form-group" style="margin:.2rem 0 .9rem">
+          <label style="font-size:.8rem">Staging area <span class="hint-inline">(optional)</span></label>
+          <input type="text" id="putawayAskArea" placeholder="e.g. Bay 3 / Inbound floor" autocomplete="off" />
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="putawayAskLater">&#128337; Putaway later — stage it</button>
+          <button class="btn-primary"   id="putawayAskNow">&#128205; Putaway now</button>
+        </div>
+      </div>
+      <div id="putawayAskResult" class="hidden">
+        <p class="hint" style="margin:.2rem 0 .5rem">Print this and stick it on the cargo:</p>
+        <div style="text-align:center;font-size:2.1rem;font-weight:900;letter-spacing:.04em" id="putawayStagingCode">—</div>
+        <div style="text-align:center;color:var(--text-light);font-size:.85rem" id="putawayStagingWhat"></div>
+        <div class="modal-actions" style="margin-top:.9rem">
+          <button class="btn-secondary" id="putawayAskClose">Close</button>
+          <button class="btn-primary"   id="putawayPrintStaging">&#128424; Print staging label</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Administrator Access Modal ── -->
   <div id="logPasswordOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:340px">

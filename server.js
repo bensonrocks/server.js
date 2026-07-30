@@ -2347,6 +2347,18 @@ function nextInboundCode(db) {
   return `IB-${day}-${String(db.inboundCodeSeq[day]).padStart(2, '0')}`;
 }
 
+// STAGING ID — the label stuck on cargo that is received but not yet binned.
+// Own per-SGT-day counter, same shape as the inbound/outbound serials, so a
+// pallet in the staging area carries a code that leads straight back to its
+// receipt without anyone having to remember which job it came from.
+function nextStagingCode(db) {
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }).slice(2).replace(/-/g, '');
+  if (!db.stagingCodeSeq) db.stagingCodeSeq = {};
+  db.stagingCodeSeq[day] = (db.stagingCodeSeq[day] || 0) + 1;
+  for (const k of Object.keys(db.stagingCodeSeq)) if (k !== day) delete db.stagingCodeSeq[k];
+  return `ST-${day}-${String(db.stagingCodeSeq[day]).padStart(2, '0')}`;
+}
+
 // One-time backfill: give pre-existing inbound records a serial based on their upload date
 (function backfillInboundCodes() {
   try {
@@ -7641,6 +7653,9 @@ app.get('/api/inbound', (req, res) => {
       pending_deletion:  rec.pending_deletion || null,
       received_totals:   state.received_totals || null,   // sku -> qty received (for Putaway)
       putaway:           state.putaway || [],              // [{sku, location_id, qty, at, by}]
+      // Cargo received but parked in a staging area rather than binned — each
+      // entry is a printed label stuck on the pallet.
+      staging:           rec.staging || [],                // [{id, code, area, at, by, lines, units}]
     };
   });
   res.json(list);
@@ -8159,6 +8174,80 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
     logAudit('inbound_putaway', { id: rec.id, sku, location: location_id, qty: Number(qty), expiry: expiry_date || '', reason: override_reason || '', by: req.userId || '' });
     res.json({ ok: true, placed: result, putaway: state.putaway });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── PUTAWAY LATER → stage it ────────────────────────────────────────────────
+// After End Receipt the crew is asked: putaway now, or later? "Now" is the
+// existing putaway flow — a real bin has to be scanned or typed. "Later" means
+// the goods physically sit in a staging area, so the system issues a STAGING ID
+// that gets printed and stuck on the cargo. The stock itself is already on hand
+// (End Receipt added it); staging is simply stock that is not in a bin yet,
+// which inventory.stagingQty() already computes — this adds the paper trail
+// that says WHICH pallet is which and what is still owed a bin.
+function stagingOutstanding(rec) {
+  const received = { ...(rec.state?.scanned || {}) };
+  for (const p of rec.state?.putaway || []) {
+    received[p.sku] = Math.max(0, (received[p.sku] || 0) - Number(p.qty || 0));
+  }
+  // ALREADY-STAGED QUANTITIES COUNT TOO. Without this a second "stage" issues a
+  // fresh label claiming the same cargo, so two printed IDs would both say they
+  // hold the same pallet and the outstanding-putaway picture would be double
+  // what is really on the floor.
+  for (const s of rec.staging || []) {
+    for (const l of s.lines || []) {
+      received[l.sku] = Math.max(0, (received[l.sku] || 0) - Number(l.qty || 0));
+    }
+  }
+  return Object.entries(received)
+    .filter(([, q]) => q > 0)
+    .map(([sku, qty]) => ({
+      sku, qty,
+      description: (rec.lines || []).find(l => l.sku === sku)?.description || '',
+    }));
+}
+
+app.post('/api/inbound/:id/stage', express.json(), (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state || (rec.state = {});
+  if (state.status !== 'done') return res.status(400).json({ error: 'Finish receiving (End Receipt) before staging.' });
+  const lines = stagingOutstanding(rec);
+  if (!lines.length) return res.status(400).json({ error: 'Everything on this receipt is already put away — nothing to stage.' });
+
+  const code = nextStagingCode(db);
+  const entry = {
+    id: uuidv4(), code,
+    area: String(req.body?.area || '').trim().slice(0, 40),   // optional: which staging bay
+    at: new Date().toISOString(),
+    by: req.userId || '',
+    lines,
+    units: lines.reduce((s, l) => s + l.qty, 0),
+  };
+  rec.staging = rec.staging || [];
+  rec.staging.push(entry);
+  writeDb(db);
+  logAudit('inbound_staged', {
+    id: rec.id, serial: rec.serial || '', staging: code, area: entry.area,
+    skus: lines.length, units: entry.units, by: req.userId || '',
+  });
+  res.status(201).json({ ok: true, staging: entry });
+});
+
+// What to print and stick on the cargo. Read-only — mirrors the carton-slip
+// pattern: the server returns the facts, the client renders and prints them.
+app.get('/api/inbound/:id/staging-label/:code', (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const s = (rec.staging || []).find(x => x.code === req.params.code);
+  if (!s) return res.status(404).json({ error: 'Staging ID not found on this receipt' });
+  res.json({
+    staging_code: s.code, area: s.area || '', staged_at: s.at, staged_by: s.by,
+    receipt: rec.serial || '', reference: rec.reference || '',
+    client_name: rec.client_name || '', source_name: rec.source_name || '',
+    units: s.units, lines: s.lines,
+  });
 });
 
 // GRN (Goods Received Note) — the client-facing receiving report for one job:

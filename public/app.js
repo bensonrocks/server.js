@@ -6567,11 +6567,108 @@
       }
       document.getElementById('inboundScanOverlay').classList.add('hidden');
       detachGlobalScanCapture();
+      const finishedId = activeInbound.id;
+      const finishedRef = activeInbound.serial || activeInbound.reference || finishedId.slice(0, 8);
       activeInbound = null;
       renderInboundTab();
+      // THE PUTAWAY DECISION. Received goods have to end up somewhere, and the
+      // crew knows right now which it is — so ask here rather than leaving the
+      // pallet unaccounted for on the floor.
+      askPutawayNowOrLater(finishedId, finishedRef);
     } catch (err) { showFeedback(feedback, 'error', err.message); }
   }
   document.getElementById('inboundCompleteBtn').addEventListener('click', () => endInboundReceipt(false));
+
+  // ── Putaway now, or stage it? ─────────────────────────────────────────────
+  // NOW  → the existing putaway screen, where a real bin must be scanned or typed.
+  // LATER→ the server issues a STAGING ID; it is printed and stuck on the cargo
+  //        so the pallet can be traced back to this receipt later.
+  let _stagingJobId = null;
+  function askPutawayNowOrLater(jobId, ref) {
+    _stagingJobId = jobId;
+    document.getElementById('putawayAskRef').textContent = ref;
+    document.getElementById('putawayAskArea').value = '';
+    document.getElementById('putawayAskResult').classList.add('hidden');
+    document.getElementById('putawayAskChoices').classList.remove('hidden');
+    document.getElementById('putawayAskOverlay').classList.remove('hidden');
+  }
+  document.getElementById('putawayAskNow').addEventListener('click', async () => {
+    document.getElementById('putawayAskOverlay').classList.add('hidden');
+    if (!_stagingJobId) return;
+    // openPutaway reads the in-memory inboundJobs list, which renderInboundTab
+    // has only just started refetching — wait for the job to land rather than
+    // racing it and silently doing nothing.
+    for (let i = 0; i < 20 && !(inboundJobs || []).some(j => j.id === _stagingJobId); i++) {
+      await new Promise(r => setTimeout(r, 150));
+    }
+    openPutaway(_stagingJobId);   // the existing screen: a real bin must be scanned or typed
+  });
+  document.getElementById('putawayAskLater').addEventListener('click', async () => {
+    if (!_stagingJobId) return;
+    const area = document.getElementById('putawayAskArea').value.trim();
+    const btn = document.getElementById('putawayAskLater');
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/api/inbound/${encodeURIComponent(_stagingJobId)}/stage`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ area }),
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || 'Could not stage this receipt.'); return; }
+      _lastStaging = { jobId: _stagingJobId, code: j.staging.code };
+      document.getElementById('putawayAskChoices').classList.add('hidden');
+      document.getElementById('putawayStagingCode').textContent = j.staging.code;
+      document.getElementById('putawayStagingWhat').textContent =
+        `${j.staging.lines.length} SKU(s) · ${j.staging.units} pcs${j.staging.area ? ` · ${j.staging.area}` : ''}`;
+      document.getElementById('putawayAskResult').classList.remove('hidden');
+      renderInboundTab();
+    } catch (e) { alert('Network error — nothing was staged.'); }
+    finally { btn.disabled = false; }
+  });
+  document.getElementById('putawayAskClose').addEventListener('click', () =>
+    document.getElementById('putawayAskOverlay').classList.add('hidden'));
+
+  // The printed label that goes on the cargo. Same window.open + print pattern
+  // as the carton slip and waybill label; the code is also rendered as a
+  // barcode so it can be scanned back off the pallet.
+  let _lastStaging = null;
+  async function printStagingLabel(jobId, code) {
+    const r = await fetch(`/api/inbound/${encodeURIComponent(jobId)}/staging-label/${encodeURIComponent(code)}`, { headers: hdrs() });
+    if (!r.ok) { alert('Could not load that staging label.'); return; }
+    const d = await r.json();
+    const w = window.open('', '_blank', 'width=420,height=620');
+    if (!w) { alert('Allow pop-ups to print the staging label.'); return; }
+    w.document.write(`<!doctype html><html><head><title>${esc(d.staging_code)}</title>
+      <script src="/vendor/jsbarcode.js"><\/script>
+      <style>
+        body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:14px}
+        .code{font-size:2.5rem;font-weight:900;letter-spacing:.04em;text-align:center;margin:.2rem 0}
+        .sub{text-align:center;color:#475569;font-size:.85rem}
+        table{width:100%;border-collapse:collapse;margin-top:.7rem;font-size:.8rem}
+        th,td{border-bottom:1px solid #e2e8f0;padding:.3rem .2rem;text-align:left}
+        td.q,th.q{text-align:right}
+        .box{border:3px solid #000;border-radius:10px;padding:10px}
+        .hd{text-align:center;font-weight:800;letter-spacing:.12em;font-size:.7rem;color:#475569}
+      </style></head><body>
+      <div class="box">
+        <div class="hd">STAGED — AWAITING PUTAWAY</div>
+        <div class="code">${esc(d.staging_code)}</div>
+        <svg id="bc"></svg>
+        <div class="sub">${esc(d.client_name)}${d.area ? ` · ${esc(d.area)}` : ''}</div>
+        <div class="sub">Receipt ${esc(d.receipt)}${d.reference ? ` · ${esc(d.reference)}` : ''}</div>
+        <div class="sub">${d.units} pcs · staged ${esc(String(d.staged_at).slice(0, 16).replace('T', ' '))}</div>
+        <table><thead><tr><th>SKU</th><th>Description</th><th class="q">Qty</th></tr></thead><tbody>
+        ${d.lines.map(l => `<tr><td>${esc(l.sku)}</td><td>${esc(String(l.description || '').slice(0, 34))}</td><td class="q">${l.qty}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+      <script>
+        try { JsBarcode('#bc', ${JSON.stringify(d.staging_code)}, {format:'CODE128',width:2,height:52,displayValue:false,margin:0}); } catch(e){}
+        setTimeout(function(){ window.print(); }, 350);
+      <\/script></body></html>`);
+    w.document.close();
+  }
+  document.getElementById('putawayPrintStaging').addEventListener('click', () => {
+    if (_lastStaging) printStagingLabel(_lastStaging.jobId, _lastStaging.code);
+  });
 
   // ── Request Order Deletion (admin: reason + own password; Master approves) ──
   let _delOrderTarget = null; // { orderNumber, batchId }

@@ -2400,6 +2400,41 @@ disconnected driver-management surface (both fixed together — see below).
   third driver-management surface whose backend hasn't been audited —
   flagged here so a future pass folds it into `/api/drivers` too.
 
+## Inbound putaway — now, or stage it with a printed ID
+
+Per the user: the crew scans the ASN/PO, then the goods go either to a final
+bin or to a staging area. The moment a receipt is ended the crew is ASKED which,
+because they know right then and an unrecorded pallet on the floor is exactly
+what goes missing.
+
+- **NOW** → the existing putaway screen (`POST /api/inbound/:id/putaway`), where
+  a real bin must be scanned or typed. Unchanged; already had capacity checks,
+  expiry/lot capture and override reasons.
+- **LATER** → `POST /api/inbound/:id/stage` issues a **staging ID**
+  (`nextStagingCode`, `ST-YYMMDD-NN`, own per-SGT-day counter like the inbound
+  and outbound serials), optionally tagged with a staging area ("Bay 3"), and
+  records exactly which SKUs and quantities that label covers. Printed via
+  `GET /api/inbound/:id/staging-label/:code` + `printStagingLabel()` — the same
+  window.open + JsBarcode + print pattern as the carton slip — so the code is
+  scannable back off the pallet.
+
+STAGING IS NOT A NEW STOCK STATE. End Receipt already added the units;
+`inventory.stagingQty()` already means "on hand but not in a bin". What was
+missing was the paper trail saying WHICH pallet is which and what is still owed
+a bin — that is all this adds.
+
+`stagingOutstanding(rec)` subtracts BOTH prior putaway AND prior staging.
+Without the second subtraction a repeat stage issued a fresh label claiming the
+same cargo, so two printed IDs would each say they held the same pallet and the
+outstanding-putaway figure would read double what was really on the floor.
+
+Verified 13 API checks: a staging ID is issued in the right format covering all
+10 pcs / 2 SKUs with the area recorded; the label carries code, receipt serial,
+client and per-SKU descriptions; an unknown code 404s; staging shows on the
+inbound record; putaway-now places into a real bin and a later stage then covers
+only the 6-pc remainder; staging before End Receipt is refused; and staging
+twice does not re-stage the same cargo.
+
 ## The item master is the DEFAULT lookup, in both directions
 
 Per the user: once a client's item master is loaded at onboarding, it applies
