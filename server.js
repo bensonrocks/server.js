@@ -4368,6 +4368,18 @@ async function processLabelPdf(buffer, filename, uploadedBy) {
 
 
   const matched = pages.filter(p => p.matchStatus === 'matched').length;
+
+  // IMAGE-ONLY PAGES (no text layer) can't match yet — kick off the background
+  // OCR pass so they are matched by the time anyone opens the review screen.
+  // This lives INSIDE the shared function on purpose: it is part of "process a
+  // label PDF", so a client-submitted waybill gets the same OCR treatment a
+  // staff upload does. It also used to sit in the route and reference `pages`,
+  // which this extraction moved out of scope — leaving it there would have
+  // thrown after the response was already sent, silently disabling OCR.
+  if (pages.some(p => p.matchStatus === 'unmatched' && !(p.rawText || '').trim())) {
+    setImmediate(() => rematchLabelImport(importId, false)
+      .catch(e => console.error('[label-ocr-bg]', e.message)));
+  }
   return { importId, pageCount: numPages, matched, import: importRecord };
 }
 
@@ -4414,13 +4426,8 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
     const { importId, pageCount, matched, import: importRecord } =
       await processLabelPdf(req.file.buffer, req.file.originalname, req.userId);
     res.json({ ok: true, importId, pageCount, matched, import: importRecord });
-
-    // Image-only pages (no text layer) can't match yet — kick off a background
-    // OCR pass so they're matched by the time anyone opens the review screen.
-    if (pages.some(p => p.matchStatus === 'unmatched' && !(p.rawText || '').trim())) {
-      setImmediate(() => rematchLabelImport(importId, false)
-        .catch(e => console.error('[label-ocr-bg]', e.message)));
-    }
+    // (the background OCR pass for image-only pages is kicked off inside
+    // processLabelPdf, so every caller gets it)
   } catch (err) {
     console.error('[label-import]', err.message);
     res.status(500).json({ error: err.message });
