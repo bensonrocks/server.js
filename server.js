@@ -3686,23 +3686,52 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
 });
 
 // Test the SKU↔barcode resolution for a client — paste a code, see what it maps
-// to (proves the item master + inter-search work before going live).
+// to.
+//
+// THIS TEST USED TO OVERSTATE ITSELF. It queried the catalogue directly
+// (inventory.get / getByBarcode) and reported "found", which only ever proved
+// the item master holds the mapping. It said nothing about whether any SCANNER
+// consults that mapping — and one did not: inbound receiving matched on SKU
+// alone, so a client's barcodes tested green here and still came up "Not on PO"
+// on the floor. A test that can pass while the thing it names is broken is
+// worse than no test.
+//
+// It now runs `resolveCodeToCatalogueSku`, the SAME function receiving calls,
+// and reports the answer PER SURFACE so the gap is visible rather than implied.
 app.get('/api/master/client-profiles/:client/test-resolve', (req, res) => {
   if (!checkMaster(req, res)) return;
   const code = String(req.query.code || '').trim();
   if (!code) return res.status(400).json({ error: 'code required' });
   const cid = invClientId(req.params.client);
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
-  const bySku = inventory.get(code, cid);
+
+  const bySku     = inventory.get(code, cid);
   const byBarcode = bySku ? null : inventory.getByBarcode(code, cid);
-  const row = bySku || byBarcode;
+  const row       = bySku || byBarcode;
+  // What the floor would actually land on, via the shared resolver.
+  const resolved  = resolveCodeToCatalogueSku(code, cid);
+
   res.json({
     code,
-    found: !!row,
+    found:     !!row,
     matchedBy: bySku ? 'sku' : (byBarcode ? 'barcode' : null),
-    sku: row ? row.sku : null,
-    name: row ? row.name : null,
-    barcode: row ? row.barcode : null,
+    sku:       row ? row.sku : null,
+    name:      row ? row.name : null,
+    barcode:   row ? row.barcode : null,
+    // Per-surface truth. `catalogue` is the mapping existing; `scansAs` is what
+    // a gun pointed at this code actually books it against on each screen. If
+    // the two ever disagree again, this is where it shows.
+    surfaces: {
+      catalogue:        !!row,
+      inboundReceiving: !!resolved,
+      outboundPicking:  !!resolved,
+    },
+    scansAs: resolved ? resolved.sku : null,
+    // A code that is in the catalogue but would NOT resolve on the floor is the
+    // failure this endpoint exists to catch. Say so in words.
+    warning: (row && !resolved)
+      ? 'This code is in the item master but would NOT resolve when scanned — do not go live until this is fixed.'
+      : (!row ? 'Not in this client\'s item master at all — check the client name the master was uploaded against.' : null),
   });
 });
 
@@ -6544,6 +6573,24 @@ function matchScannedSku(rawInput, sku, items, getSku, clientId) {
   return item || null;
 }
 
+// Scanned code → the client's catalogue row, via the SAME steps the floor uses:
+// the official CODE2 listing / learned barcodes first (resolveBeTimeCode2), then
+// SKU, then barcode. Used by receiving AND by the onboarding "test a code"
+// check, so a green test cannot mean something different from what a scanner
+// does — which is exactly how a barcode that tested fine still came up
+// "Not on PO" on the floor.
+function resolveCodeToCatalogueSku(raw, clientId) {
+  const code = String(raw || '').trim();
+  if (!code || !clientId || !inventory.available()) return null;
+  const resolved = resolveBeTimeCode2(code);
+  try {
+    return inventory.get(code, clientId)
+        || inventory.getByBarcode(code, clientId)
+        || (resolved !== code ? (inventory.get(resolved, clientId) || inventory.getByBarcode(resolved, clientId)) : null)
+        || null;
+  } catch (_) { return null; }   // inventory is optional
+}
+
 app.post('/api/scan/increment', (req, res) => {
   const { orderNumber } = req.body;
   const sku = resolveBeTimeCode2(req.body.sku);  // translate barcode → product code
@@ -7327,12 +7374,9 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   // which has no expected list at all. Resolve the barcode to its catalogue SKU
   // anyway, so received stock is filed against the real product instead of
   // under a barcode-shaped SKU nobody can reconcile later.
-  if (sku === raw && invCidRec && inventory.available()) {
-    try {
-      const row = inventory.getByBarcode(raw, invCidRec)
-               || (resolvedCode !== raw ? inventory.getByBarcode(resolvedCode, invCidRec) : null);
-      if (row && row.sku) { sku = row.sku; description = description || row.name || ''; }
-    } catch (_) { /* inventory is optional */ }
+  if (sku === raw && invCidRec) {
+    const row = resolveCodeToCatalogueSku(raw, invCidRec);
+    if (row) { sku = row.sku; description = description || row.name || ''; }
   }
 
   // Idempotent scans — same rule and same reason as /api/scan/increment: if a

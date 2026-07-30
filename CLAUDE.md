@@ -2432,6 +2432,28 @@ Order of resolution now, in `/api/inbound/:id/scan`:
 
 An unlisted item is still ACCEPTED, never blocked — that rule is unchanged.
 
+### Why the onboarding "test a code" check passed anyway
+
+The user's fair question. `GET /api/master/client-profiles/:client/test-resolve`
+queried the catalogue DIRECTLY (`inventory.get` / `inventory.getByBarcode`) and
+reported `found: true`. That only ever proved the item master holds the mapping —
+it said nothing about whether any SCANNER consults it, and receiving did not. So
+the barcodes tested green and still came up "Not on PO" on the floor. **A test
+that can pass while the thing it names is broken is worse than no test.**
+
+Fixed by construction, not by adding another assertion: the shared
+`resolveCodeToCatalogueSku(raw, clientId)` (CODE2/learned → SKU → barcode) is
+called by BOTH receiving and this endpoint, so a green test and the floor cannot
+diverge — they run the same function. The response now also reports
+`surfaces: {catalogue, inboundReceiving, outboundPicking}`, `scansAs` (the SKU a
+gun would actually book against), and a plain-English `warning` for the two
+failure shapes that matter: in the master but won't resolve when scanned, or not
+in this client's master at all (→ check the client name it was uploaded under).
+
+Verified 10 checks: the test's `scansAs` matches what receiving actually records
+for a barcode on the PO, the SKU itself, and a catalogue barcode on no PO; and
+an unknown code warns about the client name instead of failing silently.
+
 Verified with the client's own file: product master imported 253/254 (row 230
 has no Product Name — a real gap in the source file, reported not silently
 dropped), all three reported barcodes now resolve to their SKUs
