@@ -2400,6 +2400,49 @@ disconnected driver-management surface (both fixed together — see below).
   third driver-management surface whose backend hasn't been audited —
   flagged here so a future pass folds it into `/api/drivers` too.
 
+## Receiving resolves BARCODES, not just SKUs (`/api/inbound/:id/scan`)
+
+Reported from the floor: a client's Product Master was uploaded (254 rows, every
+row carrying a `Barcode (EAN/UPC)`), the PO listed those SKUs, yet scanning the
+printed barcodes during receiving showed every piece as **"Not on PO"**.
+
+Cause — receiving compared the scanned string against the line's SKU and nothing
+else:
+```js
+const line = (rec.lines || []).find(l => l.sku.toUpperCase() === raw.toUpperCase());
+```
+A barcode can never equal a SKU, so it always fell through to "unlisted". Two
+consequences, the second worse than the first: the receiver is told the item is
+not on the paperwork, AND the stock is banked under a **phantom SKU equal to the
+barcode** — a product that matches nothing in the catalogue and never
+reconciles. Outbound scanning has had the full chain for a long time
+(`matchScannedSku`); receiving simply never got it.
+
+Order of resolution now, in `/api/inbound/:id/scan`:
+1. exact SKU (case-insensitive) — unchanged, so nothing that worked stops working
+2. **the PO line's own `barcode`** — `enrichInboundLines` already fills this from
+   the item master at upload AND on read, so this step alone fixes the common
+   case even when the catalogue is unavailable
+3. `matchScannedSku(...)` — NP-suffix equivalence, packer-taught aliases, and the
+   client's item-master barcode → SKU cross-reference
+4. and if STILL unmatched (a genuinely unlisted item, or a `'return'` job, which
+   has no expected list at all) the barcode is resolved against the catalogue
+   anyway, so received stock is filed against the real product rather than under
+   a barcode-shaped SKU. `resolveBeTimeCode2` runs first, as outbound does.
+
+An unlisted item is still ACCEPTED, never blocked — that rule is unchanged.
+
+Verified with the client's own file: product master imported 253/254 (row 230
+has no Product Name — a real gap in the source file, reported not silently
+dropped), all three reported barcodes now resolve to their SKUs
+(`9557496058448` → `FJMHV9812DRWXXXXXPHML` etc.), and `state.scanned` is keyed
+by SKU with no barcode-shaped phantoms. The pre-fix code fails 4 of those 7
+checks, so the test genuinely reproduces the report. Plus 7 regression checks:
+SKU and lowercase-SKU scans still match, an unknown code is still accepted, an
+off-PO catalogue barcode resolves to its real SKU (and is still counted as an
+extra), a RETURN resolves barcodes too, and the damaged condition and eventId
+idempotency both still hold through the new path.
+
 ## Rollback points — named snapshots of a known-good state
 
 Written down HERE, in the repo, because a git tag created in a sandbox is not

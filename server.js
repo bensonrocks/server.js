@@ -7298,12 +7298,41 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   const raw = String(code).trim();
   let sku = raw, description = '';
 
+  // ── What did they just scan? ────────────────────────────────────────────
+  // Receiving used to compare the scanned string against the line's SKU and
+  // NOTHING else, so scanning a BARCODE could never match a PO whose lines are
+  // keyed by SKU. It fell through to "not on the PO" AND banked the stock under
+  // a phantom SKU equal to the barcode — a product that matches nothing and
+  // never reconciles. Outbound scanning has had the full resolution chain for a
+  // long time (matchScannedSku); receiving now uses the same one, so a barcode
+  // and its SKU are interchangeable on both sides of the warehouse.
+  const invCidRec  = invClientId(rec.client_name);
+  const resolvedCode = resolveBeTimeCode2(raw);   // official CODE2 listing, then learned barcodes
   if (rec.type === 'po') {
+    const lines = rec.lines || [];
+    let line = lines.find(l => String(l.sku || '').toUpperCase() === raw.toUpperCase());
+    // The PO line usually already CARRIES its barcode — enrichInboundLines
+    // fills it from the item master at upload time and again on read — so this
+    // one step fixes the common case even if the catalogue is unavailable.
+    if (!line) line = lines.find(l => l.barcode && String(l.barcode).trim() === String(raw).trim());
+    // Then the shared chain: NP-suffix equivalence, packer-taught aliases, and
+    // the client's item-master barcode → SKU cross-reference.
+    if (!line) line = matchScannedSku(raw, resolvedCode, lines, l => l.sku, invCidRec);
     // Unlisted SKUs are still accepted — a shipment containing something not
     // on the paperwork shouldn't block the receiver; it just has no
     // "expected" line to compare against on the receiving screen.
-    const line = (rec.lines || []).find(l => l.sku.toUpperCase() === raw.toUpperCase());
     if (line) { sku = line.sku; description = line.description || ''; }
+  }
+  // Nothing on the paperwork matched — either genuinely unlisted, or a RETURN,
+  // which has no expected list at all. Resolve the barcode to its catalogue SKU
+  // anyway, so received stock is filed against the real product instead of
+  // under a barcode-shaped SKU nobody can reconcile later.
+  if (sku === raw && invCidRec && inventory.available()) {
+    try {
+      const row = inventory.getByBarcode(raw, invCidRec)
+               || (resolvedCode !== raw ? inventory.getByBarcode(resolvedCode, invCidRec) : null);
+      if (row && row.sku) { sku = row.sku; description = description || row.name || ''; }
+    } catch (_) { /* inventory is optional */ }
   }
 
   // Idempotent scans — same rule and same reason as /api/scan/increment: if a
