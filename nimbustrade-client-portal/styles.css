@@ -307,6 +307,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   margin-bottom: 20px;
 }
 .app-toolbar h2 { font-size: 21px; font-weight: 700; }
+.toolbar-actions { display: flex; gap: 10px; flex: none; }
 
 /* ---------- Stat strip (one instrument, not five cards) ---------- */
 .stat-grid {
@@ -578,6 +579,87 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
 .modal-card h3 { font-size: 18px; margin-bottom: 8px; }
 .modal-sub { color: var(--fg-muted); font-size: 12.5px; margin: 0 0 18px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.modal-card-wide { max-width: 560px; }
+
+/* ---------- Upload orders ---------- */
+.upload-summary {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-alt);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: pre-line;
+}
+
+/* ---------- Tracking ---------- */
+.track-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--fg);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.track-btn:hover { border-color: var(--accent-strong); color: var(--accent-strong); }
+.track-btn:disabled { opacity: 0.4; cursor: default; }
+
+.tracking-timeline { list-style: none; margin: 0; padding: 0; }
+.tracking-timeline li {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.tracking-timeline li:first-child { border-top: none; }
+.tracking-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; background: var(--grey); }
+.tracking-timeline li.done .tracking-dot { background: var(--green); }
+.tracking-timeline li.issue .tracking-dot { background: var(--red); }
+.tracking-event-status { font-weight: 600; font-size: 13px; text-transform: capitalize; }
+.tracking-event-note { color: var(--fg-muted); font-size: 12.5px; margin-top: 2px; }
+.tracking-event-time { font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); margin-top: 2px; }
+
+.carrier-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.carrier-panel h4 { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
+.carrier-unavailable {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  background: var(--bg-alt);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+/* ---------- Rates ---------- */
+.rates-table-wrap { overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius); }
+table.rates-table { width: 100%; border-collapse: collapse; min-width: 620px; }
+table.rates-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+table.rates-table td {
+  padding: 9px 14px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+table.rates-table td:first-child { font-family: var(--font-body); font-weight: 600; }
+.rate-not-set { color: var(--fg-muted); font-style: italic; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
@@ -586,6 +668,8 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
   .table-controls { flex-direction: column; }
   .table-controls input { width: 100%; }
   .app-toolbar { flex-direction: column; align-items: flex-start; }
+  .toolbar-actions { width: 100%; }
+  .toolbar-actions .btn { flex: 1; }
   .field-row { grid-template-columns: 1fr; }
 }
 

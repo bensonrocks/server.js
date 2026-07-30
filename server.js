@@ -37,6 +37,7 @@ const ntAuth       = require('./lib/nimbustrade-portal/auth');
 const ntVendorAuth = require('./lib/nimbustrade-portal/vendor-auth');
 const ntStaffAuth  = require('./lib/nimbustrade-portal/staff-auth');
 const ntStore      = require('./lib/nimbustrade-portal/store');
+const ntTracking   = require('./lib/nimbustrade-portal/tracking');
 const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
@@ -1182,6 +1183,56 @@ app.patch('/client-access/api/orders/:id/status', withNTAuth, (req, res) => {
   }
 });
 
+app.post('/client-access/api/orders/import', withNTAuth, (req, res) => {
+  const { rows } = req.body || {};
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ error: 'rows must be a non-empty array' });
+  }
+  if (rows.length > 1000) {
+    return res.status(400).json({ error: 'Max 1000 rows per import' });
+  }
+  res.json(ntStore.bulkCreateOrders(req.ntClientId, rows));
+});
+
+app.get('/client-access/api/orders/export', withNTAuth, (req, res) => {
+  const { country, status, search } = req.query;
+  const { rows } = ntStore.listOrders(req.ntClientId, {
+    country: country || undefined, status: status || undefined, search: search || undefined, all: true,
+  });
+  const header = ['Order Ref', 'Market', 'Customer', 'SKU', 'Product', 'Qty', 'Status', 'Carrier', 'Waybill', 'Order Date'];
+  const csvEscape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [header.map(csvEscape).join(',')];
+  for (const r of rows) {
+    lines.push([
+      r.order_ref, r.country_name, r.customer_name, r.sku, r.product_name,
+      r.qty, r.status, r.carrier, r.waybill_number, r.order_date,
+    ].map(csvEscape).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="orders-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(lines.join('\n'));
+});
+
+app.get('/client-access/api/orders/:id/tracking', withNTAuth, async (req, res) => {
+  try {
+    const { order, events } = ntStore.getOrderTimeline(req.ntClientId, req.params.id);
+    const carrierTracking = await ntTracking.fetchCarrierTracking(order.carrier, order.waybill_number);
+    res.json({
+      orderRef: order.order_ref,
+      carrier: order.carrier,
+      waybillNumber: order.waybill_number,
+      timeline: events,
+      carrierTracking,
+    });
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
+app.get('/client-access/api/rates', withNTAuth, (req, res) => {
+  res.json(ntStore.getRatesForClient(req.ntClientId));
+});
+
 app.get('/client-access/api/inventory', withNTAuth, (req, res) => {
   res.json(ntStore.listLocationsWithInventory(req.ntClientId));
 });
@@ -1392,11 +1443,26 @@ app.get('/staff-access/api/orders', withStaffAuth, (req, res) => {
 });
 
 app.patch('/staff-access/api/orders/:id', withStaffAuth, (req, res) => {
-  const { status, issueNote, vendorId } = req.body || {};
+  const { status, issueNote, vendorId, carrier, waybillNumber } = req.body || {};
   try {
-    res.json(ntStore.updateOrderByStaff(req.params.id, { status, issueNote, vendorId }));
+    res.json(ntStore.updateOrderByStaff(req.params.id, { status, issueNote, vendorId, carrier, waybillNumber }));
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// Rates — established per-DC handling rates. Empty/zero until staff sets them;
+// never auto-filled with invented figures.
+app.get('/staff-access/api/rates', withStaffAuth, (req, res) => {
+  res.json(ntStore.getAllRatesForStaff());
+});
+
+app.patch('/staff-access/api/rates/:locationId', withStaffAuth, (req, res) => {
+  const { currency, baseFee, perUnitFee, storageFee, notes } = req.body || {};
+  try {
+    res.json(ntStore.upsertRate(req.params.locationId, { currency, baseFee, perUnitFee, storageFee, notes }));
+  } catch (e) {
+    res.status(404).json({ error: e.message });
   }
 });
 

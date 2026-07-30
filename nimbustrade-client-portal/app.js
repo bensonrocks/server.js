@@ -97,6 +97,7 @@
     loadDashboard();
     loadOrders();
     loadInventory();
+    loadRates();
   }
 
   // ---------- Dashboard (stats + map) ----------
@@ -257,7 +258,7 @@
 
   async function loadOrders() {
     const tbody = $('#orders-tbody');
-    tbody.innerHTML = '<tr><td colspan="7" class="table-loading">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="table-loading">Loading…</td></tr>';
 
     const params = new URLSearchParams({ page: currentPage, pageSize: 25 });
     const search = $('#order-search').value.trim();
@@ -269,7 +270,7 @@
     const data = await api(`/orders?${params}`);
 
     if (!data.rows.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="table-loading">No orders match this filter.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="table-loading">No orders match this filter.</td></tr>';
     } else {
       tbody.innerHTML = data.rows.map((o) => `
         <tr>
@@ -280,8 +281,12 @@
           <td>${o.qty}</td>
           <td><span class="status-pill ${o.status}">${o.status}</span>${o.issue_note ? ` <span title="${escapeHtml(o.issue_note)}" style="cursor:help;color:var(--fg-muted)">ⓘ</span>` : ''}</td>
           <td>${o.order_date}</td>
+          <td><button class="track-btn" data-track="${o.id}" data-ref="${o.order_ref}">Track</button></td>
         </tr>
       `).join('');
+      tbody.querySelectorAll('button[data-track]').forEach((btn) => {
+        btn.addEventListener('click', () => openTracking(btn.dataset.track, btn.dataset.ref));
+      });
     }
 
     renderPagination(data.total, data.page, data.pageSize);
@@ -420,6 +425,186 @@
       errEl.hidden = false;
     }
   });
+
+  // ---------- Tracking ----------
+
+  const trackingOverlay = $('#tracking-overlay');
+
+  async function openTracking(orderId, orderRef) {
+    trackingOverlay.hidden = false;
+    $('#tracking-order-ref').textContent = `Tracking — ${orderRef}`;
+    $('#tracking-carrier-line').textContent = 'Loading…';
+    $('#tracking-body').innerHTML = '<p class="table-loading">Loading…</p>';
+
+    try {
+      const data = await api(`/orders/${orderId}/tracking`);
+      $('#tracking-carrier-line').textContent = data.carrier
+        ? `${data.carrier} · Waybill ${data.waybillNumber}`
+        : 'No carrier assigned yet — order has not shipped.';
+
+      const timelineHtml = `<ul class="tracking-timeline">${data.timeline.map((ev) => `
+        <li class="${ev.status === 'issue' ? 'issue' : 'done'}">
+          <span class="tracking-dot"></span>
+          <div>
+            <div class="tracking-event-status">${ev.status}</div>
+            ${ev.note ? `<div class="tracking-event-note">${escapeHtml(ev.note)}</div>` : ''}
+            <div class="tracking-event-time">${ev.created_at}</div>
+          </div>
+        </li>
+      `).join('')}</ul>`;
+
+      let carrierHtml = '';
+      if (data.carrier) {
+        if (data.carrierTracking && data.carrierTracking.available) {
+          const ct = data.carrierTracking;
+          carrierHtml = `
+            <div class="carrier-panel">
+              <h4>Live carrier status (${data.carrier})</h4>
+              <ul class="tracking-timeline">${(ct.checkpoints || []).map((c) => `
+                <li class="done">
+                  <span class="tracking-dot"></span>
+                  <div>
+                    <div class="tracking-event-status">${escapeHtml(c.message || ct.subtag || ct.tag)}</div>
+                    ${c.location ? `<div class="tracking-event-note">${escapeHtml(c.location)}</div>` : ''}
+                    <div class="tracking-event-time">${c.time || ''}</div>
+                  </div>
+                </li>
+              `).join('') || '<li><div class="tracking-event-note">No checkpoints reported yet.</div></li>'}</ul>
+            </div>`;
+        } else {
+          const reason = data.carrierTracking && data.carrierTracking.reason === 'not_configured'
+            ? 'Live carrier tracking isn’t connected yet — this shows our own internal fulfillment status only.'
+            : 'Live carrier status isn’t available right now.';
+          carrierHtml = `<div class="carrier-panel"><p class="carrier-unavailable">${reason}</p></div>`;
+        }
+      }
+
+      $('#tracking-body').innerHTML = timelineHtml + carrierHtml;
+    } catch (err) {
+      $('#tracking-body').innerHTML = `<p class="modal-error">${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  $('#close-tracking').addEventListener('click', () => { trackingOverlay.hidden = true; });
+  trackingOverlay.addEventListener('click', (e) => { if (e.target === trackingOverlay) trackingOverlay.hidden = true; });
+
+  // ---------- Upload orders (CSV) ----------
+
+  const uploadOverlay = $('#upload-orders-overlay');
+  let parsedUploadRows = [];
+
+  function parseOrdersCsv(text) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    const looksLikeHeader = /customer/i.test(lines[0]) && /country|market/i.test(lines[0]);
+    const dataLines = looksLikeHeader ? lines.slice(1) : lines;
+
+    return dataLines.map((line) => {
+      const [customerName, country, sku, qty, orderDate] = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+      return { customerName, country: (country || '').toUpperCase(), sku, qty: qty ? parseInt(qty, 10) : 1, orderDate: orderDate || undefined };
+    });
+  }
+
+  $('#open-upload-orders').addEventListener('click', () => {
+    parsedUploadRows = [];
+    $('#upload-orders-file').value = '';
+    $('#upload-orders-summary').hidden = true;
+    $('#upload-orders-error').hidden = true;
+    $('#submit-upload-orders').disabled = true;
+    uploadOverlay.hidden = false;
+  });
+  $('#cancel-upload-orders').addEventListener('click', () => { uploadOverlay.hidden = true; });
+  uploadOverlay.addEventListener('click', (e) => { if (e.target === uploadOverlay) uploadOverlay.hidden = true; });
+
+  $('#upload-orders-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    const summaryEl = $('#upload-orders-summary');
+    const errEl = $('#upload-orders-error');
+    errEl.hidden = true;
+    if (!file) return;
+    try {
+      const text = await file.text();
+      parsedUploadRows = parseOrdersCsv(text);
+      summaryEl.hidden = false;
+      summaryEl.textContent = `${parsedUploadRows.length} row(s) ready to import.`;
+      $('#submit-upload-orders').disabled = parsedUploadRows.length === 0;
+    } catch (err) {
+      errEl.textContent = 'Could not read that file.';
+      errEl.hidden = false;
+    }
+  });
+
+  $('#submit-upload-orders').addEventListener('click', async () => {
+    const errEl = $('#upload-orders-error');
+    const summaryEl = $('#upload-orders-summary');
+    errEl.hidden = true;
+    try {
+      const result = await api('/orders/import', { method: 'POST', body: JSON.stringify({ rows: parsedUploadRows }) });
+      summaryEl.hidden = false;
+      summaryEl.textContent = `Imported ${result.created} order(s).` +
+        (result.errors.length ? `\n${result.errors.length} row(s) failed:\n` + result.errors.map((e) => `Row ${e.row}: ${e.error}`).join('\n') : '');
+      loadDashboard();
+      loadOrders();
+      if (!result.errors.length) setTimeout(() => { uploadOverlay.hidden = true; }, 1200);
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+  });
+
+  // ---------- Export CSV ----------
+
+  $('#export-orders-btn').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const params = new URLSearchParams();
+    const search = $('#order-search').value.trim();
+    const status = $('#status-filter').value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+    if (selectedCountry) params.set('country', selectedCountry);
+
+    const res = await fetch(`${API}/orders/export?${params}`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  // ---------- Rates ----------
+
+  async function loadRates() {
+    const wrap = $('#rates-table-wrap');
+    try {
+      const rates = await api('/rates');
+      wrap.innerHTML = `
+        <table class="rates-table">
+          <thead><tr><th>DC / Market</th><th>Base handling fee</th><th>Per-unit fee</th><th>Storage fee</th><th>Notes</th></tr></thead>
+          <tbody>
+            ${rates.map((r) => `
+              <tr>
+                <td>${r.country_name} <span style="color:var(--fg-muted)">(${escapeHtml(r.city)})</span></td>
+                ${r.configured ? `
+                  <td>${r.currency} ${r.base_fee.toFixed(2)}</td>
+                  <td>${r.currency} ${r.per_unit_fee.toFixed(2)}</td>
+                  <td>${r.currency} ${r.storage_fee.toFixed(2)}</td>
+                  <td>${escapeHtml(r.notes || '—')}</td>
+                ` : `
+                  <td class="rate-not-set" colspan="4">Not yet configured — contact your NimbusTrade account manager</td>
+                `}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+    } catch (err) {
+      wrap.innerHTML = `<p class="table-loading">${escapeHtml(err.message)}</p>`;
+    }
+  }
 
   // ---------- Boot ----------
 

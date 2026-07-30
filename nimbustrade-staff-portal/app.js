@@ -108,6 +108,7 @@
     await Promise.all([loadClients(), loadVendors()]);
     loadOrders();
     loadInventory();
+    loadRates();
   }
 
   // ---------- Tabs ----------
@@ -340,6 +341,17 @@
           </td>
           <td>
             <div class="status-update-cell">
+              <select class="carrier-select">
+                <option value="" ${!o.carrier ? 'selected' : ''}>No carrier</option>
+                <option value="DHL" ${o.carrier === 'DHL' ? 'selected' : ''}>DHL</option>
+                <option value="FedEx" ${o.carrier === 'FedEx' ? 'selected' : ''}>FedEx</option>
+                <option value="UPS" ${o.carrier === 'UPS' ? 'selected' : ''}>UPS</option>
+              </select>
+              <input type="text" class="waybill-input" placeholder="Waybill #" value="${escapeHtml(o.waybill_number || '')}" />
+            </div>
+          </td>
+          <td>
+            <div class="status-update-cell">
               <select class="status-select">
                 ${STATUS_OPTIONS.map((s) => `<option value="${s}" ${s === o.status ? 'selected' : ''}>${s}</option>`).join('')}
               </select>
@@ -358,9 +370,11 @@
         const status = row.querySelector('.status-select').value;
         const issueNote = row.querySelector('.issue-note-input').value.trim();
         const vendorId = row.querySelector('.vendor-select').value;
+        const carrier = row.querySelector('.carrier-select').value;
+        const waybillNumber = row.querySelector('.waybill-input').value.trim();
         btn.textContent = '…';
         try {
-          await api(`/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status, issueNote, vendorId }) });
+          await api(`/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status, issueNote, vendorId, carrier, waybillNumber }) });
           btn.textContent = 'Saved';
           setTimeout(() => { btn.textContent = 'Save'; }, 1200);
           loadOverview();
@@ -509,6 +523,74 @@
         const threshold = parseInt(row.querySelector('.threshold-input').value, 10);
         await api(`/inventory/${row.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ qty, threshold }) });
         loadInventory();
+      });
+    });
+  }
+
+  // ---------- Rates ----------
+  // Empty until set here — the client's Rates tab mirrors whatever's saved.
+
+  async function loadRates() {
+    const container = $('#rates-clients');
+    const rates = await api('/rates');
+
+    if (!rates.length) {
+      container.innerHTML = '<p class="table-loading">No locations yet.</p>';
+      return;
+    }
+
+    const byClient = new Map();
+    rates.forEach((r) => {
+      if (!byClient.has(r.client_id)) byClient.set(r.client_id, { name: r.client_name, rows: [] });
+      byClient.get(r.client_id).rows.push(r);
+    });
+
+    container.innerHTML = [...byClient.values()].map((client) => `
+      <div class="panel client-inv-panel">
+        <div class="client-inv-head"><h3>${escapeHtml(client.name)}</h3></div>
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead><tr><th>DC / Market</th><th>Currency</th><th>Base fee</th><th>Per-unit fee</th><th>Storage fee</th><th>Notes</th><th></th></tr></thead>
+            <tbody>
+              ${client.rows.map((r) => `
+                <tr data-location-id="${r.location_id}">
+                  <td>${r.country_name}<br><small style="color:var(--fg-muted)">${escapeHtml(r.city)}</small></td>
+                  <td><input type="text" class="rate-currency" value="${r.currency}" maxlength="3" style="width:52px" /></td>
+                  <td><input type="number" step="0.01" min="0" class="rate-base" value="${r.base_fee}" style="width:80px" /></td>
+                  <td><input type="number" step="0.01" min="0" class="rate-perunit" value="${r.per_unit_fee}" style="width:80px" /></td>
+                  <td><input type="number" step="0.01" min="0" class="rate-storage" value="${r.storage_fee}" style="width:80px" /></td>
+                  <td><input type="text" class="rate-notes" value="${escapeHtml(r.notes || '')}" placeholder="e.g. peak season surcharge applies" style="width:180px" /></td>
+                  <td><button class="row-action save-rate-btn">Save</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('tr[data-location-id]').forEach((row) => {
+      row.querySelector('.save-rate-btn').addEventListener('click', async () => {
+        const btn = row.querySelector('.save-rate-btn');
+        const locationId = row.dataset.locationId;
+        btn.textContent = '…';
+        try {
+          await api(`/rates/${locationId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              currency: row.querySelector('.rate-currency').value.trim().toUpperCase() || 'USD',
+              baseFee: parseFloat(row.querySelector('.rate-base').value) || 0,
+              perUnitFee: parseFloat(row.querySelector('.rate-perunit').value) || 0,
+              storageFee: parseFloat(row.querySelector('.rate-storage').value) || 0,
+              notes: row.querySelector('.rate-notes').value.trim(),
+            }),
+          });
+          btn.textContent = 'Saved';
+          setTimeout(() => { btn.textContent = 'Save'; }, 1200);
+        } catch (e) {
+          btn.textContent = 'Save';
+          alert(e.message);
+        }
       });
     });
   }
