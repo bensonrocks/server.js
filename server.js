@@ -1233,6 +1233,34 @@ app.get('/client-access/api/rates', withNTAuth, (req, res) => {
   res.json(ntStore.getRatesForClient(req.ntClientId));
 });
 
+app.get('/client-access/api/inbound', withNTAuth, (req, res) => {
+  res.json(ntStore.listInboundForClient(req.ntClientId));
+});
+
+app.get('/client-access/api/reports/export', withNTAuth, (req, res) => {
+  const byMarket = ntStore.getCountryBreakdown(req.ntClientId);
+  const inbound = ntStore.listInboundForClient(req.ntClientId);
+  const csvEscape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+  const lines = ['OUTBOUND ORDERS BY MARKET'];
+  lines.push(['Market', 'Dropped', 'Processing', 'Completed', 'Issues', 'Total'].map(csvEscape).join(','));
+  for (const m of byMarket) {
+    lines.push([m.countryName, m.dropped, m.processing, m.completed, m.issue, m.total].map(csvEscape).join(','));
+  }
+  lines.push('');
+  lines.push('INBOUND TO DC');
+  lines.push(['Reference', 'DC', 'Carrier', 'Contents', 'Expected Qty', 'Received Qty', 'Status', 'Expected Date', 'Arrived Date'].map(csvEscape).join(','));
+  for (const s of inbound) {
+    lines.push([
+      s.reference, s.country_name, s.carrier, s.contents, s.expected_qty, s.received_qty, s.status, s.expected_date, s.arrived_date,
+    ].map(csvEscape).join(','));
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="report-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(lines.join('\n'));
+});
+
 app.get('/client-access/api/inventory', withNTAuth, (req, res) => {
   res.json(ntStore.listLocationsWithInventory(req.ntClientId));
 });
@@ -1463,6 +1491,32 @@ app.patch('/staff-access/api/rates/:locationId', withStaffAuth, (req, res) => {
     res.json(ntStore.upsertRate(req.params.locationId, { currency, baseFee, perUnitFee, storageFee, notes }));
   } catch (e) {
     res.status(404).json({ error: e.message });
+  }
+});
+
+// Inbound shipments (restocking into a DC)
+app.get('/staff-access/api/inbound', withStaffAuth, (req, res) => {
+  res.json(ntStore.listAllInboundForStaff());
+});
+
+app.post('/staff-access/api/inbound', withStaffAuth, (req, res) => {
+  const { clientId, locationId, reference, carrier, waybillNumber, contents, expectedQty, expectedDate } = req.body || {};
+  if (!clientId || !locationId || !reference || !expectedDate) {
+    return res.status(400).json({ error: 'clientId, locationId, reference, and expectedDate are required' });
+  }
+  try {
+    res.status(201).json(ntStore.createInbound(clientId, { locationId, reference, carrier, waybillNumber, contents, expectedQty, expectedDate }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.patch('/staff-access/api/inbound/:id', withStaffAuth, (req, res) => {
+  const { status, receivedQty, arrivedDate } = req.body || {};
+  try {
+    res.json(ntStore.updateInboundByStaff(req.params.id, { status, receivedQty, arrivedDate }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 

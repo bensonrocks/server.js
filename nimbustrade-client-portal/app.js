@@ -98,6 +98,7 @@
     loadOrders();
     loadInventory();
     loadRates();
+    loadReports();
   }
 
   // ---------- Dashboard (stats + map) ----------
@@ -605,6 +606,71 @@
       wrap.innerHTML = `<p class="table-loading">${escapeHtml(err.message)}</p>`;
     }
   }
+
+  // ---------- Reports ----------
+
+  const INBOUND_STATUS_LABEL = { in_transit: 'In Transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
+
+  async function loadReports() {
+    $('#reports-generated-at').textContent = `Generated ${new Date().toLocaleString()}`;
+
+    const marketTbody = $('#reports-market-tbody');
+    const inboundTbody = $('#reports-inbound-tbody');
+
+    try {
+      const [dashboard, inbound] = await Promise.all([api('/dashboard'), api('/inbound')]);
+      const markets = dashboard.countries;
+
+      $('#reports-stat-outbound').textContent = dashboard.counts.total.toLocaleString();
+      $('#reports-stat-delivered').textContent = dashboard.counts.completed.toLocaleString();
+      $('#reports-stat-issues').textContent = dashboard.counts.issue.toLocaleString();
+      $('#reports-stat-inbound').textContent = inbound.length.toLocaleString();
+      $('#reports-stat-delayed').textContent = inbound.filter((s) => s.status === 'delayed').length.toLocaleString();
+
+      marketTbody.innerHTML = markets.length ? markets.map((m) => `
+        <tr>
+          <td>${escapeHtml(m.countryName)}</td>
+          <td>${m.dropped}</td>
+          <td>${m.processing}</td>
+          <td>${m.completed}</td>
+          <td>${m.issue}</td>
+          <td>${m.total}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="6" class="table-loading">No orders yet.</td></tr>';
+
+      inboundTbody.innerHTML = inbound.length ? inbound.map((s) => `
+        <tr>
+          <td style="font-family:var(--font-mono);font-size:12px">${escapeHtml(s.reference)}</td>
+          <td>${escapeHtml(s.country_name)} <span style="color:var(--fg-muted)">(${escapeHtml(s.city)})</span></td>
+          <td>${escapeHtml(s.carrier || '—')}</td>
+          <td>${escapeHtml(s.contents || '—')}</td>
+          <td>${s.expected_qty}</td>
+          <td>${s.received_qty}</td>
+          <td><span class="status-pill ${s.status}">${INBOUND_STATUS_LABEL[s.status] || s.status}</span></td>
+          <td>${escapeHtml(s.expected_date || '—')}</td>
+          <td>${escapeHtml(s.arrived_date || '—')}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="9" class="table-loading">No inbound shipments yet.</td></tr>';
+    } catch (err) {
+      marketTbody.innerHTML = `<tr><td colspan="6" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
+      inboundTbody.innerHTML = `<tr><td colspan="9" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  $('#export-reports-btn').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const res = await fetch(`${API}/reports/export`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `report-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
 
   // ---------- Boot ----------
 

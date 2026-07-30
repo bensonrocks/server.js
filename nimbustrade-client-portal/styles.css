@@ -478,6 +478,10 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
 .status-pill.processing { background: var(--amber-tint); color: var(--amber); }
 .status-pill.completed { background: var(--green-tint); color: var(--green); }
 .status-pill.issue { background: var(--red-tint); color: var(--red); }
+.status-pill.in_transit { background: var(--amber-tint); color: var(--amber); }
+.status-pill.arrived { background: var(--green-tint); color: var(--green); }
+.status-pill.delayed { background: var(--red-tint); color: var(--red); }
+.status-pill.partial { background: var(--grey-tint); color: var(--grey); }
 
 .table-loading { text-align: center; padding: 30px; color: var(--fg-muted); }
 
