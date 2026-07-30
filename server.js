@@ -5513,48 +5513,63 @@ app.get('/api/system-health', (req, res) => {
 });
 
 // Parse-only preview — returns stats without saving anything
+// ── Order-file → rows, in ONE place ─────────────────────────────────────────
+// Extracted from /api/preview so that the office preview AND a client's own
+// portal submission are parsed by exactly the same code. A client uploading the
+// file themselves must get the same rows, the same skipped-row count and the
+// same PDF issue list the office would have got from that file — otherwise the
+// preview an approver sees would not describe what actually gets created.
+// Returns { unsupported } instead of throwing for a file type we don't take.
+async function parseOrderFileToRows(buffer, filename) {
+  const ext = path.extname(filename || '').toLowerCase();
+  const pdfWarnings = [];
+  let allRows = [], skipped = 0, flagged = [];
+  if (ext === '.pdf') {
+    const detailed = await parsePdfPicklistDetailed(buffer);
+    allRows = detailed.rows;
+    for (const i of detailed.issues) {
+      pdfWarnings.push(`${i.critical ? '⛔' : '⚠'} ${i.gi}: ${i.problem}`);
+    }
+    // Flagged orders carry their parsed lines so the Confirm window can
+    // offer inline quantity adjustment before approval
+    flagged = detailed.issues.map(i => ({
+      gi: i.gi, problem: i.problem, critical: !!i.critical,
+      lines: detailed.rows
+        .filter(r => r.order_number === i.gi)
+        .map(r => ({ sku: r.sku, description: String(r.description || '').slice(0, 70), qty: r.qty })),
+    }));
+  } else if (ext === '.csv') {
+    const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
+    const detected = detectColumnMap(records);
+    const all      = records.map(r => mapRow(r, detected));
+    allRows = all.filter(r => r.sku && !isMetadataRow(r));
+    skipped = all.length - allRows.length;
+  } else if (ext === '.xlsx' || ext === '.xls') {
+    const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const ws                   = wb.Sheets[wb.SheetNames[0]];
+    const { records, headers } = _parseExcelSheet(ws);
+    const melted               = _tryMeltWide(records, headers);
+    const finalRecs            = melted || records;
+    const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
+    const detected             = detectColumnMap(cleanRecs);
+    const all                  = cleanRecs.map(r => mapRow(r, detected));
+    allRows = all.filter(r => r.sku && !isMetadataRow(r));
+    skipped = cleanRecs.length - allRows.length;
+  } else {
+    return { unsupported: true, allRows: [], skipped: 0, pdfWarnings: [], flagged: [] };
+  }
+  return { unsupported: false, allRows, skipped, pdfWarnings, flagged };
+}
+
 app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const ext = path.extname(req.file.originalname).toLowerCase();
 
-    let allRows = [], skipped = 0;
-    const pdfWarnings = [];
-    let flagged = [];
-    if (ext === '.pdf') {
-      const detailed = await parsePdfPicklistDetailed(req.file.buffer);
-      allRows = detailed.rows;
-      for (const i of detailed.issues) {
-        pdfWarnings.push(`${i.critical ? '⛔' : '⚠'} ${i.gi}: ${i.problem}`);
-      }
-      // Flagged orders carry their parsed lines so the Confirm window can
-      // offer inline quantity adjustment before approval
-      flagged = detailed.issues.map(i => ({
-        gi: i.gi, problem: i.problem, critical: !!i.critical,
-        lines: detailed.rows
-          .filter(r => r.order_number === i.gi)
-          .map(r => ({ sku: r.sku, description: String(r.description || '').slice(0, 70), qty: r.qty })),
-      }));
-    } else if (ext === '.csv') {
-      const records  = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
-      const detected = detectColumnMap(records);
-      const all      = records.map(r => mapRow(r, detected));
-      allRows = all.filter(r => r.sku && !isMetadataRow(r));
-      skipped = all.length - allRows.length;
-    } else if (ext === '.xlsx' || ext === '.xls') {
-      const wb                   = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
-      const ws                   = wb.Sheets[wb.SheetNames[0]];
-      const { records, headers } = _parseExcelSheet(ws);
-      const melted               = _tryMeltWide(records, headers);
-      const finalRecs            = melted || records;
-      const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
-      const detected             = detectColumnMap(cleanRecs);
-      const all                  = cleanRecs.map(r => mapRow(r, detected));
-      allRows = all.filter(r => r.sku && !isMetadataRow(r));
-      skipped = cleanRecs.length - allRows.length;
-    } else {
+    const parsed = await parseOrderFileToRows(req.file.buffer, req.file.originalname);
+    if (parsed.unsupported) {
       return res.json({ rowCount: 0, orderCount: 0, errors: ['Unsupported file type. Upload XLSX, CSV, or PDF.'], converted: false });
     }
+    const { allRows, skipped, pdfWarnings, flagged } = parsed;
 
     if (allRows.length > UPLOAD_MAX_ROWS) {
       return res.json({ rowCount: allRows.length, orderCount: 0, errors: [`File has ${allRows.length} rows — maximum is ${UPLOAD_MAX_ROWS.toLocaleString()} per upload. Please split into smaller files.`], converted: false });
