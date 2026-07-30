@@ -1499,6 +1499,49 @@
     </div>
   </div>
 
+  <!-- ── Client submissions awaiting approval ──────────────────────────────
+       Orders (and shipping labels) a client sent through their portal. Nothing
+       here is live work yet — approving is what creates the batch. -->
+  <div id="clientSubOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:720px">
+      <div class="modal-title">&#128228; Client Submissions</div>
+      <p class="hint" style="margin:.2rem 0 .7rem">Orders and shipping labels sent in by clients. They are <b>not</b> on the floor until you approve them.</p>
+      <div id="clientSubList" style="max-height:60vh;overflow:auto"></div>
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="clientSubCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Line-level preview for one submission, before approving it -->
+  <div id="clientSubPreviewOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:720px">
+      <div class="modal-title" id="clientSubPrevTitle">Review submission</div>
+      <div id="clientSubPrevBody" style="max-height:58vh;overflow:auto"></div>
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="clientSubPrevBack">&#8592; Back</button>
+        <button class="btn-danger"  id="clientSubRejectBtn">&#10005; Reject</button>
+        <button class="btn-primary" id="clientSubApproveBtn">&#10003; Approve &amp; create orders</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- THE 15-MINUTE PROMPT. A client submission left unapproved for longer than
+       the SLA blocks the screen until it is acknowledged — the point is that it
+       cannot be scrolled past. It is a .modal-overlay, so the global scan
+       capture already refuses to intercept scans while it is open. -->
+  <div id="clientSubNagOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:520px">
+      <div class="modal-title" style="color:#b45309">&#9888; Client work is waiting</div>
+      <p id="clientSubNagText" style="margin:.3rem 0 .8rem;font-size:.95rem;line-height:1.45"></p>
+      <p class="hint" style="margin:0 0 .8rem">Nothing else can be done on this screen until you acknowledge this.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="clientSubNagLater">I'll do it shortly</button>
+        <button class="btn-primary"   id="clientSubNagOpen">Review now</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Administrator Access Modal ── -->
   <div id="logPasswordOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:340px">
@@ -1591,6 +1634,10 @@
       <!-- New work arriving from outside (client ASN, uploaded orders) -->
       <button class="sb-admin-btn poke-btn" id="pokeBtn" title="New work that has come in">
         &#128276; New Work <span class="poke-count hidden" id="pokeCount">0</span>
+      </button>
+      <!-- Client-submitted orders/labels waiting on a decision from us -->
+      <button class="sb-admin-btn poke-btn" id="clientSubBtn" title="Orders and labels sent in by clients, waiting for approval">
+        &#128228; Client Approvals <span class="poke-count hidden" id="clientSubCount">0</span>
       </button>
       <button class="sb-admin-btn" id="logAccessBtn">&#9881; Administrator</button>
       <div id="buildStamp" class="sb-build-stamp" title="Deployed build — compare with the latest commit to confirm a deploy went live"></div>

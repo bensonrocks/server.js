@@ -7217,6 +7217,103 @@ function clientSubPublic(db, s) {
   };
 }
 
+// Parse + enrich + summarise an order file for a client, WITHOUT storing
+// anything. Shared by the portal's preview step and its submit step so the
+// Confirm dialog a client approves is computed exactly like the submission it
+// then creates — the same relationship /api/preview has to /api/upload.
+async function previewClientOrderFile(buffer, filename, client) {
+  const parsed = await parseOrderFileToRows(buffer, filename);
+  if (parsed.unsupported) return { error: 'Unsupported file type. Please upload XLSX, CSV or PDF.' };
+  const rows = parsed.allRows;
+  if (!rows.length) {
+    return { error: 'No order lines were recognised in that file. Each row needs an order number, a SKU (or barcode) and a quantity.' };
+  }
+  const cid = invClientId(client);
+  normalizeOrderRowsToInhouseSku(rows, () => cid);
+  const enrich = enrichLinesFromCatalogue(rows, client);
+  const orders = summarizeOrders(rows);
+  const warnings = [];
+  if (parsed.skipped) warnings.push(`${parsed.skipped} row(s) skipped (missing SKU or order number)`);
+  warnings.push(...parsed.pdfWarnings);
+  if (enrich.unknown) warnings.push(`${enrich.unknown} line(s) are not in your item master and will have no description.`);
+  const duplicateWarnings = findDuplicateLineWarnings(orders).map(w => w.problem);
+  return {
+    rows, orders, enrich,
+    summary: {
+      rowCount: rows.length,
+      orderCount: orders.length,
+      totalQty: orders.reduce((s, o) => s + (o.total_qty || 0), 0),
+      warnings, duplicateWarnings,
+      orders: orders.map(o => ({
+        order_number: o.order_number, total_qty: o.total_qty,
+        lines: (o.lines || []).map(l => ({ sku: l.sku, description: l.description, qty: l.qty })),
+      })),
+    },
+  };
+}
+
+// PORTAL → PREVIEW an orders file before committing to it. Mirrors the office
+// Confirm-Upload step: the client sees exactly what we would receive — orders,
+// lines, resolved SKUs and names, and any warnings — and only then submits.
+app.post('/api/portal/preview-orders', upload.single('file'), (req, res) => {
+  requirePortalAuthMiddleware(req, res, async () => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+      const p = await previewClientOrderFile(req.file.buffer, req.file.originalname, req.portalClient);
+      if (p.error) return res.status(400).json({ error: p.error });
+      res.json({ ok: true, filename: req.file.originalname, ...p.summary });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+});
+
+// PORTAL → submit a WAYBILL / shipping-label PDF. Same idea as the orders file:
+// it does not become a live label import, it waits for approval. Pages are
+// matched to orders by the office at approval time using the existing
+// label-import machinery, so client-supplied labels auto-match exactly like
+// staff-supplied ones.
+app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
+  requirePortalAuthMiddleware(req, res, async () => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+      if (path.extname(req.file.originalname).toLowerCase() !== '.pdf') {
+        return res.status(400).json({ error: 'Shipping labels must be a PDF.' });
+      }
+      const client = req.portalClient;
+      // Count the pages up front so the client — and the approver — know how
+      // many labels are in the file before anything is committed.
+      let pageCount = 0;
+      try { pageCount = (await extractPdfPageTexts(req.file.buffer)).length; } catch (_) { pageCount = 0; }
+      if (!pageCount) return res.status(400).json({ error: 'That PDF has no readable pages.' });
+
+      const db = readDb();
+      const id = uuidv4();
+      fs.writeFileSync(path.join(CLIENT_SUB_DIR, id + '.pdf'), req.file.buffer);
+      const sub = {
+        id, kind: 'labels',
+        code: nextIdealscanCode(db).replace(/^IS-/, 'CS-'),
+        client_name: canonicalClientName(db, client),
+        filename: req.file.originalname,
+        stored_ext: '.pdf',
+        contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+        submitted_at: new Date().toISOString(),
+        submitted_by: `portal:${client}`,
+        status: 'pending',
+        summary: { rowCount: pageCount, orderCount: 0, totalQty: 0, warnings: [], pages: pageCount },
+      };
+      clientSubs(db).unshift(sub);
+      addPoke(db, {
+        kind: 'client_labels_submitted', client: sub.client_name, direction: 'outbound',
+        channel: clientChannel(db, sub.client_name), lines: pageCount,
+        text: `${sub.client_name} submitted ${pageCount} shipping label page(s) for approval (${sub.code})`,
+        submissionId: id,
+      });
+      writeDb(db);
+      logAudit('client_labels_submitted', { id, code: sub.code, client: sub.client_name, filename: sub.filename, pages: pageCount, by: sub.submitted_by });
+      res.status(201).json({ ok: true, submission: clientSubPublic(db, sub) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+});
+
 // PORTAL → submit an orders file. Parsed and previewed immediately so the
 // client is told straight away if the file is unusable, but stored as pending.
 app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {

@@ -225,6 +225,30 @@
   .p-due      { background:var(--surface-2); color:var(--muted); }
   .p-overdue  { background:#ffedd5; color:#9a3412; }
 
+  /* ── Send Orders — mirrors the office upload card ─────────────────────── */
+  .up-drop { margin-top:.8rem; border:2px dashed var(--border); border-radius:14px; text-align:center;
+             padding:1.4rem .9rem; background:var(--surface-2); font-size:.86rem; transition:border-color .15s,background .15s; }
+  .up-drop.over { border-color:var(--brand); background:var(--info-bg); }
+  .up-ico { font-size:1.6rem; line-height:1; margin-bottom:.35rem; color:var(--brand); }
+  .up-row { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin-top:.7rem;
+            padding-top:.7rem; border-top:1px solid var(--border); }
+  .up-row .btn-sm { flex:0 0 auto; }
+  .cfm { margin-top:.7rem; border:1px solid var(--border); border-radius:11px; overflow:hidden; }
+  .cfm-row { display:flex; justify-content:space-between; align-items:center; gap:.6rem;
+             padding:.5rem .7rem; font-size:.83rem; }
+  .cfm-row + .cfm-row { border-top:1px solid var(--border); }
+  .cfm-row > span:first-child { color:var(--muted); font-weight:600; }
+  .cfm-big { font-weight:800; font-size:1.05rem; }
+  .cfm-prev { margin-top:.6rem; max-height:34vh; overflow:auto; border:1px solid var(--border);
+              border-radius:11px; font-size:.78rem; }
+  .cfm-prev .o { padding:.45rem .6rem; border-bottom:1px solid var(--border); }
+  .cfm-prev .o:last-child { border-bottom:0; }
+  .cfm-prev .on { font-weight:800; }
+  .cfm-prev .ln { display:flex; justify-content:space-between; gap:.5rem; color:var(--muted); margin-top:.15rem; }
+  .cfm-prev .ln b { color:var(--text); font-weight:700; }
+  .sub-row { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+  .sub-row .code { font-weight:800; }
+
   /* ── Modal ────────────────────────────────────────────────────────────── */
   .modal-bg { position:fixed; inset:0; z-index:60; background:rgba(11,18,32,.5); display:flex;
               align-items:center; justify-content:center; padding:1rem; }
@@ -310,6 +334,7 @@
     <button data-tab="stock">&#128230; Stock</button>
     <button data-tab="orders">&#128666; Orders</button>
     <button data-tab="inbound">&#128229; Inbound</button>
+    <button data-tab="send">&#128228; Send Orders</button>
   </nav>
   <main>
     <section id="tab-overview">
@@ -427,6 +452,68 @@
       <div id="ibList"></div>
       <div class="muted" id="ibWindowNote" style="text-align:center;font-size:.72rem;margin-top:.8rem"></div>
     </section>
+
+    <!-- ── SEND ORDERS ──────────────────────────────────────────────────────
+         Deliberately a 1:1 adoption of the office "Upload Client Picklist"
+         card: the same accepted file types, the same optional shipping-label
+         PDF alongside it, and the same preview-then-confirm step before
+         anything is committed. The one difference is what Approve does — here
+         it SUBMITS FOR APPROVAL rather than creating live work, because a
+         client's file is reviewed by us first. -->
+    <section id="tab-send" class="hidden">
+      <div class="card asn-card">
+        <b style="font-size:.95rem">&#128228; Send us your orders</b>
+        <div class="muted" style="font-size:.79rem;margin-top:.3rem">
+          Upload your XLSX, CSV or picking-list PDF. Column names are auto-detected — any layout works.
+          Each line needs an order number, a product code and a quantity; the product code can be
+          <b>either your SKU or the barcode</b>, and you don't need to include descriptions —
+          we fill those from your item master.
+        </div>
+
+        <div class="up-drop" id="sendDrop">
+          <input type="file" id="sendFile" accept=".xlsx,.xls,.csv,.pdf" hidden>
+          <div class="up-ico">&#8679;</div>
+          <div>Drag &amp; drop or <button class="link" id="sendBrowse" type="button">browse</button></div>
+          <div class="muted" style="font-size:.72rem;margin-top:.35rem">XLSX &middot; XLS &middot; CSV &middot; PDF &nbsp;|&nbsp; up to 10 MB</div>
+        </div>
+
+        <div class="up-row">
+          <span style="font-size:.82rem">&#127991; Shipping labels PDF <span class="muted">(optional)</span></span>
+          <input type="file" id="sendLabels" accept=".pdf" hidden>
+          <button class="btn-sm" id="sendLabelsBrowse" type="button">Attach PDF</button>
+          <span class="muted" id="sendLabelsName" style="font-size:.78rem"></span>
+        </div>
+
+        <div id="sendMsg" class="asn-msg hidden" style="margin-top:.6rem"></div>
+      </div>
+
+      <div class="sec-head" style="margin-top:1rem"><b>Your submissions</b></div>
+      <div id="sendList"></div>
+    </section>
+
+    <!-- Confirm dialog — same shape as the office Confirm Upload window -->
+    <div class="modal-bg hidden" id="sendConfirm">
+      <div class="modal-box">
+        <b style="font-size:.95rem">Confirm submission</b>
+        <div class="cfm">
+          <div class="cfm-row"><span>File</span><span id="cfmFile">&mdash;</span></div>
+          <div class="cfm-row"><span>Orders</span><span class="cfm-big" id="cfmOrders">&mdash;</span></div>
+          <div class="cfm-row"><span>Lines</span><span class="cfm-big" id="cfmLines">&mdash;</span></div>
+          <div class="cfm-row"><span>Total pieces</span><span class="cfm-big" id="cfmQty">&mdash;</span></div>
+        </div>
+        <div id="cfmWarn" class="asn-msg err hidden" style="margin-top:.5rem"></div>
+        <div id="cfmDup" class="asn-msg hidden" style="margin-top:.5rem"></div>
+        <div class="muted" style="font-size:.76rem;margin-top:.55rem">
+          These lines were matched against your item master. Submitting sends them to us for approval —
+          you'll see the status here, and they only enter processing once we approve.
+        </div>
+        <div id="cfmPreview" class="cfm-prev"></div>
+        <div class="asn-actions" style="margin-top:.8rem">
+          <button class="btn-sm" id="cfmCancel">Cancel</button>
+          <button class="btn-sm asn-primary" id="cfmGo">Submit for approval</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Dated report download (used by every tab's Report button) -->
     <div class="modal-bg hidden" id="dlModal">

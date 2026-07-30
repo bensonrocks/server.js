@@ -876,12 +876,152 @@
   wireSel('orders');
   wireSel('inbound');
 
+  // ── SEND ORDERS ───────────────────────────────────────────────────────────
+  // Deliberately the same shape as the office upload: pick a file, see a
+  // preview of exactly what we would receive, then confirm. The only
+  // difference is what confirming does — it submits for our approval instead
+  // of creating live work, because a client's file is reviewed first.
+  let sendPreview = null;   // {filename, orderCount, rowCount, totalQty, warnings, duplicateWarnings, orders}
+  let sendFileBlob = null;  // the file itself, held until the client confirms
+
+  function sendMsg(text, kind) {
+    const el = $('sendMsg');
+    el.className = 'asn-msg' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+
+  async function sendPickFile(file) {
+    if (!file) return;
+    sendFileBlob = file;
+    sendMsg('Reading ' + file.name + '…', 'busy');
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch('/api/portal/preview-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const d = await r.json();
+      if (!r.ok) { sendMsg(d.error || 'We could not read that file.', 'err'); sendFileBlob = null; return; }
+      sendPreview = d;
+      $('sendMsg').classList.add('hidden');
+      openSendConfirm();
+    } catch (e) {
+      sendMsg('Network error — please try again.', 'err');
+    }
+  }
+
+  function openSendConfirm() {
+    const d = sendPreview;
+    $('cfmFile').textContent = d.filename;
+    $('cfmOrders').textContent = d.orderCount;
+    $('cfmLines').textContent = d.rowCount;
+    $('cfmQty').textContent = d.totalQty;
+    const w = $('cfmWarn');
+    if ((d.warnings || []).length) { w.innerHTML = d.warnings.map(esc).join('<br>'); w.classList.remove('hidden'); }
+    else w.classList.add('hidden');
+    const dup = $('cfmDup');
+    if ((d.duplicateWarnings || []).length) { dup.innerHTML = d.duplicateWarnings.map(esc).join('<br>'); dup.classList.remove('hidden'); }
+    else dup.classList.add('hidden');
+    // Line-level preview so the client can see the SKUs and names WE resolved —
+    // this is what proves a barcode-only file came out right before they send it.
+    $('cfmPreview').innerHTML = (d.orders || []).map(o => `
+      <div class="o">
+        <div class="on">${esc(o.order_number)} <span class="muted">· ${o.total_qty} pc</span></div>
+        ${(o.lines || []).map(l => `<div class="ln"><b>${esc(l.sku)}</b><span>${esc(String(l.description || '').slice(0, 44))}</span><span>×${l.qty}</span></div>`).join('')}
+      </div>`).join('');
+    $('sendConfirm').classList.remove('hidden');
+  }
+
+  async function sendSubmit() {
+    if (!sendFileBlob) return;
+    $('cfmGo').disabled = true;
+    const fd = new FormData();
+    fd.append('file', sendFileBlob);
+    try {
+      const r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const d = await r.json();
+      if (!r.ok) { sendMsg(d.error || 'Submission failed.', 'err'); return; }
+      sendMsg(`✓ Sent for approval as ${d.submission.code} — ${d.submission.order_count} order(s). You'll see the status below.`, '');
+      sendPreview = null; sendFileBlob = null;
+      $('sendFile').value = '';
+      loadSubmissions();
+    } catch (e) {
+      sendMsg('Network error — nothing was submitted.', 'err');
+    } finally {
+      $('cfmGo').disabled = false;
+      $('sendConfirm').classList.add('hidden');
+    }
+  }
+
+  async function sendLabelsFile(file) {
+    if (!file) return;
+    $('sendLabelsName').textContent = file.name;
+    sendMsg('Uploading ' + file.name + '…', 'busy');
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch('/api/portal/submit-labels', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const d = await r.json();
+      if (!r.ok) { sendMsg(d.error || 'We could not read that PDF.', 'err'); return; }
+      sendMsg(`✓ ${d.submission.row_count} label page(s) sent for approval as ${d.submission.code}.`, '');
+      $('sendLabels').value = ''; $('sendLabelsName').textContent = '';
+      loadSubmissions();
+    } catch (e) { sendMsg('Network error — nothing was submitted.', 'err'); }
+  }
+
+  const SUB_PILL = {
+    pending:  ['p-due',     'Waiting for approval'],
+    approved: ['p-sla-met', 'Approved'],
+    rejected: ['p-sla-miss', 'Not accepted'],
+  };
+  async function loadSubmissions() {
+    try {
+      const rows = await (await api('/api/portal/submissions')).json();
+      const el = $('sendList');
+      if (!Array.isArray(rows) || !rows.length) {
+        el.innerHTML = '<div class="card muted" style="font-size:.83rem">Nothing sent yet. Anything you upload above appears here with its status.</div>';
+        return;
+      }
+      el.innerHTML = rows.map(s => {
+        const [cls, label] = SUB_PILL[s.status] || ['p-due', s.status];
+        const kind = s.kind === 'labels' ? `${s.row_count} label page(s)` : `${s.order_count} order(s) · ${s.row_count} line(s)`;
+        const orders = (s.orders || []).map(o =>
+          `<span class="pill ${o.status === 'done' ? 'p-sla-met' : 'p-due'}">${esc(o.order_number)} · ${esc(o.status)}</span>`).join(' ');
+        return `<div class="card">
+          <div class="sub-row">
+            <span class="code">${esc(s.code)}</span>
+            <span class="pill ${cls}">${esc(label)}</span>
+            <span class="muted" style="margin-left:auto;font-size:.76rem">${esc(fmtDateTime(s.submitted_at))}</span>
+          </div>
+          <div class="muted" style="font-size:.79rem;margin-top:.25rem">${esc(s.filename)} — ${kind}</div>
+          ${s.job_code ? `<div class="muted" style="font-size:.78rem;margin-top:.2rem">Our job reference: <b>${esc(s.job_code)}</b></div>` : ''}
+          ${s.status === 'rejected' && s.reject_reason ? `<div class="asn-msg err" style="margin-top:.45rem">${esc(s.reject_reason)}</div>` : ''}
+          ${orders ? `<div style="margin-top:.45rem;display:flex;gap:.3rem;flex-wrap:wrap">${orders}</div>` : ''}
+        </div>`;
+      }).join('');
+    } catch (e) { /* leave whatever is on screen */ }
+  }
+
   // ── Wiring ────────────────────────────────────────────────────────────────
   document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
     document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + b.dataset.tab));
+    if (b.dataset.tab === 'send') loadSubmissions();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }));
+
+  // Send Orders — file pickers, drag & drop, and the confirm dialog
+  $('sendBrowse').addEventListener('click', () => $('sendFile').click());
+  $('sendFile').addEventListener('change', e => sendPickFile(e.target.files[0]));
+  $('sendLabelsBrowse').addEventListener('click', () => $('sendLabels').click());
+  $('sendLabels').addEventListener('change', e => sendLabelsFile(e.target.files[0]));
+  {
+    const dz = $('sendDrop');
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
+    dz.addEventListener('drop', e => sendPickFile(e.dataTransfer?.files?.[0]));
+  }
+  $('cfmCancel').addEventListener('click', () => { $('sendConfirm').classList.add('hidden'); sendPreview = null; sendFileBlob = null; $('sendFile').value = ''; });
+  $('cfmGo').addEventListener('click', sendSubmit);
   function wireChips(wrapId, set) {
     const wrap = $(wrapId);
     if (!wrap) return;

@@ -3218,3 +3218,10 @@ tr.row-pendingsync td { background: #fffbeb !important; }
   #waveDetailWrap .section-header > div > button { flex: 1 1 auto; min-height: 42px; font-size: .85rem; }
   #waveCompleteBtn { flex: 1 1 100% !important; }
 }
+
+/* Client-submission status pills (Client Approvals queue) */
+.cs-pill { display:inline-block; margin-left:.4rem; padding:.1rem .5rem; border-radius:99px;
+           font-size:.68rem; font-weight:800; background:var(--bg); color:var(--text-light); }
+.cs-pill.ok   { background:#dcfce7; color:#166534; }
+.cs-pill.bad  { background:#fee2e2; color:#991b1b; }
+.cs-pill.warn { background:#ffedd5; color:#9a3412; }

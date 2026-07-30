@@ -12023,6 +12023,170 @@
   // Work that arrives from OUTSIDE the office — a client submitting an ASN
   // through their portal, or a batch of outbound orders landing — surfaces here
   // so nobody has to keep refreshing the Inbound/Orders tabs to notice it.
+  // ── Client submissions — approve before they become work ─────────────────
+  // A client's portal upload waits here. The queue polls on the same cadence as
+  // the poke bell, and anything left unapproved past the server's SLA raises a
+  // BLOCKING prompt: per the requirement, the screen cannot be used for
+  // anything else until it is acknowledged.
+  (function initClientSubs() {
+    const btn = document.getElementById('clientSubBtn');
+    if (!btn) return;
+    const countEl = document.getElementById('clientSubCount');
+    let rows = [], pending = 0, overdue = 0, slaMinutes = 15;
+    let current = null;                       // submission open in the preview
+    let nagShownFor = new Set();              // ids already acknowledged this session
+
+    async function load() {
+      if (!localStorage.getItem('wms_token')) return;   // never call /api before login
+      try {
+        const d = await (await fetch('/api/client-submissions')).json();
+        rows = d.rows || []; pending = d.pending || 0; overdue = d.overdue || 0;
+        slaMinutes = d.slaMinutes || 15;
+        countEl.textContent = pending;
+        countEl.classList.toggle('hidden', pending === 0);
+        btn.classList.toggle('has-new', pending > 0);
+        maybeNag();
+      } catch (_) { /* offline — keep the last state */ }
+    }
+
+    // THE 15-MINUTE PROMPT. Blocks the screen for the oldest overdue submission
+    // that has not already been acknowledged in this session.
+    function maybeNag() {
+      if (document.querySelector('.modal-overlay:not(.hidden)')) return;  // don't stack on another dialog
+      const due = rows.filter(r => r.overdue && !nagShownFor.has(r.id));
+      if (!due.length) return;
+      const s = due[due.length - 1];          // oldest first — rows come newest-first
+      document.getElementById('clientSubNagText').innerHTML =
+        `<b>${esc(s.client_name)}</b> sent ${s.kind === 'labels' ? `${s.row_count} shipping label page(s)` : `${s.order_count} order(s)`} `
+        + `(<b>${esc(s.code)}</b>) <b>${s.age_minutes} minutes ago</b> and it has not been approved yet.<br><br>`
+        + `Approval is what puts this on the floor — until then nobody is picking it.`;
+      document.getElementById('clientSubNagOverlay').classList.remove('hidden');
+      document.getElementById('clientSubNagOverlay').dataset.subId = s.id;
+    }
+
+    function render() {
+      const el = document.getElementById('clientSubList');
+      if (!rows.length) {
+        el.innerHTML = '<p class="hint" style="text-align:center;padding:1.6rem 0">No client submissions yet. '
+          + 'Anything a client uploads from their portal appears here for approval.</p>';
+        return;
+      }
+      el.innerHTML = rows.map(s => {
+        const pend = s.status === 'pending';
+        const cls = s.status === 'approved' ? 'ok' : s.status === 'rejected' ? 'bad' : (s.overdue ? 'warn' : '');
+        const label = s.status === 'approved' ? 'Approved' : s.status === 'rejected' ? 'Rejected'
+                    : (s.overdue ? `Waiting ${s.age_minutes} min` : 'Waiting');
+        const what = s.kind === 'labels'
+          ? `${s.row_count} shipping label page(s)`
+          : `${s.order_count} order(s) · ${s.row_count} line(s) · ${s.total_qty} pcs`;
+        return `<div class="poke-row ${pend ? 'unread' : ''}">
+          <div class="pk-ic out">${s.kind === 'labels' ? '&#127991;' : '&#128666;'}</div>
+          <div class="pk-b">
+            <div class="pk-t">${esc(s.client_name)} <span class="poke-chan">${esc(s.code)}</span>
+              <span class="cs-pill ${cls}">${esc(label)}</span></div>
+            <div class="pk-s">${esc(s.filename)} — ${what}</div>
+            ${s.job_code ? `<div class="pk-s">Created job <b>${esc(s.job_code)}</b></div>` : ''}
+            ${s.reject_reason ? `<div class="pk-s">Reason: ${esc(s.reject_reason)}</div>` : ''}
+          </div>
+          ${pend ? `<button class="btn-primary btn-sm cs-review" data-id="${esc(s.id)}">Review</button>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    async function openPreview(id) {
+      const d = await (await fetch('/api/client-submissions/' + encodeURIComponent(id))).json();
+      current = d;
+      document.getElementById('clientSubPrevTitle').textContent = `${d.client_name} — ${d.code}`;
+      const warn = (d.warnings || []).length
+        ? `<div class="confirm-errors">${d.warnings.map(esc).join('<br>')}</div>` : '';
+      const body = d.kind === 'labels'
+        ? `<p class="hint">${esc(d.filename)} — ${d.row_count} label page(s). Approving files these against matching orders.</p>`
+        : `<p class="hint">${esc(d.filename)} — ${d.order_count} order(s), ${d.row_count} line(s), ${d.total_qty} pcs.
+             SKUs and descriptions below were resolved against this client's item master.</p>
+           ${warn}
+           <table class="tbl" style="width:100%;border-collapse:collapse;font-size:.82rem">
+             <thead><tr><th>Order</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th></tr></thead>
+             <tbody>${(d.preview || []).map(o => (o.lines || []).map((l, i) => `<tr>
+               <td>${i === 0 ? esc(o.order_number) : ''}</td><td><b>${esc(l.sku)}</b></td>
+               <td>${esc(String(l.description || '').slice(0, 60))}</td>
+               <td style="text-align:right">${l.qty}</td></tr>`).join('')).join('')}</tbody>
+           </table>`;
+      document.getElementById('clientSubPrevBody').innerHTML = body;
+      document.getElementById('clientSubOverlay').classList.add('hidden');
+      document.getElementById('clientSubPreviewOverlay').classList.remove('hidden');
+    }
+
+    async function approve() {
+      if (!current) return;
+      const arrange = confirm('Also create Transport delivery jobs for these orders?\n\nOK = yes, create them\nCancel = orders only');
+      let r = await fetch(`/api/client-submissions/${encodeURIComponent(current.id)}/approve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ arrange_delivery: arrange ? 'yes' : 'no' }),
+      });
+      let j = await r.json();
+      if (r.status === 409 && j.needsDuplicateConfirm) {
+        const list = (j.duplicates || []).map(d => `${d.order} (${d.status})`).join('\n');
+        if (!confirm(`${j.message}\n\n${list}\n\nApprove anyway?`)) return;
+        r = await fetch(`/api/client-submissions/${encodeURIComponent(current.id)}/approve`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+          body: JSON.stringify({ arrange_delivery: arrange ? 'yes' : 'no', confirm_duplicates: 'yes' }),
+        });
+        j = await r.json();
+      }
+      if (!r.ok) { alert(j.error || 'Could not approve.'); return; }
+      alert(`Approved — job ${j.job} created with ${j.orderCount} order(s).`);
+      document.getElementById('clientSubPreviewOverlay').classList.add('hidden');
+      current = null;
+      await load(); render();
+      if (typeof refreshOrders === 'function') refreshOrders();
+    }
+
+    async function reject() {
+      if (!current) return;
+      const reason = prompt('Why are you rejecting this? The client sees this message.');
+      if (reason === null) return;
+      if (!reason.trim()) { alert('A reason is required.'); return; }
+      const r = await fetch(`/api/client-submissions/${encodeURIComponent(current.id)}/reject`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || 'Could not reject.'); return; }
+      document.getElementById('clientSubPreviewOverlay').classList.add('hidden');
+      current = null;
+      await load(); render();
+    }
+
+    btn.addEventListener('click', () => { load().then(render); document.getElementById('clientSubOverlay').classList.remove('hidden'); });
+    document.getElementById('clientSubCloseBtn').addEventListener('click', () => document.getElementById('clientSubOverlay').classList.add('hidden'));
+    document.getElementById('clientSubList').addEventListener('click', e => {
+      const b = e.target.closest('.cs-review'); if (b) openPreview(b.dataset.id);
+    });
+    document.getElementById('clientSubPrevBack').addEventListener('click', () => {
+      document.getElementById('clientSubPreviewOverlay').classList.add('hidden');
+      document.getElementById('clientSubOverlay').classList.remove('hidden');
+    });
+    document.getElementById('clientSubApproveBtn').addEventListener('click', approve);
+    document.getElementById('clientSubRejectBtn').addEventListener('click', reject);
+    document.getElementById('clientSubNagLater').addEventListener('click', () => {
+      const ov = document.getElementById('clientSubNagOverlay');
+      nagShownFor.add(ov.dataset.subId); ov.classList.add('hidden');
+    });
+    document.getElementById('clientSubNagOpen').addEventListener('click', () => {
+      const ov = document.getElementById('clientSubNagOverlay');
+      nagShownFor.add(ov.dataset.subId); ov.classList.add('hidden');
+      load().then(render);
+      document.getElementById('clientSubOverlay').classList.remove('hidden');
+    });
+
+    // Same self-arming schedule the poke bell uses: poll fast until a token
+    // exists (initPokes runs at parse time, before login), then settle.
+    (function tick() {
+      load();
+      setTimeout(tick, localStorage.getItem('wms_token') ? 60000 : 2000);
+    })();
+  })();
+
   (function initPokes() {
     const btn = document.getElementById('pokeBtn');
     if (!btn) return;
