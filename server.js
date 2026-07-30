@@ -4286,6 +4286,91 @@ function matchLabelPage(rawText, extracted, index) {
   return null;
 }
 
+// ── Label-PDF processing, in ONE place ──────────────────────────────────────
+// Split the PDF into per-page files, extract each page's fields, and match it
+// to an order. Extracted from POST /api/label-imports so that a WAYBILL PDF A
+// CLIENT SENT THROUGH THEIR PORTAL is processed by exactly the same code on
+// approval — same page split, same extraction, same match index, same
+// first-write-wins rules. A second implementation would have drifted the first
+// time either side learned something.
+async function processLabelPdf(buffer, filename, uploadedBy) {
+  const contentHash = crypto.createHash('sha256').update(buffer).digest('hex');
+  const importId  = uuidv4();
+  const importDir = path.join(LABEL_IMPORT_DIR, importId);
+  fs.mkdirSync(importDir, { recursive: true });
+
+  const pdfDoc   = await PDFDocument.load(buffer);
+  const numPages = pdfDoc.getPageCount();
+
+  const matchIndex = buildLabelMatchIndex();
+
+  const db = readDb();
+  if (!db.labelImports) db.labelImports = [];
+  if (!db.orderLabels)  db.orderLabels  = {};
+
+  const pages              = [];
+  const matchedThisImport  = new Set();
+
+  // Per-page text from the ORIGINAL upload — pdf-lib re-saved single pages
+  // frequently fail to parse, so text extraction must happen before the split
+  let pageTexts  = [];
+  let parseError = false;
+  try { pageTexts = await extractPdfPageTexts(buffer); }
+  catch (e) { parseError = true; console.error('[label-import] text extraction:', e.message); }
+
+  for (let i = 0; i < numPages; i++) {
+    const single  = await PDFDocument.create();
+    const [pg]    = await single.copyPages(pdfDoc, [i]);
+    single.addPage(pg);
+    const pageBuf  = Buffer.from(await single.save());
+    const pageFile = `page_${i + 1}.pdf`;
+    fs.writeFileSync(path.join(importDir, pageFile), pageBuf);
+
+    const rawText          = pageTexts[i] || '';
+    let extracted          = {};
+    let matchStatus        = parseError ? 'error' : 'unmatched';
+    let matchedOrderNumber = null;
+    let matchMethod        = null;
+
+    if (rawText) {
+      try {
+        if (extractLabelFields) extracted = extractLabelFields(rawText);
+        const hit = matchLabelPage(rawText, extracted, matchIndex);
+        if (hit) {
+          matchedOrderNumber = hit.hit;
+          matchStatus  = matchedThisImport.has(hit.hit) ? 'duplicate' : 'matched';
+          matchMethod  = hit.method;
+          matchedThisImport.add(hit.hit);
+        }
+      } catch (e) { matchStatus = 'error'; }
+    }
+
+    if (matchedOrderNumber && matchStatus === 'matched') {
+      db.orderLabels[matchedOrderNumber] = {
+        importId, pageIndex: i, pageFile,
+        attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
+      };
+    }
+
+    // rawText kept (truncated) so later rematches can reverse-scan without
+    // re-parsing the PDF from the volume
+    pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000), matchStatus, matchedOrderNumber, matchMethod });
+  }
+
+  const importRecord = {
+    id: importId, filename: filename || 'label.pdf',
+    contentHash: contentHash,
+    uploadedAt: new Date().toISOString(), uploadedBy: uploadedBy,
+    pageCount: numPages, pages,
+  };
+  db.labelImports.push(importRecord);
+  writeDb(db);
+
+
+  const matched = pages.filter(p => p.matchStatus === 'matched').length;
+  return { importId, pageCount: numPages, matched, import: importRecord };
+}
+
 app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), tenantMiddleware, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
@@ -4326,79 +4411,9 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
       }
     }
 
-    const importId  = uuidv4();
-    const importDir = path.join(LABEL_IMPORT_DIR, importId);
-    fs.mkdirSync(importDir, { recursive: true });
-
-    const pdfDoc   = await PDFDocument.load(req.file.buffer);
-    const numPages = pdfDoc.getPageCount();
-
-    const matchIndex = buildLabelMatchIndex();
-
-    const db = readDb();
-    if (!db.labelImports) db.labelImports = [];
-    if (!db.orderLabels)  db.orderLabels  = {};
-
-    const pages              = [];
-    const matchedThisImport  = new Set();
-
-    // Per-page text from the ORIGINAL upload — pdf-lib re-saved single pages
-    // frequently fail to parse, so text extraction must happen before the split
-    let pageTexts  = [];
-    let parseError = false;
-    try { pageTexts = await extractPdfPageTexts(req.file.buffer); }
-    catch (e) { parseError = true; console.error('[label-import] text extraction:', e.message); }
-
-    for (let i = 0; i < numPages; i++) {
-      const single  = await PDFDocument.create();
-      const [pg]    = await single.copyPages(pdfDoc, [i]);
-      single.addPage(pg);
-      const pageBuf  = Buffer.from(await single.save());
-      const pageFile = `page_${i + 1}.pdf`;
-      fs.writeFileSync(path.join(importDir, pageFile), pageBuf);
-
-      const rawText          = pageTexts[i] || '';
-      let extracted          = {};
-      let matchStatus        = parseError ? 'error' : 'unmatched';
-      let matchedOrderNumber = null;
-      let matchMethod        = null;
-
-      if (rawText) {
-        try {
-          if (extractLabelFields) extracted = extractLabelFields(rawText);
-          const hit = matchLabelPage(rawText, extracted, matchIndex);
-          if (hit) {
-            matchedOrderNumber = hit.hit;
-            matchStatus  = matchedThisImport.has(hit.hit) ? 'duplicate' : 'matched';
-            matchMethod  = hit.method;
-            matchedThisImport.add(hit.hit);
-          }
-        } catch (e) { matchStatus = 'error'; }
-      }
-
-      if (matchedOrderNumber && matchStatus === 'matched') {
-        db.orderLabels[matchedOrderNumber] = {
-          importId, pageIndex: i, pageFile,
-          attachedAt: new Date().toISOString(), attachedBy: req.userId,
-        };
-      }
-
-      // rawText kept (truncated) so later rematches can reverse-scan without
-      // re-parsing the PDF from the volume
-      pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000), matchStatus, matchedOrderNumber, matchMethod });
-    }
-
-    const importRecord = {
-      id: importId, filename: req.file.originalname || 'label.pdf',
-      contentHash: labelHash,
-      uploadedAt: new Date().toISOString(), uploadedBy: req.userId,
-      pageCount: numPages, pages,
-    };
-    db.labelImports.push(importRecord);
-    writeDb(db);
-
-    const matched = pages.filter(p => p.matchStatus === 'matched').length;
-    res.json({ ok: true, importId, pageCount: numPages, matched, import: importRecord });
+    const { importId, pageCount, matched, import: importRecord } =
+      await processLabelPdf(req.file.buffer, req.file.originalname, req.userId);
+    res.json({ ok: true, importId, pageCount, matched, import: importRecord });
 
     // Image-only pages (no text layer) can't match yet — kick off a background
     // OCR pass so they're matched by the time anyone opens the review screen.
@@ -7500,6 +7515,32 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
   let buf;
   try { buf = fs.readFileSync(path.join(CLIENT_SUB_DIR, s0.id + (s0.stored_ext || ''))); }
   catch { return res.status(410).json({ error: 'The submitted file is no longer on the volume — ask the client to re-submit.' }); }
+
+  // A client-sent WAYBILL / shipping-label PDF goes through the SAME processing
+  // a staff-uploaded one does — processLabelPdf splits the pages, extracts each
+  // page's fields and matches them to orders using the same index and the same
+  // first-write-wins rules. Approving is simply when that happens.
+  if (s0.kind === 'labels') {
+    try {
+      const out = await processLabelPdf(buf, s0.filename, req.userId || `approved:${s0.client_name}`);
+      const db = readDb();
+      const s = clientSubs(db).find(x => x.id === req.params.id);
+      s.status = 'approved';
+      s.approved_at = new Date().toISOString();
+      s.approved_by = req.userId || '';
+      s.label_import_id = out.importId;
+      s.summary = { ...(s.summary || {}), matched: out.matched, pages: out.pageCount };
+      writeDb(db);
+      logAudit('client_labels_approved', {
+        id: s.id, code: s.code, client: s.client_name, importId: out.importId,
+        pages: out.pageCount, matched: out.matched, by: req.userId || '',
+      });
+      return res.json({ ok: true, kind: 'labels', importId: out.importId,
+        pageCount: out.pageCount, matched: out.matched, submission: clientSubPublic(db, s) });
+    } catch (err) {
+      return res.status(500).json({ error: 'Could not process that label PDF: ' + err.message });
+    }
+  }
 
   try {
     const parsed = await parseOrderFileToRows(buf, s0.filename);
