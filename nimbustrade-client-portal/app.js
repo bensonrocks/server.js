@@ -609,6 +609,43 @@
 
   // ---------- Rates ----------
 
+  function fmtUsd(n) {
+    return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function liveIndicativeTable(li) {
+    if (!li) return '';
+    return `
+      <div class="rate-section">
+        <h4>Current month at actual volumes (live)</h4>
+        <p class="panel-sub">Computed from your real ${escapeHtml(monthLabel(li.month))} order data — actual order counts and item quantities — run through the tiered schedule above. Domestic delivery assumes the standard (up to 2.00 kg) band, the same despatch-weight assumption the modelled table above uses.</p>
+        <div class="table-wrap">
+          <table class="rates-table">
+            <thead>
+              <tr><th>Market</th><th>Orders</th><th>Items (qty)</th><th>Avg items/order</th><th>Tier applied</th><th>Indicative fee (USD)</th></tr>
+            </thead>
+            <tbody>
+              ${li.markets.map((m) => `
+                <tr>
+                  <td>${escapeHtml(m.countryName)}</td>
+                  <td>${m.orders.toLocaleString()}</td>
+                  <td>${m.qty.toLocaleString()}</td>
+                  <td>${m.avgItemsPerOrder.toFixed(2)}</td>
+                  <td>${escapeHtml(m.tierLabel)}</td>
+                  <td>${fmtUsd(m.total)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap rates-total-wrap">
+          <table class="rates-table rates-total-row">
+            <tbody><tr><td>Total</td><td>${li.totalOrders.toLocaleString()}</td><td colspan="3"></td><td>${fmtUsd(li.totalFee)}</td></tr></tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
   function ratesTable(section) {
     return `
       <div class="rate-section">
@@ -667,6 +704,8 @@
           </table>
         </div>
         <p class="panel-sub">${escapeHtml(rc.indicative.footnote)}</p>
+
+        ${liveIndicativeTable(data.liveIndicative)}
 
         <div class="rate-section">
           <h4>Commercial terms</h4>

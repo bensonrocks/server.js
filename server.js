@@ -39,7 +39,7 @@ const ntStaffAuth  = require('./lib/nimbustrade-portal/staff-auth');
 const ntStore      = require('./lib/nimbustrade-portal/store');
 const ntTracking   = require('./lib/nimbustrade-portal/tracking');
 const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
-const { seedBWLRateCard } = require('./lib/nimbustrade-portal/rate-card');
+const { seedBWLRateCard, computeLiveIndicative } = require('./lib/nimbustrade-portal/rate-card');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
 
@@ -1233,7 +1233,13 @@ app.get('/client-access/api/orders/:id/tracking', withNTAuth, async (req, res) =
 
 app.get('/client-access/api/rates', withNTAuth, (req, res) => {
   const rateCard = ntStore.getRateCardForClient(req.ntClientId);
-  if (rateCard) return res.json({ configured: true, rateCard });
+  if (rateCard) {
+    return res.json({
+      configured: true,
+      rateCard,
+      liveIndicative: computeLiveIndicative(req.ntClientId),
+    });
+  }
   // Fall back to the old flat per-DC figures for any client without a full rate card yet.
   res.json({ configured: false, perLocation: ntStore.getRatesForClient(req.ntClientId) });
 });
