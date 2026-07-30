@@ -967,6 +967,43 @@ that target has held scans** — closing over a hole would bank a short count as
 final (and, for a receipt, record the shortfall against the supplier). The job
 stays open and reopenable; the queue drains on its own.
 
+### Every scan is BOUND to its target at scan time, never re-read later
+
+A live crash from the floor:
+`TypeError: Cannot read properties of null (reading 'order_number')` at
+`enqueueOfflineScan`. The drain is async, so `closeScanOverlay` (which sets
+`activeOrder = null`) can run while a scan request is still open; when the
+request then failed, the catch called `enqueueOfflineScan`, which dereferenced
+the now-null `activeOrder` and threw UNCAUGHT — **and the piece was lost**,
+because the throw killed the very enqueue meant to save it. Reproduced exactly
+against the deployed code (`entries=[]` proves the loss), then fixed.
+
+The same code had a worse, quieter bug: `_drainScanQueue` read
+`activeOrder.order_number` when BUILDING the request, so a piece scanned on
+order A while the packer moved to order B was **posted against B**.
+
+Fix, applied identically on all three paths: the target id is captured at scan
+time and carried on the queue entry —
+`_scanQueue.push({raw, orderNumber, eventId})`, `inboundScan`'s `jobId`,
+`_waveScanQueue.push({raw, eventId, waveId})`. Nothing downstream re-reads
+`activeOrder`/`activeInbound`/`currentWave` for identity. Every UI write is
+gated behind an `onScreen()` / `stillOpen()` check comparing the captured id to
+what is open now, and `enqueueOfflineScan(raw, eventId, orderNumber)` takes the
+order explicitly and returns quietly rather than throwing if there is nothing to
+attribute the scan to. A scan that lands while its screen is closed is still
+recorded server-side; only the repaint is skipped.
+
+Verified: 8 checks (no TypeError when the overlay closes mid-scan, the piece is
+still saved against the RIGHT order, it drains once the network returns, on
+phone and desktop) + 2 checks that a mid-flight order switch still posts to the
+order the scan was taken on + 10 regression checks. The crash test fails 6/8
+against the pre-fix code, so it genuinely reproduces.
+
+TEST GOTCHA: typing a SKU with `delay:3` on a busy desktop page makes the gaps
+exceed `QTY_BURST_GAP_MS` (140ms), so the qty-burst detector splits the code and
+the assertion reads a TAIL fragment (`"-1011"`) — the harness, not the app.
+Click the scan input first and type at ~15ms.
+
 ### Two real defects this audit turned up (both were losing pieces)
 
 - **Wave scanning dropped scans silently.** `waveUI.scan` guarded concurrency

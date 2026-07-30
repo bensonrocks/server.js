@@ -6292,13 +6292,19 @@
     // outbound side; receiving must not repeat it.
     const eventId = _newEventId();
     const condition = inboundCondition;
+    // Bind the scan to the job it was taken on, for the same reason the order
+    // path does: everything after the await may run with activeInbound null
+    // (receiver went back) or pointing at a different job.
+    const jobId = activeInbound.id;
+    const stillOpen = () => !!activeInbound && activeInbound.id === jobId;
     try {
-      const resp = await fetchT(`/api/inbound/${activeInbound.id}/scan`, {
+      const resp = await fetchT(`/api/inbound/${jobId}/scan`, {
         method: 'POST', headers: hdrs(),
         body: JSON.stringify({ code, qty: 1, condition, eventId }),
       });
       const data = await resp.json();
       if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Scan failed'); return; }
+      if (!stillOpen()) return;   // landed server-side; nothing on screen to update
       activeInbound.scanned[data.sku] = data.scanned_qty;
       activeInbound.status = 'processing';
       activeInbound.active_carton_num = data.cartonNum;
@@ -6333,8 +6339,9 @@
       // NETWORK DOWN — the piece is in the receiver's hand and must not be
       // lost. Queue it durably (localStorage, survives a reload and a browser
       // restart) and count it on screen as pending, exactly like outbound.
-      enqueueOfflineTargetScan('inbound', activeInbound.id, code, eventId, { condition });
-      const held = pendingScansForTarget('inbound', activeInbound.id).length;
+      enqueueOfflineTargetScan('inbound', jobId, code, eventId, { condition });
+      const held = pendingScansForTarget('inbound', jobId).length;
+      if (!stillOpen()) return;
       showFeedback(feedback, 'pending',
         `⚡ No connection — scan saved (${code}), ${held} waiting to sync automatically`);
       renderInboundItemsTable(activeInbound);
@@ -8114,8 +8121,16 @@
     // retry reuses this same id and the server's dedupe absorbs it. Minting
     // only at enqueue time (the old way) meant a slow-response scan was
     // counted once live and once again on replay — "scan 1, get 2 pcs".
+    // BIND THE SCAN TO THE ORDER IT WAS TAKEN ON, here and now. The drain is
+    // async, so reading activeOrder when the request is built (the old way) was
+    // wrong twice over: it CRASHED if the packer closed the overlay while a
+    // request was in flight (activeOrder null → TypeError, reported from the
+    // floor), and worse, if they opened a DIFFERENT order in that window the
+    // piece would have been posted against the new one.
+    if (!activeOrder) return;   // nothing open to scan against
     _scanQueue.push({
       raw: sku,
+      orderNumber: activeOrder.order_number,
       eventId: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
     });
     if (!_scanBusy) _drainScanQueue();
@@ -8232,17 +8247,30 @@
     scheduleOfflineSync(4000);
   }
 
-  function enqueueOfflineScan(raw, eventId) {
+  // `orderNumber` is passed explicitly by the drain, because this is called
+  // AFTER an await: activeOrder may be null (overlay closed) or already a
+  // different order. Reading it off activeOrder unguarded is what produced the
+  // TypeError reported from the floor — and a lost piece with it, since the
+  // throw killed the enqueue that was meant to save the scan.
+  function enqueueOfflineScan(raw, eventId, orderNumber) {
+    const target = orderNumber || activeOrder?.order_number;
+    if (!target) return;   // nothing to attribute the scan to; never throw here
     const evt = {
       id: eventId || _newEventId(),
       kind: 'order',
-      targetId: activeOrder.order_number,
-      orderNumber: activeOrder.order_number,
+      targetId: target,
+      orderNumber: target,
       raw: String(raw).trim(),
       at: new Date().toISOString(),
     };
     _offlineQueue.push(evt);
     _saveOffQ();
+    updateOfflinePill();
+    scheduleOfflineSync(4000);
+    // Everything below is screen feedback — only meaningful while that order is
+    // still the one open.
+    const onScreen = activeOrder && activeOrder.order_number === target;
+    if (!onScreen) return;
     const sku = resolveScanLocally(evt.raw, activeOrder);
     const feedback = document.getElementById('itemScanFeedback');
     showFeedback(feedback, 'pending',
@@ -8251,8 +8279,6 @@
     if (sku) { scanFocusSku = sku; scanPageManual = false; }
     renderItemsTable(activeOrder);
     updateProgress(activeOrder);
-    updateOfflinePill();
-    scheduleOfflineSync(4000);
   }
 
   let _offSyncTimer = null;
@@ -8358,11 +8384,17 @@
       const entry    = _scanQueue.shift();
       const sku      = entry.raw;
       const eventId  = entry.eventId;
+      // The order this piece belongs to, captured at scan time — never read off
+      // activeOrder here, which may have been closed or swapped mid-request.
+      const orderNumber = entry.orderNumber || activeOrder?.order_number;
+      if (!orderNumber) continue;
+      // Is that order still the one on screen? Only then may we touch the UI.
+      const onScreen = () => !!activeOrder && activeOrder.order_number === orderNumber;
       const feedback = document.getElementById('itemScanFeedback');
       try {
         const resp = await fetchT('/api/scan/increment', {
           method: 'POST', headers: hdrs(),
-          body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, eventId }),
+          body: JSON.stringify({ orderNumber, sku, eventId }),
         });
         let data = await resp.json();
         if (!resp.ok) {
@@ -8379,7 +8411,7 @@
             const retryId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
             const retry = await fetchT('/api/scan/increment', {
               method: 'POST', headers: hdrs(),
-              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku: stripped, eventId: retryId }),
+              body: JSON.stringify({ orderNumber, sku: stripped, eventId: retryId }),
             });
             const retryData = await retry.json();
             if (retry.ok) {
@@ -8398,7 +8430,7 @@
             if (!ok) { continue; }
             const retry = await fetchT('/api/scan/increment', {
               method: 'POST', headers: hdrs(),
-              body: JSON.stringify({ orderNumber: activeOrder.order_number, sku, eventId, confirmCrossCarton: true }),
+              body: JSON.stringify({ orderNumber, sku, eventId, confirmCrossCarton: true }),
             });
             data = await retry.json();
             if (!retry.ok) { showFeedback(feedback, 'error', data.error || `SKU not in this order: ${sku}`); continue; }
@@ -8407,6 +8439,12 @@
             continue;
           }
         }
+        // The scan LANDED on the server regardless — but only paint it if that
+        // order is still the one open. If the packer closed the overlay or moved
+        // to another order while this was in flight, there is nothing on screen
+        // to update, and touching activeOrder would be writing to the wrong
+        // order (or crashing on null, which is what the floor reported).
+        if (!onScreen()) continue;
         if (!activeOrder.scanned) activeOrder.scanned = {};
         activeOrder.scanned[data.sku] = data.scanned_qty;
         if (data.cartonNum) { activeOrder.cartonNum = data.cartonNum; activeOrder.cartonCount = data.cartonCount || activeOrder.cartonCount; updateCartonBadge(activeOrder); }
@@ -8442,7 +8480,10 @@
         // durably and keep the packer moving; it syncs automatically.
         // The SAME eventId is carried into the queue so a scan the server
         // actually processed (response lost) is deduped on replay.
-        enqueueOfflineScan(sku, eventId);
+        // orderNumber is passed EXPLICITLY: this runs after an await, so
+        // activeOrder may be null by now (overlay closed) — the piece was
+        // still physically scanned and must reach the server anyway.
+        enqueueOfflineScan(sku, eventId, orderNumber);
       }
     }
     _scanBusy = false;
@@ -13291,7 +13332,10 @@
     function scan(code) {
       const val = String(code || '').trim();
       if (!val || !currentWave) return;
-      _waveScanQueue.push({ raw: val, eventId: _newEventId() });
+      // Bind to the wave open RIGHT NOW, not to whatever is open when the
+      // request is finally built — same reasoning as the order and inbound
+      // paths (a mid-flight switch would otherwise credit the wrong wave).
+      _waveScanQueue.push({ raw: val, eventId: _newEventId(), waveId: currentWave.id });
       if (!_waveScanBusy) _drainWaveScans();
     }
     async function _drainWaveScans() {
@@ -13299,7 +13343,9 @@
       try {
         while (_waveScanQueue.length) {
           const evt = _waveScanQueue[0];
-          const waveId = currentWave.id;
+          const waveId = evt.waveId || currentWave?.id;
+          if (!waveId) { _waveScanQueue.shift(); continue; }
+          const stillOpen = () => !!currentWave && currentWave.id === waveId;
           let r, j;
           try {
             r = await fetchT(`/api/waves/${encodeURIComponent(waveId)}/scan`, {
@@ -13311,14 +13357,17 @@
             // Connection gone. Hand the WHOLE remaining burst to the durable
             // queue and clear the in-memory one — nothing is held only in a
             // variable that a refresh would wipe.
-            for (const q of _waveScanQueue) enqueueOfflineTargetScan('wave', waveId, q.raw, q.eventId);
+            for (const q of _waveScanQueue) enqueueOfflineTargetScan('wave', q.waveId || waveId, q.raw, q.eventId);
             const held = pendingScansForTarget('wave', waveId).length;
             _waveScanQueue.length = 0;
-            waveScanFeedback(`⚡ No connection — ${held} scan(s) saved, will sync automatically`, 'err');
+            if (stillOpen()) waveScanFeedback(`⚡ No connection — ${held} scan(s) saved, will sync automatically`, 'err');
             return;
           }
           _waveScanQueue.shift();          // the server has now seen it
           if (!r.ok) { waveScanFeedback(j.error || 'Could not record that scan.', 'err'); continue; }
+          // Landed. Only repaint if that wave is still the one on screen —
+          // otherwise this would overwrite a different wave's view.
+          if (!stillOpen()) continue;
           currentWave = j.wave;
           renderDetail();
           const m = j.matched;
