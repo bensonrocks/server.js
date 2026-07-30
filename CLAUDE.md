@@ -2400,6 +2400,34 @@ disconnected driver-management surface (both fixed together — see below).
   third driver-management surface whose backend hasn't been audited —
   flagged here so a future pass folds it into `/api/drivers` too.
 
+## Rollback points — named snapshots of a known-good state
+
+Written down HERE, in the repo, because a git tag created in a sandbox is not
+pushable through this remote's git proxy and would be lost with the session. The
+commit sha is the durable identifier; the name is just what a human says.
+
+| Say this | Code = commit | Precedes |
+|---|---|---|
+| **"roll back to before the client portal upload"** | `1eb36b2` | the client-portal order/waybill submission + office approval workflow |
+
+To roll the CODE back to one of these:
+```
+git checkout -B claude/ecommerce-order-dashboard-cxMNo 1eb36b2   # then force-with-lease push
+```
+
+CODE AND DATA ROLL BACK SEPARATELY — a commit cannot restore db.json or the
+inventory SQLite store. Take the data snapshot BEFORE shipping anything risky:
+- `POST /api/master/backups/run-now` (master key) writes a full gzip snapshot to
+  the volume — db.json + all 13 inventory tables + config; or Administrator →
+  Backups → Run Backup Now.
+- `GET /api/master/backup` downloads the same thing as JSON to your own machine.
+- Restoring inventory from one: `POST /api/master/backups/:file/restore-inventory`.
+  There is deliberately NO whole-db restore endpoint — putting db.json back is a
+  manual, deliberate act on the volume.
+
+When adding a new rollback point: append a row here IN THE SAME COMMIT that
+records it, so the name and the sha can never drift apart.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`
