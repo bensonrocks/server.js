@@ -2400,6 +2400,76 @@ disconnected driver-management surface (both fixed together — see below).
   third driver-management surface whose backend hasn't been audited —
   flagged here so a future pass folds it into `/api/drivers` too.
 
+## Team inbound — split a receipt, finish it together
+
+Per the user: before starting, a supervisor can mass-select lines and hand them
+to colleagues, splitting again and again; everyone then scans, and the aim is to
+finish the inbound as a team.
+
+- **ASSIGNMENTS, NOT SKUs.** The same SKU arrives on several pallets and can go
+  to several people — *"each inbound line split even if its same SKU is
+  unique"*. So counting happens against `rec.assignments[]`
+  (`{id, line_id, sku, qty, done, assignee, events[], notice}`), not against a
+  SKU. **`state.scanned[sku]` REMAINS the derived per-SKU total**, so End
+  Receipt, stock posting, the GRN, discrepancies and the client portal are all
+  untouched: the split is a work-allocation layer, not a second source of truth
+  for quantities.
+- `POST /api/inbound/:id/split {assignee, items:[{line_id, qty}], password}` —
+  repeatable, never over-allocates (a second split takes only what is left; a
+  fully-allocated line is refused). `DELETE .../split/:assignmentId` undoes one,
+  refused once pieces are counted.
+- **PASSWORD + LEADER.** Splitting hands someone else responsibility for another
+  person's goods, so the splitter re-enters their OWN login password
+  (`verifyAdminReconfirm(req, {role:null})` — any signed-in user may lead, not
+  just admins; the Administrator key also works). **403, never 401** — the
+  session is valid, only the second check failed, and a 401 would trip the
+  client's session-expired handler. Whoever splits first becomes `rec.lead` and
+  owns the allocation from then on; anyone else is refused BY NAME. Audited as
+  `inbound_lead_assigned`.
+- **SCANNING fills the scanner's OWN outstanding assignment first**, then a
+  colleague's — counted either way, because the point is to finish as a team,
+  not to stop someone holding a box. A cross-scan appends to `assignment.events`
+  and sets `assignment.notice` for the owner. Per the user this is a
+  NOTIFICATION ONLY: the piece is already counted and nothing waits on
+  acknowledgement (`.../assignment/:id/seen` is just a read receipt).
+- Assignments fill ONE AT A TIME in order, so many pallets of the same SKU count
+  incrementally and can never double-credit each other.
+- **The one-receiver claim lock is relaxed ONLY when a job has assignments** —
+  otherwise the second person to scan got a 409 and team receiving was
+  impossible. An unsplit receipt is still protected.
+- **`line_id` is assigned when the job is READ**, not as a side effect of
+  calling `/split` — that side-effect version meant a client fetching the job
+  first never saw an id and its first split always failed with "Unknown line
+  undefined".
+- SERIAL / BATCH / EXPIRY are optional on the scan. No inventory schema change
+  was needed — `placeStock` already takes `lot_number` + `expiry_date` and there
+  is a `serials` table; this was about CAPTURE. A serial is registered against
+  the client immediately (waiting for putaway would lose which piece it was).
+
+### Durability for team scans
+
+`journalInboundState(id, state, assignments)` now carries a compact
+`[{id, done, notice}]` snapshot. Assignments live on the RECORD, not on
+`state` — without this a crash recovered the per-SKU totals but LOST who had
+counted what, and a colleague would then be asked to scan pieces already
+received. Replay takes the HIGHER count (same rule as wave picks: `done` only
+grows) and caps at the assignment's qty, so a stale line can neither roll
+progress back nor invent pieces.
+
+The offline queue needs NO assignment id: the server resolves the allocation at
+apply time and own-first is driven by the token's user, so a held scan replayed
+later still lands on that person's own assignment. Verified — including that a
+replayed `eventId` is deduped and double-counts neither the assignment nor the
+SKU total.
+
+Verified 38 API checks in total: 16 on split/team scanning/capture/audit, 10 on
+the password + leader rules, 6 on crash replay (progress and the cross-scan
+notice both survive; a lower or oversized journal line is ignored), and 6 on
+offline replay attribution.
+
+STILL TO BUILD: the split/assign UI and its Chromium pass. Everything above is
+API-only — no screen reaches it yet.
+
 ## Inbound putaway — now, or stage it with a printed ID
 
 Per the user: the crew scans the ASN/PO, then the goods go either to a final

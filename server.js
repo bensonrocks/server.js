@@ -1152,11 +1152,17 @@ function journalOrderState(orderNumber, state) {
 }
 // Receiving counts. conditionTotals rides along because a damaged/KIV piece
 // that replayed as a plain "received" would quietly become sellable stock.
-function journalInboundState(id, state) {
+function journalInboundState(id, state, assignments) {
   _journalAppend({
     kind: 'inbound',
     at: state.updated_at || new Date().toISOString(), id, status: state.status,
     scanned: state.scanned || {}, conditionTotals: state.conditionTotals || {},
+    // TEAM PROGRESS. Assignments live on the RECORD, not on state, so without
+    // this a crash recovered the per-SKU totals but lost who had counted what —
+    // and a colleague would then be asked to scan pieces already received.
+    // Only (id, done, notice) is needed; the allocation itself doesn't change
+    // while people are scanning.
+    assignments: (assignments || []).map(a => ({ id: a.id, done: a.done || 0, notice: a.notice || null })),
   });
 }
 // Wave pick progress. Only (sku, location, picked_qty) is journaled — the rest
@@ -1554,6 +1560,15 @@ function replayScanJournal() {
     state.scanned = e.scanned || state.scanned;
     if (e.conditionTotals) state.conditionTotals = e.conditionTotals;
     state.updated_at = e.at || state.updated_at;
+    // Restore team progress. Take the HIGHER count, same rule as wave picks:
+    // `done` only ever grows while receiving, so if db.json already has more
+    // (a write that did land) keep it.
+    for (const je of e.assignments || []) {
+      const a = (rec.assignments || []).find(x => x.id === je.id);
+      if (!a) continue;
+      a.done = Math.min(a.qty, Math.max(a.done || 0, je.done || 0));
+      if (je.notice && !a.notice) a.notice = je.notice;
+    }
     appendScanLog(state, { kind: 'recovered', raw: '', sku: '(scan journal replay after restart)', qty: '', by: '' });
     recoveredInbound++;
   }
@@ -8040,7 +8055,7 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   }
   rec.state = state;
   writeDb(db);
-  journalInboundState(id, state);   // crash-proof: db.json persistence is deferred
+  journalInboundState(id, state, rec.assignments);   // crash-proof: db.json persistence is deferred
 
   const carton = activeCarton(state);
   // CROSS-DOCK alert: if outbound orders are WAITING on this SKU (open
@@ -8264,7 +8279,7 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   writeDb(db);
   // Journal the close too, so a crash immediately after ending a receipt can't
   // reopen it on restart (the replayed entry carries status 'done').
-  journalInboundState(rec.id, rec.state);
+  journalInboundState(rec.id, rec.state, rec.assignments);
   logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, received: receivedSkus.length, discrepancies: mismatches.length, extras: extras.length, by: req.userId || '' });
   // Received stock raised availability → notify ZORT stock-sync stores.
   if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
