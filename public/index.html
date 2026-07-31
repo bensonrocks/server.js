@@ -1822,6 +1822,7 @@
         <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-bottom:.5rem">
           <button class="btn-secondary btn-sm hidden" id="manageWavesBtn">&#127754; Manage Waves</button>
           <button class="btn-secondary btn-sm" id="backordersBtn">&#9203; Backorders <span id="backordersBadge" class="nav-badge hidden">0</span></button>
+          <button class="btn-secondary btn-sm" id="pickupBtn">&#128666; Collection <span id="pickupBadge" class="nav-badge hidden">0</span></button>
           <button class="btn-secondary btn-sm" id="stationThroughputBtn">&#128202; Station Throughput</button>
         </div>
 
@@ -3447,6 +3448,81 @@
       <button id="inboundPhotoLightboxClose" class="btn-secondary btn-sm">&#10005; Close</button>
     </div>
     <img id="inboundPhotoLightboxImg" src="" alt="Receiving photo" />
+  </div>
+
+  <!-- ── COLLECTION — closing off orders that have physically left ─────────
+       Everything picked, packed and scanned but still on the staging shelf.
+       Work down the list as the courier loads; scan a waybill to close one
+       parcel, or tick and close a whole trolley. -->
+  <div id="pickupOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:900px">
+      <div class="modal-title">&#128666; Collection &mdash; close off what has left</div>
+      <p class="hint" style="margin:.2rem 0 .6rem">
+        Only orders that are <b>picked, packed and scanned</b> appear here. Mark them the moment
+        the courier takes them &mdash; the record is what proves when a parcel left us.
+      </p>
+
+      <div id="pickupStats" class="pk-stats"></div>
+
+      <div class="item-scan-wrap" style="margin:.6rem 0">
+        <span class="scan-icon-prefix">&#9524;</span>
+        <input type="text" id="pickupScanInput" class="big-scan-input" autocomplete="off" autocorrect="off"
+               spellcheck="false" placeholder="Scan a waybill / order number to close it&hellip;" />
+        <button class="btn-secondary btn-sm" id="pickupScanAdd">Close</button>
+      </div>
+      <div id="pickupScanFeedback" class="scan-feedback hidden"></div>
+
+      <div class="dcs-wrap" style="max-height:44vh;overflow:auto">
+        <table class="dcs-table" style="width:100%;border-collapse:collapse;font-size:.83rem">
+          <thead><tr>
+            <th style="width:2rem"><input type="checkbox" id="pickupPickAll" title="Select all"></th>
+            <th>Order</th><th>Client</th><th>Waybill</th>
+            <th style="text-align:right">Cartons</th>
+            <th>Finished</th><th>Leaves on</th>
+          </tr></thead>
+          <tbody id="pickupBody"></tbody>
+        </table>
+      </div>
+
+      <div id="pickupMsg" class="status-bar hidden" style="margin-top:.5rem"></div>
+
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="pickupCloseBtn">Close</button>
+        <button class="btn-secondary" id="pickupPolicyBtn" title="Collection cut-off and which days collect">&#9881; Schedule</button>
+        <button class="btn-primary"   id="pickupMarkBtn">&#10003; Mark Picked Up</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Collection schedule — the cut-off and which days things leave -->
+  <div id="pickupPolicyOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:520px">
+      <div class="modal-title">&#9881; Collection schedule</div>
+      <p class="hint" style="margin:.2rem 0 .7rem">
+        This decides which day a finished order is due to leave. It changes nothing that has
+        already been marked &mdash; only what the list asks you to close next.
+      </p>
+      <div class="form-group">
+        <label>Daily cut-off <span class="hint-inline">(Singapore time)</span></label>
+        <input type="time" id="ppCutoff" value="17:00">
+        <div class="hint" style="margin-top:.25rem">Work finished after this goes on the next collection day.</div>
+      </div>
+      <div class="form-group">
+        <label>We drop these off ourselves</label>
+        <div id="ppSelfDrop" class="pk-days"></div>
+        <div class="hint" style="margin-top:.25rem">Orders finished on these days are marked Picked Up automatically &mdash; they go to the drop-off point as part of finishing them.</div>
+      </div>
+      <div class="form-group">
+        <label>Nothing leaves on</label>
+        <div id="ppNoColl" class="pk-days"></div>
+        <div class="hint" style="margin-top:.25rem">No collection at all. Work finished on these days waits for the next day that collects.</div>
+      </div>
+      <div id="ppMsg" class="status-bar hidden" style="margin-top:.5rem"></div>
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="ppCancel">Cancel</button>
+        <button class="btn-primary"   id="ppSave">Save schedule</button>
+      </div>
+    </div>
   </div>
 
   <!-- Station Throughput — visible to Warehouse, Admin and Master -->

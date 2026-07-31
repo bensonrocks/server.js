@@ -761,7 +761,7 @@
     const icEl = document.getElementById('ctTabIcon');
     if (icEl) icEl.textContent = document.querySelector(`.tab-btn[data-tab="${name}"] .tab-icon`)?.textContent || '';
     if (name === 'upload') { fetchAndRenderStats(); renderBreakdowns(loadedOrders); }
-    if (name === 'orders') { renderOrdersDash(); loadBackordersBadge(); setTimeout(() => focusWaybillInput(), 300); }
+    if (name === 'orders') { renderOrdersDash(); loadBackordersBadge(); window.pickupUI?.refreshBadge(); setTimeout(() => focusWaybillInput(), 300); }
     document.getElementById('ordersSubMenu').style.display =
       (name === 'orders' && (currentUser?.role || 'admin') !== 'warehouse') ? 'block' : 'none';
     if (name === 'inbound') { renderInboundTab(); }
@@ -1861,6 +1861,34 @@
     }
   }
 
+  // ── COLLECTION ("Picked Up") ──────────────────────────────────────────────
+  // Being finished and having left the building are two different facts. The
+  // chip shows which one an order is at; the Collection screen below is where
+  // the second one gets recorded.
+  const DOW_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function fmtDay(d) {
+    if (!d) return '';
+    const dt = new Date(d + 'T00:00:00');
+    return `${DOW_NAMES[dt.getDay()]} ${dt.getDate()} ${dt.toLocaleString('en-GB', { month: 'short' })}`;
+  }
+  function pickupChip(ord) {
+    if (ord.pickup_status === 'picked_up') {
+      const when = ord.picked_up_at
+        ? new Date(ord.picked_up_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+        : '';
+      const how = ord.pickup_method === 'self-drop' ? ' (dropped off by us)' : '';
+      return `<span class="chip chip-picked-up" title="Left us ${esc(when)}${how}">&#10003; Picked Up</span>`;
+    }
+    if (ord.pickup_status !== 'awaiting') return '';
+    const overdue = ord.collection_due && ord.collection_due < todaySG();
+    return overdue
+      ? `<span class="chip chip-pickup-late" title="Was due to leave ${esc(fmtDay(ord.collection_due))} and is still here">&#9888; Not collected</span>`
+      : `<span class="chip chip-pickup-wait" title="Packed and waiting for collection${ord.collection_due ? ` — leaves ${fmtDay(ord.collection_due)}` : ''}">&#128230; Awaiting collection</span>`;
+  }
+  function todaySG() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  }
+
   function renderOrdersList() {
     let orders = loadedOrders;
     // Case-insensitive: picking "Betime" must also bring in orders filed as
@@ -2049,6 +2077,11 @@
         cartonCount > 1      ? `<span class="chip chip-cartons" title="Packed across ${cartonCount} cartons">&#128230; ${cartonCount} Cartons</span>` : '',
         ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
         ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill</span>` : '',
+        // COLLECTION. Green once the parcel has physically left; amber while it
+        // is still on the staging shelf, red once its collection day has passed.
+        // Only ever shown on finished work — an order still being picked has
+        // nothing to collect.
+        pickupChip(ord),
       ].filter(Boolean).join('');
 
       // Date
@@ -10122,6 +10155,204 @@
         <td>${largestOrderCell(day.largestByLines, 'lines')}</td>
       </tr>`).join('');
     document.getElementById('overviewEmpty').classList.toggle('hidden', days.some(day => day.totalOrders > 0));
+  }
+
+  // ── COLLECTION SCREEN ───────────────────────────────────────────────────────
+  // The list someone works down while the courier loads. Selection survives the
+  // re-render (same reasoning as the bulk-deletion tables: a list that reloads
+  // under a half-made selection silently throws the ticks away).
+  const pickupUI = (() => {
+    let rows = [], policy = null;
+    const sel = new Set();
+    const $ = id => document.getElementById(id);
+    const msg = (kind, text) => {
+      const el = $('pickupMsg');
+      el.className = `status-bar ${kind}`; el.textContent = text; el.classList.remove('hidden');
+    };
+
+    async function load() {
+      const r = await fetchT('/api/orders/pickup-queue', { headers: hdrs() });
+      if (!r.ok) throw new Error('Could not load the collection list.');
+      const d = await r.json();
+      rows = d.rows || []; policy = d.policy;
+      $('pickupStats').innerHTML = `
+        <div class="pk-stat"><b>${d.awaiting}</b><span>Awaiting collection</span></div>
+        <div class="pk-stat"><b>${d.dueToday}</b><span>Leaving today</span></div>
+        <div class="pk-stat${d.overdue ? ' bad' : ''}"><b>${d.overdue}</b><span>Not collected</span></div>
+        <div class="pk-stat ok"><b>${d.pickedToday}</b><span>Picked up today</span></div>`;
+      render();
+      refreshBadge(d);
+    }
+
+    function render() {
+      const tb = $('pickupBody');
+      if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="7" class="hint" style="text-align:center;padding:1.4rem 0">
+          Nothing waiting &mdash; everything finished has been collected.</td></tr>`;
+        $('pickupPickAll').checked = false;
+        return;
+      }
+      let lastDue = null;
+      tb.innerHTML = rows.map(r => {
+        // A day heading, so it is obvious which parcels are today's problem.
+        const head = r.collection_due !== lastDue
+          ? `<tr class="pk-daysep"><td colspan="7">${r.overdue ? '&#9888; ' : ''}Leaves ${esc(fmtDay(r.collection_due) || '—')}${r.overdue ? ' — still here' : ''}</td></tr>`
+          : '';
+        lastDue = r.collection_due;
+        return head + `<tr class="${r.overdue ? 'pk-late' : ''}">
+          <td><input type="checkbox" class="pk-tick" data-order="${esc(r.order_number)}" ${sel.has(r.order_number) ? 'checked' : ''}></td>
+          <td><b>${esc(r.order_number)}</b>${r.idealscan_code ? `<div class="hint">${esc(r.idealscan_code)}</div>` : ''}</td>
+          <td>${esc(r.client_name || '—')}</td>
+          <td>${esc(r.waybill_number || '—')}</td>
+          <td style="text-align:right">${r.cartons}</td>
+          <td>${r.done_at ? esc(new Date(r.done_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</td>
+          <td>${esc(fmtDay(r.collection_due) || '—')}</td>
+        </tr>`;
+      }).join('');
+      tb.querySelectorAll('.pk-tick').forEach(cb => cb.addEventListener('change', () => {
+        cb.checked ? sel.add(cb.dataset.order) : sel.delete(cb.dataset.order);
+        syncAll();
+      }));
+      // Drop ticks whose rows are gone, so a stale selection can never act on
+      // an order that is no longer in the list.
+      const live = new Set(rows.map(r => r.order_number));
+      [...sel].forEach(n => { if (!live.has(n)) sel.delete(n); });
+      syncAll();
+    }
+    function syncAll() {
+      const all = rows.length > 0 && rows.every(r => sel.has(r.order_number));
+      $('pickupPickAll').checked = all;
+      $('pickupMarkBtn').textContent = sel.size ? `✓ Mark ${sel.size} Picked Up` : '✓ Mark Picked Up';
+    }
+
+    async function mark(orderNumbers, method) {
+      const r = await fetchT('/api/orders/pickup', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orderNumbers, method: method || 'manual' }),
+      });
+      const d = await r.json();
+      if (!r.ok) { msg('error', d.error || 'Could not update those orders.'); return null; }
+      return d;
+    }
+
+    async function markSelected() {
+      if (!sel.size) { msg('error', 'Tick the orders the courier has taken.'); return; }
+      const btn = $('pickupMarkBtn'); btn.disabled = true;
+      try {
+        const d = await mark([...sel], 'manual');
+        if (!d) return;
+        sel.clear();
+        let text = `${d.updated} order(s) marked picked up.`;
+        if ((d.refused || []).length) text += ` ${d.refused.length} could not be: ${d.refused.slice(0, 3).map(x => `${x.order} — ${x.error}`).join('; ')}`;
+        msg((d.refused || []).length ? 'warning' : 'success', text);
+        await load();
+        // renderOrdersDash, not refreshOrders — the latter only refetches; the
+        // list behind this modal has to actually repaint for the pill to change.
+        renderOrdersDash();
+      } finally { btn.disabled = false; }
+    }
+
+    // Scan a waybill (or the order number) to close one parcel as it goes into
+    // the courier's bag — per-parcel and per-second, which is what makes this
+    // a record rather than a guess.
+    async function scanClose(raw) {
+      const code = String(raw || '').trim();
+      if (!code) return;
+      const fb = $('pickupScanFeedback');
+      const norm = v => String(v || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      const hit = rows.find(r => norm(r.waybill_number) === norm(code) || norm(r.order_number) === norm(code));
+      if (!hit) { showFeedback(fb, 'error', `${code} — not in the collection list (already closed, or not finished yet)`); return; }
+      const d = await mark([hit.order_number], 'scan');
+      if (!d) return;
+      if (d.updated) showFeedback(fb, 'success', `${hit.order_number} picked up`);
+      else showFeedback(fb, 'error', `${hit.order_number} — ${d.refused?.[0]?.error || 'could not close'}`);
+      await load();
+      renderOrdersDash();
+    }
+
+    // Badge on the Orders tab button: what still has to leave. Overdue is what
+    // deserves attention, so it drives the colour.
+    async function refreshBadge(pre) {
+      try {
+        const d = pre || await (await fetchT('/api/orders/pickup-queue', { headers: hdrs() })).json();
+        const b = $('pickupBadge');
+        if (!b) return;
+        const n = d.awaiting || 0;
+        b.textContent = String(n);
+        b.classList.toggle('hidden', n === 0);
+        b.classList.toggle('badge-danger', (d.overdue || 0) > 0);
+      } catch (e) { /* a badge is not worth an error */ }
+    }
+
+    // ── the schedule editor ──────────────────────────────────────────────────
+    function dayBoxes(wrapId, chosen) {
+      $(wrapId).innerHTML = DOW_NAMES.map((n, i) =>
+        `<label class="pk-day"><input type="checkbox" value="${i}" ${chosen.includes(i) ? 'checked' : ''}> ${n}</label>`).join('');
+    }
+    function readDays(wrapId) {
+      return [...$(wrapId).querySelectorAll('input:checked')].map(x => Number(x.value));
+    }
+    function openPolicy() {
+      if (!policy) return;
+      $('ppCutoff').value = policy.cutoff;
+      dayBoxes('ppSelfDrop', policy.selfDropDays);
+      dayBoxes('ppNoColl', policy.noCollectionDays);
+      $('ppMsg').classList.add('hidden');
+      $('pickupPolicyOverlay').classList.remove('hidden');
+    }
+    async function savePolicy() {
+      const body = {
+        enabled: true,
+        cutoff: $('ppCutoff').value || '17:00',
+        selfDropDays: readDays('ppSelfDrop'),
+        noCollectionDays: readDays('ppNoColl'),
+      };
+      const r = await fetchT('/api/master/pickup-policy', {
+        method: 'POST', headers: { ...hdrs(), 'x-master-key': LOG_PASSWORD }, body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      const el = $('ppMsg');
+      if (!r.ok) { el.className = 'status-bar error'; el.textContent = d.error || 'Could not save.'; el.classList.remove('hidden'); return; }
+      $('pickupPolicyOverlay').classList.add('hidden');
+      await load();
+      renderOrdersDash();
+    }
+
+    return { load, openPolicy, savePolicy, markSelected, scanClose, refreshBadge,
+             selectAll: on => { rows.forEach(r => on ? sel.add(r.order_number) : sel.delete(r.order_number)); render(); } };
+  })();
+  // switchTab runs earlier in this file than the const above, so it reaches the
+  // module through window rather than the binding (a bare reference would hit
+  // the temporal dead zone — the same trap waveUI documented).
+  window.pickupUI = pickupUI;
+
+  document.getElementById('pickupBtn')?.addEventListener('click', async () => {
+    document.getElementById('pickupOverlay').classList.remove('hidden');
+    document.getElementById('pickupMsg').classList.add('hidden');
+    try { await pickupUI.load(); } catch (e) { alert(e.message); }
+    setTimeout(() => document.getElementById('pickupScanInput')?.focus(), 80);
+  });
+  document.getElementById('pickupCloseBtn')?.addEventListener('click', () =>
+    document.getElementById('pickupOverlay').classList.add('hidden'));
+  document.getElementById('pickupMarkBtn')?.addEventListener('click', () => pickupUI.markSelected());
+  document.getElementById('pickupPolicyBtn')?.addEventListener('click', () => pickupUI.openPolicy());
+  document.getElementById('pickupPickAll')?.addEventListener('change', e => pickupUI.selectAll(e.target.checked));
+  document.getElementById('ppCancel')?.addEventListener('click', () =>
+    document.getElementById('pickupPolicyOverlay').classList.add('hidden'));
+  document.getElementById('ppSave')?.addEventListener('click', () => pickupUI.savePolicy());
+  {
+    const inp = document.getElementById('pickupScanInput');
+    inp?.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const v = inp.value; inp.value = '';
+      pickupUI.scanClose(v);
+    });
+    document.getElementById('pickupScanAdd')?.addEventListener('click', () => {
+      const v = inp.value; inp.value = '';
+      pickupUI.scanClose(v);
+      inp.focus();
+    });
   }
 
   // ── Station Throughput (Warehouse, Admin & Master) ──────────────────────────

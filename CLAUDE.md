@@ -185,6 +185,79 @@ tiles but "Active 16" below them):
   Today", `yesterdayDone`). Orders tab = packer view (today + backlog
   only). The two are deliberately different scopes.
 
+## Collection / "Picked Up" — finished is not the same as gone
+
+Per the user: platform orders (Lazada/Shopee/TikTok) are collected by the
+marketplace's own courier, so once a parcel leaves we can observe nothing more.
+"Picked Up" is therefore a **terminal** fact, not a step towards Delivered —
+making it a Transport leg would leave jobs stuck at "On the road" forever
+waiting for an event that never arrives.
+
+- **A SEPARATE FIELD, never `state.status`.** `state.pickup = {at, by, method,
+  collection_day}`. `state.status` drives completion, stats, reports and the
+  packer's screens; overloading it with a shipping state would ripple through
+  all of them. `scan_status` is asserted untouched by the tests for this reason.
+- Only **picked, packed and scanned** work can be closed — `/api/orders/pickup`
+  refuses anything not `done` ("Not finished yet (pending)"). Marking a
+  part-scanned order as collected would bank an unfinished pick as shipped.
+- **`collection_due` is DERIVED, never stamped** (same discipline as the inbound
+  SLA): `collectionDayFor(endTime, policy)` runs on every read, so changing the
+  cut-off or the collection days moves every open order's target honestly
+  instead of leaving stale dates behind.
+
+### The schedule (`db.pickupPolicy`, editable from Collection → ⚙ Schedule)
+
+`{enabled, cutoff:'17:00', selfDropDays:[6], noCollectionDays:[0]}` — defaults
+are the user's operation: Saturday we drive to the drop-off point ourselves,
+Sunday nothing leaves.
+
+- **cutoff** — work finished after it rolls to the next collecting day.
+- **selfDropDays** — the order left as part of being finished, so
+  `applyAutoPickups()` marks it `method:'self-drop'` **stamped with `endTime`,
+  not `now`**. The method name matters: the audit trail must never claim a
+  courier collected something we dropped off ourselves.
+- **noCollectionDays** — roll forward to the next day that collects.
+- A day cannot be both (400). Saving re-runs `applyAutoPickups`, so newly
+  adding a self-drop day settles that day's history immediately.
+- `sgParts()` derives the weekday from the SGT date STRING, so the host
+  timezone can never pull a completion back a day (SGT everywhere — see
+  "Day-bucketing is SGT").
+
+### The screens
+
+- Order-row chips: green **✓ Picked Up**, amber **📦 Awaiting collection**,
+  red **⚠ Not collected** once the due day has passed. Nothing at all on an
+  order still being picked. Colours asserted by computed style, not class name.
+- **Orders → 🚚 Collection** (`#pickupOverlay`): four tiles, a scan bar, and the
+  queue grouped by the day each parcel leaves, oldest first. Scanning a waybill
+  closes that one parcel (`method:'scan'`); ticking closes a trolley
+  (`method:'manual'`). `undo:true` reverses a mis-tick.
+- Selection is held in a Set and re-applied after each render, and ticks whose
+  rows are gone are dropped — same reasoning as the bulk-deletion tables.
+- Badge on the Orders tab counts what is still to leave and turns red when
+  anything is overdue. `switchTab` reaches the module via `window.pickupUI`
+  because it runs earlier in the file than the `const` (the temporal-dead-zone
+  trap `waveUI` documented).
+
+`.modal-card` HAD NO CSS AT ALL — every modal using it (split inbound,
+putaway-now-or-later, this one) rendered as bare content floating on the blurred
+backdrop, and on a phone the inline `max-width:900px` made it wider than the
+screen and clipped it on both sides. Now styled like the card it is, with
+`width:100%` so the inline max-width is a CAP, plus the bottom-sheet treatment
+`.modal` already had under 768px.
+
+`refreshOrders()` only REFETCHES; it does not repaint. Anything that needs the
+Orders list to visibly change must call `renderOrdersDash()` (which awaits
+refreshOrders and then renders) — calling refreshOrders alone left the closed
+order still showing "Not collected" behind the modal.
+
+Verified: 30 API checks (every day rule incl. after-cut-off roll, Sunday wait,
+Saturday auto-settle stamped at `endTime`, part-done refused, double-close
+refused, undo, derived due days moving with the cut-off, the self-drop/no-
+collection clash) and 25 browser checks on desktop and a Pixel 5 — pill colours
+by computed style, the scan close, the bulk close, the schedule editor, and no
+sideways scroll on a phone.
+
 ## Duplicate-line upload safeguard (server.js `findDuplicateLineWarnings`)
 
 Two lines in the SAME order sharing SKU + batch_number + expiry_date is

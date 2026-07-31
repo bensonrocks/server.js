@@ -2214,6 +2214,7 @@ function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 function globalOrdersWithState(keep) {
   const db          = readDb();
   const orderLabels = db.orderLabels || {};
+  const _pol        = pickupPolicy(db);
   // Orders currently inside a LIVE wave (not yet completed/cancelled) — the
   // Orders list shows the wave code as a pill and lets anyone reopen it
   // (that's also where the Cancel Wave button lives — before this existed,
@@ -2289,10 +2290,134 @@ function globalOrdersWithState(keep) {
         active_wave_id:    activeWaveByOrder.get(ord.order_number)?.id     || null,
         active_wave_code:  activeWaveByOrder.get(ord.order_number)?.code   || null,
         active_wave_status: activeWaveByOrder.get(ord.order_number)?.status || null,
+        // Collection — a packed order is still here until a courier takes it.
+        // `collection_due` is DERIVED from the completion time and the current
+        // policy, never stamped, so changing the cut-off or the collection days
+        // moves every open order's target honestly instead of leaving stale
+        // dates behind (same reasoning as the inbound SLA).
+        pickup_status:     state.pickup ? 'picked_up' : (state.status === 'done' ? 'awaiting' : null),
+        picked_up_at:      state.pickup?.at     || null,
+        picked_up_by:      state.pickup?.by     || null,
+        pickup_method:     state.pickup?.method || null,
+        collection_due:    state.status === 'done' && !state.pickup && _pol.enabled
+                             ? collectionDayFor(state.endTime, _pol) : null,
       });
     }
   }
   return out;
+}
+
+// ── COLLECTION / "Picked Up" ────────────────────────────────────────────────
+// A packed order still sits on the staging shelf until a courier takes it. That
+// gap is where parcels go missing, so it is tracked explicitly rather than
+// assumed: an order is DONE (picked, packed, scanned) and then, separately,
+// PICKED UP.
+//
+// Deliberately a SEPARATE field from `state.status`. That drives completion,
+// stats, reports and the packer's own screens; overloading it with a shipping
+// state would ripple through all of them.
+//
+// The policy is per-tenant and editable, because collection days and the daily
+// cut-off are an operational arrangement, not a law:
+//   cutoff          — the daily collection time (SGT). Work finished after it
+//                     goes on the NEXT collection day.
+//   selfDropDays    — days we drive to the drop-off point ourselves once the
+//                     work is done, so those orders are picked up by definition
+//                     (Saturday, per the user's operation).
+//   noCollectionDays— days nothing leaves the building at all (Sunday).
+const DEFAULT_PICKUP_POLICY = {
+  enabled: true,
+  cutoff: '17:00',          // HH:MM, SGT
+  selfDropDays: [6],        // Sat — we drop off ourselves, so auto "Picked Up"
+  noCollectionDays: [0],    // Sun — no collection
+};
+function pickupPolicy(db) {
+  const p = db.pickupPolicy || {};
+  return {
+    enabled: p.enabled !== false,
+    cutoff: /^\d{1,2}:\d{2}$/.test(p.cutoff || '') ? p.cutoff : DEFAULT_PICKUP_POLICY.cutoff,
+    selfDropDays: Array.isArray(p.selfDropDays) ? p.selfDropDays.map(Number).filter(n => n >= 0 && n <= 6) : DEFAULT_PICKUP_POLICY.selfDropDays,
+    noCollectionDays: Array.isArray(p.noCollectionDays) ? p.noCollectionDays.map(Number).filter(n => n >= 0 && n <= 6) : DEFAULT_PICKUP_POLICY.noCollectionDays,
+  };
+}
+
+// SGT day + weekday + wall-clock for an instant. Every day boundary in this app
+// is Singapore time (see "Day-bucketing is SGT everywhere") and getting this
+// wrong would put an evening completion on the wrong collection day.
+const _SG_PARTS_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+});
+function sgParts(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (isNaN(d)) return null;
+  const p = Object.fromEntries(_SG_PARTS_FMT.formatToParts(d).map(x => [x.type, x.value]));
+  const day = `${p.year}-${p.month}-${p.day}`;
+  // Weekday of the SGT day, computed from the date string so it can never be
+  // pulled back a day by the host's own timezone.
+  const dow = new Date(day + 'T00:00:00Z').getUTCDay();
+  const hhmm = `${p.hour === '24' ? '00' : p.hour}:${p.minute}`;
+  return { day, dow, hhmm };
+}
+function _nextDay(dayStr) {
+  const d = new Date(dayStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Which SGT day this order should physically leave the building.
+//   • finished on a self-drop day  → that same day (we take it ourselves)
+//   • finished on a no-collection day, or after the cut-off → the next day that
+//     collects
+// Returns null when there is no completion time to reason from.
+function collectionDayFor(endTimeIso, policy) {
+  const t = sgParts(endTimeIso);
+  if (!t) return null;
+  const noColl = new Set(policy.noCollectionDays);
+  const selfDrop = new Set(policy.selfDropDays);
+  if (selfDrop.has(t.dow) && !noColl.has(t.dow)) return t.day;   // we drive it over once it's done
+  let day = t.day, dow = t.dow;
+  // Past the cut-off, or a day nothing leaves on → roll forward.
+  if (noColl.has(dow) || t.hhmm >= policy.cutoff) { day = _nextDay(day); dow = (dow + 1) % 7; }
+  let guard = 0;
+  while (noColl.has(dow) && guard++ < 14) { day = _nextDay(day); dow = (dow + 1) % 7; }
+  return day;
+}
+
+// True when an order's collection day has already passed and it is still
+// sitting here — the one thing about this feature actually worth alerting on.
+function pickupOverdue(collectionDay) {
+  return !!collectionDay && collectionDay < sgDateStr();
+}
+
+// AUTO SELF-DROP. Orders finished on a self-drop day are taken to the drop-off
+// point as part of finishing them, so they are picked up by definition — there
+// is no separate handover to record. Marked with method 'self-drop' so the
+// audit trail never claims a courier collected them.
+//
+// Idempotent, and only ever touches orders that are DONE and not already
+// marked, so re-running it is a no-op.
+function applyAutoPickups(db) {
+  const policy = pickupPolicy(db);
+  if (!policy.enabled || !policy.selfDropDays.length) return 0;
+  const selfDrop = new Set(policy.selfDropDays);
+  let n = 0;
+  for (const batch of db.batches || []) {
+    for (const [orderNumber, state] of Object.entries(batch.orderStates || {})) {
+      if (state.status !== 'done' || state.pickup || !state.endTime) continue;
+      const t = sgParts(state.endTime);
+      if (!t || !selfDrop.has(t.dow)) continue;
+      state.pickup = {
+        at: state.endTime,           // it left as it was finished — not "now"
+        by: 'system',
+        method: 'self-drop',
+        collection_day: t.day,
+      };
+      n++;
+    }
+  }
+  if (n) logAudit('orders_auto_picked_up', { orders: n, reason: 'self-drop day' });
+  return n;
 }
 
 // ── IdealScan job codes ──────────────────────────────────────────────────────
@@ -10178,6 +10303,10 @@ app.post('/api/scan/complete', (req, res) => {
       } catch (e) { console.warn('[scan/complete] inventory deduct failed for', orderNumber, e.message); }
     }
 
+    // Finished on a day we drive to the drop-off point ourselves? Then it has
+    // already left as part of being finished — settle it now rather than
+    // leaving Saturday's work to be closed by hand on Monday.
+    applyAutoPickups(db);
     writeDb(db);
     logAudit('order_completed', completionAuditData(batch, ord, state));
     // Zort-sourced order? Push the completion back to the client's store
@@ -11387,6 +11516,126 @@ function verifyAdminReconfirm(req, { role = 'admin' } = {}) {
     code: 403,
   };
 }
+
+// ── COLLECTION QUEUE — closing off orders that have left the building ───────
+// Everything that is DONE but not yet picked up, grouped by the day it is due
+// to be collected. This is the screen someone works down as the courier loads.
+app.get('/api/orders/pickup-queue', (req, res) => {
+  const db = readDb();
+  const policy = pickupPolicy(db);
+  // Self-drop days settle themselves, so bring those up to date before
+  // reporting — otherwise Saturday's work would sit in the queue asking to be
+  // closed by hand every Monday morning.
+  if (applyAutoPickups(db)) writeDb(db);
+
+  const today = sgDateStr();
+  const rows = [];
+  let pickedToday = 0;
+  for (const batch of db.batches || []) {
+    for (const ord of batch.orders || []) {
+      const state = (batch.orderStates || {})[ord.order_number];
+      if (!state || state.status !== 'done') continue;
+      if (state.pickup) {
+        if (sgParts(state.pickup.at)?.day === today) pickedToday++;
+        continue;
+      }
+      const due = collectionDayFor(state.endTime, policy);
+      rows.push({
+        order_number: ord.order_number,
+        client_name:  batch.client_name || '',
+        customer_name: ord.customer_name || '',
+        waybill_number: ord.waybill_number || '',
+        carrier:      ord.carrier || '',
+        idealscan_code: batch.idealscan_code || '',
+        cartons:      (state.cartons || []).length || 1,
+        done_at:      state.endTime || null,
+        operator:     state.operator || '',
+        collection_due: due,
+        overdue:      pickupOverdue(due),
+      });
+    }
+  }
+  // Oldest first — the parcel that has been here longest is the one to chase.
+  rows.sort((a, b) => String(a.collection_due || '').localeCompare(String(b.collection_due || ''))
+                   || String(a.done_at || '').localeCompare(String(b.done_at || '')));
+  res.json({
+    policy, today,
+    awaiting: rows.length,
+    dueToday: rows.filter(r => r.collection_due === today).length,
+    overdue: rows.filter(r => r.overdue).length,
+    pickedToday,
+    rows: rows.slice(0, 500),
+  });
+});
+
+// Mark orders picked up (or undo a mistake). `at` lets a closing be recorded
+// for when it actually happened rather than when someone got round to keying
+// it — a courier that came at 17:00 and a screen touched at 18:30 are not the
+// same event, and the whole point of this record is that it is true.
+app.post('/api/orders/pickup', express.json(), (req, res) => {
+  const nums = Array.isArray(req.body?.orderNumbers) ? req.body.orderNumbers.map(String) : [];
+  if (!nums.length) return res.status(400).json({ error: 'Select at least one order.' });
+  const undo = req.body?.undo === true;
+  const at = req.body?.at && !isNaN(new Date(req.body.at)) ? new Date(req.body.at).toISOString() : new Date().toISOString();
+  const db = readDb();
+  const policy = pickupPolicy(db);
+  const done = [], refused = [];
+  for (const num of nums) {
+    const batch = findBatchForOrder(db, num);
+    const state = batch?.orderStates?.[num];
+    if (!batch || !state) { refused.push({ order: num, error: 'Order not found' }); continue; }
+    // ONLY picked, packed and scanned work can be closed off. A part-scanned
+    // order marked as collected would bank an unfinished pick as shipped.
+    if (state.status !== 'done') { refused.push({ order: num, error: `Not finished yet (${state.status})` }); continue; }
+    if (undo) {
+      if (!state.pickup) { refused.push({ order: num, error: 'Was not marked picked up' }); continue; }
+      delete state.pickup;
+      done.push(num);
+      continue;
+    }
+    if (state.pickup) { refused.push({ order: num, error: 'Already picked up' }); continue; }
+    state.pickup = {
+      at, by: req.userId || '',
+      method: String(req.body?.method || 'manual').slice(0, 20),
+      collection_day: collectionDayFor(state.endTime, policy),
+    };
+    done.push(num);
+  }
+  if (done.length) {
+    writeDb(db);
+    logAudit(undo ? 'orders_pickup_undone' : 'orders_picked_up', {
+      orders: done.length, sample: done.slice(0, 12), at,
+      method: String(req.body?.method || 'manual').slice(0, 20), by: req.userId || '',
+    });
+  }
+  res.json({ ok: true, updated: done.length, orders: done, refused });
+});
+
+// The collection policy — cut-off, self-drop days, no-collection days.
+app.get('/api/pickup-policy', (req, res) => res.json(pickupPolicy(readDb())));
+app.post('/api/master/pickup-policy', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const b = req.body || {};
+  if (b.cutoff && !/^\d{1,2}:\d{2}$/.test(String(b.cutoff))) {
+    return res.status(400).json({ error: 'Cut-off must look like 17:00.' });
+  }
+  const clean = list => [...new Set((Array.isArray(list) ? list : []).map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))];
+  const db = readDb();
+  const next = {
+    enabled: b.enabled !== false,
+    cutoff: b.cutoff ? String(b.cutoff) : pickupPolicy(db).cutoff,
+    selfDropDays: b.selfDropDays === undefined ? pickupPolicy(db).selfDropDays : clean(b.selfDropDays),
+    noCollectionDays: b.noCollectionDays === undefined ? pickupPolicy(db).noCollectionDays : clean(b.noCollectionDays),
+  };
+  // A day cannot both collect nothing and be one we drive over ourselves.
+  const clash = next.selfDropDays.filter(d => next.noCollectionDays.includes(d));
+  if (clash.length) return res.status(400).json({ error: 'A day cannot be both a self-drop day and a no-collection day.' });
+  db.pickupPolicy = next;
+  applyAutoPickups(db);   // a newly-added self-drop day settles its own history
+  writeDb(db);
+  logAudit('pickup_policy_updated', { ...next, by: req.userId || 'master' });
+  res.json({ ok: true, policy: next });
+});
 
 app.post('/api/scan/order-deletion-request', (req, res) => {
   const { orderNumber, batchId, reason } = req.body || {};
