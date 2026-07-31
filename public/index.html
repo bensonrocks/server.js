@@ -1542,6 +1542,54 @@
     </div>
   </div>
 
+  <!-- ── Split an inbound across the team ─────────────────────────────────
+       Mass-select lines, hand them to a colleague, repeat. Whoever splits
+       first leads the receipt; the password confirms it is really them. -->
+  <div id="splitInboundOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:760px">
+      <div class="modal-title">&#128101; Share receipt <span id="splitRef"></span> across the team</div>
+      <p class="hint" style="margin:.2rem 0 .6rem">
+        Tick the lines to hand over, set who is taking them, and confirm with your password.
+        You can split again for the next person. <b>Everyone can still scan anything</b> —
+        if you pick up someone else's item it still counts, and they are told.
+      </p>
+      <div id="splitLeadNote" class="hint hidden" style="margin:.2rem 0 .6rem;font-weight:700"></div>
+
+      <div style="max-height:34vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+        <table class="tbl" style="width:100%;border-collapse:collapse;font-size:.84rem">
+          <thead><tr>
+            <th style="width:2rem"><input type="checkbox" id="splitPickAll" title="Select all"></th>
+            <th>SKU</th><th>Description</th>
+            <th style="text-align:right">Expected</th>
+            <th style="text-align:right">Unassigned</th>
+            <th style="text-align:right;width:6rem">Give</th>
+          </tr></thead>
+          <tbody id="splitLinesBody"></tbody>
+        </table>
+      </div>
+
+      <div class="form-group" style="margin-top:.8rem;display:flex;gap:.6rem;flex-wrap:wrap">
+        <div style="flex:1 1 12rem;min-width:0">
+          <label style="font-size:.8rem">Assign to</label>
+          <input type="text" id="splitAssignee" placeholder="colleague's user id" autocomplete="off" list="splitUserList">
+          <datalist id="splitUserList"></datalist>
+        </div>
+        <div style="flex:1 1 12rem;min-width:0">
+          <label style="font-size:.8rem">Your password</label>
+          <input type="password" id="splitPassword" placeholder="confirm it's you" autocomplete="current-password">
+        </div>
+      </div>
+      <div id="splitMsg" class="status-bar hidden" style="margin-top:.5rem"></div>
+
+      <div id="splitCurrent" style="margin-top:.8rem"></div>
+
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="splitCloseBtn">Close</button>
+        <button class="btn-primary"   id="splitAssignBtn">&#10003; Assign selected</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Putaway now, or stage it? — asked the moment a receipt is ended ──── -->
   <div id="putawayAskOverlay" class="modal-overlay hidden">
     <div class="modal-card" style="max-width:480px">

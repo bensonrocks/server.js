@@ -2354,6 +2354,8 @@
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grn-id="${esc(job.id)}" title="Goods Received Note — expected vs received vs damaged, printable proof of receipt">&#128196; GRN</button>` : ''}
+                  ${job.status !== 'done' ? `<button class="btn-secondary btn-sm" data-inbound-split-id="${esc(job.id)}" title="Share this receipt out across the team">&#128101; Split${(job.assignments || []).length ? ` (${(job.assignments || []).length})` : ''}</button>` : ''}
+                  ${job.lead ? `<span class="cs-pill" title="Leading this receipt">&#11088; ${esc(job.lead.name || job.lead.user)}</span>` : ''}
                   ${isAdmin && job.status !== 'done' && !job.pending_deletion ? `<button class="btn-del-order" data-inbound-del-id="${esc(job.id)}" data-inbound-del-ref="${esc(job.reference || job.id.slice(0, 8))}" title="Request deletion">&#128465;</button>` : ''}
                 </td>
               </tr>`).join('')}
@@ -2375,7 +2377,120 @@
     list.querySelectorAll('[data-inbound-grn-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); printGrn(btn.dataset.inboundGrnId); });
     });
+    list.querySelectorAll('[data-inbound-split-id]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); openSplitInbound(btn.dataset.inboundSplitId); });
+    });
   }
+
+  // ── Split an inbound across the team ──────────────────────────────────────
+  // Mass-select lines → assign to a colleague → confirm with your own password.
+  // Repeatable. The server enforces the leader rule and never over-allocates;
+  // this screen just has to show what is left and stay honest about it.
+  let _splitJob = null;
+  function splitUnassigned(job, line) {
+    const given = (job.assignments || [])
+      .filter(a => a.line_id === line.line_id)
+      .reduce((s, a) => s + Number(a.qty || 0), 0);
+    return Math.max(0, Number(line.expected_qty || 0) - given);
+  }
+  async function openSplitInbound(id) {
+    _splitJob = (inboundJobs || []).find(j => j.id === id);
+    if (!_splitJob) return;
+    document.getElementById('splitRef').textContent = _splitJob.serial || _splitJob.reference || id.slice(0, 8);
+    document.getElementById('splitPassword').value = '';
+    document.getElementById('splitAssignee').value = '';
+    document.getElementById('splitMsg').classList.add('hidden');
+    const lead = _splitJob.lead;
+    const note = document.getElementById('splitLeadNote');
+    if (lead) {
+      note.textContent = `⭐ ${lead.name || lead.user} is leading this receipt — only they (or the Administrator key) can change the allocation.`;
+      note.classList.remove('hidden');
+    } else note.classList.add('hidden');
+    renderSplitLines();
+    renderSplitCurrent();
+    document.getElementById('splitInboundOverlay').classList.remove('hidden');
+  }
+  function renderSplitLines() {
+    const j = _splitJob;
+    document.getElementById('splitLinesBody').innerHTML = (j.lines || []).map(l => {
+      const left = splitUnassigned(j, l);
+      return `<tr data-line="${esc(l.line_id || '')}" style="${left ? '' : 'opacity:.5'}">
+        <td><input type="checkbox" class="split-pick" ${left ? '' : 'disabled'}></td>
+        <td><b>${esc(l.sku)}</b></td>
+        <td>${esc(String(l.description || '').slice(0, 46))}</td>
+        <td style="text-align:right">${l.expected_qty || 0}</td>
+        <td style="text-align:right"><b>${left}</b></td>
+        <td style="text-align:right"><input type="number" class="split-qty qty-input" min="1" max="${left}" value="${left}" ${left ? '' : 'disabled'} style="width:4.5rem;text-align:right"></td>
+      </tr>`;
+    }).join('');
+  }
+  function renderSplitCurrent() {
+    const rows = _splitJob.assignments || [];
+    const el = document.getElementById('splitCurrent');
+    if (!rows.length) { el.innerHTML = '<p class="hint">Nobody has been given anything yet.</p>'; return; }
+    // group by person so a supervisor sees the team, not a flat list
+    const byWho = {};
+    for (const a of rows) (byWho[a.assignee] = byWho[a.assignee] || []).push(a);
+    el.innerHTML = `<div class="hint" style="margin-bottom:.3rem">Who has what</div>` +
+      Object.entries(byWho).map(([who, list]) => {
+        const done = list.reduce((s, a) => s + (a.done || 0), 0);
+        const qty  = list.reduce((s, a) => s + a.qty, 0);
+        return `<div class="poke-row">
+          <div class="pk-ic out">&#128100;</div>
+          <div class="pk-b">
+            <div class="pk-t">${esc(who)} <span class="cs-pill ${done >= qty ? 'ok' : ''}">${done}/${qty} pcs</span></div>
+            <div class="pk-s">${list.map(a => `${esc(a.sku)} ${a.done || 0}/${a.qty}${a.notice ? ` &nbsp;<span class="cs-pill warn">${esc(a.notice.by)} scanned ${a.notice.qty}</span>` : ''}`).join(' &nbsp;·&nbsp; ')}</div>
+          </div>
+          ${list.every(a => !a.done) ? `<button class="btn-del-order split-undo" data-ids="${esc(list.map(a => a.id).join(','))}" title="Take this back">&#128465;</button>` : ''}
+        </div>`;
+      }).join('');
+  }
+  document.getElementById('splitPickAll').addEventListener('change', e => {
+    document.querySelectorAll('#splitLinesBody .split-pick:not([disabled])').forEach(c => { c.checked = e.target.checked; });
+  });
+  document.getElementById('splitCloseBtn').addEventListener('click', () =>
+    document.getElementById('splitInboundOverlay').classList.add('hidden'));
+  document.getElementById('splitAssignBtn').addEventListener('click', async () => {
+    const assignee = document.getElementById('splitAssignee').value.trim();
+    const password = document.getElementById('splitPassword').value;
+    const msg = document.getElementById('splitMsg');
+    const show = (kind, text) => { msg.className = `status-bar ${kind}`; msg.textContent = text; msg.classList.remove('hidden'); };
+    if (!assignee) { show('error', 'Who is taking these lines?'); return; }
+    if (!password) { show('error', 'Enter your password to confirm.'); return; }
+    const items = [...document.querySelectorAll('#splitLinesBody tr')].flatMap(tr => {
+      const cb = tr.querySelector('.split-pick');
+      if (!cb || !cb.checked) return [];
+      return [{ line_id: tr.dataset.line, qty: Number(tr.querySelector('.split-qty').value) || 0 }];
+    });
+    if (!items.length) { show('error', 'Tick at least one line to hand over.'); return; }
+    show('progress', 'Assigning…');
+    try {
+      const r = await fetch(`/api/inbound/${encodeURIComponent(_splitJob.id)}/split`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ assignee, items, password }),
+      });
+      const j = await r.json();
+      if (!r.ok) { show('error', j.error || 'Could not assign.'); return; }
+      show('success', `✓ ${j.assigned.length} line(s) — ${j.assigned.reduce((s, a) => s + a.qty, 0)} pcs — assigned to ${assignee}.`);
+      document.getElementById('splitPassword').value = '';
+      await renderInboundTab();
+      _splitJob = (inboundJobs || []).find(x => x.id === _splitJob.id) || _splitJob;
+      renderSplitLines(); renderSplitCurrent();
+    } catch (e) { show('error', 'Network error — nothing was assigned.'); }
+  });
+  document.getElementById('splitCurrent').addEventListener('click', async e => {
+    const b = e.target.closest('.split-undo');
+    if (!b) return;
+    const password = document.getElementById('splitPassword').value;
+    if (!password) { alert('Enter your password above first — taking work back needs the same confirmation.'); return; }
+    for (const id of b.dataset.ids.split(',')) {
+      await fetch(`/api/inbound/${encodeURIComponent(_splitJob.id)}/split/${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: hdrs(), body: JSON.stringify({ password }),
+      });
+    }
+    await renderInboundTab();
+    _splitJob = (inboundJobs || []).find(x => x.id === _splitJob.id) || _splitJob;
+    renderSplitLines(); renderSplitCurrent();
+  });
 
   // GRN — printable Goods Received Note (client-facing proof of receipt).
   async function printGrn(id) {
@@ -6312,6 +6427,17 @@
         activeInbound.cartons.push({ num: data.cartonNum, scans: {} });
       }
       lastScannedInboundSku = data.sku;
+      // TEAM FEEDBACK. Say whose assignment the piece landed on — and make a
+      // cross-scan obvious, so the person who picked up someone else's item
+      // knows it counted for them, not for himself.
+      if (data.allocation) {
+        activeInbound.assignments = data.assignments || activeInbound.assignments;
+        const al = data.allocation;
+        if (al.cross) {
+          showFeedback(feedback, 'pending',
+            `${data.sku}: counted for ${al.assignee} (${al.done}/${al.qty}) — they've been notified`);
+        }
+      }
       updateInboundCartonBadge(activeInbound);
       renderInboundItemsTable(activeInbound);
       const ct = data.condition_totals || {};
