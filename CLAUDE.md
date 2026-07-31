@@ -2478,8 +2478,56 @@ the password + leader rules, 6 on crash replay (progress and the cross-scan
 notice both survive; a lower or oversized journal line is ignored), and 6 on
 offline replay attribution.
 
-STILL TO BUILD: the split/assign UI and its Chromium pass. Everything above is
-API-only — no screen reaches it yet.
+### The screens — split modal, colleague picker, and the strip the pill lives on
+
+- **Split modal** (`#splitInboundOverlay`, 👥 Split button on each Inbound row):
+  tick lines → choose a colleague → your password. Repeatable; shows "Who has
+  what" underneath, and the leader is shown as a ⭐ pill on the list row.
+- **The assignee is a PICKER, not free text** (`#splitAssignee`, a `<select>`
+  fed by `GET /api/team`). The first cut was an `<input list=…>` with an empty
+  datalist, so a typo'd id created an assignment nobody would ever see.
+  `/api/team` is deliberately NOT master-gated — the people who split a receipt
+  are warehouse staff, and the master-gated `/api/master/users` would be a 403
+  for them. It returns `{id, name, self}` ONLY (no roles, features, hashes or
+  salts), excludes drivers, and sorts the caller last. The client also rejects
+  anything not on that list before sending.
+- **TEAM STRIP** (`#inboundTeamStrip`, under the meta pills on the receiving
+  screen). This is where the cross-scan pill the user asked for actually has to
+  appear — the first cut only rendered it inside the leader's Split modal, i.e.
+  never on the screen the person being notified is standing in front of. Shows
+  "Your lines" first with `SKU done/qty`, then each colleague's totals, and an
+  orange pill "<who> counted N for you ✕" that dismisses to `.../seen`.
+  Only rendered when the receipt has assignments — an unsplit receipt looks
+  exactly as it did before.
+- **`GET /api/inbound/:id/team`** is a deliberately small poll target
+  (`{assignments, lead, me, scanned, status}`) run every 6s WHILE the receiving
+  screen is open and only for a split receipt — that poll is what makes the
+  other person's pill appear by itself rather than at their next scan. It also
+  carries the receipt's running `scanned` totals, because on a shared job the
+  Received column is only correct if a colleague's pieces show up too (the strip
+  read 3/4 while the table below it still said 2). It does NOT overwrite the
+  table while that device is holding offline scans — the server doesn't know
+  about those yet. Stopped on back, on End Receipt, and whenever the open job
+  changes.
+- **BUG FOUND BY THIS TEST — the cross-scan message was being overwritten.**
+  `inboundScan` wrote "counted for <colleague>" into the feedback line, then a
+  few lines later the generic `else showFeedback('success', 'N received')`
+  clobbered it, so the person who picked up someone else's item was never told.
+  The note is now held in `crossMsg` and APPENDED to whichever outcome line
+  fires (normal, damaged/KIV, cross-dock).
+
+Verified 24 browser checks with TWO REAL BROWSERS receiving the same split
+receipt at once (whguy on desktop, demo on a Pixel 5): simultaneous scans each
+fill their own line, a cross-scan still counts and raises exactly one notice,
+whguy is told whose it was, the pill appears on demo's phone by itself, so does
+the updated Received column, dismissing is a read-receipt that moves no count,
+demo can finish whguy's line, an extra piece never pushes an assignment past its
+qty, and the ten pieces scanned across both browsers all reconcile. Plus 18
+checks on the picker (only real colleagues offered, self marked "(you)", no
+made-up id can even be set on the control, wrong password refused without a
+reload) and 11 regression checks (an unsplit receipt shows no strip and no team
+wording; a held offline scan survives the poll and drains to exactly one piece
+on the right assignment).
 
 ## Inbound putaway — now, or stage it with a printed ID
 

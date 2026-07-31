@@ -8449,6 +8449,27 @@ app.delete('/api/inbound/:id/split/:assignmentId', express.json(), (req, res) =>
   res.json({ ok: true, assignments: rec.assignments });
 });
 
+// Just the team picture for one receipt — who has what, how far along, and any
+// unseen cross-scan notice. Small enough to poll while the receiving screen is
+// open, which is what makes the other person's pill actually APPEAR on their
+// screen rather than waiting for their next scan. Deliberately not the whole
+// record (that read fills descriptions from the item master and is far heavier).
+app.get('/api/inbound/:id/team', (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  res.json({
+    assignments: rec.assignments || [],
+    lead: rec.lead || null,
+    me: req.userId || '',
+    // The receipt's running totals go with it: on a shared job the Received
+    // column is only correct if a colleague's pieces show up too. Without this
+    // the strip said 3/4 while the table below it still read 2.
+    scanned: rec.state?.scanned || {},
+    status: rec.state?.status || 'pending',
+  });
+});
+
 // Dismiss the cross-scan notification once the assignee has seen it. Purely a
 // read-receipt — the piece was counted when it was scanned; nothing was ever
 // waiting on this.
@@ -11695,6 +11716,21 @@ app.post('/api/label/doc', requireAuth, express.json(), async (req, res) => {
 });
 
 // ── Master: User management ──────────────────────────────────────────────────
+// Colleagues you can hand inbound work to. Deliberately NOT master-gated: the
+// people who split a receipt are warehouse staff, and a free-text assignee
+// field means a typo'd id creates an assignment nobody ever sees. Returns ids
+// and display names ONLY — no roles, features, hashes or salts — so it exposes
+// nothing beyond "who works here", which every signed-in user can already see
+// on the floor. Ordered so the caller isn't offered themselves first.
+app.get('/api/team', (req, res) => {
+  const me = req.userId || '';
+  const rows = readUsers()
+    .filter(u => (u.role || 'admin') !== 'driver')
+    .map(({ id, name }) => ({ id, name: name || id, self: id === me }))
+    .sort((a, b) => (a.self === b.self ? a.id.localeCompare(b.id) : (a.self ? 1 : -1)));
+  res.json(rows);
+});
+
 app.get('/api/master/users', (req, res) => {
   if (!checkMaster(req, res)) return;
   res.json(readUsers().map(({ id, name, role, features }) => ({ id, name, role: role || 'admin', features: features || null })));

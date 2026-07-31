@@ -387,6 +387,12 @@
 
     <div class="scan-order-meta" id="inboundJobMeta"></div>
 
+    <!-- TEAM STRIP — only rendered when this receipt has been split. Shows the
+         signed-in receiver their own lines first, the rest of the team after,
+         and any cross-scan notification pill (someone else counted a piece
+         against your line). Tapping the pill marks it seen. -->
+    <div id="inboundTeamStrip" class="inbound-team-strip hidden"></div>
+
     <div class="scan-items-scroll">
       <table class="scan-items-table">
         <thead>
@@ -1571,8 +1577,7 @@
       <div class="form-group" style="margin-top:.8rem;display:flex;gap:.6rem;flex-wrap:wrap">
         <div style="flex:1 1 12rem;min-width:0">
           <label style="font-size:.8rem">Assign to</label>
-          <input type="text" id="splitAssignee" placeholder="colleague's user id" autocomplete="off" list="splitUserList">
-          <datalist id="splitUserList"></datalist>
+          <select id="splitAssignee"><option value="">Choose a colleague…</option></select>
         </div>
         <div style="flex:1 1 12rem;min-width:0">
           <label style="font-size:.8rem">Your password</label>

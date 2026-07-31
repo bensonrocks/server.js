@@ -2387,6 +2387,15 @@
   // Repeatable. The server enforces the leader rule and never over-allocates;
   // this screen just has to show what is left and stay honest about it.
   let _splitJob = null;
+  // Real colleague list, not free text — a typo'd user id used to create an
+  // assignment nobody would ever see. Loaded once and reused.
+  let _teamCache = null;
+  async function loadTeam() {
+    if (_teamCache) return _teamCache;
+    try { _teamCache = await (await fetch('/api/team', { headers: hdrs() })).json(); }
+    catch { _teamCache = []; }
+    return _teamCache;
+  }
   function splitUnassigned(job, line) {
     const given = (job.assignments || [])
       .filter(a => a.line_id === line.line_id)
@@ -2398,8 +2407,11 @@
     if (!_splitJob) return;
     document.getElementById('splitRef').textContent = _splitJob.serial || _splitJob.reference || id.slice(0, 8);
     document.getElementById('splitPassword').value = '';
-    document.getElementById('splitAssignee').value = '';
     document.getElementById('splitMsg').classList.add('hidden');
+    const sel = document.getElementById('splitAssignee');
+    const team = await loadTeam();
+    sel.innerHTML = '<option value="">Choose a colleague…</option>' +
+      team.map(u => `<option value="${esc(u.id)}">${esc(u.name)}${u.self ? ' (you)' : ''} — ${esc(u.id)}</option>`).join('');
     const lead = _splitJob.lead;
     const note = document.getElementById('splitLeadNote');
     if (lead) {
@@ -2457,7 +2469,10 @@
     const password = document.getElementById('splitPassword').value;
     const msg = document.getElementById('splitMsg');
     const show = (kind, text) => { msg.className = `status-bar ${kind}`; msg.textContent = text; msg.classList.remove('hidden'); };
-    if (!assignee) { show('error', 'Who is taking these lines?'); return; }
+    if (!assignee) { show('error', 'Choose who is taking these lines.'); return; }
+    // Belt and braces: the control is a picker, but reject anything not on the
+    // real team list rather than silently creating work for a user that doesn't exist.
+    if (!(_teamCache || []).some(u => u.id === assignee)) { show('error', `"${assignee}" is not a user on this system.`); return; }
     if (!password) { show('error', 'Enter your password to confirm.'); return; }
     // Send the line only — no qty. The server reads a missing/zero qty as
     // "everything still free on this line", which is exactly what handing over
@@ -6364,6 +6379,9 @@
     setInboundCondition('straight_to_inventory'); // condition buttons show for ALL types now
     updateInboundCartonBadge(job);
     renderInboundItemsTable(job);
+    renderInboundTeamStrip(job);
+    if ((job.assignments || []).length && job.status !== 'done') startInboundTeamPoll(job.id);
+    else stopInboundTeamPoll();
     lastScannedInboundSku = null;
     renderInboundPhotoGrid(job);
     document.getElementById('inboundCompleteBtn').disabled = job.status === 'done';
@@ -6380,9 +6398,86 @@
     }
   }
 
+  // ── TEAM STRIP ──────────────────────────────────────────────────────────
+  // When a receipt has been split, the person receiving needs to see THEIR
+  // lines and how far along they are — and, when a colleague counts a piece
+  // against one of those lines, the notification pill has to appear HERE, on
+  // the screen they are actually standing in front of. Rendered from the
+  // assignments the scan response returns, and refreshed by a light poll so a
+  // cross-scan shows up without them having to do anything.
+  function renderInboundTeamStrip(job) {
+    const el = document.getElementById('inboundTeamStrip');
+    if (!el) return;
+    const list = job?.assignments || [];
+    if (!list.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+    const me = currentUser?.id || '';
+    const mine   = list.filter(a => a.assignee === me);
+    const others = list.filter(a => a.assignee !== me);
+    const chip = a => {
+      const done = a.done || 0, full = done >= a.qty;
+      const notice = a.notice && !a.notice.seen
+        ? `<button class="its-notice" data-seen-assignment="${esc(a.id)}"
+             title="Tap to dismiss">${esc(a.notice.by)} counted ${a.notice.qty} for you &#10005;</button>`
+        : '';
+      return `<span class="its-chip${full ? ' done' : ''}">${esc(a.sku)}
+        <b>${done}/${a.qty}</b>${notice}</span>`;
+    };
+    const byPerson = new Map();
+    others.forEach(a => {
+      if (!byPerson.has(a.assignee)) byPerson.set(a.assignee, []);
+      byPerson.get(a.assignee).push(a);
+    });
+    el.innerHTML = `
+      ${mine.length ? `<div class="its-row"><span class="its-who">Your lines</span>${mine.map(chip).join('')}</div>` : ''}
+      ${[...byPerson.entries()].map(([who, as]) => {
+        const done = as.reduce((s, a) => s + (a.done || 0), 0);
+        const tot  = as.reduce((s, a) => s + a.qty, 0);
+        return `<div class="its-row its-other"><span class="its-who">${esc(who)}</span>
+          <span class="its-chip${done >= tot ? ' done' : ''}">${as.length} line(s) <b>${done}/${tot}</b></span></div>`;
+      }).join('')}
+      ${!mine.length ? `<div class="its-hint">None of these lines are yours &mdash; anything you scan still counts, and they're told.</div>` : ''}`;
+    el.classList.remove('hidden');
+    el.querySelectorAll('[data-seen-assignment]').forEach(b => b.addEventListener('click', async () => {
+      const id = b.dataset.seenAssignment;
+      const a = (activeInbound?.assignments || []).find(x => x.id === id);
+      if (a?.notice) a.notice.seen = true;      // optimistic — it's only a read receipt
+      renderInboundTeamStrip(activeInbound);
+      try { await fetchT(`/api/inbound/${activeInbound.id}/assignment/${id}/seen`, { method: 'POST', headers: hdrs() }); } catch {}
+    }));
+  }
+
+  // Poll only while the receiving screen is open, and only for a split receipt.
+  let _inboundTeamPoll = null;
+  function startInboundTeamPoll(jobId) {
+    stopInboundTeamPoll();
+    _inboundTeamPoll = setInterval(async () => {
+      if (!activeInbound || activeInbound.id !== jobId) return stopInboundTeamPoll();
+      try {
+        const r = await fetchT(`/api/inbound/${jobId}/team`, { headers: hdrs() });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!activeInbound || activeInbound.id !== jobId) return;
+        activeInbound.assignments = d.assignments || [];
+        activeInbound.lead = d.lead || null;
+        // A colleague's pieces count towards the same receipt, so the Received
+        // column has to move for everyone — not just for whoever scanned.
+        // Locally-held offline scans are ADDED on top rather than overwritten:
+        // the server does not know about them yet.
+        const held = pendingScansForTarget('inbound', jobId).length;
+        if (d.scanned && !held) {
+          activeInbound.scanned = d.scanned;
+          renderInboundItemsTable(activeInbound);
+        }
+        renderInboundTeamStrip(activeInbound);
+      } catch {}
+    }, 6000);
+  }
+  function stopInboundTeamPoll() { if (_inboundTeamPoll) { clearInterval(_inboundTeamPoll); _inboundTeamPoll = null; } }
+
   document.getElementById('backToInboundBtn').addEventListener('click', () => {
     document.getElementById('inboundScanOverlay').classList.add('hidden');
     detachGlobalScanCapture();
+    stopInboundTeamPoll();
     activeInbound = null;
     renderInboundTab();
   });
@@ -6434,13 +6529,16 @@
       // TEAM FEEDBACK. Say whose assignment the piece landed on — and make a
       // cross-scan obvious, so the person who picked up someone else's item
       // knows it counted for them, not for himself.
+      let crossMsg = '';
       if (data.allocation) {
         activeInbound.assignments = data.assignments || activeInbound.assignments;
+        renderInboundTeamStrip(activeInbound);
         const al = data.allocation;
-        if (al.cross) {
-          showFeedback(feedback, 'pending',
-            `${data.sku}: counted for ${al.assignee} (${al.done}/${al.qty}) — they've been notified`);
-        }
+        // Held and appended to whatever the normal outcome line says — writing
+        // it here directly used to be overwritten a few lines down by the plain
+        // "N received" success message, so the person who picked up a colleague's
+        // item was never actually told.
+        if (al.cross) crossMsg = ` — counted for ${al.assignee} (${al.done}/${al.qty}), they've been notified`;
       }
       updateInboundCartonBadge(activeInbound);
       renderInboundItemsTable(activeInbound);
@@ -6450,7 +6548,7 @@
         // one tap opens the phone camera, photo tagged to this SKU + condition.
         const label = data.condition === 'damaged' ? `💥 DAMAGED (${ct.damaged || 1} so far)` : `⏸ KIV (${ct.kiv || 1} so far)`;
         feedback.className = 'scan-feedback error';
-        feedback.innerHTML = `${esc(data.sku)}: received as ${label} — ${data.scanned_qty} total <button class="link-btn" id="damagePhotoChip" style="font-weight:700">📷 Damage photo</button>`;
+        feedback.innerHTML = `${esc(data.sku)}: received as ${label} — ${data.scanned_qty} total${esc(crossMsg)} <button class="link-btn" id="damagePhotoChip" style="font-weight:700">📷 Damage photo</button>`;
         feedback.classList.remove('hidden');
         clearTimeout(feedback._t);
         feedback._t = setTimeout(() => feedback.classList.add('hidden'), 12000); // longer — give them time to tap
@@ -6462,8 +6560,8 @@
       } else if (data.crossdock) {
         // ⚡ CROSS-DOCK: outbound orders are waiting on this SKU — stage it for
         // packing instead of shelving it.
-        showFeedback(feedback, 'error', `${data.sku}: ${data.scanned_qty} received — ⚡ ${data.crossdock.needed} pc(s) NEEDED by ${data.crossdock.orders.join(', ')} — stage for packing, don't shelve`);
-      } else showFeedback(feedback, 'success', `${data.sku}: ${data.scanned_qty} received`);
+        showFeedback(feedback, 'error', `${data.sku}: ${data.scanned_qty} received — ⚡ ${data.crossdock.needed} pc(s) NEEDED by ${data.crossdock.orders.join(', ')} — stage for packing, don't shelve${crossMsg}`);
+      } else showFeedback(feedback, crossMsg ? 'pending' : 'success', `${data.sku}: ${data.scanned_qty} received${crossMsg}`);
       if (inboundCondition !== 'straight_to_inventory') setInboundCondition('straight_to_inventory');
     } catch (err) {
       // NETWORK DOWN — the piece is in the receiver's hand and must not be
@@ -6697,6 +6795,7 @@
       }
       document.getElementById('inboundScanOverlay').classList.add('hidden');
       detachGlobalScanCapture();
+      stopInboundTeamPoll();
       const finishedId = activeInbound.id;
       const finishedRef = activeInbound.serial || activeInbound.reference || finishedId.slice(0, 8);
       activeInbound = null;

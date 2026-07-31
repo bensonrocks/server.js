@@ -371,6 +371,20 @@ main {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(37,99,235,.1);
 }
+/* The colleague picker sits beside the password box on the split-inbound modal;
+   a bare native <select> next to a full-width input read as a different kind of
+   control. Scoped to this one id on purpose — `.form-group select` would
+   restyle every dropdown in the app. */
+#splitAssignee {
+  width: 100%; padding: .62rem .85rem;
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  font-size: .9rem; color: var(--text); background: var(--surface);
+  outline: none; transition: border-color .15s, box-shadow .15s;
+}
+#splitAssignee:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
 .form-group textarea {
   width: 100%; padding: .62rem .85rem;
   border: 1.5px solid var(--border); border-radius: var(--radius-sm);
@@ -795,6 +809,25 @@ body.scan-open { overflow: hidden; }
 .scan-order-meta span { display: flex; gap: .3rem; }
 .scan-meta-address { width: 100%; }
 .waybill-ok { color: var(--success); }
+
+/* Team strip on the receiving screen — only present when the receipt was split.
+   Sits directly under the meta pills so a receiver sees their own lines and any
+   cross-scan notification without scrolling. */
+.inbound-team-strip { padding: .45rem 1rem; background: #f8fafc; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.its-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: .15rem 0; }
+.its-who { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light); margin-right: .2rem; }
+.its-other .its-who { font-weight: 700; text-transform: none; letter-spacing: 0; }
+.its-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .55rem; border-radius: 99px;
+            background: #fff; border: 1.5px solid var(--border); font-size: .78rem; color: var(--text); }
+.its-chip.done { background: #dcfce7; border-color: #86efac; color: #166534; }
+.its-chip b { font-variant-numeric: tabular-nums; }
+.its-notice { margin-left: .35rem; padding: .1rem .45rem; border-radius: 99px; border: 0; cursor: pointer;
+              background: #ffedd5; color: #9a3412; font-size: .72rem; font-weight: 700; font-family: inherit; }
+.its-hint { font-size: .74rem; color: var(--text-light); margin-top: .15rem; }
+@media (max-width: 768px) {
+  .inbound-team-strip { padding: .4rem .9rem; }
+  .its-chip, .its-notice { font-size: .74rem; }
+}
 
 .scan-items-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .scan-items-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
