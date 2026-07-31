@@ -7704,6 +7704,10 @@ app.get('/api/inbound', (req, res) => {
       // Cargo received but parked in a staging area rather than binned — each
       // entry is a printed label stuck on the pallet.
       staging:           rec.staging || [],                // [{id, code, area, at, by, lines, units}]
+      // Team split: who is responsible for what, how far along they are, and
+      // any cross-scan notices waiting to be seen.
+      assignments:       rec.assignments || [],
+      captures:          (rec.state?.captures || []),      // serial / batch / expiry captured while scanning
     };
   });
   res.json(list);
@@ -7880,11 +7884,14 @@ app.post('/api/inbound/:id/scan', (req, res) => {
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
   if (state.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended — no further scans can be logged.' });
-  // One receiver per job — same claim rule as outbound packing (stale claims
-  // auto-expire, so a walked-away session never locks a job forever).
-  const claimHolder0 = claimBlocker(state, req.userId);
-  if (claimHolder0) return res.status(409).json({ error: `This receipt is being worked by ${claimHolder0} at another station.` });
-  refreshClaim(state, req.userId);
+  // One receiver per job — UNLESS the job has been SPLIT ACROSS A TEAM, which is
+  // the whole point of splitting: several people receive the same delivery at
+  // once. The lock still protects an unsplit job from two stations racing it.
+  if (!(rec.assignments || []).length) {
+    const claimHolder0 = claimBlocker(state, req.userId);
+    if (claimHolder0) return res.status(409).json({ error: `This receipt is being worked by ${claimHolder0} at another station.` });
+    refreshClaim(state, req.userId);
+  }
 
   const inc = Math.max(1, parseInt(qty, 10) || 1);
   const raw = String(code).trim();
@@ -7939,9 +7946,72 @@ app.post('/api/inbound/:id/scan', (req, res) => {
     });
   }
 
+  // ── TEAM ALLOCATION ──────────────────────────────────────────────────────
+  // Fill the scanner's OWN outstanding assignment for this SKU first (the
+  // normal case, frictionless). If they have none left, the piece still counts
+  // — against a colleague's assignment — because the aim is to finish the
+  // inbound as a team, not to stop someone holding a box. That cross-scan is
+  // recorded on the assignment so the other person sees a notification pill and
+  // the trail says who did what, when.
+  //
+  // Assignments are filled ONE AT A TIME in order, so many pallets of the same
+  // SKU count incrementally and can never double-credit each other.
+  const me = req.userId || '';
+  let allocation = null;
+  if ((rec.assignments || []).length) {
+    const outstanding = rec.assignments.filter(a => a.sku === sku && (a.done || 0) < a.qty);
+    const mine = outstanding.filter(a => a.assignee === me);
+    const target = mine[0] || outstanding[0] || null;
+    if (target) {
+      const room = target.qty - (target.done || 0);
+      const applied = Math.min(inc, room);
+      target.done = (target.done || 0) + applied;
+      const crossScan = target.assignee !== me;
+      target.events = target.events || [];
+      target.events.push({ at: new Date().toISOString(), by: me, qty: applied, cross: crossScan });
+      if (crossScan) {
+        // The pill the other person sees. Purely a notification — the piece is
+        // already counted, nothing waits on them acknowledging it.
+        target.notice = { by: me, at: new Date().toISOString(), qty: applied, seen: false };
+      }
+      allocation = { assignment_id: target.id, assignee: target.assignee, applied,
+                     done: target.done, qty: target.qty, cross: crossScan };
+      logAudit('inbound_scan_allocated', {
+        id: rec.id, serial: rec.serial || '', sku, qty: applied,
+        assignment: target.id, assignee: target.assignee, scannedBy: me,
+        crossScan, by: me,
+      });
+    }
+  }
+
   state.scanned = state.scanned || {};
   state.scanned[sku] = (state.scanned[sku] || 0) + inc;
   addToActiveCarton(state, sku, inc);
+
+  // ── SERIAL / BATCH, optional, captured as the piece is received ───────────
+  // Both are optional per the user. They are recorded on the receipt now and
+  // carried into the inventory store at putaway (placeStock already takes
+  // lot_number + expiry_date; the serials registry takes the serial), so the
+  // data lands in the right columns rather than in a note field.
+  const serialNo = String(req.body.serial_number || '').trim().slice(0, 64);
+  const batchNo  = String(req.body.batch_number || req.body.lot_number || '').trim().slice(0, 40);
+  const expiryIn = String(req.body.expiry_date || '').trim().slice(0, 10);
+  if (serialNo || batchNo || expiryIn) {
+    state.captures = state.captures || [];
+    state.captures.push({ sku, serial: serialNo, batch: batchNo, expiry: expiryIn || null,
+                          qty: inc, at: new Date().toISOString(), by: me });
+    // A serial identifies ONE physical unit, so register it against the client
+    // immediately — waiting until putaway would lose which piece it was.
+    if (serialNo && inventory.available()) {
+      try {
+        inventory.addSerials(invClientId(rec.client_name), sku, [serialNo], rec.serial || rec.reference || rec.id);
+      } catch (e) { console.warn('[inbound-serial]', e.message); }
+    }
+    logAudit('inbound_capture_recorded', {
+      id: rec.id, serial: rec.serial || '', sku,
+      serialNumber: serialNo, batch: batchNo, expiry: expiryIn, qty: inc, by: me,
+    });
+  }
 
   // Condition applies to EVERY receiving type now, not just returns — a PO
   // arriving with crushed units is routine, and those units must never land in
@@ -7975,7 +8045,11 @@ app.post('/api/inbound/:id/scan', (req, res) => {
     const waiting = (db.backorders || []).filter(b => b.client_id === cid && b.sku === sku && b.status === 'open');
     if (waiting.length) crossdock = { needed: waiting.reduce((s, b) => s + b.remaining, 0), orders: waiting.slice(0, 3).map(b => b.order_number) };
   } catch (_) {}
-  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], condition: cond, condition_totals: state.conditionTotals[sku], crossdock, cartonNum: carton.num, cartonCount: state.cartons.length });
+  res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], condition: cond,
+    condition_totals: state.conditionTotals[sku], crossdock,
+    cartonNum: carton.num, cartonCount: state.cartons.length,
+    allocation,                       // which assignment took this piece, and whose it was
+    assignments: rec.assignments || [] });
 });
 
 app.post('/api/inbound/:id/new-carton', (req, res) => {
@@ -8188,9 +8262,14 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   // Received stock raised availability → notify ZORT stock-sync stores.
   if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
   // GRN email to the configured alert recipient — fire-and-forget, never blocks.
+  // Captured HERE: the callbacks below run after the response, and closing over
+  // req at that point is what leaves an audit row with no actor.
+  const grnActor = req.userId || '';
   sendInboundGrnAlert(rec).then(r => {
-    logAudit(r?.sent ? 'inbound_grn_emailed' : 'inbound_grn_email_skipped', { id: rec.id, serial: rec.serial, reason: r?.reason || '' });
-  }).catch(e => logAudit('inbound_grn_email_failed', { id: rec.id, error: String(e.message || e).slice(0, 200) }));
+    // every inbound audit row carries an actor, even the automated ones — a
+    // trail with anonymous entries is a trail you can't follow
+    logAudit(r?.sent ? 'inbound_grn_emailed' : 'inbound_grn_email_skipped', { id: rec.id, serial: rec.serial, reason: r?.reason || '', by: grnActor });
+  }).catch(e => logAudit('inbound_grn_email_failed', { id: rec.id, error: String(e.message || e).slice(0, 200), by: grnActor }));
   res.json({ ok: true, discrepancies: mismatches.length, extras: extras.length });
 });
 
@@ -8222,6 +8301,114 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
     logAudit('inbound_putaway', { id: rec.id, sku, location: location_id, qty: Number(qty), expiry: expiry_date || '', reason: override_reason || '', by: req.userId || '' });
     res.json({ ok: true, placed: result, putaway: state.putaway });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── SPLIT AN INBOUND ACROSS THE TEAM ────────────────────────────────────────
+// One delivery, several people. Lines are split into ASSIGNMENTS and handed to
+// colleagues; a job can be split again and again until the supervisor is happy.
+//
+// WHY ASSIGNMENTS AND NOT SKUs: the same SKU can arrive on several pallets and
+// be given to several people. Per the user, "each inbound line split even if
+// its same SKU is unique" — so counting has to happen against an assignment,
+// not against a SKU, or two people working the same product would be
+// indistinguishable and their pallets would double-count each other.
+//
+// `state.scanned[sku]` REMAINS the derived per-SKU total, so End Receipt, stock
+// posting, the GRN, discrepancies and the client portal all keep working
+// unchanged — the split is a work-allocation layer on top, not a new source of
+// truth for quantities.
+function ensureLineIds(rec) {
+  let changed = false;
+  (rec.lines || []).forEach((l, i) => {
+    if (!l.line_id) { l.line_id = `L${String(i + 1).padStart(3, '0')}-${(l.sku || '').slice(0, 12)}`; changed = true; }
+  });
+  return changed;
+}
+function inboundAssignments(rec) { return rec.assignments || (rec.assignments = []); }
+
+// How much of a line is already handed out, so a split can never over-allocate.
+function assignedQtyForLine(rec, lineId) {
+  return inboundAssignments(rec)
+    .filter(a => a.line_id === lineId)
+    .reduce((s, a) => s + Number(a.qty || 0), 0);
+}
+
+// SPLIT — mass-assign portions of lines to a colleague. Repeatable: call it
+// again for the next person, and again after that.
+//   body: { assignee, items: [{ line_id, qty }] }
+app.post('/api/inbound/:id/split', express.json(), (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  if (rec.state?.status === 'done') return res.status(409).json({ error: 'This receipt has already been ended.' });
+  const assignee = String(req.body?.assignee || '').trim();
+  if (!assignee) return res.status(400).json({ error: 'assignee is required' });
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: 'Select at least one line to assign.' });
+
+  ensureLineIds(rec);
+  const made = [], problems = [];
+  for (const it of items) {
+    const line = (rec.lines || []).find(l => l.line_id === it.line_id);
+    if (!line) { problems.push(`Unknown line ${it.line_id}`); continue; }
+    const want = Number(it.qty);
+    const expected = Number(line.expected_qty || 0);
+    const already = assignedQtyForLine(rec, line.line_id);
+    const free = Math.max(0, expected - already);
+    const qty = (!Number.isFinite(want) || want <= 0) ? free : Math.min(want, free);
+    if (qty <= 0) { problems.push(`${line.sku}: nothing left to assign (${already}/${expected} already allocated)`); continue; }
+    const a = {
+      id: uuidv4(),
+      line_id: line.line_id,
+      sku: line.sku,
+      description: line.description || '',
+      qty,                       // how many pieces this person is responsible for
+      done: 0,                   // counted so far against THIS assignment
+      assignee,
+      assigned_at: new Date().toISOString(),
+      assigned_by: req.userId || '',
+      events: [],                // who scanned what against this assignment, and when
+    };
+    inboundAssignments(rec).push(a);
+    made.push(a);
+  }
+  if (!made.length) return res.status(400).json({ error: problems.join('; ') || 'Nothing could be assigned.' });
+  writeDb(db);
+  logAudit('inbound_split_assigned', {
+    id: rec.id, serial: rec.serial || '', assignee,
+    assignments: made.length, units: made.reduce((s, a) => s + a.qty, 0),
+    skus: [...new Set(made.map(a => a.sku))].slice(0, 12),
+    by: req.userId || '',
+  });
+  res.status(201).json({ ok: true, assigned: made, problems, assignments: inboundAssignments(rec) });
+});
+
+// Undo one assignment (before it has been scanned against).
+app.delete('/api/inbound/:id/split/:assignmentId', (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const a = inboundAssignments(rec).find(x => x.id === req.params.assignmentId);
+  if (!a) return res.status(404).json({ error: 'Assignment not found' });
+  if (a.done > 0) return res.status(409).json({ error: `${a.done} piece(s) have already been counted against this assignment — it can no longer be removed.` });
+  rec.assignments = inboundAssignments(rec).filter(x => x.id !== a.id);
+  writeDb(db);
+  logAudit('inbound_split_removed', { id: rec.id, serial: rec.serial || '', assignee: a.assignee, sku: a.sku, qty: a.qty, by: req.userId || '' });
+  res.json({ ok: true, assignments: rec.assignments });
+});
+
+// Dismiss the cross-scan notification once the assignee has seen it. Purely a
+// read-receipt — the piece was counted when it was scanned; nothing was ever
+// waiting on this.
+app.post('/api/inbound/:id/assignment/:assignmentId/seen', express.json(), (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const a = (rec.assignments || []).find(x => x.id === req.params.assignmentId);
+  if (!a) return res.status(404).json({ error: 'Assignment not found' });
+  if (a.notice) a.notice.seen = true;
+  writeDb(db);
+  res.json({ ok: true, assignment: a });
 });
 
 // ── PUTAWAY LATER → stage it ────────────────────────────────────────────────
