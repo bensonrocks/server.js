@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Staff Access | NimbusTrade Solutions</title>
 <meta name="robots" content="noindex, nofollow" />
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -15,14 +15,9 @@
 
 <!-- ---------- Login screen ---------- -->
 <div class="login-screen" id="login-screen">
-  <button class="theme-toggle login-theme-toggle" id="login-theme-toggle" type="button" aria-label="Toggle light / dark mode">
-    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/></svg>
-    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.3A8.4 8.4 0 1 1 9.7 4a6.6 6.6 0 0 0 10.3 10.3z"/></svg>
-  </button>
   <form class="login-card" id="login-form">
     <div class="login-brand">
-      <span class="brand-cn">云腾贸易方案私人有限公司</span>
-      <span class="brand-en">Nimbus<span>Trade</span></span>
+      <img src="assets/logo.png" class="brand-logo" alt="NimbusTrade Solutions" />
     </div>
     <p class="login-eyebrow">Staff Access · Master Panel</p>
     <h1>Sign in to operations control</h1>
@@ -47,15 +42,11 @@
 <div class="app" id="app" hidden>
   <header class="app-header">
     <div class="app-brand">
-      <span class="brand-cn">云腾贸易方案私人有限公司</span>
-      <span class="brand-en">Nimbus<span>Trade</span> <em>Staff Access</em></span>
+      <img src="assets/logo.png" class="brand-logo" alt="NimbusTrade Solutions" />
+      <em class="app-brand-suffix">Staff Access</em>
     </div>
     <div class="app-header-right">
       <span class="client-name" id="staff-name">—</span>
-      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light / dark mode">
-        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/></svg>
-        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.3A8.4 8.4 0 1 1 9.7 4a6.6 6.6 0 0 0 10.3 10.3z"/></svg>
-      </button>
       <button class="btn btn-ghost-sm" id="logout-btn">Log out</button>
     </div>
   </header>

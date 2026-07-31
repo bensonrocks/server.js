@@ -26,21 +26,9 @@
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }
 
-  // ---------- Theme ----------
+  // ---------- Theme (always light — no dark mode) ----------
   const root = document.documentElement;
-  const storedTheme = localStorage.getItem('nimbustrade-portal-theme');
-  root.dataset.theme = storedTheme || 'light';
-
-  function setTheme(next) {
-    root.dataset.theme = next;
-    localStorage.setItem('nimbustrade-portal-theme', next);
-    if (tileLayer) tileLayer.setUrl(tileUrlForTheme());
-  }
-
-  [$('#theme-toggle'), $('#login-theme-toggle')].forEach((btn) => {
-    if (!btn) return;
-    btn.addEventListener('click', () => setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
-  });
+  root.dataset.theme = 'light';
 
   async function api(path, opts = {}) {
     const res = await fetch(API + path, { ...opts, headers: authHeaders() });

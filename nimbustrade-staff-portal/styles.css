@@ -1,26 +1,25 @@
 /* ============================================================
-   NimbusTrade Staff Access — "Control Tower"
-   Same operational console system as Client Access: light by
-   default with a dark "night" mode toggle. Staff get the same left
-   icon rail, now driving five destinations (Overview/Orders/
-   Clients/Vendors/Inventory) instead of anchors.
+   NimbusTrade Staff Access — "Clear Water"
+   Same all-white operational console as Client Access — no dark
+   mode. Staff get the same left icon rail, driving five destinations
+   (Overview/Orders/Clients/Vendors/Inventory) instead of anchors.
    ============================================================ */
 
-:root, :root[data-theme="light"] {
+:root, :root[data-theme="light"], :root[data-theme="dark"] {
   color-scheme: light;
-  --bg: #d7d9da;
-  --bg-alt: #cbcdcf;
-  --surface: #f0f1f0;
+  --bg: #ffffff;
+  --bg-alt: #f4f5f3;
+  --surface: #ffffff;
   --fg: #14171b;
   --fg-muted: #52585f;
-  --accent: #a8620e;
-  --accent-strong: #c97710;
-  --accent-tint: rgba(168, 98, 14, 0.12);
-  --border: rgba(20, 23, 27, 0.2);
+  --accent: #0a558b;
+  --accent-strong: #0f6aa8;
+  --accent-tint: rgba(10, 85, 139, 0.1);
+  --border: rgba(20, 23, 27, 0.18);
   --border-soft: rgba(20, 23, 27, 0.1);
 
-  --chrome-bg: #eceeed;
-  --chrome-bg-2: #e2e4e3;
+  --chrome-bg: #ffffff;
+  --chrome-bg-2: #f4f5f3;
   --chrome-fg: #14171b;
   --chrome-muted: #5c636a;
   --chrome-border: rgba(20, 23, 27, 0.14);
@@ -34,36 +33,6 @@
   --red-tint: rgba(156, 50, 35, 0.1);
   --grey: #5c636a;
   --grey-tint: rgba(92, 99, 106, 0.12);
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #15171b;
-  --bg-alt: #1a1d22;
-  --surface: #1d2025;
-  --fg: #e7e5dc;
-  --fg-muted: #8b93a0;
-  --accent: #e0932c;
-  --accent-strong: #f0a838;
-  --accent-tint: rgba(240, 168, 56, 0.14);
-  --border: rgba(231, 229, 220, 0.14);
-  --border-soft: rgba(231, 229, 220, 0.08);
-
-  --chrome-bg: #101215;
-  --chrome-bg-2: #16191d;
-  --chrome-fg: #e7e5dc;
-  --chrome-muted: #7d8590;
-  --chrome-border: rgba(231, 229, 220, 0.1);
-  --chrome-hover: rgba(231, 229, 220, 0.07);
-
-  --green: #3fa66b;
-  --green-tint: rgba(63, 166, 107, 0.14);
-  --amber: #3e8fb0;
-  --amber-tint: rgba(62, 143, 176, 0.16);
-  --red: #d9695a;
-  --red-tint: rgba(217, 105, 90, 0.14);
-  --grey: #7d8590;
-  --grey-tint: rgba(125, 133, 144, 0.16);
 }
 
 :root {
@@ -170,9 +139,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .login-brand { display: flex; flex-direction: column; margin-bottom: 24px; }
-.brand-cn { font-family: var(--font-mono); font-size: 10px; color: var(--fg-muted); letter-spacing: 0.04em; }
-.brand-en { font-family: var(--font-display); font-size: 21px; font-weight: 700; }
-.brand-en span, .brand-en em { color: var(--accent-strong); font-style: normal; }
+.brand-logo { display: block; height: 30px; width: auto; }
+.brand-logo-dark { display: none; }
+:root[data-theme="dark"] .brand-logo-light { display: none; }
+:root[data-theme="dark"] .brand-logo-dark { display: block; }
 
 .login-eyebrow { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; font-weight: 600; color: var(--accent); margin: 0 0 8px; }
 .login-card h1 { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
@@ -220,9 +190,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   color: var(--chrome-fg);
   border-bottom: 1px solid var(--chrome-border);
 }
-.app-brand { display: flex; flex-direction: column; line-height: 1.1; }
-.app-brand .brand-cn { color: var(--chrome-muted); }
-.app-brand .brand-en { color: var(--chrome-fg); font-size: 17px; }
+.app-brand { display: flex; align-items: center; gap: 10px; line-height: 1.1; }
+.app-brand .brand-logo { height: 24px; }
+.app-brand-suffix { font-family: var(--font-display); font-size: 15px; font-weight: 700; font-style: normal; color: var(--chrome-fg); border-left: 1px solid var(--chrome-border); padding-left: 10px; }
 .app-header-right { display: flex; align-items: center; gap: 14px; }
 .client-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--chrome-muted); }
 .app-header .btn-ghost-sm { color: var(--chrome-fg); border-color: var(--chrome-border); }
@@ -287,7 +257,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .tab-btn svg { width: 18px; height: 18px; }
 .tab-btn:hover { color: var(--chrome-fg); background: var(--chrome-hover); }
-.tab-btn.active { color: var(--accent-strong); background: rgba(240, 168, 56, 0.08); }
+.tab-btn.active { color: var(--accent-strong); background: rgba(74, 155, 212, 0.08); }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
@@ -584,6 +554,6 @@ table.orders-table tbody tr:hover { background: var(--bg-alt); }
 
 @media (max-width: 480px) {
   .app-header { padding: 0 14px; }
-  .app-brand .brand-en em { display: none; }
+  .app-brand-suffix { display: none; }
   .app-header-right { gap: 10px; }
 }
