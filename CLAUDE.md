@@ -219,6 +219,13 @@ Sunday nothing leaves.
 - **noCollectionDays** — roll forward to the next day that collects.
 - A day cannot be both (400). Saving re-runs `applyAutoPickups`, so newly
   adding a self-drop day settles that day's history immediately.
+- **ADMIN OR MASTER, not master-only** — per the user, admins run this day to
+  day (a courier changing their pickup time should not need the Administrator
+  key). Same guard as `/api/master/report/:kind`: master key OR `role ===
+  'admin'`, enforced server-side, so warehouse gets a real 403 calling it
+  directly and not just a hidden button. READING the schedule
+  (`GET /api/pickup-policy`) and CLOSING parcels off stay open to everyone
+  signed in — that is floor work, not an admin decision.
 - `sgParts()` derives the weekday from the SGT date STRING, so the host
   timezone can never pull a completion back a day (SGT everywhere — see
   "Day-bucketing is SGT").
@@ -254,9 +261,12 @@ order still showing "Not collected" behind the modal.
 Verified: 30 API checks (every day rule incl. after-cut-off roll, Sunday wait,
 Saturday auto-settle stamped at `endTime`, part-done refused, double-close
 refused, undo, derived due days moving with the cut-off, the self-drop/no-
-collection clash) and 25 browser checks on desktop and a Pixel 5 — pill colours
-by computed style, the scan close, the bulk close, the schedule editor, and no
-sideways scroll on a phone.
+collection clash), 25 browser checks on desktop and a Pixel 5 — pill colours by
+computed style, the scan close, the bulk close, the schedule editor, and no
+sideways scroll on a phone — plus 14 access checks (admin saves without the
+master key, warehouse 403s and changes nothing, the master key still works from
+any account, no token is 401, and warehouse can still read the schedule and
+close parcels).
 
 ## Duplicate-line upload safeguard (server.js `findDuplicateLineWarnings`)
 

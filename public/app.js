@@ -10307,8 +10307,10 @@
         selfDropDays: readDays('ppSelfDrop'),
         noCollectionDays: readDays('ppNoColl'),
       };
+      // The session token is enough — the server accepts an admin here, so a
+      // schedule change no longer needs the Administrator key.
       const r = await fetchT('/api/master/pickup-policy', {
-        method: 'POST', headers: { ...hdrs(), 'x-master-key': LOG_PASSWORD }, body: JSON.stringify(body),
+        method: 'POST', headers: hdrs(), body: JSON.stringify(body),
       });
       const d = await r.json();
       const el = $('ppMsg');
@@ -10329,6 +10331,11 @@
   document.getElementById('pickupBtn')?.addEventListener('click', async () => {
     document.getElementById('pickupOverlay').classList.remove('hidden');
     document.getElementById('pickupMsg').classList.add('hidden');
+    // Closing off parcels is floor work — anyone signed in does it. CHANGING
+    // the schedule is an admin decision (and the server enforces that), so the
+    // button is only offered to someone who can actually use it.
+    document.getElementById('pickupPolicyBtn')
+      ?.classList.toggle('hidden', (currentUser?.role || 'admin') !== 'admin');
     try { await pickupUI.load(); } catch (e) { alert(e.message); }
     setTimeout(() => document.getElementById('pickupScanInput')?.focus(), 80);
   });

@@ -11613,8 +11613,16 @@ app.post('/api/orders/pickup', express.json(), (req, res) => {
 
 // The collection policy — cut-off, self-drop days, no-collection days.
 app.get('/api/pickup-policy', (req, res) => res.json(pickupPolicy(readDb())));
+// ADMIN OR MASTER, not master-only. The collection schedule is an operational
+// arrangement the admins run day to day (a courier changing their pickup time
+// should not need the Administrator key), so it follows the same guard as the
+// admin reports: master key OR role 'admin', enforced server-side — warehouse
+// gets a real 403 even calling it directly, not just a hidden button.
 app.post('/api/master/pickup-policy', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
+  if (req.headers['x-master-key'] !== MASTER_PASS) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin') return res.status(403).json({ error: 'Only Admin users can change the collection schedule.' });
+  }
   const b = req.body || {};
   if (b.cutoff && !/^\d{1,2}:\d{2}$/.test(String(b.cutoff))) {
     return res.status(400).json({ error: 'Cut-off must look like 17:00.' });
