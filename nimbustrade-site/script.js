@@ -79,6 +79,7 @@ setupReveal('.problem-card', 100);
 setupReveal('.step', 90);
 setupReveal('.team-card', 110);
 setupReveal('.why-card', 90);
+setupReveal('.testimonial-card', 100);
 setupReveal('.engage-card', 100);
 setupReveal('.compare-wrap', 0);
 

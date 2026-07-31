@@ -105,7 +105,7 @@ a:focus-visible, button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 60px;
+  height: 76px;
   gap: 20px;
 }
 
@@ -134,7 +134,7 @@ a:focus-visible, button:focus-visible {
 
 .brand-en span { color: var(--hero-accent); }
 
-.brand-logo { display: block; height: 34px; width: auto; }
+.brand-logo { display: block; height: 52px; width: auto; }
 
 .main-nav {
   display: flex;
@@ -629,10 +629,16 @@ h2.section-title {
 .pillar-card {
   background: var(--surface);
   padding: 26px 24px;
-  transition: background 0.15s ease;
+  position: relative;
+  transition: background 0.15s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
-.pillar-card:hover { background: var(--accent-tint); }
+.pillar-card:hover {
+  background: var(--accent-tint);
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px rgba(10, 85, 139, 0.1);
+  z-index: 1;
+}
 
 .pillar-top {
   display: flex;
@@ -923,6 +929,14 @@ table.compare td:last-child {
 .team-card {
   background: var(--surface);
   padding: 24px;
+  position: relative;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.team-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px rgba(10, 85, 139, 0.1);
+  z-index: 1;
 }
 
 .team-card h3 {
@@ -963,6 +977,14 @@ table.compare td:last-child {
   gap: 15px;
   padding: 20px;
   background: var(--surface);
+  position: relative;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.why-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px rgba(10, 85, 139, 0.1);
+  z-index: 1;
 }
 
 .why-icon {
@@ -991,6 +1013,123 @@ table.compare td:last-child {
   font-size: 13px;
   color: var(--fg-muted);
   margin: 0;
+}
+
+/* ---------- Testimonials ---------- */
+.trusted-by {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 28px;
+  margin-bottom: 30px;
+  padding-bottom: 26px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.trusted-by-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fg-muted);
+}
+
+.trusted-by-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+  opacity: 0.5;
+  letter-spacing: 0.01em;
+}
+
+.testimonial-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.testimonial-card {
+  position: relative;
+  background: var(--surface);
+  padding: 30px 26px 26px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.testimonial-quote-mark {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 56px;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0.28;
+  margin-bottom: -14px;
+}
+
+.testimonial-stars {
+  color: var(--accent-strong);
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  margin-bottom: 14px;
+}
+
+.testimonial-card blockquote {
+  margin: 0 0 22px;
+  padding: 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--fg);
+  flex: 1;
+}
+
+.testimonial-card figcaption {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.testimonial-avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.testimonial-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.testimonial-role {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+
+.testimonial-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px rgba(10, 85, 139, 0.1);
+  z-index: 1;
 }
 
 /* ---------- Engagement models — single strip, not 3 cards ---------- */
@@ -1184,8 +1323,8 @@ table.compare td:last-child {
   .hero-grid { grid-template-columns: 1fr; }
   .hero-seal-wrap { order: -1; padding-top: 20px; }
   .hero-seal { width: 140px; }
-  .pillars, .process, .team-grid, .why-grid { grid-template-columns: 1fr; }
-  .pillars, .process, .team-grid, .why-grid { gap: 1px; }
+  .pillars, .process, .team-grid, .why-grid, .testimonial-grid { grid-template-columns: 1fr; }
+  .pillars, .process, .team-grid, .why-grid, .testimonial-grid { gap: 1px; }
   .engage-strip { flex-direction: column; }
   .engage-col { border-right: none; border-bottom: 1px solid var(--border); }
   .engage-col:last-child { border-bottom: none; }
