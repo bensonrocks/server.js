@@ -7660,7 +7660,12 @@ app.get('/api/inbound', (req, res) => {
   // job uploaded before the master existed still shows product names. One
   // catalogue load per client per request, shared via this cache.
   const _catCache = new Map();
+  // Line ids are what the split screen assigns against, so they must EXIST on
+  // read — creating them only as a side effect of calling /split meant a client
+  // could never send a valid one on the first attempt.
+  let _idsAdded = false;
   const list = (db.inbound || []).map(rec => {
+    if (ensureLineIds(rec)) _idsAdded = true;
     const unmatchedLines = fillInboundDescriptions(rec, _catCache);
     const state = rec.state || {};
     const expectedTotal = (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0);
@@ -7707,9 +7712,11 @@ app.get('/api/inbound', (req, res) => {
       // Team split: who is responsible for what, how far along they are, and
       // any cross-scan notices waiting to be seen.
       assignments:       rec.assignments || [],
+      lead:              rec.lead || null,          // who is coordinating this receipt
       captures:          (rec.state?.captures || []),      // serial / batch / expiry captured while scanning
     };
   });
+  if (_idsAdded) writeDb(db);   // one write, only when something was actually backfilled
   res.json(list);
 });
 
@@ -8346,6 +8353,30 @@ app.post('/api/inbound/:id/split', express.json(), (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!items.length) return res.status(400).json({ error: 'Select at least one line to assign.' });
 
+  // PASSWORD CONFIRMATION. Splitting hands other people responsibility for
+  // someone else's goods, so the person doing it re-enters their OWN login
+  // password (the Administrator key also works). 403, never 401 — the session
+  // is perfectly valid, it is only this second check that failed, and a 401
+  // would trip the client's "session expired" handler and force a reload.
+  // role:null → any signed-in warehouse user can lead a receipt, not just admins.
+  const auth = verifyAdminReconfirm(req, { role: null });
+  if (auth.error) return res.status(auth.code || 403).json({ error: auth.error });
+
+  // THE LEADER. Whoever splits it first owns coordinating this receipt; from
+  // then on only they (or someone holding the Administrator key) may change the
+  // allocation, so two supervisors can't quietly reshuffle each other's teams
+  // mid-delivery.
+  const meId = req.userId || '';
+  if (!rec.lead) {
+    rec.lead = { user: meId, name: auth.user?.name || meId, at: new Date().toISOString() };
+    logAudit('inbound_lead_assigned', { id: rec.id, serial: rec.serial || '', lead: meId, by: meId });
+  } else if (rec.lead.user !== meId && !auth.viaMaster) {
+    return res.status(403).json({
+      error: `${rec.lead.name || rec.lead.user} is leading this receipt — ask them to change the allocation, or use the Administrator key.`,
+      lead: rec.lead,
+    });
+  }
+
   ensureLineIds(rec);
   const made = [], problems = [];
   for (const it of items) {
@@ -8384,13 +8415,19 @@ app.post('/api/inbound/:id/split', express.json(), (req, res) => {
 });
 
 // Undo one assignment (before it has been scanned against).
-app.delete('/api/inbound/:id/split/:assignmentId', (req, res) => {
+app.delete('/api/inbound/:id/split/:assignmentId', express.json(), (req, res) => {
   const db = readDb();
   const rec = findInbound(db, req.params.id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   const a = inboundAssignments(rec).find(x => x.id === req.params.assignmentId);
   if (!a) return res.status(404).json({ error: 'Assignment not found' });
   if (a.done > 0) return res.status(409).json({ error: `${a.done} piece(s) have already been counted against this assignment — it can no longer be removed.` });
+  // Only the receipt's leader may take work back off someone (Administrator key overrides).
+  const auth = verifyAdminReconfirm(req, { role: null });
+  if (auth.error) return res.status(auth.code || 403).json({ error: auth.error });
+  if (rec.lead && rec.lead.user !== (req.userId || '') && !auth.viaMaster) {
+    return res.status(403).json({ error: `${rec.lead.name || rec.lead.user} is leading this receipt.`, lead: rec.lead });
+  }
   rec.assignments = inboundAssignments(rec).filter(x => x.id !== a.id);
   writeDb(db);
   logAudit('inbound_split_removed', { id: rec.id, serial: rec.serial || '', assignee: a.assignee, sku: a.sku, qty: a.qty, by: req.userId || '' });
