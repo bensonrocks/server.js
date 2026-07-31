@@ -2414,13 +2414,15 @@
     const j = _splitJob;
     document.getElementById('splitLinesBody').innerHTML = (j.lines || []).map(l => {
       const left = splitUnassigned(j, l);
-      return `<tr data-line="${esc(l.line_id || '')}" style="${left ? '' : 'opacity:.5'}">
+      // ASSIGNED BY LINE, not by quantity — a ticked line goes to one person in
+      // full. A line already handed out is shown struck through rather than
+      // hidden, so the supervisor can see the whole delivery in one place.
+      return `<tr data-line="${esc(l.line_id || '')}" style="${left ? '' : 'opacity:.45'}">
         <td><input type="checkbox" class="split-pick" ${left ? '' : 'disabled'}></td>
         <td><b>${esc(l.sku)}</b></td>
         <td>${esc(String(l.description || '').slice(0, 46))}</td>
         <td style="text-align:right">${l.expected_qty || 0}</td>
-        <td style="text-align:right"><b>${left}</b></td>
-        <td style="text-align:right"><input type="number" class="split-qty qty-input" min="1" max="${left}" value="${left}" ${left ? '' : 'disabled'} style="width:4.5rem;text-align:right"></td>
+        <td style="text-align:right">${left ? `<b>${left}</b>` : '<span class="cs-pill ok">assigned</span>'}</td>
       </tr>`;
     }).join('');
   }
@@ -2457,10 +2459,12 @@
     const show = (kind, text) => { msg.className = `status-bar ${kind}`; msg.textContent = text; msg.classList.remove('hidden'); };
     if (!assignee) { show('error', 'Who is taking these lines?'); return; }
     if (!password) { show('error', 'Enter your password to confirm.'); return; }
+    // Send the line only — no qty. The server reads a missing/zero qty as
+    // "everything still free on this line", which is exactly what handing over
+    // a whole line means.
     const items = [...document.querySelectorAll('#splitLinesBody tr')].flatMap(tr => {
       const cb = tr.querySelector('.split-pick');
-      if (!cb || !cb.checked) return [];
-      return [{ line_id: tr.dataset.line, qty: Number(tr.querySelector('.split-qty').value) || 0 }];
+      return (cb && cb.checked) ? [{ line_id: tr.dataset.line }] : [];
     });
     if (!items.length) { show('error', 'Tick at least one line to hand over.'); return; }
     show('progress', 'Assigning…');

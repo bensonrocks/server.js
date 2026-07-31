@@ -2414,10 +2414,17 @@ finish the inbound as a team.
   Receipt, stock posting, the GRN, discrepancies and the client portal are all
   untouched: the split is a work-allocation layer, not a second source of truth
   for quantities.
-- `POST /api/inbound/:id/split {assignee, items:[{line_id, qty}], password}` —
-  repeatable, never over-allocates (a second split takes only what is left; a
-  fully-allocated line is refused). `DELETE .../split/:assignmentId` undoes one,
-  refused once pieces are counted.
+- `POST /api/inbound/:id/split {assignee, items:[{line_id}], password}` —
+  **ALLOCATION IS BY LINE, not by quantity**: a ticked line goes to one person in
+  full (the endpoint reads a missing/zero qty as "everything still free on this
+  line"). Repeatable, never over-allocates; a fully-allocated line is refused
+  and shown as `assigned` rather than as a leftover number.
+  `DELETE .../split/:assignmentId` undoes one, refused once pieces are counted.
+  CONSEQUENCE WORTH KNOWING: `parseInboundFile` MERGES same-SKU rows, so two
+  pallets of one SKU arrive as a single line of the combined qty — and by-line
+  allocation then sends both pallets to one person. If pallets must go to
+  different people, the file has to carry them as separate lines (or the merge
+  has to stop).
 - **PASSWORD + LEADER.** Splitting hands someone else responsibility for another
   person's goods, so the splitter re-enters their OWN login password
   (`verifyAdminReconfirm(req, {role:null})` — any signed-in user may lead, not
