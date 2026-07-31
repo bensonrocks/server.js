@@ -499,6 +499,7 @@
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>
+            ${pickupPill(o.pickup)}
             ${deliveryPill(o.delivery)}
             <div class="muted" style="font-size:.68rem;margin-top:.3rem">${isOpen ? '▲ hide' : '▼ details'}</div>
           </div>
@@ -507,6 +508,19 @@
       </div>`;
     }).join('');
     syncSel('orders');
+  }
+
+  // COLLECTION PILL — where a finished parcel has got to. The LABEL comes from
+  // the server so the client reads exactly the words the office reads, and the
+  // colours match the office list: green once it has left, amber while it is
+  // still on our shelf, red once its collection day has passed.
+  function pickupPill(pk) {
+    if (!pk || !pk.label) return '';
+    const cls = pk.status === 'picked_up' ? 'p-sla-met' : pk.status === 'late' ? 'p-sla-miss' : 'p-due';
+    const tip = pk.status === 'picked_up'
+      ? `Left us ${fmtDateTime(pk.at)}${pk.by_us ? ' — delivered to the drop-off point by us' : ''}`
+      : pk.due ? `Due to leave ${fmtDate(pk.due)}` : 'Packed and waiting for collection';
+    return `<div style="margin-top:.25rem"><span class="pill ${cls}" title="${esc(tip)}">&#128230; ${esc(pk.label)}</span></div>`;
   }
 
   // DELIVERY PILL — only when we are moving it ourselves. The LABEL comes from
@@ -534,7 +548,12 @@
     if (d.po_number) meta.push(`PO ${esc(d.po_number)}`);
     if (d.carrier) meta.push(esc(d.carrier));
     if (d.cartons) meta.push(`${d.cartons} carton${d.cartons === 1 ? '' : 's'}`);
-    if (d.completed_at) meta.push(`Shipped ${fmtDateTime(d.completed_at)}`);
+    if (d.completed_at) meta.push(`Packed ${fmtDateTime(d.completed_at)}`);
+    if (d.pickup?.status === 'picked_up') {
+      meta.push(`Picked up ${fmtDateTime(d.pickup.at)}${d.pickup.by_us ? ' (to the drop-off point by us)' : ''}`);
+    } else if (d.pickup?.due) {
+      meta.push(`Due to leave ${fmtDate(d.pickup.due)}`);
+    }
     const showPacked = d.status === 'done' || d.status === 'processing';
     return `
       ${meta.length ? `<div class="muted" style="margin-bottom:.45rem">${meta.join(' · ')}</div>` : ''}
@@ -1160,8 +1179,17 @@
                <button class="btn-sm" data-drop="${esc(s.id)}">Discard</button>
              </div>`
           : '';
-        const orders = (s.orders || []).map(o =>
-          `<span class="pill ${o.status === 'done' ? 'p-sla-met' : 'p-due'}">${esc(o.order_number)} · ${esc(o.status)}</span>`).join(' ');
+        // Live status per order, including where it has got to physically —
+        // "done" only means we finished packing it, and the client wants to
+        // know whether it has actually left. Floor shorthand is translated.
+        const orders = (s.orders || []).map(o => {
+          const where = o.pickup?.status === 'picked_up' ? 'Picked Up'
+                      : o.pickup?.label || statusOf(o.status).label;
+          const cls = o.pickup?.status === 'picked_up' ? 'p-sla-met'
+                    : o.pickup?.status === 'late' ? 'p-sla-miss'
+                    : o.status === 'done' ? 'p-due' : 'p-due';
+          return `<span class="pill ${cls}">${esc(o.order_number)} · ${esc(where)}</span>`;
+        }).join(' ');
         return `<div class="card">
           <div class="sub-row">
             <span class="code">${esc(s.code)}</span>

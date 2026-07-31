@@ -2420,6 +2420,19 @@ function applyAutoPickups(db) {
   return n;
 }
 
+// Self-drop days settle themselves, but only where something ran to notice.
+// Completion covers new work and the Collection queue covers the office — but a
+// CLIENT looking at their portal before anyone here opens that screen would have
+// seen Saturday's parcel as "not collected". Reconcile once at boot (idempotent,
+// a no-op when clean) so history is right before anyone reads it.
+(function bootApplyAutoPickups() {
+  try {
+    const db = readDb();
+    const n = applyAutoPickups(db);
+    if (n) { writeDb(db); console.log(`[IdealOne] ${n} order(s) marked picked up (self-drop day)`); }
+  } catch (e) { console.warn('[pickup-boot]', e.message); }
+})();
+
 // ── IdealScan job codes ──────────────────────────────────────────────────────
 // Every uploaded job gets a unique IS-YYMMDD-NN code — the reference that ties
 // the client's file, IdealScan, and the Keyfields WMS upload together (it is
@@ -3115,6 +3128,28 @@ function addOutboundPoke(db, batch, source) {
 const PORTAL_STATUS_LABEL = {
   done: 'Completed', processing: 'Being packed', pending: 'Queued', unprocessed: 'Cancelled',
 };
+// COLLECTION, relayed to the client. Same words the office sees — per the user,
+// the client should read exactly what we read, not a parallel vocabulary.
+// Built ONCE here and reused by the orders list, the order detail, the export
+// and the submission rows, so those four can never drift apart.
+function portalPickup(state, policy) {
+  if (!state || state.status !== 'done') return null;   // nothing to collect yet
+  if (state.pickup) {
+    return {
+      status: 'picked_up', label: 'Picked Up',
+      at: state.pickup.at || null,
+      // Told plainly rather than dressed up: a Saturday parcel went with us to
+      // the drop-off point, it was not handed to a courier here.
+      by_us: state.pickup.method === 'self-drop',
+    };
+  }
+  const due = collectionDayFor(state.endTime, policy);
+  return {
+    status: pickupOverdue(due) ? 'late' : 'awaiting',
+    label: pickupOverdue(due) ? 'Not collected' : 'Awaiting collection',
+    due, at: null, by_us: false,
+  };
+}
 // How much history the portal shows on screen vs how far back a download may
 // reach. Both are enforced SERVER-side, not just in the UI.
 const PORTAL_SCREEN_DAYS = 90;
@@ -3303,6 +3338,7 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
       date: o.date || b.uploaded_at,
       status: st.status || 'pending',
       completed_at: st.endTime || null,
+      pickup: portalPickup(st, pickupPolicy(db)),
       waybill: o.waybill_number || '', po_number: o.po_number || '',
       issue_no: o.issue_no || '', carrier: o.carrier || '',
       delivery_address: o.delivery_address || '',
@@ -3361,6 +3397,10 @@ function transportJobForOrder(db, orderNumber) {
 app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
   const db = readDb();
+  // Reconcile before answering, so a self-drop day can never show the client a
+  // parcel as still sitting here — same reason the office queue does it.
+  if (applyAutoPickups(db)) writeDb(db);
+  const _pol = pickupPolicy(db);
   const out = [];
   for (const b of db.batches || []) {
     if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
@@ -3380,6 +3420,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
         delivery,
+        pickup: portalPickup(st, _pol),
         // Whether the client may cancel this themselves — same rule the delete
         // endpoint enforces, so the UI can never offer something the server
         // will refuse.
@@ -3484,6 +3525,7 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     ];
     sheet = 'Stock'; name = 'Stock';
   } else if (kind === 'orders') {
+    const _pol = pickupPolicy(db);
     const out = [];
     for (const b of db.batches || []) {
       if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
@@ -3491,15 +3533,18 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
         const st = b.orderStates?.[o.order_number] || {};
         const when = st.endTime || o.date || b.uploaded_at;
         if (!inRange(when)) continue;
+        const pk = portalPickup(st, _pol);
         out.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
           PORTAL_STATUS_LABEL[st.status || 'pending'] || 'Queued',
           (o.lines || []).length, o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
           o.waybill_number || '', o.po_number || '',
-          st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
+          st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
+          pk ? pk.label : '',
+          pk?.at ? new Date(pk.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
       }
     }
     out.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
-    aoa = [...title('Orders'), ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)'], ...out];
+    aoa = [...title('Orders'), ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)', 'Collection', 'Picked up (SGT)'], ...out];
     sheet = 'Orders'; name = 'Orders';
   } else if (kind === 'inbound') {
     const out = (db.inbound || [])
@@ -7446,7 +7491,8 @@ function clientSubPublic(db, s) {
     const b = (db.batches || []).find(x => x.id === s.batch_id);
     for (const o of b?.orders || []) {
       const st = b.orderStates?.[o.order_number] || {};
-      orders.push({ order_number: o.order_number, status: st.status || 'pending', completed_at: st.endTime || null });
+      orders.push({ order_number: o.order_number, status: st.status || 'pending',
+                    completed_at: st.endTime || null, pickup: portalPickup(st, pickupPolicy(db)) });
     }
   }
   // A DRAFT has not been sent to us yet, so its clock has not started — the

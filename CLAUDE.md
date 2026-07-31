@@ -258,6 +258,31 @@ Orders list to visibly change must call `renderOrdersDash()` (which awaits
 refreshOrders and then renders) — calling refreshOrders alone left the closed
 order still showing "Not collected" behind the modal.
 
+### Relayed to the client portal
+
+Per the user, whatever status we hold is pushed back to the client — and in the
+SAME words we use, not a parallel vocabulary (the standing rule from the TMS
+pills). `portalPickup(state, policy)` builds it ONCE and is reused by
+`/api/portal/orders`, `/api/portal/order/:orderNumber`, the orders XLSX export
+(`Collection` + `Picked up (SGT)` columns) and the `orders[]` inside each
+client submission row, so those four can never drift.
+
+- Green **📦 Picked Up**, blue **Not collected**, amber **Awaiting collection**.
+  Blue for the missed case is deliberate — it follows the portal's existing
+  GREEN = met / BLUE = missed rule, not the office's red.
+- `by_us: true` when the method was `self-drop`, and the client is told plainly
+  ("delivered to the drop-off point by us") rather than being left to assume a
+  courier collected it.
+- An order that is not `done` carries **no** collection status at all — there is
+  nothing to collect yet, and an empty pill would read as a problem.
+- **Undo propagates.** Reversing a mis-tick at our end takes the client's pill
+  back with it, so they are never left looking at a wrong "it left".
+- **`applyAutoPickups` also runs at BOOT and on the portal read.** Completion
+  covers new work and the Collection queue covers the office — but a client
+  opening their portal before anyone here opens that screen would otherwise see
+  Saturday's parcel as still sitting with us. Idempotent, so both are no-ops
+  when clean.
+
 Verified: 30 API checks (every day rule incl. after-cut-off roll, Sunday wait,
 Saturday auto-settle stamped at `endTime`, part-done refused, double-close
 refused, undo, derived due days moving with the cut-off, the self-drop/no-
@@ -266,7 +291,9 @@ computed style, the scan close, the bulk close, the schedule editor, and no
 sideways scroll on a phone — plus 14 access checks (admin saves without the
 master key, warehouse 403s and changes nothing, the master key still works from
 any account, no token is 401, and warehouse can still read the schedule and
-close parcels).
+close parcels), plus 18 relay checks (the client sees Picked Up / Not collected
+in our words, self-drop flagged as ours, an unfinished order carries nothing,
+closing and undoing both propagate, and the XLSX carries the same value).
 
 ## Duplicate-line upload safeguard (server.js `findDuplicateLineWarnings`)
 
