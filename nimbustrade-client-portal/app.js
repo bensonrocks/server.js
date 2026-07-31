@@ -13,7 +13,7 @@
 
   let token = localStorage.getItem('nt-client-token') || '';
   let clientName = localStorage.getItem('nt-client-name') || '';
-  let selectedCountry = '';
+  let selectedCountry = new URLSearchParams(window.location.search).get('country') || '';
   let currentPage = 1;
   let inventoryLocations = [];
   let selectedInvLocation = null;
@@ -82,24 +82,27 @@
     loginScreen.hidden = true;
     app.hidden = false;
     $('#client-name').textContent = clientName;
-    loadDashboard();
-    loadOrders();
-    loadInventory();
-    loadRates();
-    loadReports();
+    // Each page only has the DOM for its own panel — load only what's here.
+    if ($('#stat-total') || $('#world-map')) loadDashboard();
+    if ($('#orders-tbody')) loadOrders();
+    if ($('#inventory-grid')) loadInventory();
+    if ($('#rates-table-wrap')) loadRates();
+    if ($('#reports-market-tbody')) loadReports();
   }
 
   // ---------- Dashboard (stats + map) ----------
 
   async function loadDashboard() {
     const data = await api('/dashboard');
-    $('#stat-total').textContent = data.counts.total.toLocaleString();
-    $('#stat-dropped').textContent = data.counts.dropped.toLocaleString();
-    $('#stat-processing').textContent = data.counts.processing.toLocaleString();
-    $('#stat-completed').textContent = data.counts.completed.toLocaleString();
-    $('#stat-issue').textContent = data.counts.issue.toLocaleString();
-    renderMap(data.countries);
-    renderMonthlyBars(data.months);
+    if ($('#stat-total')) {
+      $('#stat-total').textContent = data.counts.total.toLocaleString();
+      $('#stat-dropped').textContent = data.counts.dropped.toLocaleString();
+      $('#stat-processing').textContent = data.counts.processing.toLocaleString();
+      $('#stat-completed').textContent = data.counts.completed.toLocaleString();
+      $('#stat-issue').textContent = data.counts.issue.toLocaleString();
+      renderMonthlyBars(data.months);
+    }
+    if ($('#world-map')) renderMap(data.countries);
   }
 
   function monthLabel(yyyyMm) {
@@ -234,11 +237,8 @@
   }
 
   function selectMarket(country) {
-    selectedCountry = selectedCountry === country ? '' : country;
-    currentPage = 1;
-    renderMap(lastCountries);
-    loadOrders();
-    updateMapFilterHint();
+    // The orders table now lives on its own page — jump there, pre-filtered.
+    window.location.href = `orders.html?country=${encodeURIComponent(country)}`;
   }
 
   function renderMarketChips(countries) {
@@ -253,31 +253,35 @@
     });
   }
 
-  function updateMapFilterHint() {
-    const btn = $('#clear-map-filter');
-    btn.hidden = !selectedCountry;
-  }
-
-  $('#clear-map-filter').addEventListener('click', () => {
-    selectedCountry = '';
-    currentPage = 1;
-    renderMap(lastCountries);
-    loadOrders();
-    updateMapFilterHint();
-  });
-
   // ---------- Orders table ----------
 
   let searchDebounce;
-  $('#order-search').addEventListener('input', () => {
+  $('#order-search')?.addEventListener('input', () => {
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => { currentPage = 1; loadOrders(); }, 250);
   });
-  $('#status-filter').addEventListener('change', () => { currentPage = 1; loadOrders(); });
+  $('#status-filter')?.addEventListener('change', () => { currentPage = 1; loadOrders(); });
+  $('#orders-clear-filter')?.addEventListener('click', () => {
+    selectedCountry = '';
+    currentPage = 1;
+    history.replaceState(null, '', window.location.pathname);
+    loadOrders();
+  });
 
   async function loadOrders() {
     const tbody = $('#orders-tbody');
+    if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="8" class="table-loading">Loading…</td></tr>';
+
+    const filterHint = $('#orders-filter-hint');
+    if (filterHint) {
+      if (selectedCountry) {
+        filterHint.hidden = false;
+        filterHint.querySelector('.filter-country').textContent = selectedCountry;
+      } else {
+        filterHint.hidden = true;
+      }
+    }
 
     const params = new URLSearchParams({ page: currentPage, pageSize: 25 });
     const search = $('#order-search').value.trim();
@@ -404,19 +408,21 @@
 
   const dropOverlay = $('#drop-order-overlay');
   const skuSelect = $('#order-sku');
-  skuSelect.innerHTML = SKU_CATALOG.map((s) => `<option value="${s.sku}" data-name="${s.name}">${s.name} (${s.sku})</option>`).join('');
+  if (skuSelect) {
+    skuSelect.innerHTML = SKU_CATALOG.map((s) => `<option value="${s.sku}" data-name="${s.name}">${s.name} (${s.sku})</option>`).join('');
+  }
 
-  $('#open-drop-order').addEventListener('click', () => {
+  $('#open-drop-order')?.addEventListener('click', () => {
     $('#drop-order-error').hidden = true;
     $('#order-date').value = new Date().toISOString().slice(0, 10);
     $('#drop-order-form').reset();
     $('#order-date').value = new Date().toISOString().slice(0, 10);
     dropOverlay.hidden = false;
   });
-  $('#cancel-drop-order').addEventListener('click', () => { dropOverlay.hidden = true; });
-  dropOverlay.addEventListener('click', (e) => { if (e.target === dropOverlay) dropOverlay.hidden = true; });
+  $('#cancel-drop-order')?.addEventListener('click', () => { dropOverlay.hidden = true; });
+  dropOverlay?.addEventListener('click', (e) => { if (e.target === dropOverlay) dropOverlay.hidden = true; });
 
-  $('#drop-order-form').addEventListener('submit', async (e) => {
+  $('#drop-order-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const countryEl = $('#order-country');
     const skuEl = $('#order-sku');
@@ -438,7 +444,6 @@
       dropOverlay.hidden = true;
       currentPage = 1;
       loadDashboard();
-      loadOrders();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;
@@ -504,8 +509,8 @@
     }
   }
 
-  $('#close-tracking').addEventListener('click', () => { trackingOverlay.hidden = true; });
-  trackingOverlay.addEventListener('click', (e) => { if (e.target === trackingOverlay) trackingOverlay.hidden = true; });
+  $('#close-tracking')?.addEventListener('click', () => { trackingOverlay.hidden = true; });
+  trackingOverlay?.addEventListener('click', (e) => { if (e.target === trackingOverlay) trackingOverlay.hidden = true; });
 
   // ---------- Upload orders (CSV) ----------
 
@@ -524,7 +529,7 @@
     });
   }
 
-  $('#open-upload-orders').addEventListener('click', () => {
+  $('#open-upload-orders')?.addEventListener('click', () => {
     parsedUploadRows = [];
     $('#upload-orders-file').value = '';
     $('#upload-orders-summary').hidden = true;
@@ -532,10 +537,10 @@
     $('#submit-upload-orders').disabled = true;
     uploadOverlay.hidden = false;
   });
-  $('#cancel-upload-orders').addEventListener('click', () => { uploadOverlay.hidden = true; });
-  uploadOverlay.addEventListener('click', (e) => { if (e.target === uploadOverlay) uploadOverlay.hidden = true; });
+  $('#cancel-upload-orders')?.addEventListener('click', () => { uploadOverlay.hidden = true; });
+  uploadOverlay?.addEventListener('click', (e) => { if (e.target === uploadOverlay) uploadOverlay.hidden = true; });
 
-  $('#upload-orders-file').addEventListener('change', async (e) => {
+  $('#upload-orders-file')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     const summaryEl = $('#upload-orders-summary');
     const errEl = $('#upload-orders-error');
@@ -553,7 +558,7 @@
     }
   });
 
-  $('#submit-upload-orders').addEventListener('click', async () => {
+  $('#submit-upload-orders')?.addEventListener('click', async () => {
     const errEl = $('#upload-orders-error');
     const summaryEl = $('#upload-orders-summary');
     errEl.hidden = true;
@@ -573,7 +578,7 @@
 
   // ---------- Export CSV ----------
 
-  $('#export-orders-btn').addEventListener('click', async (e) => {
+  $('#export-orders-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     const params = new URLSearchParams();
     const search = $('#order-search').value.trim();
@@ -682,16 +687,16 @@
     `;
   }
 
-  $('#close-billing-detail').addEventListener('click', () => { billingDetailOverlay.hidden = true; });
-  billingDetailOverlay.addEventListener('click', (e) => { if (e.target === billingDetailOverlay) billingDetailOverlay.hidden = true; });
+  $('#close-billing-detail')?.addEventListener('click', () => { billingDetailOverlay.hidden = true; });
+  billingDetailOverlay?.addEventListener('click', (e) => { if (e.target === billingDetailOverlay) billingDetailOverlay.hidden = true; });
 
-  $('#rates-table-wrap').addEventListener('click', (e) => {
+  $('#rates-table-wrap')?.addEventListener('click', (e) => {
     const row = e.target.closest('.rate-row-clickable');
     if (!row || !currentLiveIndicative) return;
     const m = currentLiveIndicative.markets[parseInt(row.dataset.marketIdx, 10)];
     if (m) openBillingDetail(m, currentLiveIndicative.month);
   });
-  $('#rates-table-wrap').addEventListener('keydown', (e) => {
+  $('#rates-table-wrap')?.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const row = e.target.closest && e.target.closest('.rate-row-clickable');
     if (!row || !currentLiveIndicative) return;
@@ -718,6 +723,7 @@
 
   async function loadRates() {
     const wrap = $('#rates-table-wrap');
+    if (!wrap) return;
     try {
       const data = await api('/rates');
       if (!data.configured) {
@@ -786,10 +792,10 @@
   const INBOUND_STATUS_LABEL = { in_transit: 'In Transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
 
   async function loadReports() {
-    $('#reports-generated-at').textContent = `Generated ${new Date().toLocaleString()}`;
-
     const marketTbody = $('#reports-market-tbody');
     const inboundTbody = $('#reports-inbound-tbody');
+    if (!marketTbody || !inboundTbody) return;
+    $('#reports-generated-at').textContent = `Generated ${new Date().toLocaleString()}`;
 
     try {
       const [dashboard, inbound] = await Promise.all([api('/dashboard'), api('/inbound')]);
@@ -831,7 +837,7 @@
     }
   }
 
-  $('#export-reports-btn').addEventListener('click', async (e) => {
+  $('#export-reports-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     const res = await fetch(`${API}/reports/export`, { headers: authHeaders() });
     if (!res.ok) return;
