@@ -2420,11 +2420,15 @@ finish the inbound as a team.
   line"). Repeatable, never over-allocates; a fully-allocated line is refused
   and shown as `assigned` rather than as a leftover number.
   `DELETE .../split/:assignmentId` undoes one, refused once pieces are counted.
-  CONSEQUENCE WORTH KNOWING: `parseInboundFile` MERGES same-SKU rows, so two
-  pallets of one SKU arrive as a single line of the combined qty — and by-line
-  allocation then sends both pallets to one person. If pallets must go to
-  different people, the file has to carry them as separate lines (or the merge
-  has to stop).
+  SAME-SKU MERGE — DECIDED, DO NOT "FIX": `parseInboundFile` merges same-SKU
+  rows, so two pallets of one SKU arrive as ONE line of the combined qty, and
+  by-line allocation sends both pallets to the same person. The user was offered
+  the alternative (stop merging, so each file row becomes its own assignable
+  line) and **chose to keep the merge**. The team still covers it the way the
+  feature was designed to: anyone can scan anything, a colleague's piece still
+  counts, and the owner is notified. So a merged line landing on one person is
+  WORKING AS INTENDED — do not split the merge apart later thinking this is a
+  bug.
 - **PASSWORD + LEADER.** Splitting hands someone else responsibility for another
   person's goods, so the splitter re-enters their OWN login password
   (`verifyAdminReconfirm(req, {role:null})` — any signed-in user may lead, not
