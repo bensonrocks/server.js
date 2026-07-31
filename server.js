@@ -4250,7 +4250,15 @@ async function ocrLabelPageFile(filePath, worker) {
 }
 
 function buildLabelMatchIndex() {
-  const allOrders = globalOrdersWithState();
+  return buildLabelMatchIndexFor(globalOrdersWithState());
+}
+
+// The same index, built over ANY order-shaped list. Split out so a client's
+// portal submission can be matched against the orders IN THAT SUBMISSION —
+// which do not exist as live orders yet — using EXACTLY the rules the office
+// uses at approval time. Two implementations would have drifted, and then the
+// "12 of 12 matched" a client sees before sending would stop meaning anything.
+function buildLabelMatchIndexFor(allOrders) {
   const byOrderNo = new Map();
   const byWaybill = new Map();
   const scanKeys  = [];
@@ -7289,6 +7297,23 @@ try { fs.mkdirSync(CLIENT_SUB_DIR, { recursive: true }); } catch {}
 function clientSubs(db) { return db.clientSubmissions || (db.clientSubmissions = []); }
 const CLIENT_SUB_APPROVE_SLA_MIN = 15;   // unapproved longer than this = overdue
 
+// Ownership check for every portal route that takes a submission id. Compared
+// case-insensitively for the same reason client identity is everywhere else
+// (see "One client, one spelling"), and reported as "not found" so a client can
+// never probe for another client's records.
+function sameClient(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+// Drop a submission and the file it stored on the volume. Only ever used for
+// drafts the client withdrew — an approved or rejected submission is a record.
+function removeClientSubmission(db, id) {
+  const s = clientSubs(db).find(x => x.id === id);
+  if (!s) return false;
+  try { fs.unlinkSync(path.join(CLIENT_SUB_DIR, s.id + (s.stored_ext || ''))); } catch {}
+  db.clientSubmissions = clientSubs(db).filter(x => x.id !== id);
+  return true;
+}
+
 // What the client and the office both see for one submission.
 function clientSubPublic(db, s) {
   const orders = [];
@@ -7299,11 +7324,20 @@ function clientSubPublic(db, s) {
       orders.push({ order_number: o.order_number, status: st.status || 'pending', completed_at: st.endTime || null });
     }
   }
-  const ageMin = Math.max(0, Math.round((Date.now() - new Date(s.submitted_at).getTime()) / 60000));
+  // A DRAFT has not been sent to us yet, so its clock has not started — the
+  // overdue SLA must only ever measure how long WE have sat on something.
+  const startedAt = s.transmitted_at || s.submitted_at;
+  const ageMin = s.status === 'draft'
+    ? 0
+    : Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 60000));
+  // The waybill PDF attached to an orders draft, and what it matched against
+  // the orders in that same draft.
+  const linked = s.linked_labels_id ? clientSubs(db).find(x => x.id === s.linked_labels_id) : null;
   return {
     id: s.id, code: s.code, kind: s.kind, filename: s.filename,
     client_name: s.client_name, submitted_at: s.submitted_at, submitted_by: s.submitted_by,
-    status: s.status,                       // pending | approved | rejected
+    transmitted_at: s.transmitted_at || null,
+    status: s.status,                       // draft | pending | approved | rejected
     order_count: s.summary?.orderCount || 0,
     row_count: s.summary?.rowCount || 0,
     total_qty: s.summary?.totalQty || 0,
@@ -7314,6 +7348,16 @@ function clientSubPublic(db, s) {
     age_minutes: ageMin,
     overdue: s.status === 'pending' && ageMin >= CLIENT_SUB_APPROVE_SLA_MIN,
     orders,                                  // live status, relayed back to the client
+    // Step 2 of the client's flow: the waybills that belong to these orders.
+    labels: linked ? {
+      id: linked.id, filename: linked.filename,
+      pages: linked.summary?.pages || 0,
+      matched: linked.match_preview?.matched ?? null,
+      unmatched: linked.match_preview?.unmatched || [],
+      status: linked.status,
+      import_id: linked.label_import_id || null,
+    } : null,
+    linked_orders_id: s.linked_orders_id || null,
   };
 }
 
@@ -7346,6 +7390,11 @@ async function previewClientOrderFile(buffer, filename, client) {
       warnings, duplicateWarnings,
       orders: orders.map(o => ({
         order_number: o.order_number, total_qty: o.total_qty,
+        // The identifiers a waybill PDF might print. Carried so step 2's
+        // auto-match can resolve a label by tracking number, not only by order
+        // number — a courier label very often shows nothing else.
+        waybill_number: o.waybill_number || '',
+        issue_no: o.issue_no || '', po_number: o.po_number || '',
         lines: (o.lines || []).map(l => ({ sku: l.sku, description: l.description, qty: l.qty })),
       })),
     },
@@ -7366,11 +7415,45 @@ app.post('/api/portal/preview-orders', upload.single('file'), (req, res) => {
   });
 });
 
-// PORTAL → submit a WAYBILL / shipping-label PDF. Same idea as the orders file:
-// it does not become a live label import, it waits for approval. Pages are
-// matched to orders by the office at approval time using the existing
-// label-import machinery, so client-supplied labels auto-match exactly like
-// staff-supplied ones.
+// STEP 2's auto-match. Runs the SAME extraction and the SAME match rules the
+// office uses, but against the orders sitting in the client's own draft rather
+// than against live orders — those orders do not exist yet. This is what lets
+// the client see "12 of 12 waybills matched" BEFORE sending, which is the whole
+// point of doing the orders file first.
+async function matchLabelsAgainstDraft(buffer, draftOrders) {
+  const pages = await extractPdfPageTexts(buffer);
+  const index = buildLabelMatchIndexFor(draftOrders || []);
+  let matched = 0;
+  const unmatched = [];
+  const perPage = [];
+  for (let i = 0; i < pages.length; i++) {
+    const raw = pages[i] || '';
+    const extracted = extractLabelFields ? extractLabelFields(raw) : null;
+    const hit = matchLabelPage(raw, extracted, index);
+    if (hit) { matched++; perPage.push({ page: i + 1, order_number: hit.hit, method: hit.method }); }
+    else {
+      perPage.push({ page: i + 1, order_number: null, method: null });
+      unmatched.push({
+        page: i + 1,
+        // Whatever we DID read off the page, so an unmatched label is
+        // explainable rather than just a number.
+        tracking: extracted?.trackingNumber || '',
+        order: extracted?.orderNumber || '',
+      });
+    }
+  }
+  return { pageCount: pages.length, matched, unmatched, perPage };
+}
+
+// PORTAL → STEP 2: attach a WAYBILL / shipping-label PDF to the orders draft
+// from step 1. Nothing goes live and nothing reaches us yet — the pages are
+// matched against those orders so the client can see the result, and the whole
+// package is transmitted afterwards by /transmit.
+//
+// `for_submission` is optional: a client whose orders we already have can still
+// send waybills on their own, which is a standalone draft with no match preview
+// (there is nothing in the draft to match against — it is matched at approval
+// against live orders, exactly as before).
 app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
   requirePortalAuthMiddleware(req, res, async () => {
     try {
@@ -7379,13 +7462,30 @@ app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
         return res.status(400).json({ error: 'Shipping labels must be a PDF.' });
       }
       const client = req.portalClient;
-      // Count the pages up front so the client — and the approver — know how
-      // many labels are in the file before anything is committed.
-      let pageCount = 0;
-      try { pageCount = (await extractPdfPageTexts(req.file.buffer)).length; } catch (_) { pageCount = 0; }
-      if (!pageCount) return res.status(400).json({ error: 'That PDF has no readable pages.' });
-
       const db = readDb();
+
+      // If this is step 2 of a flow, find the draft it belongs to — and refuse
+      // to attach to someone else's, or to something already sent.
+      const forId = String(req.body?.for_submission || '').trim();
+      let parent = null;
+      if (forId) {
+        parent = clientSubs(db).find(x => x.id === forId);
+        if (!parent || !sameClient(parent.client_name, client)) {
+          return res.status(404).json({ error: 'That order upload was not found.' });
+        }
+        if (parent.kind !== 'orders') return res.status(400).json({ error: 'Waybills can only be attached to an order upload.' });
+        if (parent.status !== 'draft') return res.status(409).json({ error: 'That order upload has already been sent — start a new one.' });
+        if (parent.linked_labels_id) return res.status(409).json({ error: 'A waybill file is already attached. Remove it first to replace it.' });
+      }
+
+      let match = null;
+      try {
+        match = await matchLabelsAgainstDraft(req.file.buffer, parent ? (parent.summary?.orders || []) : []);
+      } catch (e) {
+        return res.status(400).json({ error: 'We could not read that PDF: ' + e.message });
+      }
+      if (!match.pageCount) return res.status(400).json({ error: 'That PDF has no readable pages.' });
+
       const id = uuidv4();
       fs.writeFileSync(path.join(CLIENT_SUB_DIR, id + '.pdf'), req.file.buffer);
       const sub = {
@@ -7397,25 +7497,104 @@ app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
         contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
         submitted_at: new Date().toISOString(),
         submitted_by: `portal:${client}`,
-        status: 'pending',
-        summary: { rowCount: pageCount, orderCount: 0, totalQty: 0, warnings: [], pages: pageCount },
+        status: 'draft',
+        linked_orders_id: parent ? parent.id : null,
+        // Only meaningful when there IS a draft to match against; a standalone
+        // waybill file is matched at approval time against live orders.
+        match_preview: parent ? { matched: match.matched, unmatched: match.unmatched, perPage: match.perPage } : null,
+        summary: { rowCount: match.pageCount, orderCount: 0, totalQty: 0, warnings: [], pages: match.pageCount },
       };
       clientSubs(db).unshift(sub);
-      addPoke(db, {
-        kind: 'client_labels_submitted', client: sub.client_name, direction: 'outbound',
-        channel: clientChannel(db, sub.client_name), lines: pageCount,
-        text: `${sub.client_name} submitted ${pageCount} shipping label page(s) for approval (${sub.code})`,
-        submissionId: id,
-      });
+      if (parent) parent.linked_labels_id = id;
       writeDb(db);
-      logAudit('client_labels_submitted', { id, code: sub.code, client: sub.client_name, filename: sub.filename, pages: pageCount, by: sub.submitted_by });
-      res.status(201).json({ ok: true, submission: clientSubPublic(db, sub) });
+      logAudit('client_labels_drafted', {
+        id, code: sub.code, client: sub.client_name, filename: sub.filename,
+        pages: match.pageCount, matched: parent ? match.matched : null,
+        forSubmission: parent?.code || '', by: sub.submitted_by,
+      });
+      res.status(201).json({
+        ok: true, submission: clientSubPublic(db, sub),
+        pages: match.pageCount,
+        matched: parent ? match.matched : null,
+        unmatched: parent ? match.unmatched : [],
+      });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 });
 
-// PORTAL → submit an orders file. Parsed and previewed immediately so the
-// client is told straight away if the file is unusable, but stored as pending.
+// PORTAL → remove a waybill file from a draft (wrong PDF picked).
+app.delete('/api/portal/submissions/:id/labels', (req, res) => {
+  requirePortalAuthMiddleware(req, res, () => {
+    const db = readDb();
+    const parent = clientSubs(db).find(x => x.id === req.params.id);
+    if (!parent || !sameClient(parent.client_name, req.portalClient)) return res.status(404).json({ error: 'Not found' });
+    if (parent.status !== 'draft') return res.status(409).json({ error: 'That upload has already been sent.' });
+    const lid = parent.linked_labels_id;
+    if (!lid) return res.status(404).json({ error: 'No waybill file attached.' });
+    removeClientSubmission(db, lid);
+    parent.linked_labels_id = null;
+    writeDb(db);
+    res.json({ ok: true, submission: clientSubPublic(db, parent) });
+  });
+});
+
+// PORTAL → TRANSMIT. This is the moment the package leaves the client and
+// arrives with us: the draft (and the waybill file attached to it) become
+// pending, ONE poke is raised, and our 15-minute approval clock starts. Until
+// this is called, nothing a client has uploaded is visible to the office at all.
+app.post('/api/portal/submissions/:id/transmit', express.json(), (req, res) => {
+  requirePortalAuthMiddleware(req, res, () => {
+    const db = readDb();
+    const s = clientSubs(db).find(x => x.id === req.params.id);
+    if (!s || !sameClient(s.client_name, req.portalClient)) return res.status(404).json({ error: 'Not found' });
+    if (s.status !== 'draft') return res.status(409).json({ error: `This upload is already ${s.status}.` });
+
+    const now = new Date().toISOString();
+    const linked = s.linked_labels_id ? clientSubs(db).find(x => x.id === s.linked_labels_id) : null;
+    for (const rec of [s, linked].filter(Boolean)) { rec.status = 'pending'; rec.transmitted_at = now; }
+
+    const labelPages = linked?.summary?.pages || 0;
+    const what = s.kind === 'orders'
+      ? `${s.summary?.orderCount || 0} order(s)${labelPages ? ` + ${labelPages} waybill page(s)` : ''}`
+      : `${s.summary?.pages || 0} waybill page(s)`;
+    addPoke(db, {
+      kind: s.kind === 'orders' ? 'client_orders_submitted' : 'client_labels_submitted',
+      client: s.client_name, direction: 'outbound',
+      channel: clientChannel(db, s.client_name),
+      lines: s.summary?.rowCount || 0, orders: s.summary?.orderCount || 0, pieces: s.summary?.totalQty || 0,
+      text: `${s.client_name} sent ${what} for approval (${s.code})`,
+      submissionId: s.id,
+    });
+    writeDb(db);
+    logAudit(s.kind === 'orders' ? 'client_orders_submitted' : 'client_labels_submitted', {
+      id: s.id, code: s.code, client: s.client_name, filename: s.filename,
+      orders: s.summary?.orderCount || 0, lines: s.summary?.rowCount || 0,
+      labelPages, by: s.submitted_by,
+    });
+    res.json({ ok: true, submission: clientSubPublic(db, s) });
+  });
+});
+
+// PORTAL → discard a draft that was never sent. Only a draft: once it is with
+// us it is our decision to approve or reject, not the client's to withdraw.
+app.delete('/api/portal/submissions/:id', (req, res) => {
+  requirePortalAuthMiddleware(req, res, () => {
+    const db = readDb();
+    const s = clientSubs(db).find(x => x.id === req.params.id);
+    if (!s || !sameClient(s.client_name, req.portalClient)) return res.status(404).json({ error: 'Not found' });
+    if (s.status !== 'draft') return res.status(409).json({ error: `This upload is already ${s.status} — it can no longer be withdrawn.` });
+    if (s.linked_labels_id) removeClientSubmission(db, s.linked_labels_id);
+    removeClientSubmission(db, s.id);
+    writeDb(db);
+    logAudit('client_submission_discarded', { id: s.id, code: s.code, client: s.client_name, by: s.submitted_by });
+    res.json({ ok: true });
+  });
+});
+
+// PORTAL → STEP 1: the orders file. Parsed immediately so the client is told
+// straight away if it is unusable, then held as a DRAFT — it has NOT reached us
+// yet. Step 2 attaches the waybills, and /transmit is what sends the package
+// for approval. Nothing here is visible to the office.
 app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
   // multer does not carry the AsyncLocalStorage tenant context, so the portal
   // session (and its tenant) is re-established after the upload is parsed —
@@ -7460,7 +7639,8 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
         contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
         submitted_at: new Date().toISOString(),
         submitted_by: `portal:${client}`,
-        status: 'pending',
+        status: 'draft',
+        linked_labels_id: null,
         summary: {
           rowCount: rows.length,
           orderCount: orders.length,
@@ -7468,22 +7648,21 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
           warnings,
           orders: orders.map(o => ({
             order_number: o.order_number, total_qty: o.total_qty,
+            // Same reason as the preview above — step 2 matches waybills
+            // against these, and a courier label usually carries the tracking
+            // number rather than the order number.
+            waybill_number: o.waybill_number || '',
+            issue_no: o.issue_no || '', po_number: o.po_number || '',
             lines: (o.lines || []).map(l => ({ sku: l.sku, description: l.description, qty: l.qty })),
           })),
         },
       };
       clientSubs(db).unshift(sub);
-      // Tell the office. This is work that has arrived from outside and needs a
-      // decision — the same nudge an ASN gives.
-      addPoke(db, {
-        kind: 'client_orders_submitted', client: sub.client_name, direction: 'outbound',
-        channel: clientChannel(db, sub.client_name),
-        lines: rows.length, orders: orders.length, pieces: sub.summary.totalQty,
-        text: `${sub.client_name} submitted ${orders.length} order(s) for approval (${sub.code})`,
-        submissionId: id,
-      });
       writeDb(db);
-      logAudit('client_orders_submitted', {
+      // NO POKE HERE. The office is told when the client TRANSMITS, not when
+      // they start — otherwise every half-finished upload would nudge the floor
+      // and start a 15-minute approval clock on work nobody has sent yet.
+      logAudit('client_orders_drafted', {
         id, code: sub.code, client: sub.client_name, filename: sub.filename,
         orders: orders.length, lines: rows.length, by: sub.submitted_by,
       });
@@ -7500,6 +7679,9 @@ app.get('/api/portal/submissions', requirePortalAuthMiddleware, (req, res) => {
   const db = readDb();
   res.json(clientSubs(db)
     .filter(s => String(s.client_name || '').trim().toLowerCase() === client)
+    // A waybill file attached to an orders upload is shown INSIDE that upload's
+    // row, so listing it again on its own would read as two separate sends.
+    .filter(s => !s.linked_orders_id)
     .slice(0, 100)
     .map(s => clientSubPublic(db, s)));
 });
@@ -7508,7 +7690,14 @@ app.get('/api/portal/submissions', requirePortalAuthMiddleware, (req, res) => {
 // internal user should be able to see that a client is waiting on us.
 app.get('/api/client-submissions', (req, res) => {
   const db = readDb();
-  const all = clientSubs(db).map(s => clientSubPublic(db, s));
+  // DRAFTS ARE NOT OURS TO SEE. A client part-way through their upload has not
+  // sent us anything, so it must not appear in the queue, must not count
+  // towards the badge, and must not start the approval clock. Same for the
+  // waybill file attached to an orders submission — it is shown INSIDE its
+  // parent, not as a second row for the approver to deal with separately.
+  const all = clientSubs(db)
+    .filter(s => s.status !== 'draft' && !s.linked_orders_id)
+    .map(s => clientSubPublic(db, s));
   res.json({
     pending: all.filter(s => s.status === 'pending').length,
     overdue: all.filter(s => s.overdue).length,
@@ -7532,6 +7721,7 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
   const db0 = readDb();
   const s0 = clientSubs(db0).find(x => x.id === req.params.id);
   if (!s0) return res.status(404).json({ error: 'Submission not found' });
+  if (s0.status === 'draft') return res.status(409).json({ error: 'The client has not sent this yet.' });
   if (s0.status !== 'pending') return res.status(409).json({ error: `This submission is already ${s0.status}.` });
 
   let buf;
@@ -7625,7 +7815,42 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
       id: s.id, code: s.code, client: batch.client_name, batchId,
       job: batch.idealscan_code, orders: orders.length, by: req.userId || '',
     });
-    res.json({ ok: true, batchId, job: batch.idealscan_code, orderCount: orders.length, transportJobsCreated, submission: clientSubPublic(db, s) });
+
+    // THE ATTACHED WAYBILLS, PROCESSED AFTER THE BATCH EXISTS. Order matters:
+    // processLabelPdf matches against LIVE orders, so running it before
+    // db.batches.unshift would have matched nothing every time. Approving the
+    // orders is what makes them matchable, so the labels follow immediately.
+    let labelsResult = null;
+    if (s.linked_labels_id) {
+      const lab = clientSubs(db).find(x => x.id === s.linked_labels_id);
+      if (lab && lab.status === 'pending') {
+        try {
+          const buf2 = fs.readFileSync(path.join(CLIENT_SUB_DIR, lab.id + (lab.stored_ext || '.pdf')));
+          const out = await processLabelPdf(buf2, lab.filename, req.userId || `approved:${lab.client_name}`);
+          const db2 = readDb();
+          const lab2 = clientSubs(db2).find(x => x.id === lab.id);
+          lab2.status = 'approved';
+          lab2.approved_at = new Date().toISOString();
+          lab2.approved_by = req.userId || '';
+          lab2.label_import_id = out.importId;
+          lab2.summary = { ...(lab2.summary || {}), matched: out.matched, pages: out.pageCount };
+          writeDb(db2);
+          labelsResult = { importId: out.importId, pageCount: out.pageCount, matched: out.matched };
+          logAudit('client_labels_approved', {
+            id: lab.id, code: lab.code, client: lab.client_name, importId: out.importId,
+            pages: out.pageCount, matched: out.matched, withOrders: s.code, by: req.userId || '',
+          });
+        } catch (err) {
+          // The orders ARE live — that succeeded and must not be rolled back
+          // over a label problem. Report it instead of failing the approval.
+          labelsResult = { error: err.message };
+          logAudit('client_labels_approve_failed', { id: lab.id, code: lab.code, client: lab.client_name, error: err.message, by: req.userId || '' });
+        }
+      }
+    }
+
+    res.json({ ok: true, batchId, job: batch.idealscan_code, orderCount: orders.length,
+               transportJobsCreated, labels: labelsResult, submission: clientSubPublic(readDb(), s) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -7638,11 +7863,17 @@ app.post('/api/client-submissions/:id/reject', express.json(), (req, res) => {
   const db = readDb();
   const s = clientSubs(db).find(x => x.id === req.params.id);
   if (!s) return res.status(404).json({ error: 'Submission not found' });
+  if (s.status === 'draft') return res.status(409).json({ error: 'The client has not sent this yet.' });
   if (s.status !== 'pending') return res.status(409).json({ error: `This submission is already ${s.status}.` });
-  s.status = 'rejected';
-  s.rejected_at = new Date().toISOString();
-  s.reject_reason = reason.slice(0, 500);
-  s.approved_by = req.userId || '';
+  // The waybills were sent FOR these orders — rejecting the orders rejects them
+  // too, or they would sit in the queue forever with nothing to match against.
+  const linked = s.linked_labels_id ? clientSubs(db).find(x => x.id === s.linked_labels_id) : null;
+  for (const rec of [s, linked].filter(Boolean)) {
+    rec.status = 'rejected';
+    rec.rejected_at = new Date().toISOString();
+    rec.reject_reason = reason.slice(0, 500);
+    rec.approved_by = req.userId || '';
+  }
   writeDb(db);
   logAudit('client_orders_rejected', { id: s.id, code: s.code, client: s.client_name, reason: s.reject_reason, by: req.userId || '' });
   res.json({ ok: true, submission: clientSubPublic(db, s) });

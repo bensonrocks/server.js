@@ -638,6 +638,78 @@ pill, aging flags a 40-day and a 20-day idle SKU but not a 5-day one and
 follows the threshold when changed, and the 365-day report limit is enforced
 on both sides. Pill colours asserted by computed style, not by class name.
 
+### Client order upload — THREE STEPS, and nothing reaches us until step 3
+
+Per the user: *"step 1. upload order csv. completed then / step 2. upload
+waybill pdf. match automatically / then its transmitted to Admin for approval"*.
+The first cut had two INDEPENDENT uploaders side by side, each creating its own
+`pending` submission — which meant a client's waybill PDF was matched at
+approval time against LIVE orders, and the orders it belonged to were still
+sitting unapproved, so it matched **nothing**. Doing the orders first is what
+makes the waybill match possible at all.
+
+- **`status: 'draft'`** is the new first state. Step 1 (`/api/portal/submit-orders`)
+  parses and stores the file but raises **no poke, no audit "submitted" event,
+  and the office queue filters drafts out entirely** — a client part-way through
+  an upload has not sent us anything, and a 15-minute approval clock must never
+  start on work nobody has sent. `age_minutes` is measured from `transmitted_at`,
+  not `submitted_at`.
+- **Step 2** (`/api/portal/submit-labels` with `for_submission`) matches the PDF
+  against the orders IN THAT DRAFT via `matchLabelsAgainstDraft()` and stores a
+  `match_preview`. `buildLabelMatchIndex()` was split so `buildLabelMatchIndexFor(orders)`
+  can be pointed at any order-shaped list — ONE implementation, because a second
+  one would drift and then the "12 of 12 matched" a client sees before sending
+  would stop meaning anything. Unmatched pages are returned WITH whatever was
+  read off them (tracking / order number), so an unmatched label is explainable.
+  `for_submission` is optional: without it the file is a standalone draft with no
+  preview, matched at approval against live orders exactly as before.
+- **`summary.orders[]` now carries `waybill_number`/`issue_no`/`po_number`.** A
+  courier label usually prints only the tracking number, so matching a draft by
+  order number alone would have failed on real files.
+- **Step 3** (`POST /api/portal/submissions/:id/transmit`) is the moment the
+  package arrives with us: the draft AND its attached waybill file flip to
+  `pending` together, **ONE** poke is raised naming both parts, and the clock
+  starts. `DELETE /api/portal/submissions/:id` discards a draft; it refuses
+  (409) once transmitted — from then on it is our decision to approve or reject,
+  not the client's to withdraw. `DELETE .../:id/labels` swaps out the wrong PDF.
+- **The office sees ONE row, not two.** `/api/client-submissions` filters out
+  both drafts and any submission with a `linked_orders_id`; the waybills are
+  shown INSIDE the parent row and on the approve screen, with the client's own
+  match result. Approving processes them **after** `db.batches.unshift(batch)` —
+  order matters, since `processLabelPdf` matches against live orders and running
+  it first would match nothing every time. A label failure there is reported,
+  never rolled back over: the orders are already live and must stay live.
+  Rejecting the orders rejects the waybills with them.
+- Portal UI is a 1 Orders → 2 Waybills → 3 Send stepper (`#sendSteps`), and the
+  submissions list shows a draft as "Not sent yet" with Continue / Discard, so an
+  abandoned upload is never stranded.
+
+NOT BUILT, deliberately: the portal has no entry point for sending waybills for
+orders we approved EARLIER — the server still accepts it (`for_submission`
+omitted), but no screen offers it. Add it from an approved row if a client asks.
+
+**Two parser bugs this exposed, both found in a real client file**
+(`SO Ref | Waybill Ref | SKU | Qty`, reported as "WAYBILL —" after approval):
+- `waybill_ref` was in no chain in `mapRow`, so the waybill number was DROPPED.
+  Added, with `so_ref`/`order_ref`/`so_no`/`sales_order_no`, `tracking_ref`,
+  `awb_no`/`awb_number`, `consignment_ref`.
+- Worse: the AI column-scorer picked `waybill_ref` as the **description**, so
+  every pick line would have read "LZSGD1015082878" where the product name
+  belongs. `scoreDesc` now returns -99 for a header containing any of
+  `DESC_NEVER_WORDS` (waybill, tracking, awb, airway, consignment, barcode, ean,
+  upc, invoice, shipment). Matched on WHOLE WORDS of the normalised header, not
+  as a substring — "Order Notes" (`order_notes`) is a perfectly good description
+  and must not be caught by an `order_no` substring. Regression-checked against
+  the plain SKU/Quantity/Description, Keyfields `d-` and GI Analysis shapes.
+
+Verified end to end: 28 API checks (draft invisible to the office, no poke until
+transmit, 3-of-4 auto-match against the client's own pending orders, one poke
+naming both parts, clock starts at transmit, withdrawal refused after transmit,
+approval files the waybills against the NEW orders, both records closed together)
+plus 29 browser checks with the client on a Pixel 5 and the office on a desktop
+— including that the WAYBILL column is now filled on the Orders tab instead of
+showing a dash, and that all five portal tabs fit without clipping from 320px up.
+
 ### Bulk deletion approval (Master) + client self-cancel (portal)
 
 Two separate paths, deliberately different in who needs whose permission.

@@ -12411,6 +12411,9 @@
             <div class="pk-t">${esc(s.client_name)} <span class="poke-chan">${esc(s.code)}</span>
               <span class="cs-pill ${cls}">${esc(label)}</span></div>
             <div class="pk-s">${esc(s.filename)} — ${what}</div>
+            ${s.labels ? `<div class="pk-s">&#127991; ${esc(s.labels.filename)} — ${
+              s.labels.matched == null ? `${s.labels.pages} page(s)`
+              : `<b>${s.labels.matched} of ${s.labels.pages}</b> matched to these orders by the client`}</div>` : ''}
             ${s.job_code ? `<div class="pk-s">Created job <b>${esc(s.job_code)}</b></div>` : ''}
             ${s.reject_reason ? `<div class="pk-s">Reason: ${esc(s.reject_reason)}</div>` : ''}
           </div>
@@ -12425,11 +12428,26 @@
       document.getElementById('clientSubPrevTitle').textContent = `${d.client_name} — ${d.code}`;
       const warn = (d.warnings || []).length
         ? `<div class="confirm-errors">${d.warnings.map(esc).join('<br>')}</div>` : '';
+      // The waybills the client attached in step 2, and the match they already
+      // saw. Approving processes them straight after the batch is created, so
+      // the approver should know they are coming.
+      const lab = d.labels ? `<div class="confirm-dup-warnings">
+          &#127991; <b>${esc(d.labels.filename)}</b> — ${d.labels.pages} waybill page(s),
+          ${d.labels.matched == null ? 'not matched yet'
+            : `<b>${d.labels.matched} of ${d.labels.pages}</b> already matched to the orders below`}.
+          These are filed against the orders automatically when you approve.
+          ${(d.labels.unmatched || []).length
+            ? `<br><span class="hint">Did not match: ${d.labels.unmatched.slice(0, 8).map(u =>
+                 esc(`p.${u.page}${u.tracking ? ' ' + u.tracking : ''}`)).join(', ')}${
+                 d.labels.unmatched.length > 8 ? ` and ${d.labels.unmatched.length - 8} more` : ''} — we re-try these on approval.</span>`
+            : ''}
+        </div>` : '';
       const body = d.kind === 'labels'
-        ? `<p class="hint">${esc(d.filename)} — ${d.row_count} label page(s). Approving files these against matching orders.</p>`
+        ? `<p class="hint">${esc(d.filename)} — ${d.row_count} waybill page(s). Approving files these against matching orders.</p>`
         : `<p class="hint">${esc(d.filename)} — ${d.order_count} order(s), ${d.row_count} line(s), ${d.total_qty} pcs.
              SKUs and descriptions below were resolved against this client's item master.</p>
            ${warn}
+           ${lab}
            <table class="tbl" style="width:100%;border-collapse:collapse;font-size:.82rem">
              <thead><tr><th>Order</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th></tr></thead>
              <tbody>${(d.preview || []).map(o => (o.lines || []).map((l, i) => `<tr>
@@ -12460,7 +12478,12 @@
         j = await r.json();
       }
       if (!r.ok) { alert(j.error || 'Could not approve.'); return; }
-      alert(`Approved — job ${j.job} created with ${j.orderCount} order(s).`);
+      const labMsg = j.labels
+        ? (j.labels.error
+            ? `\n\nThe attached waybills could not be processed: ${j.labels.error}\nThe orders are live — re-upload the label PDF from Labels.`
+            : `\n\nWaybills: ${j.labels.matched} of ${j.labels.pageCount} page(s) matched.`)
+        : '';
+      alert(`Approved — job ${j.job} created with ${j.orderCount} order(s).${labMsg}`);
       document.getElementById('clientSubPreviewOverlay').classList.add('hidden');
       current = null;
       await load(); render();

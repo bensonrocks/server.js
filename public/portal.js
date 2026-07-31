@@ -896,19 +896,32 @@
   wireSel('orders');
   wireSel('inbound');
 
-  // ── SEND ORDERS ───────────────────────────────────────────────────────────
-  // Deliberately the same shape as the office upload: pick a file, see a
-  // preview of exactly what we would receive, then confirm. The only
-  // difference is what confirming does — it submits for our approval instead
-  // of creating live work, because a client's file is reviewed first.
-  let sendPreview = null;   // {filename, orderCount, rowCount, totalQty, warnings, duplicateWarnings, orders}
-  let sendFileBlob = null;  // the file itself, held until the client confirms
+  // ── SEND: three steps, in order ───────────────────────────────────────────
+  // 1. the order file (previewed, then held as a DRAFT — nothing has reached us)
+  // 2. the waybill PDF, matched against those very orders on the spot
+  // 3. send — the moment the package actually arrives with the office
+  //
+  // Doing it in this order is what makes step 2's match meaningful: the orders
+  // are not live yet, so there would otherwise be nothing for a label to match.
+  let sendPreview  = null;   // {filename, orderCount, rowCount, totalQty, warnings, ...}
+  let sendFileBlob = null;   // the file itself, held until the client confirms step 1
+  let sendDraft    = null;   // the draft submission once step 1 is committed
 
-  function sendMsg(text, kind) {
-    const el = $('sendMsg');
+  function sendMsg(text, kind, id) {
+    const el = $(id || 'sendMsg');
     el.className = 'asn-msg' + (kind ? ' ' + kind : '');
     el.textContent = text;
     el.classList.remove('hidden');
+  }
+
+  // Which step is on screen, and which are behind us.
+  function sendStep(n) {
+    for (let i = 1; i <= 3; i++) $('sendStep' + i).classList.toggle('hidden', i !== n);
+    document.querySelectorAll('#sendSteps .step').forEach(el => {
+      const i = Number(el.dataset.step);
+      el.classList.toggle('on', i === n);
+      el.classList.toggle('done', i < n);
+    });
   }
 
   async function sendPickFile(file) {
@@ -951,6 +964,7 @@
     $('sendConfirm').classList.remove('hidden');
   }
 
+  // STEP 1 → commit the order file as a draft, then move to waybills.
   async function sendSubmit() {
     if (!sendFileBlob) return;
     $('cfmGo').disabled = true;
@@ -960,35 +974,165 @@
       const r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
       const d = await r.json();
       if (!r.ok) { sendMsg(d.error || 'Submission failed.', 'err'); return; }
-      sendMsg(`✓ Sent for approval as ${d.submission.code} — ${d.submission.order_count} order(s). You'll see the status below.`, '');
+      sendDraft = d.submission;
       sendPreview = null; sendFileBlob = null;
       $('sendFile').value = '';
+      $('sendMsg').classList.add('hidden');
+      $('sendMatch').classList.add('hidden');
+      $('sendLabelMsg').classList.add('hidden');
+      $('sendLabelsNext').classList.add('hidden');
+      sendStep(2);
       loadSubmissions();
     } catch (e) {
-      sendMsg('Network error — nothing was submitted.', 'err');
+      sendMsg('Network error — nothing was saved.', 'err');
     } finally {
       $('cfmGo').disabled = false;
       $('sendConfirm').classList.add('hidden');
     }
   }
 
+  // STEP 2 → the waybills, matched against step 1's orders straight away.
   async function sendLabelsFile(file) {
-    if (!file) return;
-    $('sendLabelsName').textContent = file.name;
-    sendMsg('Uploading ' + file.name + '…', 'busy');
+    if (!file || !sendDraft) return;
+    sendMsg('Reading ' + file.name + ' and matching to your orders…', 'busy', 'sendLabelMsg');
     const fd = new FormData();
     fd.append('file', file);
+    fd.append('for_submission', sendDraft.id);
     try {
       const r = await fetch('/api/portal/submit-labels', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
       const d = await r.json();
-      if (!r.ok) { sendMsg(d.error || 'We could not read that PDF.', 'err'); return; }
-      sendMsg(`✓ ${d.submission.row_count} label page(s) sent for approval as ${d.submission.code}.`, '');
-      $('sendLabels').value = ''; $('sendLabelsName').textContent = '';
+      if (!r.ok) { sendMsg(d.error || 'We could not read that PDF.', 'err', 'sendLabelMsg'); return; }
+      $('sendLabelMsg').classList.add('hidden');
+      renderMatch(file.name, d);
+      $('sendLabelsNext').classList.remove('hidden');
+      $('sendSkipLabels').textContent = 'Remove waybills';
       loadSubmissions();
-    } catch (e) { sendMsg('Network error — nothing was submitted.', 'err'); }
+    } catch (e) { sendMsg('Network error — please try again.', 'err', 'sendLabelMsg'); }
+  }
+
+  // What matched, and — just as important — what did not, with whatever we could
+  // read off the page so an unmatched label is explainable rather than a number.
+  function renderMatch(filename, d) {
+    const el = $('sendMatch');
+    const pages = d.pages || 0, matched = d.matched || 0;
+    const un = d.unmatched || [];
+    const allGood = matched === pages;
+    el.innerHTML = `
+      <div class="mt-head">
+        <span>${allGood ? '✅' : '⚠️'}</span>
+        <span>${matched} of ${pages} waybill page(s) matched to your orders</span>
+      </div>
+      <div class="muted" style="font-size:.76rem;margin-top:.2rem">${esc(filename)}</div>
+      ${un.length ? `
+        <div class="mt-list">
+          ${un.slice(0, 12).map(u => `<div class="mt-row">
+            <span class="pg">p.${u.page}</span>
+            <span class="to muted">${esc(u.tracking || u.order || 'nothing readable on this page')}</span>
+          </div>`).join('')}
+        </div>
+        <div class="muted" style="font-size:.76rem;margin-top:.4rem">
+          ${un.length > 12 ? `and ${un.length - 12} more. ` : ''}You can still send these —
+          we'll try to match them again on our side. Usually it means the order is not in the file above.
+        </div>` : ''}`;
+    el.classList.remove('hidden');
+  }
+
+  async function removeLabels() {
+    if (!sendDraft) return;
+    try {
+      const r = await fetch(`/api/portal/submissions/${sendDraft.id}/labels`, { method: 'DELETE', headers: { 'x-auth-token': token } });
+      const d = await r.json();
+      if (!r.ok) { sendMsg(d.error || 'Could not remove that file.', 'err', 'sendLabelMsg'); return; }
+      $('sendMatch').classList.add('hidden');
+      $('sendLabelsNext').classList.add('hidden');
+      $('sendSkipLabels').textContent = 'Skip — no waybills';
+      $('sendLabels').value = '';
+      loadSubmissions();
+    } catch (e) { sendMsg('Network error — please try again.', 'err', 'sendLabelMsg'); }
+  }
+
+  // STEP 3 → what is about to be sent, then send it.
+  async function openSendFinal() {
+    // Re-read the draft so the summary reflects whatever is actually attached.
+    try {
+      const rows = await (await api('/api/portal/submissions')).json();
+      const fresh = rows.find(x => x.id === sendDraft?.id);
+      if (fresh) sendDraft = fresh;
+    } catch (e) { /* fall back to what we have */ }
+    const d = sendDraft;
+    if (!d) return;
+    const lab = d.labels;
+    $('sendSummary').innerHTML = `
+      <div class="cfm-row"><span>Orders file</span><span>${esc(d.filename)}</span></div>
+      <div class="cfm-row"><span>Orders</span><span class="cfm-big">${d.order_count}</span></div>
+      <div class="cfm-row"><span>Lines</span><span class="cfm-big">${d.row_count}</span></div>
+      <div class="cfm-row"><span>Total pieces</span><span class="cfm-big">${d.total_qty}</span></div>
+      <div class="cfm-row"><span>Waybills</span><span>${lab
+        ? `${esc(lab.filename)} — <b>${lab.matched} of ${lab.pages}</b> matched`
+        : '<span class="muted">none attached</span>'}</span></div>`;
+    $('sendFinalMsg').classList.add('hidden');
+    sendStep(3);
+  }
+
+  async function sendTransmit() {
+    if (!sendDraft) return;
+    const btn = $('sendTransmit');
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/api/portal/submissions/${sendDraft.id}/transmit`, {
+        method: 'POST', headers: { 'x-auth-token': token, 'content-type': 'application/json' }, body: '{}',
+      });
+      const d = await r.json();
+      if (!r.ok) { sendMsg(d.error || 'Could not send.', 'err', 'sendFinalMsg'); return; }
+      const code = d.submission.code;
+      sendDraft = null;
+      sendStep(1);
+      sendMsg(`✓ Sent for approval as ${code}. You'll see the status below.`, '');
+      loadSubmissions();
+    } catch (e) { sendMsg('Network error — nothing was sent.', 'err', 'sendFinalMsg'); }
+    finally { btn.disabled = false; }
+  }
+
+  async function sendDiscard() {
+    if (!sendDraft) return;
+    if (!confirm('Discard this upload? Nothing has been sent to us, so nothing is lost on our side.')) return;
+    try {
+      await fetch(`/api/portal/submissions/${sendDraft.id}`, { method: 'DELETE', headers: { 'x-auth-token': token } });
+    } catch (e) { /* it is a draft; a failure here is not worth blocking on */ }
+    sendDraft = null;
+    $('sendFile').value = ''; $('sendLabels').value = '';
+    $('sendMatch').classList.add('hidden');
+    $('sendSkipLabels').textContent = 'Skip — no waybills';
+    sendStep(1);
+    $('sendMsg').classList.add('hidden');
+    loadSubmissions();
+  }
+
+  // Resume an upload the client started and never sent — a draft that is only
+  // reachable from the list would otherwise be stranded.
+  async function resumeDraft(id) {
+    try {
+      const rows = await (await api('/api/portal/submissions')).json();
+      sendDraft = rows.find(x => x.id === id) || null;
+    } catch (e) { return; }
+    if (!sendDraft) return;
+    if (sendDraft.labels) {
+      renderMatch(sendDraft.labels.filename, {
+        pages: sendDraft.labels.pages, matched: sendDraft.labels.matched, unmatched: sendDraft.labels.unmatched,
+      });
+      $('sendLabelsNext').classList.remove('hidden');
+      $('sendSkipLabels').textContent = 'Remove waybills';
+    } else {
+      $('sendMatch').classList.add('hidden');
+      $('sendLabelsNext').classList.add('hidden');
+      $('sendSkipLabels').textContent = 'Skip — no waybills';
+    }
+    sendStep(2);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   const SUB_PILL = {
+    draft:    ['p-due',     'Not sent yet'],
     pending:  ['p-due',     'Waiting for approval'],
     approved: ['p-sla-met', 'Approved'],
     rejected: ['p-sla-miss', 'Not accepted'],
@@ -1003,7 +1147,19 @@
       }
       el.innerHTML = rows.map(s => {
         const [cls, label] = SUB_PILL[s.status] || ['p-due', s.status];
-        const kind = s.kind === 'labels' ? `${s.row_count} label page(s)` : `${s.order_count} order(s) · ${s.row_count} line(s)`;
+        const kind = s.kind === 'labels' ? `${s.row_count} waybill page(s)` : `${s.order_count} order(s) · ${s.row_count} line(s)`;
+        const lab = s.labels
+          ? `<div class="muted" style="font-size:.78rem;margin-top:.2rem">🏷 ${esc(s.labels.filename)} — ${
+              s.labels.matched == null ? `${s.labels.pages} page(s)` : `<b>${s.labels.matched} of ${s.labels.pages}</b> matched`}</div>`
+          : '';
+        // A draft is the client's own unfinished work — it must be finishable
+        // or removable from here, or it would be stranded on this list forever.
+        const draftActs = s.status === 'draft'
+          ? `<div style="margin-top:.5rem;display:flex;gap:.4rem;flex-wrap:wrap">
+               <button class="btn-sm asn-primary" data-resume="${esc(s.id)}">Continue →</button>
+               <button class="btn-sm" data-drop="${esc(s.id)}">Discard</button>
+             </div>`
+          : '';
         const orders = (s.orders || []).map(o =>
           `<span class="pill ${o.status === 'done' ? 'p-sla-met' : 'p-due'}">${esc(o.order_number)} · ${esc(o.status)}</span>`).join(' ');
         return `<div class="card">
@@ -1015,9 +1171,19 @@
           <div class="muted" style="font-size:.79rem;margin-top:.25rem">${esc(s.filename)} — ${kind}</div>
           ${s.job_code ? `<div class="muted" style="font-size:.78rem;margin-top:.2rem">Our job reference: <b>${esc(s.job_code)}</b></div>` : ''}
           ${s.status === 'rejected' && s.reject_reason ? `<div class="asn-msg err" style="margin-top:.45rem">${esc(s.reject_reason)}</div>` : ''}
+          ${lab}
           ${orders ? `<div style="margin-top:.45rem;display:flex;gap:.3rem;flex-wrap:wrap">${orders}</div>` : ''}
+          ${draftActs}
         </div>`;
       }).join('');
+      el.querySelectorAll('[data-resume]').forEach(b =>
+        b.addEventListener('click', () => resumeDraft(b.dataset.resume)));
+      el.querySelectorAll('[data-drop]').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('Discard this upload? It was never sent to us.')) return;
+        await fetch(`/api/portal/submissions/${b.dataset.drop}`, { method: 'DELETE', headers: { 'x-auth-token': token } }).catch(() => {});
+        if (sendDraft && sendDraft.id === b.dataset.drop) { sendDraft = null; sendStep(1); }
+        loadSubmissions();
+      }));
     } catch (e) { /* leave whatever is on screen */ }
   }
 
@@ -1029,19 +1195,32 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }));
 
-  // Send Orders — file pickers, drag & drop, and the confirm dialog
+  // Send flow — pickers, drag & drop, and the step buttons
   $('sendBrowse').addEventListener('click', () => $('sendFile').click());
   $('sendFile').addEventListener('change', e => sendPickFile(e.target.files[0]));
   $('sendLabelsBrowse').addEventListener('click', () => $('sendLabels').click());
   $('sendLabels').addEventListener('change', e => sendLabelsFile(e.target.files[0]));
-  {
-    const dz = $('sendDrop');
+  function wireDrop(id, onFile) {
+    const dz = $(id);
+    if (!dz) return;
     ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
     ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
-    dz.addEventListener('drop', e => sendPickFile(e.dataTransfer?.files?.[0]));
+    dz.addEventListener('drop', e => onFile(e.dataTransfer?.files?.[0]));
   }
+  wireDrop('sendDrop', sendPickFile);
+  wireDrop('sendLabelDrop', sendLabelsFile);
   $('cfmCancel').addEventListener('click', () => { $('sendConfirm').classList.add('hidden'); sendPreview = null; sendFileBlob = null; $('sendFile').value = ''; });
   $('cfmGo').addEventListener('click', sendSubmit);
+  // The same button is "skip" until a PDF is attached, then "remove" — one
+  // control, because those are the same decision made twice.
+  $('sendSkipLabels').addEventListener('click', () => {
+    if (sendDraft?.labels || !$('sendMatch').classList.contains('hidden')) removeLabels();
+    else openSendFinal();
+  });
+  $('sendLabelsNext').addEventListener('click', openSendFinal);
+  $('sendBack2').addEventListener('click', () => sendStep(2));
+  $('sendTransmit').addEventListener('click', sendTransmit);
+  $('sendDiscard').addEventListener('click', sendDiscard);
   function wireChips(wrapId, set) {
     const wrap = $(wrapId);
     if (!wrap) return;

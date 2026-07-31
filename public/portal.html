@@ -85,7 +85,7 @@
   @keyframes sp { to { transform:rotate(360deg); } }
   .link { background:none; border:0; color:var(--brand-2); font-weight:700; cursor:pointer; font-size:.82rem; padding:0; }
 
-  /* All four tabs must FIT a narrow phone — an off-screen tab is an invisible
+  /* Every tab must FIT a narrow phone — an off-screen tab is an invisible
      tab. min-width:0 + flex:1 lets them shrink evenly instead of overflowing. */
   nav { display:flex; gap:.25rem; background:var(--surface); border-bottom:1px solid var(--border);
         position:sticky; top:53px; z-index:19; padding:.4rem .45rem; }
@@ -93,7 +93,14 @@
                font-weight:700; color:var(--muted); font-size:.79rem; cursor:pointer; white-space:nowrap;
                display:flex; align-items:center; justify-content:center; gap:.25rem; overflow:hidden; }
   nav button.active { color:#fff; background:linear-gradient(135deg,var(--brand-2),var(--brand)); }
-  @media (max-width:359px) { nav button { font-size:.72rem; } }
+  /* FIVE tabs have to fit a narrow phone — an off-screen tab is an invisible
+     tab. Below 430px the word "Orders" is dropped from "Send Orders" (the
+     other four tabs say what they are already), and below 380px the emoji go
+     too rather than letting any label be clipped. */
+  @media (max-width:519px) { nav button { gap:.15rem; padding:.5rem .15rem; font-size:.75rem; }
+                             nav button .tw, nav button .ti { display:none; } }
+  @media (max-width:379px) { nav button { font-size:.7rem; } }
+  @media (max-width:339px) { nav button { font-size:.65rem; padding:.5rem .05rem; } }
   main { padding:.85rem .85rem calc(2rem + var(--safe-b)); max-width:960px; margin:0 auto; }
 
   /* ── Hero ─────────────────────────────────────────────────────────────── */
@@ -235,6 +242,28 @@
   .up-row { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin-top:.7rem;
             padding-top:.7rem; border-top:1px solid var(--border); }
   .up-row .btn-sm { flex:0 0 auto; }
+
+  /* ── Send flow: 1 Orders → 2 Waybills → 3 Send ─────────────────────────── */
+  .steps { display:flex; gap:.4rem; margin-bottom:.75rem; }
+  .step { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; gap:.35rem;
+          padding:.5rem .35rem; border-radius:11px; background:var(--surface); border:1.5px solid var(--border);
+          font-size:.78rem; font-weight:700; color:var(--muted); white-space:nowrap; overflow:hidden; }
+  .step .sn { display:inline-flex; align-items:center; justify-content:center; width:1.2rem; height:1.2rem;
+              border-radius:50%; background:var(--border); color:var(--text); font-size:.7rem; font-weight:800; flex:0 0 auto; }
+  .step.on { border-color:var(--brand-2); color:var(--brand); background:var(--info-bg); }
+  .step.on .sn { background:var(--brand-2); color:#fff; }
+  .step.done { border-color:#a7f3d0; color:var(--ok); background:var(--ok-bg); }
+  .step.done .sn { background:var(--ok); color:#fff; }
+  @media (max-width:379px) { .step { font-size:.7rem; } }
+
+  /* Per-page waybill match result */
+  .mt-head { display:flex; align-items:center; gap:.5rem; font-size:.85rem; font-weight:800; }
+  .mt-list { margin-top:.5rem; border:1px solid var(--border); border-radius:11px; overflow:hidden; }
+  .mt-row { display:flex; gap:.5rem; align-items:center; padding:.42rem .65rem; font-size:.78rem; }
+  .mt-row + .mt-row { border-top:1px solid var(--border); }
+  .mt-row .pg { font-weight:800; color:var(--muted); flex:0 0 3.4rem; }
+  .mt-row .to { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
   .cfm { margin-top:.7rem; border:1px solid var(--border); border-radius:11px; overflow:hidden; }
   .cfm-row { display:flex; justify-content:space-between; align-items:center; gap:.6rem;
              padding:.5rem .7rem; font-size:.83rem; }
@@ -332,11 +361,11 @@
     </div>
   </header>
   <nav>
-    <button data-tab="overview" class="active">&#128202; Overview</button>
-    <button data-tab="stock">&#128230; Stock</button>
-    <button data-tab="orders">&#128666; Orders</button>
-    <button data-tab="inbound">&#128229; Inbound</button>
-    <button data-tab="send">&#128228; Send Orders</button>
+    <button data-tab="overview" class="active"><span class="ti">&#128202;</span> Overview</button>
+    <button data-tab="stock"><span class="ti">&#128230;</span> Stock</button>
+    <button data-tab="orders"><span class="ti">&#128666;</span> Orders</button>
+    <button data-tab="inbound"><span class="ti">&#128229;</span> Inbound</button>
+    <button data-tab="send"><span class="ti">&#128228;</span> Send<span class="tw"> Orders</span></button>
   </nav>
   <main>
     <section id="tab-overview">
@@ -463,8 +492,18 @@
          it SUBMITS FOR APPROVAL rather than creating live work, because a
          client's file is reviewed by us first. -->
     <section id="tab-send" class="hidden">
-      <div class="card asn-card">
-        <b style="font-size:.95rem">&#128228; Send us your orders</b>
+      <!-- Three steps, in order: orders first, then the waybills that belong to
+           them (matched against those orders on the spot), then send. Nothing
+           reaches us until the last step. -->
+      <div class="steps" id="sendSteps">
+        <div class="step on" data-step="1"><span class="sn">1</span> Orders</div>
+        <div class="step" data-step="2"><span class="sn">2</span> Waybills</div>
+        <div class="step" data-step="3"><span class="sn">3</span> Send</div>
+      </div>
+
+      <!-- STEP 1 — the order file -->
+      <div class="card asn-card" id="sendStep1">
+        <b style="font-size:.95rem">&#128228; Step 1 &mdash; your orders</b>
         <div class="muted" style="font-size:.79rem;margin-top:.3rem">
           Upload your XLSX, CSV or picking-list PDF. Column names are auto-detected — any layout works.
           Each line needs an order number, a product code and a quantity; the product code can be
@@ -478,15 +517,44 @@
           <div>Drag &amp; drop or <button class="link" id="sendBrowse" type="button">browse</button></div>
           <div class="muted" style="font-size:.72rem;margin-top:.35rem">XLSX &middot; XLS &middot; CSV &middot; PDF &nbsp;|&nbsp; up to 10 MB</div>
         </div>
-
-        <div class="up-row">
-          <span style="font-size:.82rem">&#127991; Shipping labels PDF <span class="muted">(optional)</span></span>
-          <input type="file" id="sendLabels" accept=".pdf" hidden>
-          <button class="btn-sm" id="sendLabelsBrowse" type="button">Attach PDF</button>
-          <span class="muted" id="sendLabelsName" style="font-size:.78rem"></span>
-        </div>
-
         <div id="sendMsg" class="asn-msg hidden" style="margin-top:.6rem"></div>
+      </div>
+
+      <!-- STEP 2 — waybills, matched against step 1's orders -->
+      <div class="card asn-card hidden" id="sendStep2">
+        <b style="font-size:.95rem">&#127991; Step 2 &mdash; your waybills <span class="muted" style="font-weight:400">(optional)</span></b>
+        <div class="muted" style="font-size:.79rem;margin-top:.3rem">
+          Upload the shipping-label PDF for the orders above and we'll match every page to an order
+          straight away, so you can see any that didn't match before you send.
+        </div>
+        <div class="up-drop" id="sendLabelDrop">
+          <input type="file" id="sendLabels" accept=".pdf" hidden>
+          <div class="up-ico">&#127991;</div>
+          <div>Drag &amp; drop or <button class="link" id="sendLabelsBrowse" type="button">browse</button></div>
+          <div class="muted" style="font-size:.72rem;margin-top:.35rem">PDF only &nbsp;|&nbsp; one page per label</div>
+        </div>
+        <div id="sendMatch" class="hidden" style="margin-top:.6rem"></div>
+        <div id="sendLabelMsg" class="asn-msg hidden" style="margin-top:.6rem"></div>
+        <div class="asn-actions" style="margin-top:.8rem">
+          <button class="btn-sm" id="sendSkipLabels">Skip &mdash; no waybills</button>
+          <button class="btn-sm asn-primary hidden" id="sendLabelsNext">Continue &#8594;</button>
+        </div>
+      </div>
+
+      <!-- STEP 3 — send the package -->
+      <div class="card asn-card hidden" id="sendStep3">
+        <b style="font-size:.95rem">&#9993; Step 3 &mdash; send for approval</b>
+        <div id="sendSummary" class="cfm" style="margin-top:.5rem"></div>
+        <div class="muted" style="font-size:.76rem;margin-top:.55rem">
+          Sending notifies us straight away. Your orders enter processing only once we approve them —
+          you'll see the status below either way.
+        </div>
+        <div id="sendFinalMsg" class="asn-msg hidden" style="margin-top:.6rem"></div>
+        <div class="asn-actions" style="margin-top:.8rem">
+          <button class="btn-sm" id="sendDiscard">Discard</button>
+          <button class="btn-sm" id="sendBack2">&#8592; Back</button>
+          <button class="btn-sm asn-primary" id="sendTransmit">&#128228; Send to us</button>
+        </div>
       </div>
 
       <div class="sec-head" style="margin-top:1rem"><b>Your submissions</b></div>
@@ -496,7 +564,7 @@
     <!-- Confirm dialog — same shape as the office Confirm Upload window -->
     <div class="modal-bg hidden" id="sendConfirm">
       <div class="modal-box">
-        <b style="font-size:.95rem">Confirm submission</b>
+        <b style="font-size:.95rem">Step 1 &mdash; check your orders</b>
         <div class="cfm">
           <div class="cfm-row"><span>File</span><span id="cfmFile">&mdash;</span></div>
           <div class="cfm-row"><span>Orders</span><span class="cfm-big" id="cfmOrders">&mdash;</span></div>
@@ -506,13 +574,13 @@
         <div id="cfmWarn" class="asn-msg err hidden" style="margin-top:.5rem"></div>
         <div id="cfmDup" class="asn-msg hidden" style="margin-top:.5rem"></div>
         <div class="muted" style="font-size:.76rem;margin-top:.55rem">
-          These lines were matched against your item master. Submitting sends them to us for approval —
-          you'll see the status here, and they only enter processing once we approve.
+          These lines were matched against your item master. Nothing is sent yet &mdash;
+          next you can attach the waybills for these orders, and send everything together.
         </div>
         <div id="cfmPreview" class="cfm-prev"></div>
         <div class="asn-actions" style="margin-top:.8rem">
           <button class="btn-sm" id="cfmCancel">Cancel</button>
-          <button class="btn-sm asn-primary" id="cfmGo">Submit for approval</button>
+          <button class="btn-sm asn-primary" id="cfmGo">Looks right &mdash; next &#8594;</button>
         </div>
       </div>
     </div>
