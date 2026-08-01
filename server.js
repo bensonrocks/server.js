@@ -82,13 +82,25 @@ const STAFF_ACCESS_HOSTS = (process.env.STAFF_ACCESS_HOSTS || 'nimbustrade-staff
   .split(',')
   .map((h) => h.trim())
   .filter(Boolean);
-const nimbustradeStatic  = express.static(path.join(__dirname, 'nimbustrade-site'));
-const clientPortalStatic = express.static(path.join(__dirname, 'nimbustrade-client-portal'));
-const vendorPortalStatic = express.static(path.join(__dirname, 'nimbustrade-vendor-portal'));
-const staffPortalStatic  = express.static(path.join(__dirname, 'nimbustrade-staff-portal'));
+// nimbustrade-site is the original static marketing page — kept on disk as a
+// rollback fallback and still served at the /nimbustrade preview path (its
+// relative links work fine mounted under a prefix). The real public host now
+// gets the premium Next.js rebuild instead: nimbustrade-web is a static
+// export (next.config.ts `output: 'export'`), rebuilt via `npm run build`
+// inside nimbustrade-web/ and committed as nimbustrade-web/out — there is no
+// build step in production, so out/ IS the served artifact, same as every
+// other nimbustrade-* directory. Its internal links are root-absolute, so it
+// is deliberately NOT also mounted at the /nimbustrade prefix (that would
+// break in-app navigation under a path prefix); host-based access is the only
+// supported way to reach it.
+const nimbustradeStatic    = express.static(path.join(__dirname, 'nimbustrade-site'));
+const nimbustradeWebStatic = express.static(path.join(__dirname, 'nimbustrade-web', 'out'));
+const clientPortalStatic   = express.static(path.join(__dirname, 'nimbustrade-client-portal'));
+const vendorPortalStatic   = express.static(path.join(__dirname, 'nimbustrade-vendor-portal'));
+const staffPortalStatic    = express.static(path.join(__dirname, 'nimbustrade-staff-portal'));
 
 app.use((req, res, next) => {
-  if (NIMBUSTRADE_HOSTS.includes(req.hostname)) return nimbustradeStatic(req, res, next);
+  if (NIMBUSTRADE_HOSTS.includes(req.hostname)) return nimbustradeWebStatic(req, res, next);
   if (CLIENT_ACCESS_HOSTS.includes(req.hostname)) return clientPortalStatic(req, res, next);
   if (VENDOR_ACCESS_HOSTS.includes(req.hostname)) return vendorPortalStatic(req, res, next);
   if (STAFF_ACCESS_HOSTS.includes(req.hostname)) return staffPortalStatic(req, res, next);
