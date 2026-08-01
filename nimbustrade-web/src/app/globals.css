@@ -1,0 +1,74 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@theme {
+  /* ---------- Brand palette (same tokens as the NimbusTrade marketing site) ---------- */
+  --color-ink: #14171b;
+  --color-ink-muted: #52585f;
+  --color-paper: #ffffff;
+  --color-paper-alt: #f4f5f3;
+  --color-paper-deep: #eceeed;
+  --color-border: rgba(20, 23, 27, 0.14);
+  --color-border-strong: rgba(20, 23, 27, 0.22);
+
+  --color-brand: #0a558b;
+  --color-brand-strong: #0f6aa8;
+  --color-brand-bright: #4a9bd4;
+  --color-brand-tint: #eaf2f8;
+
+  --color-signal: #9c3223;
+  --color-signal-tint: #f7e9e6;
+  --color-confirm: #1f7a4d;
+  --color-confirm-tint: #e7f3ec;
+
+  --font-display: var(--font-big-shoulders), "Arial Narrow", sans-serif;
+  --font-body: var(--font-ibm-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-sm: 0.125rem;
+  --radius-md: 0.1875rem;
+  --radius-lg: 0.375rem;
+
+  --animate-fade-up: fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: 0.005em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
