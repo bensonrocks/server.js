@@ -25,22 +25,12 @@ export function Credibility() {
 
         <div className="mt-10 border-t border-border pt-8">
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            Certifications &amp; partner accreditations
+            Facility footprint
           </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            {["[ Certification — placeholder ]", "[ Certification — placeholder ]", "[ Carrier partnership — placeholder ]"].map(
-              (label) => (
-                <span
-                  key={label}
-                  className="rounded-sm border border-dashed border-border-strong px-3 py-1.5 text-xs font-medium text-ink-muted"
-                >
-                  {label}
-                </span>
-              )
-            )}
-          </div>
-          <p className="mt-3 text-xs text-ink-muted/80">
-            Placeholders shown until specific certifications are confirmed for publication.
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink">
+            Own facilities in <span className="font-semibold">Singapore</span> and{" "}
+            <span className="font-semibold">Malaysia</span>, with networked partners covering
+            every other market on file.
           </p>
         </div>
       </div>
