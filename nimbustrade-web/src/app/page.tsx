@@ -1,5 +1,6 @@
 import { Hero } from "@/components/sections/hero";
 import { Credibility } from "@/components/sections/credibility";
+import { FacilityGallery } from "@/components/sections/facility-gallery";
 import { Services } from "@/components/sections/services";
 import { SolutionsSelector } from "@/components/sections/solutions-selector";
 import { HowItWorks } from "@/components/sections/how-it-works";
@@ -13,6 +14,7 @@ export default function Home() {
     <>
       <Hero />
       <Credibility />
+      <FacilityGallery />
       <Services />
       <SolutionsSelector />
       <HowItWorks />
