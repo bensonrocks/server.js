@@ -68,7 +68,7 @@ export const SOLUTIONS: Solution[] = [
     name: "Technology integration",
     question: "I want my systems talking to my 3PL.",
     description:
-      "API and file-based integration so orders, inventory, and status updates move without manual entry.",
-    included: ["Order & inventory feeds", "Webhook updates", "Reporting exports", "Sandbox access"],
+      "Connect to IdealOne, our in-house platform, via API or file feed — or run everything from the dashboard with no integration at all. Built for both B2B and B2C order flows.",
+    included: ["Order & inventory feeds", "Webhook updates", "No-integration dashboard access", "Sandbox access"],
   },
 ];

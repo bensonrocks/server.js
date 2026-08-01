@@ -88,9 +88,9 @@ export const SERVICES: Service[] = [
     name: "Technology integration",
     icon: Cpu,
     summary:
-      "API and file-based integration between your systems and our operating platform, so data moves without re-entry.",
-    benefit: "Your team sees the same numbers we're working from.",
-    points: ["Order and inventory feeds", "Webhook status updates", "Reporting exports"],
+      "API and file-based integration between your systems and IdealOne, our in-house operating platform — or skip integration entirely and run everything from the dashboard.",
+    benefit: "Works for B2B and B2C clients, with or without integration.",
+    points: ["Order and inventory feeds", "Webhook status updates", "No-integration dashboard access"],
   },
 ];
 
