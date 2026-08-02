@@ -33,7 +33,7 @@ export function SiteFooter() {
       <div className="mx-auto max-w-7xl px-6 py-16">
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
-            <img src="/logo.png" alt="NimbusTrade Solutions" className="h-9 w-auto" />
+            <img src="/logo.png" alt="NimbusTrade Solutions" className="h-16 w-auto" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-ink-muted">
               A Singapore-based 4PL/3PL partner coordinating warehousing, fulfilment, and
               cross-border freight for growing brands.

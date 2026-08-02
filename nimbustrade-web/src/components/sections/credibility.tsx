@@ -25,13 +25,20 @@ export function Credibility() {
 
         <div className="mt-10 border-t border-border pt-8">
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            Facility footprint
+            Fulfillment network
           </p>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink">
-            Own facilities in <span className="font-semibold">Singapore</span> and{" "}
-            <span className="font-semibold">Malaysia</span>, with networked partners covering
-            every other market on file.
+            Goods move through <span className="font-semibold">NimbusTrade-appointed warehouses</span>
+            {" "}— not just one distribution centre. Every partner warehouse, including our own
+            facilities in <span className="font-semibold">Singapore</span> and{" "}
+            <span className="font-semibold">Malaysia</span>, is held to the same fulfillment
+            standards.
           </p>
+          <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-muted">
+            <li>Inbound QC on every shipment</li>
+            <li>Same-day dispatch cut-offs</li>
+            <li>Real-time visibility through IdealOne</li>
+          </ul>
         </div>
       </div>
     </section>

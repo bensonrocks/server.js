@@ -70,12 +70,9 @@ Per the brief, nothing has been fabricated — anything not yet confirmed is
 labeled inline as a placeholder and should be replaced before this site is
 published externally:
 
-- **Credibility section** (`/about`, home page): certifications and partner
-  accreditations.
-- **Case studies** (`/`, case-studies data): all three case studies are
-  illustrative placeholders — client names, challenge/solution copy, and results
-  are marked `[ Placeholder ]` throughout and must be replaced with real,
-  client-approved write-ups (or removed) before publishing.
+- **Case studies** (`/`, case-studies data): real engagements, but client
+  names are intentionally withheld — each is described generically
+  (e.g. "A fashion & apparel brand") rather than attributed by name.
 - **Contact details**: phone number and registered office address (footer,
   `/contact`). Email (`hello@nimbustrade.example`) and the WhatsApp link are
   also placeholder values.

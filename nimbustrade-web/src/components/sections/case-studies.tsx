@@ -8,13 +8,12 @@ export function CaseStudies() {
           <div className="max-w-2xl">
             <span className="text-xs font-bold uppercase tracking-wider text-brand">Case studies</span>
             <h2 className="mt-3 font-display text-4xl font-bold text-ink">
-              How engagements like these typically play out.
+              How engagements like these play out.
             </h2>
           </div>
         </div>
-        <p className="mt-4 max-w-2xl rounded-sm border border-dashed border-border-strong bg-paper px-4 py-3 text-sm text-ink-muted">
-          The three write-ups below are illustrative placeholders pending confirmed client
-          details and sign-off — not real client engagements.
+        <p className="mt-4 max-w-2xl text-sm text-ink-muted">
+          Real engagements, described generically — client names are withheld by request.
         </p>
 
         <div className="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-3">

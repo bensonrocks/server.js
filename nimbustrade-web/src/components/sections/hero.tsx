@@ -10,7 +10,7 @@ const PATH_D =
 
 const NODES = [
   { x: 20, y: 170, label: "Origin factory" },
-  { x: 230, y: 150, label: "NimbusTrade DC — Singapore" },
+  { x: 230, y: 150, label: "NimbusTrade-appointed warehouse" },
   { x: 420, y: 150, label: "Port / airfreight gateway" },
   { x: 580, y: 130, label: "Last-mile destination" },
 ];
@@ -84,7 +84,7 @@ export function Hero() {
                 Simulated
               </span>
             </div>
-            <svg viewBox="0 0 600 260" className="w-full h-auto" role="img" aria-label="Animated diagram of a shipment moving from origin factory through the NimbusTrade distribution centre and freight gateway to its final destination">
+            <svg viewBox="0 0 600 260" className="w-full h-auto" role="img" aria-label="Animated diagram of a shipment moving from origin factory through a NimbusTrade-appointed warehouse and freight gateway to its final destination">
               <path
                 d={PATH_D}
                 fill="none"

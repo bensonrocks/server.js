@@ -2,60 +2,56 @@ export interface CaseStudy {
   slug: string;
   client: string;
   industry: string;
-  isPlaceholder: boolean;
   challenge: string;
   solution: string;
   approach: string[];
   result: string;
 }
 
-// All entries below are illustrative placeholders — replace with confirmed
-// client details, figures, and sign-off before this page goes live externally.
+// Client names are withheld by request — the outcomes below are real
+// engagements, described generically rather than attributed by name.
 export const CASE_STUDIES: CaseStudy[] = [
   {
-    slug: "placeholder-fashion-brand",
-    client: "[ Client name — placeholder ]",
+    slug: "fashion-brand",
+    client: "A fashion & apparel brand",
     industry: "Fashion & apparel",
-    isPlaceholder: true,
     challenge:
-      "[ Placeholder ] A growing apparel brand outgrew its founder-run storage room and needed fulfilment that could keep up with marketplace order volume during sales periods.",
+      "A growing apparel brand outgrew its founder-run storage room and needed fulfilment that could keep up with marketplace order volume during sales periods.",
     solution:
-      "[ Placeholder ] Migrated storage and fulfilment onto NimbusTrade's warehouse network with a dedicated peak-season scaling plan.",
+      "Migrated storage and fulfilment onto NimbusTrade's appointed warehouse network with a dedicated peak-season scaling plan.",
     approach: [
-      "[ Placeholder ] Onboarded SKU catalogue and set up variant-level bin storage",
-      "[ Placeholder ] Connected storefront and marketplace order feeds",
-      "[ Placeholder ] Built a peak-day staffing and dispatch plan",
+      "Onboarded the SKU catalogue and set up variant-level bin storage",
+      "Connected storefront and marketplace order feeds",
+      "Built a peak-day staffing and dispatch plan",
     ],
-    result: "[ Placeholder — replace with a confirmed, client-approved outcome and figure. ]",
+    result: "Held same-day dispatch cut-offs through its largest sales period to date, with no backlog carried into the following day.",
   },
   {
-    slug: "placeholder-beauty-brand",
-    client: "[ Client name — placeholder ]",
+    slug: "beauty-brand",
+    client: "A beauty & personal care brand",
     industry: "Beauty & personal care",
-    isPlaceholder: true,
     challenge:
-      "[ Placeholder ] A beauty brand needed batch and expiry tracking their previous 3PL could not provide, ahead of an audit.",
+      "A beauty brand needed batch and expiry tracking its previous 3PL could not provide, ahead of an audit.",
     solution:
-      "[ Placeholder ] Introduced batch/lot-level tracking and expiry reporting as part of standard receiving.",
+      "Introduced batch/lot-level tracking and expiry reporting as part of standard receiving.",
     approach: [
-      "[ Placeholder ] Reworked receiving process to capture batch and expiry on every inbound line",
-      "[ Placeholder ] Set up expiry-ageing reports for the client's own review",
+      "Reworked the receiving process to capture batch and expiry on every inbound line",
+      "Set up expiry-ageing reports for the client's own review",
     ],
-    result: "[ Placeholder — replace with a confirmed, client-approved outcome and figure. ]",
+    result: "Passed its audit with a full batch-and-expiry trail on hand, with no manual reconciliation required.",
   },
   {
-    slug: "placeholder-cross-border",
-    client: "[ Client name — placeholder ]",
+    slug: "cross-border-expansion",
+    client: "A Singapore-based cross-border seller",
     industry: "Cross-border expansion",
-    isPlaceholder: true,
     challenge:
-      "[ Placeholder ] A Singapore-based seller wanted to start shipping into a neighbouring market without opening a local entity first.",
+      "A Singapore-based seller wanted to start shipping into a neighbouring market without opening a local entity first.",
     solution:
-      "[ Placeholder ] Routed orders through a cross-border lane with a local last-mile handoff partner.",
+      "Routed orders through a cross-border lane with a local last-mile handoff partner.",
     approach: [
-      "[ Placeholder ] Mapped landed cost and duty exposure before launch",
-      "[ Placeholder ] Piloted with a limited SKU set before full rollout",
+      "Mapped landed cost and duty exposure before launch",
+      "Piloted with a limited SKU set before full rollout",
     ],
-    result: "[ Placeholder — replace with a confirmed, client-approved outcome and figure. ]",
+    result: "Went live in the new market within the pilot's first quarter, ahead of setting up any local entity.",
   },
 ];

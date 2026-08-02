@@ -25,7 +25,7 @@ export const SERVICES: Service[] = [
     name: "Warehousing",
     icon: Warehouse,
     summary:
-      "Bonded and non-bonded storage across our own Singapore and Malaysia facilities, sized to your SKU count and seasonality.",
+      "Bonded and non-bonded storage across NimbusTrade-appointed warehouses — including our own Singapore and Malaysia facilities — every one held to the same fulfillment standards.",
     benefit: "Pay for the space you use, not a fixed lease.",
     points: ["Bin and pallet storage", "Cycle counting", "Temperature-aware zoning"],
   },

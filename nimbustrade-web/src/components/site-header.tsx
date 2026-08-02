@@ -40,14 +40,14 @@ export function SiteHeader() {
       <div
         className={cn(
           "mx-auto flex max-w-7xl items-center justify-between px-6 transition-all duration-300",
-          scrolled ? "h-16" : "h-20"
+          scrolled ? "h-20" : "h-28"
         )}
       >
         <Link href="/" className="flex items-center gap-3 shrink-0" aria-label="NimbusTrade Solutions home">
           <img
             src="/logo.png"
             alt="NimbusTrade Solutions"
-            className={cn("w-auto transition-all duration-300", scrolled ? "h-9" : "h-11")}
+            className={cn("w-auto transition-all duration-300", scrolled ? "h-14" : "h-20")}
           />
         </Link>
 
