@@ -3,6 +3,8 @@ import { Big_Shoulders, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, SITE_KEYWORDS } from "@/lib/site-config";
+import { OrganizationJsonLd } from "@/components/structured-data";
 
 const bigShoulders = Big_Shoulders({
   variable: "--font-big-shoulders",
@@ -23,12 +25,52 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NimbusTrade Solutions — 4PL/3PL Logistics, Singapore",
-  description:
-    "NimbusTrade Solutions coordinates warehousing, fulfilment, and cross-border freight for growing brands, run from a single desk in Singapore.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: `${SITE_NAME} — Ecommerce Fulfillment Across Southeast Asia`,
+    template: `%s | ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  keywords: SITE_KEYWORDS,
+  applicationName: SITE_NAME,
+  authors: [{ name: SITE_NAME }],
+  category: "logistics",
+  alternates: {
+    canonical: "/",
+  },
   icons: {
     icon: "/favicon.png",
     apple: "/icon-192.png",
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_SG",
+    url: SITE_URL,
+    siteName: SITE_NAME,
+    title: `${SITE_NAME} — Ecommerce Fulfillment Across Southeast Asia`,
+    description: SITE_DESCRIPTION,
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: SITE_NAME,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${SITE_NAME} — Ecommerce Fulfillment Across Southeast Asia`,
+    description: SITE_DESCRIPTION,
+    images: ["/og-image.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+    },
   },
 };
 
@@ -43,6 +85,7 @@ export default function RootLayout({
       className={`${bigShoulders.variable} ${plexSans.variable} ${plexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-body bg-paper text-ink">
+        <OrganizationJsonLd />
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <SiteFooter />

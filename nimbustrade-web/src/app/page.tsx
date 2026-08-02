@@ -1,4 +1,4 @@
-import { BrandMasthead } from "@/components/sections/brand-masthead";
+import { IntroSplash } from "@/components/intro-splash";
 import { Hero } from "@/components/sections/hero";
 import { Credibility } from "@/components/sections/credibility";
 import { FacilityGallery } from "@/components/sections/facility-gallery";
@@ -13,7 +13,7 @@ import { ContactSection } from "@/components/sections/contact-section";
 export default function Home() {
   return (
     <>
-      <BrandMasthead />
+      <IntroSplash />
       <Hero />
       <Credibility />
       <FacilityGallery />

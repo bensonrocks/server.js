@@ -1,0 +1,6 @@
+User-Agent: *
+Allow: /
+Disallow: /privacy
+Disallow: /terms
+
+Sitemap: https://nimbustrade.up.railway.app/sitemap.xml

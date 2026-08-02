@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { WaveMark } from "@/components/wave-mark";
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
@@ -39,16 +40,35 @@ export function SiteHeader() {
     >
       <div
         className={cn(
-          "mx-auto flex max-w-7xl items-center justify-between px-6 transition-all duration-300",
-          scrolled ? "h-20" : "h-28"
+          "mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 transition-all duration-300",
+          scrolled ? "py-2" : "py-3"
         )}
       >
-        <Link href="/" className="flex items-center gap-3 shrink-0" aria-label="NimbusTrade Solutions home">
-          <img
-            src="/logo.png"
-            alt="NimbusTrade Solutions"
-            className={cn("w-auto transition-all duration-300", scrolled ? "h-14" : "h-20")}
+        <Link
+          href="/"
+          className="flex shrink-0 items-center gap-3"
+          aria-label="NimbusTrade Solutions home"
+        >
+          <WaveMark
+            className={cn(
+              "w-auto shrink-0 text-brand transition-all duration-300",
+              scrolled ? "h-8 sm:h-9 md:h-10" : "h-9 sm:h-11 md:h-14"
+            )}
           />
+          <span className="flex min-w-0 flex-col leading-none">
+            <span
+              className={cn(
+                "whitespace-nowrap font-display font-bold tracking-[0.03em] text-brand transition-all duration-300 sm:tracking-[0.08em]",
+                scrolled ? "text-sm sm:text-base md:text-lg" : "text-base sm:text-xl md:text-2xl"
+              )}
+            >
+              NIMBUSTRADE
+              <span className="text-ink"> SOLUTIONS</span>
+            </span>
+            <span className="mt-0.5 hidden text-[11px] tracking-[0.2em] text-ink-muted sm:block">
+              云腾贸易方案私人有限公司
+            </span>
+          </span>
         </Link>
 
         <nav className="hidden lg:flex items-center gap-8">

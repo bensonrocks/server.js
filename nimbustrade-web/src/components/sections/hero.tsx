@@ -29,15 +29,16 @@ export function Hero() {
       <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-12 px-6 py-20 lg:grid-cols-2 lg:py-28">
         <div>
           <span className="inline-flex items-center gap-2 rounded-sm border border-border-strong bg-paper-alt px-3 py-1 text-xs font-bold uppercase tracking-wider text-brand">
-            Singapore · 4PL / 3PL operations
+            Singapore · Ecommerce Fulfillment Across Southeast Asia
           </span>
           <h1 className="mt-6 font-display text-5xl font-bold leading-[1.05] text-ink sm:text-6xl">
-            One control tower for warehousing, fulfilment, and freight.
+            One control tower for ecommerce fulfillment across Southeast Asia.
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-muted">
             NimbusTrade Solutions runs the operating layer between your suppliers and
-            your customers — a single desk coordinating storage, pick-and-pack, customs,
-            and cross-border transport so your team can focus on selling.
+            your customers — a single Singapore desk coordinating storage, pick-and-pack,
+            customs, and cross-border transport for B2B and B2C brands across Singapore,
+            Malaysia, and the wider Southeast Asia region.
           </p>
           <div className="mt-9 flex flex-col gap-4 sm:flex-row">
             <Button asChild size="lg">

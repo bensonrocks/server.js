@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 
-export const metadata: Metadata = { title: "Privacy Policy — NimbusTrade Solutions" };
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  robots: { index: false, follow: true },
+  alternates: { canonical: "/privacy" },
+};
 
 export default function PrivacyPage() {
   return (

@@ -4,7 +4,12 @@ import { ArrowRight } from "lucide-react";
 import { SERVICES } from "@/data/services";
 import { Button } from "@/components/ui/button";
 
-export const metadata: Metadata = { title: "Services — NimbusTrade Solutions" };
+export const metadata: Metadata = {
+  title: "Ecommerce Fulfillment Services in Singapore & Southeast Asia",
+  description:
+    "Warehousing, fulfilment, freight forwarding, distribution, e-commerce operations, cross-border logistics, customs, and technology integration — every service line NimbusTrade runs across Southeast Asia.",
+  alternates: { canonical: "/services" },
+};
 
 export default function ServicesPage() {
   return (

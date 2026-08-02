@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { QuoteForm } from "@/components/sections/quote-form";
 
 export const metadata: Metadata = {
-  title: "Get a Quote — NimbusTrade Solutions",
+  title: "Get a Fulfillment Quote for Southeast Asia",
+  description:
+    "Get a fulfillment quote from NimbusTrade Solutions in six short steps — warehousing, freight, distribution, or e-commerce operations across Singapore, Malaysia, and the wider Southeast Asia region.",
+  alternates: { canonical: "/quote" },
 };
 
 export default function QuotePage() {

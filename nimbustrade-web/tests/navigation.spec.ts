@@ -1,6 +1,12 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Navigation", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip the once-per-session intro splash so it doesn't intercept clicks
+    // aimed at the header during these navigation tests.
+    await page.addInitScript(() => sessionStorage.setItem("nt-intro-seen", "1"));
+  });
+
   test("desktop header links reach every page", async ({ page }) => {
     await page.goto("/");
     const pages: [string, string][] = [

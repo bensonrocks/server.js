@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Credibility } from "@/components/sections/credibility";
+import { FaqJsonLd } from "@/components/structured-data";
 import {
   Accordion,
   AccordionItem,
@@ -7,7 +8,12 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 
-export const metadata: Metadata = { title: "About — NimbusTrade Solutions" };
+export const metadata: Metadata = {
+  title: "About Our Southeast Asia Fulfillment Network",
+  description:
+    "NimbusTrade Solutions runs ecommerce fulfillment across Southeast Asia from a single Singapore desk, coordinating NimbusTrade-appointed warehouses, freight, and last-mile delivery.",
+  alternates: { canonical: "/about" },
+};
 
 const FAQS = [
   {
@@ -31,6 +37,7 @@ const FAQS = [
 export default function AboutPage() {
   return (
     <div>
+      <FaqJsonLd faqs={FAQS} />
       <div className="mx-auto max-w-7xl px-6 py-20">
         <div className="max-w-2xl">
           <span className="text-xs font-bold uppercase tracking-wider text-brand">About</span>

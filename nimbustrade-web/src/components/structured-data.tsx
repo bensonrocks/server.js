@@ -1,0 +1,68 @@
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION } from "@/lib/site-config";
+
+export function OrganizationJsonLd() {
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    "@id": `${SITE_URL}/#organization`,
+    name: SITE_NAME,
+    alternateName: "云腾贸易方案私人有限公司",
+    url: SITE_URL,
+    logo: `${SITE_URL}/logo.png`,
+    image: `${SITE_URL}/og-image.png`,
+    description: SITE_DESCRIPTION,
+    email: "info@nimbustrade.co",
+    telephone: "+65-8877-6106",
+    priceRange: "$$",
+    address: {
+      "@type": "PostalAddress",
+      streetAddress: "62 Ubi Road 1, Oxley Bizhub 2, #06-01",
+      addressLocality: "Singapore",
+      postalCode: "408734",
+      addressCountry: "SG",
+    },
+    areaServed: [
+      { "@type": "Country", name: "Singapore" },
+      { "@type": "Country", name: "Malaysia" },
+      { "@type": "Place", name: "Southeast Asia" },
+    ],
+    knowsAbout: [
+      "Ecommerce fulfillment",
+      "3PL warehousing",
+      "4PL logistics coordination",
+      "Cross-border freight",
+      "Last-mile distribution",
+      "B2B and B2C order fulfillment",
+    ],
+    sameAs: [],
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+    />
+  );
+}
+
+export function FaqJsonLd({ faqs }: { faqs: { q: string; a: string }[] }) {
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: faqs.map((faq) => ({
+      "@type": "Question",
+      name: faq.q,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: faq.a,
+      },
+    })),
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+    />
+  );
+}
