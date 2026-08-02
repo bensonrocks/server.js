@@ -3304,6 +3304,15 @@ on #123 is refused while #125 can still bin its own 7 into the same bin.
 - **A failing item does not abort the rest.** On a floor, one full bin must not
   undo four trolleys of finished work. Each item's outcome comes back so the
   screen can name the line that needs another look.
+- **"Put away selected" ASKS, then commits.** It used to refuse a line with no
+  bin by writing into `.pa-msg` at the BOTTOM of the card — on a 36-line pallet
+  that is far below the fold, so pressing the button looked like it did nothing
+  at all (reported from the floor exactly that way). Now: missing bins are
+  offered the suggestion the screen is already showing, anything still
+  unresolved is NAMED in a dialog, and the putaway itself is confirmed with what
+  will happen ("2 line(s), 10 pc(s) into 1 bin(s) … Cancel = abort, nothing
+  happens"). `msg()` also scrolls an error into view, since an error nobody can
+  see reads as a dead button.
 - UI: a tick column and a bulk bar INSIDE each staging card (a card is one
   label off one receipt, so the scope is visible), plus **"Use suggested bins"**
   — an explicit action, never a default, because the standing rule is that a bin

@@ -10923,18 +10923,54 @@
       m.className = `pa-msg ${kind}`;
       m.textContent = text;
       m.classList.remove('hidden');
+      // On a long pallet this line sits well below the fold — an error nobody
+      // can see reads as the button doing nothing.
+      if (kind === 'error') m.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
 
     async function bulkPutAway(card) {
       const go = card.querySelector('.pa-bulk-go');
       const rowsPicked = [...card.querySelectorAll('tr[data-sku]')]
         .filter(tr => tr.querySelector('.pa-pick')?.checked);
+      if (!rowsPicked.length) { alert('Tick the lines you want to put away first.'); return; }
+
+      // A LINE WITH NO BIN USED TO FAIL SILENTLY. The refusal was written into
+      // a message line at the BOTTOM of the card, which on a 36-line pallet is
+      // far off screen — so pressing the button looked like it did nothing.
+      // Now the missing bins are ASKED about, using the suggestion the screen
+      // is already showing, and anything still unresolved is named in a dialog
+      // rather than a note nobody can see.
+      const noBin = rowsPicked.filter(tr => !tr.querySelector('.pa-bin')?.value.trim());
+      if (noBin.length) {
+        const canSuggest = noBin.filter(tr => tr.querySelector('.pa-use'));
+        if (canSuggest.length) {
+          const useThem = confirm(
+            `${noBin.length} of the ${rowsPicked.length} selected line(s) have no bin typed in.\n\n`
+            + `OK = use the suggested bin for ${canSuggest.length} of them\n`
+            + 'Cancel = go back and type them yourself');
+          if (!useThem) return;
+          for (const tr of canSuggest) {
+            const box = tr.querySelector('.pa-bin');
+            const sug = tr.querySelector('.pa-use');
+            if (box && sug) box.value = sug.dataset.bin;
+          }
+        }
+        const stillEmpty = rowsPicked.filter(tr => !tr.querySelector('.pa-bin')?.value.trim());
+        if (stillEmpty.length) {
+          alert(`${stillEmpty.length} line(s) still have no bin and no suggestion:\n\n`
+            + stillEmpty.slice(0, 12).map(tr => `\u2022 ${tr.dataset.sku}`).join('\n')
+            + (stillEmpty.length > 12 ? `\n…and ${stillEmpty.length - 12} more` : '')
+            + '\n\nScan or type a bin for those, or untick them.');
+          return;
+        }
+      }
+
       const items = [];
       for (const tr of rowsPicked) {
         const bin = tr.querySelector('.pa-bin')?.value.trim();
         const qty = parseInt(tr.querySelector('.pa-qty')?.value, 10) || 0;
-        if (!bin) { msg(card, `${tr.dataset.sku} has no bin — scan or type one, or use the suggestions.`, 'error'); return; }
-        if (qty < 1) { msg(card, `${tr.dataset.sku} has no quantity.`, 'error'); return; }
+        if (!bin) { alert(`${tr.dataset.sku} has no bin.`); return; }
+        if (qty < 1) { alert(`${tr.dataset.sku} has no quantity.`); return; }
         // One box for batch AND serials: a batch is one token, serials are
         // several. Anything past the first is treated as a serial, which is
         // how a crew actually writes it down.
@@ -10944,6 +10980,17 @@
           serials: raw.length > 1 ? raw.slice(1) : [] });
       }
       if (!items.length) return;
+
+      // CONFIRM, then commit. Per the user: pressing the button asks first, so
+      // there is always a way out that does nothing.
+      const units = items.reduce((n, i) => n + i.qty, 0);
+      const bins = [...new Set(items.map(i => i.location_id))];
+      const preview = items.slice(0, 10).map(i => `\u2022 ${i.sku} \u2192 ${i.location_id} \u00d7 ${i.qty}`).join('\n');
+      if (!confirm(
+        `Put away ${items.length} line(s), ${units} pc(s) into ${bins.length} bin(s)?\n\n`
+        + preview + (items.length > 10 ? `\n…and ${items.length - 10} more` : '')
+        + `\n\nOK = put away (the bins are incremented)\nCancel = abort, nothing happens`)) return;
+
       go.disabled = true;
       msg(card, `Putting away ${items.length} line(s)…`);
       try {
