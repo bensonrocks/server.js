@@ -3599,7 +3599,10 @@ app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
       };
     });
   } catch (_) {}
-  res.json({ rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT });
+  // Same sorter the office and both exports use — see sortStockRows.
+  rows = sortStockRows(rows, req.query.sort, req.query.dir);
+  res.json({ rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT,
+    sort: String(req.query.sort || 'sku'), dir: String(req.query.dir || 'asc') });
 });
 // One of THEIR orders in full — the line detail behind an Orders row.
 app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res) => {
@@ -3788,17 +3791,22 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
         const last = lastMove.get(r.sku) || r.first_added_at || null;
         const iso = last ? String(last).replace(' ', 'T') + (String(last).endsWith('Z') ? '' : 'Z') : null;
         const days = iso ? Math.floor((now - new Date(iso).getTime()) / 86400000) : null;
-        return { ...r, _days: days, _aging: r.stock_qty > 0 && days !== null && days > agingDays };
+        return { ...r, _last_iso: iso, _days: days, _aging: r.stock_qty > 0 && days !== null && days > agingDays };
       });
+      rows = sortStockRows(rows, req.query.sort, req.query.dir);
     } catch (_) {}
     aoa = [
       ...title('Stock on hand', false),
+      [`Sorted by ${STOCK_SORT_KEYS[String(req.query.sort || '').toLowerCase()] ? req.query.sort : 'sku'} `
+        + `${String(req.query.dir || 'asc').toLowerCase() === 'desc' ? 'descending' : 'ascending'}`],
+      ['Every SKU in your item master is listed. One with no stock shows 0 \u2014 it is not left out.'],
+      [],
       ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'On hand', 'Reserved', 'Available', 'Reorder point', 'Status',
        'Last movement', 'Days since movement', `Aging (>${agingDays}d)`],
       ...rows.map(r => [r.sku, r.name || '', r.barcode || '', r.brand || '', r.category || '',
-        r.stock_qty, r.reserved_qty, r.available_qty, r.reorder_point ?? 10,
+        Number(r.stock_qty) || 0, Number(r.reserved_qty) || 0, Number(r.available_qty) || 0, r.reorder_point ?? 10,
         r.available_qty <= 0 ? 'Out of stock' : (r.available_qty <= (r.reorder_point ?? 10) ? 'Low' : 'OK'),
-        r._days === null ? '' : (r._days === 0 ? 'today' : `${r._days}d ago`),
+        r._days === null ? 'never moved' : (r._days === 0 ? 'today' : `${r._days}d ago`),
         r._days === null ? '' : r._days,
         r._aging ? 'Yes' : '']),
     ];
@@ -15714,11 +15722,96 @@ function reqClientId(req) {
   return String(c).trim();
 }
 
+// ── SORTING A STOCK LIST ───────────────────────────────────────────────────
+// ONE implementation, used by the office list, the office export, the client
+// portal's list and the client portal's export — so what someone sees on
+// screen and what comes out of the spreadsheet can never be in a different
+// order. Sorting a screen client-side and a file server-side is exactly how
+// those two drift.
+//
+// A SKU REGISTERED WITH NO STOCK IS A ROW WITH 0, NEVER A MISSING ROW. It is
+// part of the client's catalogue and its absence would read as "we lost it".
+// `inventory.getAll()` already returns the whole catalogue; nothing here
+// filters on quantity, and the export writes a numeric 0 rather than a blank.
+const STOCK_SORT_KEYS = {
+  sku:       r => String(r.sku || '').toUpperCase(),
+  name:      r => String(r.name || '').toUpperCase(),
+  available: r => Number(r.available_qty ?? r.available ?? 0),
+  on_hand:   r => Number(r.stock_qty ?? r.on_hand ?? 0),
+  reserved:  r => Number(r.reserved_qty ?? r.reserved ?? 0),
+  moved:     r => String(r.last_movement_at || r._last_iso || ''),
+};
+function sortStockRows(rows, sort, dir) {
+  const key = STOCK_SORT_KEYS[String(sort || '').toLowerCase()] || STOCK_SORT_KEYS.sku;
+  const sign = String(dir || 'asc').toLowerCase() === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = key(a), y = key(b);
+    if (x === y) return String(a.sku || '').localeCompare(String(b.sku || ''));  // stable tie-break
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * sign;
+    return String(x).localeCompare(String(y)) * sign;
+  });
+}
+
 app.get('/api/inventory', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
-  const { category, search, lowStock } = req.query;
-  res.json(inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId }));
+  const { category, search, lowStock, sort, dir } = req.query;
+  const rows = inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId });
+  res.json(sortStockRows(rows, sort, dir));
+});
+
+// Office stock export. Registered BEFORE the /:sku routes — Express matches in
+// order and ":sku" would otherwise swallow "export" (the same rule the
+// transport routes document).
+app.get('/api/inventory/export', requireAuth, (req, res) => {
+  const clientId = reqClientId(req);
+  if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
+  const { category, search, lowStock, sort, dir } = req.query;
+  let rows = [];
+  let lastMove = new Map();
+  try {
+    rows = inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId });
+    lastMove = inventory.lastMovementBySku(clientId);
+  } catch (e) { return res.status(503).json({ error: 'Inventory store unavailable' }); }
+  const now = Date.now();
+  rows = rows.map(r => {
+    const last = lastMove.get(r.sku) || r.first_added_at || null;
+    const iso = last ? String(last).replace(' ', 'T') + (String(last).endsWith('Z') ? '' : 'Z') : null;
+    return { ...r, _last_iso: iso, _days: iso ? Math.floor((now - new Date(iso).getTime()) / 86400000) : null };
+  });
+  rows = sortStockRows(rows, sort, dir);
+  const stamp = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' });
+  const aoa = [
+    [`${clientId} — Stock on hand`],
+    [`Position as at ${stamp} SGT`],
+    [`Sorted by ${STOCK_SORT_KEYS[String(sort || '').toLowerCase()] ? sort : 'sku'} ${String(dir || 'asc').toLowerCase() === 'desc' ? 'descending' : 'ascending'}`],
+    ['Every SKU in this client\u2019s item master is listed. One with no stock shows 0 \u2014 it is not left out.'],
+    [],
+    ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'UOM', 'On hand', 'Reserved', 'Available',
+     'Reorder point', 'Status', 'Last movement', 'Days since movement'],
+    ...rows.map(r => [
+      r.sku, r.name || '', r.barcode || '', r.brand || '', r.category || '', r.uom || '',
+      Number(r.stock_qty) || 0, Number(r.reserved_qty) || 0, Number(r.available_qty) || 0,
+      r.reorder_point ?? 10,
+      (Number(r.available_qty) || 0) <= 0 ? 'Out of stock'
+        : ((Number(r.available_qty) || 0) <= (r.reorder_point ?? 10) ? 'Low' : 'OK'),
+      r._days === null ? 'never moved' : (r._days === 0 ? 'today' : `${r._days}d ago`),
+      r._days === null ? '' : r._days,
+    ]),
+    [], ['TOTAL', '', '', '', '', '',
+      rows.reduce((s2, r) => s2 + (Number(r.stock_qty) || 0), 0),
+      rows.reduce((s2, r) => s2 + (Number(r.reserved_qty) || 0), 0),
+      rows.reduce((s2, r) => s2 + (Number(r.available_qty) || 0), 0)],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 24 }, { wch: 40 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 8 },
+    { wch: 9 }, { wch: 10 }, { wch: 10 }, { wch: 13 }, { wch: 13 }, { wch: 15 }, { wch: 20 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Stock');
+  const safe = String(clientId).replace(/[^A-Za-z0-9_-]+/g, '_');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Stock_${safe}_${sgDateStr()}.xlsx"`);
+  res.send(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
 });
 app.get('/api/inventory/stats', requireAuth, (req, res) => {
   const clientId = reqClientId(req);

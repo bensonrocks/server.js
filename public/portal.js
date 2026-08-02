@@ -417,6 +417,29 @@
   }
 
   // ── Stock ─────────────────────────────────────────────────────────────────
+  // The sort the user picked. Kept in ONE place and mirrored to the server for
+  // the download, so a file can never come out in a different order from the
+  // list it was downloaded from.
+  let stSort = 'sku', stDir = 'asc';
+  const STOCK_SORT = {
+    sku:       r => String(r.sku || '').toUpperCase(),
+    name:      r => String(r.name || '').toUpperCase(),
+    available: r => Number(r.available) || 0,
+    on_hand:   r => Number(r.on_hand) || 0,
+    reserved:  r => Number(r.reserved) || 0,
+    moved:     r => String(r.last_movement_at || ''),
+  };
+  function sortRows(rows) {
+    const key = STOCK_SORT[stSort] || STOCK_SORT.sku;
+    const sign = stDir === 'desc' ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      const x = key(a), y = key(b);
+      if (x === y) return String(a.sku || '').localeCompare(String(b.sku || ''));
+      if (typeof x === 'number' && typeof y === 'number') return (x - y) * sign;
+      return String(x).localeCompare(String(y)) * sign;
+    });
+  }
+
   function renderStock() {
     const q = ($('stSearch').value || '').trim().toLowerCase();
     let rows = stock.filter(r => {
@@ -429,7 +452,7 @@
         || String(r.name || '').toLowerCase().includes(q)
         || String(r.barcode || '').toLowerCase().includes(q);
     });
-    rows = rows.sort((a, b) => a.available - b.available || String(a.sku).localeCompare(String(b.sku)));
+    rows = sortRows(rows);
 
     if (!stock.length) {
       $('stSummary').innerHTML = '';
@@ -842,7 +865,12 @@
     const orig = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     try {
-      const qs = range ? `?from=${range.from}&to=${range.to}` : '';
+      // Stock carries the sort the user is looking at, so the file matches the
+      // screen. Other kinds are period reports and have no sort to carry.
+      const parts = [];
+      if (range) parts.push(`from=${range.from}`, `to=${range.to}`);
+      if (kind === 'stock') parts.push(`sort=${encodeURIComponent(stSort)}`, `dir=${encodeURIComponent(stDir)}`);
+      const qs = parts.length ? '?' + parts.join('&') : '';
       const r = await api('/api/portal/export/' + kind + qs);
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
@@ -1327,6 +1355,13 @@
   $('logoutBtn').addEventListener('click', logout);
   $('refreshBtn').addEventListener('click', loadAll);
   $('stSearch').addEventListener('input', renderStock);
+  $('stSort').addEventListener('change', e => { stSort = e.target.value; renderStock(); });
+  $('stDir').addEventListener('click', () => {
+    stDir = stDir === 'asc' ? 'desc' : 'asc';
+    $('stDir').dataset.dir = stDir;
+    $('stDir').innerHTML = stDir === 'asc' ? '\u25b2 Ascending' : '\u25bc Descending';
+    renderStock();
+  });
   $('orSearch').addEventListener('input', renderOrders);
   $('ibSearch').addEventListener('input', renderInbound);
   // Stock is a live position — straight download, no date window.

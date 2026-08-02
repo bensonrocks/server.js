@@ -202,6 +202,14 @@
           background:var(--surface); font-size:.79rem; font-weight:700; color:var(--muted); cursor:pointer; }
   .chip.on { background:var(--brand); border-color:var(--brand); color:#fff; }
 
+  /* Sort bar — field plus a direction toggle. Wraps on a phone rather than
+     pushing the page sideways. */
+  .sortbar { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; margin-bottom:.55rem; }
+  .sortbar label { font-size:.76rem; font-weight:700; color:var(--muted); }
+  .sortbar select { padding:.35rem .5rem; border:1.5px solid var(--border); border-radius:8px;
+                    background:var(--surface); color:var(--text); font-size:.8rem; font-weight:600; }
+  #stDir { min-width:7.5rem; }
+
   /* bar meter */
   .meter { height:5px; border-radius:3px; background:#eef2f8; overflow:hidden; margin-top:.4rem; }
   .meter > i { display:block; height:100%; border-radius:3px; background:var(--ok); }
@@ -385,6 +393,20 @@
       <div class="ctrls">
         <input class="search" id="stSearch" placeholder="Search SKU, product or barcode…">
         <button class="btn-sm" id="stExport" title="Download as Excel">&#8681; Excel</button>
+      </div>
+      <!-- Sort. The SAME keys the server understands, so the list on screen and
+           the downloaded file are always in the same order. -->
+      <div class="sortbar">
+        <label for="stSort">Sort by</label>
+        <select id="stSort">
+          <option value="sku">SKU</option>
+          <option value="name">Product name</option>
+          <option value="available">Available</option>
+          <option value="on_hand">On hand</option>
+          <option value="reserved">Reserved</option>
+          <option value="moved">Last movement</option>
+        </select>
+        <button class="btn-sm" id="stDir" data-dir="asc" title="Ascending / descending">&#9650; Ascending</button>
       </div>
       <div class="chips" id="stChips">
         <button class="chip on" data-f="all">All</button>

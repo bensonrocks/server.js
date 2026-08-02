@@ -2889,6 +2889,41 @@ everyone who handled it, started/ended both present and the right way round, the
 sheet's Location cells all blank, a closed receipt refused, the audit trail
 carrying who and why) plus 16 browser checks on desktop and a Pixel 5.
 
+## Stock lists — sort, download, and zero-quantity SKUs
+
+Per the user: both the client portal and the office can toggle ascending /
+descending and download the list as Excel; the office picks the client first.
+
+- **ONE sorter, `sortStockRows(rows, sort, dir)` in server.js**, used by
+  `/api/inventory`, `/api/inventory/export`, `/api/portal/stock` and
+  `/api/portal/export/stock`. Sorting a screen client-side and a file
+  server-side is exactly how the two drift, so both go through the same
+  function and the file always matches the list it was taken from. The client
+  mirrors the same keys (`STOCK_SORT` in portal.js, `INV_SORT` in app.js) for
+  instant re-sorting without a round trip, and passes `sort`/`dir` on the
+  download so the file agrees.
+- Keys: `sku`, `name`, `available`, `on_hand`, `reserved`, `moved`. Ties break
+  on SKU so the order is stable.
+- **A SKU REGISTERED WITH NO STOCK IS A ROW READING 0, NEVER A MISSING ROW.**
+  It is part of the client's item master and its absence would read as "we lost
+  it". `inventory.getAll()` already returns the whole catalogue; nothing
+  filters on quantity, and both exports write a numeric `0` rather than a
+  blank. Both sheets say so in words under the title.
+- `GET /api/inventory/export?clientId=&sort=&dir=&search=` is new (registered
+  BEFORE the `/:sku` routes — Express would otherwise match "export" as a SKU).
+  It refuses without a `clientId` rather than dumping every client's stock.
+- The sheet records the sort it was taken in, so two files of the same client
+  in different orders are still explicable.
+
+### The sidebar's CLIENTS list was squashed to a sliver
+
+`.sb-nav` and `.sb-client-list` were siblings both trying to share the
+sidebar's leftover height. The nav takes its natural height and has grown to a
+dozen tabs, so the client list — the flexible one — collapsed to a few pixels
+with its own scrollbar and the client names were unreadable. They are now
+wrapped in ONE `.sb-scroll` region that scrolls as a unit, each keeping its
+natural size; only the user/admin block stays pinned at the bottom.
+
 ## Inbound → Staging → Putaway (the current flow)
 
 Per the user: the crew scans (or keys) quantities, **everything received then

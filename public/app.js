@@ -13916,6 +13916,7 @@
       // the whole panel set stayed hidden until "Load stock", so the tab looked
       // empty and the functions seemed missing.)
       $('invBody')?.classList.remove('hidden');
+      wireSortAndExport();
       refreshLocations();          // global bins → dropdowns + Manage-bins list
       loadDiscrepancies();         // open bin-empty reports (all clients until one is loaded)
       loadQuarantine();            // damaged/KIV awaiting disposition
@@ -13949,10 +13950,32 @@
       } catch (e) { alert('Load failed: ' + e.message); }
     }
 
+    // Sort keys MIRROR the server's (see sortStockRows in server.js) so the
+    // Excel download comes out in the same order as the table it came from.
+    let invSort = 'sku', invDir = 'asc';
+    const INV_SORT = {
+      sku:       r => String(r.sku || '').toUpperCase(),
+      name:      r => String(r.name || '').toUpperCase(),
+      on_hand:   r => Number(r.stock_qty) || 0,
+      reserved:  r => Number(r.reserved_qty) || 0,
+      available: r => Number(r.available_qty) || 0,
+      moved:     r => String(r.last_movement_at || ''),
+    };
+    function sortItems(rows) {
+      const key = INV_SORT[invSort] || INV_SORT.sku;
+      const sign = invDir === 'desc' ? -1 : 1;
+      return [...rows].sort((a, b) => {
+        const x = key(a), y = key(b);
+        if (x === y) return String(a.sku || '').localeCompare(String(b.sku || ''));
+        if (typeof x === 'number' && typeof y === 'number') return (x - y) * sign;
+        return String(x).localeCompare(String(y)) * sign;
+      });
+    }
+
     function renderList() {
       const tb = $('invTbody'); if (!tb) return;
       const q = ($('invSearch')?.value || '').toLowerCase();
-      const rows = items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q));
+      const rows = sortItems(items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)));
       if (!rows.length) { tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
       tb.innerHTML = rows.map(r => `<tr>
         <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
@@ -13972,6 +13995,26 @@
         const r2 = await fetch('/api/inventory/' + encodeURIComponent(sku), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, name: row.name || sku, units_per_carton: n }) });
         if (r2.ok) load(); else { const e = await r2.json().catch(() => ({})); alert(e.error || 'Update failed'); }
       }));
+    }
+
+    function wireSortAndExport() {
+      $('invSort')?.addEventListener('change', e => { invSort = e.target.value; renderList(); });
+      $('invDirBtn')?.addEventListener('click', () => {
+        invDir = invDir === 'asc' ? 'desc' : 'asc';
+        $('invDirBtn').dataset.dir = invDir;
+        $('invDirBtn').innerHTML = invDir === 'asc' ? '\u25b2 Ascending' : '\u25bc Descending';
+        renderList();
+      });
+      $('invExportBtn')?.addEventListener('click', () => {
+        if (!clientId) { alert('Load a client first — stock is client-owned, so a file has to be for one client.'); return; }
+        const qs = new URLSearchParams({ clientId, sort: invSort, dir: invDir });
+        const search = ($('invSearch')?.value || '').trim();
+        if (search) qs.set('search', search);
+        // The filename has to be passed in — authDownload builds a blob URL,
+        // which carries no name of its own.
+        authDownload('/api/inventory/export?' + qs.toString(),
+          `Stock_${String(clientId).replace(/[^A-Za-z0-9_-]+/g, '_')}.xlsx`);
+      });
     }
 
     function pickFile() {

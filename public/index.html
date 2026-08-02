@@ -1693,6 +1693,10 @@
 
     <!-- Navigation -->
     <div class="sb-section-lbl">NAVIGATION</div>
+    <!-- Nav AND clients scroll together as one region. They used to compete for
+         the same leftover space: the nav grew to a dozen tabs, so the client
+         list was squeezed to a few pixels with its own scrollbar. -->
+    <div class="sb-scroll">
     <nav class="sb-nav">
       <button class="tab-btn active" data-tab="upload"><span class="tab-icon">&#8679;</span>Upload</button>
       <button class="tab-btn" data-tab="orders"><span class="tab-icon">&#128203;</span>Orders</button>
@@ -1733,6 +1737,7 @@
     <!-- Clients -->
     <div class="sb-section-lbl" id="sidebarClientsLabel" style="display:none">CLIENTS</div>
     <div class="sb-client-list" id="sidebarClientList"></div>
+    </div>
 
     <!-- Bottom: user + admin -->
     <div class="sb-bottom">
@@ -2705,8 +2710,21 @@
         </div>
 
         <!-- stock table -->
-        <div style="display:flex;gap:.6rem;margin-bottom:.6rem">
-          <input id="invSearch" placeholder="Search SKU / name…" oninput="invUI.renderList()" style="flex:1;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+        <!-- Search, sort and download. The sort keys match the server's, so the
+             downloaded file comes out in the order shown on screen. -->
+        <div style="display:flex;gap:.6rem;margin-bottom:.6rem;flex-wrap:wrap;align-items:center">
+          <input id="invSearch" placeholder="Search SKU / name…" oninput="invUI.renderList()" style="flex:1;min-width:180px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+          <label for="invSort" style="font-size:.76rem;font-weight:700;color:#64748b">Sort by</label>
+          <select id="invSort" style="padding:.45rem .5rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.82rem;font-weight:600">
+            <option value="sku">SKU</option>
+            <option value="name">Name</option>
+            <option value="on_hand">On hand</option>
+            <option value="reserved">Reserved</option>
+            <option value="available">Available</option>
+            <option value="moved">Last movement</option>
+          </select>
+          <button class="btn-secondary btn-sm" id="invDirBtn" data-dir="asc" title="Ascending / descending">&#9650; Ascending</button>
+          <button class="btn-secondary btn-sm" id="invExportBtn" title="Download this client's stock as Excel. Every SKU is listed; one with no stock shows 0.">&#8681; Excel</button>
         </div>
         <div style="overflow-x:auto">
           <table class="tbl" style="width:100%">
