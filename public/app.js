@@ -2672,7 +2672,11 @@
       <td class="n">${l.expected === null ? '<i>unlisted</i>' : l.expected}</td>
       <td class="n">${l.received}</td><td class="n">${l.good}</td>
       <td class="n">${l.damaged || ''}</td><td class="n">${l.kiv || ''}</td>
-      <td class="n">${l.diff === null ? '' : (l.diff === 0 ? '✓' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td>
+      <td style="text-align:center;white-space:nowrap">${
+        l.expected === null ? '<span style="color:#b45309">Not on paperwork</span>'
+        : l.diff === 0 ? '<span style="color:#059669;font-weight:700">&#10003;</span>'
+        : l.diff > 0 ? `<span style="color:#b45309;font-weight:700">${l.diff} over</span>`
+        : `<span style="color:#b91c1c;font-weight:700">${Math.abs(l.diff)} short</span>`}</td>
       <td${l.via !== 'scanned' ? ' style="color:#9a3412"' : ''}>${({scanned:'Scanned',declared:'Declared',mixed:'Part declared'})[l.via] || 'Scanned'}</td>
       <td class="blank"></td><td class="blank"></td></tr>`).join('');
     // Everyone who counted a piece, not just whoever closed the receipt — on a
@@ -2703,7 +2707,7 @@
       Received by: ${who} · Closed by: ${esc(g.received_by || '—')}<br>
       Started: ${g.started ? new Date(g.started).toLocaleString() : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString() : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
       <p class="note">Putaway — write the bin used against each line, or scan it on the Putaway screen.</p>
-      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th class="n">Diff</th><th>How counted</th><th>Location</th><th>Qty / by</th></tr></thead>
+      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th>Tally Status</th><th>How counted</th><th>Location</th><th>Qty / by</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <div class="tot">Totals — expected ${g.totals.expected} · received ${g.totals.received} · good ${g.totals.good} · damaged ${g.totals.damaged} · KIV ${g.totals.kiv}</div>
       ${disc}

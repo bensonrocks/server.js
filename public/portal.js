@@ -815,7 +815,7 @@
       <td class="mono">${esc(l.sku)}</td><td>${esc(l.description)}</td>
       <td class="n">${l.expected ?? '—'}</td><td class="n">${l.received}</td><td class="n">${l.good}</td>
       <td class="n">${l.damaged || ''}</td><td class="n">${l.kiv || ''}</td>
-      <td class="n">${l.diff === null ? '' : (l.diff === 0 ? '✓' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td></tr>`).join('');
+      <td class="ts">${tallyStatus(l)}</td></tr>`).join('');
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
       <title>Goods Received Note ${esc(g.serial || g.reference)}</title><style>
       body{font-family:-apple-system,Arial,sans-serif;margin:26px;font-size:12.5px;color:#0b1220}
@@ -828,6 +828,7 @@
       table{border-collapse:collapse;width:100%}
       th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left}
       td.n,th.n{text-align:right} thead{background:#eff6ff} th{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
+      td.ts{text-align:center;white-space:nowrap}
       tr.flag{background:#fef2f2} .mono{font-family:ui-monospace,Menlo,monospace}
       .tot{margin-top:12px;padding:9px 11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px}
       .ft{margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px}
@@ -841,10 +842,10 @@
       <div class="meta">
         <b>Client:</b> ${esc(g.client)}<br>
         <b>Source:</b> ${esc(g.source || '—')} &nbsp;·&nbsp; <b>Received:</b> ${g.ended ? new Date(g.ended).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) + ' SGT' : '—'}<br>
-        <b>Cartons:</b> ${g.cartons} &nbsp;·&nbsp; <b>Photos on file:</b> ${g.photos}
+        <b>Photos on file:</b> ${g.photos}
       </div>
       <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th>
-        <th class="n">Good</th><th class="n">Damaged</th><th class="n">Held</th><th class="n">Diff</th></tr></thead>
+        <th class="n">Good</th><th class="n">Damaged</th><th class="n">Held</th><th>Tally Status</th></tr></thead>
         <tbody>${rows}</tbody></table>
       <div class="tot"><b>Totals</b> — expected ${g.totals.expected} · received ${g.totals.received} ·
         good ${g.totals.good} · damaged ${g.totals.damaged} · held ${g.totals.kiv}</div>
@@ -856,6 +857,17 @@
       <div class="ft">Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT from the IDEALONE Client Portal.</div>
       </body></html>`);
     w.document.close();
+  }
+
+  // TALLY STATUS — a tick means the count agreed with the paperwork. Anything
+  // else says what the difference actually was, in words, rather than leaving
+  // the client to work out what "-3" meant.
+  function tallyStatus(l) {
+    if (l.expected === null) return '<span style="color:#b45309">Not on paperwork</span>';
+    if (l.diff === 0) return '<span style="color:#059669;font-weight:700">&#10003;</span>';
+    return l.diff > 0
+      ? `<span style="color:#b45309;font-weight:700">${l.diff} over</span>`
+      : `<span style="color:#b91c1c;font-weight:700">${Math.abs(l.diff)} short</span>`;
   }
 
   // ── Export ────────────────────────────────────────────────────────────────

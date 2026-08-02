@@ -10286,13 +10286,17 @@ app.get('/api/inbound/:id/grn/export', (req, res) => {
     ['PUTAWAY \u2014 write the bin used against each line, or scan it on the Putaway screen.'],
     [],
   ];
-  const header = ['SKU', 'Description', 'Expected', 'Received', 'Good', 'Damaged', 'KIV', 'Difference',
+  const header = ['SKU', 'Description', 'Expected', 'Received', 'Good', 'Damaged', 'KIV', 'Tally status',
     'How counted', 'Location (write in)', 'Qty put away', 'By', 'Time'];
   const body = g.lines.map(l => [
     l.sku, l.description || '',
     l.expected === null ? 'unlisted' : l.expected,
     l.received, l.good, l.damaged || '', l.kiv || '',
-    l.diff === null ? '' : l.diff,
+    // A tick means the count agreed with the paperwork; anything else says what
+    // the difference was, so nobody has to work out what "-3" meant.
+    l.expected === null ? 'Not on paperwork'
+      : l.diff === 0 ? 'OK'
+      : l.diff > 0 ? `${l.diff} over` : `${Math.abs(l.diff)} short`,
     viaLabel[l.via] || 'Scanned',
     '', '', '', '',                                   // deliberately blank for the crew
   ]);
@@ -10327,13 +10331,13 @@ async function sendInboundGrnAlert(rec) {
   if (prof?.portal?.email) toEmail = toEmail ? `${toEmail}, ${prof.portal.email}` : prof.portal.email;
   if (!transporter || !fromEmail || !toEmail) return { sent: false, reason: 'not_configured' };
   const g = grnData(rec);
-  const rows = g.lines.map(l => `<tr><td>${l.sku}</td><td>${l.expected ?? '—'}</td><td>${l.received}</td><td>${l.good}</td><td>${l.damaged || ''}</td><td>${l.kiv || ''}</td><td>${l.diff === null ? 'unlisted' : (l.diff === 0 ? '' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td></tr>`).join('');
+  const rows = g.lines.map(l => `<tr><td>${l.sku}</td><td>${l.expected ?? '—'}</td><td>${l.received}</td><td>${l.good}</td><td>${l.damaged || ''}</td><td>${l.kiv || ''}</td><td>${l.expected === null ? 'Not on paperwork' : (l.diff === 0 ? 'OK' : (l.diff > 0 ? l.diff + ' over' : Math.abs(l.diff) + ' short'))}</td></tr>`).join('');
   await transporter.sendMail({
     from: fromEmail, to: toEmail,
     subject: `GRN ${g.serial || g.reference} — ${g.client} received (${g.totals.received} pcs${g.totals.damaged ? `, ${g.totals.damaged} damaged` : ''}${g.discrepancies.length ? `, ${g.discrepancies.length} discrepancy` : ''})`,
     html: `<h3>Goods Received Note — ${g.serial || g.reference}</h3>
       <p>Client: <b>${g.client}</b> · Source: ${g.source || '—'} · Type: ${g.type === 'po' ? 'PO/ASN' : 'Return'} · Received by: ${g.received_by || '—'} · Ended: ${g.ended || ''}</p>
-      <table border="1" cellpadding="4" cellspacing="0"><tr><th>SKU</th><th>Expected</th><th>Received</th><th>Good</th><th>Damaged</th><th>KIV</th><th>Diff</th></tr>${rows}</table>
+      <table border="1" cellpadding="4" cellspacing="0"><tr><th>SKU</th><th>Expected</th><th>Received</th><th>Good</th><th>Damaged</th><th>KIV</th><th>Tally status</th></tr>${rows}</table>
       <p>Totals: received ${g.totals.received} · good ${g.totals.good} · damaged ${g.totals.damaged} · KIV ${g.totals.kiv} · cartons ${g.cartons} · photos ${g.photos}</p>`,
   });
   return { sent: true };
