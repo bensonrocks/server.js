@@ -3169,6 +3169,43 @@ picked and completed, 50 pointing at no order at all, 200 genuinely waiting)
 came down to **200** at boot, the closed rows kept their reason, a second read
 is a no-op, and completing one more order took its row with it. 15 checks.
 
+## A reservation dies with its order (`releaseOrphanReservations`)
+
+Reported from the floor: an order deleted in the office still showed its units
+as **Reserved** on the client portal — "7 reserved" against "0 orders in
+progress", a contradiction the client can see. Deleting an order removed the
+order but never released what it had reserved, so those units stayed locked out
+of `available` forever.
+
+Only ONE path released a reservation (a voided marketplace order). Orders
+disappear down at least eight routes — Master delete, single and bulk approval
+of a deletion request, portal self-cancel, duplicate overwrite, whole-batch
+delete, the Master reset, the client-data wipe and the 12-month archive — so
+this RECONCILES rather than hooking each one, exactly as `pruneOrphanBackorders`
+and `pruneOrphanTransportJobs` do, and for the same reason.
+
+`inventory.openReservations(clientId)` derives what is still held per (order,
+sku) from the movement ledger — reserved − released − shipped — and anything
+whose order is not in the live set is released. Audit-logged
+`reservations_released_orphaned` with the units and the order numbers.
+
+Called from **boot**, from every deletion site, and from
+`GET /api/portal/overview` so a stuck reservation heals the moment the client
+looks rather than waiting for the next office action.
+
+**THE TEMPORAL-DEAD-ZONE TRAP, HIT FOR THE THIRD TIME.** The boot call was
+first placed with the db.json reconcile pass near the top of the file, where
+`const inventory` does not exist yet — the ReferenceError went into the
+surrounding `catch` and the reconcile was silently skipped, so the test found
+"released 0". It now runs next to `mergeInventoryClientCasing()`, which carries
+the same warning for the same reason. Anything touching `inventory` at boot
+must go THERE.
+
+Verified: 9 checks on the live path (deleting one of two orders gives back
+exactly its 7 units, the other order keeps its 3, on-hand never moves, and the
+client's own screen agrees) plus 5 on a pre-seeded fixture proving the state the
+live site is already in heals at boot.
+
 ## Administrator → Clear Test Data (selective, per client)
 
 Per the user: after testing an account, clear the trial data selectively —

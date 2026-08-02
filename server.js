@@ -3188,6 +3188,7 @@ app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
   // the same functions that already run on every deletion path.
   try { pruneOrphanBackorders(db); } catch (_) {}
   try { closeSettledBackorders(db); } catch (_) {}
+  try { releaseOrphanReservations(db); } catch (_) {}
   try { pruneOrphanTransportJobs(db); } catch (_) {}
   writeDb(db);
   logAudit('client_data_wiped', {
@@ -3623,6 +3624,11 @@ function recentSgDays(n) {
 // on-time/SLA figure — inventing one would be worse than omitting it.
 app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient;
+  // An order deleted in the office used to leave its units Reserved here — the
+  // client would read "7 reserved" against "0 orders in progress". Reconciled
+  // on the client's own read too, so a stuck reservation heals the moment they
+  // look rather than waiting for the next office action.
+  try { if (releaseOrphanReservations(readDb())) { /* audited inside */ } } catch (_) {}
   const cid = invClientId(client);
   const clientNorm = client.trim().toLowerCase();
   const db = readDb();
@@ -4378,6 +4384,7 @@ app.post('/api/portal/delete', express.json(), requirePortalWrite, (req, res) =>
 
   if (deleted.length) {
     pruneOrphanBackorders(db);          // their backorders go with them
+    releaseOrphanReservations(db);      // …and the units they had reserved
     pruneOrphanTransportJobs(db);       // and their deliveries
     // Tell the office. A client removing 50 orders must show up as an event,
     // not just as rows quietly missing from the floor's list.
@@ -13207,6 +13214,7 @@ app.delete('/api/master/batch/:batchId', (req, res) => {
     }
     db.batches.splice(idx, 1);
     pruneOrphanBackorders(db);          // every order in it took its backorders too
+    releaseOrphanReservations(db);      // …and gave back what it had reserved
     pruneOrphanTransportJobs(db);       // and their deliveries
     writeDb(db);
     logAudit('batch_deleted', {
@@ -13250,6 +13258,7 @@ app.delete('/api/master/order/:batchId/:orderNumber', (req, res) => {
     }
     if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
     pruneOrphanBackorders(db);          // the order's backorders go with it
+    releaseOrphanReservations(db);      // …and its reservation is given back
     pruneOrphanTransportJobs(db);       // and its delivery
     writeDb(db);
     logAudit('order_deleted', { order: orderNumber, batchId, client: batch.client_name || '', by: req.userId || 'master', reason });
@@ -13564,7 +13573,7 @@ app.post('/api/master/pending-deletions/bulk', express.json(), (req, res) => {
     });
     done.push(orderNumber);
   }
-  if (done.length) { pruneOrphanBackorders(db); pruneOrphanTransportJobs(db); writeDb(db); }
+  if (done.length) { pruneOrphanBackorders(db); pruneOrphanTransportJobs(db); releaseOrphanReservations(db); writeDb(db); }
   logAudit(action === 'approve' ? 'order_deletions_bulk_approved' : 'order_deletions_bulk_rejected', {
     count: done.length, failedCount: failed.length, by: req.userId || 'master', note,
     orders: done.slice(0, 200),
@@ -13584,6 +13593,7 @@ app.post('/api/master/pending-deletions/:batchId/:orderNumber/approve', (req, re
     const pending = state.pending_deletion;
     if (!removeOrderFromBatch(batch, orderNumber)) return res.status(404).json({ error: 'Order not found in batch' });
     pruneOrphanBackorders(db);          // the order's backorders go with it
+    releaseOrphanReservations(db);      // …and its reservation is given back
     pruneOrphanTransportJobs(db);       // and its delivery
     writeDb(db);
     logAudit('order_deleted', {
@@ -16081,6 +16091,16 @@ const inventory = require('./lib/inventory-store');
 inventory.init();
 assertInventoryPath();          // must run here — see the note next to its definition
 mergeInventoryClientCasing();   // likewise: needs `inventory` to exist first
+// Reservations held by orders that no longer exist. THIS MUST RUN HERE, not
+// with the db.json reconcile pass at the top of the file: `const inventory` is
+// still in its temporal dead zone up there, so the call throws into a catch and
+// is silently skipped — the trap this file has now hit three times (see
+// assertInventoryPath and mergeInventoryClientCasing above).
+try {
+  const _rdb = readDb();
+  const _freed = releaseOrphanReservations(_rdb);
+  if (_freed) console.log(`[IdealOne] Inventory: released ${_freed} unit(s) reserved by orders that no longer exist`);
+} catch (e) { console.error('[IdealOne] reservation reconcile failed:', e.message); }
 
 // 3PL model: ALL stock is client-owned. Orders/batches carry only a free-text
 // client_name, while the inventory store keys on client_id — so we derive a
@@ -16432,6 +16452,57 @@ function closeSettledBackorders(db) {
     });
   }
   return closed;
+}
+
+// A RESERVATION DIES WITH ITS ORDER.
+//
+// Reported from the floor: an order deleted in the office still showed its
+// units as Reserved on the client portal — "7 reserved" against "0 orders in
+// progress", a contradiction the client can see. Deleting an order removed the
+// order but never released what it had reserved, so those units stayed locked
+// out of `available` forever.
+//
+// Only ONE path released a reservation (a voided marketplace order). Orders
+// disappear down at least eight routes — Master delete, single and bulk
+// approval of a deletion request, portal self-cancel, duplicate overwrite,
+// whole-batch delete, the Master reset, the client-data wipe and the 12-month
+// archive — so this RECONCILES rather than hooking each one, exactly as
+// pruneOrphanBackorders and pruneOrphanTransportJobs do, and for the same
+// reason: hooking each site is precisely how the gap appeared.
+function releaseOrphanReservations(db) {
+  if (!inventory.available()) return 0;
+  const live = new Set();
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) live.add(String(o.order_number));
+  }
+  const clients = new Set();
+  for (const b of db.batches || []) if (b.client_name) clients.add(invClientId(b.client_name));
+  for (const p of clientProfiles(db)) if (p.client) clients.add(invClientId(p.client));
+  let released = 0;
+  const freed = [];
+  for (const cid of clients) {
+    let open = [];
+    try { open = inventory.openReservations(cid); } catch (e) { console.warn('[reservations]', cid, e.message); continue; }
+    const byOrder = new Map();
+    for (const r of open) {
+      if (live.has(String(r.order_id))) continue;          // its order is still with us
+      if (!byOrder.has(r.order_id)) byOrder.set(r.order_id, []);
+      byOrder.get(r.order_id).push({ sku: r.sku, qty: r.open_qty });
+    }
+    for (const [orderId, items] of byOrder) {
+      try {
+        inventory.releaseOrder(cid, { id: orderId, items });
+        released += items.reduce((n, i) => n + i.qty, 0);
+        freed.push(orderId);
+      } catch (e) { console.warn('[reservations] release failed for', orderId, e.message); }
+    }
+  }
+  if (released) {
+    logAudit('reservations_released_orphaned', {
+      units: released, orders: freed.slice(0, 200), count: freed.length,
+    });
+  }
+  return released;
 }
 
 function recordBackorders(db, clientName, orderNumber, batchId, reserveResults) {
