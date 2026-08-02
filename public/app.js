@@ -2116,6 +2116,8 @@
         <td class="ord-date-cell col-date">${dateStr}</td>
         <td class="ord-actions-cell col-actions">
           ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
+          ${canScan ? `<button class="btn-secondary btn-sm btn-picklist" data-order="${esc(ord.order_number)}"
+                title="Print a pick list for this order — bins in walk order">&#128424;</button>` : ''}
           ${isDone && !ord.has_waybill_pdf && !ord.has_order_label ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint label">&#128438;</button>` : ''}
           ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download slip">&#128196;</a>` : ''}
           ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill">&#128438; WB</button>` : ''}
@@ -2171,6 +2173,9 @@
 
     document.querySelectorAll('.btn-scan-now').forEach(btn =>
       btn.addEventListener('click', e => { e.stopPropagation(); openScanOverlay(btn.dataset.order); })
+    );
+    document.querySelectorAll('.btn-picklist').forEach(btn =>
+      btn.addEventListener('click', e => { e.stopPropagation(); printOrderPickList(btn.dataset.order); })
     );
     document.querySelectorAll('.btn-reprint-label').forEach(btn =>
       btn.addEventListener('click', e => {
@@ -10565,6 +10570,82 @@
   })();
   window.wipeUI = wipeUI;
   document.addEventListener('DOMContentLoaded', () => wipeUI.init());
+
+  // ── PER-ORDER PICK LIST ────────────────────────────────────────────────────
+  // The paper counterpart of Scan & Check, for a packer working one order.
+  // Waves have their own sheet (waveUI.print); this is the single-order one.
+  //
+  // The BIN is what the picker walks to, so lines are printed in bin order and
+  // the bin is the biggest thing on the row. A line with no binned stock is
+  // printed too, marked, rather than dropped — the picker has to know it is
+  // part of the order even if the system cannot say where it is.
+  async function printOrderPickList(orderNumber) {
+    let ord;
+    try {
+      const r = await fetchT(`/api/orders?range=all&q=${encodeURIComponent(orderNumber)}`, { headers: hdrs() });
+      const list = await r.json();
+      ord = (Array.isArray(list) ? list : list.orders || []).find(o => o.order_number === orderNumber);
+    } catch (e) { alert('Could not load that order.'); return; }
+    if (!ord) { alert('Could not find that order.'); return; }
+    const lines = ord.items || ord.lines || [];
+    const rows = [];
+    for (const l of lines) {
+      const locs = l.pick_locations || [];
+      if (locs.length) {
+        for (const p of locs) rows.push({ bin: p.location_id || '', sku: l.sku, desc: l.description || '',
+          qty: p.qty, expiry: p.expiry_date || '', short: 0 });
+      } else {
+        rows.push({ bin: '', sku: l.sku, desc: l.description || '', qty: l.qty, expiry: '', short: l.qty });
+      }
+    }
+    rows.sort((a, b) => (a.bin || 'ZZZ').localeCompare(b.bin || 'ZZZ') || a.sku.localeCompare(b.sku));
+    const totalUnits = rows.reduce((n, r2) => n + (Number(r2.qty) || 0), 0);
+    const shortLines = rows.filter(r2 => r2.short > 0).length;
+    const w = window.open('', '_blank', 'width=820,height=1000');
+    if (!w) { alert('Please allow pop-ups to print the pick list.'); return; }
+    w.document.write(`<html><head><title>Pick list ${esc(orderNumber)}</title>
+      <script src="/vendor/jsbarcode.js"><\/script><style>
+      body{font-family:-apple-system,Arial,sans-serif;margin:20px;font-size:13px;color:#0b1220}
+      h2{margin:.1em 0;font-size:1.15rem}
+      .meta{color:#475569;margin:.2rem 0 .8rem;font-size:12px}
+      table{border-collapse:collapse;width:100%}
+      th,td{border:1px solid #94a3b8;padding:6px 7px;text-align:left;vertical-align:top}
+      thead{background:#eff6ff}th{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
+      td.bin{font-family:ui-monospace,Menlo,monospace;font-weight:800;font-size:15px;white-space:nowrap}
+      td.n{text-align:right;font-weight:700;font-size:15px}
+      td.tick{width:34px;text-align:center;font-size:16px;color:#94a3b8}
+      tr.short td{background:#fff7ed}
+      .warn{margin:.5rem 0;padding:.4rem .6rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:12px;color:#9a3412}
+      .sig{margin-top:26px;display:flex;gap:36px}.sig div{flex:1;border-top:1px solid #333;padding-top:5px;font-size:11px}
+      @media print{.noprint{display:none}body{margin:8px}}
+      </style></head><body>
+      <div class="noprint" style="margin-bottom:10px"><button onclick="window.print()">&#128424; Print</button></div>
+      <h2>Pick list — ${esc(orderNumber)}</h2>
+      <svg id="bc"></svg>
+      <div class="meta">${esc(ord.client_name || '')}${ord.customer_name ? ' &middot; ' + esc(ord.customer_name) : ''}
+        ${ord.waybill_number ? ' &middot; Waybill ' + esc(ord.waybill_number) : ''}
+        &middot; ${rows.length} line(s) &middot; ${totalUnits} pc(s)
+        &middot; printed ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })} SGT</div>
+      ${shortLines ? `<div class="warn">&#9888; ${shortLines} line(s) have no binned stock — shown at the bottom with no bin. Ask before substituting.</div>` : ''}
+      <table><thead><tr>
+        <th>&#10003;</th><th>Bin</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th><th>Batch / expiry</th>
+      </tr></thead><tbody>
+      ${rows.map(r2 => `<tr class="${r2.short ? 'short' : ''}">
+        <td class="tick">&#9744;</td>
+        <td class="bin">${r2.bin ? esc(r2.bin) : '&mdash; no stock'}</td>
+        <td style="font-family:ui-monospace,Menlo,monospace">${esc(r2.sku)}</td>
+        <td>${esc(String(r2.desc).slice(0, 60))}</td>
+        <td class="n">${r2.qty}</td>
+        <td>${esc(r2.expiry || '')}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="sig"><div>Picked by</div><div>Checked by</div><div>Date / time</div></div>
+      <script>
+        try { JsBarcode('#bc', ${JSON.stringify(String(orderNumber))}, { format:'CODE128', height:38, width:1.5, fontSize:12, margin:0 }); } catch(e){}
+        window.onload = function(){ setTimeout(function(){ window.print(); }, 350); };
+      <\/script>
+      </body></html>`);
+    w.document.close();
+  }
 
   // ── Activity Overview (Admin & Master only — server-enforced) ──────────────
   function fmtDashDate(d) {
