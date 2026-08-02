@@ -10242,6 +10242,64 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
   }
   const db = readDb();
   const cid = invClientId(canonicalClientName(db, client));
+
+  // ── DEFAULT: PROPOSE, DO NOT WRITE ────────────────────────────────────────
+  // Per the user, the locations in the file are reflected INTO the open inbound
+  // job so the crew can complete the putaway (which increments the bins) or
+  // abort it (nothing happens). So the upload fills the form; pressing "Put
+  // away selected" is what moves stock, through the same /api/putaway/bulk the
+  // manual path uses — one receipt at a time, over-put guard and all.
+  //
+  // Writing straight to stock is still available for OPENING STOCK, where there
+  // is no inbound job to reflect into, but it has to be asked for explicitly.
+  const wantsDirect = String(req.body?.apply || '') === 'positions';
+  if (!wantsDirect) {
+    const queue = putawayQueue(db).filter(g => invClientId(g.client_name) === cid);
+    const bySku = new Map();                       // sku -> file location + qty
+    for (const r of rows) {
+      const k = String(r.sku || '').trim().toUpperCase();
+      if (!k || !r.location) continue;
+      if (!bySku.has(k)) bySku.set(k, []);
+      bySku.get(k).push({ location: String(r.location).trim().toUpperCase(), qty: Number(r.qty) || 0 });
+    }
+    const plan = [];
+    const seen = new Set();
+    for (const g of queue) {
+      for (const l of g.lines) {
+        const hits = bySku.get(String(l.sku).toUpperCase());
+        if (!hits || !hits.length) continue;
+        seen.add(String(l.sku).toUpperCase());
+        // A SKU listed at several locations in the file is split across them,
+        // in file order, capped at what the line still owes.
+        let left = l.qty;
+        for (const h of hits) {
+          if (left <= 0) break;
+          const take = Math.min(left, h.qty > 0 ? h.qty : left);
+          plan.push({
+            inbound_id: g.inbound_id, staging_code: g.staging_code, serial: g.serial,
+            sku: l.sku, description: l.description, location: h.location,
+            qty: take, outstanding: l.qty,
+          });
+          left -= take;
+        }
+      }
+    }
+    const unmatched = [...bySku.keys()].filter(k => !seen.has(k));
+    return res.json({
+      ok: true, plan: true, client: cid, filename: req.file.originalname,
+      rows: rows.length,
+      matched: plan.length,
+      units: plan.reduce((n, p) => n + p.qty, 0),
+      pallets: [...new Set(plan.map(p => p.staging_code))].length,
+      lines: plan,
+      unmatchedSkus: unmatched.slice(0, 50),
+      unmatchedCount: unmatched.length,
+      note: plan.length
+        ? 'Nothing has been put away yet — the bins are filled in on screen. Complete the putaway to move the stock, or abort and nothing happens.'
+        : 'None of these SKUs are waiting to be put away for this client.',
+    });
+  }
+
   // ADDING means a second upload of the same sheet genuinely doubles the stock.
   // That is the intended behaviour for a real second delivery, so it is not
   // blocked — but the commonest way to do it by accident is re-sending the same

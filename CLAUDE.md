@@ -2990,6 +2990,16 @@ keying it bin by bin. Used for opening stock at onboarding and for a stock-take
 correction afterwards. Headers are matched loosely (`pick()`), so `Available
 LHU`, `Qty`, `On hand` and `Balance` all resolve.
 
+- **BY DEFAULT IT PROPOSES, IT DOES NOT WRITE.** Per the user, the locations in
+  the file are *reflected into the open inbound job*: the bins are filled into
+  the Putaway form on the matching staging rows and the lines are ticked, with a
+  banner saying how many were filled and that nothing has moved. The crew then
+  **completes the putaway** (which increments the bins, through the same
+  `/api/putaway/bulk` the manual path uses — one receipt at a time, over-put
+  guard and all) or **aborts**, which clears the form and does nothing. A SKU in
+  the file that is not waiting to be put away is reported, never silently
+  binned. `apply=positions` is the explicit opt-in for OPENING STOCK, where
+  there is no inbound job to reflect into.
 - **THE QUANTITIES ARE ADDED**, per the user — a putaway file is a delivery
   being binned, not a stock-take. `mode=set` still exists for a genuine
   stock-take and is what the old default was.
@@ -3021,7 +3031,16 @@ and description carried across; re-sending the same file is refused and changes
 nothing, confirming it adds to 372 in one lot row per bin, `mode=set` puts the
 position back; and an order against that stock then reserves 2, points its pick
 list at the bin the sheet put it in, and on completion deducts on-hand AND the
-bin lot while releasing the reservation. 27 API checks + 14 browser checks.
+bin lot while releasing the reservation. 27 API checks + 13 browser checks, plus
+16 API + 11 browser checks on the propose-then-complete-or-abort flow (nothing
+moves until Put away is pressed; aborting clears the form and leaves all 10 pcs
+waiting; completing bins them into exactly the bin the file named).
+
+UI GOTCHAS worth keeping: the import banner is a SIBLING of the list, so
+`render()` does not remove it — abort has to take it out explicitly or it
+outlives what it describes. And a file input whose `value` is never cleared
+fires NO change event when the same file is picked again, so a second upload of
+the same sheet silently never armed the button.
 
 ## Portal orders — the waybill you can open, and no pill that says nothing
 

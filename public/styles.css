@@ -3434,3 +3434,10 @@ tr.pa-split-row td { border-top: 0; }
 .wipe-scope input { margin-top: .15rem; width: 1.05rem; height: 1.05rem; flex: 0 0 auto; }
 .wipe-scope b { display: block; font-size: .86rem; }
 .wipe-count { display: block; font-size: .75rem; font-weight: 700; color: #b45309; margin-top: .1rem; }
+
+/* A file's locations proposed into the open putaway job — nothing moved yet. */
+.pa-import-bar { display:flex; gap:.7rem; align-items:flex-start; flex-wrap:wrap;
+                 margin:0 0 .8rem; padding:.7rem .9rem; border-radius:10px;
+                 background:#fffbeb; border:1px solid #fde68a; }
+.pa-import-txt { flex:1 1 20rem; font-size:.86rem; color:#92400e; }
+.pa-import-txt .hint { display:block; margin-top:.2rem; }

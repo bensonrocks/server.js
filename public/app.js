@@ -10858,6 +10858,65 @@
       });
     }
 
+    // ── A FILE'S LOCATIONS, REFLECTED INTO THE OPEN JOB ─────────────────────
+    // Fill the bin boxes and tick the lines, then say plainly that nothing has
+    // moved and what the two ways out are. The stock only moves when the crew
+    // presses Put away — the same bulk route the manual path uses.
+    let _importBanner = null;
+    async function applyImportPlan(d) {
+      await load();                                  // repaint from the server first
+      const el = $('putawayList');
+      let filled = 0;
+      for (const p of d.lines || []) {
+        const card = el.querySelector(`.pa-card[data-staging="${CSS.escape(p.staging_code)}"]`);
+        if (!card) continue;
+        const tr = card.querySelector(`tr[data-sku="${CSS.escape(p.sku)}"]`);
+        if (!tr) continue;
+        const bin = tr.querySelector('.pa-bin');
+        const qty = tr.querySelector('.pa-qty');
+        if (!bin) continue;
+        bin.value = p.location;
+        if (qty && p.qty) qty.value = Math.min(Number(qty.max) || p.qty, p.qty);
+        const pick = tr.querySelector('.pa-pick');
+        if (pick) { pick.checked = true; }
+        filled++;
+      }
+      el.querySelectorAll('.pa-card').forEach(c => paintBulk(c));
+      _importBanner = {
+        filename: d.filename, filled,
+        unmatched: d.unmatchedCount || 0, units: d.units || 0,
+        pallets: d.pallets || 0,
+      };
+      renderImportBanner();
+    }
+    function renderImportBanner() {
+      let bar = $('paImportBanner');
+      if (!_importBanner) { if (bar) bar.remove(); return; }
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'paImportBanner';
+        bar.className = 'pa-import-bar';
+        $('putawayList').before(bar);
+      }
+      const b = _importBanner;
+      bar.innerHTML = `
+        <div class="pa-import-txt">
+          <b>${esc(b.filename)}</b> — ${b.filled} line(s) filled in across ${b.pallets} pallet(s), ${b.units} pc(s).
+          <span class="hint">Nothing has been put away yet. Check the bins, then complete the putaway on each pallet — or abort and nothing happens.</span>
+          ${b.unmatched ? `<span class="hint">${b.unmatched} SKU(s) in the file are not waiting to be put away and were ignored.</span>` : ''}
+        </div>
+        <button class="btn-secondary btn-sm" id="paImportAbort">Abort — clear these</button>`;
+      $('paImportAbort').addEventListener('click', () => {
+        // ABORT = no action done. Repaint from the server, which drops
+        // everything typed in, because nothing was ever sent. The banner is a
+        // SIBLING of the list, so render() does not remove it — take it out
+        // explicitly or it outlives the thing it describes.
+        _importBanner = null;
+        document.getElementById('paImportBanner')?.remove();
+        load().catch(() => {});
+      });
+    }
+
     function msg(card, text, kind = 'hint') {
       const m = card?.querySelector('.pa-msg');
       if (!m) return;
@@ -10980,7 +11039,7 @@
       } catch (e) { /* a badge is not worth an error */ }
     }
 
-    return { load: async () => { await load(); startPoll(); }, refreshBadge, stopPoll };
+    return { load: async () => { await load(); startPoll(); }, refreshBadge, stopPoll, applyImportPlan };
   })();
   window.putawayUI = putawayUI;
   document.getElementById('putawayRefreshBtn')?.addEventListener('click', () =>
@@ -10999,6 +11058,11 @@
   }
   async function openPaImport() {
     _paImportFile = null;
+    // Clear the input's VALUE, not just our copy: re-picking the same file on a
+    // file input whose value still holds it fires no change event, so the
+    // second upload of the same sheet would silently never arm the button.
+    const inp = _paImp('paImportInput');
+    if (inp) inp.value = '';
     _paImp('paImportFileName').textContent = 'No file chosen';
     _paImp('paImportError').classList.add('hidden');
     _paImp('paImportOverlay').classList.remove('hidden');
@@ -11045,6 +11109,19 @@
       }
       if (!r.ok) { show(d.error || 'Could not import that file.'); btn.disabled = false; return; }
       _paImp('paImportOverlay').classList.add('hidden');
+      // THE FILE PROPOSES; THE CREW DECIDES. The bins are written into the
+      // form on the open putaway job — nothing has moved yet. "Put away
+      // selected" completes it; "Clear" aborts and nothing happens.
+      if (d.plan) {
+        btn.disabled = false;          // the dialog is done with; re-arm it for next time
+        if (!d.matched) {
+          alert(`Nothing to fill in.\n\n${d.note}`
+            + (d.unmatchedCount ? `\n\n${d.unmatchedCount} SKU(s) in the file are not waiting to be put away.` : ''));
+          return;
+        }
+        await putawayUI.applyImportPlan(d);
+        return;
+      }
       alert(`Put away ${d.lines} line(s) — ${d.units} pc(s) across ${d.skus} SKU(s) for ${d.client}.`
         + (d.skusCreated ? `\n${d.skusCreated} SKU(s) added to the item master.` : '')
         + (d.binsCreated ? `\n${d.binsCreated} new bin location(s) created from the sheet.` : '')
