@@ -2990,10 +2990,20 @@ keying it bin by bin. Used for opening stock at onboarding and for a stock-take
 correction afterwards. Headers are matched loosely (`pick()`), so `Available
 LHU`, `Qty`, `On hand` and `Balance` all resolve.
 
-- **IT SETS THE POSITION, IT DOES NOT ADD TO IT** (`inventory.setStockPositions`).
-  A sheet titled "inventory as on <date>" states what is on the shelf, so
-  sending it twice must leave the same stock, not double — and a corrected sheet
-  simply corrects it. This is the whole reason the import is safe to re-run.
+- **THE QUANTITIES ARE ADDED**, per the user — a putaway file is a delivery
+  being binned, not a stock-take. `mode=set` still exists for a genuine
+  stock-take and is what the old default was.
+- **THE CLIENT IS PICKED FROM A DROPDOWN, NEVER TYPED** (`GET /api/putaway/clients`,
+  which lists the names actually in use with what each already has). "Mayer" and
+  "Mayer2026" are DIFFERENT accounts — case folds, a suffix does not — so a
+  typed name is exactly how a whole delivery ends up in a phantom client whose
+  stock no order can ever find.
+- Because adding makes a double-upload expensive, **the same FILE re-sent is
+  caught by content hash** (`db.stockImports`) and confirmed rather than waved
+  through: "This exact file was already put away for X on <date> (186 pcs).
+  Uploading it again ADDS those quantities a second time." A genuine second
+  delivery just confirms. A bin is TOPPED UP rather than growing a lot row per
+  upload.
 - **Bins named in the sheet are CREATED** if they do not exist — the racking is
   physically there and the sheet is what tells us about it — but the count comes
   back (`binsCreated`) so a typo reads as "47 new locations" rather than
@@ -3007,10 +3017,11 @@ LHU`, `Qty`, `On hand` and `Balance` all resolve.
 
 Verified against the client's real file: 37 rows, 36 SKUs, 186 units, 8 bins
 created, each SKU landing in exactly the bin the sheet names with the barcode
-and description carried across; a second upload of the same sheet leaves 186
-(not 372); and an order against that stock then reserves 2, points its pick list
-at the bin the sheet put it in, and on completion deducts on-hand AND the bin
-lot while releasing the reservation. 22 checks.
+and description carried across; re-sending the same file is refused and changes
+nothing, confirming it adds to 372 in one lot row per bin, `mode=set` puts the
+position back; and an order against that stock then reserves 2, points its pick
+list at the bin the sheet put it in, and on completion deducts on-hand AND the
+bin lot while releasing the reservation. 27 API checks + 14 browser checks.
 
 ## Portal orders — the waybill you can open, and no pill that says nothing
 

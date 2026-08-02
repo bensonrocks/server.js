@@ -10154,9 +10154,12 @@ function putawayQueue(db, { includeDone = false } = {}) {
 // keying it bin by bin. Used for opening stock at onboarding and for a
 // stock-take correction afterwards.
 //
-// IT SETS THE POSITION RATHER THAN ADDING TO IT (see setStockPositions), so
-// uploading the same sheet twice leaves the same stock, not double. That is
-// what makes it safe to re-send a corrected file.
+// PER THE USER, THE QUANTITIES ARE **ADDED** to whatever each bin already
+// holds — a putaway file is a delivery being binned, not a stock-take. The
+// consequence is that uploading the same sheet twice really does double the
+// stock, so the one accident that causes (re-sending the identical file) is
+// detected by content hash and confirmed rather than waved through. `mode=set`
+// is still available for a genuine stock-take.
 //
 // ADMIN OR MASTER: this writes a client's whole shelf position in one action.
 const STOCK_POS_HEADERS = {
@@ -10198,6 +10201,30 @@ function parseStockPositionRows(buffer, filename) {
   return rows;
 }
 
+// The client names actually in use, so the picker can never offer a spelling
+// that does not exist — "Mayer" and "Mayer2026" are different accounts, and a
+// typed name is exactly how stock ends up in a phantom one.
+app.get('/api/putaway/clients', requireAuth, (req, res) => {
+  const db = readDb();
+  const seen = new Map();                       // lowercase -> best-known spelling
+  const add = n => {
+    const v = String(n || '').trim();
+    if (!v) return;
+    const k = v.toLowerCase();
+    if (!seen.has(k)) seen.set(k, { name: v, orders: 0, inbound: 0, hasProfile: false });
+  };
+  for (const p of clientProfiles(db)) { add(p.client); const e = seen.get(String(p.client).trim().toLowerCase()); if (e) e.hasProfile = true; }
+  for (const b of db.batches || []) { add(b.client_name); const e = seen.get(String(b.client_name || '').trim().toLowerCase()); if (e) e.orders += (b.orders || []).length; }
+  for (const r of db.inbound || []) { add(r.client_name); const e = seen.get(String(r.client_name || '').trim().toLowerCase()); if (e) e.inbound++; }
+  let withStock = new Set();
+  try { withStock = new Set(Object.keys(inventory.stockByClientTotals() || {})); } catch (_) {}
+  res.json({
+    clients: [...seen.values()].map(c => ({
+      ...c, hasStock: withStock.has(c.name),
+    })).sort((a, b) => a.name.localeCompare(b.name)),
+  });
+});
+
 app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!requireInboundAdmin(req, res)) return;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -10215,13 +10242,36 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
   }
   const db = readDb();
   const cid = invClientId(canonicalClientName(db, client));
+  // ADDING means a second upload of the same sheet genuinely doubles the stock.
+  // That is the intended behaviour for a real second delivery, so it is not
+  // blocked — but the commonest way to do it by accident is re-sending the same
+  // file, so that exact case is named and confirmed rather than waved through.
+  const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+  db.stockImports = db.stockImports || [];
+  const prior = db.stockImports.find(x => x.hash === hash && x.clientId === cid);
+  if (prior && String(req.body?.confirm_reimport || '') !== 'yes') {
+    return res.status(409).json({
+      needsReimportConfirm: true, prior,
+      message: `This exact file was already put away for ${cid} on `
+        + `${new Date(prior.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })} SGT `
+        + `(${prior.units} pcs). Uploading it again ADDS those quantities a second time.`,
+    });
+  }
   let result;
   try {
     result = inventory.setStockPositions(cid, rows, {
       operator: req.userId || '',
-      reason: `stock position import — ${req.file.originalname}`,
+      reason: `putaway by file — ${req.file.originalname}`,
+      mode: req.body?.mode === 'set' ? 'set' : 'add',
     });
   } catch (e) { return res.status(400).json({ error: e.message }); }
+  db.stockImports.unshift({
+    hash, clientId: cid, filename: req.file.originalname,
+    at: new Date().toISOString(), by: req.userId || '',
+    lines: result.placed, units: result.units,
+  });
+  if (db.stockImports.length > 500) db.stockImports.length = 500;
+  writeDb(db);
   logAudit('stock_positions_imported', {
     clientId: cid, filename: req.file.originalname,
     lines: result.placed, units: result.units, skus: result.skus.length,
@@ -10234,7 +10284,7 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
     lines: result.placed, units: result.units, skus: result.skus.length,
     skusCreated: result.skusCreated, binsCreated: result.binsCreated,
     skipped: result.skipped.slice(0, 50),
-    note: 'This SET the position — re-uploading the same sheet leaves the same stock, not double.',
+    note: 'These quantities were ADDED to what each bin already held.',
   });
 });
 

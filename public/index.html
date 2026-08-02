@@ -1704,6 +1704,29 @@
   <!-- Adjust a stock quantity by hand. Administrator password and a reason,
        every time — a hand adjustment is the one stock change with no document
        behind it, so it is the one that most needs a name against it. -->
+  <!-- Put away by file. The client is PICKED, never typed: "Mayer" and
+       "Mayer2026" are different accounts, and a typo files a whole delivery
+       into a phantom one. -->
+  <div id="paImportOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:560px">
+      <h3 style="margin:0 0 .2rem">Put away by file</h3>
+      <div class="hint" style="margin-bottom:.9rem">SKU, Location and quantity — the quantities are <b>added</b> to whatever each bin already holds.</div>
+      <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">CLIENT (whose stock this is)</label>
+      <select id="paImportClient" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.95rem;margin-bottom:.7rem">
+        <option value="">Loading…</option>
+      </select>
+      <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">FILE</label>
+      <div id="paImportFileName" class="hint" style="margin-bottom:.5rem">No file chosen</div>
+      <button class="btn-secondary btn-sm" id="paImportPick">Choose file…</button>
+      <input type="file" id="paImportInput" accept=".xlsx,.xls,.csv" hidden />
+      <div id="paImportError" class="login-error hidden" style="margin-top:.7rem"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="paImportCancel">Cancel</button>
+        <button class="btn-primary" id="paImportGo" disabled>Put away</button>
+      </div>
+    </div>
+  </div>
+
   <div id="invAdjustOverlay" class="modal-overlay hidden">
     <div class="modal-card" style="max-width:520px">
       <h3 style="margin:0 0 .2rem">Adjust stock</h3>
@@ -2025,7 +2048,6 @@
         <h2>&#128205; Putaway</h2>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
           <button class="btn-secondary btn-sm" id="putawayRefreshBtn">&#8635; Refresh</button>
-        <input type="file" id="putawayImportInput" accept=".xlsx,.xls,.csv" hidden />
         <button class="btn-secondary btn-sm" id="putawayImportBtn"
           title="Bin a whole stock position from a spreadsheet — SKU, Location and quantity. It SETS the position, so re-uploading the same sheet does not double it.">&#8679; Put away by file</button>
         </div>

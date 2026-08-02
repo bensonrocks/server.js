@@ -10986,24 +10986,49 @@
   document.getElementById('putawayRefreshBtn')?.addEventListener('click', () =>
     putawayUI.load().catch(e => alert(e.message)));
 
-  // PUT AWAY BY FILE — a whole stock position from a spreadsheet, the shape a
-  // warehouse already exports. It SETS the position rather than adding to it,
-  // which is what makes re-sending a corrected sheet safe; the confirm says so
-  // before anything happens.
-  document.getElementById('putawayImportBtn')?.addEventListener('click', () =>
-    document.getElementById('putawayImportInput')?.click());
-  document.getElementById('putawayImportInput')?.addEventListener('change', async e => {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
-    // Whose stock — a bin position is client-owned and the sheet cannot say.
-    const client = prompt('Which client is this stock position for?\n(exactly as their orders name them)');
-    if (!client) return;
-    if (!confirm(`Put away every line in "${f.name}" for ${client}?\n\n`
-      + 'This SETS the position from the sheet — it does not add to what is already there, '
-      + 'so re-uploading the same file leaves the same stock, not double.')) return;
+  // PUT AWAY BY FILE — SKU / Location / quantity, the shape a warehouse already
+  // exports. Quantities are ADDED to what each bin holds, so this is a delivery
+  // being binned rather than a stock-take. The client is PICKED from the names
+  // actually in use, never typed: "Mayer" and "Mayer2026" are different
+  // accounts and a typo files the whole delivery into a phantom one.
+  let _paImportFile = null;
+  const _paImp = id => document.getElementById(id);
+  function paImportPaint() {
+    const ok = !!_paImportFile && !!_paImp('paImportClient').value;
+    _paImp('paImportGo').disabled = !ok;
+  }
+  async function openPaImport() {
+    _paImportFile = null;
+    _paImp('paImportFileName').textContent = 'No file chosen';
+    _paImp('paImportError').classList.add('hidden');
+    _paImp('paImportOverlay').classList.remove('hidden');
+    const sel = _paImp('paImportClient');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const r = await fetchT('/api/putaway/clients', { headers: hdrs() });
+      const d = await r.json();
+      const list = d.clients || [];
+      sel.innerHTML = '<option value="">— pick a client —</option>'
+        + list.map(c => {
+            const bits = [];
+            if (c.hasStock) bits.push('has stock');
+            if (c.orders) bits.push(`${c.orders} order(s)`);
+            if (c.inbound) bits.push(`${c.inbound} receipt(s)`);
+            return `<option value="${esc(c.name)}">${esc(c.name)}${bits.length ? ` — ${bits.join(', ')}` : ''}</option>`;
+          }).join('');
+      if (!list.length) sel.innerHTML = '<option value="">No clients on record yet</option>';
+    } catch (e) { sel.innerHTML = '<option value="">Could not load the client list</option>'; }
+    paImportPaint();
+  }
+  async function runPaImport(confirmReimport) {
+    const err = _paImp('paImportError');
+    const show = m => { err.textContent = m; err.classList.remove('hidden'); };
+    const client = _paImp('paImportClient').value;
+    if (!client || !_paImportFile) return;
+    const btn = _paImp('paImportGo'); btn.disabled = true;
     const fd = new FormData();
-    fd.append('file', f); fd.append('client', client);
+    fd.append('file', _paImportFile); fd.append('client', client);
+    if (confirmReimport) fd.append('confirm_reimport', 'yes');
     try {
       const r = await fetchT('/api/putaway/import', {
         method: 'POST',
@@ -11011,15 +11036,34 @@
         body: fd,
       }, 60000);
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) { alert(d.error || 'Could not import that file.'); return; }
+      // The one accident that ADDING makes expensive: the same file twice.
+      if (r.status === 409 && d.needsReimportConfirm) {
+        if (confirm(`\u26a0 ${d.message}\n\nOK = add it again (a genuine second delivery)\nCancel = stop`)) {
+          return runPaImport(true);
+        }
+        btn.disabled = false; return;
+      }
+      if (!r.ok) { show(d.error || 'Could not import that file.'); btn.disabled = false; return; }
+      _paImp('paImportOverlay').classList.add('hidden');
       alert(`Put away ${d.lines} line(s) — ${d.units} pc(s) across ${d.skus} SKU(s) for ${d.client}.`
         + (d.skusCreated ? `\n${d.skusCreated} SKU(s) added to the item master.` : '')
         + (d.binsCreated ? `\n${d.binsCreated} new bin location(s) created from the sheet.` : '')
         + (d.skipped && d.skipped.length ? `\n${d.skipped.length} row(s) skipped.` : '')
         + `\n\n${d.note}`);
       putawayUI.load().catch(() => {});
-    } catch (err) { alert('Could not reach the server — nothing was imported.'); }
+    } catch (e) { show('Could not reach the server — nothing was imported.'); btn.disabled = false; }
+  }
+  document.getElementById('putawayImportBtn')?.addEventListener('click', openPaImport);
+  document.getElementById('paImportPick')?.addEventListener('click', () => _paImp('paImportInput').click());
+  document.getElementById('paImportInput')?.addEventListener('change', e => {
+    _paImportFile = (e.target.files || [])[0] || null;
+    _paImp('paImportFileName').textContent = _paImportFile ? _paImportFile.name : 'No file chosen';
+    paImportPaint();
   });
+  document.getElementById('paImportClient')?.addEventListener('change', paImportPaint);
+  document.getElementById('paImportCancel')?.addEventListener('click', () =>
+    _paImp('paImportOverlay').classList.add('hidden'));
+  document.getElementById('paImportGo')?.addEventListener('click', () => runPaImport(false));
 
   // ── COLLECTION SCREEN ───────────────────────────────────────────────────────
   // The list someone works down while the courier loads. Selection survives the
