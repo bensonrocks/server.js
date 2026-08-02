@@ -2868,10 +2868,99 @@ this batch · its usual bin · pick face"). It is **always a suggestion, never
 forced**: the receiver scans the bin they actually used, and over-capacity is a
 confirmable fact with a recorded reason, not a refusal.
 
-NOT DONE, deliberately: **ABC velocity zoning** (fast movers near the pack
-bench). The movement history to compute it exists, but "near" has no meaning
-until zones are ranked by walking distance, and a guess there would move product
-for no reason. Worth doing once the racking is settled.
+### The location grammar — Row / Bay / Level / Location, and the floor tier
+
+Per the user: *"AA-01-04-02, means Row AA, Bay 1, Level 4, Location 2"*, and
+*"locations with 99-01-01, such as this formats are what we call floor
+locations … when XX is 01, it means its tier is on the floor thus YY regardless
+01,02,03, it would be all on the floor"*. `parseLocationId(id)` returns
+`{tier, level, row, bay, pos, bonded, label}`:
+
+- `^\d{2,3}-\d{1,3}-\d{1,3}$` (`99-01-01`, `090-001-001`) → **floor**.
+- `^[A-Z][A-Z0-9]{0,3}-\d{1,3}-\d{1,3}(-[A-Z0-9]{1,2})?$` → the THIRD part is
+  the level; **level 1 is floor**, everything above is `rack`.
+- Anything else → `unknown`, and `unknown` is never silently guessed at.
+
+**IT READS THE location_id AND NOTHING ELSE.** The zone/aisle/shelf/bin columns
+cannot carry this: in the client's own 10,438-bin sheet, `zone` says "FLOOR A"
+on level-4 racking — it is a *storey*, not ground level, so matching on the word
+"floor" would call the whole warehouse prime pick space — and `AA-003-001-A`
+imported as `shelf=1, bin=3`, i.e. the bay landed in `bin` and the `-A` was lost.
+Measured against that real file: **2,973 floor, 6,979 rack, 486 unreadable.**
+
+`tier`/`level_no`/`row_code`/`bay_code` are STORED on `warehouse_locations`
+(derived at import by `_stampLocationTiers`, re-stamped after every bulk racking
+change) so the engine can filter in SQL and an admin can correct a bin the
+grammar reads wrongly. `tier_locked=1` makes a hand correction survive
+re-stamping; passing `tier:''` to `updateLocation` hands it back to the grammar.
+
+**BONDED AREAS ARE EXCLUDED OUTRIGHT, not scored down** — a bonded bin is
+customs-controlled, so putting ordinary stock there is a compliance problem
+rather than a preference. Matched on `/BOND/i` in the id or zone. It can still
+be typed in by hand, and the count of skipped bonded bins is shown on screen so
+the exclusion is visible rather than mysterious.
+
+### Fast movers get the floor — `skuVelocity()`
+
+Per the user: *"if a cargo moves almost daily or more than 20% of the inventory
+moves per week, its a fast mover"*, and the 20% is **of that SKU's own on-hand**
+(confirmed explicitly). So a SKU is `fast` when EITHER holds:
+
+- it shipped on **≥70% of the days** in a 28-day window (`VELOCITY_DAILY_RATIO`), or
+- **≥20% of its own on-hand ships per week** (`VELOCITY_WEEKLY_PCT`), averaged
+  over 28 days rather than one raw week so a single busy Monday cannot promote it.
+
+`VELOCITY_MIN_UNITS` (10) exists because the percentage is meaningless on tiny
+numbers — 1 unit shipped against 2 on hand reads as 50% and would send a
+nothing-SKU to prime floor space. Tiers are `fast` / `medium` / `slow` (nothing
+in the window) / **`new`** (no history at all). `new` is deliberately NOT treated
+as slow and never promoted to the floor: no evidence is not evidence.
+
+COMPUTED ON READ, never stamped. `inventory.last_moved_at` is exactly the trap
+to avoid — a column nothing writes. `stock_movements` is the source, and
+`reserve`/`release` are excluded because allocating stock moves no piece.
+
+HONEST LIMITATION: `outbound` movements are only written when an order completes
+through scanning, so on a fresh site every SKU reads `new` for the first few
+weeks and the tier rule simply does not fire. It degrades to the previous
+behaviour rather than guessing.
+
+### The full suggestion ladder
+
+Same-SKU consolidation still wins — splitting one SKU across two bins costs the
+pickers more than a slightly worse level, so **velocity is a modifier, not a
+gate**:
+
+1. same SKU + same lot · 2. same SKU · 3. its usual home bin ·
+4. **velocity tier** (fast → floor +50, fast → level ≥3 −25, slow → floor −20) ·
+5. **same client together** (their row +35, their zone +12) ·
+6. pick face before bulk · 7. smallest bin that fits.
+
+**Heavy outranks velocity when they compete for the same floor bins** — a 15kg+
+carton cannot be lifted to level 4 whatever its turnover, so that rule is scored
+as the safety constraint it is (+45 on floor, and a penalty that grows with the
+level). When a fast mover cannot get a floor bin the response SAYS SO
+(`"This is a fast mover but no floor location is free"`) rather than quietly
+degrading.
+
+Every suggestion carries `where` — the bin in warehouse words, "Row AA · Bay 1 ·
+Level 1 (floor) · 01" — beside the raw code, and a fast mover shows an amber
+pill with the figure that earned it ("ships on 25 of the last 28 days"), not
+just a label.
+
+NOT DONE, deliberately: **ABC zoning by walking distance** (fast movers near the
+pack bench). Nothing in the data says where the bench is, so "near" has no
+meaning yet. And **re-slotting existing stock** — once velocity is known the
+system can see fast movers already sitting on level 04, but telling someone to
+move them belongs in its own move-list with labour attached, not in a screen
+asking a receiver to relocate stock that is not in their hands.
+
+Verified 25 API checks (the user's own examples parse exactly; level 02 is not
+floor; both fast-mover rules fire independently; slow does not squat on the
+floor; `new` gets no claim either way; a client's row is offered when the SKU
+has no bin; bonded never appears for any SKU or quantity; a 22kg carton goes
+low; consolidation still beats the tier) plus 9 browser checks on desktop and a
+Pixel 5, and the 35 + 23 earlier putaway checks re-run green.
 
 Verified 35 API checks (one scan = one piece, a keyed 47 in one go, eventId
 dedupe at qty 10, the discrepancy-photo rule still enforced, staging issued

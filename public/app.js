@@ -10398,10 +10398,17 @@
         }
         // The top choice as a button that fills the bin box; the rest as
         // alternatives, each carrying WHY it was picked.
-        cell.innerHTML = d.suggestions.map((sg, i) => `
+        // A fast mover is called out, with the figure that made it one — the
+        // receiver can see WHY the floor is being suggested rather than being
+        // told to trust it.
+        const v = d.velocity || {};
+        const vel = v.tier === 'fast' ? `<div class="pa-vel">\u26a1 Fast mover \u2014 ${esc(v.why || '')}</div>`
+                  : v.tier === 'slow' ? `<div class="pa-vel slow">Slow mover \u2014 ${esc(v.why || '')}</div>` : '';
+        cell.innerHTML = vel + d.suggestions.map((sg, i) => `
           <div class="pa-sg${i === 0 ? ' top' : ''}">
             <button class="pa-use" data-bin="${esc(sg.location_id)}">${esc(sg.location_id)}</button>
-            <span class="hint">${sg.qty < Number(qty) ? `${sg.qty} of ${qty} · ` : ''}${esc(sg.reason)}</span>
+            <span class="hint">${sg.qty < Number(qty) ? `${sg.qty} of ${qty} \u00b7 ` : ''}${esc(sg.reason)}</span>
+            ${sg.where ? `<span class="pa-where">${esc(sg.where)}</span>` : ''}
           </div>`).join('')
           + (d.notes || []).map(n => `<div class="hint">${esc(n)}</div>`).join('');
         cell.querySelectorAll('.pa-use').forEach(u => u.addEventListener('click', () => {
