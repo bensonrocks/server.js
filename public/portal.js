@@ -624,8 +624,19 @@
     } else if (d.pickup?.due) {
       meta.push(`Due to leave ${fmtDate(d.pickup.due)}`);
     }
+    if (d.issue_no) meta.push(`GI ${esc(d.issue_no)}`);
     const showPacked = d.status === 'done' || d.status === 'processing';
+    // THE WAYBILL AS A PILL. A tracking number on its own asks the client to
+    // take it on trust; this opens the actual label we matched to the order.
+    // The fetch+blob dance is because a plain <a href> cannot carry the session
+    // token header — the same reason the exports do it.
+    const wb = d.waybill
+      ? `<span class="pill ${d.has_label ? 'p-sla-met' : 'p-due'} wbpill"${d.has_label ? ` data-o="${esc(d.order_number)}" style="cursor:pointer"` : ''}
+           title="${d.has_label ? 'Open the waybill we matched to this order' : 'No waybill label on file for this order yet'}"
+         >&#127991; ${esc(d.waybill)}${d.has_label ? ' \u00b7 view' : ''}</span>`
+      : '';
     return `
+      ${wb ? `<div style="margin-bottom:.5rem">${wb}</div>` : ''}
       ${meta.length ? `<div class="muted" style="margin-bottom:.45rem">${meta.join(' · ')}</div>` : ''}
       ${d.delivery_address ? `<div class="muted" style="margin-bottom:.45rem">&#128205; ${esc(d.delivery_address)}</div>` : ''}
       <table class="dtab"><thead><tr>
@@ -1479,9 +1490,26 @@
   });
 
   // Order cards expand to show their contents.
-  $('orList').addEventListener('click', e => {
+  $('orList').addEventListener('click', async e => {
     // Ticking the cancel checkbox must not also expand the card.
     if (e.target.classList.contains('pick')) return;
+    // Neither must opening the waybill — it sits INSIDE the expanded card, so
+    // letting the click through would collapse it again.
+    const wb = e.target.closest('.wbpill[data-o]');
+    if (wb) {
+      e.stopPropagation();
+      const orig = wb.textContent;
+      wb.textContent = 'opening…';
+      try {
+        const r = await api('/api/portal/order/' + encodeURIComponent(wb.dataset.o) + '/label');
+        if (!r.ok) { alert('That waybill is not available.'); return; }
+        const url = URL.createObjectURL(await r.blob());
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } catch (_) { alert('Could not open the waybill.'); }
+      finally { wb.textContent = orig; }
+      return;
+    }
     const card = e.target.closest('.card[data-order]');
     if (card) toggleOrder(card.dataset.order);
   });

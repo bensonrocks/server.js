@@ -3792,6 +3792,9 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
       issue_no: o.issue_no || '', carrier: o.carrier || '',
       delivery_address: o.delivery_address || '',
       cartons: (st.cartons || []).length || (st.status === 'done' ? 1 : 0),
+      // The waybill page we matched to this order. A number alone asks the
+      // client to take it on trust; the label itself is the proof.
+      has_label: !!(db.orderLabels || {})[o.order_number],
       lines: (o.lines || []).map(l => ({
         sku: l.sku, description: l.description || '',
         qty: l.qty || 0, packed: scanned[l.sku] || 0,
@@ -3857,9 +3860,17 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       const st = b.orderStates?.[o.order_number] || {};
       // Delivery, when we are moving it ourselves. Same words the office sees.
       const job = transportJobForOrder(db, o.order_number);
-      const delivery = job ? {
+      const _pk = portalPickup(st, _pol);
+      // A DELIVERY PILL THAT SAYS NOTHING IS WORSE THAN NO PILL. Once a parcel
+      // has been collected, "Staging" (waiting for pickup) and "Preplanned"
+      // describe a step that is over — and for a marketplace order collected by
+      // the platform's own courier there was never a van of ours involved. If
+      // WE are moving it, "On the road" and "Delivered" are real news and stay.
+      const _lbl = job ? tmsStatusLabelSrv(job) : '';
+      const _stale = _pk?.status === 'picked_up' && (_lbl === 'Staging' || _lbl === 'Preplanned');
+      const delivery = (job && !_stale) ? {
         status: job.status || 'pending',
-        label: tmsStatusLabelSrv(job),
+        label: _lbl,
         delivered_at: job.deliveredAt || null,
         remarks: String(job.podRemarks || '').trim(),
         driver: job.assignedDriverName || '',
@@ -3869,7 +3880,10 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
         delivery,
-        pickup: portalPickup(st, _pol),
+        pickup: _pk,
+        // The waybill we matched to this order, if any — so the client can see
+        // the actual label rather than take the number on trust.
+        has_label: !!(db.orderLabels || {})[o.order_number],
         // Whether the client may cancel this themselves — same rule the delete
         // endpoint enforces, so the UI can never offer something the server
         // will refuse.
@@ -3925,6 +3939,26 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
 // ledger the export and the office report read.
 // Notices broadcast to this client. Any of their logins may acknowledge on the
 // account's behalf — see noticeRecipients.
+// The matched waybill page, for the client that owns the order. Ownership is
+// re-checked here rather than trusted from the caller — /api/order-label is the
+// STAFF route and must never be reachable with a portal token.
+app.get('/api/portal/order/:orderNumber/label', requirePortalAuthMiddleware, (req, res) => {
+  const clientNorm = req.portalClient.trim().toLowerCase();
+  const wanted = String(req.params.orderNumber);
+  const db = readDb();
+  const owns = (db.batches || []).some(b =>
+    String(b.client_name || '').trim().toLowerCase() === clientNorm &&
+    (b.orders || []).some(o => String(o.order_number) === wanted));
+  if (!owns) return res.status(404).json({ error: 'Order not found' });
+  const ref = (db.orderLabels || {})[wanted];
+  if (!ref) return res.status(404).json({ error: 'No waybill matched to this order' });
+  const filePath = path.join(LABEL_IMPORT_DIR, ref.importId, ref.pageFile);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'The waybill file is no longer on file' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${wanted}_waybill.pdf"`);
+  fs.createReadStream(filePath).pipe(res);
+});
+
 app.get('/api/portal/notices', requirePortalAuthMiddleware, (req, res) => {
   const db = readDb();
   const key = 'client:' + req.portalClient;
@@ -11837,10 +11871,20 @@ function persistSessions() {
 }
 
 // requireAuthOrToken: accepts token in header OR ?token= query param (for PDF iframes)
+// Same as requireAuth, but ALSO accepts ?token= — for <img src> and <embed>,
+// which cannot send a header. It is used by the PDF and photo viewers.
+//
+// IT MUST SKIP NAMESPACED SESSIONS FOR THE SAME REASON requireAuth DOES, and
+// for a long time it did not: a client-portal (or driver) token was accepted
+// here, so any signed-in client could fetch ANY order's waybill, any label
+// import page, any inbound photo — including other clients'. Found by a test
+// asserting a portal token could not reach the staff label route; it could.
+// The portal has its own ownership-checked label route.
 function requireAuthOrToken(req, res, next) {
   const token = req.headers['x-auth-token'] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Unauthorised' });
   for (const [userId, t] of activeSessions) {
+    if (userId.startsWith('driver:') || userId.startsWith('portal:')) continue;
     if (t === token) { req.userId = userId; return next(); }
   }
   res.status(401).json({ error: 'Session expired' });

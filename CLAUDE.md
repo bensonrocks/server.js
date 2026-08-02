@@ -2980,6 +2980,37 @@ an unqualified `client_id` in the WHERE clause made the whole query ambiguous
 and SQLite refused it. The `catch` around it was silent, so the report came back
 empty — indistinguishable from a quiet month. It now logs.
 
+## Portal orders — the waybill you can open, and no pill that says nothing
+
+- **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing
+  a grey "Staging" chip under its green "Picked Up" — Staging means *waiting for
+  pickup*, a step that is over, and for a marketplace order collected by the
+  platform's own courier there was never a van of ours involved. `/api/portal/orders`
+  now suppresses `delivery` when the parcel is `picked_up` AND the label would
+  only be `Staging` or `Preplanned`. **"On the road" and "Delivered" survive** —
+  if we really are moving it, that is real news.
+- **THE WAYBILL IS A PILL YOU CAN OPEN.** A tracking number alone asks the
+  client to take it on trust. `has_label` on the list and the detail says whether
+  a matched page exists; clicking opens it via
+  `GET /api/portal/order/:orderNumber/label`, which re-checks ownership itself
+  and 404s (never 403) for another client's order, so the route cannot be used
+  to probe for order numbers. The click `stopPropagation`s — the pill sits
+  inside the expanded card, so letting it bubble would collapse it.
+
+### SECURITY — `requireAuthOrToken` was missing the namespaced-session skip
+
+`requireAuth` skips sessions keyed `driver:`/`portal:` so a client or driver
+token can never unlock staff APIs. **`requireAuthOrToken` never got the same
+guard**, and it is what the PDF and photo viewers use (they take `?token=`
+because `<img>`/`<embed>` cannot send a header). So a signed-in client could
+fetch ANY order's waybill, any label-import page, any inbound photo and the
+no-barcode sheet — including other clients'. Four routes, all read.
+
+Found by an assertion that a portal token could NOT reach the staff label
+route; it could, and returned 200. Fixed by adding the identical skip. Keep
+both functions in step — if a third auth helper is ever added, it needs this
+too.
+
 ## Adjusting a stock quantity by hand — password, reason, trail
 
 Per the user: allow adjusting inventory quantity, behind the Administrator
