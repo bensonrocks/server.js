@@ -32,36 +32,24 @@ export function SiteHeader() {
   return (
     <header
       className={cn(
-        "sticky top-0 z-50 w-full border-b transition-all duration-300",
+        "sticky top-0 z-50 w-full border-b transition-[background-color,border-color,box-shadow,backdrop-filter] duration-300",
         scrolled
           ? "border-border bg-paper/90 backdrop-blur-md shadow-[0_1px_0_rgba(20,23,27,0.05)]"
           : "border-transparent bg-paper"
       )}
     >
-      <div
-        className={cn(
-          "mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 transition-all duration-300",
-          scrolled ? "py-2" : "py-3"
-        )}
-      >
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3">
         <Link
           href="/"
-          className="flex shrink-0 items-center gap-3"
+          className={cn(
+            "flex shrink-0 origin-left items-center gap-3 transition-transform duration-300 ease-out motion-reduce:transition-none",
+            scrolled ? "scale-[0.86]" : "scale-100"
+          )}
           aria-label="NimbusTrade Solutions home"
         >
-          <WaveMark
-            className={cn(
-              "w-auto shrink-0 text-brand transition-all duration-300",
-              scrolled ? "h-8 sm:h-9 md:h-10" : "h-9 sm:h-11 md:h-14"
-            )}
-          />
+          <WaveMark className="h-9 w-auto shrink-0 text-brand sm:h-11 md:h-14" />
           <span className="flex min-w-0 flex-col leading-none">
-            <span
-              className={cn(
-                "whitespace-nowrap font-display font-bold tracking-[0.03em] text-brand transition-all duration-300 sm:tracking-[0.08em]",
-                scrolled ? "text-sm sm:text-base md:text-lg" : "text-base sm:text-xl md:text-2xl"
-              )}
-            >
+            <span className="whitespace-nowrap font-display text-base font-bold tracking-[0.03em] text-brand sm:text-xl sm:tracking-[0.08em] md:text-2xl">
               NIMBUSTRADE
               <span className="text-ink"> SOLUTIONS</span>
             </span>

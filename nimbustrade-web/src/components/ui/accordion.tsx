@@ -27,7 +27,7 @@ const AccordionTrigger = React.forwardRef<
     <AccordionPrimitive.Trigger
       ref={ref}
       className={cn(
-        "flex flex-1 items-center justify-between py-5 text-left font-display text-lg font-semibold text-ink transition-colors hover:text-brand [&[data-state=open]>svg]:rotate-180",
+        "flex flex-1 items-center justify-between py-5 text-left font-display text-lg font-semibold text-ink transition-[color,transform] duration-150 ease-out active:scale-[0.99] motion-reduce:active:scale-100 hover:text-brand [&[data-state=open]>svg]:rotate-180",
         className
       )}
       {...props}
@@ -45,10 +45,17 @@ const AccordionContent = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <AccordionPrimitive.Content
     ref={ref}
-    className="overflow-hidden text-sm data-[state=closed]:animate-[accordion-up_0.2s_ease-out] data-[state=open]:animate-[accordion-down_0.2s_ease-out]"
+    className="group overflow-hidden text-sm motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none data-[state=closed]:animate-[accordion-up_0.2s_ease-out] data-[state=open]:animate-[accordion-down_0.2s_ease-out]"
     {...props}
   >
-    <div className={cn("pb-5 text-ink-muted leading-relaxed", className)}>{children}</div>
+    <div
+      className={cn(
+        "pb-5 text-ink-muted leading-relaxed group-data-[state=open]:animate-in group-data-[state=open]:fade-in-0 group-data-[state=open]:slide-in-from-top-1 group-data-[state=open]:duration-200 motion-reduce:group-data-[state=open]:animate-none",
+        className
+      )}
+    >
+      {children}
+    </div>
   </AccordionPrimitive.Content>
 ));
 AccordionContent.displayName = "AccordionContent";

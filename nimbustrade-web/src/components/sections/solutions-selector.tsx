@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Check } from "lucide-react";
 import { SOLUTIONS } from "@/data/solutions";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 export function SolutionsSelector() {
   const [activeSlug, setActiveSlug] = React.useState(SOLUTIONS[0].slug);
   const active = SOLUTIONS.find((s) => s.slug === activeSlug) ?? SOLUTIONS[0];
+  const reduceMotion = useReducedMotion();
 
   return (
     <section className="bg-paper-alt border-y border-border">
@@ -38,7 +39,7 @@ export function SolutionsSelector() {
                 aria-selected={s.slug === activeSlug}
                 onClick={() => setActiveSlug(s.slug)}
                 className={cn(
-                  "shrink-0 rounded-sm border px-4 py-3 text-left text-sm font-semibold transition-colors lg:shrink",
+                  "shrink-0 rounded-sm border px-4 py-3 text-left text-sm font-semibold transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] motion-reduce:active:scale-100 lg:shrink",
                   s.slug === activeSlug
                     ? "border-brand bg-brand text-white"
                     : "border-border-strong bg-paper text-ink hover:border-brand hover:text-brand"
@@ -53,10 +54,10 @@ export function SolutionsSelector() {
             <AnimatePresence mode="wait">
               <motion.div
                 key={active.slug}
-                initial={{ opacity: 0, y: 8 }}
+                initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}
+                exit={{ opacity: 0, y: reduceMotion ? 0 : -8 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               >
                 <p className="font-display text-xl font-semibold text-brand">
                   &ldquo;{active.question}&rdquo;

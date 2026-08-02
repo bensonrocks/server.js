@@ -4,6 +4,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Check, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SOLUTIONS } from "@/data/solutions";
@@ -60,8 +61,10 @@ const VOLUME_OPTIONS = [
 
 export function QuoteForm() {
   const [step, setStep] = React.useState(0);
+  const [direction, setDirection] = React.useState(1);
   const [submitted, setSubmitted] = React.useState(false);
   const [submittedValues, setSubmittedValues] = React.useState<QuoteValues | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const {
     register,
@@ -99,10 +102,16 @@ export function QuoteForm() {
   const goNext = async () => {
     const fields = STEPS[step].fields;
     const valid = fields.length === 0 ? true : await trigger(fields as never);
-    if (valid) setStep((s) => Math.min(s + 1, STEPS.length - 1));
+    if (valid) {
+      setDirection(1);
+      setStep((s) => Math.min(s + 1, STEPS.length - 1));
+    }
   };
 
-  const goBack = () => setStep((s) => Math.max(s - 1, 0));
+  const goBack = () => {
+    setDirection(-1);
+    setStep((s) => Math.max(s - 1, 0));
+  };
 
   const onSubmit = async (data: QuoteValues) => {
     await new Promise((r) => setTimeout(r, 700));
@@ -156,7 +165,15 @@ export function QuoteForm() {
       </ol>
 
       <form onSubmit={handleSubmit(onSubmit)} noValidate>
-        <div className="rounded-lg border border-border bg-paper-alt p-8">
+        <div className="overflow-hidden rounded-lg border border-border bg-paper-alt p-8">
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={step}
+          initial={{ opacity: 0, x: reduceMotion ? 0 : direction * 16 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: reduceMotion ? 0 : direction * -16 }}
+          transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        >
           {step === 0 && (
             <fieldset>
               <legend className="font-display text-2xl font-bold text-ink">
@@ -173,7 +190,7 @@ export function QuoteForm() {
                       onClick={() => toggleService(sol.slug)}
                       aria-pressed={checked}
                       className={cn(
-                        "flex items-center gap-3 rounded-sm border px-4 py-3 text-left text-sm font-semibold transition-colors",
+                        "flex items-center gap-3 rounded-sm border px-4 py-3 text-left text-sm font-semibold transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] motion-reduce:active:scale-100",
                         checked
                           ? "border-brand bg-brand-tint text-brand"
                           : "border-border-strong bg-paper text-ink hover:border-brand"
@@ -320,6 +337,8 @@ export function QuoteForm() {
               </p>
             </div>
           )}
+        </motion.div>
+        </AnimatePresence>
         </div>
 
         <div className="mt-6 flex items-center justify-between">
