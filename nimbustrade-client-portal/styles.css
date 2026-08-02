@@ -781,3 +781,11 @@ table.rates-table td:first-child { font-family: var(--font-body); font-weight: 6
   .app-brand-suffix { display: none; }
   .app-header-right { gap: 10px; }
 }
+
+/* Shipment trails — distinct from the dashed order-presence lines */
+.nt-popup-shipment { border-top: 1px solid var(--border-soft); margin-top: 6px; padding-top: 6px; }
+.nt-shipment-marker { display: flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; font-size: 10px; }
+.nt-shipment-marker.mode-air { background: var(--accent-strong); }
+.nt-shipment-marker.mode-sea { background: var(--green); }
+.nt-shipment-marker.mode-road { background: #6b5c3f; }
+.nt-shipment-marker.status-delayed { background: var(--red); }

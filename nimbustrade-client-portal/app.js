@@ -10,6 +10,8 @@
     { sku: 'VTC-CLN-100', name: 'Vitamin C Cleanser 100ml' },
   ];
   const SG_HUB = { lat: 1.3521, lng: 103.8198 };
+  const INBOUND_STATUS_LABEL = { booked: 'Booked', in_transit: 'In Transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
+  const INBOUND_MODE_LABEL = { air: 'Air', sea: 'Sea', road: 'Road' };
 
   let token = localStorage.getItem('nt-client-token') || '';
   let clientName = localStorage.getItem('nt-client-name') || '';
@@ -93,7 +95,11 @@
   // ---------- Dashboard (stats + map) ----------
 
   async function loadDashboard() {
-    const data = await api('/dashboard');
+    const needsShipments = !!$('#world-map');
+    const [data, shipments] = await Promise.all([
+      api('/dashboard'),
+      needsShipments ? api('/inbound') : Promise.resolve([]),
+    ]);
     if ($('#stat-total')) {
       $('#stat-total').textContent = data.counts.total.toLocaleString();
       $('#stat-dropped').textContent = data.counts.dropped.toLocaleString();
@@ -102,7 +108,7 @@
       $('#stat-issue').textContent = data.counts.issue.toLocaleString();
       renderMonthlyBars(data.months);
     }
-    if ($('#world-map')) renderMap(data.countries);
+    if (needsShipments) renderMap(data.countries, shipments);
   }
 
   function monthLabel(yyyyMm) {
@@ -190,7 +196,7 @@
     });
   }
 
-  function renderMap(countries) {
+  function renderMap(countries, shipments) {
     if (!leafletMap) initMap();
     lastCountries = countries;
     markerLayer.clearLayers();
@@ -228,12 +234,59 @@
       marker.addTo(markerLayer);
     });
 
+    renderShipmentTrails(shipments || []);
+
     if (!boundsSet) {
       leafletMap.fitBounds(L.latLngBounds(allPoints), { padding: [30, 30] });
       boundsSet = true;
     }
     if (selectedMarker) selectedMarker.openPopup();
     renderMarketChips(countries);
+  }
+
+  // Shipment trails — physical inbound freight moving SG hub → DC, layered on
+  // top of the same map as the order-presence lines but visually distinct
+  // (solid, colored by mode) and grouped by destination since several
+  // shipments can be moving to the same DC at once. Only ships still moving
+  // (not yet "arrived") are drawn — an arrived shipment isn't a trail anymore.
+  function renderShipmentTrails(shipments) {
+    const active = shipments.filter((s) => s.status !== 'arrived' && s.lat != null && s.lng != null);
+    const byDest = new Map();
+    active.forEach((s) => {
+      const key = `${s.lat},${s.lng}`;
+      if (!byDest.has(key)) byDest.set(key, { lat: s.lat, lng: s.lng, countryName: s.country_name, city: s.city, shipments: [] });
+      byDest.get(key).shipments.push(s);
+    });
+
+    byDest.forEach((dest) => {
+      const hasDelayed = dest.shipments.some((s) => s.status === 'delayed');
+      const primaryMode = dest.shipments[0].mode || 'air';
+      const midLat = (SG_HUB.lat + dest.lat) / 2;
+      const midLng = (SG_HUB.lng + dest.lng) / 2;
+
+      L.polyline([[SG_HUB.lat, SG_HUB.lng], [dest.lat, dest.lng]], {
+        color: hasDelayed ? '#9c3223' : '#0f6aa8', weight: 2, opacity: 0.85, interactive: false,
+      }).addTo(markerLayer);
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="nt-shipment-marker mode-${primaryMode}${hasDelayed ? ' status-delayed' : ''}" style="width:22px;height:22px;">${dest.shipments.length}</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+
+      L.marker([midLat, midLng], { icon })
+        .bindPopup(`
+          <span class="nt-popup-title">Inbound to ${escapeHtml(dest.countryName)}</span>
+          ${dest.shipments.map((s) => `
+            <div class="nt-popup-shipment">
+              <div class="nt-popup-row"><span>${escapeHtml(s.reference)}</span><span>${INBOUND_STATUS_LABEL[s.status] || s.status}</span></div>
+              <div class="nt-popup-row"><span>${escapeHtml(s.origin)} · ${INBOUND_MODE_LABEL[s.mode] || s.mode}</span><span>${escapeHtml(s.carrier || 'No carrier')}</span></div>
+            </div>
+          `).join('')}
+        `, { className: 'nt-popup' })
+        .addTo(markerLayer);
+    });
   }
 
   function selectMarket(country) {
@@ -788,9 +841,6 @@
   }
 
   // ---------- Reports ----------
-
-  const INBOUND_STATUS_LABEL = { booked: 'Booked', in_transit: 'In Transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
-  const INBOUND_MODE_LABEL = { air: 'Air', sea: 'Sea', road: 'Road' };
 
   async function loadReports() {
     const marketTbody = $('#reports-market-tbody');

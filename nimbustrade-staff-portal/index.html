@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -56,6 +57,10 @@
     <button class="tab-btn active" data-tab="overview">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
       <span>Overview</span>
+    </button>
+    <button class="tab-btn" data-tab="map">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="7"/><path d="M12 21c3-3.5 5-6.3 5-9.5"/><path d="M12 21c-3-3.5-5-6.3-5-9.5"/><circle cx="12" cy="10" r="2.2"/></svg>
+      <span>Map</span>
     </button>
     <button class="tab-btn" data-tab="orders">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
@@ -108,6 +113,34 @@
             <tbody><tr><td colspan="6" class="table-loading">Loading…</td></tr></tbody>
           </table>
         </div>
+      </section>
+    </section>
+
+    <!-- ---------- Map ---------- -->
+    <section class="tab-panel" id="tab-map">
+      <div class="app-toolbar">
+        <div>
+          <p class="eyebrow">All Clients</p>
+          <h2>Order flow and inbound shipments, network-wide</h2>
+        </div>
+      </div>
+      <section class="panel">
+        <div class="panel-head">
+          <h3>Every market, every client</h3>
+          <div class="legend">
+            <span><i class="dot dot-green"></i> Healthy</span>
+            <span><i class="dot dot-amber"></i> In motion</span>
+            <span><i class="dot dot-red"></i> Needs attention</span>
+          </div>
+        </div>
+        <div class="map-wrap">
+          <div id="world-map"></div>
+        </div>
+        <p class="map-hint">
+          Dashed lines show where each client operates — solid blue lines are inbound shipments
+          still moving from the Singapore hub; click a shipment marker for its reference, client,
+          and waybill.
+        </p>
       </section>
     </section>
 
@@ -397,6 +430,7 @@
   </form>
 </div>
 
+<script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

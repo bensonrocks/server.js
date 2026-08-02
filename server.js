@@ -1426,6 +1426,13 @@ app.get('/staff-access/api/dashboard', withStaffAuth, (req, res) => {
   res.json(ntStore.getGlobalDashboard());
 });
 
+app.get('/staff-access/api/map', withStaffAuth, (req, res) => {
+  res.json({
+    locations: ntStore.getGlobalLocationBreakdown(),
+    shipments: ntStore.listAllInboundForStaff(),
+  });
+});
+
 // Clients
 app.get('/staff-access/api/clients', withStaffAuth, (req, res) => {
   res.json(ntStore.listAllClients());

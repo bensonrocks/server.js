@@ -10,6 +10,8 @@
   let allLocations = [];
   let selectedInvLocationByClient = {};
 
+  const SG_HUB = { lat: 1.3521, lng: 103.8198 };
+
   const MARKET_PRESETS = [
     { code: 'SG', name: 'Singapore', city: 'Singapore', lat: 1.3521, lng: 103.8198 },
     { code: 'MY', name: 'Malaysia', city: 'Kuala Lumpur', lat: 3.1390, lng: 101.6869 },
@@ -111,6 +113,9 @@
       $$('.tab-panel').forEach((p) => p.classList.remove('active'));
       btn.classList.add('active');
       $(`#tab-${btn.dataset.tab}`).classList.add('active');
+      // Leaflet needs a visible, correctly-sized container — the map tab is
+      // hidden (display:none) until clicked, so init/resize happens here.
+      if (btn.dataset.tab === 'map') loadMap();
     });
   });
 
@@ -138,6 +143,150 @@
         <td><strong>${c.total}</strong></td>
       </tr>
     `).join('');
+  }
+
+  // ---------- Map (all clients, all markets + inbound shipment trails) ----------
+
+  let leafletMap = null;
+  let markerLayer = null;
+  let mapLoaded = false;
+
+  function statusOf(c) {
+    const issueRate = c.total > 0 ? c.issue / c.total : 0;
+    if (issueRate > 0.035) return 'red';
+    if (c.processing > 0 || c.dropped > 0) return 'amber';
+    return 'green';
+  }
+
+  function initMap() {
+    leafletMap = L.map('world-map', {
+      zoomControl: false,
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      touchZoom: false,
+      attributionControl: true,
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 19,
+    }).addTo(leafletMap);
+
+    markerLayer = L.layerGroup().addTo(leafletMap);
+  }
+
+  function markerIcon(status, size) {
+    return L.divIcon({
+      className: '',
+      html: `<div class="nt-marker status-${status}" style="width:${size}px;height:${size}px;">
+               <div class="nt-marker-ring"></div><div class="nt-marker-dot"></div>
+             </div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+  }
+
+  async function loadMap() {
+    const { locations, shipments } = await api('/map');
+    renderMap(locations, shipments);
+  }
+
+  function renderMap(locations, shipments) {
+    if (!leafletMap) initMap();
+    markerLayer.clearLayers();
+
+    const hubIcon = L.divIcon({ className: '', html: '<div class="nt-hub-marker"></div>', iconSize: [9, 9], iconAnchor: [4.5, 4.5] });
+    L.marker([SG_HUB.lat, SG_HUB.lng], { icon: hubIcon, interactive: false })
+      .bindTooltip('SG · HUB', { permanent: true, direction: 'right', offset: [8, 0], className: '' })
+      .addTo(markerLayer);
+
+    const allPoints = [[SG_HUB.lat, SG_HUB.lng]];
+
+    locations.forEach((loc) => {
+      allPoints.push([loc.lat, loc.lng]);
+      L.polyline([[SG_HUB.lat, SG_HUB.lng], [loc.lat, loc.lng]], {
+        color: '#dd8d6c', weight: 1.2, dashArray: '3 4', opacity: 0.5, interactive: false,
+      }).addTo(markerLayer);
+    });
+
+    locations.forEach((loc) => {
+      const status = statusOf(loc);
+      const size = Math.max(18, Math.min(34, 14 + Math.sqrt(loc.total) * 2));
+      const marker = L.marker([loc.lat, loc.lng], { icon: markerIcon(status, size) });
+      marker.bindPopup(`
+        <span class="nt-popup-title">${escapeHtml(loc.clientName)} — ${escapeHtml(loc.countryName)}</span>
+        <div class="nt-popup-row"><span>Dropped</span><span>${loc.dropped}</span></div>
+        <div class="nt-popup-row"><span>Processing</span><span>${loc.processing}</span></div>
+        <div class="nt-popup-row"><span>Completed</span><span>${loc.completed}</span></div>
+        <div class="nt-popup-row"><span>Issues</span><span>${loc.issue}</span></div>
+      `, { className: 'nt-popup' });
+      marker.on('click', () => {
+        $$('.tab-btn').forEach((b) => b.classList.remove('active'));
+        $$('.tab-panel').forEach((p) => p.classList.remove('active'));
+        $('[data-tab="orders"]').classList.add('active');
+        $('#tab-orders').classList.add('active');
+        $('#filter-client').value = loc.clientId;
+        $('#filter-country').value = loc.country;
+        ordersPage = 1;
+        loadOrders();
+      });
+      marker.addTo(markerLayer);
+    });
+
+    renderShipmentTrails(shipments || []);
+
+    if (allPoints.length > 1) leafletMap.fitBounds(L.latLngBounds(allPoints), { padding: [30, 30] });
+    if (!mapLoaded) { mapLoaded = true; }
+    setTimeout(() => leafletMap.invalidateSize(), 50);
+  }
+
+  // Same trail model as the client portal's map — solid, mode-colored lines
+  // for shipments still moving (not yet "arrived"), grouped by destination,
+  // layered over the dashed client-presence lines.
+  function renderShipmentTrails(shipments) {
+    const active = shipments.filter((s) => s.status !== 'arrived' && s.lat != null && s.lng != null);
+    const byDest = new Map();
+    active.forEach((s) => {
+      const key = `${s.client_id}:${s.lat},${s.lng}`;
+      if (!byDest.has(key)) {
+        byDest.set(key, { lat: s.lat, lng: s.lng, countryName: s.country_name, clientName: s.client_name, shipments: [] });
+      }
+      byDest.get(key).shipments.push(s);
+    });
+
+    byDest.forEach((dest) => {
+      const hasDelayed = dest.shipments.some((s) => s.status === 'delayed');
+      const primaryMode = dest.shipments[0].mode || 'air';
+      const midLat = (SG_HUB.lat + dest.lat) / 2;
+      const midLng = (SG_HUB.lng + dest.lng) / 2;
+
+      L.polyline([[SG_HUB.lat, SG_HUB.lng], [dest.lat, dest.lng]], {
+        color: hasDelayed ? '#9c3223' : '#0f6aa8', weight: 2, opacity: 0.85, interactive: false,
+      }).addTo(markerLayer);
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="nt-shipment-marker mode-${primaryMode}${hasDelayed ? ' status-delayed' : ''}" style="width:22px;height:22px;">${dest.shipments.length}</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+
+      L.marker([midLat, midLng], { icon })
+        .bindPopup(`
+          <span class="nt-popup-title">${escapeHtml(dest.clientName)} — Inbound to ${escapeHtml(dest.countryName)}</span>
+          ${dest.shipments.map((s) => `
+            <div class="nt-popup-shipment">
+              <div class="nt-popup-row"><span>${escapeHtml(s.reference)}</span><span>${SHIPMENT_STATUS_LABEL[s.status] || s.status}</span></div>
+              <div class="nt-popup-row"><span>${escapeHtml(s.origin)} · ${SHIPMENT_MODE_LABEL[s.mode] || s.mode}</span><span>${escapeHtml(s.carrier || 'No carrier')}${s.waybill_number ? ' · ' + escapeHtml(s.waybill_number) : ''}</span></div>
+            </div>
+          `).join('')}
+        `, { className: 'nt-popup' })
+        .addTo(markerLayer);
+    });
   }
 
   // ---------- Clients ----------
