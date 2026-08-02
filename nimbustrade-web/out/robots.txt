@@ -3,4 +3,4 @@ Allow: /
 Disallow: /privacy
 Disallow: /terms
 
-Sitemap: https://nimbustrade.up.railway.app/sitemap.xml
+Sitemap: https://nimbustrade.co/sitemap.xml

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SERVICES } from "@/data/services";
 import { Button } from "@/components/ui/button";
+import { ServiceJsonLd } from "@/components/structured-data";
 
 export const metadata: Metadata = {
   title: "Ecommerce Fulfillment Services in Singapore & Southeast Asia",
@@ -14,6 +15,7 @@ export const metadata: Metadata = {
 export default function ServicesPage() {
   return (
     <div className="mx-auto max-w-7xl px-6 py-20">
+      <ServiceJsonLd services={SERVICES} />
       <div className="max-w-2xl">
         <span className="text-xs font-bold uppercase tracking-wider text-brand">Services</span>
         <h1 className="mt-3 font-display text-5xl font-bold text-ink">

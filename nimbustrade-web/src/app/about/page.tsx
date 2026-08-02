@@ -50,10 +50,6 @@ export default function AboutPage() {
             one customs broker, one set of reports. We run that coordination as a single desk, so
             our clients deal with one point of contact instead of five.
           </p>
-          <p className="mt-4 rounded-sm border border-dashed border-border-strong bg-paper-alt px-4 py-3 text-sm text-ink-muted">
-            [ Company history, founding date, and leadership bios — placeholder pending
-            confirmed details. ]
-          </p>
         </div>
 
         <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2">

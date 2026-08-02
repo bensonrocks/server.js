@@ -25,7 +25,7 @@ export const SERVICES: Service[] = [
     name: "Warehousing",
     icon: Warehouse,
     summary:
-      "Bonded and non-bonded storage across NimbusTrade-appointed warehouses — including our own Singapore and Malaysia facilities — every one held to the same fulfillment standards.",
+      "Storage across NimbusTrade-appointed warehouses in Singapore and Malaysia, every one held to the same fulfillment standards.",
     benefit: "Pay for the space you use, not a fixed lease.",
     points: ["Bin and pallet storage", "Cycle counting", "Temperature-aware zoning"],
   },
@@ -61,9 +61,9 @@ export const SERVICES: Service[] = [
     name: "E-commerce operations",
     icon: ShoppingCart,
     summary:
-      "Marketplace and storefront order operations for Shopify, Lazada, Shopee, and TikTok Shop sellers.",
+      "Marketplace and storefront order operations, supported via file upload so nothing needs re-keying — API sync where a connector is already in place.",
     benefit: "Orders flow to the warehouse floor without manual re-keying.",
-    points: ["Order sync", "Inventory allocation", "Channel-level reporting"],
+    points: ["Order intake", "Inventory allocation", "Channel-level reporting"],
   },
   {
     slug: "cross-border",

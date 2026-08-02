@@ -36,8 +36,7 @@ export function FacilityGallery() {
           A look at the floor.
         </h2>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          Day-to-day storage, kitting, and dispatch — photographed on our own floor.
-          Client and carrier marks are removed from every photo below.
+          Storage, kitting, and dispatch at our Singapore facility.
         </p>
       </div>
 

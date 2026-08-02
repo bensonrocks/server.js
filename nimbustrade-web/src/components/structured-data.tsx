@@ -13,7 +13,6 @@ export function OrganizationJsonLd() {
     description: SITE_DESCRIPTION,
     email: "info@nimbustrade.co",
     telephone: "+65-8877-6106",
-    priceRange: "$$",
     address: {
       "@type": "PostalAddress",
       streetAddress: "62 Ubi Road 1, Oxley Bizhub 2, #06-01",
@@ -35,6 +34,36 @@ export function OrganizationJsonLd() {
       "B2B and B2C order fulfillment",
     ],
     sameAs: [],
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+    />
+  );
+}
+
+export function ServiceJsonLd({
+  services,
+}: {
+  services: { name: string; summary: string; slug: string }[];
+}) {
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    itemListElement: services.map((service, i) => ({
+      "@type": "Service",
+      position: i + 1,
+      name: service.name,
+      description: service.summary,
+      url: `${SITE_URL}/services#${service.slug}`,
+      provider: { "@id": `${SITE_URL}/#organization` },
+      areaServed: [
+        { "@type": "Country", name: "Singapore" },
+        { "@type": "Country", name: "Malaysia" },
+      ],
+    })),
   };
 
   return (

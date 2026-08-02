@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PricingSignal } from "@/components/sections/pricing-signal";
 import { ContactSection } from "@/components/sections/contact-section";
 
 export const metadata: Metadata = {
@@ -12,6 +13,7 @@ export default function ContactPage() {
   return (
     <>
       <h1 className="sr-only">Contact Our Singapore Fulfillment Desk</h1>
+      <PricingSignal />
       <ContactSection />
     </>
   );

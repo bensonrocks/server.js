@@ -7,7 +7,7 @@ import { SolutionsSelector } from "@/components/sections/solutions-selector";
 import { HowItWorks } from "@/components/sections/how-it-works";
 import { Industries } from "@/components/sections/industries";
 import { PlatformMockup } from "@/components/sections/platform-mockup";
-import { CaseStudies } from "@/components/sections/case-studies";
+import { PricingSignal } from "@/components/sections/pricing-signal";
 import { ContactSection } from "@/components/sections/contact-section";
 
 export default function Home() {
@@ -22,7 +22,7 @@ export default function Home() {
       <HowItWorks />
       <Industries />
       <PlatformMockup />
-      <CaseStudies />
+      <PricingSignal />
       <ContactSection />
     </>
   );

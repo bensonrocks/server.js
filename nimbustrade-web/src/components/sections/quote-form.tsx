@@ -310,6 +310,14 @@ export function QuoteForm() {
                   {values.phone ? ` · ${values.phone}` : ""}
                 </ReviewRow>
               </dl>
+              <p className="mt-6 text-xs leading-relaxed text-ink-muted">
+                By submitting this form you consent to NimbusTrade Solutions Pte Ltd collecting
+                and using the details above to respond to your enquiry, in accordance with our{" "}
+                <a href="/privacy" className="font-semibold text-brand hover:underline">
+                  Privacy Policy
+                </a>
+                . We do not sell your data or add you to marketing lists without separate consent.
+              </p>
             </div>
           )}
         </div>

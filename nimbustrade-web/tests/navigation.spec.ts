@@ -40,7 +40,7 @@ test.describe("Navigation", () => {
 
   test("footer legal links resolve", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: "Privacy policy" }).click();
+    await page.locator("footer").getByRole("link", { name: "Privacy policy" }).click();
     await expect(page).toHaveURL(/\/privacy\/?$/);
   });
 });

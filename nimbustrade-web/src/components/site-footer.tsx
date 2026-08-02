@@ -35,7 +35,7 @@ export function SiteFooter() {
           <div>
             <img src="/logo.png" alt="NimbusTrade Solutions" className="h-16 w-auto" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-ink-muted">
-              A Singapore-based 4PL/3PL partner coordinating warehousing, fulfilment, and
+              A Singapore-based 4PL control tower coordinating warehousing, fulfilment, and
               cross-border freight for growing brands.
             </p>
             <div className="mt-6 space-y-2 text-sm text-ink-muted">
@@ -78,9 +78,12 @@ export function SiteFooter() {
         <div className="mt-14 flex flex-col gap-4 border-t border-border pt-8 text-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">
           <p>&copy; {new Date().getFullYear()} NimbusTrade Solutions. All rights reserved.</p>
           <div className="flex items-center gap-4">
-            <p className="text-ink-muted/80">
-              Content marked as a placeholder has not yet been confirmed for publication.
-            </p>
+            <a
+              href="/client-access"
+              className="shrink-0 font-semibold text-ink-muted transition-colors hover:text-brand"
+            >
+              Client Access
+            </a>
             <a
               href="/staff-access"
               className="shrink-0 font-semibold text-ink-muted transition-colors hover:text-brand"

@@ -70,6 +70,13 @@ const NIMBUSTRADE_HOSTS = (process.env.NIMBUSTRADE_HOSTS || 'nimbustrade.up.rail
   .split(',')
   .map((h) => h.trim())
   .filter(Boolean);
+// The canonical public domain for the NimbusTrade marketing site. Any of the
+// NIMBUSTRADE_HOSTS that doesn't match this gets a noindex header (so the
+// Railway subdomain never competes with the real domain in search), and —
+// once NIMBUSTRADE_REDIRECT_TO_CANONICAL is turned on after DNS cutover — a
+// 301 to the canonical host instead of serving content directly.
+const NIMBUSTRADE_CANONICAL_HOST = process.env.NIMBUSTRADE_CANONICAL_HOST || 'nimbustrade.co';
+const NIMBUSTRADE_REDIRECT_TO_CANONICAL = process.env.NIMBUSTRADE_REDIRECT_TO_CANONICAL === 'true';
 const CLIENT_ACCESS_HOSTS = (process.env.CLIENT_ACCESS_HOSTS || 'nimbustrade-portal.up.railway.app')
   .split(',')
   .map((h) => h.trim())
@@ -100,7 +107,15 @@ const vendorPortalStatic   = express.static(path.join(__dirname, 'nimbustrade-ve
 const staffPortalStatic    = express.static(path.join(__dirname, 'nimbustrade-staff-portal'));
 
 app.use((req, res, next) => {
-  if (NIMBUSTRADE_HOSTS.includes(req.hostname)) return nimbustradeWebStatic(req, res, next);
+  if (NIMBUSTRADE_HOSTS.includes(req.hostname)) {
+    if (req.hostname !== NIMBUSTRADE_CANONICAL_HOST) {
+      if (NIMBUSTRADE_REDIRECT_TO_CANONICAL) {
+        return res.redirect(301, `https://${NIMBUSTRADE_CANONICAL_HOST}${req.originalUrl}`);
+      }
+      res.set('X-Robots-Tag', 'noindex');
+    }
+    return nimbustradeWebStatic(req, res, next);
+  }
   if (CLIENT_ACCESS_HOSTS.includes(req.hostname)) return clientPortalStatic(req, res, next);
   if (VENDOR_ACCESS_HOSTS.includes(req.hostname)) return vendorPortalStatic(req, res, next);
   if (STAFF_ACCESS_HOSTS.includes(req.hostname)) return staffPortalStatic(req, res, next);

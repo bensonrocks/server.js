@@ -13,7 +13,7 @@ export const SOLUTIONS: Solution[] = [
     question: "I need somewhere reliable to hold stock.",
     description:
       "Storage that flexes with your volume — from a single pallet to a dedicated bay — without a fixed-term lease.",
-    included: ["Bin & pallet storage", "Cycle counts", "Inbound QC", "Bonded storage option"],
+    included: ["Bin & pallet storage", "Cycle counts", "Inbound QC"],
   },
   {
     slug: "fulfilment",
@@ -44,8 +44,8 @@ export const SOLUTIONS: Solution[] = [
     name: "E-commerce operations",
     question: "I sell on marketplaces and my own storefront.",
     description:
-      "Order and inventory sync across Shopify, Lazada, Shopee, and TikTok Shop so nothing needs re-keying.",
-    included: ["Order sync", "Inventory allocation", "Channel reporting", "Peak-sale scaling"],
+      "Order and inventory intake across your marketplaces and storefront, supported via file upload so nothing needs re-keying — API sync where a connector is already in place.",
+    included: ["Order intake", "Inventory allocation", "Channel reporting", "Peak-sale scaling"],
   },
   {
     slug: "cross-border",

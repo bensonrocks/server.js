@@ -90,9 +90,6 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden lg:flex items-center gap-3">
-          <Button asChild size="sm" variant="outline">
-            <a href="/client-access">Client Access</a>
-          </Button>
           <Button asChild size="sm">
             <Link href="/quote">Get a Quote</Link>
           </Button>
@@ -130,9 +127,6 @@ export function SiteHeader() {
             })}
           </nav>
           <div className="mt-4 flex flex-col gap-2">
-            <Button asChild variant="outline" className="w-full">
-              <a href="/client-access">Client Access</a>
-            </Button>
             <Button asChild className="w-full">
               <Link href="/quote" onClick={() => setMobileOpen(false)}>
                 Get a Quote
