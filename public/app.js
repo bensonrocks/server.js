@@ -14108,7 +14108,7 @@
       const tb = $('invTbody'); if (!tb) return;
       const q = ($('invSearch')?.value || '').toLowerCase();
       const rows = sortItems(items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)));
-      if (!rows.length) { tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
       tb.innerHTML = rows.map(r => `<tr>
         <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
         <td>${esc(r.name || '')}</td>
@@ -14116,7 +14116,10 @@
         <td style="text-align:right;color:#d97706">${r.reserved_qty}</td>
         <td style="text-align:right;font-weight:700;color:${r.available_qty <= 0 ? '#dc2626' : '#059669'}">${r.available_qty}</td>
         <td style="text-align:right"><span class="inv-upc-edit" data-sku="${esc(r.sku)}" title="Units per carton — click to edit (powers carton-aware picking)" style="cursor:pointer;border-bottom:1px dashed #94a3b8">${Number(r.units_per_carton) > 1 ? r.units_per_carton : '—'}</span></td>
+        <td style="text-align:right"><button class="btn-secondary btn-sm inv-adjust" data-sku="${esc(r.sku)}"
+              title="Correct this quantity by hand — needs the Administrator password and a reason">Adjust</button></td>
       </tr>`).join('');
+      tb.querySelectorAll('.inv-adjust').forEach(b => b.addEventListener('click', () => openAdjust(b.dataset.sku)));
       tb.querySelectorAll('.inv-upc-edit').forEach(el => el.addEventListener('click', async () => {
         const sku = el.dataset.sku;
         const cur = (items.find(x => x.sku === sku) || {}).units_per_carton || '';
@@ -14129,7 +14132,68 @@
       }));
     }
 
+    // ── ADJUST A QUANTITY BY HAND ───────────────────────────────────────────
+    // The number is entered as the NEW on-hand figure, not a delta — someone
+    // correcting a count reads what the shelf says and types that. The delta
+    // is worked out and shown so the change is visible before it is made.
+    let adjSku = '';
+    function openAdjust(sku) {
+      const row = items.find(x => x.sku === sku);
+      if (!row) return;
+      adjSku = sku;
+      $('invAdjSub').innerHTML = `<b>${esc(sku)}</b> — ${esc(row.name || '')}<br>`
+        + `on hand <b>${row.stock_qty}</b> · reserved ${row.reserved_qty} · available ${row.available_qty}`;
+      $('invAdjTo').value = row.stock_qty;
+      $('invAdjReason').value = '';
+      $('invAdjPass').value = '';
+      $('invAdjError').classList.add('hidden');
+      $('invAdjDelta').textContent = '';
+      $('invAdjustOverlay').classList.remove('hidden');
+      setTimeout(() => $('invAdjTo').focus(), 50);
+    }
+    function adjDelta() {
+      const row = items.find(x => x.sku === adjSku) || {};
+      const to = parseInt($('invAdjTo').value, 10);
+      if (!Number.isFinite(to)) return null;
+      return to - (Number(row.stock_qty) || 0);
+    }
+    function paintAdjDelta() {
+      const d = adjDelta();
+      const el = $('invAdjDelta');
+      if (d === null || d === 0) { el.textContent = d === 0 ? 'no change' : ''; el.style.color = '#94a3b8'; return; }
+      el.textContent = d > 0 ? `+${d}` : `${d}`;
+      el.style.color = d > 0 ? '#059669' : '#b91c1c';
+      el.style.fontWeight = '800';
+    }
+    async function saveAdjust() {
+      const err = $('invAdjError');
+      const show = m => { err.textContent = m; err.classList.remove('hidden'); };
+      const d = adjDelta();
+      if (d === null) return show('Enter the new on-hand quantity.');
+      if (d === 0) return show('That is the quantity it already shows — nothing to adjust.');
+      const reason = $('invAdjReason').value.trim();
+      if (reason.length < 6) return show('Give a real reason — it goes on the audit trail and is the only record of why the number changed.');
+      const pass = $('invAdjPass').value;
+      if (!pass) return show('Enter the Administrator password.');
+      const btn = $('invAdjSave'); btn.disabled = true;
+      try {
+        const r = await fetchT(`/api/inventory/${encodeURIComponent(adjSku)}/adjust`, {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ clientId, qty: d, reason, password: pass, type: 'adjustment' }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { show(data.error || 'Could not adjust that.'); btn.disabled = false; return; }
+        $('invAdjustOverlay').classList.add('hidden');
+        await load();
+      } catch (e) { show('Could not reach the server — nothing was changed.'); }
+      finally { $('invAdjSave').disabled = false; }
+    }
+
     function wireSortAndExport() {
+      $('invAdjTo')?.addEventListener('input', paintAdjDelta);
+      $('invAdjCancel')?.addEventListener('click', () => $('invAdjustOverlay').classList.add('hidden'));
+      $('invAdjSave')?.addEventListener('click', saveAdjust);
+      $('invAdjPass')?.addEventListener('keydown', e => { if (e.key === 'Enter') saveAdjust(); });
       $('invSort')?.addEventListener('change', e => { invSort = e.target.value; renderList(); });
       $('invDirBtn')?.addEventListener('click', () => {
         invDir = invDir === 'asc' ? 'desc' : 'asc';

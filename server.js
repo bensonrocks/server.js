@@ -16448,15 +16448,46 @@ app.get('/api/inventory/:sku/movements', requireAuth, (req, res) => {
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   res.json(inventory.movements(req.params.sku, clientId, Number(req.query.limit) || 50));
 });
+// ── ADJUST A STOCK QUANTITY BY HAND ────────────────────────────────────────
+// Correcting a count, writing off a loss, or putting test data back. Per the
+// user: the Administrator password and a reason, every time.
+//
+// It used to take any signed-in user, an optional reason, and — the real gap —
+// it wrote NOTHING to the audit log. The movement landed in stock_movements,
+// so the number changed, but nothing said WHO changed it or WHY. A hand
+// adjustment is the one stock change with no document behind it (no receipt,
+// no order), so it is the one that most needs a name against it.
 app.post('/api/inventory/:sku/adjust', requireAuth, express.json(), (req, res) => {
   const { qty, type = 'adjustment', reason = '', clientId } = req.body || {};
   const cid = String(clientId || '').trim();
   if (!cid) return res.status(400).json({ error: 'clientId is required' });
   if (qty === undefined || Number.isNaN(Number(qty))) return res.status(400).json({ error: 'qty (number) is required' });
+  // A length floor is a blunt instrument, but it blocks the classic
+  // non-reasons — "oops", "test", "fix", "adj" — while "recount" and
+  // "damaged" pass. Nothing can judge whether a reason is TRUE; this only
+  // stops the box being waved through empty.
+  const why = String(reason || '').trim();
+  if (why.length < 6) {
+    return res.status(400).json({ error: 'Give a real reason for this adjustment — it goes on the audit trail and is the only record of why the number changed.' });
+  }
+  // Admin's own password, or the Administrator key. 403 and never 401: the
+  // session is valid, only this second check failed, and a 401 would trip the
+  // client's session-expired handler and force a reload.
+  const auth = verifyAdminReconfirm(req, { role: 'admin' });
+  if (auth.error) return res.status(auth.code === 401 ? 403 : auth.code).json({ error: auth.error });
+
+  const before = inventory.get(req.params.sku, cid);
+  if (!before) return res.status(404).json({ error: `${req.params.sku} is not in ${cid}'s item master.` });
   try {
-    const result = inventory.adjust(req.params.sku, cid, Number(qty), type, reason);
+    const result = inventory.adjust(req.params.sku, cid, Number(qty), type, why);
+    logAudit('inventory_adjusted', {
+      sku: req.params.sku, clientId: cid, delta: Number(qty),
+      from: Number(before.stock_qty) || 0, to: Number(result?.stock_qty ?? 0),
+      movement: String(type || 'adjustment'), reason: why.slice(0, 200),
+      viaMaster: !!auth.viaMaster, by: req.userId || '',
+    });
     zortNotifyStockChange(readDb(), cid, [req.params.sku]);
-    res.json(result);
+    res.json({ ...result, from: Number(before.stock_qty) || 0, reason: why });
   }
   catch (e) { res.status(400).json({ error: e.message }); }
 });

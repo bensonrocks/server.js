@@ -2980,6 +2980,38 @@ an unqualified `client_id` in the WHERE clause made the whole query ambiguous
 and SQLite refused it. The `catch` around it was silent, so the report came back
 empty — indistinguishable from a quiet month. It now logs.
 
+## Adjusting a stock quantity by hand — password, reason, trail
+
+Per the user: allow adjusting inventory quantity, behind the Administrator
+password, with the reason recorded. `POST /api/inventory/:sku/adjust`.
+
+**THE REAL GAP WAS THE TRAIL.** The endpoint already existed, took ANY signed-in
+user, made the reason optional, and wrote **nothing to `db.auditLog`**. The
+movement landed in `stock_movements` so the number changed, but nothing said who
+changed it or why. A hand adjustment is the one stock change with no document
+behind it — no receipt, no order — so it is the one that most needs a name
+against it. `inventory_adjusted` now records sku, client, delta, from, to,
+reason, who, and `viaMaster` (whether the Administrator key was used rather than
+a personal password).
+
+- **`verifyAdminReconfirm(req, {role:'admin'})`** — an admin's own password OR
+  the Administrator key. Warehouse gets a real 403. **403, never 401**: the
+  session is valid, only the second check failed, and a 401 would trip the
+  client's session-expired handler and force a reload (asserted in the browser
+  test — the sign-in overlay must NOT appear on a wrong password).
+- **The reason is mandatory**, floor of 6 characters. A length floor is blunt,
+  but it blocks the classic non-reasons ("oops", "test", "fix", "adj") while
+  "recount" and "damaged" pass. Nothing can judge whether a reason is TRUE; this
+  only stops the box being waved through empty. (Caught by the test: at a floor
+  of 4, "oops" sailed through.)
+- Adjusting a SKU that is not in the client's item master is a 404, not a
+  silent create.
+- **The UI takes the NEW on-hand figure, not a delta** — someone correcting a
+  count reads what the shelf says and types that. The delta is computed and
+  shown (green up, red down) so the change is visible before it is made.
+
+Verified 17 API checks and 12 browser checks.
+
 ## Stock lists — sort, download, and zero-quantity SKUs
 
 Per the user: both the client portal and the office can toggle ascending /
