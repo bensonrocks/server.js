@@ -14,12 +14,39 @@ const STEPS = [
   { icon: PackageCheck, label: "Delivered" },
 ];
 
+function ConnectorLine({ delay }: { delay: number }) {
+  return (
+    <motion.span
+      className="relative mb-5 h-px w-6 overflow-visible bg-border-strong sm:w-10"
+      initial={{ scaleX: 0 }}
+      animate={{ scaleX: 1 }}
+      style={{ transformOrigin: "left" }}
+      transition={{ duration: 0.35, delay }}
+    >
+      <motion.span
+        className="absolute top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-brand-bright"
+        initial={{ left: "0%", opacity: 0 }}
+        animate={{ left: ["0%", "100%"], opacity: [0, 1, 1, 0] }}
+        transition={{
+          duration: 1.1,
+          delay: delay + 0.3,
+          repeat: Infinity,
+          repeatDelay: (STEPS.length - 1) * 0.35,
+          ease: "easeInOut",
+        }}
+      />
+    </motion.span>
+  );
+}
+
 export function IntroSplash() {
   const reduceMotion = useReducedMotion();
-  const [visible, setVisible] = React.useState(false);
-  const [ready, setReady] = React.useState(false);
+  // "pending": SSR + first paint, before we know whether to play the intro —
+  // renders a plain opaque cover so there's never a flash of raw page content.
+  // "playing": animated intro is up. "done": nothing rendered.
+  const [phase, setPhase] = React.useState<"pending" | "playing" | "done">("pending");
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     let alreadySeen = true;
     try {
       alreadySeen = sessionStorage.getItem(SEEN_KEY) === "1";
@@ -28,15 +55,14 @@ export function IntroSplash() {
     }
 
     if (alreadySeen || reduceMotion) {
-      setReady(true);
+      setPhase("done");
       return;
     }
 
-    setVisible(true);
-    setReady(true);
+    setPhase("playing");
 
     const dismiss = window.setTimeout(() => {
-      setVisible(false);
+      setPhase("done");
       try {
         sessionStorage.setItem(SEEN_KEY, "1");
       } catch {
@@ -48,7 +74,7 @@ export function IntroSplash() {
   }, [reduceMotion]);
 
   const skip = () => {
-    setVisible(false);
+    setPhase("done");
     try {
       sessionStorage.setItem(SEEN_KEY, "1");
     } catch {
@@ -56,16 +82,18 @@ export function IntroSplash() {
     }
   };
 
-  if (!ready) return null;
+  if (phase === "pending") {
+    return <div className="fixed inset-0 z-[100] bg-paper" aria-hidden />;
+  }
 
   return (
     <AnimatePresence>
-      {visible && (
+      {phase === "playing" && (
         <motion.div
           className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-paper"
-          initial={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.5, ease: "easeInOut" }}
+          initial={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 1.03, y: -16 }}
+          transition={{ duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
         >
           <button
             type="button"
@@ -84,22 +112,23 @@ export function IntroSplash() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4, delay: i * 0.3 }}
                 >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full border border-border-strong bg-paper-alt sm:h-14 sm:w-14">
+                  <motion.span
+                    className="flex h-12 w-12 items-center justify-center rounded-full border border-border-strong bg-paper-alt sm:h-14 sm:w-14"
+                    animate={{ scale: [1, 1.08, 1] }}
+                    transition={{
+                      duration: 0.5,
+                      delay: i * 0.35 + 0.55,
+                      repeat: Infinity,
+                      repeatDelay: STEPS.length * 0.35,
+                    }}
+                  >
                     <step.icon className="h-5 w-5 text-brand sm:h-6 sm:w-6" />
-                  </span>
+                  </motion.span>
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted sm:text-xs">
                     {step.label}
                   </span>
                 </motion.div>
-                {i < STEPS.length - 1 && (
-                  <motion.span
-                    className="mb-5 h-px w-6 bg-border-strong sm:w-10"
-                    initial={{ scaleX: 0 }}
-                    animate={{ scaleX: 1 }}
-                    style={{ transformOrigin: "left" }}
-                    transition={{ duration: 0.35, delay: i * 0.3 + 0.2 }}
-                  />
-                )}
+                {i < STEPS.length - 1 && <ConnectorLine delay={i * 0.3 + 0.2} />}
               </React.Fragment>
             ))}
           </div>
