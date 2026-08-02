@@ -11167,7 +11167,66 @@
       } catch (e) { /* a badge is not worth an error */ }
     }
 
-    return { load: async () => { await load(); startPoll(); }, refreshBadge, stopPoll, applyImportPlan };
+    // ── FINISHED PUTAWAY ────────────────────────────────────────────────────
+    // Same entries the queue credits against, read back as history: one row per
+    // staging label, expandable to every movement — who put what where, when.
+    async function loadHistory() {
+      const from = $('paHistFrom')?.value || '';
+      const to = $('paHistTo')?.value || '';
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      try {
+        const r = await fetchT('/api/putaway/history?' + qs.toString(), { headers: hdrs() });
+        if (!r.ok) return;
+        const d = await r.json();
+        $('paHistStats').innerHTML = `
+          <div class="pk-stat"><b>${d.pallets}</b><span>Pallets put away</span></div>
+          <div class="pk-stat"><b>${d.units}</b><span>Units binned</span></div>
+          <div class="pk-stat"><b>${d.people}</b><span>People involved</span></div>`;
+        const el = $('paHistList');
+        if (!d.rows.length) {
+          el.innerHTML = '<div class="empty-state" style="padding:1.2rem">Nothing put away in this window yet.</div>';
+          return;
+        }
+        el.innerHTML = d.rows.map((r2, i) => `
+          <div class="pa-card pa-done" data-h="${i}">
+            <div class="pa-head" style="cursor:pointer" data-toggle="${i}">
+              <div>
+                <b class="pa-code">${esc(r2.staging_code)}</b>
+                <span class="chip">${esc(r2.client_name || '')}</span>
+                ${r2.complete ? '' : '<span class="chip" style="background:#fef3c7;color:#92400e">part done</span>'}
+              </div>
+              <div class="hint">${esc(r2.serial || '')}${r2.reference ? ' · ' + esc(r2.reference) : ''}
+                · ${r2.skus} product(s) · <b>${r2.units}</b> pc(s)
+                · ${esc((r2.people || []).join(', ') || '—')}
+                · ${r2.last_at ? esc(new Date(r2.last_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : ''}
+                <span class="hint">▾</span></div>
+            </div>
+            <div class="pa-hist-detail hidden" data-detail="${i}">
+              <table class="tbl pa-tbl"><thead><tr>
+                <th>When</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th><th>Into</th><th>By</th><th>Batch</th>
+              </tr></thead><tbody>
+              ${r2.entries.map(e => `<tr>
+                <td class="hint">${esc(new Date(e.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))}</td>
+                <td><b>${esc(e.sku)}</b></td>
+                <td>${esc(String((r2.lines.find(l => l.sku === e.sku) || {}).description || '').slice(0, 40))}</td>
+                <td style="text-align:right"><b>${e.qty}</b></td>
+                <td style="font-family:ui-monospace,monospace">${esc(e.location_id)}</td>
+                <td><span class="pa-who">${esc(e.by || '—')}</span></td>
+                <td class="hint">${esc(e.lot_number || '')}${e.expiry_date ? ' · ' + esc(e.expiry_date) : ''}${e.serials ? ` · ${e.serials} serial(s)` : ''}</td>
+              </tr>`).join('')}
+              </tbody></table>
+            </div>
+          </div>`).join('');
+        el.querySelectorAll('[data-toggle]').forEach(h => h.addEventListener('click', () => {
+          el.querySelector(`[data-detail="${h.dataset.toggle}"]`)?.classList.toggle('hidden');
+        }));
+      } catch (e) { /* history is not worth breaking the screen over */ }
+    }
+
+    return { load: async () => { await load(); loadHistory(); startPoll(); },
+             loadHistory, refreshBadge, stopPoll, applyImportPlan };
   })();
   window.putawayUI = putawayUI;
   document.getElementById('putawayRefreshBtn')?.addEventListener('click', () =>
@@ -11259,6 +11318,15 @@
     } catch (e) { show('Could not reach the server — nothing was imported.'); btn.disabled = false; }
   }
   document.getElementById('putawayImportBtn')?.addEventListener('click', openPaImport);
+  document.getElementById('paHistApply')?.addEventListener('click', () => putawayUI.loadHistory());
+  document.getElementById('paHistExport')?.addEventListener('click', () => {
+    const qs = new URLSearchParams();
+    const f = document.getElementById('paHistFrom')?.value;
+    const tt = document.getElementById('paHistTo')?.value;
+    if (f) qs.set('from', f); if (tt) qs.set('to', tt);
+    authDownload('/api/putaway/history/export?' + qs.toString(),
+      `Putaway_History_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  });
   document.getElementById('paImportPick')?.addEventListener('click', () => _paImp('paImportInput').click());
   document.getElementById('paImportInput')?.addEventListener('change', e => {
     _paImportFile = (e.target.files || [])[0] || null;

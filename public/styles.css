@@ -3441,3 +3441,8 @@ tr.pa-split-row td { border-top: 0; }
                  background:#fffbeb; border:1px solid #fde68a; }
 .pa-import-txt { flex:1 1 20rem; font-size:.86rem; color:#92400e; }
 .pa-import-txt .hint { display:block; margin-top:.2rem; }
+
+/* Finished putaway — collapsed by default, expand for every movement. */
+.pa-card.pa-done { background: var(--surface); }
+.pa-card.pa-done .pa-head:hover { background: var(--surface-2); border-radius: 8px; }
+.pa-hist-detail { margin-top: .5rem; overflow-x: auto; }

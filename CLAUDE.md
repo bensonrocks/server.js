@@ -3327,6 +3327,29 @@ the item line, 2 user pills will be seen."*
 - **Over-putting is REFUSED (409)**, naming the SKU and label ("PA-BOX on
   ST-260802-01 is already fully put away"). Two people racing the same last
   carton must not bank it twice — the physical piece only exists once.
+### Finished putaway stays on the screen
+
+The queue only lists what is still owed a bin, so a completed pallet vanished
+entirely — "Nothing waiting" and no way to check what had been done. A **✓ Put
+away** section now sits under the queue: one row per staging label with the
+receipt, client, products, units, everyone who worked it and when it finished,
+expandable to **every movement** (when, SKU, qty, bin, who, batch/expiry/
+serials).
+
+- `GET /api/putaway/history?from=&to=&client=` and
+  `/api/putaway/history/export` (XLSX: a **Pallets** rollup plus a
+  **Movements** sheet carrying every single entry — the sheet someone checks a
+  dispute against).
+- Built from `rec.state.putaway`, the SAME entries the queue credits against,
+  so the two can never disagree about what happened.
+- Entries written before staging labels existed carry no `staging_code` and are
+  grouped as one "(before staging labels)" pallet rather than dropped — old
+  work stays visible.
+
+Verified 20 API checks and 10 browser checks: the queue is empty exactly as
+reported while the finished pallet is shown below it, naming both people and
+both bins, the trail opens on click, and the download carries both sheets.
+
 - **`GET /api/inbound/:id/putaway-trail`** is the receipt-level audit view:
   every entry with qty/bin/person/time, plus the rollup the user asked for —
   how many people, which locations, how many units.

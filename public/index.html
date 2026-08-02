@@ -2058,6 +2058,20 @@
       </p>
       <div id="putawayStats" class="pk-stats" style="margin-bottom:.8rem"></div>
       <div id="putawayList"></div>
+
+      <!-- Finished work. The queue above only shows what is still owed a bin,
+           so without this a completed pallet disappeared off the screen. -->
+      <div class="section-header" style="margin-top:1.4rem">
+        <h2 style="font-size:1rem">&#10003; Put away</h2>
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <input type="date" id="paHistFrom" style="padding:.35rem .5rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.82rem" />
+          <input type="date" id="paHistTo" style="padding:.35rem .5rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.82rem" />
+          <button class="btn-secondary btn-sm" id="paHistApply">Show</button>
+          <button class="btn-secondary btn-sm" id="paHistExport" title="Download the history and every movement behind it">&#8681; Excel</button>
+        </div>
+      </div>
+      <div id="paHistStats" class="pk-stats" style="margin-bottom:.6rem"></div>
+      <div id="paHistList"></div>
     </section>
 
     <section id="tab-inbound" class="tab">

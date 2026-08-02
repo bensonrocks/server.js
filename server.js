@@ -10387,6 +10387,127 @@ app.post('/api/putaway/joins/seen', express.json(), (req, res) => {
 // The trail for one receipt: every putaway, who did it, where it went and when
 // — plus a per-line roll-up. This is what "how many people, locations, timing"
 // is answered from.
+// ── PUTAWAY HISTORY ────────────────────────────────────────────────────────
+// The queue only shows what is still owed a bin, so a finished pallet vanished
+// off the screen entirely. This is the same work AFTER it is done: one row per
+// staging label, with who put it away, where, and when — checkable on screen
+// and downloadable.
+//
+// Built from `rec.state.putaway`, the same entries the queue credits against,
+// so the two can never disagree about what happened.
+function putawayHistory(db, { from, to, client } = {}) {
+  const cn = String(client || '').trim().toLowerCase();
+  const out = [];
+  for (const rec of db.inbound || []) {
+    if (cn && String(rec.client_name || '').trim().toLowerCase() !== cn) continue;
+    const entries = (rec.state?.putaway || []);
+    if (!entries.length) continue;
+    // Group by the label the goods were staged under. Entries written before
+    // labels were tagged carry no staging_code — they are grouped as one
+    // "untagged" pallet rather than dropped, so old work is still visible.
+    const byLabel = new Map();
+    for (const p of entries) {
+      const k = p.staging_code || '(before staging labels)';
+      if (!byLabel.has(k)) byLabel.set(k, []);
+      byLabel.get(k).push(p);
+    }
+    for (const [code, rows] of byLabel) {
+      const at = rows.map(r => r.at).filter(Boolean).sort();
+      const firstAt = at[0] || '', lastAt = at[at.length - 1] || '';
+      if (from && String(lastAt).slice(0, 10) < from) continue;
+      if (to && String(firstAt).slice(0, 10) > to) continue;
+      const st = (rec.staging || []).find(x => x.code === code);
+      const owed = st ? (st.lines || []).reduce((n, l) => n + Number(l.qty || 0), 0) : 0;
+      const done = rows.reduce((n, r) => n + Number(r.qty || 0), 0);
+      const people = [...new Set(rows.map(r => r.by).filter(Boolean))];
+      const locations = [...new Set(rows.map(r => r.location_id).filter(Boolean))];
+      const bySku = new Map();
+      for (const r of rows) {
+        const e = bySku.get(r.sku) || { sku: r.sku, qty: 0, locations: new Set(), people: new Set() };
+        e.qty += Number(r.qty || 0);
+        if (r.location_id) e.locations.add(r.location_id);
+        if (r.by) e.people.add(r.by);
+        bySku.set(r.sku, e);
+      }
+      out.push({
+        staging_code: code, inbound_id: rec.id, serial: rec.serial || '',
+        reference: rec.reference || '', client_name: rec.client_name || '',
+        area: st?.area || '', staged_at: st?.at || '',
+        first_at: firstAt, last_at: lastAt,
+        units: done, owed, complete: owed > 0 ? done >= owed : true,
+        skus: bySku.size, people, locations,
+        lines: [...bySku.values()].map(e => ({
+          sku: e.sku, qty: e.qty,
+          description: (rec.lines || []).find(l => l.sku === e.sku)?.description || '',
+          locations: [...e.locations], people: [...e.people],
+        })),
+        entries: rows.map(r => ({
+          sku: r.sku, qty: Number(r.qty || 0), location_id: r.location_id,
+          at: r.at, by: r.by || '', lot_number: r.lot_number || '',
+          expiry_date: r.expiry_date || null,
+          serials: (r.serials || []).length,
+          override_reason: r.override_reason || '',
+        })).sort((a, b) => String(a.at).localeCompare(String(b.at))),
+      });
+    }
+  }
+  // Most recently finished first — what someone is checking is usually today's.
+  out.sort((a, b) => String(b.last_at || '').localeCompare(String(a.last_at || '')));
+  return out;
+}
+
+app.get('/api/putaway/history', requireAuth, (req, res) => {
+  const db = readDb();
+  const rows = putawayHistory(db, {
+    from: /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : '',
+    to:   /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '')   ? req.query.to   : '',
+    client: req.query.client || '',
+  });
+  res.json({
+    rows: rows.slice(0, 400),
+    pallets: rows.length,
+    units: rows.reduce((n, r) => n + r.units, 0),
+    people: [...new Set(rows.flatMap(r => r.people))].length,
+  });
+});
+
+app.get('/api/putaway/history/export', requireAuth, (req, res) => {
+  const db = readDb();
+  const rows = putawayHistory(db, {
+    from: /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : '',
+    to:   /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '')   ? req.query.to   : '',
+    client: req.query.client || '',
+  });
+  const fmt = t => (t ? new Date(t).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '');
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['PUTAWAY HISTORY'],
+    [`Generated ${fmt(new Date().toISOString())} SGT`],
+    [],
+    ['Staging label', 'Receipt', 'Reference', 'Client', 'Area', 'Products', 'Units put away',
+     'Units staged', 'Complete', 'People', 'Locations', 'Started (SGT)', 'Finished (SGT)'],
+    ...rows.map(r => [r.staging_code, r.serial, r.reference, r.client_name, r.area,
+      r.skus, r.units, r.owed || '', r.complete ? 'Yes' : 'Part',
+      r.people.join(', '), r.locations.join(', '), fmt(r.first_at), fmt(r.last_at)]),
+  ]), 'Pallets');
+  // EVERY movement, not just the rollup — this is the sheet someone checks a
+  // dispute against.
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['EVERY PUTAWAY MOVEMENT'],
+    [],
+    ['When (SGT)', 'Staging label', 'Receipt', 'Client', 'SKU', 'Description', 'Qty',
+     'Into location', 'By', 'Batch', 'Expiry', 'Serials', 'Override reason'],
+    ...rows.flatMap(r => r.entries.map(e => [
+      fmt(e.at), r.staging_code, r.serial, r.client_name, e.sku,
+      (r.lines.find(l => l.sku === e.sku) || {}).description || '',
+      e.qty, e.location_id, e.by, e.lot_number, e.expiry_date || '', e.serials || '', e.override_reason,
+    ])),
+  ]), 'Movements');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Putaway_History_${sgDateStr()}.xlsx"`);
+  res.send(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+});
+
 app.get('/api/inbound/:id/putaway-trail', (req, res) => {
   const db = readDb();
   const rec = findInbound(db, req.params.id);
