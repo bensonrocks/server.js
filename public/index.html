@@ -933,7 +933,7 @@
         <div class="admin-section-header">
           <div>
             <div class="admin-section-title">&#128226; Communication</div>
-            <div class="admin-section-sub">Send instructions or updates to drivers and warehouse/office staff. Every recipient must acknowledge before the message clears from their screen.</div>
+            <div class="admin-section-sub">Send instructions or updates to drivers, warehouse/office staff, or selected clients on their portal. Every recipient must acknowledge before the message clears from their screen — a client account acknowledges once, from any of its logins.</div>
           </div>
         </div>
 
@@ -969,6 +969,17 @@
                 </span>
               </div>
               <div id="cmUserList" class="cm-picker"></div>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b style="font-size:.85rem">&#127760; Clients (portal)</b>
+                <span style="display:flex;gap:.4rem">
+                  <button class="btn-secondary btn-sm cm-all" data-grp="cli">All</button>
+                  <button class="btn-secondary btn-sm cm-none" data-grp="cli">None</button>
+                </span>
+              </div>
+              <div id="cmClientList" class="cm-picker"></div>
+              <div class="hint" style="margin-top:.3rem">Only clients with a portal login are listed — the rest could never see it.</div>
             </div>
           </div>
         </div>

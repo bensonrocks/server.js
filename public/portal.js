@@ -174,6 +174,7 @@
       $('agingInput').value = agingDays;
       $('asnSlaText').textContent = `${slaWorkingDays} working day${slaWorkingDays === 1 ? '' : 's'}`;
       renderOverview(); renderStock(); renderOrders(); renderInbound();
+      loadNotices();
     } catch (e) {
       if (!overview) {
         $('ovHero').innerHTML = '';
@@ -868,6 +869,33 @@
     return l.diff > 0
       ? `<span style="color:#b45309;font-weight:700">${l.diff} over</span>`
       : `<span style="color:#b91c1c;font-weight:700">${Math.abs(l.diff)} short</span>`;
+  }
+
+  // ── Office broadcasts ─────────────────────────────────────────────────────
+  // Shown above every tab until acknowledged. One acknowledgement clears it for
+  // the whole account — a company reads a notice once.
+  async function loadNotices() {
+    try {
+      const r = await api('/api/portal/notices');
+      if (!r.ok) return;
+      const d = await r.json();
+      const wrap = $('noticeWrap');
+      wrap.innerHTML = (d.notices || []).map(n => `
+        <div class="notice${n.priority === 'urgent' ? ' urgent' : ''}">
+          <div class="nb">
+            <span class="nt">${n.priority === 'urgent' ? '\u26a0 Urgent \u00b7 ' : ''}From the warehouse \u00b7 ${
+              new Date(n.createdAt).toLocaleString('en-GB', { ...SGT, hour12: false })}</span>
+            ${esc(n.message)}
+          </div>
+          <button class="btn-sm nack" data-id="${esc(n.id)}">Got it</button>
+        </div>`).join('');
+      wrap.querySelectorAll('.nack').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true;
+        await api('/api/portal/notices/' + encodeURIComponent(b.dataset.id) + '/ack', { method: 'POST' })
+          .catch(() => {});
+        loadNotices();
+      }));
+    } catch (_) { /* a broadcast failing must never break the portal */ }
   }
 
   // ── Export ────────────────────────────────────────────────────────────────

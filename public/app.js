@@ -11280,8 +11280,8 @@
   // One composer for both audiences: drivers and warehouse/office staff.
   // "All" is stored as the literal 'all' rather than a snapshot of ids, so a
   // driver hired after the message was sent still has to acknowledge it.
-  const cmSel = { drv: new Set(), usr: new Set(), drvAll: false, usrAll: false };
-  let _cmAudience = { drivers: [], users: [] };
+  const cmSel = { drv: new Set(), usr: new Set(), cli: new Set(), drvAll: false, usrAll: false, cliAll: false };
+  let _cmAudience = { drivers: [], users: [], clients: [] };
 
   function cmRenderPickers() {
     const row = (grp, id, label, sub, checked) => `
@@ -11297,13 +11297,18 @@
       ? _cmAudience.users.map(u => row('usr', u.id, u.name || u.id, u.role,
           cmSel.usrAll || cmSel.usr.has(u.id))).join('')
       : '<div class="cm-row"><span class="hint">No users yet.</span></div>';
+    document.getElementById('cmClientList').innerHTML = (_cmAudience.clients || []).length
+      ? _cmAudience.clients.map(c => row('cli', c.id, c.name,
+          `${c.logins} login(s)`, cmSel.cliAll || cmSel.cli.has(c.id))).join('')
+      : '<div class="cm-row"><span class="hint">No client has a portal login yet.</span></div>';
     cmUpdateCount();
   }
   function cmUpdateCount() {
     const d = cmSel.drvAll ? _cmAudience.drivers.length : cmSel.drv.size;
     const u = cmSel.usrAll ? _cmAudience.users.length   : cmSel.usr.size;
+    const c = cmSel.cliAll ? (_cmAudience.clients || []).length : cmSel.cli.size;
     document.getElementById('cmCount').textContent =
-      `${d + u} recipient(s) selected — ${d} driver(s), ${u} staff`;
+      `${d + u + c} recipient(s) selected — ${d} driver(s), ${u} staff, ${c} client(s)`;
   }
   async function loadCommunication() {
     try {
@@ -11359,14 +11364,24 @@
     cb.checked ? cmSel.usr.add(cb.value) : cmSel.usr.delete(cb.value);
     cmUpdateCount();
   });
+  document.getElementById('cmClientList')?.addEventListener('change', e => {
+    const cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
+    cmSel.cliAll = false;
+    cb.checked ? cmSel.cli.add(cb.value) : cmSel.cli.delete(cb.value);
+    cmUpdateCount();
+  });
   document.querySelectorAll('.cm-all').forEach(b => b.addEventListener('click', () => {
     const g = b.dataset.grp;
-    if (g === 'drv') { cmSel.drvAll = true; cmSel.drv.clear(); } else { cmSel.usrAll = true; cmSel.usr.clear(); }
+    if (g === 'drv') { cmSel.drvAll = true; cmSel.drv.clear(); }
+    else if (g === 'cli') { cmSel.cliAll = true; cmSel.cli.clear(); }
+    else { cmSel.usrAll = true; cmSel.usr.clear(); }
     cmRenderPickers();
   }));
   document.querySelectorAll('.cm-none').forEach(b => b.addEventListener('click', () => {
     const g = b.dataset.grp;
-    if (g === 'drv') { cmSel.drvAll = false; cmSel.drv.clear(); } else { cmSel.usrAll = false; cmSel.usr.clear(); }
+    if (g === 'drv') { cmSel.drvAll = false; cmSel.drv.clear(); }
+    else if (g === 'cli') { cmSel.cliAll = false; cmSel.cli.clear(); }
+    else { cmSel.usrAll = false; cmSel.usr.clear(); }
     cmRenderPickers();
   }));
   document.getElementById('cmRefreshBtn')?.addEventListener('click', cmLoadSent);
@@ -11376,12 +11391,14 @@
     if (!msg) return st('error', 'Type a message first.');
     const toDrivers = cmSel.drvAll ? 'all' : [...cmSel.drv];
     const toUsers   = cmSel.usrAll ? 'all' : [...cmSel.usr];
-    if (toDrivers !== 'all' && !toDrivers.length && toUsers !== 'all' && !toUsers.length) return st('error', 'Pick at least one recipient.');
+    const toClients = cmSel.cliAll ? 'all' : [...cmSel.cli];
+    const none = v => v !== 'all' && !v.length;
+    if (none(toDrivers) && none(toUsers) && none(toClients)) return st('error', 'Pick at least one recipient.');
     st('progress', 'Sending…');
     try {
       const r = await fetch('/api/master/notices', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
-        body: JSON.stringify({ message: msg, priority: document.getElementById('cmUrgent').checked ? 'urgent' : 'normal', toDrivers, toUsers }),
+        body: JSON.stringify({ message: msg, priority: document.getElementById('cmUrgent').checked ? 'urgent' : 'normal', toDrivers, toUsers, toClients }),
       });
       const d = await r.json();
       if (!r.ok) return st('error', d.error || 'Send failed');

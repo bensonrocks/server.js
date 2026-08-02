@@ -3923,6 +3923,31 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
 // exact same queries the on-screen views use rather than re-deriving them.
 // The outbound stock record on screen. Read-only, client-scoped, and the same
 // ledger the export and the office report read.
+// Notices broadcast to this client. Any of their logins may acknowledge on the
+// account's behalf — see noticeRecipients.
+app.get('/api/portal/notices', requirePortalAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const key = 'client:' + req.portalClient;
+  const mine = noticeStore(db).filter(n => noticeRecipients(n, db).includes(key));
+  res.json({
+    notices: mine.filter(n => !(n.acks || {})[key]).map(n => ({
+      id: n.id, message: n.message, priority: n.priority, createdAt: n.createdAt,
+    })),
+  });
+});
+app.post('/api/portal/notices/:id/ack', express.json(), requirePortalAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const n = noticeStore(db).find(x => x.id === req.params.id);
+  if (!n) return res.status(404).json({ error: 'Not found' });
+  const key = 'client:' + req.portalClient;
+  if (!noticeRecipients(n, db).includes(key)) return res.status(403).json({ error: 'Not addressed to you' });
+  n.acks = n.acks || {};
+  n.acks[key] = { at: new Date().toISOString(), by: req.portalUser?.id || '' };
+  writeDb(db);
+  logAudit('notice_acknowledged_by_client', { notice: n.id, client: req.portalClient, by: req.portalUser?.id || '' });
+  res.json({ ok: true });
+});
+
 app.get('/api/portal/movements', requirePortalAuthMiddleware, (req, res) => {
   const cid = invClientId(req.portalClient);
   const today = sgDateStr();
@@ -15452,12 +15477,18 @@ function noticeStore(db) {
 }
 const _isAll = v => v === 'all';
 const _listed = (v, id) => _isAll(v) || (Array.isArray(v) && v.includes(id));
+// A CLIENT is one recipient, not one per portal login. A company reads a
+// notice once; asking every one of their five logins to acknowledge separately
+// would turn an announcement into a chase-list. Any of their logins may
+// acknowledge on the account's behalf.
 function noticeRecipients(n, db) {
   const drivers = _isAll(n.toDrivers) ? (db.drivers || []).map(d => 'driver:' + d.id)
                 : (n.toDrivers || []).map(id => 'driver:' + id);
   const users   = _isAll(n.toUsers)   ? readUsers().map(u => 'user:' + u.id)
                 : (n.toUsers || []).map(id => 'user:' + id);
-  return [...drivers, ...users];
+  const clients = _isAll(n.toClients) ? clientProfiles(db).map(p => 'client:' + p.client)
+                : (n.toClients || []).map(c => 'client:' + c);
+  return [...drivers, ...users, ...clients];
 }
 
 // Who an admin can send to (for the recipient picker).
@@ -15467,6 +15498,11 @@ app.get('/api/master/notice-audience', (req, res) => {
   res.json({
     drivers: (db.drivers || []).map(d => ({ id: d.id, name: d.name || d.id, vehicle: d.vehicle || '', plate: d.plate || '' })),
     users:   readUsers().map(u => ({ id: u.id, name: u.name || u.id, role: u.role || 'admin' })),
+    // Only clients with a portal login can actually be reached — offering the
+    // rest would promise a message nobody will ever see.
+    clients: clientProfiles(db)
+      .filter(p => portalUsers(p).some(u => u.enabled !== false && u.passwordHash))
+      .map(p => ({ id: p.client, name: p.client, logins: portalUsers(p).length })),
   });
 });
 
@@ -15476,6 +15512,7 @@ app.get('/api/master/notices', (req, res) => {
   const names = new Map([
     ...readUsers().map(u => ['user:' + u.id, u.name || u.id]),
     ...(db.drivers || []).map(d => ['driver:' + d.id, d.name || d.id]),
+    ...clientProfiles(db).map(p => ['client:' + p.client, p.client]),
   ]);
   res.json(noticeStore(db).map(n => {
     const to = noticeRecipients(n, db);
@@ -15483,7 +15520,7 @@ app.get('/api/master/notices', (req, res) => {
     const pending = to.filter(k => !acked.includes(k));
     return {
       id: n.id, message: n.message, priority: n.priority, createdAt: n.createdAt, createdBy: n.createdBy,
-      toDrivers: n.toDrivers, toUsers: n.toUsers,
+      toDrivers: n.toDrivers, toUsers: n.toUsers, toClients: n.toClients || [],
       total: to.length, ackedCount: to.length - pending.length,
       pendingNames: pending.map(k => names.get(k) || k).slice(0, 40),
       ackedNames: to.filter(k => acked.includes(k)).map(k => names.get(k) || k).slice(0, 40),
@@ -15493,13 +15530,13 @@ app.get('/api/master/notices', (req, res) => {
 
 app.post('/api/master/notices', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
-  const { message, priority, toDrivers, toUsers } = req.body || {};
+  const { message, priority, toDrivers, toUsers, toClients } = req.body || {};
   const msg = String(message || '').trim();
   if (!msg) return res.status(400).json({ error: 'Message is required' });
   if (msg.length > 2000) return res.status(400).json({ error: 'Message is too long (max 2000 characters)' });
   const norm = v => (v === 'all' ? 'all' : (Array.isArray(v) ? v.filter(Boolean) : []));
-  const td = norm(toDrivers), tu = norm(toUsers);
-  if (!_isAll(td) && !td.length && !_isAll(tu) && !tu.length) {
+  const td = norm(toDrivers), tu = norm(toUsers), tc = norm(toClients);
+  if (!_isAll(td) && !td.length && !_isAll(tu) && !tu.length && !_isAll(tc) && !tc.length) {
     return res.status(400).json({ error: 'Pick at least one recipient' });
   }
   const db = readDb();
@@ -15507,7 +15544,7 @@ app.post('/api/master/notices', express.json(), (req, res) => {
     id: 'MSG-' + Date.now().toString(36).toUpperCase(),
     message: msg,
     priority: priority === 'urgent' ? 'urgent' : 'normal',
-    toDrivers: td, toUsers: tu,
+    toDrivers: td, toUsers: tu, toClients: tc,
     createdAt: new Date().toISOString(), createdBy: req.userId || 'master',
     acks: {},
   };

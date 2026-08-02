@@ -210,6 +210,30 @@
                     background:var(--surface); color:var(--text); font-size:.8rem; font-weight:600; }
   #stDir { min-width:7.5rem; }
 
+  /* Guide + About */
+  ol.guide { margin:0; padding-left:0; list-style:none; }
+  ol.guide li { margin-bottom:.8rem; }
+  /* DIRECT child only — an inline <b> inside a sentence ("the Stock tab")
+     must not become a block, or the sentence breaks across three lines. */
+  ol.guide > li > b { display:block; font-size:.92rem; margin-bottom:.15rem; }
+  ol.guide > li > span { display:block; color:var(--muted); font-size:.85rem; line-height:1.55; }
+  ol.guide > li > span b { color:var(--text); }
+  .tips { margin-top:1rem; padding:.7rem .85rem; background:var(--surface-2); border-radius:10px; }
+  .tips b { font-size:.85rem; }
+  .tips ul { margin:.4rem 0 0; padding-left:1.05rem; color:var(--muted); font-size:.83rem; line-height:1.6; }
+  .abt { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.7rem; }
+  .abt > div { padding:.65rem .8rem; border:1px solid var(--border); border-radius:10px; }
+  .abt b { display:block; font-size:.87rem; margin-bottom:.2rem; }
+  .abt span { color:var(--muted); font-size:.82rem; line-height:1.5; }
+
+  /* Office broadcast */
+  .notice { display:flex; gap:.6rem; align-items:flex-start; margin-bottom:.6rem; padding:.7rem .85rem;
+            border-radius:10px; background:#eff6ff; border:1px solid #bfdbfe; }
+  .notice.urgent { background:#fef2f2; border-color:#fecaca; }
+  .notice .nb { flex:1; font-size:.87rem; line-height:1.5; }
+  .notice .nt { display:block; font-size:.72rem; font-weight:700; text-transform:uppercase;
+                letter-spacing:.04em; color:var(--muted); margin-bottom:.15rem; }
+
   /* bar meter */
   .meter { height:5px; border-radius:3px; background:#eef2f8; overflow:hidden; margin-top:.4rem; }
   .meter > i { display:block; height:100%; border-radius:3px; background:var(--ok); }
@@ -381,8 +405,13 @@
     <button data-tab="orders"><span class="ti">&#128666;</span> Orders</button>
     <button data-tab="inbound"><span class="ti">&#128229;</span> Inbound</button>
     <button data-tab="send"><span class="ti">&#128228;</span> Send<span class="tw"> Orders</span></button>
+    <button data-tab="help"><span class="ti">&#128161;</span> Guide</button>
   </nav>
   <main>
+    <!-- Broadcasts from the office. Shown above every tab until acknowledged —
+         a message nobody has to clear is a message nobody reads. -->
+    <div id="noticeWrap"></div>
+
     <section id="tab-overview">
       <div id="ovHero"></div>
       <div id="ovBody"></div>
@@ -520,6 +549,46 @@
          anything is committed. The one difference is what Approve does — here
          it SUBMITS FOR APPROVAL rather than creating live work, because a
          client's file is reviewed by us first. -->
+    <section id="tab-help" class="hidden">
+      <div class="card">
+        <h2 style="margin:0 0 .3rem;font-size:1.05rem">Using this portal</h2>
+        <p class="sub" style="margin:0 0 1rem">Five minutes end to end. Nothing here moves your stock on its own — sending an order is a request; our floor does the work and you watch it happen.</p>
+        <ol class="guide">
+          <li><b>1 &nbsp;Check what you have</b>
+            <span>The <b>Stock</b> tab is your live position: on hand, reserved, available. <i>Reserved</i> means those units are already set aside for an order and cannot be promised twice. Sort any column, and download the whole list to Excel.</span></li>
+          <li><b>2 &nbsp;Tell us what is coming in</b>
+            <span>Under <b>Inbound</b>, download the shipment template, fill it in and send it back. We check every carton against it as it lands, and you get a Goods Received Note showing what arrived, what was short and what was damaged.</span></li>
+          <li><b>3 &nbsp;Send us orders to pick</b>
+            <span>Three steps on <b>Send Orders</b>: upload your order file, attach the waybill PDF (we match it to your orders for you), then send. Nothing reaches our floor until you press send — so you can start now and finish later.</span></li>
+          <li><b>4 &nbsp;Watch it move</b>
+            <span>Orders show as being picked, packed and collected — the same words our own staff see, not a parallel set of statuses. Every stock movement on your orders is listed and downloadable.</span></li>
+        </ol>
+        <div class="tips">
+          <b>Worth knowing</b>
+          <ul>
+            <li>A SKU with no stock still appears, showing 0 — nothing ever looks lost.</li>
+            <li>If an order cannot be covered by your stock, we say so before it is accepted, not after.</li>
+            <li>You can cancel anything we have not started yet.</li>
+            <li>Up to five logins per account, each either full access or view-only.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:.8rem">
+        <h2 style="margin:0 0 .3rem;font-size:1.05rem">About IDEALONE</h2>
+        <p class="sub" style="margin:0 0 .8rem">The warehouse system your goods are actually run on — not a portal bolted onto one.</p>
+        <div class="abt">
+          <div><b>&#128230; One live number</b><span>Every unit is counted as it is received and again as it is picked, so the figure you see is the figure on the shelf.</span></div>
+          <div><b>&#9878;&#65039; Nothing is promised twice</b><span>Stock is reserved the moment an order is accepted, so two orders can never be sold the same units.</span></div>
+          <div><b>&#128248; Proof, not assurances</b><span>Photos, batch and serial numbers, and a receipt note for every shipment in — evidence on hand when a claim comes up.</span></div>
+          <div><b>&#128337; Rotation handled</b><span>Nearest-expiry stock goes out first, automatically, so old stock does not quietly age at the back of a rack.</span></div>
+          <div><b>&#128241; Built for the floor</b><span>Our staff scan every piece on a phone. That is where your numbers come from — not someone keying a summary at the end of the day.</span></div>
+          <div><b>&#128274; Your data, only yours</b><span>Every screen and download is scoped to your account. You will never see another client's stock, and they will never see yours.</span></div>
+        </div>
+        <p class="sub" style="margin:.9rem 0 0">Something not working the way you expect? Tell your account contact.</p>
+      </div>
+    </section>
+
     <section id="tab-send" class="hidden">
       <!-- Three steps, in order: orders first, then the waybills that belong to
            them (matched against those orders on the spot), then send. Nothing
