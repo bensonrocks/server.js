@@ -10148,6 +10148,96 @@ function putawayQueue(db, { includeDone = false } = {}) {
   return groups;
 }
 
+// ── PUT AWAY BY FILE ───────────────────────────────────────────────────────
+// A stock-position sheet — SKU / Location / Qty, the shape a warehouse already
+// exports ("inventory as on <date>") — bins everything in one go instead of
+// keying it bin by bin. Used for opening stock at onboarding and for a
+// stock-take correction afterwards.
+//
+// IT SETS THE POSITION RATHER THAN ADDING TO IT (see setStockPositions), so
+// uploading the same sheet twice leaves the same stock, not double. That is
+// what makes it safe to re-send a corrected file.
+//
+// ADMIN OR MASTER: this writes a client's whole shelf position in one action.
+const STOCK_POS_HEADERS = {
+  sku:      ['sku', 'skucode', 'itemcode', 'item', 'productcode', 'code'],
+  location: ['location', 'locationid', 'bin', 'binlocation', 'loc', 'binid'],
+  qty:      ['availablelhu', 'available', 'qty', 'quantity', 'onhand', 'stock', 'balance', 'lhu'],
+  name:     ['description', 'productname', 'name', 'desc'],
+  barcode:  ['barcode', 'ean', 'upc', 'barcodeeanupc'],
+  uom:      ['packing', 'uom', 'unit'],
+};
+function parseStockPositionRows(buffer, filename) {
+  const wb = XLSX.read(buffer, { type: 'buffer' });
+  const rows = [];
+  for (const sheetName of wb.SheetNames) {
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
+    if (!raw.length) continue;
+    const norm = h => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const keys = Object.keys(raw[0]);
+    const pick = want => keys.find(k => want.includes(norm(k)))
+                      || keys.find(k => want.some(w => norm(k).includes(w)));
+    const kSku = pick(STOCK_POS_HEADERS.sku), kLoc = pick(STOCK_POS_HEADERS.location), kQty = pick(STOCK_POS_HEADERS.qty);
+    if (!kSku || !kLoc || !kQty) continue;                 // not a position sheet
+    const kName = pick(STOCK_POS_HEADERS.name), kBc = pick(STOCK_POS_HEADERS.barcode), kUom = pick(STOCK_POS_HEADERS.uom);
+    for (const r of raw) {
+      const sku = String(r[kSku] ?? '').trim();
+      if (!sku || /^(total|grand total|subtotal)$/i.test(sku)) continue;
+      rows.push({
+        sku,
+        location: String(r[kLoc] ?? '').trim(),
+        qty: Number(String(r[kQty] ?? '').toString().replace(/,/g, '')) || 0,
+        name: kName ? String(r[kName] ?? '').trim() : '',
+        // A barcode arrives from XLSX as a number — stringify without
+        // scientific notation, the same trap the inbound parser documents.
+        barcode: kBc ? String(r[kBc] ?? '').trim() : '',
+        uom: kUom ? String(r[kUom] ?? '').trim() : '',
+      });
+    }
+  }
+  return rows;
+}
+
+app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const client = String(req.body?.client || req.body?.clientId || '').trim();
+  if (!client) return res.status(400).json({ error: 'Name the client whose stock this is.' });
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  let rows;
+  try { rows = parseStockPositionRows(req.file.buffer, req.file.originalname); }
+  catch (e) { return res.status(400).json({ error: 'Could not read that file: ' + e.message }); }
+  if (!rows.length) {
+    return res.status(400).json({
+      error: 'No stock positions found. The sheet needs a SKU column, a Location column and a quantity column '
+           + '(Available LHU / Qty / On hand).',
+    });
+  }
+  const db = readDb();
+  const cid = invClientId(canonicalClientName(db, client));
+  let result;
+  try {
+    result = inventory.setStockPositions(cid, rows, {
+      operator: req.userId || '',
+      reason: `stock position import — ${req.file.originalname}`,
+    });
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  logAudit('stock_positions_imported', {
+    clientId: cid, filename: req.file.originalname,
+    lines: result.placed, units: result.units, skus: result.skus.length,
+    skusCreated: result.skusCreated, binsCreated: result.binsCreated,
+    skipped: result.skipped.length, by: req.userId || '',
+  });
+  zortNotifyStockChange(db, cid, result.skus.slice(0, 200));
+  res.json({
+    ok: true, client: cid, filename: req.file.originalname,
+    lines: result.placed, units: result.units, skus: result.skus.length,
+    skusCreated: result.skusCreated, binsCreated: result.binsCreated,
+    skipped: result.skipped.slice(0, 50),
+    note: 'This SET the position — re-uploading the same sheet leaves the same stock, not double.',
+  });
+});
+
 app.get('/api/putaway/queue', (req, res) => {
   const db = readDb();
   const groups = putawayQueue(db);

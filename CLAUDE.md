@@ -2980,6 +2980,38 @@ an unqualified `client_id` in the WHERE clause made the whole query ambiguous
 and SQLite refused it. The `catch` around it was silent, so the report came back
 empty — indistinguishable from a quiet month. It now logs.
 
+## Put away by file — a whole stock position from a spreadsheet
+
+`POST /api/putaway/import` (multipart + `client`) takes the shape a warehouse
+already exports — **SKU / Location / quantity**, e.g. the client's own
+`MAYER_INVENTORY_AS_ON_300726.xlsx` (`S/No, SKU, Packing, Description,
+Location, Barcode, AVailable LHU`) — and bins the lot in one action instead of
+keying it bin by bin. Used for opening stock at onboarding and for a stock-take
+correction afterwards. Headers are matched loosely (`pick()`), so `Available
+LHU`, `Qty`, `On hand` and `Balance` all resolve.
+
+- **IT SETS THE POSITION, IT DOES NOT ADD TO IT** (`inventory.setStockPositions`).
+  A sheet titled "inventory as on <date>" states what is on the shelf, so
+  sending it twice must leave the same stock, not double — and a corrected sheet
+  simply corrects it. This is the whole reason the import is safe to re-run.
+- **Bins named in the sheet are CREATED** if they do not exist — the racking is
+  physically there and the sheet is what tells us about it — but the count comes
+  back (`binsCreated`) so a typo reads as "47 new locations" rather than
+  vanishing into the map. Tier is stamped from the grammar as usual.
+- SKUs missing from the item master are created from the sheet, taking the
+  description and barcode with them.
+- **`reserved_qty` is left alone.** A reservation belongs to an order, not to a
+  stock count; clearing it would un-promise units already sold.
+- ADMIN OR MASTER (`requireInboundAdmin`): this rewrites a client's whole shelf
+  position in one action. Audit-logged `stock_positions_imported`.
+
+Verified against the client's real file: 37 rows, 36 SKUs, 186 units, 8 bins
+created, each SKU landing in exactly the bin the sheet names with the barcode
+and description carried across; a second upload of the same sheet leaves 186
+(not 372); and an order against that stock then reserves 2, points its pick list
+at the bin the sheet put it in, and on completion deducts on-hand AND the bin
+lot while releasing the reservation. 22 checks.
+
 ## Portal orders — the waybill you can open, and no pill that says nothing
 
 - **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing

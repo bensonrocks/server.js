@@ -10986,6 +10986,41 @@
   document.getElementById('putawayRefreshBtn')?.addEventListener('click', () =>
     putawayUI.load().catch(e => alert(e.message)));
 
+  // PUT AWAY BY FILE — a whole stock position from a spreadsheet, the shape a
+  // warehouse already exports. It SETS the position rather than adding to it,
+  // which is what makes re-sending a corrected sheet safe; the confirm says so
+  // before anything happens.
+  document.getElementById('putawayImportBtn')?.addEventListener('click', () =>
+    document.getElementById('putawayImportInput')?.click());
+  document.getElementById('putawayImportInput')?.addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    // Whose stock — a bin position is client-owned and the sheet cannot say.
+    const client = prompt('Which client is this stock position for?\n(exactly as their orders name them)');
+    if (!client) return;
+    if (!confirm(`Put away every line in "${f.name}" for ${client}?\n\n`
+      + 'This SETS the position from the sheet — it does not add to what is already there, '
+      + 'so re-uploading the same file leaves the same stock, not double.')) return;
+    const fd = new FormData();
+    fd.append('file', f); fd.append('client', client);
+    try {
+      const r = await fetchT('/api/putaway/import', {
+        method: 'POST',
+        headers: { 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+        body: fd,
+      }, 60000);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.error || 'Could not import that file.'); return; }
+      alert(`Put away ${d.lines} line(s) — ${d.units} pc(s) across ${d.skus} SKU(s) for ${d.client}.`
+        + (d.skusCreated ? `\n${d.skusCreated} SKU(s) added to the item master.` : '')
+        + (d.binsCreated ? `\n${d.binsCreated} new bin location(s) created from the sheet.` : '')
+        + (d.skipped && d.skipped.length ? `\n${d.skipped.length} row(s) skipped.` : '')
+        + `\n\n${d.note}`);
+      putawayUI.load().catch(() => {});
+    } catch (err) { alert('Could not reach the server — nothing was imported.'); }
+  });
+
   // ── COLLECTION SCREEN ───────────────────────────────────────────────────────
   // The list someone works down while the courier loads. Selection survives the
   // re-render (same reasoning as the bulk-deletion tables: a list that reloads

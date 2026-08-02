@@ -2025,6 +2025,9 @@
         <h2>&#128205; Putaway</h2>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
           <button class="btn-secondary btn-sm" id="putawayRefreshBtn">&#8635; Refresh</button>
+        <input type="file" id="putawayImportInput" accept=".xlsx,.xls,.csv" hidden />
+        <button class="btn-secondary btn-sm" id="putawayImportBtn"
+          title="Bin a whole stock position from a spreadsheet — SKU, Location and quantity. It SETS the position, so re-uploading the same sheet does not double it.">&#8679; Put away by file</button>
         </div>
       </div>
       <p class="hint" style="margin:.1rem 0 .8rem">
