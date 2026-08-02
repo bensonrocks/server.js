@@ -598,6 +598,7 @@
         <button class="admin-nav-btn" data-admin-tab="email">&#9993; Email</button>
         <button class="admin-nav-btn" data-admin-tab="reports">&#128202; Reports</button>
         <button class="admin-nav-btn" data-admin-tab="tms">🚚 TMS Management</button>
+        <button class="admin-nav-btn" data-admin-tab="wipe">&#129529; Clear Test Data</button>
         <button class="admin-nav-btn" data-admin-tab="danger">&#9889; System</button>
       </div>
 
@@ -1484,6 +1485,41 @@
       </div>
 
       <!-- Tab: System / Danger zone -->
+      <!-- Tab: Clear Test Data — hand a tested account over clean -->
+      <div class="admin-tab hidden" id="adminTab-wipe">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">Clear Test Data</div>
+            <div class="admin-section-sub">Remove trial data for ONE client before handing their login over — choose exactly what goes and what stays. The audit trail, the client's profile and their portal logins are never touched, and no other client is affected.</div>
+          </div>
+        </div>
+        <div class="panel" style="margin-bottom:1rem">
+          <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:220px">
+              <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">CLIENT</label>
+              <input id="wipeClient" list="wipeClientList" placeholder="Exactly as their orders name them" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+              <datalist id="wipeClientList"></datalist>
+            </div>
+            <button class="btn-secondary btn-sm" id="wipeLoadBtn" style="padding:.55rem 1rem">Show what they have</button>
+          </div>
+        </div>
+        <div id="wipeBody" class="hidden">
+          <div class="panel" style="margin-bottom:1rem">
+            <div style="font-weight:700;margin-bottom:.5rem">What to clear</div>
+            <div id="wipeScopes" class="wipe-scopes"></div>
+          </div>
+          <div class="panel">
+            <div id="wipeSummary" class="hint" style="margin-bottom:.6rem"></div>
+            <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">TYPE THE CLIENT NAME TO CONFIRM</label>
+            <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+              <input id="wipeConfirm" placeholder="client name" style="flex:1;min-width:200px;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+              <button class="btn-danger btn-sm" id="wipeGoBtn" style="padding:.55rem 1rem" disabled>Clear selected</button>
+            </div>
+            <div id="wipeResult" class="status-bar hidden" style="margin-top:.7rem"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="admin-tab hidden" id="adminTab-danger">
         <div class="admin-section-header">
           <div>

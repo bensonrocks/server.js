@@ -1873,10 +1873,12 @@ function mergeInventoryClientCasing() {
 try {
   const _bodb = readDb();
   const _bon = pruneOrphanBackorders(_bodb);
+  const _bcl = closeSettledBackorders(_bodb);
   const _ton = pruneOrphanTransportJobs(_bodb);
-  if (_bon || _ton) {
+  if (_bon || _bcl || _ton) {
     writeDb(_bodb);
     if (_bon) console.log(`[IdealOne] Backorders: cleared ${_bon} row(s) whose order no longer exists`);
+    if (_bcl) console.log(`[IdealOne] Backorders: closed ${_bcl} row(s) whose order was picked and completed`);
     if (_ton) console.log(`[IdealOne] Transport: cleared ${_ton} job(s) whose order no longer exists (delivered / on-road jobs kept)`);
   }
 } catch (e) { console.error('[IdealOne] backorder reconcile failed:', e.message); }
@@ -3030,6 +3032,171 @@ function livePortalSession(tenantId, client, userId) {
 }
 
 // ── Admin: the client's portal accounts (max 5) ─────────────────────────────
+// ── SELECTIVE CLIENT DATA WIPE ─────────────────────────────────────────────
+// Per the user: after testing an account, clear the trial data selectively —
+// Inbound, outbound Orders, Item Master and so on — choosing what goes and what
+// stays before handing the login to the real client.
+//
+// THREE THINGS ARE NEVER WIPEABLE, and that is deliberate:
+//   • `db.auditLog` — the permanent record of what this system did. A wipe that
+//     could erase its own trail is not a trail. The wipe itself is logged there.
+//   • the client's PROFILE and PORTAL LOGINS — the whole point is to hand that
+//     account over; deleting it would defeat the exercise.
+//   • `warehouse_locations` — the racking is the warehouse's, not the client's.
+//     Deleting it would take every other client's bins with it.
+//
+// It is MASTER-KEY gated, not admin-role: this is the most destructive action
+// in the app, and it spans a client's whole history.
+const CLIENT_WIPE_SCOPES = {
+  orders:       'Outbound orders (uploads, batches, scan progress, labels)',
+  inbound:      'Inbound receipts (PO/ASN, returns, photos, staging, putaway)',
+  item_master:  'Item master (the SKU catalogue itself — implies stock)',
+  stock:        'Stock positions (bin contents, movements, serials) — keeps the catalogue',
+  transport:    'Delivery jobs',
+  submissions:  'Client portal submissions awaiting or past approval',
+  quarantine:   'Quarantine entries (damaged / held units)',
+  backorders:   'Backorder tracking rows',
+  waves:        'Wave pick lists',
+  pokes:        'New-work notifications',
+};
+
+function clientWipeSummary(db, client) {
+  const norm = String(client || '').trim().toLowerCase();
+  const mine = v => String(v || '').trim().toLowerCase() === norm;
+  const cid = invClientId(client);
+  let orders = 0, batches = 0;
+  for (const b of db.batches || []) {
+    if (!mine(b.client_name)) continue;
+    batches++; orders += (b.orders || []).length;
+  }
+  const inv = (() => { try { return inventory.clientDataCounts(cid); } catch { return {}; } })();
+  return {
+    client, clientId: cid,
+    counts: {
+      orders, batches,
+      inbound:     (db.inbound || []).filter(r => mine(r.client_name)).length,
+      transport:   (db.transport || []).filter(j => mine(j.clientName) || mine(j.client_name)).length,
+      submissions: (db.clientSubmissions || []).filter(x => mine(x.client)).length,
+      quarantine:  (db.quarantine || []).filter(q => mine(q.clientId)).length,
+      backorders:  (db.backorders || []).filter(b => mine(b.client_id)).length,
+      waves:       (db.waves || []).filter(w => mine(w.client_name)).length,
+      pokes:       (db.pokes || []).filter(p => mine(p.client)).length,
+      item_master: inv.item_master || 0,
+      on_hand:     inv.on_hand || 0,
+      stock_rows:  inv.stock_rows || 0,
+      movements:   inv.movements || 0,
+      serials:     inv.serials || 0,
+    },
+    scopes: CLIENT_WIPE_SCOPES,
+  };
+}
+
+app.get('/api/master/client-data/summary', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const client = String(req.query.client || '').trim();
+  if (!client) return res.status(400).json({ error: 'client is required' });
+  res.json(clientWipeSummary(readDb(), client));
+});
+
+app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { client, scopes, confirm } = req.body || {};
+  const name = String(client || '').trim();
+  if (!name) return res.status(400).json({ error: 'client is required' });
+  const want = (Array.isArray(scopes) ? scopes : []).filter(x => CLIENT_WIPE_SCOPES[x]);
+  if (!want.length) return res.status(400).json({ error: 'Choose at least one thing to clear.' });
+  // Typed confirmation, same guard as the other destructive actions. Getting
+  // the client name wrong is exactly the mistake this prevents.
+  if (String(confirm || '').trim().toLowerCase() !== name.toLowerCase()) {
+    return res.status(400).json({ error: `Type the client name (${name}) to confirm.` });
+  }
+  const db = readDb();
+  const norm = name.toLowerCase();
+  const mine = v => String(v || '').trim().toLowerCase() === norm;
+  const has = k => want.includes(k);
+  const removed = {};
+  const bump = (k, n) => { if (n) removed[k] = (removed[k] || 0) + n; };
+
+  if (has('orders')) {
+    const keptOrders = [];
+    const before = (db.batches || []).length;
+    db.batches = (db.batches || []).filter(b => {
+      if (!mine(b.client_name)) return true;
+      bump('orders', (b.orders || []).length);
+      for (const o of b.orders || []) keptOrders.push(o.order_number);
+      return false;
+    });
+    bump('batches', before - db.batches.length);
+    // Labels attached to those orders have nothing left to point at.
+    if (db.orderLabels) {
+      for (const k of Object.keys(db.orderLabels)) {
+        if (keptOrders.includes(k)) { delete db.orderLabels[k]; bump('labels', 1); }
+      }
+    }
+  }
+  if (has('inbound')) {
+    const gone = (db.inbound || []).filter(r => mine(r.client_name));
+    for (const rec of gone) {
+      try { fs.rmSync(path.join(DATA_DIR, 'inbound_photos', rec.id), { recursive: true, force: true }); } catch (_) {}
+    }
+    db.inbound = (db.inbound || []).filter(r => !mine(r.client_name));
+    bump('inbound', gone.length);
+  }
+  if (has('transport')) {
+    const before = (db.transport || []).length;
+    db.transport = (db.transport || []).filter(j => !(mine(j.clientName) || mine(j.client_name)));
+    bump('transport', before - db.transport.length);
+  }
+  if (has('submissions')) {
+    const before = (db.clientSubmissions || []).length;
+    db.clientSubmissions = (db.clientSubmissions || []).filter(x => !mine(x.client));
+    bump('submissions', before - db.clientSubmissions.length);
+  }
+  if (has('quarantine')) {
+    const before = (db.quarantine || []).length;
+    db.quarantine = (db.quarantine || []).filter(q => !mine(q.clientId));
+    bump('quarantine', before - db.quarantine.length);
+  }
+  if (has('backorders')) {
+    const before = (db.backorders || []).length;
+    db.backorders = (db.backorders || []).filter(b => !mine(b.client_id));
+    bump('backorders', before - db.backorders.length);
+  }
+  if (has('waves')) {
+    const before = (db.waves || []).length;
+    db.waves = (db.waves || []).filter(w => !mine(w.client_name));
+    bump('waves', before - db.waves.length);
+  }
+  if (has('pokes')) {
+    const before = (db.pokes || []).length;
+    db.pokes = (db.pokes || []).filter(p => !mine(p.client));
+    bump('pokes', before - db.pokes.length);
+  }
+
+  // Inventory side — item_master implies stock (see wipeClient).
+  const invScopes = [];
+  if (has('item_master')) invScopes.push('item_master', 'stock', 'bundles', 'cycle_counts');
+  else if (has('stock'))  invScopes.push('stock');
+  if (invScopes.length) {
+    try {
+      const r = inventory.wipeClient(invClientId(name), invScopes);
+      for (const [k, v] of Object.entries(r)) bump(k, v);
+    } catch (e) { console.warn('[client-wipe] inventory', e.message); }
+  }
+
+  // Whatever went, the orphan reconcilers keep the rest of the app honest —
+  // the same functions that already run on every deletion path.
+  try { pruneOrphanBackorders(db); } catch (_) {}
+  try { closeSettledBackorders(db); } catch (_) {}
+  try { pruneOrphanTransportJobs(db); } catch (_) {}
+  writeDb(db);
+  logAudit('client_data_wiped', {
+    client: name, scopes: want, removed, by: req.userId || 'master',
+  });
+  res.json({ ok: true, client: name, scopes: want, removed,
+    note: 'The audit trail, this client\u2019s profile and their portal logins were not touched.' });
+});
+
 app.get('/api/master/client-profiles/:client/portal-users', (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
@@ -15621,6 +15788,54 @@ function pruneOrphanBackorders(db) {
   });
   return before - db.backorders.length;
 }
+// A BACKORDER IS ONLY REAL WHILE THE WORK CANNOT BE DONE.
+//
+// Per the user: "if orders can be scanned, fulfilled and completed, then it's
+// not considered a back order." A shortfall is recorded at UPLOAD time, from
+// the system's own stock figures — which on a new account are often zero
+// simply because the item master was loaded without quantities. The goods are
+// on the shelf, the packer scans the order, and it ships. But nothing ever
+// closed the backorder: `releaseBackorders` only fires when new stock is
+// RECEIVED, so a row raised at upload outlived the order it belonged to, and
+// months of that accumulate into thousands of open rows that are not real.
+//
+// This closes a backorder when its order is finished (or cancelled), and does
+// it as a RECONCILE-ON-READ rather than a hook, for the same reason
+// pruneOrphanBackorders reconciles: an order can be finished down several
+// paths, and hooking each one is precisely how the original gap appeared.
+function closeSettledBackorders(db) {
+  const list = db.backorders;
+  if (!Array.isArray(list) || !list.length) return 0;
+  const settled = new Map();                 // order_number -> its final status
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      const st = (b.orderStates || {})[o.order_number] || {};
+      if (st.status === 'done' || st.status === 'unprocessed') settled.set(String(o.order_number), st.status);
+    }
+  }
+  if (!settled.size) return 0;
+  const now = new Date().toISOString();
+  let closed = 0;
+  const orders = new Set();
+  for (const bo of list) {
+    if (bo.status !== 'open') continue;
+    const fate = settled.get(String(bo.order_number));
+    if (!fate) continue;
+    bo.status = fate === 'done' ? 'fulfilled' : 'cancelled';
+    bo.remaining = 0;
+    bo.closed_reason = fate === 'done' ? 'order completed' : 'order cancelled';
+    bo.fulfilled_at = bo.fulfilled_at || now;
+    bo.updated_at = now;
+    closed++; orders.add(bo.order_number);
+  }
+  if (closed) {
+    logAudit('backorders_closed_settled', {
+      count: closed, orders: [...orders].slice(0, 200),
+    });
+  }
+  return closed;
+}
+
 function recordBackorders(db, clientName, orderNumber, batchId, reserveResults) {
   const cid = invClientId(clientName);
   const list = backorders(db);
@@ -15943,11 +16158,14 @@ app.get('/api/backorders', requireAuth, (req, res) => {
   // Reconcile before answering, so the queue can never show a row whose order
   // has been deleted — whichever route removed it.
   const pruned = pruneOrphanBackorders(db);
-  if (pruned) writeDb(db);
+  // …and never a row for an order that has since been picked and shipped. A
+  // job that can be scanned and completed is not awaiting stock.
+  const closed = closeSettledBackorders(db);
+  if (pruned || closed) writeDb(db);
   const list = db.backorders;
   const status = req.query.status || 'open';
   const rows = (status === 'all' ? list : list.filter(b => b.status === status)).slice(0, 500);
-  res.json({ open: list.filter(b => b.status === 'open').length, backorders: rows, pruned });
+  res.json({ open: list.filter(b => b.status === 'open').length, backorders: rows, pruned, closed });
 });
 // Manually clear a backorder (e.g. the order was cancelled, or resolved offline).
 app.post('/api/backorders/:id/resolve', express.json(), requireAuth, (req, res) => {

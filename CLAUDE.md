@@ -2924,6 +2924,75 @@ with its own scrollbar and the client names were unreadable. They are now
 wrapped in ONE `.sb-scroll` region that scrolls as a unit, each keeping its
 natural size; only the user/admin block stays pinned at the bottom.
 
+## A backorder dies when its order is fulfilled (`closeSettledBackorders`)
+
+Reported from the floor: the Admin backorder queue showed **a few thousand**
+open rows. Per the user: *"if orders can be scanned, fulfilled and completed,
+then it's not considered a back order."* He is right, and this was a real bug.
+
+A backorder is raised at UPLOAD time from `reserveOrder`'s shortfall — the
+system's own stock figure, which on a new account is often zero simply because
+the item master was loaded without quantities. The goods are on the shelf, the
+packer scans the order, it ships. But **nothing ever closed the row**:
+`releaseBackorders` only fires when new stock is RECEIVED, so a row raised at
+upload outlived the order it belonged to, and months of that pile up.
+
+`closeSettledBackorders(db)` closes any open backorder whose order is now
+`done` (→ `fulfilled`) or `unprocessed` (→ `cancelled`), stamping
+`closed_reason`. RECONCILE-ON-READ, not a hook, for exactly the reason
+`pruneOrphanBackorders` reconciles: an order can be finished down several
+paths, and hooking each one is precisely how the original gap appeared.
+
+Called from **boot**, from `GET /api/backorders`, and it sits alongside the
+orphan prune at every deletion site. Closed rows are KEPT as history, not
+deleted — only genuinely-orphaned rows are removed. Audit-logged
+`backorders_closed_settled`.
+
+Verified against the reported shape: 1,250 open rows (1,000 whose orders were
+picked and completed, 50 pointing at no order at all, 200 genuinely waiting)
+came down to **200** at boot, the closed rows kept their reason, a second read
+is a no-op, and completing one more order took its row with it. 15 checks.
+
+## Administrator → Clear Test Data (selective, per client)
+
+Per the user: after testing an account, clear the trial data selectively —
+Inbound, outbound Orders, Item Master and so on — choosing what goes and what
+stays before handing the login to the real client.
+
+`GET /api/master/client-data/summary?client=` counts what that client has;
+`POST /api/master/client-data/wipe {client, scopes[], confirm}` removes only
+the ticked scopes. **MASTER-KEY gated**, not admin-role: this is the most
+destructive action in the app and it spans a client's whole history. The
+confirmation is the client's name typed out, same guard as the other
+destructive actions.
+
+**THREE THINGS ARE NEVER WIPEABLE, deliberately:**
+- **`db.auditLog`** — a wipe that could erase its own trail is not a trail. The
+  wipe is logged *there* (`client_data_wiped`, with the scopes and the counts).
+- **The client's profile and portal logins** — the whole point is to hand that
+  account over.
+- **`warehouse_locations`** — the racking belongs to the warehouse, not the
+  client; deleting it would take every other client's bins with it.
+
+`item_master` implies `stock` (stock for a SKU that no longer exists is
+orphaned data nothing can reconcile) and the UI ticks and LOCKS the stock box
+to say so. Clearing `stock` alone keeps the catalogue and zeroes the
+quantities. Each scope shows how much it would remove, so nobody ticks blind.
+`pruneOrphanBackorders` / `pruneOrphanTransportJobs` run afterwards, as on
+every other deletion path.
+
+Verified 15 API checks (warehouse refused, a mistyped confirmation changes
+nothing, inbound-only leaves orders and the catalogue intact, stock-only keeps
+the SKUs at zero, no other client touched, the audit trail GREW, the portal
+logins survive) plus 13 browser checks.
+
+GOTCHA worth keeping: the first version of the client call set
+`'content-type'` explicitly AND spread `hdrs()`, which sets `'Content-Type'`.
+Two object keys differing only in CASE become one combined header value
+(`application/json, application/json`), which `express.json()` does not
+recognise — so the body arrived empty and the server answered "client is
+required" on a request whose payload was visibly correct in DevTools.
+
 ## Inbound → Staging → Putaway (the current flow)
 
 Per the user: the crew scans (or keys) quantities, **everything received then

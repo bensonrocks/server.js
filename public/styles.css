@@ -3425,3 +3425,12 @@ tr.pa-split-row td { border-top: 0; }
 .pa-actions { display: flex; flex-direction: column; gap: .2rem; align-items: flex-start; }
 .pa-msg.error { color: #b91c1c; font-weight: 600; }
 @media (max-width: 768px) { .pa-bulk { position: sticky; top: 0; background: var(--surface); z-index: 3; } }
+
+/* ── Clear Test Data ──────────────────────────────────────────────────────── */
+.wipe-scopes { display: grid; gap: .45rem; }
+.wipe-scope { display: flex; gap: .6rem; align-items: flex-start; padding: .5rem .6rem;
+              border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.wipe-scope:hover { background: var(--surface-2); }
+.wipe-scope input { margin-top: .15rem; width: 1.05rem; height: 1.05rem; flex: 0 0 auto; }
+.wipe-scope b { display: block; font-size: .86rem; }
+.wipe-count { display: block; font-size: .75rem; font-weight: 700; color: #b45309; margin-top: .1rem; }

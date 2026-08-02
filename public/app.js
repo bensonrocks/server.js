@@ -10434,6 +10434,128 @@
     } catch (err) { zortStatus('error', 'Save failed: ' + err.message); }
   });
 
+  // ── Clear Test Data — hand a tested account over clean ─────────────────────
+  // Master-key gated server-side. Selective on purpose: the point is to choose
+  // what goes and what stays, not to nuke a client.
+  const wipeUI = (() => {
+    let picked = new Set(), summary = null;
+    const $$ = id => document.getElementById(id);
+
+    async function loadSummary() {
+      const client = ($$('wipeClient')?.value || '').trim();
+      if (!client) { alert('Name the client first.'); return; }
+      try {
+        const r = await fetchT('/api/master/client-data/summary?client=' + encodeURIComponent(client),
+          { headers: { 'x-master-key': LOG_PASSWORD } });
+        if (!r.ok) { alert('Could not read that client.'); return; }
+        summary = await r.json();
+        picked = new Set();
+        renderScopes();
+        $$('wipeBody').classList.remove('hidden');
+        $$('wipeResult').classList.add('hidden');
+        $$('wipeConfirm').value = '';
+        paint();
+      } catch (e) { alert('Could not reach the server.'); }
+    }
+
+    // Every scope shows HOW MUCH it would remove, so nobody ticks blind.
+    const COUNT_OF = {
+      orders: c => `${c.orders} order(s) in ${c.batches} upload(s)`,
+      inbound: c => `${c.inbound} receipt(s)`,
+      item_master: c => `${c.item_master} SKU(s)`,
+      stock: c => `${c.stock_rows} bin row(s), ${c.on_hand} pc(s) on hand, ${c.movements} movement(s)`,
+      transport: c => `${c.transport} job(s)`,
+      submissions: c => `${c.submissions} submission(s)`,
+      quarantine: c => `${c.quarantine} entry(ies)`,
+      backorders: c => `${c.backorders} row(s)`,
+      waves: c => `${c.waves} wave(s)`,
+      pokes: c => `${c.pokes} notification(s)`,
+    };
+
+    function renderScopes() {
+      const c = summary.counts || {};
+      $$('wipeScopes').innerHTML = Object.entries(summary.scopes).map(([k, label]) => `
+        <label class="wipe-scope">
+          <input type="checkbox" class="wipe-pick" data-scope="${esc(k)}">
+          <span>
+            <b>${esc(label.split('(')[0].trim())}</b>
+            <span class="hint">${esc(label.includes('(') ? '(' + label.split('(').slice(1).join('(') : '')}</span>
+            <span class="wipe-count">${esc(COUNT_OF[k] ? COUNT_OF[k](c) : '')}</span>
+          </span>
+        </label>`).join('');
+      $$('wipeScopes').querySelectorAll('.wipe-pick').forEach(cb => cb.addEventListener('change', () => {
+        cb.checked ? picked.add(cb.dataset.scope) : picked.delete(cb.dataset.scope);
+        // Deleting the catalogue necessarily takes its stock with it — say so
+        // rather than letting someone think the stock survives.
+        if (cb.dataset.scope === 'item_master' && cb.checked) {
+          const st = $$('wipeScopes').querySelector('.wipe-pick[data-scope="stock"]');
+          if (st) { st.checked = true; st.disabled = true; picked.add('stock'); }
+        }
+        if (cb.dataset.scope === 'item_master' && !cb.checked) {
+          const st = $$('wipeScopes').querySelector('.wipe-pick[data-scope="stock"]');
+          if (st) st.disabled = false;
+        }
+        paint();
+      }));
+    }
+
+    function paint() {
+      const n = picked.size;
+      const typed = ($$('wipeConfirm')?.value || '').trim().toLowerCase();
+      const name = (summary?.client || '').toLowerCase();
+      $$('wipeGoBtn').disabled = !n || typed !== name;
+      $$('wipeSummary').textContent = n
+        ? `${n} thing(s) selected for ${summary.client}. The audit trail, their profile and their portal logins stay.`
+        : 'Nothing selected yet.';
+    }
+
+    async function go() {
+      if (!summary || !picked.size) return;
+      const scopes = [...picked];
+      if (!confirm(`Clear ${scopes.length} thing(s) for ${summary.client}?\n\nThis cannot be undone.`)) return;
+      const btn = $$('wipeGoBtn'); btn.disabled = true;
+      try {
+        const r = await fetchT('/api/master/client-data/wipe', {
+          method: 'POST',
+          // hdrs() already sets Content-Type. Setting it again in a different
+          // CASE makes two object keys that become ONE combined header value
+          // ("application/json, application/json"), which express.json() does
+          // not recognise — the body then arrives empty.
+          headers: { ...hdrs(), 'x-master-key': LOG_PASSWORD },
+          body: JSON.stringify({ client: summary.client, scopes, confirm: $$('wipeConfirm').value }),
+        }, 30000);
+        const d = await r.json().catch(() => ({}));
+        const box = $$('wipeResult');
+        box.classList.remove('hidden');
+        if (!r.ok) { box.className = 'status-bar error'; box.textContent = d.error || 'Could not clear that.'; btn.disabled = false; return; }
+        const lines = Object.entries(d.removed || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || 'nothing to remove';
+        box.className = 'status-bar success';
+        box.textContent = `Cleared for ${d.client} — ${lines}. ${d.note}`;
+        await loadSummary();
+      } catch (e) {
+        const box = $$('wipeResult');
+        box.classList.remove('hidden'); box.className = 'status-bar error';
+        box.textContent = 'Could not reach the server — nothing was cleared.';
+        btn.disabled = false;
+      }
+    }
+
+    function init() {
+      $$('wipeLoadBtn')?.addEventListener('click', loadSummary);
+      $$('wipeConfirm')?.addEventListener('input', paint);
+      $$('wipeGoBtn')?.addEventListener('click', go);
+      // Reuse the client names the Inventory tab already collects.
+      const dl = $$('wipeClientList');
+      if (dl) {
+        const src = document.getElementById('invClientList');
+        if (src) dl.innerHTML = src.innerHTML;
+      }
+    }
+    return { init, loadSummary };
+  })();
+  window.wipeUI = wipeUI;
+  document.addEventListener('DOMContentLoaded', () => wipeUI.init());
+
   // ── Activity Overview (Admin & Master only — server-enforced) ──────────────
   function fmtDashDate(d) {
     // The date string is already an SGT calendar day — format it as SGT
