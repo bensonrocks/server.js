@@ -48,6 +48,21 @@ export default function AboutPage() {
             confirmed details. ]
           </p>
         </div>
+
+        <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/gallery/gallery-racking-aisle.jpg"
+            alt="Pallet racking inside a NimbusTrade-appointed warehouse"
+            className="aspect-[4/3] w-full rounded-lg border border-border object-cover"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/gallery/gallery-outbound-single.jpg"
+            alt="An outbound parcel ready for courier collection"
+            className="aspect-[4/3] w-full rounded-lg border border-border object-cover"
+          />
+        </div>
       </div>
 
       <Credibility />

@@ -15,7 +15,14 @@ export function Industries() {
           </p>
         </div>
 
-        <div className="mt-12 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/gallery/gallery-kitting-2.jpg"
+          alt="Retail packaging kitted for dispatch"
+          className="mt-10 aspect-[21/9] w-full rounded-lg border border-border object-cover sm:aspect-[3/1]"
+        />
+
+        <div className="mt-10 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
           {INDUSTRIES.map((industry) => (
             <div key={industry.name} className="bg-paper p-7">
               <industry.icon className="h-6 w-6 text-brand" />
