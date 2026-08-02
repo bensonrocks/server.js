@@ -25,7 +25,7 @@ export const SERVICES: Service[] = [
     name: "Warehousing",
     icon: Warehouse,
     summary:
-      "Storage across NimbusTrade-appointed warehouses in Singapore and Malaysia, every one held to the same fulfillment standards.",
+      "Self-run storage in Singapore and Malaysia, extending through NimbusTrade-appointed partner warehouses elsewhere — every one held to the same fulfillment standards.",
     benefit: "Pay for the space you use, not a fixed lease.",
     points: ["Bin and pallet storage", "Cycle counting", "Temperature-aware zoning"],
   },
@@ -52,7 +52,7 @@ export const SERVICES: Service[] = [
     name: "Distribution",
     icon: Truck,
     summary:
-      "Last-mile and regional distribution across Southeast Asia, coordinated with local carrier partners.",
+      "Last-mile and regional distribution coordinated with local carrier partners, from Southeast Asia through to our wider international partner network.",
     benefit: "A single delivery SLA across every market you sell into.",
     points: ["Route planning", "Proof of delivery capture", "Regional carrier panel"],
   },
@@ -70,18 +70,28 @@ export const SERVICES: Service[] = [
     name: "Cross-border logistics",
     icon: Globe2,
     summary:
-      "Multi-market shipping lanes for brands expanding beyond a single country, with local-market handoffs.",
+      "Multi-market shipping lanes for brands expanding beyond a single country, with local-market handoffs and Merchant/Importer of Record support to clear trade formalities in the destination market.",
     benefit: "Expand into a new market without hiring a local logistics team first.",
-    points: ["Multi-country lanes", "Local handoff partners", "Landed-cost estimation"],
+    points: [
+      "Multi-country lanes",
+      "Local handoff partners",
+      "Landed-cost estimation",
+      "Merchant/Importer of Record support",
+    ],
   },
   {
     slug: "customs-compliance",
     name: "Customs & compliance",
     icon: FileCheck2,
     summary:
-      "Documentation and customs coordination handled alongside your shipment, not as a separate vendor relationship.",
+      "Documentation and customs coordination handled alongside your shipment, not as a separate vendor relationship — including Merchant of Record and Importer of Record support where a market requires a local entity of record to trade.",
     benefit: "Fewer parties to chase when a shipment is held at the border.",
-    points: ["HS code classification support", "Permit coordination", "Duty and tax documentation"],
+    points: [
+      "HS code classification support",
+      "Permit coordination",
+      "Duty and tax documentation",
+      "Merchant/Importer of Record",
+    ],
   },
   {
     slug: "tech-integration",

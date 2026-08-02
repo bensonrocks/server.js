@@ -4,7 +4,7 @@ import { QuoteForm } from "@/components/sections/quote-form";
 export const metadata: Metadata = {
   title: "Get a Fulfillment Quote for Southeast Asia",
   description:
-    "Get a fulfillment quote from NimbusTrade Solutions in six short steps — warehousing, freight, distribution, or e-commerce operations across Singapore, Malaysia, and the wider Southeast Asia region.",
+    "Get a fulfillment quote from NimbusTrade Solutions in six short steps — warehousing, freight, distribution, or e-commerce operations across our self-run Singapore and Malaysia network and our wider international partner markets.",
   alternates: { canonical: "/quote" },
 };
 

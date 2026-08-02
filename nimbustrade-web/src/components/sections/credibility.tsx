@@ -1,3 +1,5 @@
+import { SELF_RUN_MARKETS, PARTNER_MARKETS, formatMarketList } from "@/lib/site-config";
+
 export function Credibility() {
   return (
     <section className="border-y border-border bg-paper-alt">
@@ -6,11 +8,12 @@ export function Credibility() {
           Fulfillment network
         </p>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink">
-          Goods move through <span className="font-semibold">NimbusTrade-appointed warehouses</span>
-          {" "}across <span className="font-semibold">Singapore</span> and{" "}
-          <span className="font-semibold">Malaysia</span> — every partner warehouse is held to the
-          same fulfillment standards, so where an appointed partner is the better fit for your
-          lane, we route there instead. You deal with one desk either way.
+          We run our own warehouses in{" "}
+          <span className="font-semibold">{formatMarketList(SELF_RUN_MARKETS)}</span>, and
+          coordinate fulfillment onward through a panel of{" "}
+          <span className="font-semibold">NimbusTrade-appointed partners</span> across{" "}
+          {formatMarketList(PARTNER_MARKETS)} — every partner held to the same fulfillment
+          standards. You deal with one desk either way.
         </p>
         <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-muted">
           <li>Inbound QC on every shipment</li>

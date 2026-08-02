@@ -52,16 +52,26 @@ export const SOLUTIONS: Solution[] = [
     name: "Cross-border expansion",
     question: "I want to sell into a new country.",
     description:
-      "A staged way into a new market's logistics — local handoff partners without hiring a local team first.",
-    included: ["Multi-country lanes", "Local handoffs", "Landed-cost estimate", "Market entry review"],
+      "A staged way into a new market's logistics — local handoff partners, and Merchant/Importer of Record support, without hiring a local team first.",
+    included: [
+      "Multi-country lanes",
+      "Local handoffs",
+      "Landed-cost estimate",
+      "Merchant/Importer of Record",
+    ],
   },
   {
     slug: "customs",
     name: "Customs & compliance",
     question: "I need help with border documentation.",
     description:
-      "Customs coordination handled alongside the shipment itself, not as a separate vendor to manage.",
-    included: ["HS classification support", "Permit coordination", "Duty documentation", "Audit trail"],
+      "Customs coordination handled alongside the shipment itself, including Merchant/Importer of Record where your destination market requires a local entity of record.",
+    included: [
+      "HS classification support",
+      "Permit coordination",
+      "Duty documentation",
+      "Merchant/Importer of Record",
+    ],
   },
   {
     slug: "tech-integration",

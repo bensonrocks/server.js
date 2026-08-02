@@ -15,8 +15,9 @@ export function Hero() {
         <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-ink-muted">
           NimbusTrade Solutions runs the operating layer between your suppliers and
           your customers — a single Singapore desk coordinating storage, pick-and-pack,
-          customs, and cross-border transport for B2B and B2C brands across Singapore,
-          Malaysia, and the wider Southeast Asia region.
+          customs, and cross-border transport for B2B and B2C brands. Self-run out of
+          Singapore and Malaysia, with an appointed-partner network reaching onward
+          across Southeast Asia and into international markets.
         </p>
         <div className="mt-9 flex flex-col justify-center gap-4 sm:flex-row">
           <Button asChild size="lg">

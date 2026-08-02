@@ -11,14 +11,14 @@ import {
 export const metadata: Metadata = {
   title: "About Our Southeast Asia Fulfillment Network",
   description:
-    "NimbusTrade Solutions runs ecommerce fulfillment across Southeast Asia from a single Singapore desk, coordinating NimbusTrade-appointed warehouses, freight, and last-mile delivery.",
+    "NimbusTrade Solutions runs ecommerce fulfillment from a single Singapore desk — self-run warehousing in Singapore and Malaysia, coordinated with appointed partners across Southeast Asia and onward into international markets.",
   alternates: { canonical: "/about" },
 };
 
 const FAQS = [
   {
     q: "Where is NimbusTrade based?",
-    a: "The operating desk is based in Singapore, coordinating a network of warehousing, freight, and last-mile partners across the region.",
+    a: "The operating desk is based in Singapore. We run our own warehouses in Singapore and Malaysia, and coordinate fulfillment onward through a panel of appointed partners across the Philippines, Indonesia, Thailand, Mexico, the US, Canada, Australia, New Zealand, the UK, and the UAE.",
   },
   {
     q: "Do I need to use every service line?",
@@ -31,6 +31,10 @@ const FAQS = [
   {
     q: "Can you support a brand expanding into a new country?",
     a: "Yes — cross-border expansion is one of our service lines, typically starting with a local handoff partner before a client commits to a fuller local presence.",
+  },
+  {
+    q: "Do you offer Merchant of Record or Importer of Record services?",
+    a: "Yes — for markets where trading requires a local entity of record, we offer Merchant of Record and Importer of Record support so e-commerce clients can clear customs and sell in a new market without setting up a local entity first.",
   },
 ];
 

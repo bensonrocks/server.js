@@ -1,4 +1,4 @@
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION } from "@/lib/site-config";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, SELF_RUN_MARKETS, PARTNER_MARKETS } from "@/lib/site-config";
 
 export function OrganizationJsonLd() {
   const data = {
@@ -21,9 +21,8 @@ export function OrganizationJsonLd() {
       addressCountry: "SG",
     },
     areaServed: [
-      { "@type": "Country", name: "Singapore" },
-      { "@type": "Country", name: "Malaysia" },
-      { "@type": "Place", name: "Southeast Asia" },
+      ...SELF_RUN_MARKETS.map((name) => ({ "@type": "Country", name })),
+      ...PARTNER_MARKETS.map((name) => ({ "@type": "Country", name })),
     ],
     knowsAbout: [
       "Ecommerce fulfillment",
@@ -32,6 +31,8 @@ export function OrganizationJsonLd() {
       "Cross-border freight",
       "Last-mile distribution",
       "B2B and B2C order fulfillment",
+      "Merchant of Record services",
+      "Importer of Record services",
     ],
     sameAs: [],
   };
@@ -60,8 +61,8 @@ export function ServiceJsonLd({
       url: `${SITE_URL}/services#${service.slug}`,
       provider: { "@id": `${SITE_URL}/#organization` },
       areaServed: [
-        { "@type": "Country", name: "Singapore" },
-        { "@type": "Country", name: "Malaysia" },
+        ...SELF_RUN_MARKETS.map((name) => ({ "@type": "Country", name })),
+        ...PARTNER_MARKETS.map((name) => ({ "@type": "Country", name })),
       ],
     })),
   };
