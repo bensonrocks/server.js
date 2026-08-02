@@ -41,7 +41,7 @@ export function SiteFooter() {
             <div className="mt-6 space-y-2 text-sm text-ink-muted">
               <div className="flex items-center gap-2">
                 <MapPin className="h-4 w-4 shrink-0 text-brand" />
-                <span>[ Registered office address — placeholder ], Singapore</span>
+                <span>62 Ubi Road 1, Oxley Bizhub 2, #06-01, Singapore 408734</span>
               </div>
               <div className="flex items-center gap-2">
                 <Phone className="h-4 w-4 shrink-0 text-brand" />

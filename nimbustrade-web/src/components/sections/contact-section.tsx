@@ -19,6 +19,8 @@ const contactSchema = z.object({
 
 type ContactValues = z.infer<typeof contactSchema>;
 
+const OFFICE_ADDRESS = "62 Ubi Road 1, Oxley Bizhub 2, #06-01, Singapore 408734";
+
 export function ContactSection() {
   const [submitted, setSubmitted] = React.useState(false);
   const {
@@ -63,15 +65,21 @@ export function ContactSection() {
             </a>
             <div className="flex items-center gap-3 text-ink">
               <MapPin className="h-5 w-5 shrink-0 text-brand" />
-              [ Registered office address — placeholder ], Singapore
+              {OFFICE_ADDRESS}
             </div>
             <div className="flex items-center gap-3 text-ink">
               <Clock className="h-5 w-5 text-brand" /> Mon–Fri, 9:00am–6:00pm SGT
             </div>
           </div>
 
-          <div className="mt-8 flex h-40 items-center justify-center rounded-lg border border-dashed border-border-strong bg-paper-alt text-sm text-ink-muted">
-            Map placeholder — embed once the registered office address is confirmed
+          <div className="mt-8 h-64 overflow-hidden rounded-lg border border-border">
+            <iframe
+              title="NimbusTrade Solutions office location"
+              src={`https://www.google.com/maps?q=${encodeURIComponent(OFFICE_ADDRESS)}&output=embed`}
+              className="h-full w-full border-0"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
           </div>
         </div>
 
