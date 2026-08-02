@@ -6375,6 +6375,17 @@
     nextBtn.disabled = num >= count;
   }
 
+  // The Received figure is EDITABLE until End Receipt closes the job, so a
+  // mis-scan is corrected where it is noticed. Rendered as an input rather than
+  // behind an edit button — on a phone, one tap beats two.
+  function receivedCell(job, sku, received, expected) {
+    const done = job.status === 'done';
+    if (done) return `<td class="qty-col">${received}</td>`;
+    return `<td class="qty-col"><input class="inb-qty-edit" type="number" min="0" inputmode="numeric"
+      data-sku="${esc(sku)}" data-was="${received}" value="${received}"
+      aria-label="Received quantity for ${esc(sku)}"></td>`;
+  }
+
   function renderInboundItemsTable(job) {
     const tbody = document.getElementById('inboundItemsTbody');
     document.getElementById('inboundExpectedHeader').style.display = job.type === 'po' ? '' : 'none';
@@ -6383,17 +6394,68 @@
     for (const line of job.lines) {
       seenSkus.add(line.sku);
       const received = job.scanned[line.sku] || 0;
-      rows.push(`<tr class="${received >= line.expected_qty && line.expected_qty > 0 ? 'status-done' : ''}">
-        <td>${esc(line.sku)}</td><td>${esc(line.description || '')}</td>
-        <td class="qty-col">${line.expected_qty}</td><td class="qty-col">${received}</td>
+      const exp = Number(line.expected_qty) || 0;
+      // An OVER receipt must not read as a finished line. It used to take the
+      // same status-done styling as a correct count, so 11 of 10 looked exactly
+      // like a job well done — reassuring, at the one moment it should not.
+      const cls = exp > 0 && received > exp ? 'inb-over'
+                : exp > 0 && received >= exp ? 'status-done' : '';
+      const flag = exp > 0 && received > exp ? ` <span class="inb-over-pill">+${received - exp} over</span>` : '';
+      rows.push(`<tr class="${cls}">
+        <td>${esc(line.sku)}${flag}</td><td>${esc(line.description || '')}</td>
+        <td class="qty-col">${exp}</td>${receivedCell(job, line.sku, received, exp)}
       </tr>`);
     }
     for (const [sku, qty] of Object.entries(job.scanned)) {
       if (seenSkus.has(sku)) continue;
       rows.push(`<tr><td>${esc(sku)}</td><td><em>Not on ${job.type === 'po' ? 'PO' : 'list'}</em></td>
-        <td class="qty-col">${job.type === 'po' ? '—' : ''}</td><td class="qty-col">${qty}</td></tr>`);
+        <td class="qty-col">${job.type === 'po' ? '\u2014' : ''}</td>${receivedCell(job, sku, qty, 0)}</tr>`);
     }
     tbody.innerHTML = rows.join('') || `<tr><td colspan="4" class="hint">No items scanned yet.</td></tr>`;
+    tbody.querySelectorAll('.inb-qty-edit').forEach(inp => {
+      // Commit on blur or Enter, never on every keystroke — typing "10" over a
+      // "2" would otherwise fire a correction to 1 on the way past.
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+      inp.addEventListener('change', () => commitInboundQty(inp));
+    });
+  }
+
+  async function commitInboundQty(inp) {
+    if (!activeInbound || inp.dataset.busy) return;
+    const sku = inp.dataset.sku;
+    const was = Number(inp.dataset.was) || 0;
+    const want = Math.max(0, parseInt(inp.value, 10) || 0);
+    const fb = (kind, msg) => showFeedback(document.getElementById('inboundScanFeedback'), kind, msg);
+    if (want === was) { inp.value = was; return; }
+    // A held scan has not reached the server yet, so the number on screen is
+    // not the number being corrected — same reasoning that blocks End Receipt.
+    if (pendingScansForTarget('inbound', activeInbound.id).length) {
+      inp.value = was;
+      fb('error', 'Some scans are still waiting for the connection — the count on screen is not final yet.');
+      return;
+    }
+    inp.dataset.busy = '1';
+    try {
+      const r = await fetchT(`/api/inbound/${encodeURIComponent(activeInbound.id)}/setqty`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ sku, qty: want }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { inp.value = was; fb('error', d.error || 'Could not change that count.'); return; }
+      activeInbound.scanned[sku] = want;
+      if (!want) delete activeInbound.scanned[sku];
+      if (d.condition_totals) (activeInbound.condition_totals = activeInbound.condition_totals || {})[sku] = d.condition_totals;
+      if (d.assignments) activeInbound.assignments = d.assignments;
+      activeInbound.cartons = activeInbound.cartons || [];
+      let msg = `${sku} corrected to ${want}`;
+      if ((d.serialsRemoved || []).length) msg += ` \u00b7 ${d.serialsRemoved.length} serial(s) un-registered`;
+      if (d.serialsRefused) msg += ` \u00b7 ${d.serialsRefused.message}`;
+      fb(d.serialsRefused ? 'error' : 'success', msg);
+      renderInboundItemsTable(activeInbound);
+      renderInboundTeamStrip(activeInbound);
+    } catch (e) {
+      inp.value = was;
+      fb('error', 'Could not reach the server — the count was not changed.');
+    } finally { delete inp.dataset.busy; }
   }
 
   function openInboundReceiving(id) {

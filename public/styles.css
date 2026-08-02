@@ -3370,3 +3370,19 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 .cs-pill.ok   { background:#dcfce7; color:#166534; }
 .cs-pill.bad  { background:#fee2e2; color:#991b1b; }
 .cs-pill.warn { background:#ffedd5; color:#9a3412; }
+
+/* ── Correcting a received count ───────────────────────────────────────────
+   Editable until End Receipt closes the job. Sized for a thumb, and narrow
+   enough that the Received column does not push the table sideways. */
+.inb-qty-edit { width: 5.5rem; padding: .3rem .4rem; text-align: right; font-weight: 700;
+                font-size: 1rem; border: 1.5px solid var(--border); border-radius: 6px;
+                background: var(--surface); color: var(--text); }
+.inb-qty-edit:focus { outline: none; border-color: var(--primary); background: #eff6ff; }
+/* An over-receipt must NOT read as a finished line — it used to take the same
+   green as a correct count, which reassured at the one moment it should not. */
+tr.inb-over { background: #fff7ed; }
+tr.inb-over .inb-qty-edit { border-color: #f97316; color: #9a3412; }
+.inb-over-pill { display: inline-block; margin-left: .4rem; padding: .05rem .4rem; border-radius: 99px;
+                 font-size: .68rem; font-weight: 800; background: #ffedd5; color: #9a3412;
+                 border: 1px solid #fed7aa; white-space: nowrap; }
+@media (max-width: 768px) { .inb-qty-edit { width: 4.5rem; font-size: 1.05rem; } }

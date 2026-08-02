@@ -2766,6 +2766,59 @@ reload) and 11 regression checks (an unsplit receipt shows no strip and no team
 wording; a held offline scan survives the poll and drains to exactly one piece
 on the right assignment).
 
+### Correcting a received count — editable until End Receipt
+
+Per the user: *"allow editing of qty, unless one closes it."* `POST
+/api/inbound/:id/setqty` — the Received figure on the receiving screen is an
+input, not text, for as long as the receipt is open.
+
+**End Receipt is the one hard boundary, and it is the right one**: that is the
+moment the units become sellable stock, the discrepancies are frozen onto the
+record and the GRN goes to the client. Before it, nothing downstream has been
+told anything, so a correction is free; after it, three things would disagree.
+
+- **ABSOLUTE set, not an adjustment** (same as outbound's `/api/scan/setqty`) —
+  the receiver reads a number off the screen and types what it should say.
+- **Everything that must agree with `state.scanned` moves by the DELTA**: the
+  condition breakdown, the carton breakdown, the team assignments, and any
+  serials captured in error. `applyCartonDelta` spreads a reduction over the
+  most recent cartons — calling `addToActiveCarton` with a big negative would
+  clamp at zero inside ONE carton and silently leave the breakdown short.
+- **`condition` changes what the number MEANS, deliberately.** Without it, `qty`
+  is the TOTAL and the change lands on the good count; damaged/KIV are
+  photo-gated evidence and a plain total edit must never quietly erase them, so
+  a reduction below them is refused with the numbers named. WITH it, `qty` is
+  that bucket's absolute value and the total is re-derived — "set damaged to 1"
+  is what someone means; making them compute a new total to get there would be a
+  puzzle, not a correction.
+- **SERIALS are only unwound on a genuine contradiction** — when the serials
+  captured for a SKU outnumber the corrected total. 3 serialised units among 14
+  is consistent, and removing one would be inventing a fact about which physical
+  unit left. `inventory.removeSerials()` (new) never touches a serial already
+  **shipped**: that unit really left the building.
+- Refused while the device holds **offline scans** (the number on screen is not
+  the number being corrected — same reasoning as End Receipt), and behind the
+  same claim lock as scanning. Audit-logged `inbound_qty_corrected` with from,
+  to, delta, condition and reason.
+- The client commits on **blur/Enter, never on input** — typing "40" over a "2"
+  would otherwise fire a correction to 4 on the way past (asserted: one request,
+  and it lands on 40).
+
+**An over-receipt no longer reads as a finished line.** `received >= expected`
+took the same `status-done` green as a correct count, so 11 of 10 looked exactly
+like a job well done — reassuring at the one moment it should not. It now has
+its own amber `.inb-over` row and a "+N over" pill.
+
+Verified 33 API checks (the correction reaching cartons/conditions/assignments/
+serials, the damage refusal, a barcode fired into the box, the split-receipt
+case where an assignment must follow the count down and back up, a shipped
+serial left alone, and the close-then-refuse boundary) plus 15 browser checks on
+desktop and a Pixel 5.
+
+STILL NOT GUARDED, deliberately flagged: nothing warns at SCAN time when a line
+goes past its expected quantity — the discrepancy still only surfaces at End
+Receipt. Correcting it is now easy; noticing it early is not yet built.
+
 ## Inbound → Staging → Putaway (the current flow)
 
 Per the user: the crew scans (or keys) quantities, **everything received then

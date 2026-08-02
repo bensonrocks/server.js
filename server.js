@@ -8830,6 +8830,193 @@ app.post('/api/inbound/:id/scan', (req, res) => {
     assignments: rec.assignments || [] });
 });
 
+// ── CORRECT A COUNT ────────────────────────────────────────────────────────
+// Per the user: "allow editing of qty, unless one closes it." The Received
+// figure on the receiving screen is editable for as long as the receipt is
+// open; End Receipt is the one thing that locks it, and that boundary matters
+// because End Receipt is also the moment the units become sellable stock, the
+// discrepancies are frozen onto the record and the GRN goes out. Before that
+// nothing downstream has been told anything, so a correction is free.
+//
+// This is an ABSOLUTE set (like outbound's /api/scan/setqty), not an
+// adjustment, because the receiver is reading a number off the screen and
+// typing what it should say. Everything that has to keep agreeing with
+// state.scanned is moved by the DELTA: the condition breakdown, the carton
+// breakdown, the team assignments, and any serials captured in error.
+function applyCartonDelta(state, sku, delta) {
+  if (!delta) return;
+  if (delta > 0) { addToActiveCarton(state, sku, delta); return; }
+  // Take a reduction off the most recently worked cartons first. Calling
+  // addToActiveCarton with a big negative would clamp at zero inside ONE
+  // carton and silently leave the breakdown summing short of the total.
+  let left = -delta;
+  const cartons = state.cartons || [];
+  for (let i = cartons.length - 1; i >= 0 && left > 0; i--) {
+    const have = (cartons[i].scans || {})[sku] || 0;
+    const take = Math.min(have, left);
+    if (take > 0) { cartons[i].scans[sku] = have - take; left -= take; }
+  }
+}
+
+// Move a split receipt's assignments by the same delta, so "who has counted
+// what" never claims more (or less) than the SKU total actually holds.
+function applyAssignmentDelta(rec, sku, delta, me) {
+  const list = (rec.assignments || []).filter(a => a.sku === sku);
+  if (!list.length || !delta) return [];
+  const touched = [];
+  const note = (a, qty) => {
+    a.events = a.events || [];
+    a.events.push({ at: new Date().toISOString(), by: me, qty, correction: true });
+    touched.push({ assignment_id: a.id, assignee: a.assignee, qty, done: a.done, total: a.qty });
+  };
+  let left = Math.abs(delta);
+  if (delta > 0) {
+    // Fill the corrector's OWN outstanding lines first, then a colleague's —
+    // the same own-first rule a scan follows.
+    const open = list.filter(a => (a.done || 0) < a.qty);
+    for (const a of [...open.filter(a => a.assignee === me), ...open.filter(a => a.assignee !== me)]) {
+      if (left <= 0) break;
+      const take = Math.min(a.qty - (a.done || 0), left);
+      if (take > 0) { a.done = (a.done || 0) + take; left -= take; note(a, take); }
+    }
+  } else {
+    // Give pieces back from the most recently worked line first — that is the
+    // work most likely to be the mistake being corrected.
+    const recent = [...list].sort((x, y) =>
+      String((y.events || []).slice(-1)[0]?.at || '').localeCompare(String((x.events || []).slice(-1)[0]?.at || '')));
+    for (const a of recent) {
+      if (left <= 0) break;
+      const take = Math.min(a.done || 0, left);
+      if (take > 0) { a.done = (a.done || 0) - take; left -= take; note(a, -take); }
+    }
+  }
+  return touched;
+}
+
+app.post('/api/inbound/:id/setqty', (req, res) => {
+  const { id } = req.params;
+  const { sku: skuIn, qty, condition, reason } = req.body || {};
+  const sku = String(skuIn || '').trim();
+  if (!sku) return res.status(400).json({ error: 'sku required' });
+  const db  = readDb();
+  const rec = findInbound(db, id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
+
+  // THE ONE HARD BOUNDARY. After End Receipt the stock is on hand, the
+  // discrepancies are a permanent record and the GRN has gone to the client —
+  // changing the count here would leave all three saying different things.
+  if (state.status === 'done') {
+    return res.status(409).json({ error: 'This receipt has been ended — its counts can no longer be edited.' });
+  }
+  if (!(rec.assignments || []).length) {
+    const holder = claimBlocker(state, req.userId);
+    if (holder) return res.status(409).json({ error: `This receipt is being worked by ${holder} at another station.` });
+    refreshClaim(state, req.userId);
+  }
+
+  // Same guard as outbound: a gun bursting into the qty box arrives as a
+  // gigantic number. No real receipt is ever this large.
+  const want = Math.max(0, parseInt(qty, 10) || 0);
+  if (want > 99999) {
+    return res.status(400).json({ error: `"${qty}" looks like a scanned barcode, not a quantity — nothing was changed.` });
+  }
+
+  state.scanned = state.scanned || {};
+  const prev = Number(state.scanned[sku]) || 0;
+  if (prev === 0 && !(rec.lines || []).some(l => l.sku === sku) && !want) {
+    return res.status(404).json({ error: `"${sku}" has not been received on this job.` });
+  }
+  if (!INBOUND_CONDITIONS.has(condition) && want === prev) {
+    return res.json({ ok: true, unchanged: true, sku, scanned_qty: prev,
+      condition_totals: (state.conditionTotals || {})[sku] || null });
+  }
+
+  // WHAT THE NUMBER MEANS depends on whether a condition was named, and the two
+  // readings are deliberately different because they answer different questions:
+  //   • no condition  → "the TOTAL received should be N". The change lands on
+  //     the GOOD count, because damaged and KIV are photo-gated evidence and a
+  //     plain total edit must never quietly erase them. If the reduction would
+  //     have to eat into them, it is refused with the numbers named.
+  //   • condition given → "the DAMAGED count should be N" — an absolute set of
+  //     that one bucket, with the total re-derived. Saying "set damaged to 1"
+  //     is what someone actually means; making them work out a new total to get
+  //     there would be a puzzle, not a correction.
+  state.conditionTotals = state.conditionTotals || {};
+  let ct = state.conditionTotals[sku];
+  // Legacy/untagged rows: everything counted so far was good.
+  if (!ct) ct = state.conditionTotals[sku] = { straight_to_inventory: prev, damaged: 0, kiv: 0 };
+  const num = v => Number(v) || 0;
+  const cond = INBOUND_CONDITIONS.has(condition) ? condition : 'straight_to_inventory';
+  let total;
+  if (INBOUND_CONDITIONS.has(condition)) {
+    ct[cond] = want;
+    total = num(ct.straight_to_inventory) + num(ct.damaged) + num(ct.kiv);
+  } else {
+    const bad = num(ct.damaged) + num(ct.kiv);
+    if (want < bad) {
+      return res.status(409).json({
+        error: `${bad} of these are recorded as damaged or held, so the total cannot go below ${bad}. Correct that count instead.`,
+      });
+    }
+    ct.straight_to_inventory = want - bad;
+    total = want;
+  }
+  const change = total - prev;                 // what the breakdowns must follow
+  state.scanned[sku] = total;
+  if (!total) delete state.scanned[sku];
+
+  applyCartonDelta(state, sku, change);
+  const assignmentChanges = applyAssignmentDelta(rec, sku, change, req.userId || '');
+
+  // SERIALS captured in error are un-registered, because a serial identifies
+  // ONE physical unit and was written into the client's registry the moment it
+  // was scanned. Leaving more serials than units is a phantom that never
+  // reconciles. Most recent first; a serial already SHIPPED is never removed.
+  const serialsRemoved = [], serialsRefused = [];
+  if (change < 0) {
+    const caps = (state.captures || []).map((c, i) => ({ c, i })).filter(x => x.c.sku === sku && x.c.serial);
+    let over = caps.length - total;
+    for (let k = caps.length - 1; k >= 0 && over > 0; k--, over--) {
+      const { c, i } = caps[k];
+      let gone = true;
+      if (inventory.available()) {
+        try {
+          const r = inventory.removeSerials(invClientId(rec.client_name), [c.serial]);
+          if ((r.refused || []).length) { serialsRefused.push(c.serial); gone = false; }
+        } catch (e) { console.warn('[inbound-setqty] serial removal failed', e.message); gone = false; }
+      }
+      if (gone) { serialsRemoved.push(c.serial); state.captures[i]._removed = true; }
+    }
+    if (serialsRemoved.length) state.captures = state.captures.filter(c => !c._removed);
+  }
+
+  if (state.status === 'pending' && total > 0) { state.status = 'processing'; state.startTime = state.startTime || new Date().toISOString(); }
+  state.updated_at = new Date().toISOString();
+  appendScanLog(state, { kind: 'count', raw: '', sku, qty: total, condition: cond,
+    note: String(reason || '').slice(0, 120), by: req.userId || '' });
+  rec.state = state;
+  writeDb(db);
+  journalInboundState(id, state, rec.assignments);
+  logAudit('inbound_qty_corrected', {
+    id: rec.id, serial: rec.serial || '', jobType: rec.type, sku,
+    from: prev, to: total, delta: change, condition: cond, reason: String(reason || '').slice(0, 120),
+    serialsRemoved: serialsRemoved.length, by: req.userId || '',
+  });
+
+  const carton = activeCarton(state);
+  res.json({ ok: true, sku, scanned_qty: total, previous_qty: prev, delta: change,
+    condition: cond, condition_totals: state.conditionTotals[sku],
+    cartonNum: carton.num, cartonCount: (state.cartons || []).length,
+    assignmentChanges, assignments: rec.assignments || [],
+    serialsRemoved,
+    // Said plainly rather than swallowed: a shipped serial is real history.
+    serialsRefused: serialsRefused.length
+      ? { serials: serialsRefused, message: `${serialsRefused.length} serial(s) could not be removed — they have already been shipped.` }
+      : null,
+  });
+});
+
 app.post('/api/inbound/:id/new-carton', (req, res) => {
   const { id } = req.params;
   const db  = readDb();
