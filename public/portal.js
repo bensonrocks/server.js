@@ -11,6 +11,11 @@
 
   let token = localStorage.getItem('portal_token') || '';
   let clientName = localStorage.getItem('portal_client') || '';
+  // Which of the client's logins this is, and what it may do. Re-confirmed
+  // against the server on every load — a stale copy in localStorage must never
+  // be what decides whether the Send tab appears.
+  let portalUser = (() => { try { return JSON.parse(localStorage.getItem('portal_user') || 'null'); } catch { return null; } })();
+  const canWrite = () => (portalUser?.access || 'full') !== 'view';
   let overview = null, stock = [], orders = [], inbound = [];
   let stFilter = 'all', orFilter = 'all', ibFilter = 'all';
   let agingDays = 15, screenDays = 90, exportMaxDays = 365, slaWorkingDays = 2;
@@ -54,6 +59,7 @@
   async function login() {
     const btn = $('liBtn');
     const client = $('liClient').value.trim();
+    const user = $('liUser').value.trim();
     const password = $('liPass').value;
     $('liErr').textContent = '';
     if (!client || !password) { $('liErr').textContent = 'Enter your client name and password.'; return; }
@@ -61,13 +67,21 @@
     try {
       const r = await fetch('/api/portal/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client, password }),
+        body: JSON.stringify({ client, user, password }),
       });
       const d = await r.json();
-      if (!r.ok) { $('liErr').textContent = d.error || 'Sign-in failed'; return; }
+      if (!r.ok) {
+        $('liErr').textContent = d.error || 'Sign-in failed';
+        // The company has several logins and this person did not say which —
+        // put the cursor where the answer goes rather than making them hunt.
+        if (d.needsUser) $('liUser').focus();
+        return;
+      }
       token = d.token; clientName = d.client;
+      portalUser = d.user || null;
       localStorage.setItem('portal_token', token);
       localStorage.setItem('portal_client', clientName);
+      localStorage.setItem('portal_user', JSON.stringify(portalUser || {}));
       $('liPass').value = '';
       showApp();
     } catch (e) {
@@ -76,19 +90,51 @@
   }
   function logout() {
     api('/api/portal/logout', { method: 'POST' }).catch(() => {});
-    token = ''; clientName = '';
+    token = ''; clientName = ''; portalUser = null;
     localStorage.removeItem('portal_token'); localStorage.removeItem('portal_client');
+    localStorage.removeItem('portal_user');
     overview = null; stock = []; orders = []; inbound = [];
     $('appView').classList.add('hidden');
     $('loginView').classList.remove('hidden');
   }
-  function showApp() {
+  async function showApp() {
     $('loginView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     $('whoName').textContent = clientName;
     document.title = clientName + ' — IDEALONE Portal';
     showSkeleton();
+    await applyAccess();
     loadAll();
+  }
+
+  // What this login may do, taken from the SERVER — the copy in localStorage is
+  // only a hint for the first paint. Hiding the Send tab is a courtesy; every
+  // write is refused server-side regardless of what the page shows.
+  async function applyAccess() {
+    try {
+      const r = await api('/api/portal/me');
+      if (r.status === 401) { logout(); return; }
+      if (r.ok) {
+        portalUser = await r.json();
+        localStorage.setItem('portal_user', JSON.stringify(portalUser));
+      }
+    } catch (e) { /* keep whatever we had */ }
+    const write = canWrite();
+    document.querySelector('nav button[data-tab="send"]')?.classList.toggle('hidden', !write);
+    // The other two places a client can write: sending an ASN, and setting
+    // their own aging threshold. Both are hidden for a view-only login (and
+    // both are refused server-side regardless).
+    $('asnCard')?.classList.toggle('hidden', !write);
+    $('agingCard')?.classList.toggle('hidden', !write);
+    if (!write && document.querySelector('nav button[data-tab="send"]')?.classList.contains('active')) {
+      document.querySelector('nav button[data-tab="overview"]')?.click();
+    }
+    const chip = $('whoUser');
+    if (chip) {
+      chip.textContent = portalUser?.name ? (write ? portalUser.name : `${portalUser.name} · view only`) : '';
+      chip.classList.toggle('hidden', !portalUser?.name);
+      chip.classList.toggle('view-only', !write);
+    }
   }
 
   function showSkeleton() {
@@ -487,7 +533,7 @@
       const d = orderDetail.get(o.order_number);
       return `<div class="card exp" data-order="${esc(o.order_number)}" style="margin-bottom:.5rem">
         <div class="row">
-          ${o.can_delete
+          ${o.can_delete && canWrite()
             ? `<input type="checkbox" class="pick" data-k="${esc(o.order_number)}" title="Select to cancel">`
             : '<span class="no-pick"></span>'}
           <div style="min-width:0;flex:1">
@@ -662,7 +708,7 @@
       ].filter(Boolean).join(' · ');
       return `<div class="card" style="margin-bottom:.5rem">
         <div class="row">
-          ${r.can_delete
+          ${r.can_delete && canWrite()
             ? `<input type="checkbox" class="pick" data-k="${esc(r.id)}" title="Select to cancel">`
             : '<span class="no-pick"></span>'}
           <div style="min-width:0;flex:1">
@@ -845,7 +891,7 @@
     const rows = isOrders ? orders : inbound;
     const idOf = r => isOrders ? r.order_number : r.id;
     // Drop anything that has since been picked/received, or has vanished.
-    const eligible = new Set(rows.filter(r => r.can_delete).map(idOf));
+    const eligible = new Set(canWrite() ? rows.filter(r => r.can_delete).map(idOf) : []);
     [...sel].forEach(k => { if (!eligible.has(k)) sel.delete(k); });
 
     const pre = isOrders ? 'or' : 'ib';
@@ -870,7 +916,7 @@
       syncSel(which);
     });
     $(pre + 'PickAll').addEventListener('change', e => {
-      const rows = (isOrders ? orders : inbound).filter(r => r.can_delete);
+      const rows = canWrite() ? (isOrders ? orders : inbound).filter(r => r.can_delete) : [];
       rows.forEach(r => { if (e.target.checked) sel.add(idOf(r)); else sel.delete(idOf(r)); });
       syncSel(which);
     });

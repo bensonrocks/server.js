@@ -2926,15 +2926,206 @@ app.post('/api/master/client-profiles/:client/portal', express.json(), (req, res
   p.portal = p.portal || {};
   if (req.body.enabled !== undefined) p.portal.enabled = !!req.body.enabled;
   if (req.body.email !== undefined) p.portal.email = String(req.body.email || '').trim().slice(0, 160);
-  const pw = String(req.body.password || '');
-  if (pw) { // blank = keep current (same convention as ZORT store secrets)
-    if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    p.portal.salt = uuidv4().slice(0, 8);
-    p.portal.passwordHash = hashPass(pw, p.portal.salt);
+  // PASSWORDS LIVE ON THE ACCOUNTS, not here — see /portal-users. Accepting one
+  // at this route would set a field login no longer reads, which is worse than
+  // refusing it: the office would think a password had been set.
+  if (req.body.password) {
+    return res.status(400).json({ error: 'Set passwords on the individual portal logins, not on the client.' });
   }
+  portalUsers(p);   // migrate the original single credential if this is the first touch
   writeDb(db);
   logAudit('client_portal_updated', { client: p.client, enabled: !!p.portal.enabled, by: req.userId || '' });
-  res.json({ ok: true, portal: { enabled: !!p.portal.enabled, email: p.portal.email || '', hasPassword: !!p.portal.passwordHash } });
+  res.json({ ok: true, portal: { enabled: !!p.portal.enabled, email: p.portal.email || '', users: p.portalUsers.length } });
+});
+
+// ── PORTAL ACCOUNTS — up to five people per onboarded client ────────────────
+// Per the user: a client gets up to 5 logins, each either FULL access (send
+// orders and waybills, submit ASNs, cancel their own unprocessed work, and read
+// everything) or VIEW ONLY (read and download, no writes). Deliberately a
+// two-way toggle, not a permission matrix — a matrix invites half-configured
+// accounts nobody can reason about, and the user asked for exactly two levels.
+//
+// Every account under a client sees the SAME client-scoped data, so all five
+// read the same live status on the same orders. Access changes what an account
+// may DO, never what it may SEE.
+const PORTAL_MAX_USERS = 5;
+const PORTAL_ACCESS = new Set(['full', 'view']);
+// How long a portal session may sit untouched before another device may take
+// the account over. Without this, "one place at a time" would lock a client out
+// of their own account until a session they can no longer reach expires.
+const PORTAL_SESSION_IDLE_MIN = 15;
+
+// The accounts on a profile, migrating the ORIGINAL single credential into the
+// list on first touch. Same salt and hash, so the password a client already has
+// keeps working — a rename of the storage must never be a password reset.
+function portalUsers(profile) {
+  if (!profile) return [];
+  if (!Array.isArray(profile.portalUsers)) {
+    profile.portalUsers = [];
+    const legacy = profile.portal;
+    if (legacy && legacy.passwordHash) {
+      profile.portalUsers.push({
+        id: 'main',
+        name: legacy.name || 'Main account',
+        email: legacy.email || '',
+        salt: legacy.salt, passwordHash: legacy.passwordHash,
+        access: 'full',                       // the single account could do everything
+        enabled: legacy.enabled !== false,
+        created_at: profile.createdAt || new Date().toISOString(),
+        migrated_from_single: true,
+      });
+    }
+  }
+  return profile.portalUsers;
+}
+// What the office may see. NEVER the salt or the hash.
+function portalUserPublic(u, live) {
+  return {
+    id: u.id, name: u.name || u.id, email: u.email || '',
+    access: u.access === 'view' ? 'view' : 'full',
+    enabled: u.enabled !== false,
+    hasPassword: !!u.passwordHash,
+    last_login_at: u.last_login_at || null,
+    signed_in: !!live,                        // someone is using it right now
+    signed_in_at: live?.at || null,
+  };
+}
+function portalUserId(name, existing) {
+  const base = String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'user';
+  let id = base, n = 2;
+  while (existing.some(u => u.id === id)) id = `${base}-${n++}`;
+  return id;
+}
+
+// Live portal sessions, keyed by session key. Held in memory alongside
+// activeSessions (which stores only the token) because "who is signed in, and
+// when were they last seen" is what the one-place-at-a-time rule turns on.
+const portalSessionMeta = new Map();
+function portalSessionKey(tenantId, userId, client) {
+  // The PIPE matters: a client name may legitimately contain a colon, so the
+  // user id is separated by a character the name cannot contain. It also makes
+  // pre-existing sessions (no pipe) parse as the legacy single account instead
+  // of silently taking the first word of the client name as a user id.
+  return `portal:${tenantId}:${userId}|${client}`;
+}
+function parsePortalSessionKey(sessionKey) {
+  const rest = sessionKey.slice('portal:'.length);
+  const sep = rest.indexOf(':');
+  const tenantId = sep >= 0 ? rest.slice(0, sep) : tenantStore.DEFAULT_TENANT_ID;
+  const tail = sep >= 0 ? rest.slice(sep + 1) : rest;
+  const pipe = tail.indexOf('|');
+  return pipe >= 0
+    ? { tenantId, userId: tail.slice(0, pipe), client: tail.slice(pipe + 1) }
+    : { tenantId, userId: 'main', client: tail };   // a session from before accounts existed
+}
+// Is this account already in use somewhere? Idle sessions are not "in use" —
+// see PORTAL_SESSION_IDLE_MIN.
+function livePortalSession(tenantId, client, userId) {
+  const key = portalSessionKey(tenantId, userId, client);
+  if (!activeSessions.has(key)) return null;
+  const meta = portalSessionMeta.get(key);
+  const seen = new Date(meta?.lastSeenAt || meta?.at || 0).getTime();
+  if (!seen || Date.now() - seen > PORTAL_SESSION_IDLE_MIN * 60000) return null;
+  return meta || { at: null, lastSeenAt: null };
+}
+
+// ── Admin: the client's portal accounts (max 5) ─────────────────────────────
+app.get('/api/master/client-profiles/:client/portal-users', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const before = Array.isArray(p.portalUsers);
+  const users = portalUsers(p);
+  if (!before) writeDb(db);   // one-time migration of the original single login
+  const tenantId = tenantContext.currentTenantId();
+  res.json({
+    max: PORTAL_MAX_USERS,
+    enabled: !!p.portal?.enabled,
+    users: users.map(u => portalUserPublic(u, livePortalSession(tenantId, p.client, u.id))),
+  });
+});
+
+app.post('/api/master/client-profiles/:client/portal-users', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const users = portalUsers(p);
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 60);
+  const access = PORTAL_ACCESS.has(String(b.access)) ? String(b.access) : 'view';
+  const pw = String(b.password || '');
+
+  let u = b.id ? users.find(x => x.id === String(b.id)) : null;
+  if (!u) {
+    // NEW ACCOUNT — the cap is enforced here, not in the UI, so it holds
+    // however the endpoint is reached.
+    if (users.length >= PORTAL_MAX_USERS) {
+      return res.status(409).json({ error: `A client may have at most ${PORTAL_MAX_USERS} portal logins. Remove one first.` });
+    }
+    if (!name) return res.status(400).json({ error: 'A name is required.' });
+    if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    u = { id: portalUserId(name, users), created_at: new Date().toISOString(), enabled: true };
+    users.push(u);
+  }
+  if (name) u.name = name;
+  if (b.email !== undefined) u.email = String(b.email || '').trim().slice(0, 160);
+  if (b.access !== undefined) u.access = access;
+  if (b.enabled !== undefined) u.enabled = !!b.enabled;
+  if (pw) {   // blank on edit = keep the current password
+    if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    u.salt = uuidv4().slice(0, 8);
+    u.passwordHash = hashPass(pw, u.salt);
+  }
+  // Switching an account off must also end whatever session it is holding —
+  // otherwise a revoked login keeps working until its next request.
+  const tenantId = tenantContext.currentTenantId();
+  if (u.enabled === false) {
+    const key = portalSessionKey(tenantId, u.id, p.client);
+    activeSessions.delete(key); portalSessionMeta.delete(key); persistSessions();
+  }
+  p.portal = p.portal || {};
+  if (p.portal.enabled === undefined) p.portal.enabled = true;
+  writeDb(db);
+  logAudit('client_portal_user_saved', {
+    client: p.client, user: u.id, access: u.access, enabled: u.enabled !== false,
+    passwordSet: !!pw, by: req.userId || 'master',
+  });
+  res.json({ ok: true, user: portalUserPublic(u, livePortalSession(tenantId, p.client, u.id)) });
+});
+
+app.delete('/api/master/client-profiles/:client/portal-users/:userId', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const users = portalUsers(p);
+  const u = users.find(x => x.id === req.params.userId);
+  if (!u) return res.status(404).json({ error: 'login not found' });
+  p.portalUsers = users.filter(x => x.id !== u.id);
+  const tenantId = tenantContext.currentTenantId();
+  const key = portalSessionKey(tenantId, u.id, p.client);
+  activeSessions.delete(key); portalSessionMeta.delete(key); persistSessions();
+  writeDb(db);
+  logAudit('client_portal_user_removed', { client: p.client, user: u.id, by: req.userId || 'master' });
+  res.json({ ok: true });
+});
+
+// Release a session someone is stuck out of — a client who closed the browser
+// on another machine should not have to wait out the idle window.
+app.post('/api/master/client-profiles/:client/portal-users/:userId/release', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const tenantId = tenantContext.currentTenantId();
+  const key = portalSessionKey(tenantId, req.params.userId, p.client);
+  const had = activeSessions.delete(key);
+  portalSessionMeta.delete(key);
+  if (had) persistSessions();
+  logAudit('client_portal_session_released', { client: p.client, user: req.params.userId, had, by: req.userId || 'master' });
+  res.json({ ok: true, released: had });
 });
 
 function _findClientAcrossTenants(clientNorm) {
@@ -2946,6 +3137,7 @@ function _findClientAcrossTenants(clientNorm) {
 }
 app.post('/api/portal/login', express.json(), (req, res) => {
   const { client, password } = req.body || {};
+  const who = String(req.body?.user || '').trim();
   if (!String(client || '').trim() || !String(password || '').trim()) return res.status(400).json({ error: 'Client name and password required' });
   const cNorm = String(client).trim().toLowerCase();
   const pWait = loginBlockedFor(req, 'ptl:' + cNorm);
@@ -2955,39 +3147,126 @@ app.post('/api/portal/login', express.json(), (req, res) => {
   }
   const found = _findClientAcrossTenants(cNorm);
   const p = found?.profile;
-  if (!p || !p.portal || !p.portal.enabled || !p.portal.passwordHash) {
+  // The accounts are read (and the legacy single credential migrated) inside
+  // the right tenant, then persisted if the migration actually changed
+  // anything — so the move happens once, quietly, on first login.
+  let users = [];
+  if (p) {
+    tenantContext.run(found.tenantId, () => {
+      const db = readDb();
+      const live = clientProfiles(db).find(x => x.client === p.client) || p;
+      const before = Array.isArray(live.portalUsers);
+      users = portalUsers(live);
+      if (!before) writeDb(db);
+    });
+  }
+  const usable = users.filter(u => u.enabled !== false && u.passwordHash);
+  if (!p || !p.portal?.enabled || !usable.length) {
     loginFailure(req, 'ptl:' + cNorm);
     return res.status(401).json({ error: 'Portal access is not enabled for this client — contact IdealOne.' });
   }
-  if (hashPass(String(password), p.portal.salt) !== p.portal.passwordHash) {
+  // WHICH ACCOUNT. A client with one account logs in exactly as before (name +
+  // password); once there are several, the user has to say who they are.
+  const wNorm = who.toLowerCase();
+  let user = wNorm
+    ? usable.find(u => u.id.toLowerCase() === wNorm || String(u.email || '').toLowerCase() === wNorm
+                    || String(u.name || '').toLowerCase() === wNorm)
+    : (usable.length === 1 ? usable[0] : null);
+  if (!user) {
     loginFailure(req, 'ptl:' + cNorm);
-    tenantContext.run(found.tenantId, () => logAudit('portal_login_failed', { client: p.client }));
+    return res.status(401).json({
+      error: who ? 'No such user for this client.' : 'Enter your user name — this client has more than one login.',
+      needsUser: !who,
+    });
+  }
+  if (hashPass(String(password), user.salt) !== user.passwordHash) {
+    loginFailure(req, 'ptl:' + cNorm);
+    tenantContext.run(found.tenantId, () => logAudit('portal_login_failed', { client: p.client, user: user.id }));
     return res.status(401).json({ error: 'Invalid password' });
   }
+
+  // ONE PLACE AT A TIME. Per the user, an account already signed in elsewhere
+  // cannot be used from a second device. Refused rather than silently kicking
+  // the first device off, so nobody loses a half-finished upload without being
+  // told — and released automatically once that session goes idle, so a closed
+  // browser can never lock a client out of their own account.
+  const live = livePortalSession(found.tenantId, p.client, user.id);
+  if (live) {
+    tenantContext.run(found.tenantId, () => logAudit('portal_login_blocked_in_use', { client: p.client, user: user.id }));
+    return res.status(409).json({
+      error: `"${user.name || user.id}" is already signed in on another device. Sign out there first, or wait ${PORTAL_SESSION_IDLE_MIN} minutes and try again.`,
+      inUse: true,
+    });
+  }
+
   loginSuccess(req, 'ptl:' + cNorm);
   const token = uuidv4();
-  activeSessions.set(`portal:${found.tenantId}:${p.client}`, token);
+  const key = portalSessionKey(found.tenantId, user.id, p.client);
+  activeSessions.set(key, token);
+  const now = new Date().toISOString();
+  portalSessionMeta.set(key, { at: now, lastSeenAt: now, ip: clientInfo(req).ip });
   persistSessions();
-  tenantContext.run(found.tenantId, () => logAudit('portal_login', { client: p.client }));
-  res.json({ token, client: p.client });
+  tenantContext.run(found.tenantId, () => {
+    const db = readDb();
+    const live2 = portalUsers(clientProfiles(db).find(x => x.client === p.client) || {}).find(u => u.id === user.id);
+    if (live2) { live2.last_login_at = now; writeDb(db); }
+    logAudit('portal_login', { client: p.client, user: user.id, access: user.access || 'full' });
+  });
+  res.json({ token, client: p.client, user: { id: user.id, name: user.name || user.id, access: user.access === 'view' ? 'view' : 'full' } });
 });
 function requirePortalAuthMiddleware(req, res, next) {
   const token = req.headers['x-auth-token'] || req.query.token;
   if (!token) { res.status(401).json({ error: 'Unauthorised' }); return; }
   for (const [sessionKey, t] of activeSessions) {
     if (t !== token || !sessionKey.startsWith('portal:')) continue;
-    const rest = sessionKey.slice(7);
-    const sep = rest.indexOf(':');
-    const tenantId = sep >= 0 ? rest.slice(0, sep) : tenantStore.DEFAULT_TENANT_ID;
-    req.portalClient = sep >= 0 ? rest.slice(sep + 1) : rest;
+    const { tenantId, userId, client } = parsePortalSessionKey(sessionKey);
+    req.portalClient = client;
+    req.portalUserId = userId;
     req.portalSessionKey = sessionKey;
-    tenantContext.run(tenantId, () => next());
+    // Keep the session warm — this is what the one-place-at-a-time rule
+    // measures idleness against.
+    const meta = portalSessionMeta.get(sessionKey) || { at: new Date().toISOString() };
+    meta.lastSeenAt = new Date().toISOString();
+    portalSessionMeta.set(sessionKey, meta);
+    tenantContext.run(tenantId, () => {
+      // Access is read FRESH on every request, so revoking or downgrading an
+      // account takes effect at once rather than at their next login.
+      const prof = clientProfiles(readDb()).find(x => String(x.client).trim().toLowerCase() === String(client).trim().toLowerCase());
+      const u = portalUsers(prof).find(x => x.id === userId);
+      if (prof && (!u || u.enabled === false || prof.portal?.enabled === false)) {
+        activeSessions.delete(sessionKey);
+        portalSessionMeta.delete(sessionKey);
+        persistSessions();
+        res.status(401).json({ error: 'This login has been switched off — contact IdealOne.' });
+        return;
+      }
+      req.portalAccess = u ? (u.access === 'view' ? 'view' : 'full') : 'full';
+      req.portalUserName = u?.name || userId;
+      next();
+    });
     return;
   }
   res.status(401).json({ error: 'Session expired' });
 }
+// Writes are FULL-access only. Read routes never use this, so a view-only
+// account still sees every order, receipt and report their client has.
+function requirePortalWrite(req, res, next) {
+  requirePortalAuthMiddleware(req, res, () => {
+    if (req.portalAccess === 'view') {
+      return res.status(403).json({
+        error: 'This login is view-only — it can read and download, but not send work in. Ask your administrator for full access.',
+        viewOnly: true,
+      });
+    }
+    next();
+  });
+}
+app.get('/api/portal/me', requirePortalAuthMiddleware, (req, res) => {
+  res.json({ client: req.portalClient, user: req.portalUserId, name: req.portalUserName, access: req.portalAccess });
+});
 app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
   activeSessions.delete(req.portalSessionKey);
+  portalSessionMeta.delete(req.portalSessionKey);
   persistSessions();
   res.json({ ok: true });
 });
@@ -3642,7 +3921,7 @@ app.post('/api/portal/asn', upload.single('file'), (req, res) => {
   // multer does not reliably carry the AsyncLocalStorage tenant context, and
   // this route sits outside the global auth middleware, so re-establish the
   // portal session (and its tenant) after the upload has been parsed.
-  requirePortalAuthMiddleware(req, res, async () => {
+  requirePortalWrite(req, res, async () => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
       const rows = await parseInboundFile(req.file.buffer, req.file.originalname);
@@ -3727,7 +4006,7 @@ app.post('/api/portal/asn', upload.single('file'), (req, res) => {
 // Their own display preference — how many still days count as "aging". The only
 // other portal write besides submitting an ASN; strictly a threshold on their
 // own profile, it changes no operational data.
-app.post('/api/portal/settings', express.json(), requirePortalAuthMiddleware, (req, res) => {
+app.post('/api/portal/settings', express.json(), requirePortalWrite, (req, res) => {
   const db = readDb();
   const p = (db.clientProfiles || []).find(x => String(x.client).trim().toLowerCase() === req.portalClient.trim().toLowerCase());
   if (!p) return res.status(404).json({ error: 'Profile not found' });
@@ -3767,7 +4046,7 @@ function portalDeletable(kind, rec) {
   return null;   // deletable
 }
 
-app.post('/api/portal/delete', express.json(), requirePortalAuthMiddleware, (req, res) => {
+app.post('/api/portal/delete', express.json(), requirePortalWrite, (req, res) => {
   const client = req.portalClient;
   const clientNorm = client.trim().toLowerCase();
   const kind = req.body?.kind === 'inbound' ? 'inbound' : 'orders';
@@ -7576,7 +7855,7 @@ async function previewClientOrderFile(buffer, filename, client) {
 // Confirm-Upload step: the client sees exactly what we would receive — orders,
 // lines, resolved SKUs and names, and any warnings — and only then submits.
 app.post('/api/portal/preview-orders', upload.single('file'), (req, res) => {
-  requirePortalAuthMiddleware(req, res, async () => {
+  requirePortalWrite(req, res, async () => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
       const p = await previewClientOrderFile(req.file.buffer, req.file.originalname, req.portalClient);
@@ -7626,7 +7905,7 @@ async function matchLabelsAgainstDraft(buffer, draftOrders) {
 // (there is nothing in the draft to match against — it is matched at approval
 // against live orders, exactly as before).
 app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
-  requirePortalAuthMiddleware(req, res, async () => {
+  requirePortalWrite(req, res, async () => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
       if (path.extname(req.file.originalname).toLowerCase() !== '.pdf') {
@@ -7695,7 +7974,7 @@ app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
 
 // PORTAL → remove a waybill file from a draft (wrong PDF picked).
 app.delete('/api/portal/submissions/:id/labels', (req, res) => {
-  requirePortalAuthMiddleware(req, res, () => {
+  requirePortalWrite(req, res, () => {
     const db = readDb();
     const parent = clientSubs(db).find(x => x.id === req.params.id);
     if (!parent || !sameClient(parent.client_name, req.portalClient)) return res.status(404).json({ error: 'Not found' });
@@ -7714,7 +7993,7 @@ app.delete('/api/portal/submissions/:id/labels', (req, res) => {
 // pending, ONE poke is raised, and our 15-minute approval clock starts. Until
 // this is called, nothing a client has uploaded is visible to the office at all.
 app.post('/api/portal/submissions/:id/transmit', express.json(), (req, res) => {
-  requirePortalAuthMiddleware(req, res, () => {
+  requirePortalWrite(req, res, () => {
     const db = readDb();
     const s = clientSubs(db).find(x => x.id === req.params.id);
     if (!s || !sameClient(s.client_name, req.portalClient)) return res.status(404).json({ error: 'Not found' });
@@ -7749,7 +8028,7 @@ app.post('/api/portal/submissions/:id/transmit', express.json(), (req, res) => {
 // PORTAL → discard a draft that was never sent. Only a draft: once it is with
 // us it is our decision to approve or reject, not the client's to withdraw.
 app.delete('/api/portal/submissions/:id', (req, res) => {
-  requirePortalAuthMiddleware(req, res, () => {
+  requirePortalWrite(req, res, () => {
     const db = readDb();
     const s = clientSubs(db).find(x => x.id === req.params.id);
     if (!s || !sameClient(s.client_name, req.portalClient)) return res.status(404).json({ error: 'Not found' });
@@ -7770,7 +8049,7 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
   // multer does not carry the AsyncLocalStorage tenant context, so the portal
   // session (and its tenant) is re-established after the upload is parsed —
   // same reason /api/portal/asn does it this way.
-  requirePortalAuthMiddleware(req, res, async () => {
+  requirePortalWrite(req, res, async () => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
       const client = req.portalClient;

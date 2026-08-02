@@ -46,6 +46,10 @@
   /* On a phone the hero already shows the client name in full, so the chip is
      dropped there rather than ellipsised down to nothing. */
   @media (max-width:479px) { .who-chip { display:none; } }
+  /* Which of the client's logins this is. A view-only account says so plainly
+     rather than leaving someone to wonder why the Send tab is missing. */
+  .who-user { background:var(--surface-2); color:var(--muted); }
+  .who-user.view-only { background:var(--warn-bg); color:var(--warn); }
   .login-logo { width:100%; max-width:186px; height:auto; display:block; margin:0 auto; }
 
   /* ── Login ────────────────────────────────────────────────────────────── */
@@ -335,7 +339,9 @@
       </div>
     </div>
     <label for="liClient">Client name</label>
-    <input id="liClient" autocomplete="username" autocapitalize="words" placeholder="Your company name">
+    <input id="liClient" autocomplete="organization" autocapitalize="words" placeholder="Your company name">
+    <label for="liUser">Your login <span style="text-transform:none;letter-spacing:0;font-weight:600">(leave blank if your company has only one)</span></label>
+    <input id="liUser" autocomplete="username" autocapitalize="none" placeholder="name or email">
     <label for="liPass">Password</label>
     <input id="liPass" type="password" autocomplete="current-password" placeholder="••••••••">
     <button class="btn btn-primary" id="liBtn">Sign in</button>
@@ -356,6 +362,7 @@
     </div>
     <div class="hdr-acts">
       <span class="who-chip" id="whoName"></span>
+      <span class="who-chip who-user hidden" id="whoUser" title="The login you are signed in with"></span>
       <button class="icon-btn" id="refreshBtn" title="Refresh" aria-label="Refresh">&#8635;</button>
       <button class="link" id="logoutBtn" style="padding:.45rem .3rem">Sign out</button>
     </div>
@@ -386,7 +393,7 @@
         <button class="chip" data-f="aging">Aging</button>
         <button class="chip" data-f="res">Reserved</button>
       </div>
-      <div class="card" style="margin-bottom:.6rem;padding:.7rem .85rem">
+      <div class="card" id="agingCard" style="margin-bottom:.6rem;padding:.7rem .85rem">
         <div class="row" style="gap:.6rem;flex-wrap:wrap">
           <div style="min-width:0;flex:1">
             <b style="font-size:.83rem">&#9203; Aging stock</b>
@@ -430,7 +437,7 @@
 
     <section id="tab-inbound" class="hidden">
       <!-- Send us an ASN: download our template, fill it, upload it. -->
-      <div class="card asn-card">
+      <div class="card asn-card" id="asnCard">
         <div class="row" style="align-items:flex-start;gap:.7rem">
           <div style="flex:1;min-width:0">
             <b style="font-size:.93rem">&#128228; Sending us stock?</b>

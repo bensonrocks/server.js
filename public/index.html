@@ -700,14 +700,36 @@
               <!-- Client Portal access -->
               <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">
                 <b>🌐 Client Portal access</b>
-                <div class="hint" style="margin:.2rem 0 .5rem">Self-service login at <code>/portal</code> — the client sees their own stock, orders, inbound receipts and GRNs (read-only). GRN emails also go to the email below.</div>
+                <div class="hint" style="margin:.2rem 0 .5rem">Self-service login at <code>/portal</code> — the client sees their own stock, orders, inbound receipts and GRNs. GRN emails also go to the email below.</div>
                 <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-                  <label style="display:flex;gap:.35rem;align-items:center;font-size:.85rem"><input type="checkbox" id="obPortalEnabled"> Enabled</label>
+                  <label style="display:flex;gap:.35rem;align-items:center;font-size:.85rem"><input type="checkbox" id="obPortalEnabled"> Portal switched on</label>
                   <input type="email" id="obPortalEmail" placeholder="client email (for GRNs)" style="flex:1;min-width:170px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
-                  <input type="text" id="obPortalPass" placeholder="set password (blank = keep)" autocomplete="new-password" style="flex:1;min-width:170px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
-                  <button class="btn-secondary btn-sm" id="obPortalSaveBtn">Save portal</button>
+                  <button class="btn-secondary btn-sm" id="obPortalSaveBtn">Save</button>
                 </div>
                 <div id="obPortalStatus" class="hint" style="margin-top:.4rem"></div>
+              </div>
+
+              <!-- The client's own logins — up to five, each full or view-only -->
+              <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">
+                <b>👥 Portal logins <span class="hint-inline" id="obUserCount"></span></b>
+                <div class="hint" style="margin:.2rem 0 .55rem">
+                  Up to <b>5</b> people per client. <b>Full access</b> can send orders, waybills and ASNs and cancel their own
+                  unprocessed work; <b>View only</b> can read and download everything but send nothing in.
+                  Every login sees the same live status on the same orders.
+                  An account can only be signed in <b>one place at a time</b>.
+                </div>
+                <div id="obUserList"></div>
+                <div id="obUserForm" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:.6rem">
+                  <input type="text"  id="obUserName"  placeholder="name" style="flex:1 1 9rem;min-width:0;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+                  <input type="email" id="obUserEmail" placeholder="email (optional)" style="flex:1 1 11rem;min-width:0;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+                  <select id="obUserAccess" style="flex:0 0 auto;padding:.5rem .6rem;border:1px solid #e2e8f0;border-radius:8px">
+                    <option value="full">Full access</option>
+                    <option value="view" selected>View only</option>
+                  </select>
+                  <input type="text"  id="obUserPass"  placeholder="password (min 6)" autocomplete="new-password" style="flex:1 1 9rem;min-width:0;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+                  <button class="btn-primary btn-sm" id="obUserAddBtn">+ Add login</button>
+                </div>
+                <div id="obUserMsg" class="hint" style="margin-top:.4rem"></div>
               </div>
 
               <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">

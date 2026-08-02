@@ -748,6 +748,61 @@ pill, aging flags a 40-day and a 20-day idle SKU but not a 5-day one and
 follows the threshold when changed, and the 365-day report limit is enforced
 on both sides. Pill colours asserted by computed style, not by class name.
 
+### Portal accounts — up to five per client, full or view-only, one place at a time
+
+Per the user: an onboarded client gets **up to 5 logins**; each is either **Full
+access** (send orders/waybills/ASNs, cancel their own unprocessed work, read
+everything) or **View only** (read and download, send nothing in); the same
+account may not be signed in from two places; and every account sees all the
+status we hold on that client's orders.
+
+- `clientProfiles[].portalUsers[]` = `{id, name, email, salt, passwordHash,
+  access:'full'|'view', enabled, created_at, last_login_at}`, capped at
+  `PORTAL_MAX_USERS = 5` **server-side** — the UI hiding the form is a courtesy,
+  not the rule.
+- **DELIBERATELY TWO LEVELS, not a permission matrix.** A matrix invites
+  half-configured accounts nobody can reason about; the user asked for a toggle.
+- **The original single credential is MIGRATED, not replaced.** `portalUsers()`
+  folds `profile.portal` into the list on first touch keeping the SAME salt and
+  hash, so a client's existing password still works — renaming the storage must
+  never be a silent password reset. It becomes `id:'main'`, access `full`.
+- **Access is what you may DO, never what you may SEE.** Both levels read the
+  identical client-scoped payload; asserted by comparing the two responses
+  byte-for-byte. Writes go through `requirePortalWrite` (403 + `viewOnly:true`):
+  submit-orders, preview-orders, submit-labels, transmit, discard, remove
+  labels, ASN, portal delete, aging settings.
+- **Access is re-read on EVERY request**, so downgrading or switching an account
+  off bites on their next action rather than at their next login — and a
+  disabled account's session is deleted the moment it is saved.
+- **ONE PLACE AT A TIME** (`livePortalSession`): a second login for the same
+  account is **refused** (409 `inUse`) rather than silently kicking the first
+  device off — nobody loses a half-finished upload without being told. Released
+  automatically after `PORTAL_SESSION_IDLE_MIN` (15) idle minutes so a closed
+  browser can never lock a client out of their own account, and the office can
+  free it at once from the onboarding screen.
+- Session key is `portal:<tenant>:<userId>|<client>`. The **pipe** matters: a
+  client name may contain a colon, and a pre-existing session (no pipe) still
+  parses as the legacy single account instead of taking the first word of the
+  client name as a user id.
+- Login is `{client, user, password}`. `user` matches id, email or name
+  case-insensitively; a client with exactly ONE account may still leave it blank
+  and log in exactly as before.
+- **Passwords live on the accounts only.** `POST .../portal` now REFUSES a
+  password (400) rather than writing one login no longer reads — the office
+  would otherwise believe a password had been set.
+- Office UI: Administrator → Onboard Client → **👥 Portal logins** — add,
+  set password, switch off, free a stuck session, remove, and change access
+  from a dropdown. Portal UI: a "Your login" field on the sign-in card, the
+  account name as a chip (amber "· view only"), and the Send tab, ASN card and
+  cancel ticks hidden for a view-only login.
+
+Verified: 37 API checks (migration keeps the old password working, the cap
+refuses a sixth, both levels see identical orders, every write refused for view
+with a reason, the second device refused while the first carries on, sign-out
+and admin release both free it, switching off ends the session at once,
+downgrade bites on the next request, no hash or salt ever reaches the office)
+plus 19 browser checks across the office screen and two client phones.
+
 ### Client order upload — THREE STEPS, and nothing reaches us until step 3
 
 Per the user: *"step 1. upload order csv. completed then / step 2. upload

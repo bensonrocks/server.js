@@ -9854,10 +9854,97 @@
       const pt = p.portal || {};
       $('obPortalEnabled').checked = !!pt.enabled;
       $('obPortalEmail').value = pt.email || '';
-      $('obPortalPass').value = '';
       $('obPortalStatus').innerHTML = pt.enabled
-        ? `✅ Portal ON — login at <b>${location.origin}/portal</b> with client name "<b>${esc(p.client)}</b>"${pt.hasPassword ? '' : ' — <span style="color:#dc2626">no password set yet!</span>'}`
+        ? `✅ Portal ON — login at <b>${location.origin}/portal</b> with client name "<b>${esc(p.client)}</b>"`
         : 'Portal off.';
+      loadPortalUsers();
+    }
+
+    // ── The client's own logins ────────────────────────────────────────────
+    // Up to five, each Full or View only. The cap, the access rule and the
+    // one-place-at-a-time rule are all enforced server-side; this screen just
+    // has to make them legible.
+    let obUsers = [];
+    async function loadPortalUsers() {
+      if (!current) return;
+      try {
+        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-users`, { headers: mkJson() });
+        if (!r.ok) { $('obUserList').innerHTML = ''; return; }
+        const d = await r.json();
+        obUsers = d.users || [];
+        $('obUserCount').textContent = `(${obUsers.length} of ${d.max})`;
+        $('obUserForm').style.display = obUsers.length >= d.max ? 'none' : '';
+        renderPortalUsers(d.max);
+      } catch (e) { /* leave whatever is on screen */ }
+    }
+    function renderPortalUsers(max) {
+      if (!obUsers.length) {
+        $('obUserList').innerHTML = '<p class="hint">No logins yet — add one below and give the client the details.</p>';
+        return;
+      }
+      $('obUserList').innerHTML = `<table class="tbl" style="width:100%;border-collapse:collapse;font-size:.83rem">
+        <thead><tr><th>Name</th><th>Email</th><th>Access</th><th>Last signed in</th><th></th></tr></thead>
+        <tbody>${obUsers.map(u => `<tr>
+          <td><b>${esc(u.name)}</b>${u.signed_in ? ' <span class="cs-pill ok" title="Signed in right now">● in use</span>' : ''}
+              ${u.enabled ? '' : ' <span class="cs-pill bad">off</span>'}
+              ${u.hasPassword ? '' : ' <span class="cs-pill warn">no password</span>'}
+              <div class="hint">${esc(u.id)}</div></td>
+          <td>${esc(u.email || '—')}</td>
+          <td>
+            <select class="ob-user-access" data-id="${esc(u.id)}" style="padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px">
+              <option value="full" ${u.access === 'full' ? 'selected' : ''}>Full access</option>
+              <option value="view" ${u.access === 'view' ? 'selected' : ''}>View only</option>
+            </select>
+          </td>
+          <td class="hint">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : 'never'}</td>
+          <td style="white-space:nowrap">
+            <button class="btn-secondary btn-sm ob-user-pw"  data-id="${esc(u.id)}" title="Set a new password">🔑</button>
+            <button class="btn-secondary btn-sm ob-user-tog" data-id="${esc(u.id)}" data-on="${u.enabled ? '1' : '0'}" title="${u.enabled ? 'Switch this login off' : 'Switch it back on'}">${u.enabled ? '⏸' : '▶'}</button>
+            ${u.signed_in ? `<button class="btn-secondary btn-sm ob-user-rel" data-id="${esc(u.id)}" title="They are signed in elsewhere and cannot get back in — free the account">⏏</button>` : ''}
+            <button class="btn-del-order ob-user-del" data-id="${esc(u.id)}" data-name="${esc(u.name)}" title="Remove this login">🗑</button>
+          </td></tr>`).join('')}</tbody></table>`;
+
+      const save = (id, body) => fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-users`,
+        { method: 'POST', headers: mkJson(), body: JSON.stringify({ id, ...body }) });
+      const msg = (t, bad) => { $('obUserMsg').innerHTML = bad ? `<span style="color:#dc2626">${esc(t)}</span>` : `<b style="color:#059669">${esc(t)}</b>`; };
+
+      $('obUserList').querySelectorAll('.ob-user-access').forEach(sel => sel.addEventListener('change', async () => {
+        const r = await save(sel.dataset.id, { access: sel.value });
+        const d = await r.json();
+        if (!r.ok) { msg(d.error || 'Could not change access', true); loadPortalUsers(); return; }
+        msg(`${d.user.name} is now ${d.user.access === 'view' ? 'view only' : 'full access'}.`);
+        loadPortalUsers();
+      }));
+      $('obUserList').querySelectorAll('.ob-user-pw').forEach(b => b.addEventListener('click', async () => {
+        const pw = prompt('New password for this login (min 6 characters):');
+        if (!pw) return;
+        const r = await save(b.dataset.id, { password: pw });
+        const d = await r.json();
+        msg(r.ok ? 'Password set — give it to the client.' : (d.error || 'Could not set the password'), !r.ok);
+        loadPortalUsers();
+      }));
+      $('obUserList').querySelectorAll('.ob-user-tog').forEach(b => b.addEventListener('click', async () => {
+        const turningOff = b.dataset.on === '1';
+        if (turningOff && !confirm('Switch this login off? Whoever is using it is signed out immediately.')) return;
+        const r = await save(b.dataset.id, { enabled: !turningOff });
+        const d = await r.json();
+        msg(r.ok ? (turningOff ? 'Login switched off.' : 'Login switched back on.') : (d.error || 'Failed'), !r.ok);
+        loadPortalUsers();
+      }));
+      $('obUserList').querySelectorAll('.ob-user-rel').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('Free this account? Whoever has it open will be signed out, and it can be used again straight away.')) return;
+        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-users/${encodeURIComponent(b.dataset.id)}/release`,
+          { method: 'POST', headers: mkJson() });
+        msg(r.ok ? 'Account freed — they can sign in again now.' : 'Could not free that account', !r.ok);
+        loadPortalUsers();
+      }));
+      $('obUserList').querySelectorAll('.ob-user-del').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm(`Remove the login "${b.dataset.name}"? They will not be able to sign in again.`)) return;
+        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-users/${encodeURIComponent(b.dataset.id)}`,
+          { method: 'DELETE', headers: mkJson() });
+        msg(r.ok ? 'Login removed.' : 'Could not remove that login', !r.ok);
+        loadPortalUsers();
+      }));
     }
     function renderInstr(list) {
       $('obInstrList').innerHTML = list.length ? list.map(i => {
@@ -9933,13 +10020,26 @@
       $('obInstrText')?.addEventListener('keydown', e => { if (e.key === 'Enter') addInstr(); });
       $('obPortalSaveBtn')?.addEventListener('click', async () => {
         if (!current) { alert('Save the client first.'); return; }
-        const body = { enabled: $('obPortalEnabled').checked, email: $('obPortalEmail').value.trim(), password: $('obPortalPass').value };
+        const body = { enabled: $('obPortalEnabled').checked, email: $('obPortalEmail').value.trim() };
         const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal`, { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
         const d = await r.json();
         if (!r.ok) { $('obPortalStatus').innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Failed')}</span>`; return; }
-        $('obPortalPass').value = '';
         await load(); select(current);
         $('obPortalStatus').innerHTML += ' <b style="color:#059669">✓ saved</b>';
+      });
+      $('obUserAddBtn')?.addEventListener('click', async () => {
+        if (!current) { alert('Save the client first.'); return; }
+        const body = {
+          name: $('obUserName').value.trim(), email: $('obUserEmail').value.trim(),
+          access: $('obUserAccess').value, password: $('obUserPass').value,
+        };
+        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-users`,
+          { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) { $('obUserMsg').innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Failed')}</span>`; return; }
+        $('obUserName').value = ''; $('obUserEmail').value = ''; $('obUserPass').value = '';
+        $('obUserMsg').innerHTML = `<b style="color:#059669">✓ ${esc(d.user.name)} added — they sign in with the client name, "${esc(d.user.id)}" and that password.</b>`;
+        loadPortalUsers();
       });
       $('obDeleteBtn')?.addEventListener('click', remove);
     }, 0);
