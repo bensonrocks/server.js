@@ -710,7 +710,7 @@
   _sbDrawerOverlay?.addEventListener('click', closeSidebar);
 
   // ── Tab switching ──────────────────────────────────────────────────────────
-  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', waves: 'Wave Pick', inbound: 'Inbound', inventory: 'Inventory', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
+  const TAB_TITLES = { upload: 'Upload', orders: 'Orders', waves: 'Wave Pick', inbound: 'Inbound', putaway: 'Putaway', inventory: 'Inventory', transport: 'Transport', labels: 'Labels', reports: 'Reports', connections: 'Connections', about: 'About' };
   document.querySelectorAll('.tab-btn').forEach(btn =>
     btn.addEventListener('click', () => { switchTab(btn.dataset.tab); closeSidebar(); })
   );
@@ -748,6 +748,7 @@
     // const is initialised, and `typeof` on a const in its temporal dead zone
     // throws rather than yielding "undefined".)
     if (name !== 'waves') window.waveUI?.leaveDetail();
+    if (name !== 'putaway') window.putawayUI?.stopPoll();
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${name}`).classList.add('active');
@@ -765,6 +766,9 @@
     document.getElementById('ordersSubMenu').style.display =
       (name === 'orders' && (currentUser?.role || 'admin') !== 'warehouse') ? 'block' : 'none';
     if (name === 'inbound') { renderInboundTab(); }
+    // switchTab runs earlier in the file than the const, so the module is
+    // reached through window (the temporal-dead-zone trap waveUI documented).
+    if (name === 'putaway') { window.putawayUI?.load().catch(() => {}); }
     if (name === 'inventory') { renderInventory(); }
     // Inventory's functions live in a sidebar sub-menu (same pattern as
     // Transport) instead of stacked on one very long page.
@@ -6410,6 +6414,7 @@
           : ''}
       </div>`;
     setInboundCondition('straight_to_inventory'); // condition buttons show for ALL types now
+    setInboundQty(1);                              // never inherit a multiplier from the last job
     updateInboundCartonBadge(job);
     renderInboundItemsTable(job);
     renderInboundTeamStrip(job);
@@ -6519,6 +6524,48 @@
   // Applies to EVERY receiving type (a PO can arrive damaged too, not just
   // returns). Auto-resets to Good after a non-good scan: damage is the
   // exception, and a sticky Damaged button would quietly quarantine everything.
+  // ── QTY FOR THE NEXT INBOUND SCAN ────────────────────────────────────────
+  // One scan = one piece is the default and stays the default. Keying a number
+  // is for a sealed carton nobody wants to scan 24 times. It RESETS to 1 the
+  // moment it is used, so a multiplier left set can never quietly inflate the
+  // rest of a receipt — the same reasoning as the damaged/KIV condition reset.
+  let inboundQty = 1;
+  function setInboundQty(n) {
+    inboundQty = Math.min(9999, Math.max(1, parseInt(n, 10) || 1));
+    const inp = document.getElementById('inboundQtyInput');
+    const hint = document.getElementById('inboundQtyHint');
+    if (inp) { inp.value = String(inboundQty); inp.classList.toggle('multi', inboundQty > 1); }
+    if (hint) {
+      hint.textContent = inboundQty > 1
+        ? `next scan counts ${inboundQty} — then back to 1`
+        : '1 piece per scan';
+      hint.classList.toggle('multi', inboundQty > 1);
+    }
+  }
+  function takeInboundQty() {
+    const n = inboundQty;
+    if (n > 1) setInboundQty(1);
+    return n;
+  }
+  setTimeout(() => {
+    const inp = document.getElementById('inboundQtyInput');
+    inp?.addEventListener('change', () => setInboundQty(inp.value));
+    // Enter in the qty box means "I have keyed it, now let me scan" — not a
+    // form submit, and certainly not a scan of the number itself.
+    inp?.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault(); e.stopPropagation();
+      setInboundQty(inp.value);
+      document.getElementById('inboundScanInput')?.focus();
+    });
+    document.getElementById('inboundQtyMinus')?.addEventListener('click', () => {
+      setInboundQty(inboundQty - 1); document.getElementById('inboundScanInput')?.focus();
+    });
+    document.getElementById('inboundQtyPlus')?.addEventListener('click', () => {
+      setInboundQty(inboundQty + 1); document.getElementById('inboundScanInput')?.focus();
+    });
+  }, 0);
+
   let inboundCondition = 'straight_to_inventory';
   function setInboundCondition(cond) {
     inboundCondition = cond;
@@ -6545,9 +6592,11 @@
     const jobId = activeInbound.id;
     const stillOpen = () => !!activeInbound && activeInbound.id === jobId;
     try {
+      // Qty for THIS scan, then straight back to 1 — see setInboundQty.
+      const qty = takeInboundQty();
       const resp = await fetchT(`/api/inbound/${jobId}/scan`, {
         method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ code, qty: 1, condition, eventId }),
+        body: JSON.stringify({ code, qty, condition, eventId }),
       });
       const data = await resp.json();
       if (!resp.ok) { showFeedback(feedback, 'error', data.error || 'Scan failed'); return; }
@@ -6600,7 +6649,7 @@
       // NETWORK DOWN — the piece is in the receiver's hand and must not be
       // lost. Queue it durably (localStorage, survives a reload and a browser
       // restart) and count it on screen as pending, exactly like outbound.
-      enqueueOfflineTargetScan('inbound', jobId, code, eventId, { condition });
+      enqueueOfflineTargetScan('inbound', jobId, code, eventId, { condition, qty });
       const held = pendingScansForTarget('inbound', jobId).length;
       if (!stillOpen()) return;
       showFeedback(feedback, 'pending',
@@ -6833,59 +6882,37 @@
       const finishedRef = activeInbound.serial || activeInbound.reference || finishedId.slice(0, 8);
       activeInbound = null;
       renderInboundTab();
-      // THE PUTAWAY DECISION. Received goods have to end up somewhere, and the
-      // crew knows right now which it is — so ask here rather than leaving the
-      // pallet unaccounted for on the floor.
-      askPutawayNowOrLater(finishedId, finishedRef);
+      // EVERYTHING GOES TO STAGING. The server issues the staging ID as part of
+      // ending the receipt, so there is no decision to make at the door — the
+      // pallet gets its label and Putaway is worked as its own job afterwards.
+      showStagedResult(finishedId, finishedRef, data?.staging || null);
+      window.putawayUI?.refreshBadge();
     } catch (err) { showFeedback(feedback, 'error', err.message); }
   }
   document.getElementById('inboundCompleteBtn').addEventListener('click', () => endInboundReceipt(false));
 
-  // ── Putaway now, or stage it? ─────────────────────────────────────────────
-  // NOW  → the existing putaway screen, where a real bin must be scanned or typed.
-  // LATER→ the server issues a STAGING ID; it is printed and stuck on the cargo
-  //        so the pallet can be traced back to this receipt later.
-  let _stagingJobId = null;
-  function askPutawayNowOrLater(jobId, ref) {
-    _stagingJobId = jobId;
+  // ── The receipt is closed and the goods are in staging ────────────────────
+  // There is no longer a now-or-later question: everything received goes to
+  // staging, and Putaway is its own job on its own tab. This just shows the
+  // staging ID that was issued so it can be printed and stuck on the pallet.
+  function showStagedResult(jobId, ref, staging) {
     document.getElementById('putawayAskRef').textContent = ref;
-    document.getElementById('putawayAskArea').value = '';
-    document.getElementById('putawayAskResult').classList.add('hidden');
-    document.getElementById('putawayAskChoices').classList.remove('hidden');
+    if (!staging) {
+      // Nothing outstanding — every unit was already binned or the receipt was
+      // empty. Say so rather than showing an ID that covers nothing.
+      document.getElementById('putawayStagingCode').textContent = '—';
+      document.getElementById('putawayStagingWhat').textContent = 'Nothing left to put away on this receipt.';
+      _lastStaging = null;
+    } else {
+      _lastStaging = { jobId, code: staging.code };
+      document.getElementById('putawayStagingCode').textContent = staging.code;
+      document.getElementById('putawayStagingWhat').textContent =
+        `${staging.lines.length} SKU(s) · ${staging.units} pcs${staging.area ? ` · ${staging.area}` : ''}`;
+    }
+    document.getElementById('putawayAskChoices').classList.add('hidden');
+    document.getElementById('putawayAskResult').classList.remove('hidden');
     document.getElementById('putawayAskOverlay').classList.remove('hidden');
   }
-  document.getElementById('putawayAskNow').addEventListener('click', async () => {
-    document.getElementById('putawayAskOverlay').classList.add('hidden');
-    if (!_stagingJobId) return;
-    // openPutaway reads the in-memory inboundJobs list, which renderInboundTab
-    // has only just started refetching — wait for the job to land rather than
-    // racing it and silently doing nothing.
-    for (let i = 0; i < 20 && !(inboundJobs || []).some(j => j.id === _stagingJobId); i++) {
-      await new Promise(r => setTimeout(r, 150));
-    }
-    openPutaway(_stagingJobId);   // the existing screen: a real bin must be scanned or typed
-  });
-  document.getElementById('putawayAskLater').addEventListener('click', async () => {
-    if (!_stagingJobId) return;
-    const area = document.getElementById('putawayAskArea').value.trim();
-    const btn = document.getElementById('putawayAskLater');
-    btn.disabled = true;
-    try {
-      const r = await fetch(`/api/inbound/${encodeURIComponent(_stagingJobId)}/stage`, {
-        method: 'POST', headers: hdrs(), body: JSON.stringify({ area }),
-      });
-      const j = await r.json();
-      if (!r.ok) { alert(j.error || 'Could not stage this receipt.'); return; }
-      _lastStaging = { jobId: _stagingJobId, code: j.staging.code };
-      document.getElementById('putawayAskChoices').classList.add('hidden');
-      document.getElementById('putawayStagingCode').textContent = j.staging.code;
-      document.getElementById('putawayStagingWhat').textContent =
-        `${j.staging.lines.length} SKU(s) · ${j.staging.units} pcs${j.staging.area ? ` · ${j.staging.area}` : ''}`;
-      document.getElementById('putawayAskResult').classList.remove('hidden');
-      renderInboundTab();
-    } catch (e) { alert('Network error — nothing was staged.'); }
-    finally { btn.disabled = false; }
-  });
   document.getElementById('putawayAskClose').addEventListener('click', () =>
     document.getElementById('putawayAskOverlay').classList.add('hidden'));
 
@@ -8659,8 +8686,12 @@
         // scan the server already applied (response lost) is absorbed by its
         // dedupe instead of counting twice.
         const req = kind === 'inbound'
+          // The qty travels WITH the held scan. Replaying a keyed carton of 24
+          // as a single piece would silently lose 23 — the same class of bug
+          // as replaying a damaged piece as plain "received".
           ? { url: `/api/inbound/${encodeURIComponent(target)}/scan`,
-              body: { code: evt.raw, qty: 1, condition: evt.extra?.condition, eventId: evt.id, isReplay: true } }
+              body: { code: evt.raw, qty: Math.max(1, Number(evt.extra?.qty) || 1),
+                      condition: evt.extra?.condition, eventId: evt.id, isReplay: true } }
           : kind === 'wave'
           ? { url: `/api/waves/${encodeURIComponent(target)}/scan`,
               body: { code: evt.raw, eventId: evt.id, isReplay: true } }
@@ -10256,6 +10287,225 @@
       </tr>`).join('');
     document.getElementById('overviewEmpty').classList.toggle('hidden', days.some(day => day.totalOrders > 0));
   }
+
+  // ── PUTAWAY ─────────────────────────────────────────────────────────────────
+  // Its own job, its own screen. Everything received is already in staging with
+  // a printed ID on it; this is the list of what still needs a bin. The system
+  // SUGGESTS a bin and says why — it never forces one, because the person
+  // holding the carton can see whether it actually fits.
+  const putawayUI = (() => {
+    let rows = [];
+    const suggestCache = new Map();   // `client|sku|qty` → the server's shortlist
+    const $ = id => document.getElementById(id);
+
+    let me = '';
+    async function load() {
+      const r = await fetchT('/api/putaway/queue', { headers: hdrs() });
+      if (!r.ok) throw new Error('Could not load the putaway list.');
+      const d = await r.json();
+      rows = d.rows || [];
+      me = d.me || '';
+      $('putawayStats').innerHTML = `
+        <div class="pk-stat"><b>${d.pallets}</b><span>Staged pallets</span></div>
+        <div class="pk-stat"><b>${d.skus}</b><span>Products</span></div>
+        <div class="pk-stat"><b>${d.units}</b><span>Units to bin</span></div>
+        <div class="pk-stat${d.inProgress ? ' ok' : ''}"><b>${d.inProgress}</b><span>Part done</span></div>`;
+      render();
+      refreshBadge(d);
+    }
+
+    // While this screen is open, poll — so a colleague's putaway shows up here
+    // without anyone refreshing, and the "someone joined" note actually
+    // appears on the screen of the person it is for.
+    let poll = null;
+    function startPoll() {
+      stopPoll();
+      poll = setInterval(() => {
+        if (!document.getElementById('tab-putaway')?.classList.contains('active')) return stopPoll();
+        // Never repaint over a half-typed bin or qty — the person is mid-action.
+        const busy = [...document.querySelectorAll('#putawayList .pa-bin')].some(i => i.value.trim())
+          || document.activeElement?.closest?.('#putawayList');
+        if (busy) return;
+        load().catch(() => {});
+      }, 7000);
+    }
+    function stopPoll() { if (poll) { clearInterval(poll); poll = null; } }
+
+    function render() {
+      const el = $('putawayList');
+      if (!rows.length) {
+        el.innerHTML = '<p class="hint" style="text-align:center;padding:2rem 0">'
+          + 'Nothing waiting &mdash; everything received has been put away.</p>';
+        return;
+      }
+      el.innerHTML = rows.map(g => `
+        <div class="pa-card" data-staging="${esc(g.staging_code)}">
+          <div class="pa-head">
+            <div>
+              <b class="pa-code">${esc(g.staging_code)}</b>
+              ${g.area ? `<span class="chip">${esc(g.area)}</span>` : ''}
+              <span class="chip">${esc(g.client_name || '—')}</span>
+            </div>
+            <div class="hint">${esc(g.serial || '')}${g.reference ? ` · ${esc(g.reference)}` : ''}
+              · staged ${g.staged_at ? esc(new Date(g.staged_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</div>
+          </div>
+          ${joinNote(g)}
+          <table class="tbl pa-tbl">
+            <thead><tr><th>SKU</th><th>Description</th><th style="text-align:right">Left</th>
+              <th>Done by</th><th>Suggested bin</th><th>Put into</th><th style="text-align:right">Qty</th><th></th></tr></thead>
+            <tbody>${g.lines.map(l => `<tr data-sku="${esc(l.sku)}">
+              <td><b>${esc(l.sku)}</b></td>
+              <td>${esc(String(l.description || '').slice(0, 40))}</td>
+              <td style="text-align:right"><b>${l.qty}</b>
+                ${l.done ? `<div class="hint">${l.done} of ${l.total} done</div>` : ''}</td>
+              <td>${(l.contributors || []).length
+                ? (l.contributors || []).map(c => `<span class="pa-who${c.by === me ? ' mine' : ''}"
+                      title="${esc(c.locations.join(', '))} · ${esc(new Date(c.last_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))}"
+                    >${esc(c.by || '—')} ${c.qty}</span>`).join(' ')
+                : '<span class="hint">—</span>'}</td>
+              <td class="pa-suggest"><button class="link-btn pa-ask"
+                    data-client="${esc(g.client_name)}" data-sku="${esc(l.sku)}" data-qty="${l.qty}">Suggest a bin</button></td>
+              <td><input type="text" class="pa-bin" placeholder="scan or type bin" autocomplete="off" /></td>
+              <td style="text-align:right"><input type="number" class="pa-qty" min="1" max="${l.qty}" value="${l.qty}" /></td>
+              <td><button class="btn-primary btn-sm pa-go"
+                    data-inbound="${esc(g.inbound_id)}" data-staging="${esc(g.staging_code)}"
+                    data-sku="${esc(l.sku)}" data-left="${l.qty}">Put away</button></td>
+            </tr>`).join('')}</tbody>
+          </table>
+          <div class="pa-msg hint hidden"></div>
+        </div>`).join('');
+      wire();
+      // Ask for every suggestion up front — the receiver should see where things
+      // go without having to press anything per line.
+      el.querySelectorAll('.pa-ask').forEach(b => askSuggestion(b));
+    }
+
+    async function askSuggestion(btn) {
+      const { client, sku, qty } = btn.dataset;
+      const cell = btn.closest('.pa-suggest');
+      const key = `${client}|${sku}|${qty}`;
+      cell.innerHTML = '<span class="hint">looking…</span>';
+      try {
+        let d = suggestCache.get(key);
+        if (!d) {
+          const r = await fetchT(`/api/putaway/suggest?client=${encodeURIComponent(client)}&sku=${encodeURIComponent(sku)}&qty=${encodeURIComponent(qty)}`, { headers: hdrs() });
+          d = r.ok ? await r.json() : { suggestions: [], notes: ['Could not work out a suggestion.'] };
+          suggestCache.set(key, d);
+        }
+        if (!(d.suggestions || []).length) {
+          cell.innerHTML = `<span class="hint">${esc((d.notes || [])[0] || 'no suggestion')}</span>`;
+          return;
+        }
+        // The top choice as a button that fills the bin box; the rest as
+        // alternatives, each carrying WHY it was picked.
+        cell.innerHTML = d.suggestions.map((sg, i) => `
+          <div class="pa-sg${i === 0 ? ' top' : ''}">
+            <button class="pa-use" data-bin="${esc(sg.location_id)}">${esc(sg.location_id)}</button>
+            <span class="hint">${sg.qty < Number(qty) ? `${sg.qty} of ${qty} · ` : ''}${esc(sg.reason)}</span>
+          </div>`).join('')
+          + (d.notes || []).map(n => `<div class="hint">${esc(n)}</div>`).join('');
+        cell.querySelectorAll('.pa-use').forEach(u => u.addEventListener('click', () => {
+          const row = u.closest('tr');
+          const box = row.querySelector('.pa-bin');
+          box.value = u.dataset.bin;
+          box.focus();
+        }));
+      } catch (e) {
+        cell.innerHTML = '<span class="hint">could not reach the server</span>';
+      }
+    }
+
+    function wire() {
+      const el = $('putawayList');
+      el.querySelectorAll('.pa-bin').forEach(inp => inp.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        inp.closest('tr').querySelector('.pa-go')?.click();
+      }));
+      el.querySelectorAll('.pa-go').forEach(b => b.addEventListener('click', () => putAway(b)));
+      el.querySelectorAll('.pa-join-x').forEach(b => b.addEventListener('click', async () => {
+        b.closest('.pa-join')?.remove();
+        await fetchT('/api/putaway/joins/seen', {
+          method: 'POST', headers: hdrs(), body: JSON.stringify({ staging_code: b.dataset.seen }),
+        }).catch(() => {});
+      }));
+    }
+
+    // "Someone joined your pallet" — shown to whoever was already working it.
+    // A notification only: the units were placed when they were placed, and
+    // nothing waits on this being read.
+    function joinNote(g) {
+      const mine = (g.joins || []).filter(j => (j.to || []).includes(me));
+      if (!mine.length) return '';
+      const who = [...new Set(mine.map(j => j.by))].join(', ');
+      const n = mine.reduce((s, j) => s + Number(j.qty || 0), 0);
+      return `<div class="pa-join"><b>${esc(who)}</b> joined this pallet and put away ${n} pc(s)
+        <button class="pa-join-x" data-seen="${esc(g.staging_code)}" title="Dismiss">&#10005;</button></div>`;
+    }
+
+    async function putAway(btn) {
+      const row = btn.closest('tr');
+      const card = btn.closest('.pa-card');
+      const msg = card.querySelector('.pa-msg');
+      const say = (t, bad) => {
+        msg.innerHTML = bad ? `<span style="color:#dc2626">${esc(t)}</span>` : `<b style="color:#059669">${esc(t)}</b>`;
+        msg.classList.remove('hidden');
+      };
+      const bin = (row.querySelector('.pa-bin')?.value || '').trim();
+      if (!bin) { say('Scan or type the bin you put it in.', true); return; }
+      const left = Number(btn.dataset.left);
+      // PARTIAL IS NORMAL — put away what you actually carried. The box
+      // defaults to everything left, so the common case is still one tap.
+      const qty = Math.max(1, Math.min(left, parseInt(row.querySelector('.pa-qty')?.value, 10) || left));
+      const { inbound, staging, sku } = btn.dataset;
+      btn.disabled = true;
+      try {
+        const send = extra => fetchT(`/api/inbound/${encodeURIComponent(inbound)}/putaway`, {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ sku, location_id: bin, qty, staging_code: staging, ...extra }),
+        });
+        let r = await send();
+        let d = await r.json();
+        if (r.status === 409 && d.needsCapacityOverride) {
+          // Over capacity is a real-world fact, not an error — the goods are in
+          // the bin. Confirm, record a reason, and let the numbers tell the truth.
+          if (!confirm(`${d.message}\n\nPut it there anyway?`)) return;
+          const reason = prompt('Why over capacity? (recorded against the putaway)') || 'over capacity, confirmed on the floor';
+          r = await send({ override: true, override_reason: reason });
+          d = await r.json();
+        }
+        if (!r.ok) {
+          // A colleague may have finished it while this was open — say so and
+          // refresh, so the screen tells the truth rather than a bare error.
+          say(d.error || 'Could not record that putaway.', true);
+          await load();
+          return;
+        }
+        const joined = (d.joinedOthers || []).length
+          ? ` — ${d.joinedOthers.join(', ')} ${d.joinedOthers.length === 1 ? 'was' : 'were'} already on this pallet and ${d.joinedOthers.length === 1 ? 'has' : 'have'} been told`
+          : '';
+        say(`${qty} × ${sku} put into ${bin}${joined}.`);
+        suggestCache.clear();     // the bin's contents just changed
+        await load();
+      } catch (e) { say('Could not reach the server.', true); }
+      finally { btn.disabled = false; }
+    }
+
+    async function refreshBadge(pre) {
+      try {
+        const d = pre || await (await fetchT('/api/putaway/queue', { headers: hdrs() })).json();
+        const b = $('putawayNavBadge');
+        if (!b) return;
+        b.textContent = String(d.pallets || 0);
+        b.classList.toggle('hidden', !d.pallets);
+      } catch (e) { /* a badge is not worth an error */ }
+    }
+
+    return { load: async () => { await load(); startPoll(); }, refreshBadge, stopPoll };
+  })();
+  window.putawayUI = putawayUI;
+  document.getElementById('putawayRefreshBtn')?.addEventListener('click', () =>
+    putawayUI.load().catch(e => alert(e.message)));
 
   // ── COLLECTION SCREEN ───────────────────────────────────────────────────────
   // The list someone works down while the courier loads. Selection survives the

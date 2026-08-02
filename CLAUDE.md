@@ -2766,7 +2766,121 @@ reload) and 11 regression checks (an unsplit receipt shows no strip and no team
 wording; a held offline scan survives the poll and drains to exactly one piece
 on the right assignment).
 
-## Inbound putaway — now, or stage it with a printed ID
+## Inbound → Staging → Putaway (the current flow)
+
+Per the user: the crew scans (or keys) quantities, **everything received then
+goes to Inbound Staging**, and **Putaway is a separate function on the sidebar**.
+There is no longer a putaway-now-or-later question at End Receipt — that decision
+used to be forced on the person closing a receipt while a driver waited.
+
+### Scanning: one piece by default, a keyed quantity when it helps
+
+`#inboundQtyInput` sets what the NEXT scan counts. It **resets to 1 the moment
+it is used** (`takeInboundQty`), so a multiplier left set can never quietly
+inflate the rest of a receipt — the same discipline as the damaged/KIV condition
+reset. The box turns amber while it is above 1 so a set multiplier is visible,
+and ± buttons exist because keying on a phone mid-scan is slow. The server has
+always accepted `qty`; this only wires it up.
+
+**The qty travels with a held offline scan** (`extra.qty`). Replaying a keyed
+carton of 24 as a single piece would silently lose 23 — the same class of bug as
+replaying a damaged piece as plain "received".
+
+### End Receipt issues the staging ID itself
+
+`/api/inbound/:id/end-receipt` now stages everything outstanding as part of
+closing (`auto: true` on the entry) and returns it, so the screen can offer the
+label to print. `stagingOutstanding()` is unchanged and still subtracts BOTH
+prior putaway and prior staging. Staging is **not a new stock state** — the units
+were added to inventory at End Receipt; staging records WHICH pallet is which and
+what is still owed a bin.
+
+### `GET /api/putaway/queue` — one row per staging label
+
+Every staged pallet still owed a bin, across ALL receipts, oldest first. Grouped
+by staging ID because that is the physical unit: one label, one pallet, one trip.
+Putaway is recorded per SKU on the receipt (not per label), so the queue credits
+completed putaway against labels **oldest-first** — the order the floor would
+physically work them.
+
+### Partial putaway, and two people finishing one pallet together
+
+Per the user: a pallet may be put away a bit at a time, and a second person may
+**join** a pallet someone else started — *"whse user 1 put away sku ABC qty 10,
+whse user 2 putaway ABC qty 10pcs, it will result in a final qty of 10+10. for
+the item line, 2 user pills will be seen."*
+
+- **PARTIAL IS THE NORMAL CASE, not an exception.** Each line carries
+  `done of total` with the remainder left in the queue; the qty box defaults to
+  what is still outstanding, so putting the lot away is one tap and putting away
+  half is one edit. Quantities **add** — there is no "who owns this pallet"
+  lock to take or hand over.
+- **`putawayDoneForLabel(rec, stagingCode, sku)`** rolls the raw putaway entries
+  up into `contributors` — `{by, qty, locations[], first_at, last_at}` per
+  person, oldest first — which is what draws the `.pa-who` pills (your own
+  highlighted) and what the receipt trail reports.
+- **JOINING IS A NOTICE, NEVER A BLOCK.** A putaway that lands on a label
+  someone else has already worked appends to `st.joins[]` and the response
+  reports `joinedOthers`, so the joiner is told whose pallet they picked up and
+  the earlier worker sees an orange notice on their own screen (dismissed via
+  `POST /api/putaway/joins/seen`). Nothing waits on an acknowledgement — the
+  units are already binned, and stopping the second person to ask permission is
+  exactly the delay this feature exists to remove.
+- **`staging_code` is stamped on every putaway entry.** Entries written before
+  this existed carry none and are credited to labels oldest-first, so a
+  part-finished pallet from before the refinement still reconciles.
+- **Over-putting is REFUSED (409)**, naming the SKU and label ("PA-BOX on
+  ST-260802-01 is already fully put away"). Two people racing the same last
+  carton must not bank it twice — the physical piece only exists once.
+- **`GET /api/inbound/:id/putaway-trail`** is the receipt-level audit view:
+  every entry with qty/bin/person/time, plus the rollup the user asked for —
+  how many people, which locations, how many units.
+- The queue polls every 7s so a colleague's progress appears by itself, and
+  **skips the repaint while any field has content or focus** — repainting under
+  someone mid-keying a bin would lose what they typed.
+
+### `inventory.suggestPutaway()` — a ranked shortlist, with reasons
+
+`GET /api/putaway/suggest?client=&sku=&qty=`. HARD CONSTRAINTS filter first (bin
+active, unit headroom left, carton physically fits when BOTH carton and bin are
+measured — an unmeasured warehouse must still get suggestions). Then, in order:
+
+1. **CONSOLIDATE** — a bin already holding this SKU. Fewest bins per SKU is the
+   biggest picking win. A bin holding the SAME lot/expiry scores above one
+   holding a different lot, so a bin stays easy to pick FEFO from.
+2. **HOME BIN** — where the SKU has historically been put away, even if empty
+   now. Pickers build muscle memory; moving a product's home costs more than the
+   space it saves. Read from `stock_movements.to_location` — there is no
+   `location_id` column on that table, and reading the wrong one silently
+   returns no home.
+3. **PICK FACE THEN BULK** — top the pick face up to capacity, overflow to bulk.
+   This is what stops a full pallet being crammed into a shelf that holds a day's
+   picking. The plan is returned as a split (`qty` per bin) that adds up.
+4. **SMALLEST BIN THAT FITS** — a pallet location is worth more than a carton
+   needs.
+
+Plus **heavy cartons (≥ `PUTAWAY_HEAVY_KG` = 15kg) prefer a low shelf** — an
+ergonomics rule, judged on the shelf label's ordering and said plainly rather
+than dressed up as a calculation.
+
+EVERY suggestion carries a `reason` string that the screen shows ("already holds
+this batch · its usual bin · pick face"). It is **always a suggestion, never
+forced**: the receiver scans the bin they actually used, and over-capacity is a
+confirmable fact with a recorded reason, not a refusal.
+
+NOT DONE, deliberately: **ABC velocity zoning** (fast movers near the pack
+bench). The movement history to compute it exists, but "near" has no meaning
+until zones are ranked by walking distance, and a guess there would move product
+for no reason. Worth doing once the racking is settled.
+
+Verified 35 API checks (one scan = one piece, a keyed 47 in one go, eventId
+dedupe at qty 10, the discrepancy-photo rule still enforced, staging issued
+automatically covering all 68 units, the queue draining exactly as lines are
+binned, a split across pick+bulk that adds up, a heavy carton sent low, a second
+delivery consolidating into the bin the SKU already lives in) plus 27 browser
+checks on desktop and a Pixel 5.
+
+## Inbound putaway — now, or stage it with a printed ID (SUPERSEDED — see above)
 
 Per the user: the crew scans the ASN/PO, then the goods go either to a final
 bin or to a staging area. The moment a receipt is ended the crew is ASKED which,

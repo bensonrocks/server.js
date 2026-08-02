@@ -9032,6 +9032,32 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   rec.extras = extras;
   rec.received_by = req.userId || '';
 
+  // EVERYTHING RECEIVED GOES TO STAGING. Per the user, the crew scans the goods
+  // and the goods then sit in the staging area — putaway is a separate job done
+  // later from its own screen, not a decision forced on the person closing the
+  // receipt while a driver waits. A staging ID is issued here so the pallet
+  // carries a printable label from the moment it is put down.
+  //
+  // The stock itself is already on hand (added above); staging only records
+  // WHICH pallet is which and what is still owed a bin.
+  let staged = null;
+  const toStage = stagingOutstanding(rec);
+  if (toStage.length) {
+    staged = {
+      id: uuidv4(), code: nextStagingCode(db),
+      area: String(req.body?.staging_area || '').trim().slice(0, 40),
+      at: new Date().toISOString(), by: req.userId || '',
+      lines: toStage, units: toStage.reduce((s, l) => s + l.qty, 0),
+      auto: true,
+    };
+    rec.staging = rec.staging || [];
+    rec.staging.push(staged);
+    logAudit('inbound_staged', {
+      id: rec.id, serial: rec.serial || '', staging: staged.code, area: staged.area,
+      skus: toStage.length, units: staged.units, auto: true, by: req.userId || '',
+    });
+  }
+
   writeDb(db);
   // Journal the close too, so a crash immediately after ending a receipt can't
   // reopen it on restart (the replayed entry carries status 'done').
@@ -9048,7 +9074,7 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
     // trail with anonymous entries is a trail you can't follow
     logAudit(r?.sent ? 'inbound_grn_emailed' : 'inbound_grn_email_skipped', { id: rec.id, serial: rec.serial, reason: r?.reason || '', by: grnActor });
   }).catch(e => logAudit('inbound_grn_email_failed', { id: rec.id, error: String(e.message || e).slice(0, 200), by: grnActor }));
-  res.json({ ok: true, discrepancies: mismatches.length, extras: extras.length });
+  res.json({ ok: true, discrepancies: mismatches.length, extras: extras.length, staging: staged });
 });
 
 // PUTAWAY — direct received goods into a bin. The stock is already sellable
@@ -9062,7 +9088,23 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
   const state = rec.state || (rec.state = {});
   if (state.status !== 'done') return res.status(400).json({ error: 'Finish receiving (End Receipt) before putaway.' });
   const { sku, location_id, qty, expiry_date, lot_number, override_reason } = req.body || {};
+  const stagingCode = String(req.body?.staging_code || '').trim();
   if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
+  if (!(Number(qty) > 0)) return res.status(400).json({ error: 'Quantity must be more than zero.' });
+  // PARTIAL PUTAWAY IS NORMAL — half a pallet now, the rest later or by someone
+  // else. Refuse only OVER-putting, which would bank stock into a bin that
+  // never physically arrived there.
+  if (stagingCode) {
+    const outstanding = putawayOutstandingForLabel(rec, stagingCode, sku);
+    if (Number(qty) > outstanding) {
+      return res.status(409).json({
+        error: outstanding > 0
+          ? `Only ${outstanding} left to put away on ${stagingCode} for ${sku} — someone may have done part of it already.`
+          : `${sku} on ${stagingCode} is already fully put away.`,
+        outstanding,
+      });
+    }
+  }
   const capChk = inventory.binCapacityCheck(location_id, Number(qty));
   if (capChk.exceeds && req.body?.override !== true) {
     return res.status(409).json({ needsCapacityOverride: true, location: location_id, ...capChk, message: `${location_id} holds ${capChk.occupied}/${capChk.capacity}; adding ${capChk.adding} exceeds by ${capChk.over}.` });
@@ -9074,10 +9116,37 @@ app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
   try {
     const result = inventory.placeStock(cid, sku, location_id, Number(qty), { received_at: receivedAt, expiry_date, lot_number, operator: req.userId || '' });
     state.putaway = state.putaway || [];
-    state.putaway.push({ sku, location_id, qty: Number(qty), expiry_date: expiry_date || null, lot_number: lot_number || '', override_reason: override_reason || '', at: new Date().toISOString(), by: req.userId || '' });
+    const me = req.userId || '';
+    // ANYONE MAY JOIN A PALLET SOMEONE ELSE STARTED — the aim is to clear the
+    // floor, not to protect a claim. Whoever was already on it is TOLD, so the
+    // trail says who did what and nobody is surprised by a line finishing
+    // itself. Same reasoning as the cross-scan notice on team receiving.
+    const priorWorkers = new Set(
+      state.putaway.filter(p => !stagingCode || p.staging_code === stagingCode)
+        .map(p => p.by).filter(b => b && b !== me));
+    const entry = {
+      sku, location_id, qty: Number(qty),
+      expiry_date: expiry_date || null, lot_number: lot_number || '',
+      override_reason: override_reason || '',
+      staging_code: stagingCode || '',
+      at: new Date().toISOString(), by: me,
+    };
+    state.putaway.push(entry);
+    if (priorWorkers.size && stagingCode) {
+      const st = (rec.staging || []).find(x => x.code === stagingCode);
+      if (st) {
+        st.joins = st.joins || [];
+        st.joins.push({ by: me, at: entry.at, sku, qty: Number(qty), location_id, to: [...priorWorkers], seen: false });
+        if (st.joins.length > 50) st.joins.splice(0, st.joins.length - 50);
+      }
+    }
     writeDb(db);
-    logAudit('inbound_putaway', { id: rec.id, sku, location: location_id, qty: Number(qty), expiry: expiry_date || '', reason: override_reason || '', by: req.userId || '' });
-    res.json({ ok: true, placed: result, putaway: state.putaway });
+    logAudit('inbound_putaway', {
+      id: rec.id, serial: rec.serial || '', staging: stagingCode,
+      sku, location: location_id, qty: Number(qty), expiry: expiry_date || '',
+      reason: override_reason || '', joinedOthers: [...priorWorkers], by: me,
+    });
+    res.json({ ok: true, placed: result, putaway: state.putaway, joinedOthers: [...priorWorkers] });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -9296,6 +9365,166 @@ app.post('/api/inbound/:id/stage', express.json(), (req, res) => {
     skus: lines.length, units: entry.units, by: req.userId || '',
   });
   res.status(201).json({ ok: true, staging: entry });
+});
+
+// ── PUTAWAY QUEUE — every staged pallet still owed a bin, across ALL receipts ─
+// Putaway is its own job, not a step inside receiving: the goods are already on
+// the floor with a staging label on them, and someone works this list down when
+// there is time. Grouped by staging ID because that is the physical unit — one
+// label, one pallet, one trip.
+// How much of one SKU on one staging label is still owed a bin.
+function putawayOutstandingForLabel(rec, stagingCode, sku) {
+  const st = (rec.staging || []).find(x => x.code === stagingCode);
+  if (!st) return 0;
+  const total = (st.lines || []).filter(l => l.sku === sku).reduce((s, l) => s + Number(l.qty || 0), 0);
+  const done = putawayDoneForLabel(rec, stagingCode, sku).qty;
+  return Math.max(0, total - done);
+}
+// Who has put this line away, how much each, and where — the trail the user
+// asked for: quantity, how many people, locations and timing, per line.
+function putawayDoneForLabel(rec, stagingCode, sku) {
+  const rows = (rec.state?.putaway || []).filter(p => p.sku === sku && (p.staging_code || '') === stagingCode);
+  const byUser = new Map();
+  for (const p of rows) {
+    const k = p.by || '';
+    const e = byUser.get(k) || { by: k, qty: 0, locations: [], first_at: p.at, last_at: p.at };
+    e.qty += Number(p.qty || 0);
+    if (p.location_id && !e.locations.includes(p.location_id)) e.locations.push(p.location_id);
+    if (String(p.at || '') < String(e.first_at || '')) e.first_at = p.at;
+    if (String(p.at || '') > String(e.last_at || '')) e.last_at = p.at;
+    byUser.set(k, e);
+  }
+  return {
+    qty: rows.reduce((s, p) => s + Number(p.qty || 0), 0),
+    contributors: [...byUser.values()].sort((a, b) => String(a.first_at).localeCompare(String(b.first_at))),
+  };
+}
+
+function putawayQueue(db, { includeDone = false } = {}) {
+  const groups = [];
+  for (const rec of db.inbound || []) {
+    if (rec.state?.status !== 'done') continue;
+    // Putaway entries made BEFORE labels were tagged (or from the old
+    // per-receipt screen) carry no staging_code. Credit those against the
+    // labels oldest-first, so history still reconciles instead of showing
+    // work as outstanding when it is already on a shelf.
+    const untagged = {};
+    for (const p of rec.state?.putaway || []) {
+      if (p.staging_code) continue;
+      untagged[p.sku] = (untagged[p.sku] || 0) + Number(p.qty || 0);
+    }
+    for (const st of rec.staging || []) {
+      const lines = [];
+      for (const l of st.lines || []) {
+        const total = Number(l.qty || 0);
+        const tagged = putawayDoneForLabel(rec, st.code, l.sku);
+        const legacy = Math.min(Math.max(0, total - tagged.qty), untagged[l.sku] || 0);
+        untagged[l.sku] = (untagged[l.sku] || 0) - legacy;
+        const done = tagged.qty + legacy;
+        const left = Math.max(0, total - done);
+        if (left <= 0 && !includeDone) continue;
+        lines.push({
+          sku: l.sku, description: l.description || '',
+          qty: left,                 // still to bin — what the screen works down
+          done, total,               // …and the progress behind it
+          contributors: tagged.contributors,
+        });
+      }
+      if (!lines.length) continue;
+      groups.push({
+        staging_code: st.code, area: st.area || '', staged_at: st.at,
+        inbound_id: rec.id, serial: rec.serial || '', reference: rec.reference || '',
+        client_name: rec.client_name || '', source_name: rec.source_name || '',
+        lines, units: lines.reduce((s, l) => s + l.qty, 0),
+        // Everyone who has touched this pallet, and any unread "I joined" note.
+        workers: [...new Set(lines.flatMap(l => l.contributors.map(c => c.by)).filter(Boolean))],
+        joins: (st.joins || []).filter(j => !j.seen),
+      });
+    }
+  }
+  // Oldest first — a pallet that has been standing longest is the one to clear.
+  groups.sort((a, b) => String(a.staged_at || '').localeCompare(String(b.staged_at || '')));
+  return groups;
+}
+
+app.get('/api/putaway/queue', (req, res) => {
+  const db = readDb();
+  const groups = putawayQueue(db);
+  res.json({
+    me: req.userId || '',
+    pallets: groups.length,
+    skus: new Set(groups.flatMap(g => g.lines.map(l => `${g.client_name}|${l.sku}`))).size,
+    units: groups.reduce((s, g) => s + g.units, 0),
+    // Pallets someone has started but not finished — the ones where a second
+    // person joining is most likely.
+    inProgress: groups.filter(g => g.workers.length > 0).length,
+    rows: groups.slice(0, 300),
+  });
+});
+
+// Dismiss a "someone joined your pallet" note. A read receipt only — the units
+// were placed when they were placed; nothing waits on this.
+app.post('/api/putaway/joins/seen', express.json(), (req, res) => {
+  const code = String(req.body?.staging_code || '').trim();
+  if (!code) return res.status(400).json({ error: 'staging_code required' });
+  const db = readDb();
+  let n = 0;
+  for (const rec of db.inbound || []) {
+    const st = (rec.staging || []).find(x => x.code === code);
+    if (!st) continue;
+    for (const j of st.joins || []) if (!j.seen) { j.seen = true; n++; }
+  }
+  if (n) writeDb(db);
+  res.json({ ok: true, marked: n });
+});
+
+// The trail for one receipt: every putaway, who did it, where it went and when
+// — plus a per-line roll-up. This is what "how many people, locations, timing"
+// is answered from.
+app.get('/api/inbound/:id/putaway-trail', (req, res) => {
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const entries = (rec.state?.putaway || []).map(p => ({
+    sku: p.sku, qty: Number(p.qty || 0), location_id: p.location_id,
+    staging_code: p.staging_code || '', at: p.at, by: p.by || '',
+    override_reason: p.override_reason || '',
+  })).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const byLine = new Map();
+  for (const st of rec.staging || []) {
+    for (const l of st.lines || []) {
+      const k = `${st.code}|${l.sku}`;
+      const d = putawayDoneForLabel(rec, st.code, l.sku);
+      byLine.set(k, {
+        staging_code: st.code, sku: l.sku, description: l.description || '',
+        total: Number(l.qty || 0), done: d.qty, people: d.contributors.length,
+        contributors: d.contributors,
+      });
+    }
+  }
+  res.json({
+    inbound_id: rec.id, serial: rec.serial || '', client_name: rec.client_name || '',
+    lines: [...byLine.values()], entries,
+    people: new Set(entries.map(e => e.by).filter(Boolean)).size,
+    locations: new Set(entries.map(e => e.location_id).filter(Boolean)).size,
+    units: entries.reduce((s, e) => s + e.qty, 0),
+  });
+});
+
+// Where should this go? A ranked shortlist with the reason for each — never a
+// single forced answer. See suggestPutaway in lib/inventory-store.js for the
+// rules; the receiver still scans the bin they actually used.
+app.get('/api/putaway/suggest', (req, res) => {
+  if (!inventory.available()) return res.json({ suggestions: [], notes: ['Inventory is not set up on this server.'] });
+  const sku = String(req.query.sku || '').trim();
+  const client = String(req.query.client || '').trim();
+  const qty = Math.max(1, parseInt(req.query.qty, 10) || 1);
+  if (!sku || !client) return res.status(400).json({ error: 'sku and client are required' });
+  try {
+    res.json(inventory.suggestPutaway(invClientId(client), sku, qty, {
+      expiry_date: req.query.expiry || null, lot_number: req.query.lot || '',
+    }));
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // What to print and stick on the cargo. Read-only — mirrors the carton-slip

@@ -421,6 +421,18 @@
           <button type="button" class="cond-btn cond-kiv" data-cond="kiv">⏸ KIV</button>
         </div>
       </div>
+      <!-- QTY FOR THE NEXT SCAN. One scan is one piece by default — the way a
+           gun is used. Set a number here and the next scan counts that many,
+           for a sealed carton of 24 nobody wants to scan 24 times. It resets to
+           1 straight after, so a stuck multiplier can never quietly inflate the
+           rest of the receipt. -->
+      <div class="inb-qty-row">
+        <label for="inboundQtyInput">Next scan counts</label>
+        <button type="button" class="inb-qty-step" id="inboundQtyMinus" title="Less">&minus;</button>
+        <input type="number" id="inboundQtyInput" min="1" max="9999" value="1" inputmode="numeric" />
+        <button type="button" class="inb-qty-step" id="inboundQtyPlus" title="More">+</button>
+        <span class="inb-qty-hint" id="inboundQtyHint">1 piece per scan</span>
+      </div>
       <div class="item-scan-wrap">
         <span class="scan-icon-prefix">&#9524;</span>
         <input type="text" id="inboundScanInput" class="big-scan-input"
@@ -1617,26 +1629,20 @@
     </div>
   </div>
 
-  <!-- ── Putaway now, or stage it? — asked the moment a receipt is ended ──── -->
+  <!-- ── Receipt closed → the goods are in staging ──────────────────────────
+       There is no longer a now-or-later question: everything received goes to
+       staging with a printed ID on it, and Putaway is worked as its own job
+       from its own tab. #putawayAskChoices is kept (hidden) so the panel's
+       show/hide logic stays in one shape. -->
   <div id="putawayAskOverlay" class="modal-overlay hidden">
     <div class="modal-card" style="max-width:480px">
       <div class="modal-title">&#128230; Receipt <span id="putawayAskRef"></span> is closed</div>
-      <div id="putawayAskChoices">
-        <p style="margin:.3rem 0 .9rem;font-size:.95rem;line-height:1.45">
-          Where are these goods going now? Putting them away needs a real bin scanned or typed.
-          If they are going to a staging area instead, we'll issue a <b>staging ID</b> to print and stick on the cargo.
-        </p>
-        <div class="form-group" style="margin:.2rem 0 .9rem">
-          <label style="font-size:.8rem">Staging area <span class="hint-inline">(optional)</span></label>
-          <input type="text" id="putawayAskArea" placeholder="e.g. Bay 3 / Inbound floor" autocomplete="off" />
-        </div>
-        <div class="modal-actions">
-          <button class="btn-secondary" id="putawayAskLater">&#128337; Putaway later — stage it</button>
-          <button class="btn-primary"   id="putawayAskNow">&#128205; Putaway now</button>
-        </div>
-      </div>
+      <div id="putawayAskChoices" class="hidden"></div>
       <div id="putawayAskResult" class="hidden">
-        <p class="hint" style="margin:.2rem 0 .5rem">Print this and stick it on the cargo:</p>
+        <p class="hint" style="margin:.2rem 0 .5rem">
+          These goods are now in <b>Inbound Staging</b>. Print this and stick it on the cargo &mdash;
+          then bin them from the <b>Putaway</b> tab whenever there is time.
+        </p>
         <div style="text-align:center;font-size:2.1rem;font-weight:900;letter-spacing:.04em" id="putawayStagingCode">—</div>
         <div style="text-align:center;color:var(--text-light);font-size:.85rem" id="putawayStagingWhat"></div>
         <div class="modal-actions" style="margin-top:.9rem">
@@ -1695,6 +1701,7 @@
       </div>
       <button class="tab-btn" data-tab="waves"><span class="tab-icon">&#128737;</span>Wave Pick</button>
       <button class="tab-btn" data-tab="inbound"><span class="tab-icon">&#128230;</span>Inbound</button>
+      <button class="tab-btn" data-tab="putaway"><span class="tab-icon">&#128205;</span>Putaway <span id="putawayNavBadge" class="nav-badge hidden">0</span></button>
       <button class="tab-btn" data-tab="inventory"><span class="tab-icon">&#128451;</span>Inventory</button>
       <div style="padding-left:2rem;display:none" id="inventorySubMenu">
         <button class="tab-btn inv-sub" style="font-size:13px;padding:0.4rem 0.8rem" data-inv-view="overview">📊 Overview</button>
@@ -1927,6 +1934,25 @@
     </section>
 
     <!-- ── TAB: Inbound (IdealInbound — receiving POs/ASNs and returns) ── -->
+    <!-- ── PUTAWAY ────────────────────────────────────────────────────────
+         Everything received is in the staging area with a printed ID on it.
+         This is the list of what still needs a bin — worked down whenever
+         there is time, not while a driver waits at the door. -->
+    <section id="tab-putaway" class="tab">
+      <div class="section-header">
+        <h2>&#128205; Putaway</h2>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="btn-secondary btn-sm" id="putawayRefreshBtn">&#8635; Refresh</button>
+        </div>
+      </div>
+      <p class="hint" style="margin:.1rem 0 .8rem">
+        Received goods sit in staging until they are binned. Each row is one staging label &mdash;
+        one pallet, one trip. We suggest a bin and say why; scan or type the bin you actually used.
+      </p>
+      <div id="putawayStats" class="pk-stats" style="margin-bottom:.8rem"></div>
+      <div id="putawayList"></div>
+    </section>
+
     <section id="tab-inbound" class="tab">
       <div class="section-header">
         <h2>Inbound</h2>

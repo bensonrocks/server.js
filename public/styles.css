@@ -884,6 +884,21 @@ body.scan-open { overflow: hidden; }
   display: block; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
   color: var(--text-muted); margin-bottom: .3rem;
 }
+/* Qty-for-the-next-scan row on the receiving screen. Big enough for a gloved
+   thumb; the ± buttons exist because keying on a phone mid-scan is slow. */
+.inb-qty-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; padding: 0 0 .5rem; }
+.inb-qty-row label { font-size: .78rem; font-weight: 700; color: var(--text-light); margin-right: .1rem; }
+.inb-qty-step { width: 2.2rem; height: 2.2rem; flex: 0 0 auto; border: 1.5px solid var(--border);
+                background: var(--surface); border-radius: 8px; font-size: 1.1rem; font-weight: 800;
+                color: var(--text); cursor: pointer; line-height: 1; }
+.inb-qty-step:active { background: var(--surface-2); }
+#inboundQtyInput { width: 4.2rem; text-align: center; font-size: 1.05rem; font-weight: 800;
+                   padding: .4rem .3rem; border: 1.5px solid var(--border); border-radius: 8px;
+                   background: var(--surface); color: var(--text); }
+#inboundQtyInput.multi { border-color: var(--warning); background: #fffbeb; color: #92400e; }
+.inb-qty-hint { font-size: .76rem; color: var(--text-light); font-weight: 600; }
+.inb-qty-hint.multi { color: #92400e; font-weight: 800; }
+
 .inbound-condition-row select {
   width: 100%; padding: .62rem .85rem;
   border: 1.5px solid var(--border); border-radius: var(--radius-sm);
@@ -2769,6 +2784,48 @@ body.ls-open { overflow: hidden; }
 .chip-pickup-late { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }
 
 .pk-stats { display: flex; gap: .5rem; flex-wrap: wrap; }
+
+/* ── Putaway ───────────────────────────────────────────────────────────────
+   One card per staging label — one pallet, one trip. */
+.pa-card { border: 1.5px solid var(--border); border-radius: var(--radius); background: var(--surface);
+           padding: .75rem .9rem; margin-bottom: .7rem; }
+.pa-head { display: flex; justify-content: space-between; align-items: baseline; gap: .6rem;
+           flex-wrap: wrap; margin-bottom: .5rem; }
+.pa-code { font-family: monospace; font-size: .95rem; letter-spacing: .02em; margin-right: .35rem; }
+.pa-tbl { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.pa-tbl th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--text-light); border-bottom: 1px solid var(--border); padding: .3rem .4rem; }
+.pa-tbl td { padding: .4rem; border-bottom: 1px solid var(--border-light); vertical-align: top; }
+.pa-bin { width: 100%; min-width: 8rem; padding: .4rem .55rem; border: 1.5px solid var(--border);
+          border-radius: 6px; font-size: .85rem; font-family: monospace; }
+.pa-sg { display: flex; align-items: baseline; gap: .35rem; flex-wrap: wrap; margin-bottom: .15rem; }
+.pa-use { border: 1.5px solid var(--border); background: var(--surface-2); border-radius: 6px;
+          padding: .15rem .45rem; font-family: monospace; font-size: .8rem; font-weight: 700;
+          cursor: pointer; color: var(--text); }
+.pa-sg.top .pa-use { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
+.pa-msg { margin-top: .45rem; }
+/* Who has already put part of this line away. Your own contribution is
+   highlighted so a shared pallet is readable at a glance. */
+.pa-who { display: inline-block; padding: .1rem .45rem; border-radius: 99px; font-size: .72rem;
+          font-weight: 700; background: var(--surface-2); color: var(--text-light);
+          border: 1px solid var(--border); white-space: nowrap; }
+.pa-who.mine { background: #eff6ff; color: var(--primary); border-color: #bfdbfe; }
+/* Someone joined a pallet you were working. A notification, not a gate. */
+.pa-join { display: flex; align-items: center; gap: .5rem; margin: 0 0 .5rem;
+           padding: .4rem .6rem; border-radius: 8px; background: #ffedd5; color: #9a3412;
+           font-size: .8rem; font-weight: 700; }
+.pa-join-x { margin-left: auto; border: 0; background: transparent; color: inherit;
+             font-size: .85rem; cursor: pointer; font-weight: 800; }
+.pa-qty { width: 4.2rem; text-align: center; padding: .35rem .3rem; border: 1.5px solid var(--border);
+          border-radius: 6px; font-size: .85rem; font-weight: 700; }
+
+@media (max-width: 768px) {
+  /* The table becomes stacked rows — a putaway list is worked from a phone. */
+  .pa-tbl thead { display: none; }
+  .pa-tbl > tbody > tr { display: block; border: 1px solid var(--border); border-radius: 8px;
+                         padding: .45rem .55rem; margin-bottom: .5rem; }
+  .pa-tbl > tbody > tr > td { display: block; border: 0; padding: .18rem 0; }
+}
 .pk-stat { flex: 1 1 8rem; min-width: 0; border: 1.5px solid var(--border); border-radius: 10px;
            padding: .5rem .7rem; background: var(--surface-2); }
 .pk-stat b { display: block; font-size: 1.35rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
