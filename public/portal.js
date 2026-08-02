@@ -971,6 +971,7 @@
   let sendPreview  = null;   // {filename, orderCount, rowCount, totalQty, warnings, ...}
   let sendFileBlob = null;   // the file itself, held until the client confirms step 1
   let sendDraft    = null;   // the draft submission once step 1 is committed
+  let lastMatch    = null;   // the waybill match result last shown
 
   function sendMsg(text, kind, id) {
     const el = $(id || 'sendMsg');
@@ -1059,7 +1060,9 @@
   // STEP 2 → the waybills, matched against step 1's orders straight away.
   async function sendLabelsFile(file) {
     if (!file || !sendDraft) return;
-    sendMsg('Reading ' + file.name + ' and matching to your orders…', 'busy', 'sendLabelMsg');
+    // Scanned labels have to be read with text recognition, which takes a
+    // couple of seconds a page — say so rather than leaving them staring at it.
+    sendMsg(`Reading ${file.name} and matching to your orders… scanned labels take a few seconds a page.`, 'busy', 'sendLabelMsg');
     const fd = new FormData();
     fd.append('file', file);
     fd.append('for_submission', sendDraft.id);
@@ -1069,6 +1072,7 @@
       if (!r.ok) { sendMsg(d.error || 'We could not read that PDF.', 'err', 'sendLabelMsg'); return; }
       $('sendLabelMsg').classList.add('hidden');
       renderMatch(file.name, d);
+      lastMatch = d;
       $('sendLabelsNext').classList.remove('hidden');
       $('sendSkipLabels').textContent = 'Remove waybills';
       loadSubmissions();
@@ -1082,17 +1086,25 @@
     const pages = d.pages || 0, matched = d.matched || 0;
     const un = d.unmatched || [];
     const allGood = matched === pages;
+    // Scanned labels carry no text, so those pages are read by OCR. Saying so
+    // explains both the wait and why an OCR page might read slightly off.
+    const howRead = d.ocrPages
+      ? `<div class="muted" style="font-size:.75rem;margin-top:.2rem">${d.ocrPages} page(s) were scanned images — we read them with text recognition.${
+          d.ocrSkipped ? ` ${d.ocrSkipped} were left for us to read on our side.` : ''}</div>`
+      : '';
     el.innerHTML = `
       <div class="mt-head">
         <span>${allGood ? '✅' : '⚠️'}</span>
         <span>${matched} of ${pages} waybill page(s) matched to your orders</span>
       </div>
       <div class="muted" style="font-size:.76rem;margin-top:.2rem">${esc(filename)}</div>
+      ${howRead}
       ${un.length ? `
         <div class="mt-list">
           ${un.slice(0, 12).map(u => `<div class="mt-row">
             <span class="pg">p.${u.page}</span>
-            <span class="to muted">${esc(u.tracking || u.order || 'nothing readable on this page')}</span>
+            <span class="to muted">${esc(u.tracking || u.order
+              || (u.via === 'none' ? 'we could not read this page' : 'read, but no matching order above'))}</span>
           </div>`).join('')}
         </div>
         <div class="muted" style="font-size:.76rem;margin-top:.4rem">

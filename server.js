@@ -4785,9 +4785,22 @@ async function processLabelPdf(buffer, filename, uploadedBy) {
 
   // Per-page text from the ORIGINAL upload — pdf-lib re-saved single pages
   // frequently fail to parse, so text extraction must happen before the split
+  //
+  // OCR IS PART OF READING, NOT AN AFTERTHOUGHT. A scanned carrier label (a
+  // Lazada/Speedpost AWB, for one) has NO text layer at all, so a text-only
+  // pass matched nothing and the approver was told "0 of 6 matched" — even
+  // though the background rematch quietly fixed it a few seconds later. The
+  // number someone reads at the moment they approve has to be true, so the
+  // OCR happens here. pageTextsWithOcr carries its own page cap and time
+  // budget; anything past them still falls to the background rematch below.
   let pageTexts  = [];
   let parseError = false;
-  try { pageTexts = await extractPdfPageTexts(buffer); }
+  let ocrPages   = 0;
+  try {
+    const read = await pageTextsWithOcr(buffer);
+    pageTexts = read.pages.map(p => p.text);
+    ocrPages  = read.ocrPages;
+  }
   catch (e) { parseError = true; console.error('[label-import] text extraction:', e.message); }
 
   for (let i = 0; i < numPages; i++) {
@@ -4852,7 +4865,7 @@ async function processLabelPdf(buffer, filename, uploadedBy) {
     setImmediate(() => rematchLabelImport(importId, false)
       .catch(e => console.error('[label-ocr-bg]', e.message)));
   }
-  return { importId, pageCount: numPages, matched, import: importRecord };
+  return { importId, pageCount: numPages, matched, ocrPages, import: importRecord };
 }
 
 app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), tenantMiddleware, async (req, res) => {
@@ -7870,29 +7883,87 @@ app.post('/api/portal/preview-orders', upload.single('file'), (req, res) => {
 // than against live orders — those orders do not exist yet. This is what lets
 // the client see "12 of 12 waybills matched" BEFORE sending, which is the whole
 // point of doing the orders file first.
+// READING A LABEL PDF, WHATEVER IT IS MADE OF.
+// Carrier label PDFs come in two shapes and only one of them has text in it:
+// some are generated with a text layer, and some — Lazada/Speedpost AWBs among
+// them — are pure images with no extractable text at all. Reading only the text
+// layer means an image-only file reports "nothing readable on this page" for
+// every page, which is what a real client file did.
+//
+// So: read the text layer first (instant, exact), and OCR only the pages that
+// came back empty. On a real 6-page Lazada AWB that is ~1.9s a page and every
+// tracking number comes out exactly right — which is what matters, because the
+// tracking number is printed large and repeated all over the label while the
+// order number is small and OCRs with the odd digit wrong.
+const OCR_PREVIEW_PAGE_CAP = 80;      // a runaway file must not hang the request
+const OCR_PREVIEW_MS_BUDGET = 45000;  // …and neither must a slow one
+async function pageTextsWithOcr(buffer) {
+  const texts = await extractPdfPageTexts(buffer);
+  const out = texts.map(t => ({ text: t || '', via: String(t || '').trim() ? 'text' : 'none' }));
+  const blank = out.map((p, i) => (p.via === 'none' ? i : -1)).filter(i => i >= 0);
+  if (!blank.length || !Tesseract) return { pages: out, ocrPages: 0, ocrSkipped: blank.length };
+
+  const started = Date.now();
+  let worker = null, ocrPages = 0, skipped = 0, doc = null;
+  try {
+    for (const i of blank) {
+      if (ocrPages >= OCR_PREVIEW_PAGE_CAP || Date.now() - started > OCR_PREVIEW_MS_BUDGET) { skipped++; continue; }
+      let png = await renderPdfPageToPng(buffer, i, 3);
+      if (!png) {
+        // No rasteriser on this host — fall back to the largest embedded image,
+        // which is the whole label whenever the page really is one bitmap.
+        try {
+          doc = doc || await PDFDocument.load(buffer);
+          const img = extractLargestPageImage(doc, i);
+          if (img) png = img.rotate && sharp
+            ? await sharp(img.buf).rotate(img.rotate).png().toBuffer()
+            : img.buf;
+        } catch (e) { /* fall through to skipped */ }
+      }
+      if (!png) { skipped++; continue; }
+      if (!worker) worker = await createOcrWorker();
+      const text = await runOcr(png, {}, worker) || '';
+      ocrPages++;
+      if (text.trim()) { out[i].text = text; out[i].via = 'ocr'; }
+    }
+  } catch (e) {
+    console.warn('[label-ocr-preview]', e.message);
+  } finally {
+    if (worker) await worker.terminate().catch(() => {});
+  }
+  return { pages: out, ocrPages, ocrSkipped: skipped };
+}
+
 async function matchLabelsAgainstDraft(buffer, draftOrders) {
-  const pages = await extractPdfPageTexts(buffer);
+  const read = await pageTextsWithOcr(buffer);
+  const pages = read.pages;
   const index = buildLabelMatchIndexFor(draftOrders || []);
   let matched = 0;
   const unmatched = [];
   const perPage = [];
   for (let i = 0; i < pages.length; i++) {
-    const raw = pages[i] || '';
+    const raw = pages[i].text || '';
     const extracted = extractLabelFields ? extractLabelFields(raw) : null;
     const hit = matchLabelPage(raw, extracted, index);
-    if (hit) { matched++; perPage.push({ page: i + 1, order_number: hit.hit, method: hit.method }); }
+    if (hit) { matched++; perPage.push({ page: i + 1, order_number: hit.hit, method: hit.method, via: pages[i].via }); }
     else {
-      perPage.push({ page: i + 1, order_number: null, method: null });
+      perPage.push({ page: i + 1, order_number: null, method: null, via: pages[i].via });
       unmatched.push({
         page: i + 1,
         // Whatever we DID read off the page, so an unmatched label is
         // explainable rather than just a number.
         tracking: extracted?.trackingNumber || '',
         order: extracted?.orderNumber || '',
+        // …and HOW we read it, so "nothing readable" can be told apart from
+        // "read fine, but this order is not in the file above".
+        via: pages[i].via,
       });
     }
   }
-  return { pageCount: pages.length, matched, unmatched, perPage };
+  return {
+    pageCount: pages.length, matched, unmatched, perPage,
+    ocrPages: read.ocrPages, ocrSkipped: read.ocrSkipped,
+  };
 }
 
 // PORTAL → STEP 2: attach a WAYBILL / shipping-label PDF to the orders draft
@@ -7967,6 +8038,10 @@ app.post('/api/portal/submit-labels', upload.single('file'), (req, res) => {
         pages: match.pageCount,
         matched: parent ? match.matched : null,
         unmatched: parent ? match.unmatched : [],
+        // How the pages were read, so the client can tell "we couldn't read
+        // this label" apart from "we read it, but that order isn't in your file".
+        ocrPages: match.ocrPages || 0,
+        ocrSkipped: match.ocrSkipped || 0,
       });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });

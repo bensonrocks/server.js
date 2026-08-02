@@ -2939,13 +2939,49 @@ rematches are instant. This used to sit in the ROUTE, where it referenced
 anywhere and image-only labels silently stopped being OCR'd. Keep it inside the
 function; every caller needs it.
 
-⚠ **NOT YET VERIFIED ON A REAL SCANNED WAYBILL.** The client path is proven to
-match a text-layer PDF (3/3 orders by `order_number_scan`), but the OCR branch
-has only been reasoned about, not exercised. Synthetic fixtures are useless
-here — a `pdf-lib`-generated file used earlier turned out to be unreadable by
-`pdf-parse` standalone, which produced a false "the staff path is broken"
-conclusion before it was traced to the fixture. Test with a genuine scanned
-waybill PDF through BOTH paths before relying on this.
+### OCR IS PART OF READING A LABEL, NOT AN AFTERTHOUGHT
+
+VERIFIED ON A REAL SCANNED WAYBILL (a 6-page Lazada/Speedpost AWB from the
+client). It has **no text layer at all** — `extractPdfPageTexts` returns `''`
+for every page — so a text-only read reported "nothing readable on this page"
+six times and matched 0 of 6, which is exactly what the client saw.
+
+`pageTextsWithOcr(buffer)` is now the single way a label PDF is read: text
+layer first (instant, exact), then OCR **only** the pages that came back empty,
+reusing ONE Tesseract worker. Used by BOTH `matchLabelsAgainstDraft` (the
+client's step-2 preview) and `processLabelPdf` (the office import and the
+approval path), so the two can never disagree.
+
+- Measured on the real file: **~1.9s a page, 11s for six**, and all six
+  tracking numbers come out exactly right.
+- **Match on the TRACKING number, not the order number.** OCR reads
+  `LZSGD1015082878` perfectly — it is large, and printed 8+ times down both
+  sides of the label — while the small `Order No:` line comes back with the odd
+  digit wrong (`169103066792054` → `169102066792054`). `matchLabelPage`'s
+  `scanKeys` pass finds the tracking number anywhere in the OCR text, so this
+  works as long as the client's order file carries the waybill column (see the
+  `waybill_ref` mapping fix above — the two fixes are load-bearing together).
+- `OCR_PREVIEW_PAGE_CAP` (80) and `OCR_PREVIEW_MS_BUDGET` (45s) bound the
+  request. Anything past them is left to the existing background
+  `rematchLabelImport`, and the client is TOLD how many were left.
+- WHY IT ALSO WENT INTO `processLabelPdf`: the background rematch did
+  eventually OCR and attach all six — about 12 seconds after approval. But the
+  approver was shown "0 of 6 matched" at the moment they clicked, which is a
+  number that reads as a failure. What someone reads when they approve has to
+  be true, so the OCR happens in the first pass.
+- Fallback when no rasteriser is available: the largest embedded image on the
+  page, which IS the whole label whenever the page is one bitmap.
+
+Verified 13 checks on the client path (image-only PDF, 6/6 matched in the
+preview, 6/6 filed against the live orders on approval, every order carrying
+its label) and 5 on the office Labels import with the same file (6/6 matched
+straight away, not after a delay).
+
+FIXTURE WARNING, kept because it cost real time: synthetic PDFs are useless
+here. A `pdf-lib`-generated file is unreadable by this repo's `pdf-parse`
+("bad XRef entry"), which once produced a false "the staff path is broken"
+conclusion. Generate test PDFs by printing HTML through headless Chromium, or
+use a genuine carrier file.
 
 Also worth knowing: `buildLabelMatchIndex`'s `scanKeys` fallback only accepts a
 normalised key of **≥8 chars (10 if all digits)**, so short order numbers can
