@@ -2889,6 +2889,97 @@ everyone who handled it, started/ended both present and the right way round, the
 sheet's Location cells all blank, a closed receipt refused, the audit trail
 carrying who and why) plus 16 browser checks on desktop and a Pixel 5.
 
+## Stock is allocated at INTAKE and depleted at COMPLETION — on every path
+
+Per the user: orders arriving by upload OR by sync must allocate the SKU's
+quantity; a shortfall must ask the client to drop those orders or abort; ground
+locations are depleted before racks; and the units sit **Reserved** until
+scanning completes, with the record visible in outbound reporting on both the
+office and client sides.
+
+### One gate, four doors
+
+`checkIntakeStock(clientId, orders)` and `reserveIntakeOrders(...)` are used by
+ALL FOUR ways an order can arrive — file upload, photo scan, store sync, and an
+approved client-portal submission. Four copies would drift, and the first thing
+to drift would be whether stock was reserved at all.
+
+**TWO OF THOSE PATHS PREVIOUSLY RESERVED NOTHING.** A photo-scanned picking list
+and an approved client submission both created their batch with no
+`inventory_tracked` flag, so they reserved nothing at intake and — because the
+deduction is gated on the same flag — deducted nothing at completion. They
+looked identical to a tracked order on the Orders tab and moved no stock for
+their whole life. Both are wired now.
+
+`checkIntakeStock` reserves NOTHING; it reports what a reservation *would* do,
+so the answer shown before approving is the answer the reservation gives.
+Availability is judged **cumulatively across the file**: two orders for the same
+SKU compete for one pool, and a per-order check would pass both and then short
+the second at reserve time.
+
+### The shortfall prompt — drop, or abort
+
+`/api/upload` returns 409 `{needsStockDecision, shortOrders[], okCount,
+shortCount, unknownSkus[]}` naming each order and, per line, what it needs
+against what is free. The uploader chooses:
+- **drop** (`stock_action=drop`) — the short orders are removed and the rest
+  goes through; the response carries `droppedShortOrders` and the client says
+  which were left behind BY NAME, because a silent drop looks like the file
+  simply had fewer orders in it. Audit-logged `upload_short_orders_dropped`.
+- **abort** — the client simply doesn't resend. Nothing was reserved, so the
+  account is exactly as it was.
+- `stock_action=proceed` exists as a deliberate override; the shortfall still
+  becomes a backorder so it stays visible.
+
+A SKU not in the item master is created at zero rather than being skipped — the
+old behaviour let such an order go untracked, which is the gap being closed.
+
+### Picking priority — ground before racks, but rotation first
+
+`binLotsForSku` orders lots by:
+1. dated lots before undated, nearest expiry first (**FEFO — not a preference**)
+2. **ground before rack** (`wl.tier`)
+3. pick face before bulk
+4. oldest received first
+
+The user's instruction was *"always deplete from ground first … IF THERE IS A
+CHOICE"*, and that last clause is the design. FEFO leads because sending a
+later-expiring floor unit ahead of a sooner-expiring rack unit ships the wrong
+lot and eventually ships expired stock. For ordinary non-perishable goods every
+expiry is NULL, so step 1 ties and the FLOOR genuinely wins — the case this was
+asked for. Under FIFO the received date leads, for the same reason.
+
+### Reserved → depleted, and where the record lives
+
+Reserving moves units from available into reserved; **on-hand is unchanged**
+until `/api/scan/complete` runs `deductOrder`, which deducts the stock and
+releases the reservation together (guarded by `state.inventory_deducted` so an
+offline replay cannot double-deduct). Cancelling releases instead.
+
+`inventory.outboundMovements(clientId, {from, to})` reads the reserve / release
+/ outbound rows from `stock_movements` — the ledger those three write to — and
+is shared by:
+- **Office**: `GET /api/master/report/outbound-stock` (in `ADMIN_REPORT_KINDS`)
+  — an "Outbound Stock" sheet of every move plus a "By Order" sheet that
+  reconciles reserved − released − shipped = still reserved.
+- **Client portal**: `GET /api/portal/movements` on screen and
+  `/api/portal/export/movements` as XLSX, in the client's own words ("Reserved
+  for your order", "Shipped — stock deducted") with a line explaining what
+  Reserved means.
+
+Verified 22 + 18 checks: an ordinary upload reserves silently, the ground bin is
+picked before the rack, a short order stops the upload naming the numbers,
+aborting reserves nothing and creates no order, dropping uploads only the
+covered ones, two orders competing for one pool flag only the second, completion
+depletes on-hand and releases the reservation, a photo scan and an approved
+client submission now both reserve and deplete, and both the office report and
+the client's own record reconcile.
+
+GOTCHA: `outboundMovements` joins `inventory`, which ALSO has a `client_id`, so
+an unqualified `client_id` in the WHERE clause made the whole query ambiguous
+and SQLite refused it. The `catch` around it was silent, so the report came back
+empty — indistinguishable from a quiet month. It now logs.
+
 ## Stock lists — sort, download, and zero-quantity SKUs
 
 Per the user: both the client portal and the office can toggle ascending /

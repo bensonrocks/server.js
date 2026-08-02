@@ -3921,6 +3921,26 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
 // Download their own data as a spreadsheet. Read-only like everything else
 // here, and scoped to the signed-in client by construction — it reuses the
 // exact same queries the on-screen views use rather than re-deriving them.
+// The outbound stock record on screen. Read-only, client-scoped, and the same
+// ledger the export and the office report read.
+app.get('/api/portal/movements', requirePortalAuthMiddleware, (req, res) => {
+  const cid = invClientId(req.portalClient);
+  const today = sgDateStr();
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from
+             : sgDateStr(new Date(Date.now() - (PORTAL_SCREEN_DAYS - 1) * 86400000));
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : today;
+  let rows = [];
+  try { rows = inventory.outboundMovements(cid, { from, to, limit: 2000 }); } catch (_) {}
+  const LABEL = { reserve: 'Reserved', release: 'Released', outbound: 'Shipped' };
+  res.json({
+    rows: rows.map(m => ({
+      at: m.at, order_number: m.order_id || '', sku: m.sku, product: m.product || '',
+      kind: m.type, label: LABEL[m.type] || m.type, qty: Math.abs(Number(m.qty) || 0),
+    })),
+    from, to, screenDays: PORTAL_SCREEN_DAYS,
+  });
+});
+
 app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient;
   const clientNorm = client.trim().toLowerCase();
@@ -3978,6 +3998,25 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
         r._aging ? 'Yes' : '']),
     ];
     sheet = 'Stock'; name = 'Stock';
+  } else if (kind === 'movements') {
+    // THE OUTBOUND STOCK RECORD, in the client's own words. Reserved when their
+    // order arrived, released if it was cancelled, depleted when it shipped —
+    // the same ledger the office report reads, so the two always agree.
+    let mv = [];
+    try { mv = inventory.outboundMovements(cid, { from, to }); } catch (_) {}
+    const LABEL = { reserve: 'Reserved for your order', release: 'Released (order cancelled)',
+                    outbound: 'Shipped — stock deducted' };
+    aoa = [
+      ...title('Stock movements on your orders'),
+      ['Reserved means the units are set aside for that order and no longer available to promise elsewhere. They are deducted when the order is picked, packed and completed.'],
+      [],
+      ['When (SGT)', 'Order No', 'SKU', 'Product', 'What happened', 'Units'],
+      ...mv.map(m => [
+        new Date(String(m.at).replace(' ', 'T') + 'Z').toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }),
+        m.order_id || '', m.sku, m.product || '', LABEL[m.type] || m.type, Math.abs(Number(m.qty) || 0),
+      ]),
+    ];
+    sheet = 'Movements'; name = 'Stock_Movements';
   } else if (kind === 'orders') {
     const _pol = pickupPolicy(db);
     const out = [];
@@ -6505,6 +6544,22 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       orderStates: {},
       orders,
     };
+    // A photo-scanned picking list is an order like any other: it reserves
+    // stock at intake and deducts at completion. It used to create the batch
+    // with no inventory link at all, so those orders moved no stock for their
+    // whole life while looking identical on screen to ones that did.
+    {
+      const pcid = invClientId(batch.client_name);
+      if (inventory.available() && pcid) {
+        for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
+          if (!inventory.get(sku, pcid)) { try { inventory.upsert({ sku, name: sku, clientId: pcid }); } catch (_) {} }
+        }
+        const rr = reserveIntakeOrders(db, pcid, batch.client_name, orders, batchId, 'fefo', 'wait');
+        batch.inventory_tracked = rr.tracked;
+        if (rr.tracked) batch.inventory_client = pcid;
+        if (rr.reservedSkus.size) zortNotifyStockChange(db, pcid, [...rr.reservedSkus]);
+      }
+    }
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'photo-scan');
     // Photo-scanned picking lists also feed the Transport tab — but only when
@@ -6736,7 +6791,9 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     }
 
     const sessionId = req.headers['x-session-id'] || uuidv4();
-    const orders    = summarizeOrders(mapped);
+    // `let`: the stock gate below can DROP short orders from this list when the
+    // uploader chooses to take the rest.
+    let orders      = summarizeOrders(mapped);
 
     // SAFETY RULE — duplicate order numbers: re-uploading the same file (or
     // the same picking lists in another file) would create twin orders.
@@ -6879,30 +6936,61 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     const clientName = ((req.body?.client_name || '').trim() || fileClientName).trim();
     const invCid     = invClientId(clientName);
 
+    // ── STOCK GATE ────────────────────────────────────────────────────────
+    // Per the user: if a SKU has too little stock (or is not in the item
+    // master at all), SAY SO and offer two ways out — drop those orders and
+    // take the rest, or abort the whole upload. Nothing is reserved until one
+    // is chosen, so an abort leaves the account exactly as it was.
     let inventoryTracked = false;
+    let droppedOrders = [];
     if (inventory.available()) {
-      const uniqueSkus = [...new Set(mapped.map(r => r.sku).filter(Boolean))];
-      const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku, invCid));
-      if (missingSkus.length) {
-        const decision = String(req.body?.inventory_decision || '').toLowerCase();
-        if (decision === 'track') {
-          for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku, clientId: invCid }); } catch (_) {} }
-          inventoryTracked = true;
-          logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
-        } else if (decision === 'skip') {
-          inventoryTracked = false;
-          logAudit('upload_inventory_tracking_skipped', { missingCount: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
+      const stock = checkIntakeStock(invCid, orders);
+      if (stock.shortOrders.length) {
+        const action = String(req.body?.stock_action || '').toLowerCase();
+        if (action === 'drop') {
+          const dropSet = new Set(stock.shortOrders.map(x => x.order_number));
+          droppedOrders = stock.shortOrders.map(x => ({ order_number: x.order_number, reason: x.reason }));
+          orders = orders.filter(o => !dropSet.has(o.order_number));
+          if (!orders.length) {
+            return res.status(409).json({
+              error: 'Every order in this file is short on stock — there is nothing left to upload.',
+              shortOrders: stock.shortOrders.slice(0, 100),
+            });
+          }
+          logAudit('upload_short_orders_dropped', {
+            dropped: droppedOrders.length, kept: orders.length,
+            orders: droppedOrders.map(d => d.order_number).slice(0, 50),
+            clientId: invCid, ...clientInfo(req),
+          });
+        } else if (action === 'proceed') {
+          // Deliberate override: take everything anyway. The shortfall still
+          // becomes a backorder, so it is visible rather than lost.
+          logAudit('upload_short_orders_accepted', {
+            shortOrders: stock.shortOrders.length, clientId: invCid, ...clientInfo(req),
+          });
         } else {
           return res.status(409).json({
-            needsInventoryConfirm: true,
-            missingSkus: missingSkus.slice(0, 50),
-            missingCount: missingSkus.length,
-            message: `${missingSkus.length} SKU(s) in this upload were not found in Inventory. Add them and reserve stock for this upload, or continue without inventory tracking (this upload will only be processed/tracked for activity — e.g. billing — with no stock reserved or deducted)?`,
+            needsStockDecision: true,
+            unknownSkus: stock.unknownSkus.slice(0, 50),
+            shortOrders: stock.shortOrders.slice(0, 100),
+            okCount: stock.okOrders.length,
+            shortCount: stock.shortOrders.length,
+            message: `${stock.shortOrders.length} of ${orders.length} order(s) cannot be covered by this client's stock`
+              + `${stock.unknownSkus.length ? ` (${stock.unknownSkus.length} SKU(s) are not in their item master)` : ''}.`
+              + ` Drop those orders and upload the remaining ${stock.okOrders.length}, or abort the whole upload?`,
           });
         }
-      } else {
-        inventoryTracked = true; // every SKU already known — track automatically, no prompt
       }
+      // Any SKU still unknown after that decision has to be created before it
+      // can be reserved against — otherwise the order would silently go
+      // untracked, which is the gap this whole change closes.
+      const uniqueSkus = [...new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))];
+      const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku, invCid));
+      for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku, clientId: invCid }); } catch (_) {} }
+      if (missingSkus.length) {
+        logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
+      }
+      inventoryTracked = true;
     }
 
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
@@ -6934,24 +7022,19 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     batch.pick_strategy = pickStrategy;
 
     let inventorySkusReserved = 0;
-    const reservedSkus = new Set();
+    let reservedSkus = new Set();
     if (inventoryTracked && inventory.available()) {
-      for (const order of orders) {
-        try {
-          const rres = inventory.reserveOrder(invCid, { id: order.order_number, items: order.lines.map(l => ({ sku: l.sku, qty: l.qty })) });
-          recordBackorders(db, clientName, order.order_number, batchId, rres); // any short lines → awaiting-stock queue
-          inventorySkusReserved++;
-          for (const l of order.lines) if (l.sku) reservedSkus.add(l.sku);
-        } catch (e) { console.warn('[upload] inventory reserve failed for', order.order_number, e.message); }
-      }
-      // Allocate pick locations per line (FEFO/FIFO over bin lots). This is what
-      // puts a bin on every pick-list line — l.pick_locations = [{location, qty,
-      // expiry}]; l.pick_shortfall = units with no stock; l.awaiting_putaway_qty =
-      // units sitting in staging when the user chose to wait till binned.
-      const stagingMode = String(req.body?.pick_staging || 'wait').toLowerCase() === 'staging' ? 'staging' : 'wait';
-      batch.pick_staging = stagingMode;
-      allocatePickLocations(invCid, orders, pickStrategy, stagingMode);
+      const rr = reserveIntakeOrders(db, invCid, clientName, orders, batchId, pickStrategy,
+        String(req.body?.pick_staging || 'wait').toLowerCase() === 'staging' ? 'staging' : 'wait');
+      reservedSkus = rr.reservedSkus;
+      inventorySkusReserved = orders.length;
+      // reserveIntakeOrders also allocates the pick bins (FEFO/FIFO, ground
+      // before racks) — l.pick_locations, l.pick_shortfall, l.awaiting_putaway_qty.
+      batch.pick_staging = String(req.body?.pick_staging || 'wait').toLowerCase() === 'staging' ? 'staging' : 'wait';
     }
+    batch.orders = orders;                 // the gate above may have dropped some
+    batch.order_count = orders.length;
+    if (droppedOrders.length) batch.dropped_short_orders = droppedOrders;
 
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'file-upload');
@@ -7027,6 +7110,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       transportJobsCreated,
       inventoryTracked,
       inventorySkusReserved,
+      droppedShortOrders: droppedOrders,
       locationCoverage: { linesWithLocation, totalLines: mapped.length }
     });
   } catch (err) {
@@ -8497,6 +8581,20 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
       client_submission_id: s0.id,
       client_submission_code: s0.code,
     };
+    // An approved client order reserves stock exactly like a staff upload.
+    // Without this it looked identical on the Orders tab but moved nothing.
+    {
+      const scid = invClientId(batch.client_name);
+      if (inventory.available() && scid) {
+        for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
+          if (!inventory.get(sku, scid)) { try { inventory.upsert({ sku, name: sku, clientId: scid }); } catch (_) {} }
+        }
+        const rr = reserveIntakeOrders(db, scid, batch.client_name, orders, batch.id, 'fefo', 'wait');
+        batch.inventory_tracked = rr.tracked;
+        if (rr.tracked) batch.inventory_client = scid;
+        if (rr.reservedSkus.size) zortNotifyStockChange(db, scid, [...rr.reservedSkus]);
+      }
+    }
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'client-submission-approved');
     let transportJobsCreated = 0;
@@ -12394,7 +12492,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -12527,6 +12625,48 @@ app.get('/api/master/report/:kind', (req, res) => {
       addSheet('Aging', [
         ['Order No', 'Client', 'Carrier', 'Status', 'Uploaded', 'Days Pending', 'Lines', 'Pieces Ordered'],
         ...rows,
+      ]);
+
+    } else if (kind === 'outbound-stock') {
+      // WHAT THE STOCK ACTUALLY DID, per order. Reserved at intake, released if
+      // the order was cancelled, depleted when it shipped — read from
+      // stock_movements, which is the ledger those three write to.
+      title = 'Outbound_Stock_Movements';
+      const LABEL = { reserve: 'Reserved', release: 'Released (cancelled)', outbound: 'Depleted (shipped)' };
+      const clients = [...new Set((db.batches || []).map(b => b.client_name).filter(Boolean))];
+      const rows = [];
+      for (const cn of clients) {
+        const cid = invClientId(cn);
+        let mv = [];
+        // Do NOT swallow this silently — an empty report that should have rows
+        // is indistinguishable from a quiet month.
+        try { mv = inventory.outboundMovements(cid, { from, to }); }
+        catch (e) { console.warn('[report/outbound-stock]', cn, e.message); }
+        for (const m of mv) {
+          rows.push([m.at, cn, m.order_id || '', m.sku, m.product || '',
+            LABEL[m.type] || m.type, Math.abs(Number(m.qty) || 0), m.operator || '', m.reason || '']);
+        }
+      }
+      rows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+      addSheet('Outbound Stock', [
+        ['When', 'Client', 'Order No', 'SKU', 'Product', 'What happened', 'Units', 'By', 'Note'],
+        ...rows,
+      ]);
+      // One line per order so the shape is readable without reading every move.
+      const byOrder = new Map();
+      for (const r of rows) {
+        const k = `${r[1]}|${r[2]}`;
+        const e = byOrder.get(k) || { client: r[1], order: r[2], reserved: 0, released: 0, shipped: 0, last: r[0] };
+        if (/^Reserved/.test(r[5])) e.reserved += r[6];
+        else if (/^Released/.test(r[5])) e.released += r[6];
+        else e.shipped += r[6];
+        if (String(r[0]) > String(e.last)) e.last = r[0];
+        byOrder.set(k, e);
+      }
+      addSheet('By Order', [
+        ['Client', 'Order No', 'Units reserved', 'Units released', 'Units shipped', 'Still reserved', 'Last movement'],
+        ...[...byOrder.values()].map(e => [e.client, e.order, e.reserved, e.released, e.shipped,
+          Math.max(0, e.reserved - e.released - e.shipped), e.last]),
       ]);
 
     } else if (kind === 'login-audit') {
@@ -13917,18 +14057,20 @@ async function pullZortStore(db, store) {
     // upload — but only when the SKU already exists in this client's inventory
     // (a Zort pull never invents catalog items). Reservations lower available,
     // which the stock push below then reflects to ZORT.
+    // A synced marketplace order reserves and allocates exactly like an upload,
+    // through the same helper. A sync never invents catalogue items, so a SKU
+    // the client has not registered is created at zero rather than skipped —
+    // otherwise the sale would silently move no stock at all.
     let tracked = false;
     if (inventory.available()) {
-      for (const o of clientOrders) {
-        const items = (o.lines || []).filter(l => l.sku && inventory.get(l.sku, cid)).map(l => ({ sku: l.sku, qty: l.qty }));
-        if (!items.length) continue;
-        try {
-          const rres = inventory.reserveOrder(cid, { id: o.order_number, items });
-          recordBackorders(db, clientName, o.order_number, null, rres); // marketplace order short on stock → backorder
-          tracked = true;
-          if (!reservedByClient.has(cid)) reservedByClient.set(cid, new Set());
-          for (const it of items) reservedByClient.get(cid).add(it.sku);
-        } catch (e) { console.warn('[zort-pull] reserve failed for', o.order_number, e.message); }
+      for (const sku of new Set(clientOrders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
+        if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
+      }
+      const rr = reserveIntakeOrders(db, cid, clientName, clientOrders, null, 'fefo', 'wait');
+      tracked = rr.tracked;
+      if (rr.reservedSkus.size) {
+        if (!reservedByClient.has(cid)) reservedByClient.set(cid, new Set());
+        for (const sku of rr.reservedSkus) reservedByClient.get(cid).add(sku);
       }
     }
     const batch = {
@@ -15612,6 +15754,86 @@ function canonicalClientName(db, name) {
 //               shows "awaiting putaway" and the order waits until putaway is done.
 // A running per-SKU staging pool is drawn down across the whole batch so two orders
 // can't both be promised the same staging units.
+// ── ONE STOCK GATE FOR EVERY WAY AN ORDER ARRIVES ──────────────────────────
+// Upload, photo scan, store sync and an approved client submission all funnel
+// through these two functions, so a marketplace order and a keyed-in one get
+// the same allocation and the same refusal. Four copies of this would drift,
+// and the first thing to drift would be whether stock was reserved at all.
+//
+// checkIntakeStock() reserves NOTHING — it only reports what would happen, so
+// the answer shown before approving is the answer the reservation will give.
+function checkIntakeStock(clientId, orders) {
+  const problems = { unknownSkus: [], shortOrders: [], okOrders: [], byOrder: {} };
+  if (!inventory.available() || !clientId) {
+    problems.okOrders = (orders || []).map(o => o.order_number);
+    return problems;
+  }
+  const unknown = new Set();
+  // Availability is a POOL: two orders for the same SKU compete for it, so the
+  // check runs cumulatively rather than judging each order in isolation. A
+  // per-order check would pass both and then short the second at reserve time.
+  const claimed = new Map();
+  for (const o of orders || []) {
+    const items = (o.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: Number(l.qty) || 0 }));
+    const res = inventory.checkAvailability(clientId, items);
+    const short = [];
+    for (const u of res.unknown) unknown.add(u.sku);
+    // Fold in what earlier orders in this same batch already claimed.
+    for (const it of items) {
+      const already = claimed.get(it.sku) || 0;
+      const row = inventory.get(it.sku, clientId);
+      if (!row) continue;                       // unknown is reported separately
+      const free = Math.max(0, (Number(row.stock_qty) || 0) - (Number(row.reserved_qty) || 0) - already);
+      if (it.qty > free) {
+        const existing = short.find(x => x.sku === it.sku);
+        if (existing) existing.shortfall += it.qty - free;
+        else short.push({ sku: it.sku, name: row.name || '', needed: it.qty, available: free, shortfall: it.qty - free });
+      }
+      claimed.set(it.sku, already + it.qty);
+    }
+    const orderUnknown = res.unknown.map(u => u.sku);
+    problems.byOrder[o.order_number] = { unknown: orderUnknown, short };
+    if (orderUnknown.length || short.length) {
+      problems.shortOrders.push({
+        order_number: o.order_number,
+        unknown: orderUnknown,
+        lines: short,
+        reason: orderUnknown.length && short.length ? 'unknown SKU and not enough stock'
+              : orderUnknown.length ? 'SKU not in the item master' : 'not enough stock',
+      });
+    } else {
+      problems.okOrders.push(o.order_number);
+    }
+  }
+  problems.unknownSkus = [...unknown];
+  return problems;
+}
+
+// Reserve every line of every order, record any shortfall as a backorder, and
+// allocate pick bins. Returns what was reserved so the caller can stamp the
+// batch and notify a connected store.
+function reserveIntakeOrders(db, clientId, clientName, orders, batchId, strategy = 'fefo', stagingMode = 'wait') {
+  const reservedSkus = new Set();
+  if (!inventory.available() || !clientId) return { tracked: false, reservedSkus };
+  let tracked = false;
+  for (const order of orders || []) {
+    const items = (order.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: Number(l.qty) || 0 }));
+    if (!items.length) continue;
+    try {
+      const rres = inventory.reserveOrder(clientId, { id: order.order_number, items });
+      recordBackorders(db, clientName, order.order_number, batchId, rres);
+      tracked = true;
+      for (const it of items) reservedSkus.add(it.sku);
+    } catch (e) { console.warn('[intake] reserve failed for', order.order_number, e.message); }
+  }
+  if (tracked) {
+    try { allocatePickLocations(clientId, orders, strategy, stagingMode); } catch (e) {
+      console.warn('[intake] pick allocation failed:', e.message);
+    }
+  }
+  return { tracked, reservedSkus };
+}
+
 function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait') {
   if (!inventory.available()) return;
   const stagingLeft = {}; // sku -> staging units still unallocated this batch

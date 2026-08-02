@@ -1391,36 +1391,42 @@
         data = await resp.json();
       }
 
-      // Inventory check: SKUs in this upload that Inventory doesn't know
-      // about. Two types of orders exist — inventory-tracked (reserves real
-      // stock) or non-inventory (processed/scanned for activity/billing only,
-      // never touches stock). Ask which this upload should be.
-      if (resp.status === 409 && data.needsInventoryConfirm) {
-        const lines = (data.missingSkus || []).slice(0, 15).map(s => `• ${s}`).join('\n');
-        const more = data.missingCount > 15 ? `\n…and ${data.missingCount - 15} more` : '';
-        const track = confirm(
-          `⚠ SKUs NOT FOUND IN INVENTORY\n\n${data.message}\n\n${lines}${more}` +
-          `\n\nOK = add these SKUs to Inventory (at 0 stock) and reserve stock for this upload` +
-          `\nCancel = continue without inventory tracking`);
-        if (track) {
-          form.append('inventory_decision', 'track');
-        } else {
-          const carryOn = confirm(
-            `Continue this upload WITHOUT inventory tracking?\n\n` +
-            `OK = continue — this upload is only processed/tracked for activity (e.g. billing); no stock is reserved or deducted\n` +
-            `Cancel = abort the whole upload`);
-          if (!carryOn) {
-            document.getElementById('uploadConfirmOverlay').classList.add('hidden');
-            setUploadStatus('error', 'Upload cancelled — inventory tracking not confirmed.');
-            return;
-          }
-          form.append('inventory_decision', 'skip');
+      // ── STOCK GATE ────────────────────────────────────────────────────
+      // Some orders in this file cannot be covered by the client's stock (too
+      // little, or the SKU is not in their item master). Per the user, the
+      // choice is: drop those and take the rest, or abort the whole upload.
+      // Nothing was reserved server-side yet, so aborting leaves it untouched.
+      if (resp.status === 409 && data.needsStockDecision) {
+        const rows = (data.shortOrders || []).slice(0, 12).map(o => {
+          const detail = (o.lines || []).map(l => `${l.sku} need ${l.needed}, have ${l.available}`).join('; ')
+            || (o.unknown || []).map(x => `${x} not in item master`).join('; ');
+          return `\u2022 ${o.order_number} — ${detail}`;
+        }).join('\n');
+        const more = (data.shortCount || 0) > 12 ? `\n…and ${data.shortCount - 12} more` : '';
+        const drop = confirm(
+          `\u26a0 NOT ENOUGH STOCK\n\n${data.message}\n\n${rows}${more}` +
+          `\n\nOK = drop those ${data.shortCount} order(s) and upload the other ${data.okCount}` +
+          `\nCancel = abort — upload nothing`);
+        if (!drop) {
+          document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+          setUploadStatus('error', 'Upload aborted — nothing was uploaded and no stock was reserved.');
+          return;
         }
+        form.append('stock_action', 'drop');
         resp = await sendUpload();
         data = await resp.json();
       }
 
       document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+
+      // Say which orders were left behind, by name — a silent drop would look
+      // like the file simply had fewer orders in it.
+      if (resp.ok && (data.droppedShortOrders || []).length) {
+        const names = data.droppedShortOrders.map(d => d.order_number).slice(0, 20).join(', ');
+        alert(`${data.droppedShortOrders.length} order(s) were NOT uploaded — not enough stock:\n\n${names}`
+          + `${data.droppedShortOrders.length > 20 ? '\n…and more' : ''}`
+          + `\n\nThey were not reserved and are not on the Orders tab. Receive stock, then upload them again.`);
+      }
 
       if (!resp.ok) {
         if (resp.status === 422 && data.validation) {
