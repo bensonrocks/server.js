@@ -3386,3 +3386,13 @@ tr.inb-over .inb-qty-edit { border-color: #f97316; color: #9a3412; }
                  font-size: .68rem; font-weight: 800; background: #ffedd5; color: #9a3412;
                  border: 1px solid #fed7aa; white-space: nowrap; }
 @media (max-width: 768px) { .inb-qty-edit { width: 4.5rem; font-size: 1.05rem; } }
+
+/* ── Mass receive selection bar ───────────────────────────────────────────── */
+.ib-mass-bar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+               margin: 0 0 .8rem; padding: .6rem .8rem; border-radius: 10px;
+               background: #fffbeb; border: 1px solid #fde68a; }
+.ib-mass-count { font-weight: 800; color: #92400e; }
+.ib-mass-note { color: #92400e; font-size: .78rem; flex: 1 1 16rem; }
+th.ib-tick, td.ib-tick { width: 2.2rem; text-align: center; }
+th.ib-tick input, td.ib-tick input { width: 1.05rem; height: 1.05rem; }
+@media (max-width: 768px) { .ib-mass-bar { position: sticky; bottom: 0; z-index: 5; } }

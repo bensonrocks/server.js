@@ -2819,6 +2819,76 @@ STILL NOT GUARDED, deliberately flagged: nothing warns at SCAN time when a line
 goes past its expected quantity — the discrepancy still only surfaces at End
 Receipt. Correcting it is now easy; noticing it early is not yet built.
 
+### Mass receive — accepting the paperwork, and saying so
+
+Per the user: an admin can select receipts and receive them in one go, with the
+GRN generated and made available. `POST /api/inbound/mass-receive`
+`{ids[], end, reason}`.
+
+**A MASS RECEIVE IS NOT A COUNT, and the system never pretends otherwise.**
+Every line is set to the quantity the PO declared; nobody has handled those
+pieces. So it is recorded as `state.declared[sku]`, the GRN prints
+**"Accepted as declared"** (or "Part scanned, part declared") against those
+lines, and it is audit-logged under its own event `inbound_mass_received` with
+who, why and how many. A GRN that presented an accepted figure as a scanned one
+would be a document that cannot be trusted, which is the opposite of its job.
+
+- **ADMIN OR MASTER**, enforced server-side (`requireInboundAdmin`) — accepting
+  stock nobody counted is a commercial decision, not floor work. Warehouse gets
+  a real 403 and the ticks are not rendered for them.
+- **Never reduces a line.** A SKU already counted ABOVE its declared quantity
+  keeps the higher figure — a real over-receipt is not erased by accepting the
+  paperwork.
+- **Completed receipts are refused**, the standing rule.
+- **The claim lock is OVERRIDDEN, but never silently.** An admin's normal case
+  is "the crew counted part of it, accept the rest", and the lock stays warm for
+  20 minutes after anyone's last scan, so obeying it would make the feature
+  unusable exactly when it is wanted. Whoever held it is named in the response
+  and on the audit trail (`takenFrom`), and the claim is handed over.
+- **Ending is still a separate step**, and it goes through the REAL
+  `/end-receipt` route one job at a time rather than a second copy of that
+  logic — so the compulsory-photo rule and every other guard apply exactly as
+  they do to a hand-received job. A refusal is reported against that receipt,
+  not swallowed. (In practice a clean mass receipt has no discrepancy, so no
+  photo is demanded.)
+
+### The GRN — who received it, when, and a blind Location column
+
+`grnData()` gained `receivers[]`, `generated_at`, and a per-line `via`:
+
+- **`received_by` alone was wrong on a split receipt** — it is whoever pressed
+  End Receipt, one name out of several. `receivers[]` lists everyone who counted
+  a piece with their piece count and first/last touch, taken from the scan log
+  that already recorded it. Both are shown: "Received by … · Closed by …".
+- `started` / `ended` were already captured; they are now stated on the printed
+  sheet and the download in SGT, alongside when the document itself was made.
+
+**`GET /api/inbound/:id/grn/export`** is the downloadable worksheet the putaway
+crew carries: the header block above, every line, and **Location (write in) /
+Qty put away / By / Time left BLANK**.
+
+THE BLANK COLUMN IS THE POINT. It is a fallback for a flat phone or a bin label
+that will not read, and pre-filling it with the system's SUGGESTION would
+produce a sheet that says where goods ARE when it only ever said where they
+might go — and someone would later file it as evidence of a putaway that never
+happened. Anything written on it still has to go through the Putaway screen to
+move stock: this sheet is a worksheet and a receipt, never a posting document.
+
+UI: an admin-only tick column on the Inbound list with a select-all, a
+mass-receive bar that states what it does before you press it ("nobody counts
+these pieces"), and a ⬇ GRN button on every closed receipt. The selection is
+held in a Set and re-applied after each render — same reasoning as the
+bulk-deletion tables, since the list refreshes on a timer. `authDownload` needs
+the filename passed in: it builds a blob URL, which carries no name, so the
+server's Content-Disposition is lost and the crew would collect a folder of
+"download.xlsx".
+
+Verified 23 API checks (warehouse 403s and changes nothing, lines set to the
+declared figure, a part-counted line reads as part declared, the GRN names
+everyone who handled it, started/ended both present and the right way round, the
+sheet's Location cells all blank, a closed receipt refused, the audit trail
+carrying who and why) plus 16 browser checks on desktop and a Pixel 5.
+
 ## Inbound → Staging → Putaway (the current flow)
 
 Per the user: the crew scans (or keys) quantities, **everything received then

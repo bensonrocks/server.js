@@ -2368,6 +2368,7 @@
         <table class="orders-table">
           <thead>
             <tr>
+              ${isAdmin ? '<th class="ib-tick"><input type="checkbox" id="ibSelectAll" title="Select all open receipts"></th>' : ''}
               <th>Serial</th><th>Type</th><th>Reference</th><th>Source</th><th>Client</th>
               <th>Items</th><th>Cartons</th><th>Status</th><th>Date</th><th>Actions</th>
             </tr>
@@ -2375,6 +2376,8 @@
           <tbody>
             ${inboundJobs.map(job => `
               <tr>
+                ${isAdmin ? `<td class="ib-tick">${job.status === 'done' ? ''
+                  : `<input type="checkbox" class="ib-pick" data-id="${esc(job.id)}" ${_ibPicked.has(job.id) ? 'checked' : ''}>`}</td>` : ''}
                 <td><code>${esc(job.serial || '—')}</code></td>
                 <td><span class="chip ${job.type === 'po' ? 'chip-cartons' : ''}">${job.type === 'po' ? 'PO / ASN' : 'Return'}</span></td>
                 <td>${esc(job.reference || '—')}</td>
@@ -2391,6 +2394,7 @@
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grn-id="${esc(job.id)}" title="Goods Received Note — expected vs received vs damaged, printable proof of receipt">&#128196; GRN</button>` : ''}
+                  ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grndl-id="${esc(job.id)}" title="Download the GRN as a putaway worksheet — the Location column is left blank to write in">&#11015; GRN</button>` : ''}
                   ${job.status !== 'done' ? `<button class="btn-secondary btn-sm" data-inbound-split-id="${esc(job.id)}" title="Share this receipt out across the team">&#128101; Split${(job.assignments || []).length ? ` (${(job.assignments || []).length})` : ''}</button>` : ''}
                   ${job.lead ? `<span class="cs-pill" title="Leading this receipt">&#11088; ${esc(job.lead.name || job.lead.user)}</span>` : ''}
                   ${isAdmin && job.status !== 'done' && !job.pending_deletion ? `<button class="btn-del-order" data-inbound-del-id="${esc(job.id)}" data-inbound-del-ref="${esc(job.reference || job.id.slice(0, 8))}" title="Request deletion">&#128465;</button>` : ''}
@@ -2414,10 +2418,97 @@
     list.querySelectorAll('[data-inbound-grn-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); printGrn(btn.dataset.inboundGrnId); });
     });
+    list.querySelectorAll('[data-inbound-grndl-id]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); grnDownload(btn.dataset.inboundGrndlId); });
+    });
+    wireMassReceive(list);
     list.querySelectorAll('[data-inbound-split-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); openSplitInbound(btn.dataset.inboundSplitId); });
     });
   }
+
+  // ── MASS RECEIVE ──────────────────────────────────────────────────────────
+  // Accepting the paperwork's own figures for whole receipts. Admin only, and
+  // the wording says plainly what it is: nobody counted these pieces.
+  //
+  // The selection is held in a Set and re-applied after every render, for the
+  // same reason the bulk-deletion tables do it — this list refreshes on a timer
+  // and a plain re-render would silently clear a dozen ticks.
+  const _ibPicked = new Set();
+
+  function wireMassReceive(list) {
+    const open = new Set([...list.querySelectorAll('.ib-pick')].map(c => c.dataset.id));
+    for (const id of [..._ibPicked]) if (!open.has(id)) _ibPicked.delete(id);   // its row is gone
+    const bar = document.getElementById('ibMassBar');
+    const paint = () => {
+      if (!bar) return;
+      const n = _ibPicked.size;
+      bar.classList.toggle('hidden', !n);
+      const lbl = document.getElementById('ibMassCount');
+      if (lbl) lbl.textContent = `${n} receipt${n === 1 ? '' : 's'} selected`;
+      const all = document.getElementById('ibSelectAll');
+      if (all) all.checked = n > 0 && n === open.size;
+    };
+    list.querySelectorAll('.ib-pick').forEach(cb => cb.addEventListener('change', () => {
+      cb.checked ? _ibPicked.add(cb.dataset.id) : _ibPicked.delete(cb.dataset.id);
+      paint();
+    }));
+    const all = document.getElementById('ibSelectAll');
+    if (all) all.addEventListener('change', () => {
+      list.querySelectorAll('.ib-pick').forEach(cb => { cb.checked = all.checked;
+        all.checked ? _ibPicked.add(cb.dataset.id) : _ibPicked.delete(cb.dataset.id); });
+      paint();
+    });
+    paint();
+  }
+
+  async function runMassReceive(alsoEnd) {
+    const ids = [..._ibPicked];
+    if (!ids.length) return;
+    const what = ids.length === 1 ? 'this receipt' : `these ${ids.length} receipts`;
+    if (!confirm(`Receive ${what} as declared?\n\nEvery line will be set to the quantity on the paperwork. `
+      + `Nobody will have counted these pieces, and the GRN will say so against each line.`
+      + (alsoEnd ? '\n\nThe receipts will then be closed and their GRNs issued.' : ''))) return;
+    const reason = prompt('Why is this being accepted without counting? (optional, goes on the audit trail)') || '';
+    try {
+      const r = await fetchT('/api/inbound/mass-receive', {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({ ids, end: !!alsoEnd, reason }),
+      }, 30000);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.error || 'Mass receive failed.'); return; }
+      const good = (d.results || []).filter(x => x.ok);
+      const bad  = (d.results || []).filter(x => !x.ok);
+      // Ending goes through the REAL end-receipt route, one at a time, so every
+      // guard it carries (the photo rule above all) still applies. A refusal is
+      // reported against that receipt rather than silently skipped.
+      const ended = [], refused = [];
+      if (alsoEnd) {
+        for (const g of good) {
+          const er = await fetchT(`/api/inbound/${encodeURIComponent(g.id)}/end-receipt`, {
+            method: 'POST', headers: hdrs(), body: JSON.stringify({ force: true }) }, 20000);
+          const ed = await er.json().catch(() => ({}));
+          if (er.ok) ended.push(g.serial || g.id);
+          else refused.push(`${g.serial || g.id}: ${ed.message || ed.error || 'could not be closed'}`);
+        }
+      }
+      _ibPicked.clear();
+      await renderInboundTab();
+      let msg = `${good.length} receipt(s) received as declared`
+        + ` — ${good.reduce((s, x) => s + (x.units || 0), 0)} pcs across ${good.reduce((s, x) => s + (x.lines || 0), 0)} line(s).`;
+      if (ended.length)  msg += `\n\nClosed, GRN issued: ${ended.join(', ')}`;
+      if (refused.length) msg += `\n\nNot closed:\n${refused.join('\n')}`;
+      if (bad.length)     msg += `\n\nSkipped:\n${bad.map(x => `${x.serial || x.id}: ${x.error}`).join('\n')}`;
+      alert(msg);
+    } catch (e) { alert('Could not reach the server — nothing was received.'); }
+  }
+
+  document.getElementById('ibMassReceiveBtn')?.addEventListener('click', () => runMassReceive(false));
+  document.getElementById('ibMassReceiveEndBtn')?.addEventListener('click', () => runMassReceive(true));
+  document.getElementById('ibMassClearBtn')?.addEventListener('click', () => {
+    _ibPicked.clear();
+    document.querySelectorAll('.ib-pick, #ibSelectAll').forEach(c => { c.checked = false; });
+    document.getElementById('ibMassBar')?.classList.add('hidden');
+  });
 
   // ── Split an inbound across the team ──────────────────────────────────────
   // Mass-select lines → assign to a colleague → confirm with your own password.
@@ -2548,6 +2639,18 @@
     renderSplitLines(); renderSplitCurrent();
   });
 
+  // The GRN popup is a separate window, so it reaches back through window.opener
+  // for the download — an <a href> could not carry the session token header.
+  // The filename has to be passed in: authDownload builds a blob URL, which
+  // carries no name of its own, so the server's Content-Disposition is lost and
+  // the crew would end up with a folder of "download.xlsx".
+  function grnDownload(id) {
+    const j = (inboundJobs || []).find(x => x.id === id);
+    const name = `GRN_${String(j?.serial || j?.reference || id).replace(/[^A-Za-z0-9_-]+/g, '_')}.xlsx`;
+    return authDownload(`/api/inbound/${encodeURIComponent(id)}/grn/export`, name);
+  }
+  window.grnDownload = grnDownload;
+
   // GRN — printable Goods Received Note (client-facing proof of receipt).
   async function printGrn(id) {
     let g;
@@ -2563,7 +2666,14 @@
       <td class="n">${l.expected === null ? '<i>unlisted</i>' : l.expected}</td>
       <td class="n">${l.received}</td><td class="n">${l.good}</td>
       <td class="n">${l.damaged || ''}</td><td class="n">${l.kiv || ''}</td>
-      <td class="n">${l.diff === null ? '' : (l.diff === 0 ? '✓' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td></tr>`).join('');
+      <td class="n">${l.diff === null ? '' : (l.diff === 0 ? '✓' : (l.diff > 0 ? '+' + l.diff : l.diff))}</td>
+      <td${l.via !== 'scanned' ? ' style="color:#9a3412"' : ''}>${({scanned:'Scanned',declared:'Declared',mixed:'Part declared'})[l.via] || 'Scanned'}</td>
+      <td class="blank"></td><td class="blank"></td></tr>`).join('');
+    // Everyone who counted a piece, not just whoever closed the receipt — on a
+    // split receipt those are different people.
+    const who = (g.receivers || []).length
+      ? (g.receivers || []).map(r => `${esc(r.by)} (${r.pieces} pcs)`).join(' · ')
+      : esc(g.received_by || '—');
     const disc = g.discrepancies.length || g.extras.length
       ? `<h3>⚠ Discrepancies</h3><ul>
           ${g.discrepancies.map(m => `<li>${esc(m.sku)}: expected ${m.expected_qty}, received ${m.scanned_qty}</li>`).join('')}
@@ -2576,13 +2686,18 @@
       td.n,th.n{text-align:right}thead{background:#f1f5f9}
       .tot{margin-top:10px;font-weight:600}
       .sig{margin-top:36px;display:flex;gap:40px}.sig div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:12px}
+      .note{color:#9a3412;font-size:12px;margin:6px 0}
+      td.blank{min-width:90px;background:#fffdf5}
       @media print{.noprint{display:none}}
     </style></head><body>
-      <div class="noprint" style="margin-bottom:12px"><button onclick="window.print()">🖨 Print</button></div>
+      <div class="noprint" style="margin-bottom:12px"><button onclick="window.print()">🖨 Print</button>
+        <button onclick="window.opener.grnDownload('${esc(id)}')">⬇ Download (Excel)</button></div>
       <h2>Goods Received Note — ${esc(g.serial || g.reference)}</h2>
       <div class="meta">Client: <b>${esc(g.client)}</b> · Source: ${esc(g.source || '—')} · Type: ${g.type === 'po' ? 'PO / ASN' : 'Return'} · Ref: ${esc(g.reference || '—')}<br>
-      Received by: ${esc(g.received_by || '—')} · Started: ${g.started ? new Date(g.started).toLocaleString() : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString() : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
-      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th class="n">Diff</th></tr></thead>
+      Received by: ${who} · Closed by: ${esc(g.received_by || '—')}<br>
+      Started: ${g.started ? new Date(g.started).toLocaleString() : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString() : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
+      <p class="note">Putaway — write the bin used against each line, or scan it on the Putaway screen.</p>
+      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th class="n">Diff</th><th>How counted</th><th>Location</th><th>Qty / by</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <div class="tot">Totals — expected ${g.totals.expected} · received ${g.totals.received} · good ${g.totals.good} · damaged ${g.totals.damaged} · KIV ${g.totals.kiv}</div>
       ${disc}

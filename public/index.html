@@ -1963,6 +1963,15 @@
       </div>
       <div id="inboundArriving" class="hidden" style="margin:0 0 .8rem;padding:.7rem .9rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;font-size:.85rem"></div>
       <div id="inboundEmpty" class="empty-state hidden">No inbound jobs yet.</div>
+      <!-- Mass receive: accepting the paperwork's own figures for whole receipts.
+           Admin only, and worded so nobody mistakes it for a count. -->
+      <div id="ibMassBar" class="ib-mass-bar hidden">
+        <span id="ibMassCount" class="ib-mass-count">0 receipts selected</span>
+        <span class="ib-mass-note">Accepts the declared quantity on every line — nobody counts these pieces.</span>
+        <button id="ibMassReceiveBtn" class="btn-secondary btn-sm">Receive as declared</button>
+        <button id="ibMassReceiveEndBtn" class="btn-primary btn-sm">Receive &amp; close (issue GRN)</button>
+        <button id="ibMassClearBtn" class="btn-secondary btn-sm">Clear</button>
+      </div>
       <div id="inboundList"></div>
     </section>
 

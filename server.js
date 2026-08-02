@@ -9733,6 +9733,97 @@ app.get('/api/inbound/:id/staging-label/:code', (req, res) => {
 // GRN (Goods Received Note) — the client-facing receiving report for one job:
 // expected vs received vs damaged/KIV per SKU, discrepancies, who/when. The
 // client renders this JSON into a printable page (same pattern as carton slips).
+// ── MASS RECEIVE ───────────────────────────────────────────────────────────
+// Per the user: an admin can select receipts and receive them in one go, with
+// the GRN generated and made available afterwards.
+//
+// A mass receive ACCEPTS THE PAPERWORK: every line is set to the quantity the
+// PO declared. That is a fundamentally different act from scanning, because
+// nobody counted those pieces — so it is recorded as such (`state.declared`),
+// the GRN prints "declared" against those lines, and it is audit-logged under
+// its own event. Presenting an accepted figure as a scanned one would make the
+// GRN a document that cannot be trusted, which is the opposite of its job.
+//
+// ADMIN OR MASTER only, enforced server-side: accepting stock nobody counted is
+// a commercial decision, not floor work.
+function requireInboundAdmin(req, res) {
+  if (req.headers['x-master-key'] === MASTER_PASS) return true;
+  const role = readUsers().find(u => u.id === req.userId)?.role;
+  if (role !== 'admin') {
+    res.status(403).json({ error: 'Administrator access is required to mass receive.' });
+    return false;
+  }
+  return true;
+}
+
+app.post('/api/inbound/mass-receive', (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const { ids, end, reason } = req.body || {};
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (!list.length) return res.status(400).json({ error: 'Select at least one receipt.' });
+  const db = readDb();
+  const me = req.userId || '';
+  const now = new Date().toISOString();
+  const results = [];
+  for (const id of list) {
+    const rec = findInbound(db, id);
+    if (!rec) { results.push({ id, ok: false, error: 'Not found' }); continue; }
+    const state = rec.state = rec.state || { status: 'pending', scanned: {}, scanLog: [] };
+    // Completed work is never re-opened or overwritten — the standing rule.
+    if (state.status === 'done') { results.push({ id, serial: rec.serial, ok: false, error: 'Already ended' }); continue; }
+    if (rec.type !== 'po') { results.push({ id, serial: rec.serial, ok: false, error: 'Only a PO/ASN declares quantities to accept' }); continue; }
+    // The claim lock is OVERRIDDEN here rather than obeyed, but never silently.
+    // An admin's normal case is "the crew counted part of it, accept the rest",
+    // and the lock stays warm for 20 minutes after anyone's last scan — obeying
+    // it would make the feature unusable exactly when it is wanted. So the
+    // person who held it is named in the response and on the audit trail, and
+    // the claim is handed over rather than left pointing at someone who is no
+    // longer the last to touch this receipt.
+    const takenFrom = claimBlocker(state, me);
+    refreshClaim(state, me);
+
+    state.scanned = state.scanned || {};
+    state.conditionTotals = state.conditionTotals || {};
+    state.declared = state.declared || {};
+    let linesTouched = 0, unitsAdded = 0;
+    for (const line of (rec.lines || [])) {
+      const want = Number(line.expected_qty) || 0;
+      const have = Number(state.scanned[line.sku]) || 0;
+      if (want <= have) continue;                       // already counted in full (or over) — never reduced
+      const add = want - have;
+      const ct = state.conditionTotals[line.sku] || (state.conditionTotals[line.sku] = { straight_to_inventory: have, damaged: 0, kiv: 0 });
+      ct.straight_to_inventory = (Number(ct.straight_to_inventory) || 0) + add;
+      state.scanned[line.sku] = want;
+      applyCartonDelta(state, line.sku, add);
+      applyAssignmentDelta(rec, line.sku, add, me);
+      const d = state.declared[line.sku] || { qty: 0, by: me, at: now };
+      d.qty += add; d.by = me; d.at = now;
+      state.declared[line.sku] = d;
+      appendScanLog(state, { kind: 'scan', raw: '', sku: line.sku, qty: add,
+        condition: 'straight_to_inventory', declared: true, by: me });
+      linesTouched++; unitsAdded += add;
+    }
+    if (state.status === 'pending' && unitsAdded > 0) { state.status = 'processing'; state.startTime = state.startTime || now; }
+    state.updated_at = now;
+    rec.state = state;
+    journalInboundState(rec.id, state, rec.assignments);
+    logAudit('inbound_mass_received', {
+      id: rec.id, serial: rec.serial || '', reference: rec.reference || '',
+      client: rec.client_name || '', lines: linesTouched, units: unitsAdded,
+      takenFrom: takenFrom || '', reason: String(reason || '').slice(0, 120), by: me,
+    });
+    results.push({ id, serial: rec.serial || '', reference: rec.reference || '', ok: true,
+      lines: linesTouched, units: unitsAdded, ended: false, takenFrom: takenFrom || null });
+  }
+  writeDb(db);
+  // Ending is a SEPARATE, explicit step even here — it posts stock, freezes the
+  // discrepancies and sends the GRN. It reuses the real end-receipt route rather
+  // than a second copy of that logic, so the photo rule and every other guard
+  // still apply exactly as they do to a hand-received job.
+  const toEnd = end ? results.filter(r => r.ok).map(r => r.id) : [];
+  res.json({ ok: true, results, endNext: toEnd });
+});
+
 function grnData(rec) {
   const state = rec.state || {};
   const scanned = state.scanned || {};
@@ -9751,10 +9842,37 @@ function grnData(rec) {
     };
   }).sort((a, b) => a.sku.localeCompare(b.sku));
   const tot = k => lines.reduce((s, l) => s + (Number(l[k]) || 0), 0);
+  // WHO RECEIVED IT — "received_by" alone is whoever pressed End Receipt, which
+  // on a split receipt is one name out of several. The GRN has to answer "who
+  // handled this", so every person who counted a piece is listed with their
+  // first and last touch, taken from the scan log that already records it.
+  const byPerson = new Map();
+  for (const e of (state.scanLog || [])) {
+    if (e.kind !== 'scan' && e.kind !== 'count') continue;
+    const who = e.by || '—';
+    const p = byPerson.get(who) || { by: who, pieces: 0, first_at: e.at, last_at: e.at };
+    if (e.kind === 'scan') p.pieces += Number(e.qty) || 0;
+    if (e.at < p.first_at) p.first_at = e.at;
+    if (e.at > p.last_at) p.last_at = e.at;
+    byPerson.set(who, p);
+  }
+  const receivers = [...byPerson.values()].sort((a, b) => String(a.first_at).localeCompare(String(b.first_at)));
+  // HOW each line was counted. A mass receive accepts the paperwork's own
+  // figure — nobody physically counted those pieces — and the GRN must not
+  // present that as if it had been scanned piece by piece.
+  const declared = state.declared || {};
+  for (const l of lines) {
+    const dq = Number(declared[l.sku]?.qty || 0);
+    l.declared_qty = dq;
+    l.via = dq <= 0 ? 'scanned' : (dq >= l.received ? 'declared' : 'mixed');
+    l.declared_by = declared[l.sku]?.by || '';
+  }
   return {
     serial: rec.serial || '', reference: rec.reference || '', type: rec.type,
     client: rec.client_name || '', source: rec.source_name || '',
     received_by: rec.received_by || state.operator || '',
+    receivers,
+    generated_at: new Date().toISOString(),
     started: state.startTime || null, ended: state.endTime || null,
     lines, totals: { expected: tot('expected'), received: tot('received'), good: tot('good'), damaged: tot('damaged'), kiv: tot('kiv') },
     discrepancies: rec.discrepancies || [], extras: rec.extras || [],
@@ -9766,6 +9884,76 @@ app.get('/api/inbound/:id/grn', (req, res) => {
   const rec = findInbound(readDb(), req.params.id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
   res.json(grnData(rec));
+});
+
+// DOWNLOADABLE GRN — the sheet the putaway crew actually carries.
+//
+// Per the user, the Location column is left BLIND: the crew writes the bin in
+// by hand as they work, as an alternative to scanning it. That is deliberate on
+// two counts — it is a fallback for when a phone is flat or a bin label will
+// not read, and a blank column is an honest one. Pre-filling it with the
+// system's SUGGESTION would produce a sheet that says where goods are when it
+// only ever said where they might go, and someone would later file it as
+// evidence of a putaway that never happened.
+//
+// Anything typed back in still has to go through the Putaway screen to move
+// stock; this sheet is a worksheet and a receipt, never a posting document.
+app.get('/api/inbound/:id/grn/export', (req, res) => {
+  const rec = findInbound(readDb(), req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const g = grnData(rec);
+  const fmt = t => (t ? new Date(t).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '');
+  const viaLabel = { scanned: 'Scanned', declared: 'Accepted as declared', mixed: 'Part scanned, part declared' };
+
+  const head = [
+    ['GOODS RECEIVED NOTE'],
+    ['GRN / Receipt', g.serial || g.reference || ''],
+    ['Reference', g.reference || ''],
+    ['Client', g.client || ''],
+    ['Source', g.source || ''],
+    ['Type', g.type === 'po' ? 'PO / ASN' : 'Return'],
+    ['Receiving started (SGT)', fmt(g.started)],
+    ['Receiving ended (SGT)', fmt(g.ended)],
+    ['Closed by', g.received_by || ''],
+    ['Received by', g.receivers.length
+      ? g.receivers.map(r => `${r.by} (${r.pieces} pcs, ${fmt(r.first_at)} \u2013 ${fmt(r.last_at)})`).join('; ')
+      : (g.received_by || '')],
+    ['Cartons', g.cartons], ['Photos on file', g.photos],
+    ['Document generated (SGT)', fmt(g.generated_at)],
+    [],
+    ['PUTAWAY \u2014 write the bin used against each line, or scan it on the Putaway screen.'],
+    [],
+  ];
+  const header = ['SKU', 'Description', 'Expected', 'Received', 'Good', 'Damaged', 'KIV', 'Difference',
+    'How counted', 'Location (write in)', 'Qty put away', 'By', 'Time'];
+  const body = g.lines.map(l => [
+    l.sku, l.description || '',
+    l.expected === null ? 'unlisted' : l.expected,
+    l.received, l.good, l.damaged || '', l.kiv || '',
+    l.diff === null ? '' : l.diff,
+    viaLabel[l.via] || 'Scanned',
+    '', '', '', '',                                   // deliberately blank for the crew
+  ]);
+  const foot = [[], ['TOTALS', '', g.totals.expected, g.totals.received, g.totals.good, g.totals.damaged, g.totals.kiv],
+    [], ['Received by (warehouse): ____________________', '', '', 'Put away by: ____________________'],
+    ['Date / time: ____________________', '', '', 'Date / time: ____________________']];
+
+  const ws = XLSX.utils.aoa_to_sheet([...head, header, ...body, ...foot]);
+  ws['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 8 },
+    { wch: 11 }, { wch: 26 }, { wch: 22 }, { wch: 13 }, { wch: 14 }, { wch: 18 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'GRN');
+  if ((g.discrepancies || []).length || (g.extras || []).length) {
+    const d = [['DISCREPANCIES'], ['SKU', 'Expected', 'Received', 'Difference']];
+    for (const m of g.discrepancies) d.push([m.sku, m.expected_qty, m.scanned_qty, m.scanned_qty - m.expected_qty]);
+    for (const x of g.extras) d.push([x.sku, 'not on paperwork', x.scanned_qty, '']);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(d), 'Discrepancies');
+  }
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const safe = String(g.serial || g.reference || rec.id).replace(/[^A-Za-z0-9_-]+/g, '_');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="GRN_${safe}.xlsx"`);
+  res.send(buf);
 });
 async function sendInboundGrnAlert(rec) {
   const transporter = buildTransporter();
