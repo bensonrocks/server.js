@@ -13553,8 +13553,13 @@
       });
       let j = await r.json();
       if (r.status === 409 && j.needsDuplicateConfirm) {
-        const list = (j.duplicates || []).map(d => `${d.order} (${d.status})`).join('\n');
-        if (!confirm(`${j.message}\n\n${list}\n\nApprove anyway?`)) return;
+        // The same lines the CLIENT was shown — which numbers, and when we last
+        // saw them — plus whether they were warned and went ahead anyway.
+        const list = (j.lines || (j.duplicates || []).map(d => `${d.order_number || d.order} (${d.status})`)).join('\n');
+        const cc = j.clientConfirmed
+          ? `\n\nThe client was shown this on ${new Date(j.clientConfirmed.at).toLocaleString()} and sent it anyway.`
+          : '';
+        if (!confirm(`${j.message}${cc}\n\n${list}\n\nApprove anyway?`)) return;
         r = await fetch(`/api/client-submissions/${encodeURIComponent(current.id)}/approve`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
           body: JSON.stringify({ arrange_delivery: arrange ? 'yes' : 'no', confirm_duplicates: 'yes' }),

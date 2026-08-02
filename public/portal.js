@@ -1116,7 +1116,23 @@
     const fd = new FormData();
     fd.append('file', sendFileBlob);
     try {
-      const r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      let r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      // ── DUPLICATE ORDER NUMBERS ────────────────────────────────────────
+      // Which ones, and when we last saw them. Approve or abort — nothing has
+      // been stored yet, so aborting leaves nothing behind.
+      if (r.status === 409) {
+        const dj = await r.clone().json().catch(() => ({}));
+        if (dj.needsDuplicateConfirm) {
+          const shown = (dj.lines || []).slice(0, 15).join('\n');
+          const more = (dj.duplicates || []).length > 15 ? `\n…and ${dj.duplicates.length - 15} more` : '';
+          const go = confirm(`\u26a0 ALREADY WITH US\n\n${dj.message}\n\n${shown}${more}`
+            + `\n\nOK = send it anyway (our team will check it again before accepting)`
+            + `\nCancel = do not send — nothing is uploaded`);
+          if (!go) { sendMsg('Not sent — nothing was uploaded.', 'err'); $('cfmGo').disabled = false; return; }
+          fd.append('confirm_duplicates', 'yes');
+          r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+        }
+      }
       const d = await r.json();
       if (!r.ok) { sendMsg(d.error || 'Submission failed.', 'err'); return; }
       sendDraft = d.submission;

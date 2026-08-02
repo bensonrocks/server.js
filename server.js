@@ -8129,6 +8129,9 @@ function clientSubPublic(db, s) {
     age_minutes: ageMin,
     overdue: s.status === 'pending' && ageMin >= CLIENT_SUB_APPROVE_SLA_MIN,
     orders,                                  // live status, relayed back to the client
+    // The client was warned about duplicate order numbers and sent it anyway.
+    // Shown on the approval row so the office knows before opening it.
+    client_confirmed_duplicates: s.client_confirmed_duplicates || null,
     // Step 2 of the client's flow: the waybills that belong to these orders.
     labels: linked ? {
       id: linked.id, filename: linked.filename,
@@ -8418,6 +8421,55 @@ app.post('/api/portal/submissions/:id/transmit', express.json(), (req, res) => {
   });
 });
 
+// ── DUPLICATE ORDER NUMBERS — one detector, told twice ─────────────────────
+// Per the user: the client is warned at their end (which numbers, and when we
+// last saw them) and may approve or abort; if they approve, the office is told
+// the SAME thing at approval and may approve or abort again.
+//
+// One function, so the two notices can never describe different facts — and so
+// "the client already confirmed this" means they confirmed what the office is
+// now looking at.
+function findDuplicateOrderNumbers(db, orders, clientName) {
+  const want = new Map();
+  for (const o of orders || []) {
+    const n = String(o.order_number || '').trim();
+    if (n) want.set(n, true);
+  }
+  if (!want.size) return [];
+  const out = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      const n = String(o.order_number || '').trim();
+      if (!want.has(n)) continue;
+      const st = (b.orderStates || {})[n] || {};
+      out.push({
+        order_number: n,
+        status: st.status || 'pending',
+        // WHEN — what the client actually asks. Completion is the meaningful
+        // date when there is one; otherwise when it was uploaded.
+        seen_at: st.endTime || b.uploaded_at || null,
+        completed_at: st.endTime || null,
+        job: b.idealscan_code || '',
+        filename: b.filename || '',
+        client_name: b.client_name || '',
+        source: b.source === 'client-portal' ? 'sent by you' : 'uploaded here',
+        same_client: sameClient(b.client_name, clientName),
+      });
+    }
+  }
+  // Newest first, so the most recent sighting is the one they read first.
+  out.sort((a, b2) => String(b2.seen_at || '').localeCompare(String(a.seen_at || '')));
+  return out;
+}
+// One line a human can read, used in both notices.
+function describeDuplicate(d) {
+  const when = d.seen_at
+    ? new Date(d.seen_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })
+    : 'an earlier date';
+  const state = d.status === 'done' ? 'completed' : d.status === 'unprocessed' ? 'cancelled' : 'still being worked';
+  return `${d.order_number} — ${state}, ${when} SGT (${d.source}${d.job ? `, job ${d.job}` : ''})`;
+}
+
 // PORTAL → discard a draft that was never sent. Only a draft: once it is with
 // us it is our decision to approve or reject, not the client's to withdraw.
 app.delete('/api/portal/submissions/:id', (req, res) => {
@@ -8469,6 +8521,31 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
       warnings.push(...findDuplicateLineWarnings(orders).map(w => w.problem));
 
       const db = readDb();
+      const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+
+      // ── LAYER ONE: tell the CLIENT, at their end ──────────────────────────
+      // Which numbers, and when we last saw them. They approve or abort. This
+      // runs before anything is stored, so aborting leaves nothing behind.
+      const dups = findDuplicateOrderNumbers(db, orders, client);
+      // The same FILE sent twice is the commonest cause and worth naming as
+      // such — the hash was already being stored but never checked.
+      const sameFile = clientSubs(db).find(x => x.kind === 'orders' && x.contentHash === hash
+        && sameClient(x.client_name, client) && x.status !== 'rejected');
+      if ((dups.length || sameFile) && String(req.body?.confirm_duplicates || '') !== 'yes') {
+        return res.status(409).json({
+          needsDuplicateConfirm: true,
+          duplicates: dups.slice(0, 100),
+          lines: dups.slice(0, 100).map(describeDuplicate),
+          sameFile: sameFile ? { filename: sameFile.filename, code: sameFile.code,
+            at: sameFile.submitted_at, status: sameFile.status } : null,
+          message: sameFile
+            ? `You already sent this exact file (${sameFile.filename}) on `
+              + `${new Date(sameFile.submitted_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })} SGT.`
+              + (dups.length ? ` ${dups.length} of its order number(s) are already with us.` : '')
+            : `${dups.length} order number(s) in this file are already with us.`,
+        });
+      }
+
       const id = uuidv4();
       const ext = path.extname(req.file.originalname).toLowerCase();
       fs.writeFileSync(path.join(CLIENT_SUB_DIR, id + ext), req.file.buffer);
@@ -8479,7 +8556,14 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
         client_name: canonicalClientName(db, client),
         filename: req.file.originalname,
         stored_ext: ext,
-        contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+        contentHash: hash,
+        // What the client was shown and accepted — carried forward so the
+        // office notice can say "they were told this, and went ahead".
+        client_confirmed_duplicates: (dups.length || sameFile) ? {
+          at: new Date().toISOString(), by: req.portalUser?.id || '',
+          count: dups.length, sameFile: !!sameFile,
+          orders: dups.slice(0, 50).map(d => d.order_number),
+        } : null,
         submitted_at: new Date().toISOString(),
         submitted_by: `portal:${client}`,
         status: 'draft',
@@ -8607,18 +8691,27 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     const orders = summarizeOrders(rows);
 
     const db = readDb();
-    // SAME STANDING RULE as every other path: completed work is never
-    // overwritten, and a duplicate of a live order is a human decision.
-    const clash = [];
-    for (const b of db.batches || []) for (const o of b.orders || []) {
-      if (orders.some(x => x.order_number === o.order_number)) {
-        clash.push({ order: o.order_number, status: b.orderStates?.[o.order_number]?.status || 'pending', job: b.idealscan_code || '' });
-      }
-    }
+    // ── LAYER TWO: tell the OFFICE, at approval ─────────────────────────
+    // The SAME detector the client saw, so the two notices describe the same
+    // facts — and so "the client already confirmed this" means they confirmed
+    // what is on this screen. The office decides independently: a client
+    // clicking through is not our approval.
+    const clash = findDuplicateOrderNumbers(db, orders, s0.client_name);
     if (clash.length && req.body?.confirm_duplicates !== 'yes') {
+      const done = clash.filter(d => d.status === 'done');
       return res.status(409).json({
-        needsDuplicateConfirm: true, duplicates: clash,
-        message: `${clash.length} order number(s) in this submission already exist. Approve anyway only if these are genuinely new orders.`,
+        needsDuplicateConfirm: true,
+        duplicates: clash.slice(0, 100),
+        lines: clash.slice(0, 100).map(describeDuplicate),
+        completedCount: done.length,
+        clientConfirmed: s0.client_confirmed_duplicates || null,
+        message: `${clash.length} order number(s) in this submission already exist`
+          + (done.length ? `, ${done.length} of them on work that is already COMPLETED` : '')
+          + '. '
+          + (s0.client_confirmed_duplicates
+              ? 'The client was shown this and chose to send it anyway. '
+              : '')
+          + 'Approve only if these are genuinely new orders.',
       });
     }
 
