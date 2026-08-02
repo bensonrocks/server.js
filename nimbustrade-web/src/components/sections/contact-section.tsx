@@ -47,14 +47,14 @@ export function ContactSection() {
           </p>
 
           <div className="mt-8 space-y-4 text-sm">
-            <a href="mailto:hello@nimbustrade.example" className="flex items-center gap-3 text-ink hover:text-brand">
-              <Mail className="h-5 w-5 text-brand" /> hello@nimbustrade.example
+            <a href="mailto:info@nimbustrade.co" className="flex items-center gap-3 text-ink hover:text-brand">
+              <Mail className="h-5 w-5 text-brand" /> info@nimbustrade.co
             </a>
-            <div className="flex items-center gap-3 text-ink">
-              <Phone className="h-5 w-5 text-brand" /> [ +65 XXXX XXXX — placeholder ]
-            </div>
+            <a href="tel:+6588776106" className="flex items-center gap-3 text-ink hover:text-brand">
+              <Phone className="h-5 w-5 text-brand" /> +65 8877 6106
+            </a>
             <a
-              href="https://wa.me/6500000000"
+              href="https://wa.me/6588776106"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-3 text-ink hover:text-brand"

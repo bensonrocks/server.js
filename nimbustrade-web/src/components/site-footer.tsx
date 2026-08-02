@@ -45,11 +45,11 @@ export function SiteFooter() {
               </div>
               <div className="flex items-center gap-2">
                 <Phone className="h-4 w-4 shrink-0 text-brand" />
-                <span>[ +65 XXXX XXXX — placeholder ]</span>
+                <span>+65 8877 6106</span>
               </div>
               <div className="flex items-center gap-2">
                 <Mail className="h-4 w-4 shrink-0 text-brand" />
-                <span>hello@nimbustrade.example</span>
+                <span>info@nimbustrade.co</span>
               </div>
             </div>
           </div>

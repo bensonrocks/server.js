@@ -73,9 +73,9 @@ published externally:
 - **Case studies** (`/`, case-studies data): real engagements, but client
   names are intentionally withheld — each is described generically
   (e.g. "A fashion & apparel brand") rather than attributed by name.
-- **Contact details**: phone number and registered office address (footer,
-  `/contact`). Email (`hello@nimbustrade.example`) and the WhatsApp link are
-  also placeholder values.
+- **Contact details**: registered office address (footer, `/contact`) is
+  still a placeholder pending confirmation. Phone, WhatsApp, and email are
+  set to real values.
 - **About page**: founding date, company history, and leadership bios.
 - **Legal pages** (`/privacy`, `/terms`): stub pages that should be drafted with
   real legal review before launch.
