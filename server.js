@@ -16471,9 +16471,26 @@ function closeSettledBackorders(db) {
 // reason: hooking each site is precisely how the gap appeared.
 function releaseOrphanReservations(db) {
   if (!inventory.available()) return 0;
+  // A RESERVATION IS ONLY LEGITIMATE WHILE THE ORDER IS STILL OPEN.
+  //
+  // The first cut of this compared against orders that still EXIST, which
+  // missed the case actually reported: an order CANCELLED in the office is
+  // still on the books, so its units stayed Reserved on the client's screen
+  // ("7 reserved" against "0 orders in progress") even though nobody was ever
+  // going to pick it.
+  //   • pending / processing → the reservation is real, leave it
+  //   • unprocessed (cancelled) → nobody will pick it; give the units back
+  //   • done → deductOrder already released it; anything left is stale, and
+  //     releasing is safe because a done order that still holds a reservation
+  //     never had its stock deducted either
+  //   • gone entirely → nothing to hold it
   const live = new Set();
   for (const b of db.batches || []) {
-    for (const o of b.orders || []) live.add(String(o.order_number));
+    for (const o of b.orders || []) {
+      const st = (b.orderStates || {})[o.order_number] || {};
+      const status = st.status || 'pending';
+      if (status === 'pending' || status === 'processing') live.add(String(o.order_number));
+    }
   }
   const clients = new Set();
   for (const b of db.batches || []) if (b.client_name) clients.add(invClientId(b.client_name));
@@ -16485,7 +16502,7 @@ function releaseOrphanReservations(db) {
     try { open = inventory.openReservations(cid); } catch (e) { console.warn('[reservations]', cid, e.message); continue; }
     const byOrder = new Map();
     for (const r of open) {
-      if (live.has(String(r.order_id))) continue;          // its order is still with us
+      if (live.has(String(r.order_id))) continue;          // still open work — leave it alone
       if (!byOrder.has(r.order_id)) byOrder.set(r.order_id, []);
       byOrder.get(r.order_id).push({ sku: r.sku, qty: r.open_qty });
     }

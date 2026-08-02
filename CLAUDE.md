@@ -3184,9 +3184,22 @@ delete, the Master reset, the client-data wipe and the 12-month archive — so
 this RECONCILES rather than hooking each one, exactly as `pruneOrphanBackorders`
 and `pruneOrphanTransportJobs` do, and for the same reason.
 
+**A RESERVATION IS ONLY LEGITIMATE WHILE THE ORDER IS STILL OPEN** — the first
+cut compared against orders that still EXIST, which missed the case actually
+reported: an order CANCELLED in the office is still on the books, so its units
+stayed Reserved. The rule is on STATUS:
+- `pending` / `processing` → real, leave it
+- `unprocessed` (cancelled) → nobody will pick it, give the units back
+- `done` → `deductOrder` already released it; anything left is stale, and
+  releasing is safe because a done order still holding a reservation never had
+  its stock deducted either
+- gone entirely → nothing to hold it
+
 `inventory.openReservations(clientId)` derives what is still held per (order,
 sku) from the movement ledger — reserved − released − shipped — and anything
-whose order is not in the live set is released. Audit-logged
+not in the open set is released. A SHIPPED order can never get its stock back:
+the ledger's outbound row cancels its reserve row, so it has no open
+reservation to release (asserted directly). Audit-logged
 `reservations_released_orphaned` with the units and the order numbers.
 
 Called from **boot**, from every deletion site, and from
@@ -3201,9 +3214,11 @@ surrounding `catch` and the reconcile was silently skipped, so the test found
 the same warning for the same reason. Anything touching `inventory` at boot
 must go THERE.
 
-Verified: 9 checks on the live path (deleting one of two orders gives back
-exactly its 7 units, the other order keeps its 3, on-hand never moves, and the
-client's own screen agrees) plus 5 on a pre-seeded fixture proving the state the
+Verified 19 checks on the live path (deleting one of two orders gives back
+exactly its 7 units; CANCELLING another gives back its 4 while it stays on the
+books; the order still open keeps its 3; on-hand never moves; completing an
+order deducts and releases together and re-running the reconciler does NOT
+resurrect shipped stock) plus 5 on a pre-seeded fixture proving the state the
 live site is already in heals at boot.
 
 ## Administrator → Clear Test Data (selective, per client)
