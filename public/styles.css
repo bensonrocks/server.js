@@ -3396,3 +3396,21 @@ tr.inb-over .inb-qty-edit { border-color: #f97316; color: #9a3412; }
 th.ib-tick, td.ib-tick { width: 2.2rem; text-align: center; }
 th.ib-tick input, td.ib-tick input { width: 1.05rem; height: 1.05rem; }
 @media (max-width: 768px) { .ib-mass-bar { position: sticky; bottom: 0; z-index: 5; } }
+
+/* ── Mass putaway + split destinations ────────────────────────────────────── */
+.pa-bulk { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+           padding: .45rem .1rem .55rem; border-bottom: 1px dashed var(--border); margin-bottom: .4rem; }
+.pa-bulk-all { display: inline-flex; align-items: center; gap: .35rem; font-size: .8rem; font-weight: 700; }
+.pa-bulk-note { flex: 1 1 12rem; }
+th.pa-tick, td.pa-tick { width: 2rem; text-align: center; }
+th.pa-tick input, td.pa-tick input { width: 1.05rem; height: 1.05rem; }
+.pa-lot { display: block; width: 100%; margin-top: .25rem; padding: .2rem .35rem;
+          font-size: .75rem; border: 1px solid var(--border); border-radius: 5px;
+          background: var(--surface); color: var(--text); }
+/* Another destination for the SAME line — indented so it reads as a child of
+   the row above rather than a separate product. */
+tr.pa-split-row { background: var(--surface-2); }
+tr.pa-split-row td { border-top: 0; }
+.pa-actions { display: flex; flex-direction: column; gap: .2rem; align-items: flex-start; }
+.pa-msg.error { color: #b91c1c; font-weight: 600; }
+@media (max-width: 768px) { .pa-bulk { position: sticky; top: 0; background: var(--surface); z-index: 3; } }

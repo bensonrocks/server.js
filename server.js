@@ -9268,73 +9268,162 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
 // (added to inventory.stock_qty at end-receipt); this records WHERE it physically
 // sits (stock_by_location), so it never changes the sellable total — same
 // semantics as the Inventory tab's Place Stock, but seeded from what was received.
+// ONE PUTAWAY, against ONE inbound receipt. Extracted so the single-line route
+// and the mass route below run the SAME code — a second copy would drift, and
+// the first thing to drift would be the over-put guard.
+//
+// PUTAWAY IS SCOPED TO THE RECEIPT IT CAME FROM, always. Per the user: inbound
+// #123 and inbound #125 can both contain SKU ABC, and each putaway job is done
+// against one inbound at a time. That is why every entry is written onto
+// `rec.state.putaway` with its own `staging_code`, and why nothing here ever
+// looks a SKU up across receipts — #125's ABC can neither satisfy nor consume
+// #123's outstanding quantity.
+function doPutaway(rec, body, me) {
+  const state = rec.state || (rec.state = {});
+  if (state.status !== 'done') return { error: 'Finish receiving (End Receipt) before putaway.', status: 400 };
+  const { sku, location_id, qty, expiry_date, lot_number, override_reason } = body || {};
+  const stagingCode = String(body?.staging_code || '').trim();
+  if (!sku || !location_id || qty === undefined || qty === '') return { error: 'sku, location_id, qty required', status: 400 };
+  if (!(Number(qty) > 0)) return { error: 'Quantity must be more than zero.', status: 400 };
+  // SPLIT LINES ARE NORMAL. One SKU of a larger quantity can sit in several
+  // bins, each with its OWN batch/expiry and its own serials — so this function
+  // is deliberately per-DESTINATION, not per-SKU, and the caller sends one item
+  // per bin. Nothing here assumes a SKU has a single home on this receipt.
+  const serials = (Array.isArray(body?.serials) ? body.serials : String(body?.serials || '')
+    .split(/[\s,;]+/)).map(x => String(x || '').trim()).filter(Boolean);
+  if (serials.length > Number(qty)) {
+    return { status: 400, error: `${serials.length} serial(s) given for ${qty} unit(s) of ${sku} — a serial identifies one unit.` };
+  }
+  if (new Set(serials.map(x => x.toUpperCase())).size !== serials.length) {
+    return { status: 400, error: 'The same serial is listed twice — each identifies one physical unit.' };
+  }
+  if (stagingCode) {
+    const outstanding = putawayOutstandingForLabel(rec, stagingCode, sku);
+    if (Number(qty) > outstanding) {
+      return {
+        status: 409, outstanding,
+        error: outstanding > 0
+          ? `Only ${outstanding} left to put away on ${stagingCode} for ${sku} — someone may have done part of it already.`
+          : `${sku} on ${stagingCode} is already fully put away.`,
+      };
+    }
+  }
+  const capChk = inventory.binCapacityCheck(location_id, Number(qty));
+  if (capChk.exceeds && body?.override !== true) {
+    return { status: 409, needsCapacityOverride: true, location: location_id, ...capChk,
+      error: `${location_id} holds ${capChk.occupied}/${capChk.capacity}; adding ${capChk.adding} exceeds by ${capChk.over}.` };
+  }
+  const cid = invClientId(rec.client_name);
+  const receivedAt = (rec.uploaded_at || new Date().toISOString()).slice(0, 10);
+  let placed;
+  try {
+    placed = inventory.placeStock(cid, sku, location_id, Number(qty),
+      { received_at: receivedAt, expiry_date, lot_number, operator: me });
+  } catch (e) { return { status: 400, error: e.message }; }
+  // Bin the serials against THIS destination, so a split line's identities are
+  // recorded per bin rather than lumped under the SKU.
+  let serialResult = null;
+  if (serials.length && inventory.available()) {
+    try {
+      serialResult = inventory.placeSerials(cid, sku, serials, location_id,
+        { lot_number: lot_number || '', received_ref: rec.serial || rec.reference || rec.id });
+    } catch (e) { console.warn('[putaway-serial]', e.message); }
+  }
+  state.putaway = state.putaway || [];
+  const priorWorkers = new Set(
+    state.putaway.filter(p => !stagingCode || p.staging_code === stagingCode)
+      .map(p => p.by).filter(b => b && b !== me));
+  const entry = {
+    sku, location_id, qty: Number(qty),
+    expiry_date: expiry_date || null, lot_number: lot_number || '',
+    serials: serialResult ? serialResult.placed : serials,
+    override_reason: override_reason || '',
+    staging_code: stagingCode || '',
+    at: new Date().toISOString(), by: me,
+  };
+  state.putaway.push(entry);
+  if (priorWorkers.size && stagingCode) {
+    const st = (rec.staging || []).find(x => x.code === stagingCode);
+    if (st) {
+      st.joins = st.joins || [];
+      st.joins.push({ by: me, at: entry.at, sku, qty: Number(qty), location_id, to: [...priorWorkers], seen: false });
+      if (st.joins.length > 50) st.joins.splice(0, st.joins.length - 50);
+    }
+  }
+  logAudit('inbound_putaway', {
+    id: rec.id, serial: rec.serial || '', staging: stagingCode,
+    sku, location: location_id, qty: Number(qty), expiry: expiry_date || '',
+    lot: lot_number || '', serials: (serialResult ? serialResult.placed : serials).length,
+    reason: override_reason || '', joinedOthers: [...priorWorkers], by: me,
+  });
+  return { ok: true, placed, joinedOthers: [...priorWorkers],
+    serials: serialResult || (serials.length ? { placed: serials, added: [], refused: [] } : null) };
+}
+
+// ── MASS PUTAWAY ───────────────────────────────────────────────────────────
+// Several lines off one pallet in one go, instead of a round trip per SKU.
+//
+// IT TAKES ONE `inbound_id` AND ONE `staging_code`, and that is the whole
+// enforcement of "one inbound job at a time" — a request that spans two
+// receipts cannot be expressed, so there is no rule to forget to check. Items
+// are applied one at a time through the SAME doPutaway() the single route
+// uses, so the over-put guard, the capacity check and the join notice all
+// behave identically.
+//
+// A failing item does NOT abort the rest: on a floor, one bin being full must
+// not undo four trolleys of work that already happened. Each item's outcome is
+// returned so the screen can say exactly which line needs another look.
+app.post('/api/putaway/bulk', express.json(), (req, res) => {
+  const { inbound_id, staging_code, items, override, override_reason } = req.body || {};
+  const list = Array.isArray(items) ? items.filter(i => i && i.sku) : [];
+  if (!inbound_id) return res.status(400).json({ error: 'inbound_id required' });
+  if (!list.length) return res.status(400).json({ error: 'Select at least one line to put away.' });
+  const db = readDb();
+  const rec = findInbound(db, inbound_id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const me = req.userId || '';
+  const stagingCode = String(staging_code || '').trim();
+  const results = [];
+  const joined = new Set();
+  let done = 0, units = 0;
+  for (const it of list) {
+    const r = doPutaway(rec, {
+      sku: it.sku, location_id: it.location_id, qty: it.qty,
+      expiry_date: it.expiry_date, lot_number: it.lot_number, serials: it.serials,
+      staging_code: stagingCode, override: override === true || it.override === true,
+      override_reason: it.override_reason || override_reason || '',
+    }, me);
+    if (r.ok) {
+      done++; units += Number(it.qty) || 0;
+      (r.joinedOthers || []).forEach(x => joined.add(x));
+      results.push({ sku: it.sku, location_id: it.location_id, qty: Number(it.qty) || 0, ok: true,
+        lot_number: it.lot_number || '', serials: r.serials ? r.serials.placed : [],
+        serialsRefused: r.serials ? r.serials.refused : [] });
+    } else {
+      results.push({ sku: it.sku, location_id: it.location_id, qty: Number(it.qty) || 0,
+        ok: false, error: r.error, needsCapacityOverride: !!r.needsCapacityOverride });
+    }
+  }
+  writeDb(db);
+  logAudit('inbound_putaway_bulk', {
+    id: rec.id, serial: rec.serial || '', staging: stagingCode,
+    lines: done, failed: results.length - done, units, by: me,
+  });
+  res.json({ ok: true, inbound_id, staging_code: stagingCode, lines: done, units,
+    failed: results.filter(r => !r.ok).length, results, joinedOthers: [...joined] });
+});
+
 app.post('/api/inbound/:id/putaway', express.json(), (req, res) => {
   const db = readDb();
   const rec = findInbound(db, req.params.id);
   if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
-  const state = rec.state || (rec.state = {});
-  if (state.status !== 'done') return res.status(400).json({ error: 'Finish receiving (End Receipt) before putaway.' });
-  const { sku, location_id, qty, expiry_date, lot_number, override_reason } = req.body || {};
-  const stagingCode = String(req.body?.staging_code || '').trim();
-  if (!sku || !location_id || qty === undefined || qty === '') return res.status(400).json({ error: 'sku, location_id, qty required' });
-  if (!(Number(qty) > 0)) return res.status(400).json({ error: 'Quantity must be more than zero.' });
-  // PARTIAL PUTAWAY IS NORMAL — half a pallet now, the rest later or by someone
-  // else. Refuse only OVER-putting, which would bank stock into a bin that
-  // never physically arrived there.
-  if (stagingCode) {
-    const outstanding = putawayOutstandingForLabel(rec, stagingCode, sku);
-    if (Number(qty) > outstanding) {
-      return res.status(409).json({
-        error: outstanding > 0
-          ? `Only ${outstanding} left to put away on ${stagingCode} for ${sku} — someone may have done part of it already.`
-          : `${sku} on ${stagingCode} is already fully put away.`,
-        outstanding,
-      });
-    }
+  const r = doPutaway(rec, req.body || {}, req.userId || '');
+  if (!r.ok) {
+    const { status, error, ...rest } = r;
+    return res.status(status || 400).json({ error, message: error, ...rest });
   }
-  const capChk = inventory.binCapacityCheck(location_id, Number(qty));
-  if (capChk.exceeds && req.body?.override !== true) {
-    return res.status(409).json({ needsCapacityOverride: true, location: location_id, ...capChk, message: `${location_id} holds ${capChk.occupied}/${capChk.capacity}; adding ${capChk.adding} exceeds by ${capChk.over}.` });
-  }
-  const cid = invClientId(rec.client_name);
-  // received_at = the inbound's upload/receipt date, so FIFO rotates by when goods
-  // actually arrived (not when someone got around to putaway).
-  const receivedAt = (rec.uploaded_at || new Date().toISOString()).slice(0, 10);
-  try {
-    const result = inventory.placeStock(cid, sku, location_id, Number(qty), { received_at: receivedAt, expiry_date, lot_number, operator: req.userId || '' });
-    state.putaway = state.putaway || [];
-    const me = req.userId || '';
-    // ANYONE MAY JOIN A PALLET SOMEONE ELSE STARTED — the aim is to clear the
-    // floor, not to protect a claim. Whoever was already on it is TOLD, so the
-    // trail says who did what and nobody is surprised by a line finishing
-    // itself. Same reasoning as the cross-scan notice on team receiving.
-    const priorWorkers = new Set(
-      state.putaway.filter(p => !stagingCode || p.staging_code === stagingCode)
-        .map(p => p.by).filter(b => b && b !== me));
-    const entry = {
-      sku, location_id, qty: Number(qty),
-      expiry_date: expiry_date || null, lot_number: lot_number || '',
-      override_reason: override_reason || '',
-      staging_code: stagingCode || '',
-      at: new Date().toISOString(), by: me,
-    };
-    state.putaway.push(entry);
-    if (priorWorkers.size && stagingCode) {
-      const st = (rec.staging || []).find(x => x.code === stagingCode);
-      if (st) {
-        st.joins = st.joins || [];
-        st.joins.push({ by: me, at: entry.at, sku, qty: Number(qty), location_id, to: [...priorWorkers], seen: false });
-        if (st.joins.length > 50) st.joins.splice(0, st.joins.length - 50);
-      }
-    }
-    writeDb(db);
-    logAudit('inbound_putaway', {
-      id: rec.id, serial: rec.serial || '', staging: stagingCode,
-      sku, location: location_id, qty: Number(qty), expiry: expiry_date || '',
-      reason: override_reason || '', joinedOthers: [...priorWorkers], by: me,
-    });
-    res.json({ ok: true, placed: result, putaway: state.putaway, joinedOthers: [...priorWorkers] });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  writeDb(db);
+  return res.json({ ok: true, placed: r.placed, putaway: rec.state.putaway, joinedOthers: r.joinedOthers });
 });
 
 // ── SPLIT AN INBOUND ACROSS THE TEAM ────────────────────────────────────────

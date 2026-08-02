@@ -10527,10 +10527,21 @@
               · staged ${g.staged_at ? esc(new Date(g.staged_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</div>
           </div>
           ${joinNote(g)}
+          <!-- Mass putaway lives INSIDE the card, and the card is one staging
+               label off one inbound receipt — so a bulk action can only ever
+               cover that one receipt's goods. -->
+          <div class="pa-bulk">
+            <label class="pa-bulk-all"><input type="checkbox" class="pa-all"> Select all</label>
+            <button class="btn-secondary btn-sm pa-fill">Use suggested bins</button>
+            <button class="btn-primary btn-sm pa-bulk-go" disabled
+              data-inbound="${esc(g.inbound_id)}" data-staging="${esc(g.staging_code)}">Put away selected</button>
+            <span class="hint pa-bulk-note">All ${esc(g.serial || g.staging_code)} — one receipt at a time.</span>
+          </div>
           <table class="tbl pa-tbl">
-            <thead><tr><th>SKU</th><th>Description</th><th style="text-align:right">Left</th>
+            <thead><tr><th class="pa-tick"></th><th>SKU</th><th>Description</th><th style="text-align:right">Left</th>
               <th>Done by</th><th>Suggested bin</th><th>Put into</th><th style="text-align:right">Qty</th><th></th></tr></thead>
             <tbody>${g.lines.map(l => `<tr data-sku="${esc(l.sku)}">
+              <td class="pa-tick"><input type="checkbox" class="pa-pick"></td>
               <td><b>${esc(l.sku)}</b></td>
               <td>${esc(String(l.description || '').slice(0, 40))}</td>
               <td style="text-align:right"><b>${l.qty}</b>
@@ -10542,11 +10553,19 @@
                 : '<span class="hint">—</span>'}</td>
               <td class="pa-suggest"><button class="link-btn pa-ask"
                     data-client="${esc(g.client_name)}" data-sku="${esc(l.sku)}" data-qty="${l.qty}">Suggest a bin</button></td>
-              <td><input type="text" class="pa-bin" placeholder="scan or type bin" autocomplete="off" /></td>
+              <td>
+                <input type="text" class="pa-bin" placeholder="scan or type bin" autocomplete="off" />
+                <input type="text" class="pa-lot" placeholder="batch / serial(s)" autocomplete="off"
+                  title="Batch or lot number. Serial numbers can be listed here too, separated by spaces or commas." />
+              </td>
               <td style="text-align:right"><input type="number" class="pa-qty" min="1" max="${l.qty}" value="${l.qty}" /></td>
-              <td><button class="btn-primary btn-sm pa-go"
+              <td class="pa-actions">
+                <button class="btn-primary btn-sm pa-go"
                     data-inbound="${esc(g.inbound_id)}" data-staging="${esc(g.staging_code)}"
-                    data-sku="${esc(l.sku)}" data-left="${l.qty}">Put away</button></td>
+                    data-sku="${esc(l.sku)}" data-left="${l.qty}">Put away</button>
+                <button class="link-btn pa-split" title="The rest of this line goes to another bin"
+                    data-sku="${esc(l.sku)}">+ another bin</button>
+              </td>
             </tr>`).join('')}</tbody>
           </table>
           <div class="pa-msg hint hidden"></div>
@@ -10607,12 +10626,156 @@
         inp.closest('tr').querySelector('.pa-go')?.click();
       }));
       el.querySelectorAll('.pa-go').forEach(b => b.addEventListener('click', () => putAway(b)));
+      el.querySelectorAll('.pa-split').forEach(b => b.addEventListener('click', () => addSplitRow(b)));
+      wireBulk(el);
       el.querySelectorAll('.pa-join-x').forEach(b => b.addEventListener('click', async () => {
         b.closest('.pa-join')?.remove();
         await fetchT('/api/putaway/joins/seen', {
           method: 'POST', headers: hdrs(), body: JSON.stringify({ staging_code: b.dataset.seen }),
         }).catch(() => {});
       }));
+    }
+
+    // ── SPLIT A LINE ACROSS BINS ────────────────────────────────────────────
+    // Per the user: a larger quantity of one SKU can sit in different
+    // locations, with different batch or serial numbers. Each extra row is
+    // another DESTINATION for the same line — its own bin, its own quantity,
+    // its own batch/serials — and they are posted together as one mass putaway
+    // against this one receipt.
+    //
+    // The quantities are split off the row above rather than added on top, so
+    // the total can never exceed what is actually left to bin.
+    function addSplitRow(btn) {
+      const row = btn.closest('tr');
+      const sku = btn.dataset.sku;
+      const qtyBox = row.querySelector('.pa-qty');
+      const have = Math.max(1, parseInt(qtyBox.value, 10) || 1);
+      if (have < 2) {
+        msg(row.closest('.pa-card'), 'There is only one piece left on this line — nothing to split.');
+        return;
+      }
+      const take = Math.floor(have / 2);
+      qtyBox.value = have - take;
+      const extra = document.createElement('tr');
+      extra.className = 'pa-split-row';
+      extra.dataset.sku = sku;
+      extra.innerHTML = `
+        <td class="pa-tick"><input type="checkbox" class="pa-pick" checked></td>
+        <td colspan="4" class="hint">↳ ${esc(sku)} — another bin</td>
+        <td>
+          <input type="text" class="pa-bin" placeholder="scan or type bin" autocomplete="off" />
+          <input type="text" class="pa-lot" placeholder="batch / serial(s)" autocomplete="off" />
+        </td>
+        <td style="text-align:right"><input type="number" class="pa-qty" min="1" value="${take}" /></td>
+        <td class="pa-actions">
+          <button class="link-btn pa-unsplit" title="Remove this destination">✕</button>
+        </td>`;
+      row.after(extra);
+      extra.querySelector('.pa-unsplit').addEventListener('click', () => {
+        qtyBox.value = (parseInt(qtyBox.value, 10) || 0) + (parseInt(extra.querySelector('.pa-qty').value, 10) || 0);
+        extra.remove();
+        paintBulk(row.closest('.pa-card'));
+      });
+      extra.querySelector('.pa-pick').addEventListener('change', () => paintBulk(row.closest('.pa-card')));
+      row.querySelector('.pa-pick').checked = true;
+      extra.querySelector('.pa-bin').focus();
+      paintBulk(row.closest('.pa-card'));
+    }
+
+    // ── MASS PUTAWAY ────────────────────────────────────────────────────────
+    // Scoped to ONE card, and a card is one staging label off one inbound
+    // receipt — so a bulk action can never span two receipts. That is why the
+    // endpoint takes a single inbound_id: the shape enforces the rule.
+    function paintBulk(card) {
+      if (!card) return;
+      const picked = [...card.querySelectorAll('.pa-pick')].filter(c => c.checked);
+      const go = card.querySelector('.pa-bulk-go');
+      if (go) {
+        go.disabled = !picked.length;
+        go.textContent = picked.length ? `Put away selected (${picked.length})` : 'Put away selected';
+      }
+      const all = card.querySelector('.pa-all');
+      const boxes = card.querySelectorAll('.pa-pick');
+      if (all) all.checked = boxes.length > 0 && picked.length === boxes.length;
+    }
+
+    function wireBulk(el) {
+      el.querySelectorAll('.pa-card').forEach(card => {
+        card.querySelectorAll('.pa-pick').forEach(cb => cb.addEventListener('change', () => paintBulk(card)));
+        card.querySelector('.pa-all')?.addEventListener('change', e => {
+          card.querySelectorAll('.pa-pick').forEach(cb => { cb.checked = e.target.checked; });
+          paintBulk(card);
+        });
+        // Fill every empty bin box with its own top suggestion. Deliberately an
+        // EXPLICIT action rather than a default: the crew has then seen and
+        // accepted each suggestion, and the standing rule is that a bin is
+        // always suggested, never forced.
+        card.querySelector('.pa-fill')?.addEventListener('click', () => {
+          let filled = 0;
+          card.querySelectorAll('tr[data-sku]').forEach(tr => {
+            const box = tr.querySelector('.pa-bin');
+            if (!box || box.value.trim()) return;
+            const top = tr.querySelector('.pa-use');           // the suggestion button
+            if (top) { box.value = top.dataset.bin; filled++; }
+          });
+          msg(card, filled ? `Filled ${filled} bin(s) from the suggestions — change any of them before putting away.`
+                           : 'No suggestion is available to fill — type or scan the bin.');
+        });
+        card.querySelector('.pa-bulk-go')?.addEventListener('click', () => bulkPutAway(card));
+        paintBulk(card);
+      });
+    }
+
+    function msg(card, text, kind = 'hint') {
+      const m = card?.querySelector('.pa-msg');
+      if (!m) return;
+      m.className = `pa-msg ${kind}`;
+      m.textContent = text;
+      m.classList.remove('hidden');
+    }
+
+    async function bulkPutAway(card) {
+      const go = card.querySelector('.pa-bulk-go');
+      const rowsPicked = [...card.querySelectorAll('tr[data-sku]')]
+        .filter(tr => tr.querySelector('.pa-pick')?.checked);
+      const items = [];
+      for (const tr of rowsPicked) {
+        const bin = tr.querySelector('.pa-bin')?.value.trim();
+        const qty = parseInt(tr.querySelector('.pa-qty')?.value, 10) || 0;
+        if (!bin) { msg(card, `${tr.dataset.sku} has no bin — scan or type one, or use the suggestions.`, 'error'); return; }
+        if (qty < 1) { msg(card, `${tr.dataset.sku} has no quantity.`, 'error'); return; }
+        // One box for batch AND serials: a batch is one token, serials are
+        // several. Anything past the first is treated as a serial, which is
+        // how a crew actually writes it down.
+        const raw = (tr.querySelector('.pa-lot')?.value || '').split(/[\s,;]+/).filter(Boolean);
+        items.push({ sku: tr.dataset.sku, location_id: bin, qty,
+          lot_number: raw.length > 1 ? raw[0] : (raw[0] || ''),
+          serials: raw.length > 1 ? raw.slice(1) : [] });
+      }
+      if (!items.length) return;
+      go.disabled = true;
+      msg(card, `Putting away ${items.length} line(s)…`);
+      try {
+        const r = await fetchT('/api/putaway/bulk', {
+          method: 'POST', headers: hdrs(),
+          body: JSON.stringify({ inbound_id: go.dataset.inbound, staging_code: go.dataset.staging, items }),
+        }, 30000);
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { msg(card, d.error || 'Could not put those away.', 'error'); go.disabled = false; return; }
+        const bad = (d.results || []).filter(x => !x.ok);
+        let text = `${d.lines} line(s) put away, ${d.units} pc(s).`;
+        if ((d.joinedOthers || []).length) text += ` You joined ${d.joinedOthers.join(', ')} on this pallet.`;
+        if (bad.length) text += ` ${bad.length} could not be done: ` + bad.map(x => `${x.sku} — ${x.error}`).join('; ');
+        await load();
+        // load() repaints the list, so the message has to go somewhere that
+        // survives it — the card may no longer exist once a pallet is cleared.
+        const again = document.querySelector(`.pa-card[data-staging="${CSS.escape(go.dataset.staging)}"]`);
+        if (again) msg(again, text, bad.length ? 'error' : 'hint');
+        else if (bad.length) alert(text);
+      } catch (e) {
+        msg(card, 'Could not reach the server — nothing was put away.', 'error');
+        go.disabled = false;
+      }
     }
 
     // "Someone joined your pallet" — shown to whoever was already working it.

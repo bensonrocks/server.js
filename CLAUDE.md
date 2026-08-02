@@ -2962,6 +2962,57 @@ the item line, 2 user pills will be seen."*
   **skips the repaint while any field has content or focus** — repainting under
   someone mid-keying a bin would lose what they typed.
 
+### Mass putaway, and one inbound at a time
+
+Per the user: *"putaway activity needs to tally with the unique inbound. ie:
+inbound #123 contains sku ABC. inbound #125 contains also SKU ABC. each putaway
+job, needs to be done based on one inbound job at a time."*
+
+**THE RULE IS ENFORCED BY SHAPE, not by a check.** `POST /api/putaway/bulk`
+takes ONE `inbound_id` and ONE `staging_code`, so a request spanning two
+receipts cannot be expressed and there is no rule to forget. Every entry is
+written onto `rec.state.putaway` tagged with its `staging_code`, and
+`putawayOutstandingForLabel` / `putawayDoneForLabel` never look a SKU up across
+receipts — #125's ABC can neither satisfy nor consume #123's outstanding
+quantity. Verified directly with two receipts sharing SKU ABC: clearing all 10
+of #123's leaves all 7 of #125's owing, credited with nothing, and an 11th piece
+on #123 is refused while #125 can still bin its own 7 into the same bin.
+
+- `doPutaway()` was EXTRACTED so the single-line route and the bulk route run
+  the same code — a second copy would drift, and the first thing to drift would
+  be the over-put guard.
+- **A failing item does not abort the rest.** On a floor, one full bin must not
+  undo four trolleys of finished work. Each item's outcome comes back so the
+  screen can name the line that needs another look.
+- UI: a tick column and a bulk bar INSIDE each staging card (a card is one
+  label off one receipt, so the scope is visible), plus **"Use suggested bins"**
+  — an explicit action, never a default, because the standing rule is that a bin
+  is suggested and never forced.
+
+### Split lines — one SKU, several bins, different batches and serials
+
+Per the user: *"allow split lines as same sku, of larger quantities can sit in
+different locations, they can have different batch/serial no too."*
+`doPutaway()` is per-DESTINATION, not per-SKU: the caller sends one item per
+bin, each with its own qty, `lot_number`/`expiry_date` and `serials[]`. The
+"+ another bin" button splits the quantity OFF the row above rather than adding
+on top, so the destinations can never total more than the line has left.
+
+**`serials` gained `location_id` and `lot_number` columns** (`_migrateSerialLocation`)
+and `inventory.placeSerials()` is new. A serial identifies one physical unit, so
+once binned the registry has to say WHICH bin — otherwise a split line is only
+half recorded. A serial never captured at receiving is registered now rather
+than dropped (the crew reading it off the carton is the first time the system
+could know it); a serial already **shipped** is never re-homed.
+
+Refused, because both are contradictions rather than preferences: more serials
+than units on a destination, and the same serial listed twice.
+
+Verified 13 checks: 30 pcs to three bins in one action with three different
+batches, stock landing 10/15/5 and adding back to 30, each serial recorded
+against the bin AND the batch of its own split, a 31st piece refused, and both
+serial contradictions refused.
+
 ### `inventory.suggestPutaway()` — a ranked shortlist, with reasons
 
 `GET /api/putaway/suggest?client=&sku=&qty=`. HARD CONSTRAINTS filter first (bin
