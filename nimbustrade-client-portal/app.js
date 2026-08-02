@@ -789,7 +789,8 @@
 
   // ---------- Reports ----------
 
-  const INBOUND_STATUS_LABEL = { in_transit: 'In Transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
+  const INBOUND_STATUS_LABEL = { booked: 'Booked', in_transit: 'In Transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
+  const INBOUND_MODE_LABEL = { air: 'Air', sea: 'Sea', road: 'Road' };
 
   async function loadReports() {
     const marketTbody = $('#reports-market-tbody');
@@ -822,20 +823,90 @@
         <tr>
           <td style="font-family:var(--font-mono);font-size:12px">${escapeHtml(s.reference)}</td>
           <td>${escapeHtml(s.country_name)} <span style="color:var(--fg-muted)">(${escapeHtml(s.city)})</span></td>
-          <td>${escapeHtml(s.carrier || '—')}</td>
+          <td>${escapeHtml(s.origin || '—')}</td>
+          <td>${INBOUND_MODE_LABEL[s.mode] || s.mode || '—'}</td>
+          <td>${escapeHtml(s.carrier || '—')}${s.waybill_number ? `<br><span style="font-family:var(--font-mono);font-size:11.5px;color:var(--fg-muted)">${escapeHtml(s.waybill_number)}</span>` : ''}</td>
           <td>${escapeHtml(s.contents || '—')}</td>
           <td>${s.expected_qty}</td>
           <td>${s.received_qty}</td>
           <td><span class="status-pill ${s.status}">${INBOUND_STATUS_LABEL[s.status] || s.status}</span></td>
           <td>${escapeHtml(s.expected_date || '—')}</td>
           <td>${escapeHtml(s.arrived_date || '—')}</td>
+          <td><button class="track-btn" data-track-shipment="${s.id}" data-ref="${escapeHtml(s.reference)}">Track</button></td>
         </tr>
-      `).join('') : '<tr><td colspan="9" class="table-loading">No inbound shipments yet.</td></tr>';
+      `).join('') : '<tr><td colspan="12" class="table-loading">No inbound shipments yet.</td></tr>';
+
+      inboundTbody.querySelectorAll('[data-track-shipment]').forEach((btn) => {
+        btn.addEventListener('click', () => openShipmentTracking(btn.dataset.trackShipment, btn.dataset.ref));
+      });
     } catch (err) {
       marketTbody.innerHTML = `<tr><td colspan="6" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
-      inboundTbody.innerHTML = `<tr><td colspan="9" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
+      inboundTbody.innerHTML = `<tr><td colspan="12" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
     }
   }
+
+  // ---------- Shipment tracking (inbound to DC) ----------
+
+  const shipmentTrackingOverlay = $('#shipment-tracking-overlay');
+
+  async function openShipmentTracking(shipmentId, reference) {
+    if (!shipmentTrackingOverlay) return;
+    shipmentTrackingOverlay.hidden = false;
+    $('#shipment-tracking-ref').textContent = `Tracking — ${reference}`;
+    $('#shipment-tracking-carrier-line').textContent = 'Loading…';
+    $('#shipment-tracking-body').innerHTML = '<p class="table-loading">Loading…</p>';
+
+    try {
+      const data = await api(`/inbound/${shipmentId}/tracking`);
+      $('#shipment-tracking-carrier-line').textContent = data.carrier
+        ? `${data.origin} → ${data.destination} · ${INBOUND_MODE_LABEL[data.mode] || data.mode} · ${data.carrier} · Waybill ${data.waybillNumber || '—'}`
+        : `${data.origin} → ${data.destination} · ${INBOUND_MODE_LABEL[data.mode] || data.mode} · No carrier assigned yet.`;
+
+      const timelineHtml = `<ul class="tracking-timeline">${data.timeline.map((ev) => `
+        <li class="${ev.status === 'delayed' ? 'issue' : 'done'}">
+          <span class="tracking-dot"></span>
+          <div>
+            <div class="tracking-event-status">${INBOUND_STATUS_LABEL[ev.status] || ev.status}</div>
+            ${ev.note ? `<div class="tracking-event-note">${escapeHtml(ev.note)}</div>` : ''}
+            <div class="tracking-event-time">${ev.created_at}</div>
+          </div>
+        </li>
+      `).join('')}</ul>`;
+
+      let carrierHtml = '';
+      if (data.carrier) {
+        if (data.carrierTracking && data.carrierTracking.available) {
+          const ct = data.carrierTracking;
+          carrierHtml = `
+            <div class="carrier-panel">
+              <h4>Live carrier status (${data.carrier})</h4>
+              <ul class="tracking-timeline">${(ct.checkpoints || []).map((c) => `
+                <li class="done">
+                  <span class="tracking-dot"></span>
+                  <div>
+                    <div class="tracking-event-status">${escapeHtml(c.message || ct.subtag || ct.tag)}</div>
+                    ${c.location ? `<div class="tracking-event-note">${escapeHtml(c.location)}</div>` : ''}
+                    <div class="tracking-event-time">${c.time || ''}</div>
+                  </div>
+                </li>
+              `).join('') || '<li><div class="tracking-event-note">No checkpoints reported yet.</div></li>'}</ul>
+            </div>`;
+        } else {
+          const reason = data.carrierTracking && data.carrierTracking.reason === 'not_configured'
+            ? 'Live carrier tracking isn’t connected yet — this shows our own internal shipment status only.'
+            : 'Live carrier status isn’t available right now.';
+          carrierHtml = `<div class="carrier-panel"><p class="carrier-unavailable">${reason}</p></div>`;
+        }
+      }
+
+      $('#shipment-tracking-body').innerHTML = timelineHtml + carrierHtml;
+    } catch (err) {
+      $('#shipment-tracking-body').innerHTML = `<p class="modal-error">${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  $('#close-shipment-tracking')?.addEventListener('click', () => { shipmentTrackingOverlay.hidden = true; });
+  shipmentTrackingOverlay?.addEventListener('click', (e) => { if (e.target === shipmentTrackingOverlay) shipmentTrackingOverlay.hidden = true; });
 
   $('#export-reports-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();

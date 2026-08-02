@@ -7,6 +7,7 @@
   let ordersPage = 1;
   let allClients = [];
   let allVendors = [];
+  let allLocations = [];
   let selectedInvLocationByClient = {};
 
   const MARKET_PRESETS = [
@@ -98,6 +99,7 @@
     await Promise.all([loadClients(), loadVendors()]);
     loadOrders();
     loadInventory();
+    loadShipments();
     loadRates();
   }
 
@@ -415,6 +417,7 @@
   async function loadInventory() {
     const container = $('#inventory-clients');
     const [locations, inventory] = await Promise.all([api('/locations'), api('/inventory')]);
+    allLocations = locations;
 
     if (!allClients.length) {
       container.innerHTML = '<p class="table-loading">Add a client first, from the Clients tab.</p>';
@@ -516,6 +519,133 @@
       });
     });
   }
+
+  // ---------- Shipments (inbound to DC — typically ex-Singapore airfreight) ----------
+
+  const SHIPMENT_STATUS_OPTIONS = ['in_transit', 'arrived', 'delayed', 'partial'];
+  const SHIPMENT_STATUS_LABEL = { in_transit: 'In transit', arrived: 'Arrived', delayed: 'Delayed', partial: 'Partial' };
+  const SHIPMENT_MODE_LABEL = { air: 'Air', sea: 'Sea', road: 'Road' };
+
+  async function loadShipments() {
+    const tbody = $('#shipments-tbody');
+    const shipments = await api('/inbound');
+
+    if (!shipments.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="table-loading">No inbound shipments yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = shipments.map((s) => `
+      <tr data-id="${s.id}">
+        <td><code>${escapeHtml(s.reference)}</code></td>
+        <td>${escapeHtml(s.client_name || '')}</td>
+        <td>${s.country_name} <span style="color:var(--fg-muted)">(${escapeHtml(s.city)})</span></td>
+        <td>${escapeHtml(s.origin || '—')}</td>
+        <td>${SHIPMENT_MODE_LABEL[s.mode] || s.mode || '—'}</td>
+        <td>
+          <div class="status-update-cell">
+            <select class="ship-carrier-select">
+              <option value="" ${!s.carrier ? 'selected' : ''}>No carrier</option>
+              <option value="DHL" ${s.carrier === 'DHL' ? 'selected' : ''}>DHL</option>
+              <option value="FedEx" ${s.carrier === 'FedEx' ? 'selected' : ''}>FedEx</option>
+              <option value="UPS" ${s.carrier === 'UPS' ? 'selected' : ''}>UPS</option>
+            </select>
+            <input type="text" class="ship-waybill-input" placeholder="Waybill #" value="${escapeHtml(s.waybill_number || '')}" />
+          </div>
+        </td>
+        <td>${escapeHtml(s.contents || '—')}</td>
+        <td>${s.expected_qty} / <input type="number" class="ship-received-input" min="0" value="${s.received_qty}" style="width:56px" /></td>
+        <td>
+          <div class="status-update-cell">
+            <select class="ship-status-select">
+              ${SHIPMENT_STATUS_OPTIONS.map((st) => `<option value="${st}" ${st === s.status ? 'selected' : ''}>${SHIPMENT_STATUS_LABEL[st]}</option>`).join('')}
+            </select>
+            <input type="date" class="ship-arrived-input" value="${s.arrived_date || ''}" />
+            <button class="save-shipment-btn">Save</button>
+          </div>
+          <div style="margin-top:4px;color:var(--fg-muted);font-size:11.5px">Expected ${escapeHtml(s.expected_date || '—')}</div>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('tr[data-id]').forEach((row) => {
+      const id = row.dataset.id;
+      row.querySelector('.save-shipment-btn').addEventListener('click', async () => {
+        const btn = row.querySelector('.save-shipment-btn');
+        const status = row.querySelector('.ship-status-select').value;
+        const carrier = row.querySelector('.ship-carrier-select').value;
+        const waybillNumber = row.querySelector('.ship-waybill-input').value.trim();
+        const receivedQty = parseInt(row.querySelector('.ship-received-input').value, 10) || 0;
+        const arrivedDate = row.querySelector('.ship-arrived-input').value;
+        btn.textContent = '…';
+        try {
+          await api(`/inbound/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status, carrier, waybillNumber, receivedQty, arrivedDate }),
+          });
+          btn.textContent = 'Saved';
+          setTimeout(() => { btn.textContent = 'Save'; }, 1200);
+        } catch (e) {
+          btn.textContent = 'Save';
+          alert(e.message);
+        }
+      });
+    });
+  }
+
+  function populateShipmentClientSelect() {
+    $('#new-shipment-client').innerHTML = '<option value="">Select a client…</option>' +
+      allClients.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  }
+
+  function populateShipmentLocationSelect(clientId) {
+    const sel = $('#new-shipment-location');
+    const locs = allLocations.filter((l) => l.client_id === clientId);
+    sel.innerHTML = locs.length
+      ? locs.map((l) => `<option value="${l.id}">${l.country_name} — ${escapeHtml(l.city)}</option>`).join('')
+      : '<option value="">No DCs for this client yet</option>';
+  }
+
+  $('#new-shipment-client').addEventListener('change', (e) => {
+    populateShipmentLocationSelect(e.target.value);
+  });
+
+  $('#open-add-shipment').addEventListener('click', () => {
+    $('#add-shipment-error').hidden = true;
+    $('#add-shipment-form').reset();
+    populateShipmentClientSelect();
+    $('#new-shipment-location').innerHTML = '<option value="">Select a client first…</option>';
+    $('#new-shipment-origin').value = 'Singapore';
+    $('#add-shipment-overlay').hidden = false;
+  });
+
+  $('#add-shipment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = $('#add-shipment-error');
+    errEl.hidden = true;
+    try {
+      await api('/inbound', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId: $('#new-shipment-client').value,
+          locationId: $('#new-shipment-location').value,
+          origin: $('#new-shipment-origin').value.trim() || 'Singapore',
+          mode: $('#new-shipment-mode').value,
+          reference: $('#new-shipment-reference').value.trim(),
+          carrier: $('#new-shipment-carrier').value,
+          waybillNumber: $('#new-shipment-waybill').value.trim(),
+          contents: $('#new-shipment-contents').value.trim(),
+          expectedQty: parseInt($('#new-shipment-qty').value, 10) || 0,
+          expectedDate: $('#new-shipment-date').value,
+        }),
+      });
+      $('#add-shipment-overlay').hidden = true;
+      loadShipments();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+  });
 
   // ---------- Rates ----------
   // Empty until set here — the client's Rates tab mirrors whatever's saved.

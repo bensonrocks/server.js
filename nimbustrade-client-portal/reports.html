@@ -145,7 +145,7 @@
 
       <div class="panel-head">
         <h3>Inbound to DC — replenishment shipments</h3>
-        <p class="panel-sub">Stock arriving from BWL's supplier into each distribution centre — separate from customer orders above.</p>
+        <p class="panel-sub">Stock moving into each distribution centre — typically ex-Singapore, our self-run hub — separate from customer orders above.</p>
       </div>
       <div class="table-wrap">
         <table class="orders-table" id="reports-inbound-table">
@@ -153,22 +153,39 @@
             <tr>
               <th>Reference</th>
               <th>DC</th>
-              <th>Carrier</th>
+              <th>Origin</th>
+              <th>Mode</th>
+              <th>Carrier / Waybill</th>
               <th>Contents</th>
               <th>Expected Qty</th>
               <th>Received Qty</th>
               <th>Status</th>
               <th>Expected Date</th>
               <th>Arrived Date</th>
+              <th>Tracking</th>
             </tr>
           </thead>
           <tbody id="reports-inbound-tbody">
-            <tr><td colspan="9" class="table-loading">Loading…</td></tr>
+            <tr><td colspan="12" class="table-loading">Loading…</td></tr>
           </tbody>
         </table>
       </div>
     </section>
   </main>
+  </div>
+</div>
+
+<!-- ---------- Shipment tracking modal ---------- -->
+<div class="modal-overlay" id="shipment-tracking-overlay" hidden>
+  <div class="modal-card modal-card-wide">
+    <h3 id="shipment-tracking-ref">Tracking</h3>
+    <p class="modal-sub" id="shipment-tracking-carrier-line">—</p>
+    <div id="shipment-tracking-body">
+      <p class="table-loading">Loading…</p>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" id="close-shipment-tracking">Close</button>
+    </div>
   </div>
 </div>
 
