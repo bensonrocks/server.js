@@ -227,7 +227,14 @@ tell what is critical."*
 - **THE SCREEN**: a `#kpiBar` under the Orders stat tiles — Overdue / Critical /
   Due soon / On time, then Met / Late — where **every tile is a filter**,
   because knowing 6 orders are critical is only useful if those 6 are one tap
-  away. Row chips show the countdown (`⏱ 2h 15m left`, `⏳ 13d 15h over`) with
+  away. **A FILTERED LIST SAYS SO IN WORDS** (`.kpi-filter-note` — "⏱ Showing
+  186 of 189 — Due soon only", with a Clear filter button): reported as "the
+  tiles do not filter" when they always had. With a 17:00 cut-off and a 4h
+  amber window, from 13:00 onward nearly every same-day order is Due soon, so
+  filtering to it removed 3 rows out of 189 and read as nothing happening. The
+  row count cannot speak for itself when one bucket holds almost everything.
+  (If the buckets are that lopsided the THRESHOLDS want tuning — that is the ⚙,
+  and it is the user's policy, not something to quietly change for them.) Row chips show the countdown (`⏱ 2h 15m left`, `⏳ 13d 15h over`) with
   the whole promise in the tooltip. **The Active list is sorted most-urgent
   first** — a countdown nobody scrolls to is a countdown nobody acts on.
   Counted from the SAME `fulfilment` object the chips render, so tile and pill

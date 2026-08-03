@@ -2863,6 +2863,21 @@ body.ls-open { overflow: hidden; }
 }
 .kpi-cog:hover { background: #f1f5f9; }
 
+/* Says the list IS filtered. When one bucket holds nearly all the work,
+   filtering removes a couple of rows and looks like nothing happened — this
+   removes the doubt, and gives one obvious way back out. */
+.kpi-filter-note {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+  border-radius: 8px; padding: .4rem .7rem; margin-bottom: .5rem; font-size: .82rem;
+}
+.kpi-clear {
+  margin-left: auto; border: 1px solid #bfdbfe; background: #fff; color: #1e40af;
+  border-radius: 6px; padding: .2rem .55rem; font: inherit; font-size: .76rem;
+  font-weight: 700; cursor: pointer;
+}
+.kpi-clear:hover { background: #dbeafe; }
+
 /* One editable cut-off band in the KPI settings modal. */
 .kpi-band { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; margin-bottom: .35rem; }
 .kpi-band .kb-lead { font-size: .78rem; color: var(--text-muted, #64748b); }

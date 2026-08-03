@@ -2130,8 +2130,13 @@
       orders = orders.filter(o => (o.client_name || '').trim().toLowerCase() === want);
     }
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
-    // Clicking a KPI tile narrows the list to exactly what it counted.
+    // Clicking a KPI tile narrows the list to exactly what it counted. When one
+    // bucket holds nearly all the work, removing the rest changes the screen by
+    // a couple of rows and reads as "nothing happened" — so the filter says so
+    // in words rather than relying on the row count to speak for itself.
+    const _kpiBefore = orders.length;
     if (KPI_FILTERS[kpiFilter]) orders = orders.filter(KPI_FILTERS[kpiFilter]);
+    const _kpiOn = !!KPI_FILTERS[kpiFilter];
 
     // Date filter — default TODAY, sliced in SGT calendar days (naive UTC
     // slicing put pre-08:00 uploads/completions on the previous day).
@@ -2181,6 +2186,13 @@
       .map(x => x[0]);
     const dateChips = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Last 7 Days'], ['all', 'All'], ['range', 'Date Range&hellip;']]
       .map(([k, lbl]) => `<button class="filter-chip ${ordersDateFilter === k ? 'active' : ''}" data-odate="${k}">${lbl}</button>`).join('');
+    const KPI_NAME = { overdue: 'Overdue', critical: 'Critical', soon: 'Due soon',
+                       ontime: 'On time', met: 'Met', missed: 'Late' };
+    const kpiBanner = _kpiOn ? `
+      <div class="kpi-filter-note">
+        <span>&#9201; Showing <b>${orders.length}</b> of ${_kpiBefore} &mdash; <b>${esc(KPI_NAME[kpiFilter] || kpiFilter)}</b> only</span>
+        <button class="kpi-clear" id="kpiClearBtn">&times; Clear filter</button>
+      </div>` : '';
     const dateFilterHTML = `
       <div class="orders-date-row">
         <span class="odr-label">SHOW:</span>
@@ -2191,6 +2203,7 @@
           <input type="date" id="ordersDateTo" value="${esc(ordersDateTo)}" />` : ''}
       </div>`;
     const subTabsHTML = `
+      ${kpiBanner}
       ${dateFilterHTML}
       <div class="orders-subtabs">
         <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
@@ -2245,6 +2258,9 @@
         ordersView = b.dataset.oview;
         renderOrdersList();
       }));
+      document.getElementById('kpiClearBtn')?.addEventListener('click', () => {
+        kpiFilter = 'all'; renderKpiBar(); renderOrdersList();
+      });
       document.querySelectorAll('[data-odate]').forEach(b => b.addEventListener('click', () => {
         ordersDateFilter = b.dataset.odate;
         if (ordersDateFilter === 'range' && !ordersDateFrom) {
