@@ -2868,6 +2868,58 @@ function runAuditLogArchive() {
 setTimeout(runAuditLogArchive, 90 * 1000);          // shortly after boot (staggered from batch archive)
 setInterval(runAuditLogArchive, 24 * 3600 * 1000);  // then daily
 
+// ── PERSONAL DATA IS ERASED 3 MONTHS AFTER AN ORDER COMPLETES ───────────────
+// Per the marketplace's ISV requirement (and the user's decision): once an
+// order is done, the personal data on it may be kept for at most three months
+// and must then be permanently deleted.
+//
+// THE ORDER SURVIVES, THE PERSON DOES NOT. Only the fields that identify a
+// human are erased — customer name, delivery address, phone. The order number,
+// SKUs, quantities, dates and tracking number stay, so billing, stock history
+// and dispute records remain intact and reconcilable. Deleting whole orders
+// would tear holes in figures we are separately obliged to keep.
+//
+// IRREVERSIBLE BY DESIGN: the fields are overwritten in place, not moved. A
+// purge you can undo is not a deletion.
+const PII_PURGE_AFTER_DAYS = 90;
+const PII_FIELDS = ['customer_name', 'delivery_address', 'tel'];
+function purgePersonalData(db) {
+  const cutoff = Date.now() - PII_PURGE_AFTER_DAYS * 86400000;
+  let orders = 0, fields = 0;
+  for (const b of db.batches || []) {
+    const states = b.orderStates || {};
+    for (const o of b.orders || []) {
+      if (o.pii_purged_at) continue;                       // already done
+      const st = states[o.order_number] || {};
+      // The clock runs from COMPLETION, not upload — an order still being
+      // worked has not started it.
+      if (st.status !== 'done') continue;
+      const done = new Date(st.endTime || 0).getTime();
+      if (!done || done > cutoff) continue;
+      let hit = false;
+      for (const f of PII_FIELDS) {
+        if (o[f] !== undefined && o[f] !== '' && o[f] !== null) { o[f] = ''; fields++; hit = true; }
+      }
+      o.pii_purged_at = new Date().toISOString();
+      if (hit) orders++;
+    }
+  }
+  if (orders) logAudit('personal_data_purged', { orders, fields, afterDays: PII_PURGE_AFTER_DAYS });
+  return { orders, fields };
+}
+function runPersonalDataPurge() {
+  try {
+    const db = readDb();
+    const r = purgePersonalData(db);
+    if (r.orders) {
+      writeDb(db);
+      console.log(`[IdealOne] Personal data erased on ${r.orders} order(s) completed over ${PII_PURGE_AFTER_DAYS} days ago`);
+    }
+  } catch (e) { console.error('[IdealOne] personal data purge failed:', e.message); }
+}
+setTimeout(runPersonalDataPurge, 120 * 1000);          // shortly after boot
+setInterval(runPersonalDataPurge, 24 * 3600 * 1000);   // then daily
+
 // ── Marketplace (Lazada/ZORT) data-retention purge ──────────────────────────
 // Lazada ISV Q8e: personal data from a COMPLETED marketplace order must be
 // permanently deleted after 3 months. We redact the personal fields (customer

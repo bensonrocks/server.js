@@ -1565,6 +1565,32 @@ login form after a reload times out because the session survives in
 localStorage — the overlay is present but hidden, so check visibility, not
 existence.
 
+## Personal data is erased 3 months after an order completes
+
+Required by the marketplace's ISV programme and decided by the user: once an
+order is done, personal data may be kept for at most three months and must then
+be permanently deleted.
+
+**THE ORDER SURVIVES, THE PERSON DOES NOT.** `purgePersonalData(db)` blanks only
+the fields that identify a human — `customer_name`, `delivery_address`, `tel`
+(`PII_FIELDS`). The order number, SKUs, quantities, dates and tracking number
+stay, so billing, stock history and dispute records remain reconcilable;
+deleting whole orders would tear holes in figures we are separately obliged to
+keep for 12 months.
+
+- **The clock runs from COMPLETION** (`state.endTime`), not upload — an order
+  still being worked has not started it.
+- **Irreversible by design**: the fields are overwritten in place, never moved.
+  A purge you can undo is not a deletion.
+- Stamped `pii_purged_at` so a second run is a no-op; audit-logged
+  `personal_data_purged` with the counts.
+- Runs 2 minutes after boot and daily thereafter, alongside the two archive
+  jobs.
+
+CARRIED OVER, NOT SOLVED: nightly gzip backups (kept 14) still contain the
+personal data until they rotate out, so full erasure completes ~14 days after
+the purge. Say so if asked rather than claiming instant deletion.
+
 ## Data lifecycle (server.js)
 
 - ATOMIC WRITES: db.json persists via tmp+rename (`_persistDb`), serialized. Never
