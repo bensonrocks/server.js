@@ -15355,7 +15355,9 @@ async function pullZortStore(db, store) {
   const query = { limit: 100, page: 1, updatedafter: new Date(sinceMs).toISOString().slice(0, 10) };
 
   const rows = [];
-  const zortMeta = {}; // order_number → {zort_id, zort_status}
+  const zortMeta = {};
+  // Built once for the whole pull — one query per client, not one per order.
+  const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
   let fetched = 0, skippedExisting = 0, skippedVoid = 0;
   for (let page = 1; page <= 20; page++) {
     const resp = await zortApi.getOrders(store, { ...query, page });
@@ -15371,12 +15373,19 @@ async function pullZortStore(db, store) {
       if (existing.has(number)) { skippedExisting++; continue; }
       const lines = o.list || o.orderlist || [];
       if (!lines.length) continue;
-      // Which CLIENT does this order belong to? The sales channel it came
-      // from (the client's Lazada/Shopee/TikTok shop connected inside the
-      // ZORT account) decides — via the store's channel→client mapping.
+      // WHICH CLIENT DOES THIS ORDER BELONG TO?
+      // One store account can house many clients selling on the SAME channels,
+      // so the channel is too coarse to decide on its own — it was filing every
+      // unmapped order under the store's own name, where its stock, billing and
+      // portal visibility all sat against the wrong account in silence.
+      // The SKU is the specific evidence: item masters are per client and (per
+      // the user) no SKU is shared between them, so the products on the order
+      // say whose order it is. Specific beats coarse, so SKU leads.
       const channel = String(o.saleschannel || o.channel || '').trim();
-      const clientForOrder = (store.channelClients || {})[channel] || store.clientName || channel || 'ZORT';
-      zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder };
+      const att = attributeSyncClient(skuOwners, lines, channel, store);
+      const clientForOrder = att.client;
+      zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder,
+                           attributed_via: att.via, attribution_unsure: att.unsure || null };
       for (const l of lines) {
         rows.push({
           order_number:     number,
@@ -15410,6 +15419,8 @@ async function pullZortStore(db, store) {
     o.zort_id = m.zort_id;
     o.zort_store_id = store.id;
     o._client = m.client || store.clientName || 'ZORT';
+    o._attributed_via = m.attributed_via || 'default';
+    o._attribution_unsure = m.attribution_unsure || null;
   }
 
   // ONE ZORT account carries MANY clients' sales channels — group the pull
@@ -15482,7 +15493,16 @@ async function pullZortStore(db, store) {
     }
   }
   store.lastPullAt = new Date().toISOString();
-  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients };
+  // WHICH ORDERS COULD NOT BE PLACED WITH CONFIDENCE. Reported rather than
+  // buried: an order filed under the store's own name has its stock, billing
+  // and portal visibility against the wrong account, and nobody would know.
+  const unsure = orders.filter(o => o._attribution_unsure)
+    .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
+  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid,
+                       clients: batchClients, needsAttribution: unsure.slice(0, 50) };
+  if (unsure.length) {
+    logAudit('sync_client_attribution_unsure', { storeId: store.id, count: unsure.length, orders: unsure.slice(0, 20) });
+  }
   writeDb(db);
   // Reservations from this pull lowered available — reflect it back to ZORT
   // stock-sync stores (e.g. a Shopee sale reserving stock updates the
@@ -15490,6 +15510,63 @@ async function pullZortStore(db, store) {
   for (const [cid, skuSet] of reservedByClient) zortNotifyStockChange(db, cid, [...skuSet]);
   logAudit('zort_pull', { storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients.slice(0, 20) });
   return store.lastResult;
+}
+
+// SKU → client, built once per pull from the per-client item masters. Item
+// masters are per client and no SKU is shared between them, so a SKU names its
+// owner outright. A SKU appearing under TWO clients is recorded as ambiguous
+// rather than resolved — guessing there would misfile someone's order.
+function buildSkuOwnerIndex(db) {
+  const idx = new Map();   // SKU (upper) -> client name, or '' when ambiguous
+  if (!inventory.available()) return idx;
+  const names = new Set();
+  for (const p of db.clientProfiles || []) if (p.client) names.add(String(p.client).trim());
+  for (const b of db.batches || []) if (b.client_name) names.add(String(b.client_name).trim());
+  // A client can exist ONLY as an item master — that is what onboarding creates
+  // FIRST, before they have a profile or a single order. Leaving them out meant
+  // the newest clients were exactly the ones this could not place.
+  try { for (const c of inventory.listClientIds()) if (c) names.add(String(c).trim()); } catch (_) {}
+  for (const name of names) {
+    let rows = [];
+    try { rows = inventory.getAll({ clientId: invClientId(name) }) || []; } catch (_) { continue; }
+    for (const r of rows) {
+      const k = String(r.sku || '').trim().toUpperCase();
+      if (!k) continue;
+      const cur = idx.get(k);
+      if (cur === undefined) idx.set(k, name);
+      else if (cur && cur !== name) idx.set(k, '');   // two owners → decide nothing
+    }
+  }
+  return idx;
+}
+
+// Resolve one order's client. Returns what it decided AND how, so an order
+// nobody could place is visible rather than quietly filed under the store.
+function attributeSyncClient(skuOwners, lines, channel, store) {
+  const owners = new Set();
+  let ambiguous = false;
+  for (const l of lines || []) {
+    const k = String(l.sku || l.barcode || '').trim().toUpperCase();
+    if (!k) continue;
+    const owner = skuOwners.get(k);
+    if (owner === '') ambiguous = true;          // SKU registered to more than one client
+    else if (owner) owners.add(owner);
+  }
+  if (owners.size === 1 && !ambiguous) return { client: [...owners][0], via: 'sku' };
+  const mapped = (store.channelClients || {})[channel];
+  if (mapped) {
+    // Lines pointing at a DIFFERENT client than the channel map is worth
+    // knowing about — one of the two is wrong.
+    const clash = owners.size === 1 && [...owners][0] !== mapped;
+    return { client: mapped, via: 'channel', unsure: clash ? `SKUs suggest ${[...owners][0]}` : null };
+  }
+  if (owners.size > 1) {
+    return { client: store.clientName || channel || 'ZORT', via: 'unresolved',
+             unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}` };
+  }
+  return { client: store.clientName || channel || 'ZORT', via: 'default',
+           unsure: ambiguous ? 'a SKU is registered to more than one client'
+                             : 'no SKU on this order is in any client item master' };
 }
 
 // ── ZORT outbox — durable, retrying up/down message queue ───────────────────

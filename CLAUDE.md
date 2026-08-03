@@ -645,6 +645,30 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   imported 2/3 orders (void skipped), completion pushed PackOrder with
   correct id+trackingno, re-pull created 0. The sandbox proxy blocks
   open-api.zortout.com, so live verification must happen from production.
+- **WHICH CLIENT A SYNCED ORDER BELONGS TO — the SKU decides.** One store
+  account houses MANY clients selling on the SAME channels, so the sales
+  channel is too coarse: every unmapped order was filed under the store's own
+  name (`IDEALONEMAIN`), where its stock, billing and portal visibility all sat
+  against the wrong account **in silence**. Per the user, no SKU is shared
+  between clients, so the products on an order name its owner outright.
+  `buildSkuOwnerIndex(db)` builds SKU → client once per pull;
+  `attributeSyncClient()` resolves each order: **SKU (specific) → channel map
+  (coarse) → the store's default**.
+  - A client can exist **ONLY as an item master** — that is what onboarding
+    creates FIRST, before any profile or order — so the index also reads
+    `inventory.listClientIds()`. Without it the NEWEST clients were exactly the
+    ones it could not place (caught by the test: everything came back
+    IDEALONEMAIN).
+  - A SKU registered to TWO clients resolves to **nothing**, not a guess.
+  - An order it cannot place still falls back to the store, but is REPORTED —
+    `lastResult.needsAttribution` with the reason, and audit-logged
+    `sync_client_attribution_unsure`. Silence is what made this invisible.
+  - A channel mapping that CONTRADICTS the SKUs is flagged too: one of the two
+    is wrong and someone should look.
+  Verified 10 checks against a mock store carrying three orders: the AAA-1
+  order files to AlphaCo, the BBB-1 order to BetaCo, a SKU nobody owns falls
+  back to the store AND is the only one flagged, and the pull splits into one
+  batch per client.
 - **CARRIER LABELS FOR SYNCED ORDERS** (per-store `labelSync`, off by default).
   A synced order arrives with its tracking number but no label. When the toggle
   is on, `pullZortStore` enqueues a `kind: 'label'` outbox entry per order and
