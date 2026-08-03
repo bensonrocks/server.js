@@ -3238,11 +3238,27 @@ with intake reservations: before that feature the file uploaded fine.
   proceed-or-abort — never an action that cannot work. `stock_action=proceed`
   already existed server-side; nothing in the UI reached it.
 
+**SAID BEFORE APPROVING, NOT DISCOVERED AFTERWARDS.** An untracked upload looks
+identical to a tracked one on the Orders tab, so `/api/preview` returns a
+`stockNotice` and the Confirm-Upload modal renders it (`#confirmStockNotice`):
+grey **ℹ No stock to allocate** when the client has no item master ("nothing
+will be reserved and nothing will be deducted when they complete"), amber when
+real orders cannot be covered ("you will be asked what to do when you approve").
+**Silence when all is well** — a fully covered file shows no notice at all.
+Never a block: Approve stays enabled, and the notice reserves nothing itself
+(asserted — previewing three times left `reserved_qty` unchanged). The upload
+result carries `noItemMaster` so the success line says WHY nothing was reserved
+rather than the bare "not tracked in Inventory", which sent people hunting for a
+setting they had never turned off.
+
 Verified 16 checks against the client's real file: it uploads (200, was 409),
 all 93 orders land, **no phantom SKUs are created**, a client we DO hold stock
 for still reserves exactly as before, a genuinely short order is still stopped
 and still called a shortage, an unregistered SKU is flagged separately with
-correct wording, and uploading anyway works.
+correct wording, and uploading anyway works. Plus 17 checks on the notice (right kind and
+wording for each of the three cases, none when covered, nothing reserved by
+previewing) and 7 in the browser (rendered on the Confirm screen, neutral grey
+by computed style, Approve still enabled).
 
 ### Label OCR: the budget has to fit the file
 

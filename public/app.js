@@ -1109,6 +1109,24 @@
       dupEl.classList.add('hidden');
     }
 
+    // WHAT WILL HAPPEN TO STOCK. Approving an upload for a client whose stock
+    // we do not hold is fine — but it must not be a surprise afterwards that
+    // nothing was reserved, so it is said here, before the Approve button.
+    // Never a block: the ⚠ cases are re-confirmed by the existing prompt on
+    // approve, and the ℹ case is simply how that client works.
+    const snEl = document.getElementById('confirmStockNotice');
+    if (snEl) {
+      const sn = preview.stockNotice;
+      if (sn) {
+        const info = sn.kind === 'no-item-master';
+        snEl.className = 'confirm-stock-notice ' + (info ? 'csn-info' : 'csn-warn');
+        snEl.innerHTML = `<b>${info ? '&#8505; No stock to allocate' : '&#9888; Stock allocation'}</b>${esc(sn.text)}`;
+        snEl.classList.remove('hidden');
+      } else {
+        snEl.classList.add('hidden');
+      }
+    }
+
     // Staging decision — only when some units would come from received-but-unbinned
     // stock. Default "wait till binned"; user can switch to "allocate from staging".
     const stagingSec = document.getElementById('stagingSection');
@@ -1471,9 +1489,13 @@
       if (data.transportJobsCreated > 0) {
         successMsg += ` 🚚 ${data.transportJobsCreated} delivery job(s) added to Transport.`;
       }
+      // Say WHY nothing was reserved, not just that nothing was — "not tracked"
+      // on its own leaves someone hunting for a setting they never turned off.
       successMsg += data.inventoryTracked
         ? ` 📦 Stock reserved in Inventory.`
-        : ` (not tracked in Inventory — activity/billing only.)`;
+        : data.noItemMaster
+          ? ` ℹ No item master for this client, so there was no stock to allocate — nothing reserved, nothing will be deducted on completion.`
+          : ` (not tracked in Inventory — activity/billing only.)`;
       const lc = data.locationCoverage;
       if (lc && lc.totalLines > 0) {
         if (lc.linesWithLocation === 0) {

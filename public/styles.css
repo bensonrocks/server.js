@@ -1040,6 +1040,13 @@ body.scan-open { overflow: hidden; }
 .confirm-val { color: var(--text); word-break: break-all; }
 .confirm-big { font-size: 1.1rem; font-weight: 800; color: var(--primary); }
 .confirm-errors { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--warning); margin-top: .75rem; list-style: disc inside; }
+/* Stock allocation heads-up in the Confirm-Upload modal. Grey/blue when there
+   is simply nothing to allocate (an arrangement, not a problem); amber when
+   real orders cannot be covered. */
+.confirm-stock-notice { border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; margin-top: .75rem; line-height: 1.4; }
+.confirm-stock-notice.csn-info { background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; }
+.confirm-stock-notice.csn-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.confirm-stock-notice b { display: block; margin-bottom: .15rem; }
 .confirm-dup-warnings { background: var(--primary-light); border: 1px solid var(--primary); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--primary); margin-top: .75rem; list-style: disc inside; }
 
 .confirm-val-edit { flex: 1; min-width: 0; }

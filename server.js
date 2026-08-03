@@ -6867,7 +6867,39 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
     let staging = { units: 0, skus: [] };
     try { if (clientName) staging = stagingDemand(invClientId(clientName), orders, 'fefo'); } catch (_) {}
 
+    // ALLOCATION HEADS-UP, at the moment of approving. An upload for a client
+    // whose stock we do not hold goes through untracked — correct, but nobody
+    // should discover afterwards that nothing was reserved. Say it here, on
+    // the screen the approver already reads, rather than making them wonder
+    // why the reserved figure never moved.
+    let stockNotice = null;
+    try {
+      const _cid = invClientId(clientName);
+      if (clientName && inventory.available()) {
+        if (!clientHasItemMaster(_cid)) {
+          stockNotice = {
+            kind: 'no-item-master',
+            text: `No item master is loaded for ${clientName}, so there is no stock to allocate. `
+                + `These orders will upload for picking and scanning, but nothing will be reserved `
+                + `and nothing will be deducted when they complete.`,
+          };
+        } else {
+          const chk = checkIntakeStock(_cid, orders);
+          const zero = chk.unknownSkus.length;
+          if (chk.shortOrders.length) {
+            stockNotice = {
+              kind: zero && chk.shortOrders.every(o => !(o.lines || []).length) ? 'unknown-skus' : 'short',
+              text: `${chk.shortOrders.length} of ${orders.length} order(s) cannot be covered by ${clientName}'s stock`
+                  + `${zero ? ` — ${zero} SKU(s) are not in their item master` : ''}.`
+                  + ` You will be asked what to do with them when you approve.`,
+            };
+          }
+        }
+      }
+    } catch (e) { console.warn('[preview] stock notice:', e.message); }
+
     res.json({
+      stockNotice,
       rowCount: allRows.length,
       orderCount: orders.length,
       errors,
@@ -7339,6 +7371,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // take the rest, or abort the whole upload. Nothing is reserved until one
     // is chosen, so an abort leaves the account exactly as it was.
     let inventoryTracked = false;
+    let noItemMaster = false;
     let droppedOrders = [];
     if (inventory.available()) {
       const stock = checkIntakeStock(invCid, orders);
@@ -7348,6 +7381,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       // and then deduct against it at completion. Upload untracked instead,
       // exactly as this worked before intake reservations existed.
       if (stock.noItemMaster) {
+        noItemMaster = true;
         logAudit('upload_untracked_no_item_master', {
           clientId: invCid, orders: orders.length, ...clientInfo(req),
         });
@@ -7532,6 +7566,9 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       transportJobsCreated,
       inventoryTracked,
       inventorySkusReserved,
+      // Why nothing was reserved, when nothing was. A silent untracked upload
+      // reads exactly like a tracked one on the Orders tab.
+      noItemMaster: !!noItemMaster,
       droppedShortOrders: droppedOrders,
       locationCoverage: { linesWithLocation, totalLines: mapped.length }
     });
