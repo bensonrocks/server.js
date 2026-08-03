@@ -3909,7 +3909,10 @@ function addOutboundPoke(db, batch, source) {
 // "processing" becomes "Being packed". Shared by the on-screen views and the
 // spreadsheet export so the two can never disagree.
 const PORTAL_STATUS_LABEL = {
-  done: 'Completed', processing: 'Being packed', pending: 'Queued', unprocessed: 'Cancelled',
+  // "Queued" told the client where the work sat in OUR list. "Pending
+  // Processing" tells them what is happening to their order, which is the
+  // thing they actually want to know.
+  done: 'Completed', processing: 'Being packed', pending: 'Pending Processing', unprocessed: 'Cancelled',
 };
 // COLLECTION, relayed to the client. Same words the office sees — per the user,
 // the client should read exactly what we read, not a parallel vocabulary.
@@ -3929,7 +3932,10 @@ function portalPickup(state, policy) {
   const due = collectionDayFor(state.endTime, policy);
   return {
     status: pickupOverdue(due) ? 'late' : 'awaiting',
-    label: pickupOverdue(due) ? 'Not collected' : 'Awaiting collection',
+    // READY FOR COLLECTION, not "awaiting" it — the work is finished and the
+    // parcel is on the shelf waiting for the courier. From the client's side
+    // that is good news, so it reads as good news.
+    label: pickupOverdue(due) ? 'Not collected' : 'Ready for Collection',
     due, at: null, by_us: false,
   };
 }
@@ -4454,7 +4460,7 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
         if (!inRange(when)) continue;
         const pk = portalPickup(st, _pol);
         out.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
-          PORTAL_STATUS_LABEL[st.status || 'pending'] || 'Queued',
+          PORTAL_STATUS_LABEL[st.status || 'pending'] || PORTAL_STATUS_LABEL.pending,
           (o.lines || []).length, o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
           o.waybill_number || '', o.po_number || '',
           st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',

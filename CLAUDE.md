@@ -331,9 +331,21 @@ pills). `portalPickup(state, policy)` builds it ONCE and is reused by
 (`Collection` + `Picked up (SGT)` columns) and the `orders[]` inside each
 client submission row, so those four can never drift.
 
-- Green **📦 Picked Up**, blue **Not collected**, amber **Awaiting collection**.
+- **Ready for Collection** (green), **📦 Picked Up** (a STRONGER solid green),
+  blue **Not collected**. Per the user: a packed parcel on the shelf is good
+  news, so it reads as good news — "Awaiting collection" described our queue,
+  "Ready for Collection" describes their order. Picked Up keeps a distinct
+  green so the terminal state is not just one more green pill (asserted: the
+  two background colours differ).
+- **Pending Processing** (yellow) replaced "Queued" for the same reason —
+  "Queued" said where the work sat in OUR list. Yellow is `p-wait`, deliberately
+  not the amber `p-open` that "Being packed" uses: one is waiting, the other is
+  moving.
   Blue for the missed case is deliberate — it follows the portal's existing
   GREEN = met / BLUE = missed rule, not the office's red.
+- Both labels live in ONE place server-side (`PORTAL_STATUS_LABEL` and
+  `portalPickup`), so the orders list, the order detail, the submission rows and
+  the XLSX export cannot drift — the export is asserted to carry the same words.
 - `by_us: true` when the method was `self-drop`, and the client is told plainly
   ("delivered to the drop-off point by us") rather than being left to assume a
   courier collected it.

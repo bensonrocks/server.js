@@ -605,7 +605,7 @@
   const STATUS = {
     done:        { label: 'Completed',   pill: 'p-done' },
     processing:  { label: 'Being packed', pill: 'p-open' },
-    pending:     { label: 'Queued',      pill: 'p-info' },
+    pending:     { label: 'Pending Processing', pill: 'p-wait' },
     unprocessed: { label: 'Cancelled',   pill: 'p-bad' },
   };
   const statusOf = st => STATUS[st] || STATUS.pending;
@@ -675,7 +675,10 @@
   // still on our shelf, red once its collection day has passed.
   function pickupPill(pk) {
     if (!pk || !pk.label) return '';
-    const cls = pk.status === 'picked_up' ? 'p-sla-met' : pk.status === 'late' ? 'p-sla-miss' : 'p-due';
+    // Ready for Collection is GREEN — the pick is done and the parcel is on the
+    // shelf. Picked Up is a STRONGER green so the terminal state still reads as
+    // final rather than as one more green pill.
+    const cls = pk.status === 'picked_up' ? 'p-gone' : pk.status === 'late' ? 'p-sla-miss' : 'p-ready';
     const tip = pk.status === 'picked_up'
       ? `Left us ${fmtDateTime(pk.at)}${pk.by_us ? ' — delivered to the drop-off point by us' : ''}`
       : pk.due ? `Due to leave ${fmtDate(pk.due)}` : 'Packed and waiting for collection';
@@ -1427,9 +1430,12 @@
         const orders = (s.orders || []).map(o => {
           const where = o.pickup?.status === 'picked_up' ? 'Picked Up'
                       : o.pickup?.label || statusOf(o.status).label;
-          const cls = o.pickup?.status === 'picked_up' ? 'p-sla-met'
+          // Same colours as the Orders tab — a client should not have to learn
+          // two schemes for the same fact.
+          const cls = o.pickup?.status === 'picked_up' ? 'p-gone'
                     : o.pickup?.status === 'late' ? 'p-sla-miss'
-                    : o.status === 'done' ? 'p-due' : 'p-due';
+                    : o.pickup ? 'p-ready'
+                    : statusOf(o.status).pill;
           return `<span class="pill ${cls}">${esc(o.order_number)} · ${esc(where)}</span>`;
         }).join(' ');
         return `<div class="card">
