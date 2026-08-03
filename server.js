@@ -2285,6 +2285,9 @@ function globalOrdersWithState(keep) {
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
+        // Cancelled by the client from their own portal. Kept for the trail,
+        // filtered off the everyday screens by whoever reads this list.
+        client_cancelled:  state.client_cancelled  || null,
         cartons:           state.cartons           || [],
         active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
         wave_id:           state.wave_id || doneWaveByOrder.get(ord.order_number)?.id || null,
@@ -3699,7 +3702,9 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
     }
   }
 
-  const myInbound = (db.inbound || []).filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm);
+  const myInbound = (db.inbound || [])
+    .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
+    .filter(r => !isClientCancelled(r));
   const inboundOpen = myInbound.filter(r => (r.state?.status || 'pending') !== 'done').length;
   let openDiscrepancies = 0, slaMet = 0, slaMissed = 0, slaOverdue = 0;
   for (const rec of myInbound) {
@@ -3864,6 +3869,9 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
     if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
     for (const o of b.orders || []) {
       const st = b.orderStates?.[o.order_number] || {};
+      // Cancelled by this client: the record stays for the trail but leaves
+      // every everyday screen, theirs included.
+      if (isClientCancelled(st)) continue;
       // Delivery, when we are moving it ourselves. Same words the office sees.
       const job = transportJobForOrder(db, o.order_number);
       const _pk = portalPickup(st, _pol);
@@ -3909,6 +3917,7 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
   const cutoff = Date.now() - PORTAL_SCREEN_DAYS * 86400000;
   const out = (db.inbound || [])
     .filter(r => String(r.client_name || '').trim().toLowerCase() === client)
+    .filter(r => !isClientCancelled(r))
     .filter(r => {
       // Anything still open is ALWAYS visible regardless of age — a job we
       // have not finished must never fall off the client's screen.
@@ -4347,6 +4356,18 @@ app.post('/api/portal/settings', express.json(), requirePortalWrite, (req, res) 
 // not worked on — so it IS deletable here. Deliberate: a client clearing out
 // something we already agreed not to process is exactly the tidy-up this
 // feature is for, and the audit log plus nightly backup keep the history.
+// Cancelled by the client: kept for the trail, hidden from the everyday
+// screens. ONE predicate, so the office list, the portal list and the inbound
+// list can never disagree about what is hidden.
+function isClientCancelled(x) {
+  return !!(x && x.client_cancelled);
+}
+// Only an administrator (or the master key) may ask to SEE them.
+function maySeeCancelled(req) {
+  if (req.headers['x-master-key'] === MASTER_PASS) return true;
+  return (readUsers().find(u => u.id === req.userId)?.role) === 'admin';
+}
+
 function portalDeletable(kind, rec) {
   const state = (kind === 'inbound' ? rec.state : rec) || {};
   const status = state.status || 'pending';
@@ -4388,7 +4409,13 @@ app.post('/api/portal/delete', express.json(), requirePortalWrite, (req, res) =>
         expected: (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
         reason, by: `portal:${client}`,
       });
-      removeInboundRecord(db, id);
+      // KEEP THE RECORD, HIDE IT. Per the user: cancelling reverses the stock
+      // but the trail stays — the record leaves the everyday screens and is
+      // reachable only from the audit report or by an administrator. Deleting
+      // it outright would make the audit entry point at nothing.
+      rec.client_cancelled = { at: new Date().toISOString(), by: `portal:${client}`, reason };
+      rec.state = rec.state || {};
+      rec.state.status = 'cancelled';
       deleted.push(label);
     }
   } else {
@@ -4410,7 +4437,15 @@ app.post('/api/portal/delete', express.json(), requirePortalWrite, (req, res) =>
         qty: order.total_qty || (order.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         reason, by: `portal:${client}`,
       });
-      removeOrderFromBatch(found, orderNumber);
+      // Same as inbound: kept, hidden, and its reservation given back by
+      // releaseOrphanReservations below (which treats 'unprocessed' as
+      // holding no stock).
+      found.orderStates = found.orderStates || {};
+      found.orderStates[orderNumber] = {
+        ...state,
+        status: 'unprocessed',
+        client_cancelled: { at: new Date().toISOString(), by: `portal:${client}`, reason },
+      };
       deleted.push(orderNumber);
     }
   }
@@ -7320,6 +7355,9 @@ app.get('/api/stats', (_req, res) => {
 // orders on completion date.
 app.get('/api/orders', (req, res) => {
   const { range, from, to } = req.query;
+  // Cancelled by the client: off the everyday list. An administrator can ask
+  // for them with ?cancelled=1; anyone else asking simply does not get them.
+  const wantCancelled = String(req.query.cancelled || '') === '1' && maySeeCancelled(req);
   // Build the range predicate FIRST and hand it to globalOrdersWithState so
   // out-of-window orders are skipped before enrichment (the Orders tab asks for
   // one day; enriching a full 12-month window to throw it away cost seconds).
@@ -7348,6 +7386,9 @@ app.get('/api/orders', (req, res) => {
     };
   }
   let orders = globalOrdersWithState(keep);
+  orders = wantCancelled
+    ? orders.filter(o => o.client_cancelled)          // the admin's review view
+    : orders.filter(o => !o.client_cancelled);        // everyday: hidden
   // Cross-reference: show which Transport job (TR-...) each order is linked
   // to. Linked by order number → referenceId/clientId, the same match the
   // scan-completion confirm uses. Purely informational on the order row.
@@ -8952,6 +8993,10 @@ app.post('/api/pokes/ack', express.json(), (req, res) => {
 
 app.get('/api/inbound', (req, res) => {
   const db = readDb();
+  // Client-cancelled receipts are KEPT (the audit entry has to point at
+  // something) but leave the everyday list. Only an administrator can ask for
+  // them, with ?cancelled=1.
+  const wantCancelled = String(req.query.cancelled || '') === '1' && maySeeCancelled(req);
   // Descriptions are filled from the client's item master AT READ TIME, so a
   // job uploaded before the master existed still shows product names. One
   // catalogue load per client per request, shared via this cache.
@@ -8960,7 +9005,7 @@ app.get('/api/inbound', (req, res) => {
   // read — creating them only as a side effect of calling /split meant a client
   // could never send a valid one on the first attempt.
   let _idsAdded = false;
-  const list = (db.inbound || []).map(rec => {
+  const list = (db.inbound || []).filter(r => isClientCancelled(r) === wantCancelled).map(rec => {
     if (ensureLineIds(rec)) _idsAdded = true;
     const unmatchedLines = fillInboundDescriptions(rec, _catCache);
     const state = rec.state || {};
@@ -9000,6 +9045,7 @@ app.get('/api/inbound', (req, res) => {
       endTime:           state.endTime || null,
       photos:            (rec.photos || []).map(p => ({ id: p.id, sku: p.sku, condition: p.condition || null, caption: p.caption, uploadedAt: p.uploadedAt })),
       pending_deletion:  rec.pending_deletion || null,
+      client_cancelled:  rec.client_cancelled || null,
       received_totals:   state.received_totals || null,   // sku -> qty received (for Putaway)
       putaway:           state.putaway || [],              // [{sku, location_id, qty, at, by}]
       // Cargo received but parked in a staging area rather than binned — each
@@ -10992,6 +11038,49 @@ app.post('/api/inbound/:id/deletion-request', (req, res) => {
   writeDb(db);
   logAudit('inbound_deletion_requested', { id, reference: rec.reference || '', jobType: rec.type, client: rec.client_name || '', by: req.userId || '', reason: reasonTrim });
   res.json({ ok: true });
+});
+
+// ── Cancelled by the client — the administrator's review view ───────────────
+// A client cancelling their own unprocessed work reverses the stock but keeps
+// the record: the audit entry has to point at something, and "it vanished" is
+// not an answer when someone asks a week later what happened to an order.
+// So the record leaves every everyday screen (office list, portal list,
+// portal overview) and is reachable ONLY here and from the audit-log report.
+// ADMIN OR MASTER, same guard as the reports — a client's cancellation history
+// is not floor information.
+app.get('/api/master/client-cancelled', (req, res) => {
+  if (!maySeeCancelled(req)) return res.status(403).json({ error: 'Administrator access required.' });
+  const db = readDb();
+  const orders = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      const st = (b.orderStates || {})[o.order_number] || {};
+      if (!isClientCancelled(st)) continue;
+      orders.push({
+        order_number: o.order_number,
+        client:       b.client_name || '',
+        batchId:      b.id,
+        idealscan_code: b.idealscan_code || '',
+        uploaded_at:  b.uploaded_at,
+        lines:        (o.lines || []).length,
+        qty:          o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+        cancelled:    st.client_cancelled,
+      });
+    }
+  }
+  const inbound = (db.inbound || []).filter(isClientCancelled).map(r => ({
+    id:        r.id,
+    serial:    r.serial || '',
+    reference: r.reference || '',
+    jobType:   r.type,
+    client:    r.client_name || '',
+    uploaded_at: r.uploaded_at,
+    lines:     (r.lines || []).length,
+    expected:  (r.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
+    cancelled: r.client_cancelled,
+  }));
+  const byNewest = (a, b) => String(b.cancelled?.at || '').localeCompare(String(a.cancelled?.at || ''));
+  res.json({ orders: orders.sort(byNewest), inbound: inbound.sort(byNewest) });
 });
 
 app.get('/api/master/inbound-pending-deletions', (req, res) => {

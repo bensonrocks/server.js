@@ -875,6 +875,19 @@
           </table>
           <div id="pendingWavePurgeEmpty" class="empty-state hidden">No wave deletion requests.</div>
         </div>
+
+        <div class="admin-section-divider"></div>
+        <div class="admin-section-header">
+          <div class="admin-section-title" style="font-size:.8rem">&#128683; Cancelled by clients</div>
+          <div class="admin-section-sub">Work a client withdrew from their own portal before we started it. The stock it had reserved was given back; the record is kept here and in the audit log, and is hidden from every other screen &mdash; the office list, their own portal, and the counts.</div>
+        </div>
+        <div id="clientCancelledWrap" class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Record</th><th class="pd-col-client">Client</th><th>Size</th><th>Cancelled</th><th>Reason</th></tr></thead>
+            <tbody id="clientCancelledBody"></tbody>
+          </table>
+          <div id="clientCancelledEmpty" class="empty-state hidden">Nothing cancelled by a client.</div>
+        </div>
       </div>
 
       <!-- Tab: Upload History -->

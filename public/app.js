@@ -9551,7 +9551,8 @@
     loadPendingDeletions();
     loadInboundPendingDeletions();
     loadWavePendingCancellations();
-    _pendingDelTimer = setInterval(() => { loadPendingDeletions(); loadInboundPendingDeletions(); loadWavePendingCancellations(); }, 15000);
+    loadClientCancelled();
+    _pendingDelTimer = setInterval(() => { loadPendingDeletions(); loadInboundPendingDeletions(); loadWavePendingCancellations(); loadClientCancelled(); }, 15000);
   }
   function stopPendingDelPolling() {
     if (_pendingDelTimer) { clearInterval(_pendingDelTimer); _pendingDelTimer = null; }
@@ -9563,6 +9564,40 @@
       renderPendingDeletions(await r.json());
     } catch { /* silent — next poll retries */ }
   }
+  // Work a client withdrew from their own portal. Read-only: there is nothing
+  // to approve — it was unprocessed paperwork and the units are already back.
+  // This is the ONLY screen it appears on (plus the audit-log report), which is
+  // the whole point of keeping it rather than deleting it.
+  async function loadClientCancelled() {
+    const body  = document.getElementById('clientCancelledBody');
+    const empty = document.getElementById('clientCancelledEmpty');
+    if (!body) return;
+    let data;
+    try {
+      const r = await fetch('/api/master/client-cancelled', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) return;
+      data = await r.json();
+    } catch { return; }   // silent — next poll retries
+    const rows = [
+      ...(data.orders || []).map(o => ({
+        what: `📦 ${o.order_number}`, client: o.client,
+        size: `${o.lines} line(s) · ${o.qty} pc(s)`, c: o.cancelled,
+      })),
+      ...(data.inbound || []).map(i => ({
+        what: `📥 ${i.serial || i.reference || i.id}`, client: i.client,
+        size: `${i.lines} line(s) · ${i.expected} pc(s)`, c: i.cancelled,
+      })),
+    ].sort((a, b) => String(b.c?.at || '').localeCompare(String(a.c?.at || '')));
+    body.innerHTML = rows.map(r => `<tr>
+      <td>${esc(r.what)}</td>
+      <td class="pd-col-client">${esc(r.client || '—')}</td>
+      <td>${esc(r.size)}</td>
+      <td>${esc(fmtDateTime(r.c?.at))}<div style="font-size:.72rem;opacity:.7">${esc(r.c?.by || '')}</div></td>
+      <td>${esc(r.c?.reason || '—')}</td>
+    </tr>`).join('');
+    empty?.classList.toggle('hidden', rows.length > 0);
+  }
+
   // Select-all + bulk approve/reject. Shared by both Pending Deletions tables:
   // each passes its own element ids, the key it selects by, and the endpoint.
   // Approving is IRREVERSIBLE, so a bulk approve needs a typed confirmation —
