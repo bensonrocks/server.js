@@ -645,6 +645,34 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   imported 2/3 orders (void skipped), completion pushed PackOrder with
   correct id+trackingno, re-pull created 0. The sandbox proxy blocks
   open-api.zortout.com, so live verification must happen from production.
+- **CARRIER LABELS FOR SYNCED ORDERS** (per-store `labelSync`, off by default).
+  A synced order arrives with its tracking number but no label. When the toggle
+  is on, `pullZortStore` enqueues a `kind: 'label'` outbox entry per order and
+  `getShippingLabel()` fetches the PDF, which then goes through
+  **`processLabelPdf` — the SAME pipeline a staff upload and a client
+  submission use**, so it matches and attaches like every other label. One
+  implementation; a second path would drift.
+  - **QUEUED, NOT FETCHED INLINE.** The channel generates the label MINUTES
+    after the order exists, so an inline fetch finds nothing on most of them.
+  - **"Not generated yet" is a WAIT, not a failure**: `err.notReady` gets a
+    flat `ZORT_LABEL_RETRY_MS` (60s) retry, does NOT count toward the
+    20-attempt stall limit, and only after a full day of waiting is it flagged
+    (`sync_label_never_arrived`). A channel that is slow must never read as
+    broken.
+  - **THE LABEL PATH IS CONFIGURABLE** (`store.labelPath`, default
+    `Order/GetOrderLabel?id={id}`, `{id}`/`{tracking}` substituted). This is
+    the ONE call in the client never confirmed against a live account — the
+    sandbox cannot reach zortout.com. If the first production call 404s,
+    correct it on the Connections screen; no redeploy, same escape hatch
+    `store.endpoint` already gives the base URL.
+  - A 200 carrying JSON rather than a PDF is treated as absent, not as a fault
+    to retry forever (`%PDF` magic checked).
+  - `POST /api/master/zort/outbox/drain` runs the queue on demand, for when
+    someone is standing there waiting for a label.
+  Verified against a mock store that refuses the label twice then serves a real
+  29-page AWB: the order syncs with its tracking number and NO label, a label
+  job is queued, it retries until the label exists (3 attempts, not one-and-give-up),
+  and the PDF lands as a normal label import split into all 29 pages.
 - Webhook/UpdateWebhook exists in the API — a future push-based
   alternative to polling, not yet used.
 

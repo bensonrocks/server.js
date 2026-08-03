@@ -10606,6 +10606,8 @@
       }
       const actLbl = { none: 'nothing', pack: 'Pack', readytoship: 'Ready to ship', status: 'status code' };
       tbody.innerHTML = stores.map(s => {
+        const labelBadge = s.labelSync
+          ? '<span class="lhi-badge lhi-matched">&#127991; labels</span>' : '';
         const stockBadge = s.stockSync
           ? `<span style="color:#059669;font-weight:600">📦 On</span>` + (s.outboxPending ? `<br><span style="color:#64748b;font-size:.75rem">${s.outboxPending} queued</span>` : '') + (s.outboxStalled ? `<br><span style="color:#dc2626;font-size:.75rem">⚠ ${s.outboxStalled} stalled</span>` : '')
           : `<span style="color:#94a3b8">off</span>`;
@@ -10616,7 +10618,7 @@
           <td><code>${esc(s.apikeyMasked)}</code></td>
           <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
           <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
-          <td>${stockBadge}</td>
+          <td>${stockBadge}${labelBadge}</td>
           <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
@@ -10700,6 +10702,8 @@
     document.getElementById('zfStatusCode').value = store?.completeStatusCode ?? 1;
     document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', (store?.completeAction || 'none') !== 'status');
     document.getElementById('zfStockSync').checked = !!store?.stockSync;
+    document.getElementById('zfLabelSync').checked = !!store?.labelSync;
+    document.getElementById('zfLabelPath').value = store?.labelPath || '';
   }
   document.getElementById('zortAddStoreBtn')?.addEventListener('click', () => openZortForm(null));
   document.getElementById('zortCancelStoreBtn')?.addEventListener('click', () => document.getElementById('zortStoreForm').classList.add('hidden'));
@@ -10752,6 +10756,8 @@
       completeAction: document.getElementById('zfCompleteAction').value,
       completeStatusCode: parseInt(document.getElementById('zfStatusCode').value, 10) || 1,
       stockSync: document.getElementById('zfStockSync').checked,
+      labelSync: document.getElementById('zfLabelSync').checked,
+      labelPath: document.getElementById('zfLabelPath').value.trim(),
       enabled: true,
     };
     try {

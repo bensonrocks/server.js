@@ -15287,6 +15287,7 @@ function zortStorePublic(s, db) {
     id: s.id, clientName: s.clientName, storename: s.storename,
     apikeyMasked: zortMask(s.apikey), apisecretMasked: zortMask(s.apisecret),
     endpoint: s.endpoint || '', enabled: !!s.enabled,
+    labelSync: !!s.labelSync, labelPath: s.labelPath || '',
     channelClients: s.channelClients || {},
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
@@ -15464,6 +15465,21 @@ async function pullZortStore(db, store) {
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'store-sync');
     batchClients.push(`${clientName} (${clientOrders.length})`);
+    // THE LABEL FOLLOWS THE ORDER. Queued rather than fetched inline: the
+    // channel usually generates the label a few minutes after the order
+    // exists, so a fetch here would find nothing on most of them. The outbox
+    // waits and retries, and the bytes then go through the SAME label pipeline
+    // as an office upload. Off by default — a store whose labels are printed
+    // elsewhere should not be polled for them.
+    if (store.labelSync) {
+      for (const o of clientOrders) {
+        if (o.zort_id || o.waybill_number) {
+          enqueueZortLabel(db, store.id, {
+            orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '',
+          });
+        }
+      }
+    }
   }
   store.lastPullAt = new Date().toISOString();
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients };
@@ -15511,6 +15527,18 @@ function enqueueZortStock(db, storeId, clientId, sku) {
   if (ob.some(e => e.kind === 'stock' && e.storeId === storeId && e.sku === sku && !e.stalled)) return false;
   ob.push({
     id: uuidv4(), kind: 'stock', storeId, clientId: invClientId(clientId), sku,
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+// Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so
+// a re-pull cannot queue the same label twice.
+function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking }) {
+  const ob = zortOutbox(db);
+  if (ob.some(e => e.kind === 'label' && e.storeId === storeId && e.orderNumber === orderNumber && !e.stalled)) return false;
+  ob.push({
+    id: uuidv4(), kind: 'label', storeId, orderNumber, zortId, tracking: tracking || '',
     attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
   });
   return true;
@@ -15572,6 +15600,31 @@ function _zortBackoffMs(attempts) {
 
 // Send one outbox entry. Returns true on success (entry should be removed).
 async function _zortSendOutboxEntry(db, store, entry) {
+  // ── THE CARRIER LABEL FOR A SYNCED ORDER ──────────────────────────────────
+  // Fetched here rather than during the pull for two reasons: the label often
+  // does not exist yet at the moment the order does (the channel generates it
+  // minutes later), and the outbox already knows how to wait and retry. Once
+  // the bytes arrive they go through processLabelPdf — the SAME pipeline a
+  // staff upload and a client submission use — so a synced label matches and
+  // attaches exactly like every other label. One implementation, no parallel
+  // path that could drift.
+  if (entry.kind === 'label') {
+    const pdf = await zortApi.getShippingLabel(store, { id: entry.zortId, tracking: entry.tracking });
+    if (!pdf) {
+      // Not generated yet. That is not a failure — it is "come back later", so
+      // it is thrown to get the normal backoff rather than dropped.
+      const e = new Error('Label not available yet');
+      e.notReady = true;
+      throw e;
+    }
+    const name = `${entry.orderNumber || entry.tracking || 'label'}.pdf`;
+    const out = await processLabelPdf(pdf, name, `sync:${store.clientName || store.storename || ''}`);
+    logAudit('sync_label_imported', {
+      order: entry.orderNumber, client: store.clientName || '',
+      importId: out.importId, pages: out.pageCount, matched: out.matched,
+    });
+    return true;
+  }
   if (entry.kind === 'completion') {
     const t = entry.tracking || undefined;
     if (entry.action === 'pack')        await zortApi.packOrder(store, { id: entry.zortId, trackingno: t });
@@ -15603,6 +15656,9 @@ async function _zortSendOutboxEntry(db, store, entry) {
 
 // Drain due outbox entries. Guarded like the auto-pull scheduler; runs in the
 // default-tenant context (bare readDb) to match the rest of the ZORT feature.
+// How often to re-ask for a label that has not been generated yet. Flat, not
+// exponential — the wait is the channel's, not a fault of ours.
+const ZORT_LABEL_RETRY_MS = Math.max(1000, Number(process.env.ZORT_LABEL_RETRY_MS) || 60000);
 let _zortOutboxDraining = false;
 async function drainZortOutbox() {
   if (_zortOutboxDraining) return;
@@ -15622,12 +15678,29 @@ async function drainZortOutbox() {
         await _zortSendOutboxEntry(db, store, entry);
         changed = true; // success → drop entry (not pushed to remaining)
       } catch (err) {
+        // "The label does not exist yet" is NOT a failure — it is the normal
+        // state for the first few minutes after an order syncs. It gets a
+        // short, flat retry and does not count toward the stall limit, so a
+        // channel that takes an hour to generate a label never reads as broken.
+        if (err.notReady) {
+          entry.waits = (entry.waits || 0) + 1;
+          entry.lastError = 'Waiting for the channel to generate the label';
+          entry.nextAttemptAt = new Date(now + ZORT_LABEL_RETRY_MS).toISOString();
+          // A day of waiting is long enough to say something is wrong.
+          if (entry.waits * ZORT_LABEL_RETRY_MS > 24 * 3600 * 1000 && !entry.stalled) {
+            entry.stalled = true;
+            logAudit('sync_label_never_arrived', { storeId: store.id, order: entry.orderNumber, waits: entry.waits });
+          }
+          changed = true; remaining.push(entry); continue;
+        }
         entry.attempts = (entry.attempts || 0) + 1;
         entry.lastError = String(err.message).slice(0, 200);
         entry.nextAttemptAt = new Date(now + _zortBackoffMs(entry.attempts)).toISOString();
         if (entry.attempts >= 20 && !entry.stalled) {
           entry.stalled = true;
-          logAudit(entry.kind === 'stock' ? 'zort_stock_push_failed' : 'zort_completion_push_failed',
+          logAudit(entry.kind === 'stock' ? 'zort_stock_push_failed'
+                 : entry.kind === 'label' ? 'sync_label_fetch_failed'
+                 : 'zort_completion_push_failed',
             { storeId: store.id, client: store.clientName || '', sku: entry.sku, order: entry.orderNumber, attempts: entry.attempts, error: entry.lastError });
         }
         changed = true;
@@ -15665,6 +15738,11 @@ app.post('/api/master/zort/stores', (req, res) => {
   if (b.apikey)    store.apikey    = String(b.apikey).trim();
   if (b.apisecret) store.apisecret = String(b.apisecret).trim();
   if (b.endpoint !== undefined) store.endpoint = String(b.endpoint || '').trim();
+  // Pull the carrier label for each synced order and run it through the normal
+  // label matching. `labelPath` overrides the endpoint if the default 404s —
+  // correctable from this screen without a redeploy.
+  if (b.labelSync !== undefined) store.labelSync = !!b.labelSync;
+  if (b.labelPath !== undefined) store.labelPath = String(b.labelPath || '').trim();
   store.enabled = b.enabled !== undefined ? !!b.enabled : (store.enabled ?? true);
   // Sales-channel → client mapping: orders from the channel named e.g.
   // "Lazada - ClientX" tag as ClientX. Plain short strings both sides.
@@ -15759,6 +15837,15 @@ app.post('/api/master/zort/stores/:id/push-stock', (req, res) => {
 });
 
 // Outbox status — pending & stalled entries (for the Connections status panel).
+// Drain the queue NOW rather than waiting for the next tick — for when someone
+// is standing there watching a label that should have arrived.
+app.post('/api/master/zort/outbox/drain', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  await drainZortOutbox();
+  const ob = zortOutbox(readDb());
+  res.json({ ok: true, pending: ob.filter(e => !e.stalled).length, stalled: ob.filter(e => e.stalled).length });
+});
+
 app.get('/api/master/zort/outbox', (req, res) => {
   if (!checkMaster(req, res)) return;
   const ob = zortOutbox(readDb());
