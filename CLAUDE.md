@@ -3566,6 +3566,18 @@ destructive actions.
 - **`warehouse_locations`** — the racking belongs to the warehouse, not the
   client; deleting it would take every other client's bins with it.
 
+**THE DAY'S NUMBERING FOLLOWS WHAT SURVIVES** (`resyncCodeSequences`). Clearing
+a client's test data used to leave the counters where they were, so the next
+upload came out `CS-260803-04` with nothing on screen at all. **Recomputed,
+never zeroed**: these counters are per-day and GLOBAL across clients (IS- and
+CS- deliberately share `db.jobCodeSeq`, which is why `IS-260803-03` and
+`CS-260803-01` sit side by side), so blindly resetting after wiping ONE client
+would re-mint a code another client is already using today. Each counter is set
+to the highest number still in use for that day — 0 when nothing is left, which
+is the "start again at 01" the floor expects. Covers `jobCodeSeq` (IS-/CS-),
+`inboundCodeSeq` (IB-), `waveCodeSeq` (WV-) and `stagingCodeSeq` (ST-), and the
+result is returned and audit-logged as `sequences`.
+
 `item_master` implies `stock` (stock for a SKU that no longer exists is
 orphaned data nothing can reconcile) and the UI ticks and LOCKS the stock box
 to say so. Clearing `stock` alone keeps the catalogue and zeroes the
@@ -3576,7 +3588,10 @@ every other deletion path.
 Verified 15 API checks (warehouse refused, a mistyped confirmation changes
 nothing, inbound-only leaves orders and the catalogue intact, stock-only keeps
 the SKUs at zero, no other client touched, the audit trail GREW, the portal
-logins survive) plus 13 browser checks.
+logins survive) plus 13 browser checks — and 15 more on the counter resync:
+clearing one client leaves the counter at 4 because ANOTHER client still holds
+`IS-<day>-04`, clearing that one too takes it to 0, and the very next upload
+is `IS-<day>-01`.
 
 GOTCHA worth keeping: the first version of the client call set
 `'content-type'` explicitly AND spread `hdrs()`, which sets `'Content-Type'`.

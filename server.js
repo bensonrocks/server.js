@@ -3313,6 +3313,50 @@ app.get('/api/master/client-data/summary', (req, res) => {
   res.json(clientWipeSummary(readDb(), client));
 });
 
+// ── Put the daily job-code counters back in step with what SURVIVES ─────────
+// After clearing a client's test data, the day's numbering should reflect what
+// is actually left — otherwise today's next upload is CS-260803-04 when the
+// screen shows nothing at all.
+//
+// RECOMPUTED, NEVER ZEROED. These counters are per-DAY and GLOBAL across every
+// client (IS- and CS- deliberately share one, which is why IS-260803-03 and
+// CS-260803-01 sit side by side). Blindly resetting after wiping ONE client
+// would re-mint a code another client is already using today. So each counter
+// is set to the highest number still in use for that day — 0 when nothing is
+// left, which is exactly the "start again at 01" the floor expects.
+function resyncCodeSequences(db) {
+  const day = sgDateStr().slice(2).replace(/-/g, '');
+  const highest = (codes, prefix) => {
+    let top = 0;
+    const pat = new RegExp('^' + prefix + '-' + day + '-(\\d+)$');
+    for (const c of codes) {
+      const m = pat.exec(String(c || '').trim());
+      if (m) top = Math.max(top, Number(m[1]) || 0);
+    }
+    return top;
+  };
+  const set = (key, top) => {
+    db[key] = db[key] || {};
+    for (const k of Object.keys(db[key])) if (k !== day) delete db[key][k];   // yesterday's counters are dead
+    if (top > 0) db[key][day] = top; else delete db[key][day];
+  };
+  // IS- (uploads) and CS- (client submissions) share db.jobCodeSeq.
+  set('jobCodeSeq', Math.max(
+    highest((db.batches || []).map(b => b.idealscan_code), 'IS'),
+    highest((db.clientSubmissions || []).map(x => x.code), 'CS'),
+  ));
+  set('inboundCodeSeq', highest((db.inbound || []).map(r => r.serial), 'IB'));
+  set('waveCodeSeq',    highest((db.waves || []).map(w => w.code), 'WV'));
+  set('stagingCodeSeq', highest(
+    (db.inbound || []).flatMap(r => (r.staging || []).map(x => x.code)), 'ST'));
+  return {
+    jobCodeSeq:     (db.jobCodeSeq     || {})[day] || 0,
+    inboundCodeSeq: (db.inboundCodeSeq || {})[day] || 0,
+    waveCodeSeq:    (db.waveCodeSeq    || {})[day] || 0,
+    stagingCodeSeq: (db.stagingCodeSeq || {})[day] || 0,
+  };
+}
+
 app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
   const { client, scopes, confirm } = req.body || {};
@@ -3405,11 +3449,14 @@ app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
   try { closeSettledBackorders(db); } catch (_) {}
   try { releaseOrphanReservations(db); } catch (_) {}
   try { pruneOrphanTransportJobs(db); } catch (_) {}
+  // Today's numbering follows what is left, so a cleared client's next upload
+  // starts at 01 instead of carrying on from the test data that just went.
+  const sequences = resyncCodeSequences(db);
   writeDb(db);
   logAudit('client_data_wiped', {
-    client: name, scopes: want, removed, by: req.userId || 'master',
+    client: name, scopes: want, removed, sequences, by: req.userId || 'master',
   });
-  res.json({ ok: true, client: name, scopes: want, removed,
+  res.json({ ok: true, client: name, scopes: want, removed, sequences,
     note: 'The audit trail, this client\u2019s profile and their portal logins were not touched.' });
 });
 
