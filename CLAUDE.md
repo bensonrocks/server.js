@@ -3210,6 +3210,58 @@ outlives what it describes. And a file input whose `value` is never cleared
 fires NO change event when the same file is picked again, so a second upload of
 the same sheet silently never armed the button.
 
+## A client with NO item master is not a client who has run out
+
+Reported from the floor as *"orders unable to upload"*: a 93-order BETIME GI
+Analysis file was refused outright with **"Every order in this file is short on
+stock — there is nothing left to upload."** Reproduced with the client's own
+file: **not one line was actually short.** BETIME has zero rows in their item
+master — their stock lives in their own WMS and we pick, pack and scan for them
+— so all 94 SKUs came back `unknown`, `checkIntakeStock` put all 93 orders in
+`shortOrders`, and the drop path then had nothing left. A regression introduced
+with intake reservations: before that feature the file uploaded fine.
+
+- **`clientHasItemMaster(clientId)`** gates all FOUR intake paths (upload, photo
+  scan, approved client submission, store sync). No catalogue → `noItemMaster`,
+  the gate is skipped, the batch is **untracked**, and — critically — the
+  "create every missing SKU at zero" block is skipped too. Inventing 94 SKUs
+  from a picking list would fabricate a stock position nobody gave us and then
+  deduct against it at completion. Audit-logged `upload_untracked_no_item_master`.
+- **UNKNOWN SKU ≠ SHORT ON STOCK.** They are different problems and must never
+  share wording — one is a shortage to wait out, the other is a product nobody
+  registered. The 409 now carries `onlyUnknown` and says so in plain words;
+  the client heading switches between "SKUs NOT IN THE ITEM MASTER" and "NOT
+  ENOUGH STOCK".
+- **THREE WAYS OUT, NOT TWO.** The prompt only offered drop-or-abort, and
+  dropping every order is a dead end (the 409 above). It now offers drop /
+  upload anyway / abort, and when `okCount === 0` it offers only
+  proceed-or-abort — never an action that cannot work. `stock_action=proceed`
+  already existed server-side; nothing in the UI reached it.
+
+Verified 16 checks against the client's real file: it uploads (200, was 409),
+all 93 orders land, **no phantom SKUs are created**, a client we DO hold stock
+for still reserves exactly as before, a genuinely short order is still stopped
+and still called a shortage, an unregistered SKU is flagged separately with
+correct wording, and uploading anyway works.
+
+### Label OCR: the budget has to fit the file
+
+Same report, second screenshot: **86 unmatched** on a Shopee label PDF. Same
+cause as a 29-page Lazada AWB the user sent: these files have **no text layer at
+all**, so every page needs OCR at ~2.5s, and `OCR_PREVIEW_MS_BUDGET` was a flat
+**45s** — both stopped ~18 pages in and reported the rest "unmatched" when those
+pages had simply never been read.
+
+- The allowance now scales: `OCR_PREVIEW_MS_PER_PAGE` (4s) × pages needing OCR,
+  floored at 45s and ceilinged at 10 minutes, with `OCR_PREVIEW_PAGE_CAP` raised
+  to 300. Measured on the real 29-page AWB: **29/29 pages read in 47s**, every
+  tracking number correct (was ~18).
+- **`ocrSkipped` was being dropped** by `processLabelPdf` and by the route, so
+  the office screen had no way to distinguish "not read yet" from "failed". It
+  is returned now and rendered as a blue **"⏳ N still being read…"** badge
+  instead of counting toward the amber unmatched figure — a half-finished import
+  no longer reads as a broken one.
+
 ## Portal orders — the waybill you can open, and no pill that says nothing
 
 - **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing

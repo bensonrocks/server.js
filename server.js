@@ -5334,10 +5334,12 @@ async function processLabelPdf(buffer, filename, uploadedBy) {
   let pageTexts  = [];
   let parseError = false;
   let ocrPages   = 0;
+  let ocrSkipped = 0;
   try {
     const read = await pageTextsWithOcr(buffer);
     pageTexts = read.pages.map(p => p.text);
     ocrPages  = read.ocrPages;
+    ocrSkipped = read.ocrSkipped;
   }
   catch (e) { parseError = true; console.error('[label-import] text extraction:', e.message); }
 
@@ -5403,7 +5405,10 @@ async function processLabelPdf(buffer, filename, uploadedBy) {
     setImmediate(() => rematchLabelImport(importId, false)
       .catch(e => console.error('[label-ocr-bg]', e.message)));
   }
-  return { importId, pageCount: numPages, matched, ocrPages, import: importRecord };
+  // ocrSkipped was being dropped here, so the office screen showed
+  // "11 unmatched" with no way to say those pages had not been READ yet — the
+  // background pass below then quietly fixed them. Report it.
+  return { importId, pageCount: numPages, matched, ocrPages, ocrSkipped, import: importRecord };
 }
 
 app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf'), tenantMiddleware, async (req, res) => {
@@ -5446,9 +5451,11 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
       }
     }
 
-    const { importId, pageCount, matched, import: importRecord } =
+    const { importId, pageCount, matched, ocrPages, ocrSkipped, import: importRecord } =
       await processLabelPdf(req.file.buffer, req.file.originalname, req.userId);
-    res.json({ ok: true, importId, pageCount, matched, import: importRecord });
+    // Pass the OCR counts through — the screen needs `ocrSkipped` to say
+    // "still being read" instead of showing unread pages as failures.
+    res.json({ ok: true, importId, pageCount, matched, ocrPages, ocrSkipped, import: importRecord });
     // (the background OCR pass for image-only pages is kicked off inside
     // processLabelPdf, so every caller gets it)
   } catch (err) {
@@ -6937,7 +6944,10 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     // whole life while looking identical on screen to ones that did.
     {
       const pcid = invClientId(batch.client_name);
-      if (inventory.available() && pcid) {
+      // Same rule as the upload gate: a client we hold no item master for is
+      // not an inventory client, and inventing one from their picking list
+      // would fabricate a stock position nobody gave us.
+      if (inventory.available() && pcid && clientHasItemMaster(pcid)) {
         for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
           if (!inventory.get(sku, pcid)) { try { inventory.upsert({ sku, name: sku, clientId: pcid }); } catch (_) {} }
         }
@@ -7332,7 +7342,16 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     let droppedOrders = [];
     if (inventory.available()) {
       const stock = checkIntakeStock(invCid, orders);
-      if (stock.shortOrders.length) {
+      // NO ITEM MASTER = NOT AN INVENTORY CLIENT. Their stock is held in their
+      // own WMS; we pick, pack and scan. Creating 94 SKUs at zero and calling
+      // the batch "tracked" would invent a stock position we were never given
+      // and then deduct against it at completion. Upload untracked instead,
+      // exactly as this worked before intake reservations existed.
+      if (stock.noItemMaster) {
+        logAudit('upload_untracked_no_item_master', {
+          clientId: invCid, orders: orders.length, ...clientInfo(req),
+        });
+      } else if (stock.shortOrders.length) {
         const action = String(req.body?.stock_action || '').toLowerCase();
         if (action === 'drop') {
           const dropSet = new Set(stock.shortOrders.map(x => x.order_number));
@@ -7340,7 +7359,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
           orders = orders.filter(o => !dropSet.has(o.order_number));
           if (!orders.length) {
             return res.status(409).json({
-              error: 'Every order in this file is short on stock — there is nothing left to upload.',
+              error: 'Dropping the flagged orders would leave nothing to upload — every order in this file was flagged.',
               shortOrders: stock.shortOrders.slice(0, 100),
             });
           }
@@ -7356,28 +7375,44 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
             shortOrders: stock.shortOrders.length, clientId: invCid, ...clientInfo(req),
           });
         } else {
+          // NOT ENOUGH STOCK and NOT IN THE CATALOGUE are different problems
+          // and must not be reported in the same words — one is a shortage to
+          // wait out, the other is a SKU nobody has told us about. Saying
+          // "short on stock" for an unlisted SKU sends someone looking for
+          // stock that was never missing.
+          const onlyUnknown = stock.shortOrders.every(o => !(o.lines || []).length);
+          const nShort = stock.shortOrders.filter(o => (o.lines || []).length).length;
           return res.status(409).json({
             needsStockDecision: true,
+            onlyUnknown,
             unknownSkus: stock.unknownSkus.slice(0, 50),
+            unknownSkuCount: stock.unknownSkus.length,
             shortOrders: stock.shortOrders.slice(0, 100),
             okCount: stock.okOrders.length,
             shortCount: stock.shortOrders.length,
-            message: `${stock.shortOrders.length} of ${orders.length} order(s) cannot be covered by this client's stock`
-              + `${stock.unknownSkus.length ? ` (${stock.unknownSkus.length} SKU(s) are not in their item master)` : ''}.`
-              + ` Drop those orders and upload the remaining ${stock.okOrders.length}, or abort the whole upload?`,
+            message: onlyUnknown
+              ? `${stock.unknownSkus.length} SKU(s) in this file are not in ${clientName || 'this client'}'s item master, `
+                + `so ${stock.shortOrders.length} of ${orders.length} order(s) cannot be checked against stock. `
+                + `Nothing is short — these products have simply never been registered.`
+              : `${stock.shortOrders.length} of ${orders.length} order(s) cannot be covered by this client's stock`
+                + `${stock.unknownSkus.length ? ` (${nShort} genuinely short, ${stock.unknownSkus.length} SKU(s) not in their item master)` : ''}.`,
           });
         }
       }
       // Any SKU still unknown after that decision has to be created before it
       // can be reserved against — otherwise the order would silently go
-      // untracked, which is the gap this whole change closes.
-      const uniqueSkus = [...new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))];
-      const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku, invCid));
-      for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku, clientId: invCid }); } catch (_) {} }
-      if (missingSkus.length) {
-        logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
+      // untracked, which is the gap this whole change closes. Only ever for a
+      // client we DO hold a catalogue for: filling an empty one from an order
+      // file would fabricate an item master out of a picking list.
+      if (!stock.noItemMaster) {
+        const uniqueSkus = [...new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))];
+        const missingSkus = uniqueSkus.filter(sku => !inventory.get(sku, invCid));
+        for (const sku of missingSkus) { try { inventory.upsert({ sku, name: sku, clientId: invCid }); } catch (_) {} }
+        if (missingSkus.length) {
+          logAudit('upload_inventory_skus_created', { count: missingSkus.length, skus: missingSkus.slice(0, 20), clientId: invCid, ...clientInfo(req) });
+        }
+        inventoryTracked = true;
       }
-      inventoryTracked = true;
     }
 
     const wmsBuffer  = generateKeyfieldsXLSX(orders, loadCustomHeaders());
@@ -8574,8 +8609,17 @@ app.post('/api/portal/preview-orders', upload.single('file'), (req, res) => {
 // tracking number comes out exactly right — which is what matters, because the
 // tracking number is printed large and repeated all over the label while the
 // order number is small and OCRs with the odd digit wrong.
-const OCR_PREVIEW_PAGE_CAP = 80;      // a runaway file must not hang the request
-const OCR_PREVIEW_MS_BUDGET = 45000;  // …and neither must a slow one
+// A FLAT BUDGET IS THE WRONG SHAPE. Scanned carrier AWBs have no text layer at
+// all, so EVERY page needs OCR at ~2.5s each — a 29-page Lazada file needs 75s
+// and an 86-page Shopee file needs ~215s. At a flat 45s both stopped ~18 pages
+// in and the rest were reported "unmatched", which reads as failure when the
+// pages were simply never read. Scale with the file instead, so an ordinary
+// day's labels finish in the first pass, and keep a hard ceiling so one absurd
+// file still cannot hold a request open indefinitely.
+const OCR_PREVIEW_PAGE_CAP  = 300;     // a runaway file must not hang the request
+const OCR_PREVIEW_MS_PER_PAGE = 4000;  // generous vs the ~2.5s measured on real AWBs
+const OCR_PREVIEW_MS_FLOOR  = 45000;   // small files keep the old allowance
+const OCR_PREVIEW_MS_CEILING = 600000; // …and nothing runs longer than 10 minutes
 async function pageTextsWithOcr(buffer) {
   const texts = await extractPdfPageTexts(buffer);
   const out = texts.map(t => ({ text: t || '', via: String(t || '').trim() ? 'text' : 'none' }));
@@ -8583,10 +8627,14 @@ async function pageTextsWithOcr(buffer) {
   if (!blank.length || !Tesseract) return { pages: out, ocrPages: 0, ocrSkipped: blank.length };
 
   const started = Date.now();
+  // The allowance is for THIS file: enough time to read every page that needs
+  // reading, bounded at both ends.
+  const budget = Math.min(OCR_PREVIEW_MS_CEILING,
+    Math.max(OCR_PREVIEW_MS_FLOOR, blank.length * OCR_PREVIEW_MS_PER_PAGE));
   let worker = null, ocrPages = 0, skipped = 0, doc = null;
   try {
     for (const i of blank) {
-      if (ocrPages >= OCR_PREVIEW_PAGE_CAP || Date.now() - started > OCR_PREVIEW_MS_BUDGET) { skipped++; continue; }
+      if (ocrPages >= OCR_PREVIEW_PAGE_CAP || Date.now() - started > budget) { skipped++; continue; }
       let png = await renderPdfPageToPng(buffer, i, 3);
       if (!png) {
         // No rasteriser on this host — fall back to the largest embedded image,
@@ -9155,7 +9203,7 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     // Without this it looked identical on the Orders tab but moved nothing.
     {
       const scid = invClientId(batch.client_name);
-      if (inventory.available() && scid) {
+      if (inventory.available() && scid && clientHasItemMaster(scid)) {
         for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
           if (!inventory.get(sku, scid)) { try { inventory.upsert({ sku, name: sku, clientId: scid }); } catch (_) {} }
         }
@@ -15171,7 +15219,7 @@ async function pullZortStore(db, store) {
     // the client has not registered is created at zero rather than skipped —
     // otherwise the sale would silently move no stock at all.
     let tracked = false;
-    if (inventory.available()) {
+    if (inventory.available() && clientHasItemMaster(cid)) {
       for (const sku of new Set(clientOrders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
         if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
       }
@@ -16893,9 +16941,30 @@ function canonicalClientName(db, name) {
 //
 // checkIntakeStock() reserves NOTHING — it only reports what would happen, so
 // the answer shown before approving is the answer the reservation will give.
+// Does this client have an item master at all? A client we hold NO stock
+// position for is not a client who has run out — see the note in
+// checkIntakeStock. Cheap enough to call per upload; getAll is a single query.
+function clientHasItemMaster(clientId) {
+  if (!inventory.available() || !clientId) return false;
+  try { return (inventory.getAll({ clientId }) || []).length > 0; }
+  catch (e) { console.warn('[intake] item-master check failed:', e.message); return false; }
+}
+
 function checkIntakeStock(clientId, orders) {
-  const problems = { unknownSkus: [], shortOrders: [], okOrders: [], byOrder: {} };
+  const problems = { unknownSkus: [], shortOrders: [], okOrders: [], byOrder: {}, noItemMaster: false };
   if (!inventory.available() || !clientId) {
+    problems.okOrders = (orders || []).map(o => o.order_number);
+    return problems;
+  }
+  // NOT EVERY CLIENT'S STOCK LIVES HERE. Some are pick/pack/scan only — their
+  // inventory is held in their own WMS and we were never given an item master.
+  // For them "the SKU is not in the item master" is not a shortage, it is the
+  // arrangement, and blocking the upload stops real work over a stock position
+  // we were never asked to keep. Found the hard way: a 93-order file was
+  // refused outright with "every order is short on stock" when not one line
+  // was actually short — the client simply had no catalogue loaded.
+  if (!clientHasItemMaster(clientId)) {
+    problems.noItemMaster = true;
     problems.okOrders = (orders || []).map(o => o.order_number);
     return problems;
   }

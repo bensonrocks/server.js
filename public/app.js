@@ -951,6 +951,10 @@
         filename:  file.name,
         matched:   data.matched,
         unmatched: data.pageCount - data.matched,
+        // Pages we ran out of time to READ are not failures — a background
+        // pass is still working through them. Showing them as plain
+        // "unmatched" made a half-finished import look like a broken one.
+        stillReading: data.ocrSkipped || 0,
       });
     } catch (err) {
       statusEl.className = 'status-bar error';
@@ -966,7 +970,8 @@
     document.getElementById('labelImportUploadName').textContent = cur.filename;
     el.innerHTML = `
       ${cur.matched   ? `<span class="lhi-badge lhi-matched">${cur.matched} matched</span>` : ''}
-      ${cur.unmatched ? `<span class="lhi-badge lhi-unmatched">${cur.unmatched} unmatched</span>` : ''}
+      ${cur.stillReading ? `<span class="lhi-badge lhi-reading" title="These pages are scanned images with no text layer. They are being read in the background — check back, or press Auto Match to finish now.">&#8987; ${cur.stillReading} still being read…</span>` : ''}
+      ${cur.unmatched - (cur.stillReading || 0) > 0 ? `<span class="lhi-badge lhi-unmatched">${cur.unmatched - cur.stillReading} unmatched</span>` : ''}
       ${cur.unmatched ? `<button class="btn-primary btn-sm" id="labelCurAutoMatch">&#9889; Auto Match</button>` : ''}
       ${cur.unmatched ? `<button class="btn-ghost btn-sm" id="labelCurReview">Review ›</button>` : `<span class="lhi-badge lhi-matched">&#10003; all pages matched</span>`}`;
     el.classList.remove('hidden');
@@ -1403,16 +1408,37 @@
           return `\u2022 ${o.order_number} — ${detail}`;
         }).join('\n');
         const more = (data.shortCount || 0) > 12 ? `\n…and ${data.shortCount - 12} more` : '';
-        const drop = confirm(
-          `\u26a0 NOT ENOUGH STOCK\n\n${data.message}\n\n${rows}${more}` +
-          `\n\nOK = drop those ${data.shortCount} order(s) and upload the other ${data.okCount}` +
-          `\nCancel = abort — upload nothing`);
-        if (!drop) {
+        // THREE WAYS OUT, not two. Dropping every order leaves nothing to
+        // upload, which is a dead end — and when the problem is a SKU nobody
+        // registered rather than a real shortage, uploading anyway is usually
+        // the right answer. The heading says which problem this actually is.
+        const head = data.onlyUnknown ? '\u26a0 SKUs NOT IN THE ITEM MASTER' : '\u26a0 NOT ENOUGH STOCK';
+        const abort = () => {
           document.getElementById('uploadConfirmOverlay').classList.add('hidden');
           setUploadStatus('error', 'Upload aborted — nothing was uploaded and no stock was reserved.');
-          return;
+        };
+        if (!data.okCount) {
+          // Dropping would leave nothing, so proceed-or-abort is the only real
+          // choice. Never offer an action that cannot work.
+          const go = confirm(`${head}\n\n${data.message}\n\n${rows}${more}`
+            + `\n\nOK = upload all ${data.shortCount} anyway (any genuine shortfall becomes a backorder)`
+            + `\nCancel = abort — upload nothing`);
+          if (!go) { abort(); return; }
+          form.append('stock_action', 'proceed');
+        } else {
+          const drop = confirm(`${head}\n\n${data.message}\n\n${rows}${more}`
+            + `\n\nOK = drop those ${data.shortCount} order(s) and upload the other ${data.okCount}`
+            + `\nCancel = see the other options`);
+          if (drop) {
+            form.append('stock_action', 'drop');
+          } else {
+            const anyway = confirm(`Upload ALL ${data.okCount + data.shortCount} order(s) instead?\n\n`
+              + `Any genuine shortfall becomes a backorder, so it stays visible rather than being lost.\n\n`
+              + `OK = upload everything\nCancel = abort — upload nothing`);
+            if (!anyway) { abort(); return; }
+            form.append('stock_action', 'proceed');
+          }
         }
-        form.append('stock_action', 'drop');
         resp = await sendUpload();
         data = await resp.json();
       }

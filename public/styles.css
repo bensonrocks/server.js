@@ -2324,6 +2324,9 @@ body.ls-open { overflow: hidden; }
 .lhi-badge { font-size: .72rem; font-weight: 600; border-radius: 99px; padding: .2em .65em; white-space: nowrap; }
 .lhi-matched   { background: var(--success-bg);  color: var(--success);  border: 1px solid var(--success-border); }
 .lhi-unmatched { background: var(--warning-bg);  color: var(--warning);  border: 1px solid var(--warning-border); }
+/* Blue, not amber: a page still being read is work in progress, not a problem.
+   Amber here made a half-finished import look like a failed one. */
+.lhi-reading   { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
 .lhi-duplicate { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
 .lhi-error     { background: var(--danger-bg);   color: var(--danger);   border: 1px solid var(--danger-border); }
 .lhi-review-btn { flex-shrink: 0; }
