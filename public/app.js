@@ -8523,7 +8523,13 @@
       }
       if (item.awaiting_putaway_qty > 0) lotParts.push(`<span class="lot-badge lot-await" title="Received but not yet put away — waiting for putaway before this can be picked from a bin" style="background:#fef9c3;color:#854d0e">&#9203; ${item.awaiting_putaway_qty} awaiting putaway</span>`);
       if (item.pick_shortfall > 0) lotParts.push(`<span class="lot-badge lot-short" title="No stock anywhere — walk-up pick / backorder" style="background:#fee2e2;color:#991b1b">&#9888; ${item.pick_shortfall} walk-up</span>`);
-      if (item.batch_number)  lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(item.batch_number)}</span>`);
+      // A Lot badge that just repeats the expiry is noise on a phone-width row —
+      // and it was how a date-formatted BatchNo cell showed up twice, once
+      // mangled. Show the lot only when it says something the expiry does not.
+      const _lot = String(item.batch_number || '').trim();
+      if (_lot && _lot !== String(item.expiry_date || '').trim()) {
+        lotParts.push(`<span class="lot-badge lot-batch">Lot&nbsp;${esc(_lot)}</span>`);
+      }
       if (item.serial_number) lotParts.push(`<span class="lot-badge lot-serial">S/N&nbsp;${esc(item.serial_number)}</span>`);
       if (item.expiry_date)   lotParts.push(`<span class="lot-badge lot-expiry">Exp&nbsp;${esc(item.expiry_date)}</span>`);
       const lotBadges = lotParts.length ? `<div class="lot-inline">${lotParts.join('')}</div>` : '';

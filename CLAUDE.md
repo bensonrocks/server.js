@@ -3210,6 +3210,34 @@ outlives what it describes. And a file input whose `value` is never cleared
 fires NO change event when the same file is picked again, so a second upload of
 the same sheet silently never armed the button.
 
+## A text field must never render a raw JavaScript Date (`textVal`)
+
+From a photo of the scan screen: a BETIME line showed
+**`Lot Sat Oct 28 2028 00:00:00 GMT+0000 (Coordinated Universal Time)`** where a
+lot code belongs, with the correct `Exp 2028-10-28` right beneath it.
+
+XLSX parses a date-formatted cell into a **Date object**, and `mapRow` wrapped
+every text field in a bare `String()` — so `String(someDate)` put the full JS
+date string in front of a packer. The GI Analysis export's `BatchNo/LotNo`
+column is date-formatted on some lines, which is how it surfaced; but the
+exposure was in all 17 text fields, not just that one.
+
+`textVal(v)` replaces `String(v)` throughout `mapRow`: a Date becomes a plain
+`YYYY-MM-DD`, everything else is trimmed as before. Note `expirydate_lot1` was
+NEVER in the batch chain — the column name containing "Lot" was a red herring;
+the date really was in the batch column.
+
+The screen also stopped repeating itself: a **Lot badge is suppressed when it
+only echoes the expiry**, which is both noise on a phone-width row and how one
+value came to be shown twice, once mangled.
+
+Verified 9 checks on the exact failing shape (a Date in BatchNo/LotNo becomes
+`2028-10-28`, the expiry still reads right, a normal lot code like `W0492A` is
+untouched, and no field on the row leaks a `GMT+0000` string) plus 11
+regression checks on the client's real 283-line export and a plain
+SKU/Quantity file — same 283 lines, same 93 orders, every expiry a calendar
+day, every lot intact.
+
 ## A pick list must never ask a bin for more than it holds (`newPickClaim`)
 
 Reported from the floor: SKU `FS1605XXXXBKML` sat 24 in `AA-013-003-A` and 6 in
