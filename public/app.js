@@ -144,9 +144,13 @@
   function hdrs() {
     return { 'x-session-id': SESSION_ID, 'Content-Type': 'application/json' };
   }
-  async function authDownload(url, filename) {
+  // `extraHeaders` matters for the master-key routes: this does a bare fetch,
+  // and a route behind checkMaster rejects it without the header. The backup
+  // files were undownloadable for exactly that reason — the button fetched,
+  // got a 401 back, and showed "Download failed".
+  async function authDownload(url, filename, extraHeaders) {
     try {
-      const resp = await fetch(url);
+      const resp = await fetch(url, extraHeaders ? { headers: extraHeaders } : undefined);
       if (!resp.ok) { alert('Download failed: ' + (await resp.text())); return; }
       const blob = await resp.blob();
       const a    = document.createElement('a');
@@ -13069,7 +13073,8 @@
       </table></div>
       <p class="hint" style="margin-top:.4rem">Stored on the server at <code>${esc(d.dir)}</code>. Downloading saves a copy to your own computer.</p>`;
     el.querySelectorAll('.bk-dl').forEach(b => b.addEventListener('click', () =>
-      authDownload(`/api/master/backups/${encodeURIComponent(b.dataset.f)}`, b.dataset.f)));
+      authDownload(`/api/master/backups/${encodeURIComponent(b.dataset.f)}`, b.dataset.f,
+                   { 'x-master-key': LOG_PASSWORD })));
     el.querySelectorAll('.bk-rs').forEach(b => b.addEventListener('click', async () => {
       const replace = confirm(
         `Restore warehouse locations and inventory from ${b.dataset.f}?\n\n` +
