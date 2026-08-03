@@ -3566,6 +3566,21 @@ destructive actions.
 - **`warehouse_locations`** — the racking belongs to the warehouse, not the
   client; deleting it would take every other client's bins with it.
 
+**PER-UPLOAD, NOT ALL-OR-NOTHING.** "37 order(s) in 3 upload(s)" is not enough
+to decide with when some of those uploads are real work. `clientWipeSummary`
+returns an `uploads[]` breakdown — when it landed, its job code and file, how
+many orders and lines, and how many are **done / started / untouched** — and the
+Outbound-orders box expands into it. Ticking specific rows sends `batchIds` and
+the wipe clears only those; leaving them all unticked clears the client's whole
+history exactly as before. An upload holding COMPLETED work shows its count in
+red and the confirm dialog names it, because clearing that is destroying a
+finished pick rather than tidying a test.
+
+**A SUBMISSION STORES ITS CLIENT AS `client_name`.** The summary and the wipe
+both filtered on `x.client`, which no submission has — so the box read
+**0 submission(s)** with four sitting in the client's portal, and ticking it
+removed none of them. Found from a screenshot of exactly that.
+
 **THE DAY'S NUMBERING FOLLOWS WHAT SURVIVES** (`resyncCodeSequences`). Clearing
 a client's test data used to leave the counters where they were, so the next
 upload came out `CS-260803-04` with nothing on screen at all. **Recomputed,

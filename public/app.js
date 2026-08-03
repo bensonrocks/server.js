@@ -10753,6 +10753,10 @@
   // what goes and what stays, not to nuke a client.
   const wipeUI = (() => {
     let picked = new Set(), summary = null;
+    // Which specific uploads to clear. EMPTY MEANS ALL of them — the same
+    // all-or-nothing behaviour as before, so ticking "Outbound orders" and
+    // touching nothing else still does what it always did.
+    let pickedBatches = new Set();
     const $$ = id => document.getElementById(id);
 
     async function loadSummary() {
@@ -10764,6 +10768,7 @@
         if (!r.ok) { alert('Could not read that client.'); return; }
         summary = await r.json();
         picked = new Set();
+        pickedBatches = new Set();
         renderScopes();
         $$('wipeBody').classList.remove('hidden');
         $$('wipeResult').classList.add('hidden');
@@ -10795,8 +10800,10 @@
             <b>${esc(label.split('(')[0].trim())}</b>
             <span class="hint">${esc(label.includes('(') ? '(' + label.split('(').slice(1).join('(') : '')}</span>
             <span class="wipe-count">${esc(COUNT_OF[k] ? COUNT_OF[k](c) : '')}</span>
+            ${k === 'orders' ? uploadListHtml() : ''}
           </span>
         </label>`).join('');
+      wireUploadPicks();
       $$('wipeScopes').querySelectorAll('.wipe-pick').forEach(cb => cb.addEventListener('change', () => {
         cb.checked ? picked.add(cb.dataset.scope) : picked.delete(cb.dataset.scope);
         // Deleting the catalogue necessarily takes its stock with it — say so
@@ -10813,20 +10820,77 @@
       }));
     }
 
+    // One row per upload: when it landed, which file, how many orders, and
+    // whether any of them are already DONE — clearing finished work is
+    // destroying a completed pick, not tidying up a test, so it is said in red.
+    function uploadListHtml() {
+      const ups = summary.uploads || [];
+      if (!ups.length) return '';
+      const fmt = t => { const d = new Date(t); return isNaN(d) ? '' :
+        d.toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); };
+      return `<div class="wipe-uploads" onclick="event.stopPropagation()">
+        <div class="wu-head">
+          <label class="wu-all"><input type="checkbox" id="wuAll"> Choose which uploads</label>
+          <span class="hint">leave all unticked to clear every one</span>
+        </div>
+        ${ups.map(u => `
+          <label class="wu-row">
+            <input type="checkbox" class="wu-pick" data-batch="${esc(u.batchId)}">
+            <span class="wu-when">${esc(fmt(u.uploaded_at))}</span>
+            <span class="wu-file" title="${esc(u.filename)}">${esc(u.code || u.filename || '—')}</span>
+            <span class="wu-n">${u.orders} order(s)${u.lines ? ` · ${u.lines} line(s)` : ''}</span>
+            <span class="wu-state">${u.done ? `<b class="wu-done">${u.done} done</b>` : ''}${u.started ? ` <b class="wu-started">${u.started} started</b>` : ''}${(!u.done && !u.started) ? '<span class="hint">untouched</span>' : ''}</span>
+            <span class="hint wu-src">${esc(u.source)}</span>
+          </label>`).join('')}
+      </div>`;
+    }
+    function wireUploadPicks() {
+      const wrap = $$('wipeScopes');
+      wrap.querySelectorAll('.wu-pick').forEach(cb => cb.addEventListener('change', e => {
+        e.stopPropagation();
+        cb.checked ? pickedBatches.add(cb.dataset.batch) : pickedBatches.delete(cb.dataset.batch);
+        // Choosing an upload only makes sense with the scope on.
+        const scope = wrap.querySelector('.wipe-pick[data-scope="orders"]');
+        if (pickedBatches.size && scope && !scope.checked) { scope.checked = true; picked.add('orders'); }
+        paint();
+      }));
+      $$('wuAll')?.addEventListener('change', e => {
+        e.stopPropagation();
+        const on = e.target.checked;
+        wrap.querySelectorAll('.wu-pick').forEach(cb => { cb.checked = on; on ? pickedBatches.add(cb.dataset.batch) : pickedBatches.delete(cb.dataset.batch); });
+        const scope = wrap.querySelector('.wipe-pick[data-scope="orders"]');
+        if (on && scope && !scope.checked) { scope.checked = true; picked.add('orders'); }
+        paint();
+      });
+    }
+
     function paint() {
       const n = picked.size;
       const typed = ($$('wipeConfirm')?.value || '').trim().toLowerCase();
       const name = (summary?.client || '').toLowerCase();
       $$('wipeGoBtn').disabled = !n || typed !== name;
+      const ups = (summary?.uploads || []).filter(u => pickedBatches.has(String(u.batchId)));
+      const scoped = picked.has('orders') && ups.length
+        ? ` Orders: only ${ups.length} upload(s) — ${ups.reduce((t, u) => t + u.orders, 0)} order(s).`
+        : (picked.has('orders') ? ` Orders: ALL ${summary?.counts?.orders || 0} of them.` : '');
       $$('wipeSummary').textContent = n
-        ? `${n} thing(s) selected for ${summary.client}. The audit trail, their profile and their portal logins stay.`
+        ? `${n} thing(s) selected for ${summary.client}.${scoped} The audit trail, their profile and their portal logins stay.`
         : 'Nothing selected yet.';
     }
 
     async function go() {
       if (!summary || !picked.size) return;
       const scopes = [...picked];
-      if (!confirm(`Clear ${scopes.length} thing(s) for ${summary.client}?\n\nThis cannot be undone.`)) return;
+      const batchIds = [...pickedBatches];
+      const ups = (summary.uploads || []).filter(u => pickedBatches.has(String(u.batchId)));
+      const what = scopes.includes('orders')
+        ? (batchIds.length
+            ? `\n\nOrders: ${ups.length} chosen upload(s), ${ups.reduce((t, u) => t + u.orders, 0)} order(s).`
+            : `\n\nOrders: EVERY upload — ${summary.counts?.orders || 0} order(s).`)
+        : '';
+      const finished = ups.reduce((t, u) => t + u.done, 0);
+      const warn = finished ? `\n\n\u26a0 ${finished} of them are COMPLETED work, not test data.` : '';
+      if (!confirm(`Clear ${scopes.length} thing(s) for ${summary.client}?${what}${warn}\n\nThis cannot be undone.`)) return;
       const btn = $$('wipeGoBtn'); btn.disabled = true;
       try {
         const r = await fetchT('/api/master/client-data/wipe', {
@@ -10836,7 +10900,7 @@
           // ("application/json, application/json"), which express.json() does
           // not recognise — the body then arrives empty.
           headers: { ...hdrs(), 'x-master-key': LOG_PASSWORD },
-          body: JSON.stringify({ client: summary.client, scopes, confirm: $$('wipeConfirm').value }),
+          body: JSON.stringify({ client: summary.client, scopes, batchIds, confirm: $$('wipeConfirm').value }),
         }, 30000);
         const d = await r.json().catch(() => ({}));
         const box = $$('wipeResult');

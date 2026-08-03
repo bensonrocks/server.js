@@ -3291,7 +3291,10 @@ function clientWipeSummary(db, client) {
       orders, batches,
       inbound:     (db.inbound || []).filter(r => mine(r.client_name)).length,
       transport:   (db.transport || []).filter(j => mine(j.clientName) || mine(j.client_name)).length,
-      submissions: (db.clientSubmissions || []).filter(x => mine(x.client)).length,
+      // A submission stores its client as `client_name` — filtering on `client`
+      // matched nothing, so this read 0 with four sitting in the portal and
+      // ticking the box removed none of them.
+      submissions: (db.clientSubmissions || []).filter(x => mine(x.client_name)).length,
       quarantine:  (db.quarantine || []).filter(q => mine(q.clientId)).length,
       backorders:  (db.backorders || []).filter(b => mine(b.client_id)).length,
       waves:       (db.waves || []).filter(w => mine(w.client_name)).length,
@@ -3303,6 +3306,34 @@ function clientWipeSummary(db, client) {
       serials:     inv.serials || 0,
     },
     scopes: CLIENT_WIPE_SCOPES,
+    // ── PER-UPLOAD BREAKDOWN ─────────────────────────────────────────────
+    // "37 order(s) in 3 upload(s)" is not enough to decide with — some of
+    // those uploads are test data and some are real work. One row per upload
+    // with its date, its file and how many orders it carries, so the choice
+    // is made on what is actually there rather than all-or-nothing. Newest
+    // first, and DONE work is called out because clearing it is destroying a
+    // completed pick, not tidying a test.
+    uploads: (db.batches || [])
+      .filter(b => mine(b.client_name))
+      .map(b => {
+        const st = b.orderStates || {};
+        const orders = (b.orders || []).map(o => o.order_number);
+        const done = orders.filter(n => (st[n] || {}).status === 'done').length;
+        const started = orders.filter(n => (st[n] || {}).status === 'processing').length;
+        return {
+          batchId: b.id,
+          code: b.idealscan_code || '',
+          filename: b.filename || '',
+          uploaded_at: b.uploaded_at,
+          uploaded_by: b.uploaded_by || '',
+          source: b.source === 'client-portal' ? 'client portal' : 'office upload',
+          orders: orders.length,
+          lines: b.row_count || (b.orders || []).reduce((n, o) => n + (o.lines || []).length, 0),
+          done, started,
+          untouched: orders.length - done - started,
+        };
+      })
+      .sort((x, y) => String(y.uploaded_at || '').localeCompare(String(x.uploaded_at || ''))),
   };
 }
 
@@ -3377,10 +3408,16 @@ app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
   const bump = (k, n) => { if (n) removed[k] = (removed[k] || 0) + n; };
 
   if (has('orders')) {
+    // NARROWED TO SPECIFIC UPLOADS when `batchIds` is given — clearing three
+    // months of testing and clearing this morning's real file are the same
+    // click otherwise. Omit it and the whole client's orders go, as before.
+    const only = Array.isArray(req.body?.batchIds) && req.body.batchIds.length
+      ? new Set(req.body.batchIds.map(String)) : null;
     const keptOrders = [];
     const before = (db.batches || []).length;
     db.batches = (db.batches || []).filter(b => {
       if (!mine(b.client_name)) return true;
+      if (only && !only.has(String(b.id))) return true;
       bump('orders', (b.orders || []).length);
       for (const o of b.orders || []) keptOrders.push(o.order_number);
       return false;
@@ -3408,7 +3445,7 @@ app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
   }
   if (has('submissions')) {
     const before = (db.clientSubmissions || []).length;
-    db.clientSubmissions = (db.clientSubmissions || []).filter(x => !mine(x.client));
+    db.clientSubmissions = (db.clientSubmissions || []).filter(x => !mine(x.client_name));
     bump('submissions', before - db.clientSubmissions.length);
   }
   if (has('quarantine')) {

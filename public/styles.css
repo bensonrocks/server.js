@@ -3507,6 +3507,37 @@ tr.pa-split-row td { border-top: 0; }
 
 /* ── Clear Test Data ──────────────────────────────────────────────────────── */
 .wipe-scopes { display: grid; gap: .45rem; }
+
+/* Per-upload breakdown under "Outbound orders" — "37 orders in 3 uploads" is
+   not enough to decide with when some of them are real work. Scrolls rather
+   than pushing the rest of the form off the screen on a long history. */
+.wipe-uploads {
+  margin-top: .5rem; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
+  background: #fff; max-height: 260px; overflow-y: auto; cursor: default;
+}
+.wu-head {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  padding: .4rem .6rem; border-bottom: 1px solid var(--border, #e2e8f0);
+  background: var(--surface-2, #f8fafc); position: sticky; top: 0;
+}
+.wu-all { font-size: .78rem; font-weight: 700; display: flex; align-items: center; gap: .35rem; }
+.wu-row {
+  display: grid; grid-template-columns: auto 8.5em minmax(0, 1fr) auto auto auto;
+  gap: .55rem; align-items: center; padding: .35rem .6rem; font-size: .78rem;
+  border-top: 1px solid #f1f5f9;
+}
+.wu-row:hover { background: var(--surface-2, #f8fafc); }
+.wu-when { color: var(--text-muted, #64748b); white-space: nowrap; }
+.wu-file { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wu-n    { white-space: nowrap; }
+.wu-done    { color: #991b1b; }   /* completed work — clearing it destroys a real pick */
+.wu-started { color: #92400e; }
+.wu-src  { white-space: nowrap; }
+@media (max-width: 700px) {
+  /* Stack on a phone rather than squeezing six columns into 393px. */
+  .wu-row { grid-template-columns: auto 1fr; row-gap: .15rem; }
+  .wu-when, .wu-n, .wu-state, .wu-src { grid-column: 2; }
+}
 .wipe-scope { display: flex; gap: .6rem; align-items: flex-start; padding: .5rem .6rem;
               border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
 .wipe-scope:hover { background: var(--surface-2); }
