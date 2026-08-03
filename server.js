@@ -15706,7 +15706,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
   // attaches exactly like every other label. One implementation, no parallel
   // path that could drift.
   if (entry.kind === 'label') {
-    const pdf = await zortApi.getShippingLabel(store, { id: entry.zortId, tracking: entry.tracking });
+    const pdf = await zortApi.getShippingLabel(store, { id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking });
     if (!pdf) {
       // Not generated yet. That is not a failure — it is "come back later", so
       // it is thrown to get the normal backoff rather than dropped.
@@ -15741,20 +15741,16 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // QUANTITY IS DELIBERATELY NOT SENT. Stock is pushed separately as an
     // absolute available figure; putting a number here as well would give the
     // store two sources for one fact.
+    // Field names are the spec's, not ours: `sku` (not code), `unittext` (not
+    // unit). Only documented fields are sent — anything else is guesswork that
+    // could mean something different to them.
     await zortApi.upsertProduct(store, {
-      code:        it.sku,
-      name:        it.name || it.sku,
-      barcode:     it.barcode || '',
-      unit:        it.unit || '',
-      category:    it.category || '',
-      brand:       it.brand || '',
-      model:       it.model || '',
-      description: it.description || '',
-      purchaseprice: Number(it.cost_price) || 0,
-      weight:      Number(it.unit_weight) || 0,
-      width:       Number(it.unit_w) || 0,
-      length:      Number(it.unit_l) || 0,
-      height:      Number(it.unit_h) || 0,
+      sku:           it.sku,
+      name:          it.name || it.sku,
+      barcode:       it.barcode || '',
+      unittext:      it.unit || '',
+      purchaseprice: String(Number(it.cost_price) || 0),
+      weight:        String(Number(it.unit_weight) || 0),
     });
     logAudit('sync_product_pushed', { sku: it.sku, client: store.clientName || '', name: it.name || '' });
     return true;
