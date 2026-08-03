@@ -656,6 +656,43 @@ business, so it was rebuilt as a proper dashboard.
   horizontal overflow, and NO third-party/other-branch names anywhere in the
   rendered DOM.
 
+### EVERYTHING a client sends waits for us — inbound as well as outbound
+
+Per the user: *"whatever the client uploads at its end — inbound/outbound. office
+will receive it duly after its approval then will process. its status will be
+transferred back to client via portal."*
+
+Outbound already worked that way. **A client ASN did NOT** — `POST
+/api/portal/asn` created a LIVE `db.inbound[]` receiving job the moment the
+client pressed send, which made an inbound submission the one thing that reached
+the warehouse floor without anyone here agreeing to it. It now creates a
+`clientSubs` record of `kind: 'inbound'` and waits in the SAME approval queue as
+their orders.
+
+- **`buildAsnLines(buffer, filename, client)`** is used BOTH at submission (to
+  validate and preview) and at approval (to create the job) — one
+  implementation, so what the office approves is exactly what gets created.
+- An ASN has no second step (no waybills to attach), so sending it IS
+  transmitting it: `transmitted_at` is stamped at submission and the approval
+  clock starts there.
+- **The SLA clock runs from the CLIENT'S submission, not our approval.**
+  `asn_submitted_at` is carried onto the receiving job from the submission —
+  our own delay in approving must never quietly buy us time on their promise.
+- **The client can see where it is.** `/api/portal/inbound` prepends their
+  pending and rejected ASNs ("Waiting for us to accept" / "Not accepted" with
+  the reason). Without this a shipment simply vanished between pressing send
+  and someone here approving it.
+- A REJECTED ASN never reaches the floor, and the rejection reason is relayed.
+- The office queue and its detail screen read it as an inbound shipment — 📥
+  icon, "inbound shipment · N line(s) · Q pcs", and a preview of the expected
+  lines rather than an empty orders table.
+
+Verified 21 API checks (nothing on the floor before approval, the client sees
+"waiting", the office sees it as inbound, approving creates the receipt with
+their reference and name, the waiting row is replaced by the real receipt,
+rejection reaches them with the reason and creates nothing) plus 7 browser
+checks on the office approval screen.
+
 ### Client-submitted ASNs, the "New Work In" poke, inbound SLA, aging stock
 
 Four connected features that make the portal two-way. NOTE: the portal is

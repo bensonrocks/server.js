@@ -13819,7 +13819,8 @@
       if (!due.length) return;
       const s = due[due.length - 1];          // oldest first — rows come newest-first
       document.getElementById('clientSubNagText').innerHTML =
-        `<b>${esc(s.client_name)}</b> sent ${s.kind === 'labels' ? `${s.row_count} shipping label page(s)` : `${s.order_count} order(s)`} `
+        `<b>${esc(s.client_name)}</b> sent ${s.kind === 'labels' ? `${s.row_count} shipping label page(s)`
+            : s.kind === 'inbound' ? `an inbound shipment of ${s.row_count} line(s)` : `${s.order_count} order(s)`} `
         + `(<b>${esc(s.code)}</b>) <b>${s.age_minutes} minutes ago</b> and it has not been approved yet.<br><br>`
         + `Approval is what puts this on the floor — until then nobody is picking it.`;
       document.getElementById('clientSubNagOverlay').classList.remove('hidden');
@@ -13840,9 +13841,11 @@
                     : (s.overdue ? `Waiting ${s.age_minutes} min` : 'Waiting');
         const what = s.kind === 'labels'
           ? `${s.row_count} shipping label page(s)`
-          : `${s.order_count} order(s) · ${s.row_count} line(s) · ${s.total_qty} pcs`;
+          : s.kind === 'inbound'
+            ? `inbound shipment · ${s.row_count} line(s) · ${s.total_qty} pcs`
+            : `${s.order_count} order(s) · ${s.row_count} line(s) · ${s.total_qty} pcs`;
         return `<div class="poke-row ${pend ? 'unread' : ''}">
-          <div class="pk-ic out">${s.kind === 'labels' ? '&#127991;' : '&#128666;'}</div>
+          <div class="pk-ic out">${s.kind === 'labels' ? '&#127991;' : s.kind === 'inbound' ? '&#128229;' : '&#128666;'}</div>
           <div class="pk-b">
             <div class="pk-t">${esc(s.client_name)} <span class="poke-chan">${esc(s.code)}</span>
               <span class="cs-pill ${cls}">${esc(label)}</span></div>
@@ -13878,7 +13881,20 @@
                  d.labels.unmatched.length > 8 ? ` and ${d.labels.unmatched.length - 8} more` : ''} — we re-try these on approval.</span>`
             : ''}
         </div>` : '';
-      const body = d.kind === 'labels'
+      // An inbound ASN is a shipment coming IN — it has expected lines, not
+      // orders, and approving it is what puts it on the receiving screen.
+      const body = d.kind === 'inbound'
+        ? `<p class="hint">${esc(d.filename)} — an inbound shipment of ${d.row_count} line(s), ${d.total_qty} pc(s).
+             ${d.reference ? `Their reference <b>${esc(d.reference)}</b>. ` : ''}
+             ${d.eta ? `Expected <b>${esc(d.eta)}</b>. ` : ''}
+             Approving it creates the receiving job — nothing reaches the floor until then.</p>
+           <table class="tbl" style="width:100%;border-collapse:collapse;font-size:.82rem">
+             <thead><tr><th>SKU</th><th>Description</th><th style="text-align:right">Expected</th></tr></thead>
+             <tbody>${(d.inbound_lines || []).map(l => `<tr>
+               <td><b>${esc(l.sku)}</b></td><td>${esc(l.description || '')}</td>
+               <td style="text-align:right">${l.qty}</td></tr>`).join('')}</tbody>
+           </table>`
+        : d.kind === 'labels'
         ? `<p class="hint">${esc(d.filename)} — ${d.row_count} waybill page(s). Approving files these against matching orders.</p>`
         : `<p class="hint">${esc(d.filename)} — ${d.order_count} order(s), ${d.row_count} line(s), ${d.total_qty} pcs.
              SKUs and descriptions below were resolved against this client's item master.</p>

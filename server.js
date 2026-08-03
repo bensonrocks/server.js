@@ -3935,6 +3935,25 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
       };
     })
     .sort((a, b) => String(b.submitted_at || b.received_at || '').localeCompare(String(a.submitted_at || a.received_at || '')));
+  // ASNs the client has sent that we have not accepted yet. Without these the
+  // shipment simply vanished between pressing send and someone here approving
+  // it — the client would have no idea whether it had arrived with us.
+  const waiting = clientSubs(db)
+    .filter(x => x.kind === 'inbound' && sameClient(x.client_name, client)
+              && (x.status === 'pending' || x.status === 'rejected'))
+    .map(x => ({
+      id: x.id, serial: x.code, type: 'Inbound shipment',
+      reference: x.reference || '', source: x.client_name,
+      status: x.status === 'rejected' ? 'Not accepted' : 'Waiting for us to accept',
+      awaiting_approval: x.status === 'pending',
+      rejected: x.status === 'rejected',
+      reject_reason: x.reject_reason || '',
+      submitted_at: x.submitted_at, eta: x.eta || null,
+      line_count: (x.summary?.lines || []).length,
+      expected: x.summary?.totalQty || 0, received: 0,
+      damaged: 0, discrepancies: 0, sla: null, can_delete: false,
+    }));
+  out.unshift(...waiting);
   res.json({ rows: out.slice(0, 400), screenDays: PORTAL_SCREEN_DAYS, exportMaxDays: PORTAL_EXPORT_MAX_DAYS,
              slaWorkingDays: INBOUND_SLA_WORKING_DAYS });
 });
@@ -4193,9 +4212,44 @@ app.get('/api/portal/asn-template', requirePortalAuthMiddleware, (req, res) => {
   res.send(buf);
 });
 
-// Client submits an ASN. This is one of only TWO writes the portal allows (the
-// other is their own aging-days preference) — it creates a PENDING inbound job
-// and nothing else; no stock moves until our floor actually receives it.
+// Parse a client's ASN file into expected lines — used BOTH when they submit
+// it (to validate and preview) and when the office approves it (to create the
+// job). One implementation, so what the office approves is what gets created.
+async function buildAsnLines(buffer, filename, client) {
+  const rows = await parseInboundFile(buffer, filename);
+  if (!rows.length) {
+    const e = new Error('No product rows were recognised in that file. Please use the ASN template — the header row must include a SKU column.');
+    e.status = 400; throw e;
+  }
+  enrichInboundLines(rows, client);
+  // Same SKU across several rows (one per batch, say) merges into one expected
+  // line, exactly as the office upload path does.
+  const merged = new Map();
+  for (const r of rows) {
+    const key = r.sku || r.barcode;
+    const cur = merged.get(key) || { sku: r.sku, barcode: r.barcode || '', description: r.description,
+      expected_qty: 0, expiry_date: '', lot_number: '', unknown_product: !!r.unknown_product };
+    cur.expected_qty += r.qty;
+    if (!cur.description && r.description) cur.description = r.description;
+    if (!cur.barcode && r.barcode) cur.barcode = r.barcode;
+    if (!cur.expiry_date && r.expiry_date) cur.expiry_date = r.expiry_date;
+    if (!cur.lot_number && r.lot_number) cur.lot_number = r.lot_number;
+    merged.set(key, cur);
+  }
+  return [...merged.values()];
+}
+
+// CLIENT SUBMITS AN ASN — and it now waits for us, exactly like their orders.
+//
+// Per the user: whatever the client uploads, inbound or outbound, the office
+// receives it, approves it, and only then processes it; the status goes back to
+// the client through the portal. This used to create a LIVE receiving job on
+// the floor the moment the client pressed send, which meant an inbound
+// submission was the one thing that reached the warehouse without anyone here
+// agreeing to it.
+//
+// The SLA clock still runs from the CLIENT's submission, not our approval —
+// our own delay in approving must never quietly buy us time on their promise.
 app.post('/api/portal/asn', upload.single('file'), (req, res) => {
   // multer does not reliably carry the AsyncLocalStorage tenant context, and
   // this route sits outside the global auth middleware, so re-establish the
@@ -4203,81 +4257,60 @@ app.post('/api/portal/asn', upload.single('file'), (req, res) => {
   requirePortalWrite(req, res, async () => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
-      const rows = await parseInboundFile(req.file.buffer, req.file.originalname);
-      if (!rows.length) {
-        return res.status(400).json({ error: 'No product rows were recognised in that file. Please use the ASN template — the header row must include a SKU column.' });
-      }
-      // Same SKU across several rows (one per batch, say) merges into one
-      // expected line, exactly as the office upload path does.
-      // Same standard enrichment as the office upload path.
-      enrichInboundLines(rows, req.portalClient);
-      const merged = new Map();
-      for (const r of rows) {
-        const key = r.sku || r.barcode;
-        const cur = merged.get(key) || { sku: r.sku, barcode: r.barcode || '', description: r.description, expected_qty: 0, expiry_date: '', lot_number: '', unknown_product: !!r.unknown_product };
-        cur.expected_qty += r.qty;
-        if (!cur.description && r.description) cur.description = r.description;
-        if (!cur.barcode && r.barcode) cur.barcode = r.barcode;
-        if (!cur.expiry_date && r.expiry_date) cur.expiry_date = r.expiry_date;
-        if (!cur.lot_number && r.lot_number) cur.lot_number = r.lot_number;
-        merged.set(key, cur);
-      }
-      const lines = [...merged.values()];
-      const now = new Date().toISOString();
-      const submittedDay = sgDateStr(new Date(now));
+      const lines = await buildAsnLines(req.file.buffer, req.file.originalname, req.portalClient);
 
       const db = readDb();
-      db.inbound = db.inbound || [];
-      const rec = {
-        id:          uuidv4(),
-        serial:      nextInboundCode(db),
-        type:        'po',
-        eta:         String(req.body?.eta || '').slice(0, 10) || null,
-        reference:   String(req.body?.reference || '').trim().slice(0, 60),
-        source_name: req.portalClient,
-        client_name: req.portalClient,
-        uploaded_at: now,
-        uploaded_by: `portal:${req.portalClient}`,
-        filename:    req.file.originalname,
-        lines,
-        // SLA clock starts the moment the client submits, and the due day is
-        // STAMPED rather than recomputed, so a later change to the SLA rule
-        // can never silently move the goalposts on work already promised.
-        submitted_by_client: true,
-        asn_submitted_at: now,
-        // No stamped due day: it is derived from the arrival basis (ETA, or
-        // actual arrival when that is later) by inboundSla(), so giving or
-        // correcting an ETA moves the promise honestly instead of leaving a
-        // stale submission-based date behind.
-        arrived_at: null,
-        state:       { status: 'pending', scanned: {}, scanLog: [] },
+      const id = uuidv4();
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      fs.writeFileSync(path.join(CLIENT_SUB_DIR, id + ext), req.file.buffer);
+      const now = new Date().toISOString();
+      const pieces = lines.reduce((n, l) => n + (l.expected_qty || 0), 0);
+
+      const sub = {
+        id, kind: 'inbound',
+        code: nextIdealscanCode(db).replace(/^IS-/, 'CS-'),
+        client_name: canonicalClientName(db, req.portalClient),
+        filename: req.file.originalname,
+        stored_ext: ext,
+        contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+        submitted_at: now,
+        submitted_by: `portal:${req.portalClient}`,
+        // An ASN has no second step (no waybills to attach), so sending it IS
+        // transmitting it — the approval clock starts here.
+        transmitted_at: now,
+        status: 'pending',
+        eta: String(req.body?.eta || '').slice(0, 10) || null,
+        reference: String(req.body?.reference || '').trim().slice(0, 60),
+        summary: {
+          rowCount: lines.length, orderCount: 1,
+          totalQty: pieces, warnings: [],
+          lines: lines.map(l => ({ sku: l.sku, description: l.description || '', qty: l.expected_qty })),
+        },
       };
-      db.inbound.unshift(rec);
+      clientSubs(db).unshift(sub);
 
       addPoke(db, {
         kind: 'inbound_asn',
         client: req.portalClient,
         direction: 'inbound',
         channel: clientChannel(db, req.portalClient),
-        ref: rec.serial,
-        recordId: rec.id,
+        ref: sub.code,
+        recordId: sub.id,
         lines: lines.length,
-        pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
-        due: (inboundSla(rec) || {}).dueDay,
-        eta: rec.eta,
+        pieces,
+        eta: sub.eta,
+        note: 'awaiting approval',
       });
       writeDb(db);
       logAudit('portal_asn_submitted', {
-        client: req.portalClient, serial: rec.serial, lines: lines.length,
-        pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
-        filename: rec.filename, due: (inboundSla(rec) || {}).dueDay, eta: rec.eta || null,
+        client: req.portalClient, code: sub.code, lines: lines.length, pieces,
+        filename: sub.filename, eta: sub.eta || null, awaitingApproval: true,
       });
-      res.json({ ok: true, serial: rec.serial, lines: lines.length,
-                 pieces: lines.reduce((s, l) => s + (l.expected_qty || 0), 0),
-                 due: (inboundSla(rec) || {}).dueDay, eta: rec.eta || null,
-                 slaBasis: (inboundSla(rec) || {}).basis });
+      res.json({ ok: true, code: sub.code, status: 'pending', lines: lines.length, pieces,
+                 eta: sub.eta || null,
+                 note: 'Sent for approval — our team will confirm it, and you will see it under Inbound once accepted.' });
     } catch (e) {
-      res.status(400).json({ error: e.message });
+      res.status(e.status || 400).json({ error: e.message });
     }
   });
 });
@@ -8645,7 +8678,11 @@ app.get('/api/client-submissions/:id', (req, res) => {
   const s = clientSubs(db).find(x => x.id === req.params.id);
   if (!s) return res.status(404).json({ error: 'Submission not found' });
   // full preview, including every line, for the approve screen
-  res.json({ ...clientSubPublic(db, s), preview: s.summary?.orders || [] });
+  // An inbound ASN has no orders — its preview is the expected lines.
+  res.json({ ...clientSubPublic(db, s),
+    preview: s.summary?.orders || [],
+    inbound_lines: s.kind === 'inbound' ? (s.summary?.lines || []) : [],
+    eta: s.eta || null, reference: s.reference || '' });
 });
 
 // OFFICE → APPROVE. Re-reads the stored file and builds the batch, so what goes
@@ -8686,6 +8723,62 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     } catch (err) {
       return res.status(500).json({ error: 'Could not process that label PDF: ' + err.message });
     }
+  }
+
+  // ── AN INBOUND SUBMISSION ─────────────────────────────────────────────
+  // The client's ASN becomes a real receiving job only now, on approval. The
+  // SLA clock is carried from THEIR submission time, not this moment: our own
+  // delay in approving must never quietly buy us time on their promise.
+  if (s0.kind === 'inbound') {
+    let lines;
+    try { lines = await buildAsnLines(buf, s0.filename, s0.client_name); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+    const db = readDb();
+    db.inbound = db.inbound || [];
+    const rec = {
+      id: uuidv4(),
+      serial: nextInboundCode(db),
+      type: 'po',
+      eta: s0.eta || null,
+      reference: s0.reference || '',
+      source_name: s0.client_name,
+      client_name: canonicalClientName(db, s0.client_name),
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: s0.submitted_by || `portal:${s0.client_name}`,
+      filename: s0.filename,
+      lines,
+      submitted_by_client: true,
+      asn_submitted_at: s0.submitted_at,        // THEIR clock, not ours
+      approved_at: new Date().toISOString(),
+      approved_by: req.userId || '',
+      client_submission_id: s0.id,
+      client_submission_code: s0.code,
+      arrived_at: null,
+      state: { status: 'pending', scanned: {}, scanLog: [] },
+    };
+    db.inbound.unshift(rec);
+    const live = clientSubs(db).find(x => x.id === s0.id);
+    if (live) {
+      live.status = 'approved';
+      live.approved_at = rec.approved_at;
+      live.approved_by = req.userId || '';
+      live.inbound_id = rec.id;
+      live.job_code = rec.serial;
+    }
+    addPoke(db, {
+      kind: 'inbound_asn', client: rec.client_name, direction: 'inbound',
+      channel: clientChannel(db, rec.client_name), ref: rec.serial, recordId: rec.id,
+      lines: lines.length, pieces: lines.reduce((n, l) => n + (l.expected_qty || 0), 0),
+      due: (inboundSla(rec) || {}).dueDay, eta: rec.eta,
+    });
+    writeDb(db);
+    logAudit('client_submission_approved', {
+      id: s0.id, code: s0.code, kind: 'inbound', client: rec.client_name,
+      serial: rec.serial, lines: lines.length, by: req.userId || '',
+    });
+    return res.json({ ok: true, kind: 'inbound', serial: rec.serial, inbound_id: rec.id,
+      lines: lines.length, pieces: lines.reduce((n, l) => n + (l.expected_qty || 0), 0),
+      due: (inboundSla(rec) || {}).dueDay });
   }
 
   try {
