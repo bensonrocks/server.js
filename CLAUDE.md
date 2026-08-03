@@ -3210,6 +3210,54 @@ outlives what it describes. And a file input whose `value` is never cleared
 fires NO change event when the same file is picked again, so a second upload of
 the same sheet silently never armed the button.
 
+## A pick list must never ask a bin for more than it holds (`newPickClaim`)
+
+Reported from the floor: SKU `FS1605XXXXBKML` sat 24 in `AA-013-003-A` and 6 in
+`AA-015-002-A`, and the wave pick list **asked AA-013-003-A for 28** while the
+second bin was never visited.
+
+**`allocatePick` IS STATELESS.** It reads `bin_lots` and decrements nothing, so
+every call starts again from the full pool. Any caller that calls it more than
+once for one SKU in a single planning run promises **the same physical units
+twice**. Reproduced exactly: two calls for 24 then 4 both returned
+`AA-013-003-A`, totalling 28 against a bin holding 24.
+
+Three callers did exactly that:
+- `enrichWaveWithBins` — one call per wave pick row, and a SKU printed at two
+  locations becomes two rows.
+- `allocatePickLocations` — one call per order LINE, so a batch with the same
+  SKU across many orders over-promised the same bin to all of them. **This one
+  affected every order pick list, not just waves.**
+- the bin-empty re-allocation — one call per line of the SKU being re-picked.
+
+`inventory.newPickClaim()` returns a `Map(lot_id → units already promised)`;
+`allocatePick(..., claimed)` starts each lot from `qty − claimed` and adds what
+it takes. One ledger per planning run, threaded through all three callers.
+**Per RUN, not global** — planning still decrements nothing, so the next run
+sees the real shelf; a stale ledger could never strand stock.
+
+Verified 11 unit checks (the reported 24+4 splits correctly and the second bin
+is finally used; 34 wanted against 30 on the shelf over-asks nothing and
+reports an honest shortfall of 4; ten orders planned in one run allocate all 30
+units exactly once; a fresh run plans from the full shelf again; and a single
+call with no ledger behaves exactly as before) plus 10 end-to-end checks
+through the real upload → wave → pick-list endpoints, asserting the wave AND
+the per-order pick list both ask 24/4 and never exceed what a bin holds.
+
+### The scan row leads with the PRODUCT BARCODE, not the bin
+
+Per the user, from a photo of the scan screen: *"return the product barcode not
+the location"*. The row showed only `📍 AA-013-003-A ×1`. The bin answers "where
+do I walk"; the **barcode answers "is this the right item in my hand"**, which is
+the question the Scan & Check screen exists to settle — so it leads, in green,
+before the bin pill.
+
+`barcode` is now filled at READ time in `globalOrdersWithState` from the
+client's item master, memoised per (client, SKU) for the call. Upload-time
+enrichment alone misses every order uploaded before that client's catalogue was
+loaded — the same reason inbound descriptions are filled on read. Suppressed
+when the barcode equals the SKU (nothing gained by printing it twice).
+
 ## A client with NO item master is not a client who has run out
 
 Reported from the floor as *"orders unable to upload"*: a 93-order BETIME GI

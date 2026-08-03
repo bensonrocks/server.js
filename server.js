@@ -2213,8 +2213,25 @@ function batchWaybillSet(batchId) {
 }
 function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 
+// sku -> barcode, per client, for the life of ONE globalOrdersWithState call.
+function _makeBarcodeLookup() {
+  const cache = new Map();   // `${cid}|${sku}` -> barcode ('' when unknown)
+  return (batch, sku) => {
+    if (!sku) return '';
+    const cid = batch.inventory_client || invClientId(batch.client_name || '');
+    if (!cid) return '';
+    const key = cid + '|' + sku;
+    if (cache.has(key)) return cache.get(key);
+    let bc = '';
+    try { bc = String((inventory.get(sku, cid) || {}).barcode || '').trim(); } catch (_) { bc = ''; }
+    cache.set(key, bc);
+    return bc;
+  };
+}
+
 function globalOrdersWithState(keep) {
   const db          = readDb();
+  const _lineBarcode = _makeBarcodeLookup();
   const orderLabels = db.orderLabels || {};
   const _pol        = pickupPolicy(db);
   const _fpol       = fulfilmentPolicy(db);
@@ -2264,6 +2281,12 @@ function globalOrdersWithState(keep) {
         return {
           ...l,
           description: realDesc || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
+          // The PRODUCT BARCODE, filled at READ time from the client's item
+          // master. Upload-time enrichment alone misses every order uploaded
+          // before that client's catalogue was loaded — the same reason
+          // inbound descriptions are filled on read. Memoised per (client,
+          // SKU) for the whole call, so a 900-order page is one lookup each.
+          barcode: l.barcode || _lineBarcode(batch, l.sku),
         };
       });
       out.push({
@@ -12587,9 +12610,12 @@ app.post('/api/scan/report-bin-empty', (req, res) => {
     // Re-allocate every line of this SKU fresh (carton-aware) — allocatePick now
     // skips the emptied bin automatically (it only picks from lots with qty > 0).
     const upc = Number((inventory.get(sku, cid) || {}).units_per_carton) || 1;
+    // One ledger across every line of this SKU — re-allocating them
+    // independently would point them all at the same replacement bin.
+    const claim = inventory.newPickClaim();
     for (const l of lines) {
       try {
-        const a = inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat, upc);
+        const a = inventory.allocatePick(cid, l.sku, Number(l.qty) || 0, strat, upc, claim);
         const byLoc = []; const idx = {};
         for (const p of a.picks) { if (idx[p.location_id] === undefined) { idx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null, kind: p.kind }); } const e = byLoc[idx[p.location_id]]; e.qty += p.qty; if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date; }
         l.pick_locations = byLoc;
@@ -17073,6 +17099,12 @@ function reserveIntakeOrders(db, clientId, clientName, orders, batchId, strategy
 
 function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait') {
   if (!inventory.available()) return;
+  // ONE LEDGER FOR THE WHOLE BATCH. allocatePick reads bin_lots and decrements
+  // nothing, so without this every line plans against the full pool and two
+  // orders wanting the same SKU are both sent to the same units — a pick list
+  // that asks a 24-unit bin for more than it holds while another bin is never
+  // visited.
+  const claim = inventory.newPickClaim();
   const stagingLeft = {}; // sku -> staging units still unallocated this batch
   const stagingFor = sku => (stagingLeft[sku] !== undefined ? stagingLeft[sku] : (stagingLeft[sku] = inventory.stagingQty(clientId, sku)));
   for (const order of (orders || [])) {
@@ -17096,7 +17128,7 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
             } catch (_) { /* fall back to normal allocation */ }
           }
         }
-        const a = inventory.allocatePick(clientId, l.sku, lineQty, strategy, upc);
+        const a = inventory.allocatePick(clientId, l.sku, lineQty, strategy, upc, claim);
         // Aggregate the lot-level picks into one row per bin (preserving plan order:
         // bulk case-picks first, then pick-face eaches).
         const byLoc = []; const idx = {};
@@ -18642,6 +18674,10 @@ app.get('/api/waves/:id', requireAuth, (req, res) => {
 // location code for any SKU with no binned stock.
 function enrichWaveWithBins(db, wave) {
   if (!inventory.available()) return;
+  // Same ledger, same reason. A SKU printed at two locations becomes two pick
+  // rows, and without this each row re-allocates from the top of the bin list
+  // and both point at the same bin.
+  const claim = inventory.newPickClaim();
   // order_number -> {clientId, strategy} from its batch.
   const meta = {};
   for (const b of db.batches || []) {
@@ -18656,7 +18692,7 @@ function enrichWaveWithBins(db, wave) {
     try {
       const upc = Number((inventory.get(row.sku, m.clientId) || {}).units_per_carton) || 1;
       row.units_per_carton = upc;
-      const a = inventory.allocatePick(m.clientId, row.sku, row.total_qty, m.strategy, upc);
+      const a = inventory.allocatePick(m.clientId, row.sku, row.total_qty, m.strategy, upc, claim);
       // Aggregate lot picks into one row per bin for display.
       const byLoc = []; const bidx = {};
       for (const p of a.picks) { if (bidx[p.location_id] === undefined) { bidx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null }); } const e = byLoc[bidx[p.location_id]]; e.qty += p.qty; if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date; }

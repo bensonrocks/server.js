@@ -8487,6 +8487,13 @@
       // Pick-from-bin locations (FEFO/FIFO-allocated at upload) — the pick list.
       // A 'STAGING' pseudo-location means "pick from the receiving area" (chosen at
       // upload when there was received-but-unbinned stock).
+      // THE PRODUCT BARCODE IS WHAT THE PACKER SCANS, so it leads. The bin code
+      // answers "where do I walk"; the barcode answers "is this the right item
+      // in my hand" — which is the question this screen exists to settle.
+      // Filled from the client's item master at upload (enrichLinesFromCatalogue).
+      if (item.barcode && String(item.barcode).trim() && String(item.barcode).trim() !== item.sku) {
+        lotParts.push(`<span class="lot-badge lot-barcode" title="Product barcode — scan this off the item" style="background:#ecfdf5;color:#065f46;font-weight:700">&#9646;&#9614;&#9646; ${esc(String(item.barcode).trim())}</span>`);
+      }
       if (item.pick_locations && item.pick_locations.length) {
         const binPicks = item.pick_locations.filter(pl => pl.location_id !== 'STAGING');
         const stagePicks = item.pick_locations.filter(pl => pl.location_id === 'STAGING');
