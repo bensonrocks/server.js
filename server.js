@@ -2553,6 +2553,12 @@ function nextHandoverDay(dayStr, pol) {
 // clock that never started (same rule as the inbound SLA).
 function fulfilmentSla(order, fpol, ppol, nowIso) {
   if (!fpol.enabled) return null;
+  // NO WAYBILL, NO CLOCK. Per the user: this KPI is the promise on ONLINE
+  // marketplace orders, and those arrive with a tracking number. An order with
+  // no waybill is a B2B or manually-keyed job that carries no handover
+  // commitment, so putting a countdown on it invents a deadline nobody agreed
+  // to — and buries the orders that DO have one under a pile that does not.
+  if (!String(order.waybill_number || '').trim()) return null;
   const arrived = order.uploadedAt || order.uploaded_at || null;
   const t = sgParts(arrived);
   if (!t) return null;
@@ -7799,6 +7805,7 @@ app.get('/api/stats', (_req, res) => {
       if (_fpol.enabled) {
         const f = fulfilmentSla({
           uploadedAt: batch.uploaded_at, platform: ord.platform || '',
+          waybill_number: ord.waybill_number || '',
           scan_status: state?.status || 'pending', endTime: state?.endTime || null,
           picked_up_at: state?.pickup?.at || null,
         }, _fpol, _ppol, _nowIso);
@@ -13902,6 +13909,7 @@ app.get('/api/master/report/:kind', (req, res) => {
           if (isClientCancelled(st)) continue;
           const f = fulfilmentSla({
             uploadedAt: b.uploaded_at, platform: o.platform || '',
+            waybill_number: o.waybill_number || '',
             scan_status: st.status || 'pending', endTime: st.endTime || null,
             picked_up_at: st.pickup?.at || null,
           }, fpol, ppol, nowIso);

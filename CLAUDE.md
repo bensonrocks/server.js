@@ -202,6 +202,12 @@ tell what is critical."*
   Consequence worth knowing: Saturday IS a handover day here, because this
   operation self-drops on Saturday. Change that in Collection → ⚙ Schedule, not
   here.
+- **NO WAYBILL, NO CLOCK.** Per the user, this KPI is the promise on ONLINE
+  marketplace orders, and those arrive with a tracking number. An order with no
+  waybill is a B2B or manually-keyed job carrying no handover commitment, so
+  `fulfilmentSla` returns null for it — no chip, not counted in the tiles, not
+  scored in the report. Inventing a deadline nobody agreed to would also bury
+  the orders that DO have one under a pile that does not.
 - **DERIVED ON EVERY READ** (`fulfilmentSla`), never stamped — same discipline
   as `collection_due` and the inbound SLA. Editing a band re-scores every open
   order honestly instead of leaving stale targets behind; the test asserts this
