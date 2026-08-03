@@ -988,6 +988,32 @@ plus 29 browser checks with the client on a Pixel 5 and the office on a desktop
 — including that the WAYBILL column is now filled on the Orders tab instead of
 showing a dash, and that all five portal tabs fit without clipping from 320px up.
 
+### The office can open what the client sent, and re-match their labels
+
+Per the user: client submissions must be downloadable BEFORE approval so the
+office can check them, and the labels must be re-matchable from our end
+afterwards — especially when the match came back short.
+
+- **`GET /api/client-submissions/:id/file`** streams the original the client
+  uploaded — the orders sheet or the waybill PDF — under THEIR filename, before
+  or after approval. The bytes were always on disk (`CLIENT_SUB_DIR`); nothing
+  served them. "29 order(s), 33 line(s)" is not the same as opening the sheet.
+- Each file on an approval row gets a **⬇ file** button, and an approved
+  submission gets **⚡ match again**, which jumps to the Labels tab with that
+  import already open — the review screen where ⚡ Auto Match / ↻ Rematch All
+  live. `label_import_id` is exposed on the submission for both the standalone
+  `kind: 'labels'` case and the waybills linked to an orders submission.
+- CONFIRMED, not assumed: a client-approved label PDF **does** appear in the
+  Labels tab import history under the client's filename with all its pages —
+  `processLabelPdf` runs at approval and `GET /api/label-imports` filters
+  nothing. If one is ever missing, the approval threw and said so in the audit
+  log as `client_labels_approve_failed`; the orders stay live either way.
+
+Verified 17 API checks (both files download before approval under the client's
+own names and the sheet parses back to its real rows; approval creates the job
+and links the import; the import is in the Labels list with all 29 pages; a
+re-match runs and reports what it matched) plus 8 browser checks on the buttons.
+
 ### Bulk deletion approval (Master) + client self-cancel (portal)
 
 Two separate paths, deliberately different in who needs whose permission.

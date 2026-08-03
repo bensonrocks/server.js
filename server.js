@@ -8705,6 +8705,13 @@ function clientSubPublic(db, s) {
     approved_at: s.approved_at || null, approved_by: s.approved_by || null,
     rejected_at: s.rejected_at || null, reject_reason: s.reject_reason || '',
     batch_id: s.batch_id || null, job_code: s.job_code || '',
+    // THE CLIENT'S OWN FILE, downloadable before approving. Reading "29
+    // order(s), 33 line(s)" is not the same as opening the sheet they sent —
+    // an approver who wants to check the source has to be able to.
+    has_file: !!s.stored_ext,
+    stored_ext: s.stored_ext || '',
+    // Set once approved, so the labels can be re-matched from our end.
+    label_import_id: s.label_import_id || null,
     age_minutes: ageMin,
     overdue: s.status === 'pending' && ageMin >= CLIENT_SUB_APPROVE_SLA_MIN,
     orders,                                  // live status, relayed back to the client
@@ -9207,6 +9214,27 @@ app.get('/api/portal/submissions', requirePortalAuthMiddleware, (req, res) => {
 
 // OFFICE → the approval queue. Behind normal staff auth: any signed-in
 // internal user should be able to see that a client is waiting on us.
+// THE ORIGINAL FILE THE CLIENT SENT — orders sheet or waybill PDF.
+// Available before approval (that is the point: check it, then decide) and
+// after, so a query weeks later can go back to the source. Staff only; the
+// portal has its own routes and never reaches this one.
+app.get('/api/client-submissions/:id/file', requireAuthOrToken, (req, res) => {
+  const db = readDb();
+  const s = clientSubs(db).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Submission not found' });
+  if (!s.stored_ext) return res.status(404).json({ error: 'No file was stored for this submission.' });
+  const file = path.join(CLIENT_SUB_DIR, s.id + s.stored_ext);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'The stored file is no longer on disk.' });
+  const TYPES = { '.pdf': 'application/pdf', '.csv': 'text/csv',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xls': 'application/vnd.ms-excel' };
+  res.setHeader('Content-Type', TYPES[s.stored_ext] || 'application/octet-stream');
+  // The client's own filename, so what lands in Downloads is what they sent.
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${String(s.filename || ('submission' + s.stored_ext)).replace(/"/g, '')}"`);
+  fs.createReadStream(file).pipe(res);
+});
+
 app.get('/api/client-submissions', (req, res) => {
   const db = readDb();
   // DRAFTS ARE NOT OURS TO SEE. A client part-way through their upload has not

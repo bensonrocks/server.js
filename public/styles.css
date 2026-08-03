@@ -2334,6 +2334,18 @@ body.ls-open { overflow: hidden; }
 /* Blue, not amber: a page still being read is work in progress, not a problem.
    Amber here made a half-finished import look like a failed one. */
 .lhi-reading   { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+
+/* Small inline actions on a client-submission row: download what they sent,
+   and (once approved) jump to the label import to re-run matching. */
+.cs-dl {
+  border: 1px solid var(--border, #e2e8f0); background: #fff; border-radius: 6px;
+  cursor: pointer; font: inherit; font-size: .68rem; font-weight: 700;
+  color: var(--primary, #2563eb); padding: .05rem .35rem; margin-left: .35rem;
+  white-space: nowrap; vertical-align: baseline;
+}
+.cs-dl:hover { background: #f1f5f9; }
+.cs-dl.cs-lab { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+.cs-dl.cs-lab:hover { background: #fef3c7; }
 .lhi-duplicate { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
 .lhi-error     { background: var(--danger-bg);   color: var(--danger);   border: 1px solid var(--danger-border); }
 .lhi-review-btn { flex-shrink: 0; }

@@ -14212,16 +14212,32 @@
           <div class="pk-b">
             <div class="pk-t">${esc(s.client_name)} <span class="poke-chan">${esc(s.code)}</span>
               <span class="cs-pill ${cls}">${esc(label)}</span></div>
-            <div class="pk-s">${esc(s.filename)} — ${what}</div>
+            <div class="pk-s">${esc(s.filename)} — ${what}
+              ${s.has_file ? `<button class="cs-dl" data-dl="${esc(s.id)}" data-name="${esc(s.filename)}" title="Download the file the client sent">&#11015; file</button>` : ''}</div>
             ${s.labels ? `<div class="pk-s">&#127991; ${esc(s.labels.filename)} — ${
               s.labels.matched == null ? `${s.labels.pages} page(s)`
-              : `<b>${s.labels.matched} of ${s.labels.pages}</b> matched to these orders by the client`}</div>` : ''}
+              : `<b>${s.labels.matched} of ${s.labels.pages}</b> matched to these orders by the client`}
+              <button class="cs-dl" data-dl="${esc(s.labels.id)}" data-name="${esc(s.labels.filename)}" title="Download the waybill PDF the client sent">&#11015; file</button>
+              ${s.labels.import_id ? `<button class="cs-dl cs-lab" data-lab="${esc(s.labels.import_id)}" title="Open this import to re-run matching from our end">&#9889; match again</button>` : ''}</div>` : ''}
+            ${(s.kind === 'labels' && s.label_import_id) ? `<div class="pk-s"><button class="cs-dl cs-lab" data-lab="${esc(s.label_import_id)}" title="Open this import to re-run matching from our end">&#9889; match again</button></div>` : ''}
             ${s.job_code ? `<div class="pk-s">Created job <b>${esc(s.job_code)}</b></div>` : ''}
             ${s.reject_reason ? `<div class="pk-s">Reason: ${esc(s.reject_reason)}</div>` : ''}
           </div>
           ${pend ? `<button class="btn-primary btn-sm cs-review" data-id="${esc(s.id)}">Review</button>` : ''}
         </div>`;
       }).join('');
+      // The client's own file, and — once approved — a way straight back to the
+      // label import so it can be re-matched without hunting for it.
+      el.querySelectorAll('.cs-dl[data-dl]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        authDownload(`/api/client-submissions/${encodeURIComponent(b.dataset.dl)}/file`, b.dataset.name);
+      }));
+      el.querySelectorAll('.cs-lab[data-lab]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        document.getElementById('clientSubOverlay')?.classList.add('hidden');
+        switchTab('labels');
+        setTimeout(() => openLabelReview(b.dataset.lab), 200);
+      }));
     }
 
     async function openPreview(id) {
