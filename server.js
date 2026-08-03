@@ -15609,6 +15609,18 @@ function enqueueZortStock(db, storeId, clientId, sku) {
   return true;
 }
 
+// Enqueue one item-master row for push into the store's product list.
+function enqueueZortProduct(db, storeId, clientId, sku) {
+  const ob = zortOutbox(db);
+  const cid = invClientId(clientId);
+  if (ob.some(e => e.kind === 'product' && e.storeId === storeId && e.sku === sku && e.clientId === cid && !e.stalled)) return false;
+  ob.push({
+    id: uuidv4(), kind: 'product', storeId, clientId: cid, sku,
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  return true;
+}
+
 // Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so
 // a re-pull cannot queue the same label twice.
 function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking }) {
@@ -15710,6 +15722,35 @@ async function _zortSendOutboxEntry(db, store, entry) {
     logAudit('zort_completion_pushed', { order: entry.orderNumber, client: store.clientName || '', action: entry.action });
     return true;
   }
+  // ── THE ITEM MASTER ROW, PUSHED AS A PRODUCT ─────────────────────────────
+  // Per the user: the product information the store needs IS the item master
+  // uploaded at client onboarding. IdealOne is the master record; this maps our
+  // columns onto theirs. Read at SEND time, so a corrected name or barcode goes
+  // out as it stands now rather than as it stood when the job was queued.
+  if (entry.kind === 'product') {
+    const it = inventory.available() ? inventory.get(entry.sku, entry.clientId) : null;
+    if (!it) { logAudit('sync_product_skipped', { sku: entry.sku, client: entry.clientId, why: 'no longer in the item master' }); return true; }
+    // QUANTITY IS DELIBERATELY NOT SENT. Stock is pushed separately as an
+    // absolute available figure; putting a number here as well would give the
+    // store two sources for one fact.
+    await zortApi.upsertProduct(store, {
+      code:        it.sku,
+      name:        it.name || it.sku,
+      barcode:     it.barcode || '',
+      unit:        it.unit || '',
+      category:    it.category || '',
+      brand:       it.brand || '',
+      model:       it.model || '',
+      description: it.description || '',
+      purchaseprice: Number(it.cost_price) || 0,
+      weight:      Number(it.unit_weight) || 0,
+      width:       Number(it.unit_w) || 0,
+      length:      Number(it.unit_l) || 0,
+      height:      Number(it.unit_h) || 0,
+    });
+    logAudit('sync_product_pushed', { sku: it.sku, client: store.clientName || '', name: it.name || '' });
+    return true;
+  }
   // kind === 'stock' — recompute CURRENT available right now and push absolute.
   // A bundle SKU has no stock row of its own; its sellable quantity is DERIVED
   // from its components (IdealOne is the bundle master).
@@ -15776,6 +15817,7 @@ async function drainZortOutbox() {
         if (entry.attempts >= 20 && !entry.stalled) {
           entry.stalled = true;
           logAudit(entry.kind === 'stock' ? 'zort_stock_push_failed'
+                 : entry.kind === 'product' ? 'sync_product_push_failed'
                  : entry.kind === 'label' ? 'sync_label_fetch_failed'
                  : 'zort_completion_push_failed',
             { storeId: store.id, client: store.clientName || '', sku: entry.sku, order: entry.orderNumber, attempts: entry.attempts, error: entry.lastError });
@@ -15914,6 +15956,28 @@ app.post('/api/master/zort/stores/:id/push-stock', (req, res) => {
 });
 
 // Outbox status — pending & stalled entries (for the Connections status panel).
+// Push this store's clients' ITEM MASTER into its product list. Manual and
+// explicit — the catalogue is not something to fire off on a timer.
+app.post('/api/master/zort/stores/:id/push-products', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable.' });
+  // Every client this store carries: its own label plus any mapped channel.
+  const clients = new Set([store.clientName, ...Object.values(store.channelClients || {})]
+    .map(c => String(c || '').trim()).filter(Boolean));
+  let queued = 0, skus = 0;
+  for (const c of clients) {
+    let rows = [];
+    try { rows = inventory.getAll({ clientId: invClientId(c) }) || []; } catch (_) { continue; }
+    for (const r of rows) { skus++; if (enqueueZortProduct(db, store.id, c, r.sku)) queued++; }
+  }
+  writeDb(db);
+  logAudit('sync_products_queued', { storeId: store.id, clients: [...clients], skus, queued, by: req.userId || 'master' });
+  res.json({ ok: true, clients: [...clients], skus, queued });
+});
+
 // Drain the queue NOW rather than waiting for the next tick — for when someone
 // is standing there watching a label that should have arrived.
 app.post('/api/master/zort/outbox/drain', async (req, res) => {

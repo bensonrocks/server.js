@@ -10625,6 +10625,7 @@
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
             ${s.stockSync ? '<button class="btn-secondary btn-sm z-pushstock" title="Enqueue current stock levels for every SKU to the store">⇪ Push Stock</button>' : ''}
+            <button class="btn-secondary btn-sm z-pushprod" title="Send this client's item master to the store as its product list (codes, names, barcodes — never quantities)">&#128230; Push Catalogue</button>
             <button class="btn-secondary btn-sm z-edit">&#9998;</button>
             <button class="btn-danger btn-sm z-del">&#128465;</button>
           </td>
@@ -10674,6 +10675,20 @@
             if (d.ok) { zortStatus('success', `✓ ${d.enqueued} stock update(s) queued — syncing in the background`); loadZortStores(); }
             else zortStatus('error', `✗ ${d.error}`);
           } catch (err) { zortStatus('error', 'Push stock failed: ' + err.message); }
+          e.target.disabled = false;
+        });
+        tr.querySelector('.z-pushprod')?.addEventListener('click', async e => {
+          if (!confirm(`Send ${store.clientName}'s ITEM MASTER to their store as its product list?\n\n`
+            + `Codes, names, barcodes, dimensions and cost — NEVER quantities. Stock is a separate push, `
+            + `so the store keeps one source for each fact.`)) return;
+          e.target.disabled = true;
+          zortStatus('progress', `Enqueuing the catalogue for ${store.clientName}…`);
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/push-products`, { method: 'POST', headers: zortHdrs() });
+            const d = await r2.json();
+            if (d.ok) { zortStatus('success', `✓ ${d.queued} of ${d.skus} product(s) queued — syncing in the background`); loadZortStores(); }
+            else zortStatus('error', `✗ ${d.error}`);
+          } catch (err) { zortStatus('error', 'Push catalogue failed: ' + err.message); }
           e.target.disabled = false;
         });
         tr.querySelector('.z-edit').addEventListener('click', () => openZortForm(store));
