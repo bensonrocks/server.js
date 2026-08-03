@@ -2217,6 +2217,8 @@ function globalOrdersWithState(keep) {
   const db          = readDb();
   const orderLabels = db.orderLabels || {};
   const _pol        = pickupPolicy(db);
+  const _fpol       = fulfilmentPolicy(db);
+  const _now        = new Date().toISOString();
   // Orders currently inside a LIVE wave (not yet completed/cancelled) — the
   // Orders list shows the wave code as a pill and lets anyone reopen it
   // (that's also where the Cancel Wave button lives — before this existed,
@@ -2307,6 +2309,11 @@ function globalOrdersWithState(keep) {
         collection_due:    state.status === 'done' && !state.pickup && _pol.enabled
                              ? collectionDayFor(state.endTime, _pol) : null,
       });
+      // The fulfilment promise — when this one has to be handed over, and how
+      // much of that time is left. Derived from what we just built, so the
+      // countdown always agrees with the status shown beside it.
+      const _o = out[out.length - 1];
+      _o.fulfilment = fulfilmentSla(_o, _fpol, _pol, _now);
     }
   }
   return out;
@@ -2393,6 +2400,152 @@ function collectionDayFor(endTimeIso, policy) {
 // sitting here — the one thing about this feature actually worth alerting on.
 function pickupOverdue(collectionDay) {
   return !!collectionDay && collectionDay < sgDateStr();
+}
+
+// ── OUTBOUND FULFILMENT KPI — what is critical, right now ───────────────────
+// The operation's own promise on marketplace orders, in the user's words:
+//   received by 12:00        → picked, packed and handed over the SAME working day
+//   received 12:01–14:00     → same day where we can, Shopee especially
+//   received after 14:00     → handed over the NEXT working day
+//
+// THE DEADLINE IS THE HANDOVER TIME, NOT A NOTIONAL "END OF DAY". A parcel is
+// only fulfilled when it physically leaves, so the due moment is the daily
+// handover cut-off (`pickupPolicy.cutoff`) on the due day, and the days it can
+// leave on are the days the collection policy already says it can. ONE
+// calendar, not two — a second copy would drift the first time someone changed
+// a courier's pickup time.
+//
+// DERIVED ON EVERY READ, never stamped — same discipline as `collection_due`
+// and the inbound SLA. Editing the bands or the cut-off moves every open
+// order's target honestly instead of leaving stale times behind.
+const DEFAULT_FULFILMENT_POLICY = {
+  enabled: true,
+  bands: [
+    // `until` is the SGT wall-clock the band runs UP TO (inclusive).
+    { until: '12:00', sameDay: true,  commitment: 'committed', label: 'Same working day' },
+    // "Prioritise same-day, mainly for Shopee" — a TARGET, not a promise, so a
+    // miss reads as a missed target rather than a breach. The named platforms
+    // are the exception: for them this band IS a commitment.
+    { until: '14:00', sameDay: true,  commitment: 'target',    label: 'Same day where we can',
+      priorityPlatforms: ['shopee'] },
+    { until: '24:00', sameDay: false, commitment: 'committed', label: 'Next working day' },
+  ],
+  warnMins: 240,       // amber below 4h left
+  criticalMins: 120,   // red below 2h left
+};
+function fulfilmentPolicy(db) {
+  const p = db.fulfilmentPolicy || {};
+  const bands = Array.isArray(p.bands) && p.bands.length
+    ? p.bands
+        .filter(b => /^\d{1,2}:\d{2}$/.test(String(b?.until || '')))
+        .map(b => ({
+          until: b.until,
+          sameDay: b.sameDay !== false,
+          commitment: b.commitment === 'target' ? 'target' : 'committed',
+          label: String(b.label || '').slice(0, 60) || (b.sameDay !== false ? 'Same working day' : 'Next working day'),
+          priorityPlatforms: (Array.isArray(b.priorityPlatforms) ? b.priorityPlatforms : [])
+            .map(x => String(x).trim().toLowerCase()).filter(Boolean).slice(0, 10),
+        }))
+        .sort((a, b) => a.until.localeCompare(b.until))
+    : DEFAULT_FULFILMENT_POLICY.bands;
+  const num = (v, d, lo, hi) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n) : d;
+  };
+  return {
+    enabled: p.enabled !== false,
+    bands,
+    warnMins: num(p.warnMins, DEFAULT_FULFILMENT_POLICY.warnMins, 5, 2880),
+    criticalMins: num(p.criticalMins, DEFAULT_FULFILMENT_POLICY.criticalMins, 1, 2880),
+  };
+}
+
+// The SGT instant a given day's handover cut-off falls on, as a real timestamp.
+// Built by walking back from a UTC guess rather than assuming a fixed offset,
+// so it stays correct if this ever runs somewhere that is not UTC+8.
+function sgInstantFor(dayStr, hhmm) {
+  if (!dayStr || !/^\d{1,2}:\d{2}$/.test(hhmm || '')) return null;
+  // SGT is UTC+8 with no DST — but derive it rather than hard-code it, by
+  // checking what SGT wall-clock a candidate instant actually lands on.
+  let guess = new Date(`${dayStr}T${hhmm.padStart(5, '0')}:00Z`).getTime();
+  if (isNaN(guess)) return null;
+  for (let i = 0; i < 3; i++) {
+    const got = sgParts(new Date(guess).toISOString());
+    if (!got) return null;
+    if (got.day === dayStr && got.hhmm === hhmm.padStart(5, '0')) break;
+    const want = new Date(`${dayStr}T${hhmm.padStart(5, '0')}:00Z`).getTime();
+    const have = new Date(`${got.day}T${got.hhmm}:00Z`).getTime();
+    guess += want - have;
+  }
+  return new Date(guess).toISOString();
+}
+
+// The next day (from `dayStr` inclusive) that anything actually leaves.
+function nextHandoverDay(dayStr, pol) {
+  const noColl = new Set(pol.noCollectionDays);
+  let day = dayStr, dow = new Date(day + 'T00:00:00Z').getUTCDay(), guard = 0;
+  while (noColl.has(dow) && guard++ < 14) { day = _nextDay(day); dow = (dow + 1) % 7; }
+  return day;
+}
+
+// One order's fulfilment promise. `order` needs uploadedAt / platform /
+// scan_status / endTime / pickup. Returns null when the KPI is switched off or
+// there is no arrival time to reason from — an SLA cannot be judged against a
+// clock that never started (same rule as the inbound SLA).
+function fulfilmentSla(order, fpol, ppol, nowIso) {
+  if (!fpol.enabled) return null;
+  const arrived = order.uploadedAt || order.uploaded_at || null;
+  const t = sgParts(arrived);
+  if (!t) return null;
+
+  const band = fpol.bands.find(b => t.hhmm <= b.until) || fpol.bands[fpol.bands.length - 1];
+  const platform = String(order.platform || '').trim().toLowerCase();
+  // A named platform lifts this band from a target to a real commitment.
+  const priority = !!(band.priorityPlatforms || []).some(p => platform && platform.includes(p));
+  const commitment = priority ? 'committed' : band.commitment;
+
+  // Same-day work is still due on a day something leaves; next-day work starts
+  // looking from the day after arrival.
+  const dueDay = band.sameDay
+    ? nextHandoverDay(t.day, ppol)
+    : nextHandoverDay(_nextDay(nextHandoverDay(t.day, ppol)), ppol);
+  const dueAt = sgInstantFor(dueDay, ppol.cutoff);
+
+  const out = {
+    basis: arrived, receivedAt: arrived, receivedHhmm: t.hhmm,
+    band: band.label, bandUntil: band.until,
+    commitment, priority, platform: order.platform || '',
+    dueDay, dueAt, dueAtLabel: ppol.cutoff, sameDay: !!band.sameDay,
+  };
+
+  // CLOSED — judge on when it actually left, not on when scanning finished.
+  // A parcel packed at 16:55 that goes out on the 17:00 handover met the
+  // promise; one packed at 17:30 leaves tomorrow and did not.
+  if (order.scan_status === 'done') {
+    const leftAt = order.picked_up_at || null;
+    const leftDay = leftAt ? sgParts(leftAt)?.day : collectionDayFor(order.endTime, ppol);
+    out.closed = true;
+    out.handoverDay = leftDay || null;
+    if (!leftDay) { out.status = 'unknown'; return out; }
+    out.met = leftDay <= dueDay;
+    out.status = out.met ? 'met' : 'missed';
+    out.daysLate = out.met ? 0 : Math.max(0, Math.round(
+      (new Date(leftDay + 'T00:00:00Z') - new Date(dueDay + 'T00:00:00Z')) / 86400000));
+    return out;
+  }
+  // Cancelled work carries no promise — there is nothing left to hand over.
+  if (order.scan_status === 'unprocessed') { out.closed = true; out.status = 'cancelled'; return out; }
+
+  const now = nowIso ? new Date(nowIso).getTime() : Date.now();
+  const mins = dueAt ? Math.round((new Date(dueAt).getTime() - now) / 60000) : null;
+  out.closed = false;
+  out.minutesLeft = mins;
+  out.status = mins === null ? 'unknown'
+    : mins < 0                 ? 'overdue'
+    : mins <= fpol.criticalMins ? 'critical'
+    : mins <= fpol.warnMins     ? 'due-soon'
+    : 'ontime';
+  return out;
 }
 
 // AUTO SELF-DROP. Orders finished on a self-drop day are taken to the drop-off
@@ -7298,6 +7451,12 @@ app.get('/api/stats', (_req, res) => {
   let todayPending = 0, todayDone = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
   let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0, totalDone = 0;
   const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
+  // Fulfilment KPI — how much of the open work is running out of time, and how
+  // today's finished work did against the promise. Same derivation as the
+  // Orders list uses, so the tile and the pills can never disagree.
+  const _fpol = fulfilmentPolicy(db), _ppol = pickupPolicy(db), _nowIso = new Date().toISOString();
+  const kpi = { enabled: _fpol.enabled, overdue: 0, critical: 0, dueSoon: 0, onTime: 0,
+                todayMet: 0, todayMissed: 0, handoverAt: _ppol.cutoff };
 
   for (const batch of db.batches) {
     const batchDate   = sgDateStr(new Date(batch.uploaded_at));
@@ -7313,8 +7472,26 @@ app.get('/api/stats', (_req, res) => {
 
     for (const ord of batchOrders) {
       const state  = states[ord.order_number];
+      if (isClientCancelled(state)) continue;   // withdrawn by the client — not our work
       const isPending = !state || state.status === 'pending' || state.status === 'processing';
       if (isPending) pendingBacklog++; // ANY day — feeds the sidebar Orders badge
+      if (_fpol.enabled) {
+        const f = fulfilmentSla({
+          uploadedAt: batch.uploaded_at, platform: ord.platform || '',
+          scan_status: state?.status || 'pending', endTime: state?.endTime || null,
+          picked_up_at: state?.pickup?.at || null,
+        }, _fpol, _ppol, _nowIso);
+        if (f) {
+          if (f.status === 'overdue')       kpi.overdue++;
+          else if (f.status === 'critical') kpi.critical++;
+          else if (f.status === 'due-soon') kpi.dueSoon++;
+          else if (f.status === 'ontime')   kpi.onTime++;
+          else if (f.closed && (f.status === 'met' || f.status === 'missed')
+                   && sgDateStr(new Date(state.endTime)) === todayStr) {
+            if (f.status === 'met') kpi.todayMet++; else kpi.todayMissed++;
+          }
+        }
+      }
       if (batchDate === todayStr) {
         cs.todayUploaded++;
         if (isPending) { cs.todayPending++; todayPending++; }
@@ -7346,7 +7523,7 @@ app.get('/api/stats', (_req, res) => {
 
   res.json({ todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
     pendingBacklog, totalDone,
-    avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats });
+    avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats, kpi });
 });
 
 // Date-windowed orders: the dashboard asks only for the selected range, so
@@ -13166,7 +13343,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -13341,6 +13518,98 @@ app.get('/api/master/report/:kind', (req, res) => {
         ['Client', 'Order No', 'Units reserved', 'Units released', 'Units shipped', 'Still reserved', 'Last movement'],
         ...[...byOrder.values()].map(e => [e.client, e.order, e.reserved, e.released, e.shipped,
           Math.max(0, e.reserved - e.released - e.shipped), e.last]),
+      ]);
+
+    } else if (kind === 'fulfilment') {
+      // DID WE HAND IT OVER WHEN WE SAID WE WOULD? Read from live orders, not
+      // from the audit log, because the promise is DERIVED from the current
+      // policy — a report built from stamped values would go stale the moment
+      // a cut-off changed. `from`/`to` slice on the day the order reached us.
+      title = 'Fulfilment_KPI';
+      const fpol = fulfilmentPolicy(db), ppol = pickupPolicy(db), nowIso = new Date().toISOString();
+      const fmtSgt = t => (t ? new Date(t).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '');
+      const rows = [];
+      for (const b of db.batches || []) {
+        const day = sgDateStr(new Date(b.uploaded_at));
+        if ((from && day < from) || (to && day > to)) continue;
+        for (const o of b.orders || []) {
+          const st = (b.orderStates || {})[o.order_number] || {};
+          if (isClientCancelled(st)) continue;
+          const f = fulfilmentSla({
+            uploadedAt: b.uploaded_at, platform: o.platform || '',
+            scan_status: st.status || 'pending', endTime: st.endTime || null,
+            picked_up_at: st.pickup?.at || null,
+          }, fpol, ppol, nowIso);
+          if (!f) continue;
+          const VERDICT = { met: 'Met', missed: 'Missed', overdue: 'OVERDUE — still here',
+            critical: 'Critical', 'due-soon': 'Due soon', ontime: 'On time', cancelled: 'Cancelled',
+            unknown: 'No handover date' };
+          rows.push([
+            b.client_name || '', o.order_number, o.platform || '',
+            fmtSgt(b.uploaded_at), f.receivedHhmm, f.band,
+            f.commitment === 'target' ? 'Target' : 'Committed',
+            f.dueDay, ppol.cutoff,
+            st.status === 'done' ? fmtSgt(st.endTime) : '',
+            f.handoverDay || '', VERDICT[f.status] || f.status,
+            f.closed ? '' : (f.minutesLeft === null ? '' : f.minutesLeft),
+            f.daysLate || 0,
+          ]);
+        }
+      }
+      rows.sort((a, c) => String(a[3]).localeCompare(String(c[3])));
+      addSheet('Fulfilment', [
+        ['Client', 'Order No', 'Channel', 'Received (SGT)', 'Received at', 'Band', 'Commitment',
+         'Due day', 'Handover by', 'Completed (SGT)', 'Left on', 'Verdict', 'Minutes left', 'Days late'],
+        ...rows,
+      ]);
+      // The headline. Committed work is what the promise is measured on; the
+      // target band is reported separately rather than folded in, because
+      // scoring a "where we can" against a hard promise would flatter or
+      // damn us for the wrong reason.
+      const tally = (pred) => {
+        const set = rows.filter(pred);
+        const met = set.filter(r => r[11] === 'Met').length;
+        const missed = set.filter(r => r[11] === 'Missed').length;
+        const closed = met + missed;
+        return [set.length, met, missed, closed ? `${Math.round(met / closed * 100)}%` : 'n/a'];
+      };
+      addSheet('Summary', [
+        ['Fulfilment KPI', '', '', ''],
+        [`Handover cut-off: ${ppol.cutoff} SGT`, '', '', ''],
+        [], ['Group', 'Orders', 'Met', 'Missed', 'On-time %'],
+        ['Committed', ...tally(r => r[6] === 'Committed')],
+        ['Target (same day where we can)', ...tally(r => r[6] === 'Target')],
+        ['All', ...tally(() => true)],
+        [],
+        ['Still open', rows.filter(r => ['On time', 'Due soon', 'Critical', 'OVERDUE — still here'].includes(r[11])).length, '', '', ''],
+        ['…of which overdue', rows.filter(r => r[11] === 'OVERDUE — still here').length, '', '', ''],
+        [],
+        ['NOTE — an order counts as fulfilled on the day it physically LEAVES,'],
+        ['not the moment scanning finished. Work completed after the handover'],
+        ['cut-off leaves on the next collecting day, and is judged on that day.'],
+        ['Bands and thresholds are the CURRENT policy: this report is derived,'],
+        ['so changing a cut-off re-scores history honestly rather than leaving'],
+        ['stale targets behind.'],
+      ]);
+      // Where the misses are.
+      const byCh = new Map();
+      for (const r of rows) {
+        const k = r[2] || '(not a marketplace order)';
+        const e = byCh.get(k) || { ch: k, n: 0, met: 0, missed: 0, open: 0, overdue: 0 };
+        e.n++;
+        if (r[11] === 'Met') e.met++;
+        else if (r[11] === 'Missed') e.missed++;
+        else if (r[11] === 'Cancelled') { /* carries no promise */ }
+        else { e.open++; if (r[11] === 'OVERDUE — still here') e.overdue++; }
+        byCh.set(k, e);
+      }
+      addSheet('By Channel', [
+        ['Channel', 'Orders', 'Met', 'Missed', 'On-time %', 'Still open', 'Overdue'],
+        ...[...byCh.values()].sort((a, c) => c.n - a.n).map(e => [
+          e.ch, e.n, e.met, e.missed,
+          (e.met + e.missed) ? `${Math.round(e.met / (e.met + e.missed) * 100)}%` : 'n/a',
+          e.open, e.overdue,
+        ]),
       ]);
 
     } else if (kind === 'login-audit') {
@@ -13727,6 +13996,69 @@ app.post('/api/master/pickup-policy', express.json(), (req, res) => {
   writeDb(db);
   logAudit('pickup_policy_updated', { ...next, by: req.userId || 'master' });
   res.json({ ok: true, policy: next });
+});
+
+// ── Fulfilment KPI schedule ─────────────────────────────────────────────────
+// Reading it is floor information — the packers need to know what today's
+// cut-offs are. Changing it is a commercial promise, so it follows the same
+// guard as the collection schedule: admin role or the master key.
+app.get('/api/fulfilment-policy', (req, res) => {
+  const db = readDb();
+  res.json({ ...fulfilmentPolicy(db), handoverAt: pickupPolicy(db).cutoff });
+});
+app.post('/api/master/fulfilment-policy', express.json(), (req, res) => {
+  if (req.headers['x-master-key'] !== MASTER_PASS) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin') return res.status(403).json({ error: 'Only Admin users can change the fulfilment KPI.' });
+  }
+  const b = req.body || {};
+  const db = readDb();
+  const cur = fulfilmentPolicy(db);
+  let bands = cur.bands;
+  if (b.bands !== undefined) {
+    if (!Array.isArray(b.bands) || !b.bands.length) {
+      return res.status(400).json({ error: 'At least one cut-off band is required.' });
+    }
+    if (b.bands.length > 6) return res.status(400).json({ error: 'At most 6 bands.' });
+    for (const x of b.bands) {
+      if (!/^\d{1,2}:\d{2}$/.test(String(x?.until || ''))) {
+        return res.status(400).json({ error: 'Each band needs a cut-off time like 12:00.' });
+      }
+    }
+    bands = b.bands.map(x => ({
+      until: String(x.until).padStart(5, '0'),
+      sameDay: x.sameDay !== false,
+      commitment: x.commitment === 'target' ? 'target' : 'committed',
+      label: String(x.label || '').slice(0, 60) || (x.sameDay !== false ? 'Same working day' : 'Next working day'),
+      priorityPlatforms: (Array.isArray(x.priorityPlatforms) ? x.priorityPlatforms : [])
+        .map(v => String(v).trim().toLowerCase()).filter(Boolean).slice(0, 10),
+    })).sort((a, c) => a.until.localeCompare(c.until));
+    // The last band has to catch everything, or an order arriving late in the
+    // evening would fall through and carry no promise at all.
+    if (bands[bands.length - 1].until < '23:59') bands[bands.length - 1].until = '24:00';
+    if (new Set(bands.map(x => x.until)).size !== bands.length) {
+      return res.status(400).json({ error: 'Two bands cannot share the same cut-off time.' });
+    }
+  }
+  const next = {
+    enabled: b.enabled !== false,
+    bands,
+    warnMins: b.warnMins === undefined ? cur.warnMins : Number(b.warnMins),
+    criticalMins: b.criticalMins === undefined ? cur.criticalMins : Number(b.criticalMins),
+  };
+  if (!(next.criticalMins > 0) || !(next.warnMins > 0)) {
+    return res.status(400).json({ error: 'The amber and red thresholds must both be more than zero minutes.' });
+  }
+  if (next.criticalMins >= next.warnMins) {
+    return res.status(400).json({ error: 'The red threshold must be shorter than the amber one.' });
+  }
+  db.fulfilmentPolicy = next;
+  writeDb(db);
+  logAudit('fulfilment_policy_updated', {
+    enabled: next.enabled, bands: next.bands.length, warnMins: next.warnMins,
+    criticalMins: next.criticalMins, by: req.userId || 'master',
+  });
+  res.json({ ok: true, policy: { ...fulfilmentPolicy(db), handoverAt: pickupPolicy(db).cutoff } });
 });
 
 app.post('/api/scan/order-deletion-request', (req, res) => {

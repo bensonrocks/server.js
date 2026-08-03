@@ -1308,6 +1308,8 @@
           <button class="report-btn" data-report="order-size"><b>&#128230; Order Size Analysis</b><span>Pieces &amp; line-items per order — sorted three ways: by size bucket, by pieces, by line count</span></button>
           <button class="report-btn" data-report="inbound"><b>&#128230; Inbound Receiving</b><span>Every PO/ASN and return: reference, serial, status, and per-SKU scanned lines with condition breakdown</span></button>
           <button class="report-btn" data-report="drivers"><b>&#128666; Driver Performance</b><span>Per driver: jobs assigned/delivered, cartons, est. distance travelled, days active — plus every job line</span></button>
+          <button class="report-btn" data-report="fulfilment"><b>&#9201; Fulfilment KPI (Handover)</b><span>Every order against its cut-off band: due day, when it actually left, met or missed — with a channel breakdown</span></button>
+          <button class="report-btn" data-report="outbound-stock"><b>&#128202; Outbound Stock Movements</b><span>Reserved at intake, released on cancellation, depleted on shipping — reconciled per order</span></button>
         </div>
         <div class="admin-section-divider"></div>
         <div class="report-range-row">
@@ -1964,6 +1966,9 @@
       </div>
       <div id="ordersDashboard" class="hidden">
         <div class="stats-bar" id="statsBar"></div>
+        <!-- Fulfilment KPI: what has to leave today, and what is running out
+             of time. Each tile filters the list below it. -->
+        <div class="kpi-bar hidden" id="kpiBar"></div>
         <div id="kfClosureBanner" class="kf-closure-banner hidden"></div>
 
         <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-bottom:.5rem">
@@ -3725,6 +3730,46 @@
       <div class="modal-actions" style="margin-top:.8rem">
         <button class="btn-secondary" id="ppCancel">Cancel</button>
         <button class="btn-primary"   id="ppSave">Save schedule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fulfilment KPI — the cut-off bands that decide when an order is due out -->
+  <div id="kpiPolicyOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:640px">
+      <div class="modal-title">&#9201; Fulfilment KPI</div>
+      <p class="hint" style="margin:.2rem 0 .7rem">
+        When an order arrives decides when it has to be handed over. The deadline itself is the
+        <b>collection cut-off</b> (<span id="kpiHandoverAt">&mdash;</span>, set under Collection &rarr; &#9881; Schedule),
+        on a day something actually leaves. Changing anything here re-scores every open order
+        straight away &mdash; nothing is stamped, so nothing goes stale.
+      </p>
+      <label class="form-group" style="display:flex;align-items:center;gap:.5rem">
+        <input type="checkbox" id="kpiEnabled" checked> <span>Track a fulfilment KPI</span>
+      </label>
+      <div class="form-group">
+        <label>Cut-off bands</label>
+        <div id="kpiBands"></div>
+        <button class="btn-secondary btn-sm" id="kpiAddBand" style="margin-top:.4rem">+ Add band</button>
+        <div class="hint" style="margin-top:.35rem">
+          Read as &ldquo;arrived at or before this time &rarr; this promise&rdquo;. The last band always
+          catches everything later in the day. A <b>target</b> is what we aim for; a
+          <b>commitment</b> is what we are measured on &mdash; naming a channel on a target band
+          (e.g. <code>shopee</code>) makes it a commitment for that channel only.
+        </div>
+      </div>
+      <div class="form-group" style="display:flex;gap:1rem;flex-wrap:wrap">
+        <label style="flex:1;min-width:150px">Amber below
+          <input type="number" id="kpiWarn" min="5" max="2880" step="5"> <span class="hint-inline">minutes left</span>
+        </label>
+        <label style="flex:1;min-width:150px">Red below
+          <input type="number" id="kpiCrit" min="1" max="2880" step="5"> <span class="hint-inline">minutes left</span>
+        </label>
+      </div>
+      <div id="kpiMsg" class="status-bar hidden" style="margin-top:.5rem"></div>
+      <div class="modal-actions" style="margin-top:.8rem">
+        <button class="btn-secondary" id="kpiCancel">Cancel</button>
+        <button class="btn-primary"   id="kpiSave">Save KPI</button>
       </div>
     </div>
   </div>

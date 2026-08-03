@@ -2794,6 +2794,75 @@ body.ls-open { overflow: hidden; }
 .chip-pickup-wait { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; font-weight: 600; }
 .chip-pickup-late { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }
 
+/* ── Fulfilment KPI chips ──────────────────────────────────────────────────
+   The countdown to handover. Grey while there is plenty of time, amber as it
+   approaches, red once it is critical or already past — the whole point is
+   that a packer can pick the urgent one out of a full screen without reading
+   a single timestamp. Green/red on finished work is the verdict. */
+.chip-kpi-ontime   { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; font-weight: 600; }
+.chip-kpi-soon     { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; font-weight: 700; }
+.chip-kpi-critical { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 800; }
+.chip-kpi-overdue  { background: #991b1b; color: #fff;    border: 1px solid #7f1d1d; font-weight: 800; }
+.chip-kpi-met      { background: #dcfce7; color: #166534; border: 1px solid #86efac; font-weight: 600; }
+.chip-kpi-missed   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }
+
+/* ── Fulfilment KPI bar ────────────────────────────────────────────────────
+   Sits under the status tiles on the Orders tab. Every tile is a filter, so
+   "6 critical" is one tap away from being those 6 orders on screen. Scrolls
+   sideways on a phone rather than wrapping into a wall of boxes. */
+.kpi-bar {
+  display: flex; align-items: stretch; gap: .4rem; margin-bottom: .6rem;
+  overflow-x: auto; padding-bottom: .2rem;
+}
+.kpi-head {
+  display: flex; align-items: center; font-size: .66rem; font-weight: 800;
+  letter-spacing: .06em; color: var(--text-muted, #64748b); padding-right: .3rem;
+  white-space: nowrap;
+}
+.kpi-tile {
+  flex: 0 0 auto; min-width: 74px; padding: .35rem .6rem; border-radius: 8px;
+  border: 1px solid #e2e8f0; background: #fff; cursor: pointer; text-align: center;
+  font: inherit; line-height: 1.15;
+}
+.kpi-tile b    { display: block; font-size: 1.05rem; font-weight: 800; }
+.kpi-tile span { display: block; font-size: .64rem; text-transform: uppercase; letter-spacing: .04em; opacity: .8; }
+.kpi-tile.empty  { opacity: .5; }
+.kpi-tile.active { outline: 2px solid var(--primary, #2563eb); outline-offset: 1px; }
+.kpi-tile.kpi-red   { background: #991b1b; color: #fff; border-color: #7f1d1d; }
+.kpi-tile.kpi-amber { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.kpi-tile.kpi-warn  { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+.kpi-tile.kpi-grey  { background: #f8fafc; color: #475569; }
+.kpi-tile.kpi-green { background: #dcfce7; color: #166534; border-color: #86efac; }
+.kpi-tile.kpi-late  { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+.kpi-sep { flex: 0 0 1px; background: #e2e8f0; margin: .2rem .25rem; }
+.kpi-cog {
+  flex: 0 0 auto; border: 1px solid #e2e8f0; background: #fff; border-radius: 8px;
+  cursor: pointer; padding: 0 .55rem; font-size: 1rem; color: var(--text-muted, #64748b);
+}
+.kpi-cog:hover { background: #f1f5f9; }
+
+/* One editable cut-off band in the KPI settings modal. */
+.kpi-band { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; margin-bottom: .35rem; }
+.kpi-band .kb-lead { font-size: .78rem; color: var(--text-muted, #64748b); }
+.kpi-band input[type="time"] { width: 8.5em; }
+.kpi-band .kb-plat { flex: 1 1 170px; min-width: 0; }
+.kpi-band .kb-del {
+  border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; border-radius: 6px;
+  cursor: pointer; width: 1.9rem; height: 1.9rem; font-size: 1rem; line-height: 1;
+}
+.kpi-band .kb-del:disabled { opacity: .35; cursor: default; }
+
+@media (max-width: 700px) {
+  /* On a phone the wording ate half the bar and pushed the tiles off-screen —
+     the numbers are the point, and the cut-off is still on every chip's
+     tooltip and in the settings. */
+  .kpi-head { font-size: 0; padding-right: .15rem; }
+  .kpi-head::before { content: '\23F1'; font-size: .95rem; }
+  .kpi-tile { min-width: 62px; padding: .3rem .45rem; }
+  .kpi-tile b    { font-size: .95rem; }
+  .kpi-tile span { font-size: .58rem; }
+}
+
 .pk-stats { display: flex; gap: .5rem; flex-wrap: wrap; }
 
 /* ── Putaway ───────────────────────────────────────────────────────────────

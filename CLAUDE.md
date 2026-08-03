@@ -185,6 +185,70 @@ tiles but "Active 16" below them):
   Today", `yesterdayDone`). Orders tab = packer view (today + backlog
   only). The two are deliberately different scopes.
 
+## Outbound fulfilment KPI — what has to leave, and what is critical
+
+Per the user, for marketplace orders (Lazada / Shopee / TikTok / Shopify):
+received **by 12:00** → picked, packed and handed over the SAME working day;
+**12:01–14:00** → prioritise same-day, *"mainly for Shopee"*; **after 14:00** →
+handed over the NEXT working day. *"Set the timer at the Office end so we can
+tell what is critical."*
+
+- **THE DEADLINE IS THE HANDOVER TIME, NOT A NOTIONAL END OF DAY.** A parcel is
+  only fulfilled when it physically leaves, so the due moment is the daily
+  collection cut-off (`pickupPolicy.cutoff`, 17:00) on the due day, and the days
+  it can leave on are the days the collection policy already says it can
+  (`nextHandoverDay` skips `noCollectionDays`). **ONE calendar, not two** — a
+  second copy would drift the first time someone moved a courier's pickup time.
+  Consequence worth knowing: Saturday IS a handover day here, because this
+  operation self-drops on Saturday. Change that in Collection → ⚙ Schedule, not
+  here.
+- **DERIVED ON EVERY READ** (`fulfilmentSla`), never stamped — same discipline
+  as `collection_due` and the inbound SLA. Editing a band re-scores every open
+  order honestly instead of leaving stale targets behind; the test asserts this
+  by switching the KPI off (every promise disappears) and back on (they all
+  come back).
+- **TARGET vs COMMITMENT is a real distinction, not decoration.** The 12:01–14:00
+  band is `commitment: 'target'` — we aim for it, and a miss reads as a missed
+  target. `priorityPlatforms: ['shopee']` lifts it to a commitment **for that
+  channel only**, which is exactly what the user asked for. The report scores
+  the two groups separately: folding a "where we can" into a hard promise would
+  flatter or damn us for the wrong reason.
+- **JUDGED ON THE DAY IT LEFT, not when scanning stopped.** An order packed at
+  16:30 makes the 17:00 handover; one packed at 18:30 leaves the next day and
+  missed. `collectionDayFor(endTime)` supplies that day (or `pickup.at` when the
+  parcel was actually closed off). Verified both ways.
+- `db.fulfilmentPolicy` = `{enabled, bands[{until, sameDay, commitment, label,
+  priorityPlatforms}], warnMins: 240, criticalMins: 120}`. `GET
+  /api/fulfilment-policy` is open to anyone signed in (the floor has to know
+  today's cut-offs); `POST /api/master/fulfilment-policy` is **admin or master**,
+  same guard as the collection schedule — warehouse gets a real 403 and the ⚙ is
+  not rendered for them. The **last band always catches everything** (`24:00`),
+  or an evening order would fall through and carry no promise at all.
+- **THE SCREEN**: a `#kpiBar` under the Orders stat tiles — Overdue / Critical /
+  Due soon / On time, then Met / Late — where **every tile is a filter**,
+  because knowing 6 orders are critical is only useful if those 6 are one tap
+  away. Row chips show the countdown (`⏱ 2h 15m left`, `⏳ 13d 15h over`) with
+  the whole promise in the tooltip. **The Active list is sorted most-urgent
+  first** — a countdown nobody scrolls to is a countdown nobody acts on.
+  Counted from the SAME `fulfilment` object the chips render, so tile and pill
+  can never disagree.
+- **Report — "⏱ Fulfilment KPI (Handover)"** (`kind === 'fulfilment'`, in
+  `ADMIN_REPORT_KINDS`): every order with its band, due day, the day it actually
+  left and the verdict; a Summary scoring Committed and Target separately; and a
+  By Channel breakdown. Built from live orders, not the audit log, precisely
+  because the promise is derived. (`outbound-stock` was also added to the
+  Reports screen — it had been reachable only by API.)
+
+Verified 37 API checks (each band incl. Shopee's exception, Friday→Saturday,
+Saturday→Monday skipping Sunday, met vs missed across the 17:00 cut-off, the
+thresholds moved around a real countdown to flip a live order
+critical→amber→on-time, every open order in exactly one stats bucket, warehouse
+403 with nothing changed but still able to read, three validation refusals, off
+then on again) plus 30 browser checks on desktop and a Pixel 5 (tile colours by
+computed style, the tile filter and its clear, urgency-first ordering, the
+editor saving and the chips re-scoring at once, no cog for warehouse, and all
+four live tiles fitting a 393px screen without scrolling the bar).
+
 ## Collection / "Picked Up" — finished is not the same as gone
 
 Per the user: platform orders (Lazada/Shopee/TikTok) are collected by the

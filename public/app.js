@@ -1701,6 +1701,8 @@
       <div class="stat-box done"><div class="val">${c.done||0}</div><div class="lbl">Done</div></div>
       <div class="stat-box unprocessed"><div class="val">${c.unprocessed||0}</div><div class="lbl">Unprocessed</div></div>`;
 
+    renderKpiBar();
+
     const isAdmin = (currentUser?.role || 'admin') === 'admin';
     const pendingKf = loadedOrders.filter(o => o.scan_status === 'done' && !o.keyfields_closed).length;
     const kfBanner = document.getElementById('kfClosureBanner');
@@ -1736,6 +1738,144 @@
 
     renderOrdersList();
   }
+
+  // ── Fulfilment KPI bar ─────────────────────────────────────────────────────
+  // Counted from the SAME `fulfilment` object the row chips render, so the tile
+  // and the pills below it can never disagree. Each tile is a filter — the
+  // point of knowing 6 orders are critical is being able to see those 6.
+  let kpiFilter = 'all';
+  function kpiCounts(list) {
+    const k = { overdue: 0, critical: 0, dueSoon: 0, onTime: 0, met: 0, missed: 0 };
+    for (const o of list) {
+      const s = o.fulfilment?.status;
+      if (s === 'overdue') k.overdue++;
+      else if (s === 'critical') k.critical++;
+      else if (s === 'due-soon') k.dueSoon++;
+      else if (s === 'ontime') k.onTime++;
+      else if (s === 'met') k.met++;
+      else if (s === 'missed') k.missed++;
+    }
+    return k;
+  }
+  function renderKpiBar() {
+    const bar = document.getElementById('kpiBar');
+    if (!bar) return;
+    // Nothing carries a promise (KPI switched off, or no arrival times) → the
+    // bar is not rendered at all rather than showing a row of zeroes.
+    if (!loadedOrders.some(o => o.fulfilment)) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    const k = kpiCounts(loadedOrders);
+    const handoverAt = loadedOrders.find(o => o.fulfilment?.dueAtLabel)?.fulfilment.dueAtLabel || '';
+    const tile = (key, n, lbl, cls, title) => `
+      <button class="kpi-tile ${cls}${kpiFilter === key ? ' active' : ''}${n ? '' : ' empty'}"
+              data-kpi="${key}" title="${esc(title)}"><b>${n}</b><span>${lbl}</span></button>`;
+    bar.innerHTML = `
+      <div class="kpi-head">&#9201; HANDOVER${handoverAt ? ` &middot; cut-off ${esc(handoverAt)}` : ''}</div>
+      ${tile('overdue',  k.overdue,  'Overdue',  'kpi-red',   'Past its handover time and still here')}
+      ${tile('critical', k.critical, 'Critical', 'kpi-amber', 'Very little time left before handover')}
+      ${tile('soon',     k.dueSoon,  'Due soon', 'kpi-warn',  'Approaching its handover time')}
+      ${tile('ontime',   k.onTime,   'On time',  'kpi-grey',  'Plenty of time left')}
+      <div class="kpi-sep"></div>
+      ${tile('met',      k.met,      'Met',      'kpi-green', 'Finished and handed over by the promised day')}
+      ${tile('missed',   k.missed,   'Late',     'kpi-late',  'Left later than the promised day')}
+      ${(currentUser?.role || 'admin') === 'admin'
+        ? `<button class="kpi-cog" id="kpiCogBtn" title="Set the cut-off times and thresholds">&#9881;</button>` : ''}`;
+    bar.querySelectorAll('.kpi-tile').forEach(b => b.addEventListener('click', () => {
+      kpiFilter = (kpiFilter === b.dataset.kpi) ? 'all' : b.dataset.kpi;   // click again to clear
+      renderKpiBar(); renderOrdersList();
+    }));
+    document.getElementById('kpiCogBtn')?.addEventListener('click', openKpiSettings);
+  }
+  // ── The KPI schedule editor ────────────────────────────────────────────────
+  let _kpiPolicy = null;
+  function kpiBandRows(bands) {
+    document.getElementById('kpiBands').innerHTML = bands.map((b, i) => `
+      <div class="kpi-band" data-i="${i}">
+        <span class="kb-lead">by</span>
+        <input type="time" class="kb-until" value="${esc(b.until === '24:00' ? '23:59' : b.until)}" ${i === bands.length - 1 ? 'disabled title="The last band catches everything later in the day"' : ''}>
+        <select class="kb-same">
+          <option value="1" ${b.sameDay ? 'selected' : ''}>same working day</option>
+          <option value="0" ${b.sameDay ? '' : 'selected'}>next working day</option>
+        </select>
+        <select class="kb-commit">
+          <option value="committed" ${b.commitment === 'committed' ? 'selected' : ''}>commitment</option>
+          <option value="target"    ${b.commitment === 'target'    ? 'selected' : ''}>target</option>
+        </select>
+        <input type="text" class="kb-plat" placeholder="channels always committed, e.g. shopee"
+               value="${esc((b.priorityPlatforms || []).join(', '))}">
+        <button class="kb-del" title="Remove this band" ${bands.length < 2 || i === bands.length - 1 ? 'disabled' : ''}>&#215;</button>
+      </div>`).join('');
+    document.querySelectorAll('#kpiBands .kb-del').forEach(btn => btn.addEventListener('click', () => {
+      const i = Number(btn.closest('.kpi-band').dataset.i);
+      const cur = readKpiBands(); cur.splice(i, 1); kpiBandRows(cur);
+    }));
+  }
+  function readKpiBands() {
+    return [...document.querySelectorAll('#kpiBands .kpi-band')].map(row => ({
+      until: row.querySelector('.kb-until').value || '23:59',
+      sameDay: row.querySelector('.kb-same').value === '1',
+      commitment: row.querySelector('.kb-commit').value,
+      priorityPlatforms: row.querySelector('.kb-plat').value.split(',').map(s => s.trim()).filter(Boolean),
+      label: '',
+    }));
+  }
+  async function openKpiSettings() {
+    try {
+      const r = await fetchT('/api/fulfilment-policy', { headers: hdrs() });
+      _kpiPolicy = await r.json();
+    } catch { alert('Could not load the KPI schedule.'); return; }
+    document.getElementById('kpiEnabled').checked = _kpiPolicy.enabled !== false;
+    document.getElementById('kpiWarn').value = _kpiPolicy.warnMins;
+    document.getElementById('kpiCrit').value = _kpiPolicy.criticalMins;
+    document.getElementById('kpiHandoverAt').textContent = _kpiPolicy.handoverAt || '—';
+    kpiBandRows(_kpiPolicy.bands || []);
+    document.getElementById('kpiMsg').classList.add('hidden');
+    document.getElementById('kpiPolicyOverlay').classList.remove('hidden');
+  }
+  document.getElementById('kpiAddBand')?.addEventListener('click', () => {
+    const cur = readKpiBands();
+    // The new band goes BEFORE the catch-all, which must stay last.
+    cur.splice(Math.max(0, cur.length - 1), 0,
+      { until: '15:00', sameDay: false, commitment: 'committed', priorityPlatforms: [], label: '' });
+    kpiBandRows(cur);
+  });
+  document.getElementById('kpiCancel')?.addEventListener('click', () =>
+    document.getElementById('kpiPolicyOverlay').classList.add('hidden'));
+  document.getElementById('kpiSave')?.addEventListener('click', async () => {
+    const bands = readKpiBands();
+    // Give each band the wording that matches what it now says, so the chip's
+    // tooltip never describes a promise the band no longer makes.
+    bands.forEach(b => { b.label = b.sameDay ? 'Same working day' : 'Next working day'; });
+    if (bands.length) bands[bands.length - 1].until = '24:00';
+    const body = {
+      enabled: document.getElementById('kpiEnabled').checked,
+      bands,
+      warnMins: Number(document.getElementById('kpiWarn').value),
+      criticalMins: Number(document.getElementById('kpiCrit').value),
+    };
+    const el = document.getElementById('kpiMsg');
+    const r = await fetchT('/api/master/fulfilment-policy', {
+      method: 'POST', headers: hdrs(), body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      el.className = 'status-bar error'; el.textContent = d.error || 'Could not save.';
+      el.classList.remove('hidden'); return;
+    }
+    document.getElementById('kpiPolicyOverlay').classList.add('hidden');
+    // REFETCH, don't just repaint: the promise is derived server-side, so the
+    // new bands only reach the screen by asking for the orders again.
+    renderOrdersDash();
+  });
+
+  const KPI_FILTERS = {
+    overdue:  o => o.fulfilment?.status === 'overdue',
+    critical: o => o.fulfilment?.status === 'critical',
+    soon:     o => o.fulfilment?.status === 'due-soon',
+    ontime:   o => o.fulfilment?.status === 'ontime',
+    met:      o => o.fulfilment?.status === 'met',
+    missed:   o => o.fulfilment?.status === 'missed',
+  };
 
   // ── Waybill scan bar ───────────────────────────────────────────────────────
   function focusWaybillInput() {
@@ -1899,6 +2039,40 @@
     return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
   }
 
+  // ── FULFILMENT KPI CHIP — the countdown to handover ────────────────────────
+  // The server derives the whole promise (band, due day, minutes left) so the
+  // chip only formats it. Rendering it from a locally-invented deadline would
+  // be a second implementation, and the two would disagree the first time
+  // someone moved a cut-off.
+  function fmtMins(m) {
+    const a = Math.abs(m);
+    if (a < 60) return `${a}m`;
+    const h = Math.floor(a / 60), mm = a % 60;
+    return h < 24 ? (mm ? `${h}h ${mm}m` : `${h}h`) : `${Math.floor(h / 24)}d ${h % 24}h`;
+  }
+  function fulfilmentChip(ord) {
+    const f = ord.fulfilment;
+    if (!f || f.status === 'cancelled' || f.status === 'unknown') return '';
+    const due = `${fmtDay(f.dueDay)} by ${esc(f.dueAtLabel || '')}`.trim();
+    const band = `Arrived ${esc(f.receivedHhmm)} → ${esc(f.band)}`
+      + (f.commitment === 'target' ? ' (target, not a commitment)' : '')
+      + (f.priority ? ` · priority channel: ${esc(f.platform)}` : '');
+    if (f.closed) {
+      // A finished order is judged on the day it actually LEFT, not on when
+      // scanning stopped — so the tooltip says which day that was.
+      return f.status === 'met'
+        ? `<span class="chip chip-kpi-met" title="${band} — due ${esc(due)}, left ${esc(fmtDay(f.handoverDay))}">&#10003; On&nbsp;time</span>`
+        : `<span class="chip chip-kpi-missed" title="${band} — due ${esc(due)}, left ${esc(fmtDay(f.handoverDay))}">&#9888; Late${f.daysLate ? ` ${f.daysLate}d` : ''}</span>`;
+    }
+    if (f.minutesLeft === null || f.minutesLeft === undefined) return '';
+    if (f.status === 'overdue') {
+      return `<span class="chip chip-kpi-overdue" title="${band} — was due ${esc(due)}">&#9203; ${fmtMins(f.minutesLeft)} over</span>`;
+    }
+    const cls = f.status === 'critical' ? 'chip-kpi-critical'
+              : f.status === 'due-soon' ? 'chip-kpi-soon' : 'chip-kpi-ontime';
+    return `<span class="chip ${cls}" title="${band} — hand over ${esc(due)}">&#9201; ${fmtMins(f.minutesLeft)} left</span>`;
+  }
+
   function renderOrdersList() {
     let orders = loadedOrders;
     // Case-insensitive: picking "Betime" must also bring in orders filed as
@@ -1908,6 +2082,8 @@
       orders = orders.filter(o => (o.client_name || '').trim().toLowerCase() === want);
     }
     if (activeCarrierFilter !== 'all') orders = orders.filter(o => (o.carrier || '') === activeCarrierFilter);
+    // Clicking a KPI tile narrows the list to exactly what it counted.
+    if (KPI_FILTERS[kpiFilter]) orders = orders.filter(KPI_FILTERS[kpiFilter]);
 
     // Date filter — default TODAY, sliced in SGT calendar days (naive UTC
     // slicing put pre-08:00 uploads/completions on the previous day).
@@ -1939,7 +2115,22 @@
     // Active / Completed sub-tabs — completed orders leave the main list and
     // live in their own searchable view for reference and label reprinting
     const doneOrders   = orders.filter(o => o.scan_status === 'done');
-    const activeOrders = orders.filter(o => o.scan_status !== 'done');
+    // MOST URGENT FIRST. A packer works down this list, so the order that has
+    // to leave soonest belongs at the top — a countdown chip nobody scrolls to
+    // is a countdown nobody acts on. Orders carrying no promise keep their
+    // existing relative position at the end. Sorting a COPY: `orders` is a
+    // filtered array, but its elements are shared with loadedOrders.
+    const activeOrders = orders.filter(o => o.scan_status !== 'done')
+      .map((o, i) => [o, i])
+      .sort((a, b) => {
+        const ma = a[0].fulfilment?.closed === false ? a[0].fulfilment.minutesLeft : null;
+        const mb = b[0].fulfilment?.closed === false ? b[0].fulfilment.minutesLeft : null;
+        if (ma === null && mb === null) return a[1] - b[1];
+        if (ma === null) return 1;
+        if (mb === null) return -1;
+        return ma - mb || a[1] - b[1];
+      })
+      .map(x => x[0]);
     const dateChips = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Last 7 Days'], ['all', 'All'], ['range', 'Date Range&hellip;']]
       .map(([k, lbl]) => `<button class="filter-chip ${ordersDateFilter === k ? 'active' : ''}" data-odate="${k}">${lbl}</button>`).join('');
     const dateFilterHTML = `
@@ -2092,6 +2283,9 @@
         // Only ever shown on finished work — an order still being picked has
         // nothing to collect.
         pickupChip(ord),
+        // FULFILMENT KPI. The countdown to this order's handover, so a packer
+        // can see at a glance which of a screenful is actually urgent.
+        fulfilmentChip(ord),
       ].filter(Boolean).join('');
 
       // Date
