@@ -1053,6 +1053,73 @@ restarts") is now also only in that panel, so nobody sees it unless they open
 Administrator. The boot log still prints it loudly, and `/api/version` still
 reports `storage.dataLostOnLastRestart` for an external check.
 
+### A client-portal fault IS a System Outage — and the client never sees a stack
+
+Per the user: *"client portal if error is hit, also notify via System Outage"*.
+The portal reported **nothing**. The office app and the driver app both had a
+reporter posting to `/api/errors`; `public/portal.js` had neither one nor any
+error handler, so a client staring at a screen that would not load was
+completely invisible to us until they rang.
+
+**THE CLIENT GETS A SENTENCE, WE GET THE STACK.** The office/driver treatment
+shows the trace and asks the person to send it to the tech team — right for our
+own staff and our own drivers, wrong for a customer. The portal shows one calm
+line at the BOTTOM of the screen ("Something didn't load. Our team has been
+notified automatically."), dismissible, never a fixed bar across the top (the
+standing no-top-banner rule) and never a trace. The 500 body is
+`"Something went wrong at our end. It has been reported."` — asserted to leak
+no internal detail.
+
+**TWO REPORTERS, EACH COVERING WHAT THE OTHER CANNOT SEE.** Filing from both
+ends would land one fault as two rows with different wording:
+- **Server** owns 5xx. `app.use('/api/portal', …)` registers a `res.on('finish')`
+  hook before every portal route, so it sees them all — including the multipart
+  uploads — and knows the real error. It only OBSERVES; the response is
+  untouched, so a bug here can never take the portal down on top of whatever
+  already went wrong. **4xx is deliberately not recorded** — a 401 on an expired
+  session or a 404 on someone else's record is the system working.
+- **Client** owns what never reaches us: JS errors (`error` /
+  `unhandledrejection`, skipping the opaque cross-origin "Script error." that is
+  almost always a browser extension) and requests that never completed.
+  De-duplicated per session so a render loop cannot flood us; the server counts
+  recurrences on its own row anyway.
+
+- **Grouped on the ROUTE PATTERN** (`/api/portal/grn/:id`), not the concrete
+  path — a broken screen is one fault however many records hit it, and keying on
+  the id would file a row per receipt and bury how often it is happening. The
+  concrete path is kept as `page` so the exact request is still reproducible.
+- **The app is part of the signature** (`_errSig`): the same wording from the
+  portal and from the office is two faults in two systems, and merging them
+  would hide a client-facing outage inside an internal one.
+- **WHICH CLIENT is resolved from their session token** (`_errWho`), never taken
+  from the request body. `e.clients[]` accumulates everyone affected, because
+  "three clients cannot see their stock" is a different call from "one".
+  `/api/errors` stays open (a crash can happen before login and error reporting
+  must never need a session), so the lookup is best-effort and is a diagnostic
+  label only — nothing is authorised on it.
+- **A client-facing fault is its own health issue**, not one more row:
+  `/api/system-health` returns `openPortalErrors` / `portalErrorClients` /
+  `portalErrorLastAt`, and `deriveHealthIssues` raises a **crit** "Clients are
+  hitting errors in the portal" naming them, at the top of System Outages. The
+  list tags those rows **CLIENT PORTAL** in red and shows "Affected: …".
+- **There was NO Express error middleware at all** — an uncaught throw fell to
+  Express's default handler, a bare 500 with the stack swallowed and nobody told.
+  One is registered last, after every route: it records the real message (which
+  the portal finish hook picks up out of `res.locals`, so the outage row is
+  diagnosable) and files non-portal throws as office errors.
+- Every portal call now goes through the single `api()` funnel — it omits the
+  JSON content type for `FormData` so the upload screens use it too, instead of
+  bare fetches nothing watches.
+
+Verified 29 API checks (a genuinely corrupt receipt makes a real route throw:
+the client gets 500 with no internal detail, the office is told without anyone
+reporting it, with the route, the client and the real TypeError; a repeat counts
+on the same row; a 404 and a 401 are NOT outages; the same wording from two apps
+stays two rows; resolving clears the health issue and a recurrence reopens it)
+plus 17 browser checks on a Pixel 5 and a desktop. The test found a SECOND real
+failure path off the same bad data — `/api/portal/inbound` breaks on it too —
+which is the mechanism doing its job.
+
 ### Backorders die with their order — `pruneOrphanBackorders()`
 
 A `db.backorders[]` row is a tracking record hung off an ORDER ("awaiting

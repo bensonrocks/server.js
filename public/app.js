@@ -10183,11 +10183,19 @@
         const open = e.status === 'open';
         const dot = open ? '🔴' : '🟢';
         const border = open ? '#dc2626' : '#059669';
+        // WHICH SYSTEM failed matters as much as what failed — a fault a
+        // client is looking at is not the same problem as one on our own
+        // screens, so the portal is called out in red rather than in a hint.
+        const tag = e.app === 'portal'
+          ? ' <span style="background:#fee2e2;color:#991b1b;border-radius:5px;padding:0 .35rem;font-size:.66rem;font-weight:800">CLIENT PORTAL</span>'
+          : e.app === 'driver' ? ' <span class="hint">(driver app)</span>' : '';
+        const who = (e.clients || []).filter(Boolean);
         return `<div class="user-row" data-id="${esc(e.id)}" style="cursor:pointer;border-left:4px solid ${border}">
           <span style="font-size:1.1rem">${dot}</span>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:600">${esc(e.context || 'Error')}${e.app === 'driver' ? ' <span class="hint">(driver app)</span>' : ''}</div>
+            <div style="font-weight:600">${esc(e.context || 'Error')}${tag}</div>
             <div class="hint" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((e.message || '').split('\n')[0].slice(0, 100))}</div>
+            ${who.length ? `<div class="hint">Affected: ${esc(who.join(', '))}</div>` : ''}
           </div>
           <span class="hint" style="text-align:right">×${e.count}<br>${new Date(e.lastAt).toLocaleString()}</span>
           <button class="btn-secondary btn-sm ob-ts" data-id="${esc(e.id)}">🔧 Troubleshoot</button>
@@ -10202,6 +10210,7 @@
       $('outageDetail').innerHTML = `
         <div><b>${esc(e.context || 'Error')}</b> — <span style="color:${e.status === 'open' ? '#dc2626' : '#059669'}">${e.status === 'open' ? '🔴 Open' : '🟢 Resolved'}</span></div>
         <div class="hint" style="margin:.3rem 0">Seen ${e.count}× · first ${new Date(e.firstAt).toLocaleString()} · last ${new Date(e.lastAt).toLocaleString()}${e.lastUser ? ' · last user ' + esc(e.lastUser) : ''} · ${esc(e.app || 'office')} app</div>
+        ${(e.clients || []).filter(Boolean).length ? `<div class="hint"><b>Clients affected:</b> ${esc(e.clients.filter(Boolean).join(', '))}</div>` : ''}
         <div class="hint">Page: ${esc(e.page || e.lastPage || '—')}</div>
         <pre style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:.7rem;font-size:.72rem;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;margin:.6rem 0 0">${esc(e.stack || e.message)}</pre>`;
       $('outageHealth').innerHTML = '';
@@ -14363,6 +14372,17 @@
     if (h.zortOutboxStalled > 0) out.push({ sev: 'warn',
       title: `Stock sync stalled — ${h.zortOutboxStalled} update(s) failing`,
       text: 'Stock updates are repeatedly failing to reach the connected store. Check the store connection under Connections.' });
+    // A CLIENT-FACING FAULT IS ITS OWN ISSUE, not one more row in the list
+    // below — a customer is looking at our software not working, and it is
+    // worth knowing that before they ring to tell us.
+    if (h.openPortalErrors > 0) {
+      const who = (h.portalErrorClients || []).filter(Boolean);
+      out.push({ sev: 'crit',
+        title: `Clients are hitting errors in the portal — ${h.openPortalErrors} open`,
+        text: (who.length ? `Affected: ${who.join(', ')}. ` : '')
+          + (h.portalErrorLastAt ? `Last seen ${new Date(h.portalErrorLastAt).toLocaleString()}. ` : '')
+          + 'The client was shown a plain message and told we have been notified — the detail is in the list below.' });
+    }
     return out;
   }
 

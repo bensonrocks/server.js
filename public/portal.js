@@ -22,10 +22,99 @@
   const openOrder = new Set();      // order numbers expanded on screen
   const orderDetail = new Map();    // order_number -> line detail (lazy loaded)
 
-  const api = (path, opts = {}) => fetch(path, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', 'x-auth-token': token, ...(opts.headers || {}) },
+  // ── Faults reach US, not the client ───────────────────────────────────────
+  // Per the user: if the portal hits an error, it is notified through System
+  // Outages. Deliberately NOT the office/driver treatment — those show a stack
+  // trace and ask the person to send it to us, which is fine for our own staff
+  // and our own drivers but not for a customer. A client sees one calm
+  // sentence; the diagnosable part is posted to /api/errors (app: 'portal') so
+  // it lands in the Administrator's outage panel with the client's name on it.
+  const _faultSeen = new Set();
+  function reportFault(detail, context) {
+    try {
+      const text = detail && detail.stack ? String(detail.stack)
+                 : detail && detail.message ? String(detail.message)
+                 : String(detail == null ? 'Unknown error' : detail);
+      // Never let a repeating fault (a render loop, a poll that keeps failing)
+      // turn into a flood of requests. The server counts recurrences on its
+      // own row, so it loses nothing by hearing it once per session.
+      const key = String(context) + '|' + text.split('\n')[0].slice(0, 160);
+      if (_faultSeen.has(key)) return;
+      _faultSeen.add(key);
+      fetch('/api/errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'x-auth-token': token } : {}) },
+        body: JSON.stringify({
+          app: 'portal', message: text, context: context || '', stack: text,
+          page: location.pathname + (location.hash || ''), userAgent: navigator.userAgent,
+        }),
+      }).catch(() => {});   // reporting a fault must never raise one
+    } catch (_) { /* ditto */ }
+  }
+  function showFault(msg) {
+    let el = document.getElementById('pfFault');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'pfFault'; el.className = 'pf-fault';
+      document.body.appendChild(el);
+    }
+    el.innerHTML = `<span>&#9888;</span><div><b>Something didn't load.</b>`
+      + `<span id="pfFaultMsg"></span></div><button aria-label="Dismiss">&times;</button>`;
+    el.querySelector('#pfFaultMsg').textContent = msg
+      || ' Our team has been notified automatically. Please try again in a moment.';
+    el.querySelector('button').onclick = () => el.remove();
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.remove(), 12000);
+  }
+  window.addEventListener('error', e => {
+    // An opaque cross-origin "Script error." carries no file, line or stack and
+    // is almost always a browser extension, not our code. Clients are on their
+    // own machines, so they hit this most — never alarm them over it.
+    if (e instanceof ErrorEvent && !e.error && !e.filename && !e.lineno) return;
+    reportFault(e.error || e.message, 'Uncaught error');
+    showFault();
   });
+  window.addEventListener('unhandledrejection', e => {
+    if (e.reason === undefined || e.reason === null) return;
+    reportFault(e.reason, 'Unhandled async error');
+    showFault();
+  });
+
+  // EVERY portal request goes through here, which is why the reporting lives
+  // here rather than at each call site — a new screen added later is covered
+  // without anyone remembering to wire it up.
+  const api = async (path, opts = {}) => {
+    let r;
+    try {
+      // A file upload must NOT be given a JSON content type — the browser has
+      // to set its own multipart boundary. Handling that here is what lets the
+      // upload screens use this same funnel instead of a bare fetch that
+      // nothing watches.
+      const isForm = typeof FormData !== 'undefined' && opts.body instanceof FormData;
+      r = await fetch(path, {
+        ...opts,
+        headers: {
+          ...(isForm ? {} : { 'Content-Type': 'application/json' }),
+          'x-auth-token': token, ...(opts.headers || {}),
+        },
+      });
+    } catch (err) {
+      // The request never completed — the client's own connection, or ours
+      // being unreachable. Worth knowing either way, and the client is told
+      // plainly rather than being left with a screen that simply never fills.
+      reportFault(err, `Request failed: ${String(path).split('?')[0]}`);
+      showFault(' We could not reach IdealOne. Check your connection and try again.');
+      throw err;
+    }
+    // 4xx is the system working — an expired session, a record that is not
+    // theirs. A 5xx IS an outage, but the SERVER files it (its /api/portal
+    // finish hook sees every route, including the multipart uploads that do
+    // not come through here, and knows the real error). Reporting it from both
+    // ends would file one fault as two rows with different wording, so this
+    // side only tells the client.
+    if (r.status >= 500) showFault();
+    return r;
+  };
 
   // ── Dates ─────────────────────────────────────────────────────────────────
   // Everything the warehouse records is bucketed by Singapore calendar day, so
@@ -796,7 +885,7 @@
       fd.append('reference', $('asnRef').value.trim());
       fd.append('eta', $('asnEta').value);
       // No Content-Type header — the browser must set the multipart boundary.
-      const r = await fetch('/api/portal/asn', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const r = await api('/api/portal/asn', { method: 'POST', body: fd });
       const d = await r.json();
       if (!r.ok) { asnMsg('err', esc(d.error || 'That file could not be read.')); return; }
       asnMsg('', `&#10003; ASN <b>${esc(d.serial)}</b> received — ${num(d.lines)} line(s), ${num(d.pieces)} pieces.`
@@ -1016,7 +1105,7 @@
       const btn = e.currentTarget, orig = btn.innerHTML;
       btn.disabled = true; btn.textContent = 'Cancelling…';
       try {
-        const r = await fetch('/api/portal/delete', {
+        const r = await api('/api/portal/delete', {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': token },
           body: JSON.stringify({ kind: isOrders ? 'orders' : 'inbound', items: [...sel], reason }),
         });
@@ -1076,7 +1165,7 @@
     const fd = new FormData();
     fd.append('file', file);
     try {
-      const r = await fetch('/api/portal/preview-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const r = await api('/api/portal/preview-orders', { method: 'POST', body: fd });
       const d = await r.json();
       if (!r.ok) { sendMsg(d.error || 'We could not read that file.', 'err'); sendFileBlob = null; return; }
       sendPreview = d;
@@ -1116,7 +1205,7 @@
     const fd = new FormData();
     fd.append('file', sendFileBlob);
     try {
-      let r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      let r = await api('/api/portal/submit-orders', { method: 'POST', body: fd });
       // ── DUPLICATE ORDER NUMBERS ────────────────────────────────────────
       // Which ones, and when we last saw them. Approve or abort — nothing has
       // been stored yet, so aborting leaves nothing behind.
@@ -1130,7 +1219,7 @@
             + `\nCancel = do not send — nothing is uploaded`);
           if (!go) { sendMsg('Not sent — nothing was uploaded.', 'err'); $('cfmGo').disabled = false; return; }
           fd.append('confirm_duplicates', 'yes');
-          r = await fetch('/api/portal/submit-orders', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+          r = await api('/api/portal/submit-orders', { method: 'POST', body: fd });
         }
       }
       const d = await r.json();
@@ -1162,7 +1251,7 @@
     fd.append('file', file);
     fd.append('for_submission', sendDraft.id);
     try {
-      const r = await fetch('/api/portal/submit-labels', { method: 'POST', headers: { 'x-auth-token': token }, body: fd });
+      const r = await api('/api/portal/submit-labels', { method: 'POST', body: fd });
       const d = await r.json();
       if (!r.ok) { sendMsg(d.error || 'We could not read that PDF.', 'err', 'sendLabelMsg'); return; }
       $('sendLabelMsg').classList.add('hidden');
@@ -1212,7 +1301,7 @@
   async function removeLabels() {
     if (!sendDraft) return;
     try {
-      const r = await fetch(`/api/portal/submissions/${sendDraft.id}/labels`, { method: 'DELETE', headers: { 'x-auth-token': token } });
+      const r = await api(`/api/portal/submissions/${sendDraft.id}/labels`, { method: 'DELETE' });
       const d = await r.json();
       if (!r.ok) { sendMsg(d.error || 'Could not remove that file.', 'err', 'sendLabelMsg'); return; }
       $('sendMatch').classList.add('hidden');
@@ -1251,7 +1340,7 @@
     const btn = $('sendTransmit');
     btn.disabled = true;
     try {
-      const r = await fetch(`/api/portal/submissions/${sendDraft.id}/transmit`, {
+      const r = await api(`/api/portal/submissions/${sendDraft.id}/transmit`, {
         method: 'POST', headers: { 'x-auth-token': token, 'content-type': 'application/json' }, body: '{}',
       });
       const d = await r.json();
@@ -1269,7 +1358,7 @@
     if (!sendDraft) return;
     if (!confirm('Discard this upload? Nothing has been sent to us, so nothing is lost on our side.')) return;
     try {
-      await fetch(`/api/portal/submissions/${sendDraft.id}`, { method: 'DELETE', headers: { 'x-auth-token': token } });
+      await api(`/api/portal/submissions/${sendDraft.id}`, { method: 'DELETE' });
     } catch (e) { /* it is a draft; a failure here is not worth blocking on */ }
     sendDraft = null;
     $('sendFile').value = ''; $('sendLabels').value = '';
@@ -1361,7 +1450,7 @@
         b.addEventListener('click', () => resumeDraft(b.dataset.resume)));
       el.querySelectorAll('[data-drop]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm('Discard this upload? It was never sent to us.')) return;
-        await fetch(`/api/portal/submissions/${b.dataset.drop}`, { method: 'DELETE', headers: { 'x-auth-token': token } }).catch(() => {});
+        await api(`/api/portal/submissions/${b.dataset.drop}`, { method: 'DELETE' }).catch(() => {});
         if (sendDraft && sendDraft.id === b.dataset.drop) { sendDraft = null; sendStep(1); }
         loadSubmissions();
       }));
@@ -1492,7 +1581,7 @@
     if (!Number.isFinite(n) || n < 1 || n > 365) { msg('err', 'Enter a number of days between 1 and 365.'); return; }
     btn.disabled = true; btn.textContent = '…';
     try {
-      const r = await fetch('/api/portal/settings', {
+      const r = await api('/api/portal/settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': token },
         body: JSON.stringify({ agingDays: n }),
       });

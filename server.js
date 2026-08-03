@@ -3459,6 +3459,43 @@ function _findClientAcrossTenants(clientNorm) {
   }
   return null;
 }
+// ── A CLIENT-FACING FAILURE IS AN OUTAGE, AND THE OFFICE HEARS ABOUT IT ─────
+// Per the user: if the client portal hits an error, notify via System Outages.
+// The browser reporter in portal.js covers what happens in front of the client;
+// this covers what never reaches them — a route that throws or 500s. Without
+// it, a client staring at "couldn't load" was invisible to us until they rang.
+//
+// Mounted BEFORE every portal route so it sees them all, and it only ever
+// OBSERVES: the response is untouched, so a bug in here can never take the
+// portal down on top of whatever already went wrong. 4xx is deliberately not
+// recorded — a 401 on an expired session or a 404 on someone else's record is
+// the system working, not failing.
+app.use('/api/portal', (req, res, next) => {
+  res.on('finish', () => {
+    if (res.statusCode < 500) return;
+    try {
+      const who = _errWho(req);
+      // Group on the ROUTE PATTERN (/api/portal/grn/:id), not the concrete
+      // path. A broken screen is one fault however many records it is hit
+      // with; keying on the id would file a fresh row per receipt and bury the
+      // fact that it is happening constantly. The concrete path is kept as the
+      // page, so the exact request is still there to reproduce from.
+      const where = req.route?.path || (req.baseUrl + req.path);
+      recordSystemError({
+        app: 'portal',
+        context: `Client portal ${res.statusCode}`,
+        message: `${req.method} ${where} failed with ${res.statusCode}`
+                 + (res.locals?._errDetail ? `\n${res.locals._errDetail}` : ''),
+        stack: res.locals?._errStack || '',
+        page: req.baseUrl + req.path,
+        userAgent: req.headers['user-agent'],
+        user: who.user, client: who.client,
+      });
+    } catch (_) { /* never let outage recording cause an outage */ }
+  });
+  next();
+});
+
 app.post('/api/portal/login', express.json(), (req, res) => {
   const { client, password } = req.body || {};
   const who = String(req.body?.user || '').trim();
@@ -6495,38 +6532,88 @@ app.get('/api/version', (req, res) => {
 // 🔴 open until an Administrator marks it 🟢 resolved; a resolved error that
 // recurs auto-reopens (goes red again). Lives in db.systemErrors.
 function systemErrors(db) { return db.systemErrors || (db.systemErrors = []); }
-function _errSig(context, message) {
-  const base = String(context || '') + '|' + String(message || '').split('\n')[0].slice(0, 160);
+const ERROR_APPS = new Set(['office', 'portal', 'driver']);
+// The app is PART of the signature. The same wording arriving from the client
+// portal and from the office is two different faults in two different systems,
+// and merging them would hide a client-facing outage inside an internal one.
+function _errSig(context, message, app) {
+  const base = String(app || 'office') + '|' + String(context || '')
+             + '|' + String(message || '').split('\n')[0].slice(0, 160);
   let h = 0; for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) | 0;
   return 'e' + Math.abs(h).toString(36);
+}
+// Who hit it. This route is deliberately open (a crash can happen before login,
+// and error reporting must never itself need a session), so the token is
+// resolved best-effort: a portal session tells us WHICH CLIENT is affected,
+// which is the first thing anyone asks. Purely a diagnostic label — nothing is
+// authorised on the strength of it.
+function _errWho(req) {
+  const token = req.headers['x-auth-token'];
+  if (!token) return { user: req.userId || '', client: '' };
+  for (const [key, t] of activeSessions) {
+    if (t !== token) continue;
+    if (key.startsWith('portal:')) {
+      // portal:<tenant>:<userId>|<client> — the pipe matters, a client name may
+      // itself contain a colon.
+      const tail = key.slice('portal:'.length);
+      const pipe = tail.lastIndexOf('|');
+      return pipe === -1
+        ? { user: '', client: tail.split(':').slice(1).join(':') }
+        : { user: tail.slice(0, pipe).split(':').slice(1).join(':'), client: tail.slice(pipe + 1) };
+    }
+    if (key.startsWith('driver:')) return { user: key.slice(key.indexOf(':', 7) + 1), client: '' };
+    return { user: key, client: '' };
+  }
+  return { user: req.userId || '', client: '' };
+}
+// Record one fault. Shared by the browser reporter below and by the
+// server-side portal failure hook — ONE implementation, so a 500 the client
+// never sees and a script error they do are filed the same way.
+function recordSystemError({ app, context, message, stack, page, userAgent, user, client }) {
+  const msg = String(message || 'Unknown error').slice(0, 4000);
+  const ctx = String(context || '').slice(0, 200);
+  const appName = ERROR_APPS.has(String(app)) ? String(app) : 'office';
+  const sig = _errSig(ctx, msg, appName);
+  const now = new Date().toISOString();
+  const db = readDb();
+  const list = systemErrors(db);
+  let e = list.find(x => x.signature === sig);
+  if (e) {
+    e.count += 1; e.lastAt = now;
+    e.lastPage = String(page || '').slice(0, 200);
+    e.lastUser = user || e.lastUser || '';
+    if (client) {
+      e.lastClient = String(client).slice(0, 80);
+      // Which clients are affected, not just the most recent one — "three
+      // clients cannot see their stock" is a very different call from "one".
+      e.clients = [...new Set([...(e.clients || []), e.lastClient])].slice(0, 20);
+    }
+    if (e.status === 'resolved') { e.status = 'open'; e.reopenedAt = now; } // recurred → back to red
+  } else {
+    e = {
+      id: uuidv4().slice(0, 8), signature: sig, context: ctx, message: msg,
+      stack: String(stack || '').slice(0, 4000),
+      page: String(page || '').slice(0, 200), userAgent: String(userAgent || '').slice(0, 200),
+      count: 1, firstAt: now, lastAt: now, status: 'open',
+      lastUser: user || '', app: appName,
+      lastClient: client ? String(client).slice(0, 80) : '',
+      clients: client ? [String(client).slice(0, 80)] : [],
+    };
+    list.unshift(e);
+    if (list.length > 500) list.length = 500; // cap
+  }
+  writeDb(db);
+  return e;
 }
 app.post('/api/errors', express.json({ limit: '256kb' }), (req, res) => {
   try {
     const b = req.body || {};
-    const message = String(b.message || 'Unknown error').slice(0, 4000);
-    const context = String(b.context || '').slice(0, 200);
-    const sig = _errSig(context, message);
-    const now = new Date().toISOString();
-    const db = readDb();
-    const list = systemErrors(db);
-    let e = list.find(x => x.signature === sig);
-    if (e) {
-      e.count += 1; e.lastAt = now;
-      e.lastPage = String(b.page || '').slice(0, 200);
-      e.lastUser = req.userId || e.lastUser || '';
-      if (e.status === 'resolved') { e.status = 'open'; e.reopenedAt = now; } // recurred → back to red
-    } else {
-      e = {
-        id: uuidv4().slice(0, 8), signature: sig, context, message,
-        stack: String(b.stack || '').slice(0, 4000),
-        page: String(b.page || '').slice(0, 200), userAgent: String(b.userAgent || '').slice(0, 200),
-        count: 1, firstAt: now, lastAt: now, status: 'open',
-        lastUser: req.userId || '', app: String(b.app || 'office').slice(0, 20),
-      };
-      list.unshift(e);
-      if (list.length > 500) list.length = 500; // cap
-    }
-    writeDb(db);
+    const who = _errWho(req);
+    const e = recordSystemError({
+      app: b.app, context: b.context, message: b.message, stack: b.stack,
+      page: b.page, userAgent: b.userAgent || req.headers['user-agent'],
+      user: who.user, client: who.client,
+    });
     res.json({ ok: true, id: e.id });
   } catch (err) { res.status(200).json({ ok: false }); } // never let error-logging itself error out loudly
 });
@@ -6615,6 +6702,19 @@ app.get('/api/system-health', (req, res) => {
     zortOutboxStalled: ob.filter(e => e.stalled).length,
     storagePersistent: PERSISTENCE.survivedRestart,
     ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
+    // A CLIENT-FACING FAULT OUTRANKS AN INTERNAL ONE. An error in the portal is
+    // a customer looking at our software not working, so it is surfaced as a
+    // health issue in its own right rather than being one more row in the list
+    // — and the affected clients are named, because "three clients cannot see
+    // their stock" is a different call from "one".
+    ...(() => {
+      const open = (db.systemErrors || []).filter(e => e.status === 'open' && e.app === 'portal');
+      return {
+        openPortalErrors: open.length,
+        portalErrorClients: [...new Set(open.flatMap(e => e.clients || (e.lastClient ? [e.lastClient] : [])))].slice(0, 10),
+        portalErrorLastAt: open.map(e => e.lastAt).sort().pop() || null,
+      };
+    })(),
   });
 });
 
@@ -18839,6 +18939,33 @@ app.post('/api/master/wave-pending-purges/:id/reject', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// ── Last line of defence: a route that THREW ────────────────────────────────
+// There was no error middleware at all, so an uncaught throw fell to Express's
+// default handler — a bare 500 with the stack swallowed. This records the real
+// message first (the /api/portal finish hook picks it up out of res.locals, so
+// a client-facing failure reaches System Outages with something diagnosable in
+// it), then answers in the shape the caller expects. Registered last, after
+// every route, which is what makes Express treat it as the error handler.
+app.use((err, req, res, next) => {
+  const detail = String(err?.message || err || 'Unknown error').slice(0, 500);
+  console.error('[unhandled]', req.method, req.originalUrl, '—', detail);
+  res.locals._errDetail = detail;
+  res.locals._errStack  = String(err?.stack || '').slice(0, 4000);
+  // Anything outside the portal has no finish hook, so file it here instead.
+  if (!String(req.path || '').startsWith('/api/portal')) {
+    try {
+      recordSystemError({
+        app: 'office', context: 'Server error',
+        message: `${req.method} ${req.path} — ${detail}`,
+        stack: res.locals._errStack, page: req.path,
+        userAgent: req.headers['user-agent'], user: req.userId || '',
+      });
+    } catch (_) { /* recording a fault must never raise one */ }
+  }
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Something went wrong at our end. It has been reported.' });
+});
+
 app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`))
   .on('error', err => {
     if (err.code === 'EADDRINUSE') {
