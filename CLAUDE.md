@@ -3231,12 +3231,24 @@ The screen also stopped repeating itself: a **Lot badge is suppressed when it
 only echoes the expiry**, which is both noise on a phone-width row and how one
 value came to be shown twice, once mangled.
 
+**THE WORK ALREADY ON THE FLOOR IS HEALED TOO.** Fixing the parser only helps
+the NEXT upload, so `repairStoredDateStrings(db)` runs at boot and rewrites any
+stored field holding a JS date toString to a plain calendar day, across order
+lines and inbound lines. Deliberately conservative — it matches only the
+unambiguous `Www Mmm DD YYYY HH:MM:SS GMT±ZZZZ` shape, so nothing a human typed
+can be caught. Audit-logged `stored_dates_repaired`; a no-op once clean
+(verified by restarting: 0 repairs on the second boot).
+
 Verified 9 checks on the exact failing shape (a Date in BatchNo/LotNo becomes
 `2028-10-28`, the expiry still reads right, a normal lot code like `W0492A` is
 untouched, and no field on the row leaks a `GMT+0000` string) plus 11
 regression checks on the client's real 283-line export and a plain
 SKU/Quantity file — same 283 lines, same 93 orders, every expiry a calendar
-day, every lot intact.
+day, every lot intact. Plus 8 checks on the boot repair against a seeded copy
+of the live state: the mangled lot becomes `2028-10-28`, the expiry and the
+rest of the line are untouched, a real lot code (`W0492A`) and human-typed
+remarks are untouched, inbound lines are repaired too, and no `GMT+0000` string
+survives anywhere in the database.
 
 ## A pick list must never ask a bin for more than it holds (`newPickClaim`)
 

@@ -1846,6 +1846,42 @@ try {
   if (_cnn) { writeDb(_cndb); console.log(`[IdealOne] Client names: folded ${_cnn} record(s) onto a single spelling`); }
 } catch (e) { console.error('[IdealOne] client name normalise failed:', e.message); }
 
+// ── Clean up dates that were stored as raw JavaScript date strings ──────────
+// Lines uploaded before textVal() existed hold e.g.
+// "Sat Oct 28 2028 00:00:00 GMT+0000 (Coordinated Universal Time)" in a lot or
+// remarks field — a packer reads that off the scan screen. Fixing the parser
+// only helps the NEXT upload, so the work already on the floor is healed here.
+// Rewrites in place to a plain calendar day; idempotent, so it is a no-op once
+// clean. Deliberately conservative: it only touches strings that are
+// unambiguously a JS Date toString, never anything a human might have typed.
+const _JS_DATE_STR = /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{2} \d{4} \d{2}:\d{2}:\d{2} GMT[+-]\d{4}/;
+function _plainDay(v) {
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+function repairStoredDateStrings(db) {
+  let fixed = 0;
+  const scrub = obj => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v !== 'string' || !_JS_DATE_STR.test(v)) continue;
+      const day = _plainDay(v);
+      if (day) { obj[k] = day; fixed++; }
+    }
+  };
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) for (const l of o.lines || []) scrub(l);
+  }
+  for (const r of db.inbound || []) for (const l of r.lines || []) scrub(l);
+  if (fixed) logAudit('stored_dates_repaired', { fields: fixed });
+  return fixed;
+}
+try {
+  const _dsdb = readDb();
+  const _dsn = repairStoredDateStrings(_dsdb);
+  if (_dsn) { writeDb(_dsdb); console.log(`[IdealOne] Repaired ${_dsn} field(s) holding a raw date string`); }
+} catch (e) { console.error('[IdealOne] stored date repair failed:', e.message); }
+
 // The inventory store keys stock by the client NAME, so the same casing split
 // gave one client TWO stock accounts with half the stock invisible from each
 // side. Folding those needs the inventory module, which is required much later
