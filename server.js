@@ -3482,6 +3482,13 @@ const CLIENT_WIPE_SCOPES = {
   backorders:   'Backorder tracking rows',
   waves:        'Wave pick lists',
   pokes:        'New-work notifications',
+  // THE ONBOARDING RECORD ITSELF. Everything above clears a client's DATA and
+  // deliberately leaves the account standing, because the usual job is handing
+  // a cleaned account over. This one removes the account: an onboarding done
+  // by mistake, or under the wrong spelling, had no way back before.
+  // Portal logins live on the profile, so they go with it — said in words on
+  // the screen rather than discovered by the client at their next sign-in.
+  profile:      'The onboarding profile itself (contact details, instructions, PORTAL LOGINS)',
 };
 
 function clientWipeSummary(db, client) {
@@ -3494,8 +3501,13 @@ function clientWipeSummary(db, client) {
     batches++; orders += (b.orders || []).length;
   }
   const inv = (() => { try { return inventory.clientDataCounts(cid); } catch { return {}; } })();
+  // Case-insensitive, like every other match here — "Betime" and "BETIME" are
+  // one client (see "One client, one spelling"), and an onboarding done under
+  // the wrong casing is exactly what this exists to undo.
+  const profs = clientProfiles(db).filter(p => mine(p.client));
   return {
     client, clientId: cid,
+    profileNames: profs.map(p => p.client),
     counts: {
       orders, batches,
       inbound:     (db.inbound || []).filter(r => mine(r.client_name)).length,
@@ -3508,6 +3520,10 @@ function clientWipeSummary(db, client) {
       backorders:  (db.backorders || []).filter(b => mine(b.client_id)).length,
       waves:       (db.waves || []).filter(w => mine(w.client_name)).length,
       pokes:       (db.pokes || []).filter(p => mine(p.client)).length,
+      // What removing the account would take with it — counted so the screen
+      // can say "and 3 portal login(s)" instead of springing it on someone.
+      profile:      profs.length,
+      portal_users: profs.reduce((n, p) => n + portalUsers(p).length, 0),
       item_master: inv.item_master || 0,
       on_hand:     inv.on_hand || 0,
       stock_rows:  inv.stock_rows || 0,
@@ -3676,6 +3692,26 @@ app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
     const before = (db.pokes || []).length;
     db.pokes = (db.pokes || []).filter(p => !mine(p.client));
     bump('pokes', before - db.pokes.length);
+  }
+
+  // THE ACCOUNT ITSELF, done last so a failure earlier leaves the profile in
+  // place to try again with. Portal sessions are killed with it — leaving a
+  // client signed in against a profile that no longer exists is how you get a
+  // 500 on their next request instead of a clean "signed out".
+  if (has('profile')) {
+    const tenantId = tenantContext.currentTenantId();
+    const gone = clientProfiles(db).filter(p => mine(p.client));
+    for (const p of gone) {
+      for (const u of portalUsers(p)) {
+        const key = portalSessionKey(tenantId, u.id, p.client);
+        activeSessions.delete(key); portalSessionMeta.delete(key);
+        bump('portal_users', 1);
+      }
+    }
+    if (gone.length) persistSessions();
+    db.clientProfiles = clientProfiles(db).filter(p => !mine(p.client));
+    bump('profile', gone.length);
+    if (gone.length) removed.profileNames = gone.map(p => p.client);
   }
 
   // Inventory side — item_master implies stock (see wipeClient).

@@ -10945,6 +10945,8 @@
       backorders: c => `${c.backorders} row(s)`,
       waves: c => `${c.waves} wave(s)`,
       pokes: c => `${c.pokes} notification(s)`,
+      profile: c => `${c.profile || 0} profile${(c.profile || 0) === 1 ? '' : 's'}`
+        + ((c.portal_users || 0) ? ` · ${c.portal_users} portal login(s) — the client loses access` : ''),
     };
 
     function renderScopes() {

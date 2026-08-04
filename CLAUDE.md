@@ -3823,13 +3823,30 @@ destructive action in the app and it spans a client's whole history. The
 confirmation is the client's name typed out, same guard as the other
 destructive actions.
 
-**THREE THINGS ARE NEVER WIPEABLE, deliberately:**
+**REMOVING THE ACCOUNT ITSELF** is the `profile` scope. Every other scope clears
+a client's DATA and deliberately leaves the account standing, because the usual
+job is handing a cleaned account over — but an onboarding done by mistake, or
+under a spelling that turns out to be a case-variant of an existing client, had
+no way back at all. It removes the profile and, with it, the **portal logins**
+(said in those words on the screen, and counted, rather than discovered by the
+client at their next sign-in); their sessions are deleted at the same time via
+`portalSessionKey`, so nobody is left holding a token against a profile that no
+longer exists. Matched case-insensitively like every other scope here — "Betime"
+and "BETIME" are one client, which is precisely the mistake this undoes.
+Ticking it takes nothing else with it: orders, inbound and the item master are
+each still their own choice.
+
+**TWO THINGS ARE NEVER WIPEABLE, deliberately:**
 - **`db.auditLog`** — a wipe that could erase its own trail is not a trail. The
-  wipe is logged *there* (`client_data_wiped`, with the scopes and the counts).
-- **The client's profile and portal logins** — the whole point is to hand that
-  account over.
+  wipe is logged *there* (`client_data_wiped`, with the scopes and the counts),
+  and that record outlives the account even when the profile scope removes it.
 - **`warehouse_locations`** — the racking belongs to the warehouse, not the
   client; deleting it would take every other client's bins with it.
+
+(The profile and its portal logins USED to be in this list — "the whole point is
+to hand that account over" — which is right for a handover and wrong for an
+onboarding mistake. They are now the opt-in `profile` scope above, never part of
+a data clear.)
 
 **PER-UPLOAD, NOT ALL-OR-NOTHING.** "37 order(s) in 3 upload(s)" is not enough
 to decide with when some of those uploads are real work. `clientWipeSummary`
