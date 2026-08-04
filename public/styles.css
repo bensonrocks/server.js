@@ -2335,6 +2335,15 @@ body.ls-open { overflow: hidden; }
    Amber here made a half-finished import look like a failed one. */
 .lhi-reading   { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
 
+/* Where a label import came from. Without this every row reads the same
+   whether we uploaded it or a client sent it in. */
+.lhi-src {
+  display: inline-block; margin-left: .4rem; padding: 0 .35rem; border-radius: 5px;
+  font-size: .6rem; font-weight: 800; letter-spacing: .04em; vertical-align: middle;
+}
+.lhi-src-client { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; }
+.lhi-src-sync   { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+
 /* Small inline actions on a client-submission row: download what they sent,
    and (once approved) jump to the label import to re-run matching. */
 .cs-dl {

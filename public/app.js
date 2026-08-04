@@ -13855,8 +13855,8 @@
         return `
           <div class="label-history-item" data-import-id="${esc(imp.id)}">
             <div class="lhi-left">
-              <span class="lhi-filename">&#128196; ${esc(imp.filename)}</span>
-              <span class="lhi-date">${esc(dt)}</span>
+              <span class="lhi-filename">&#128196; ${esc(imp.filename)}${labelSourceTag(imp.uploadedBy)}</span>
+              <span class="lhi-date">${esc(dt)}${labelSourceWho(imp.uploadedBy)}</span>
             </div>
             <div class="lhi-right">
               <span class="lhi-pages">${imp.pageCount} page${imp.pageCount !== 1 ? 's' : ''}</span>
@@ -14159,6 +14159,27 @@
     input.addEventListener('input', onInput);
     modal.classList.remove('hidden');
     setTimeout(() => input.focus(), 100);
+  }
+
+  // WHERE A LABEL IMPORT CAME FROM. Every row looked identical whether we
+  // uploaded it or a client sent it through their portal, so "what did the
+  // client send us?" could not be answered from this screen at all. The origin
+  // is already on the record — processLabelPdf stamps uploadedBy as
+  // `approved:<client>` for a client submission and `sync:<store>` for one
+  // pulled from a connected store — it was simply never rendered.
+  function labelSourceTag(by) {
+    const v = String(by || '');
+    if (v.startsWith('approved:')) return ' <span class="lhi-src lhi-src-client">FROM CLIENT</span>';
+    if (v.startsWith('sync:'))     return ' <span class="lhi-src lhi-src-sync">SYNCED</span>';
+    return '';
+  }
+  function labelSourceWho(by) {
+    const v = String(by || '').trim();
+    if (!v) return '';
+    const who = v.startsWith('approved:') ? v.slice('approved:'.length)
+              : v.startsWith('sync:')     ? v.slice('sync:'.length)
+              : v;
+    return who ? ` &nbsp;·&nbsp; ${esc(who)}` : '';
   }
 
   // Labels tab upload wiring
