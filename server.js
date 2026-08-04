@@ -15688,6 +15688,39 @@ function enqueueZortStock(db, storeId, clientId, sku) {
   return true;
 }
 
+// SKU → the store's own product id. Read back from them because Update needs
+// their id and we only know our SKU. Cached per store for a short window: one
+// drain pass pushes many products and would otherwise re-fetch the whole
+// catalogue for each one.
+const _zortProductIdCache = new Map();   // storeId -> { at, map }
+const ZORT_PRODUCT_CACHE_MS = 60 * 1000;
+async function zortProductId(store, sku) {
+  const hit = _zortProductIdCache.get(store.id);
+  if (hit && Date.now() - hit.at < ZORT_PRODUCT_CACHE_MS) return hit.map.get(String(sku).toUpperCase()) || null;
+  const map = new Map();
+  try {
+    for (let page = 1; page <= 20; page++) {
+      const res = await zortApi.getProducts(store, { page, limit: 100 });
+      const list = res?.list || res?.products || (Array.isArray(res) ? res : []);
+      for (const p of list) {
+        // Defensive on their field names — the spec documents the call, not the
+        // response shape.
+        const k = String(p.sku ?? p.code ?? '').trim().toUpperCase();
+        const id = p.id ?? p.productid ?? p.productId;
+        if (k && id !== undefined && id !== null) map.set(k, id);
+      }
+      if (list.length < 100) break;
+    }
+  } catch (e) {
+    // A catalogue we cannot read is not a reason to skip the push — fall back
+    // to Add, which is what the previous behaviour did anyway.
+    console.warn('[sync] product id lookup failed:', e.message);
+    return null;
+  }
+  _zortProductIdCache.set(store.id, { at: Date.now(), map });
+  return map.get(String(sku).toUpperCase()) || null;
+}
+
 // Enqueue one item-master row for push into the store's product list.
 function enqueueZortProduct(db, storeId, clientId, sku) {
   const ob = zortOutbox(db);
@@ -15815,15 +15848,28 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // Field names are the spec's, not ours: `sku` (not code), `unittext` (not
     // unit). Only documented fields are sent — anything else is guesswork that
     // could mean something different to them.
-    await zortApi.upsertProduct(store, {
-      sku:           it.sku,
+    const fields = {
       name:          it.name || it.sku,
       barcode:       it.barcode || '',
       unittext:      it.unit || '',
       purchaseprice: String(Number(it.cost_price) || 0),
       weight:        String(Number(it.unit_weight) || 0),
-    });
-    logAudit('sync_product_pushed', { sku: it.sku, client: store.clientName || '', name: it.name || '' });
+    };
+    // A REAL UPSERT: the API has separate Add and Update calls, and Update
+    // needs the STORE'S OWN product id, which we do not hold. So the SKU → id
+    // map is read back from them and cached briefly — without it, re-pushing a
+    // catalogue would either error or quietly duplicate every product.
+    const existingId = await zortProductId(store, it.sku);
+    if (existingId) {
+      await zortApi.updateProduct(store, existingId, fields);
+      logAudit('sync_product_updated', { sku: it.sku, client: store.clientName || '', id: existingId });
+    } else {
+      await zortApi.upsertProduct(store, { sku: it.sku, ...fields });
+      // A product just created is not in the cached map — drop it so the next
+      // push sees the new id rather than trying to add it a second time.
+      _zortProductIdCache.delete(store.id);
+      logAudit('sync_product_created', { sku: it.sku, client: store.clientName || '', name: fields.name });
+    }
     return true;
   }
   // kind === 'stock' — recompute CURRENT available right now and push absolute.

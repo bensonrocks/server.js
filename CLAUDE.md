@@ -675,6 +675,23 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   order files to AlphaCo, the BBB-1 order to BetaCo, a SKU nobody owns falls
   back to the store AND is the only one flagged, and the pull splits into one
   batch per client.
+- **CATALOGUE PUSH IS A REAL UPSERT, not add-only.** The API has SEPARATE
+  `Product/AddProduct` and `Product/UpdateProduct?id=`, and Update needs the
+  STORE'S OWN product id — which we do not hold, since we only know our SKU. So
+  `zortProductId()` reads their catalogue back via `Product/GetProducts` (paged)
+  and builds SKU → id, cached per store for 60s because one drain pass sends
+  many products and would otherwise re-fetch the whole catalogue per SKU.
+  Existing → Update, new → Add. Without this a second push would error or
+  silently duplicate every product.
+  - The cache is **dropped after a create**, so the next push sees the new id
+    instead of trying to add the same SKU twice.
+  - A catalogue we cannot read falls back to Add rather than skipping — no
+    worse than the old behaviour, and it still gets a product across.
+  - **SKU is not sent on an update**: it identifies the record, it is not a
+    field to edit.
+  Verified 9 checks against a mock that rejects a duplicate SKU the way a real
+  catalogue does: the first push Adds both, a second push Updates and creates
+  nothing, and a rename plus a cost change reach the store.
 - **CARRIER LABELS FOR SYNCED ORDERS** (per-store `labelSync`, off by default).
   A synced order arrives with its tracking number but no label. When the toggle
   is on, `pullZortStore` enqueues a `kind: 'label'` outbox entry per order and
