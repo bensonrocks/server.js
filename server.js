@@ -14,6 +14,7 @@ const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
+const { getMacroContext }            = require('./lib/macro');
 const hitpay                         = require('./lib/hitpay');
 const mtBridge                       = require('./lib/mtBridge');
 
@@ -172,39 +173,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Auth API ───────────────────────────────────────────────────────────
 app.post('/api/auth/signup', async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ ok: false, error: 'All fields required' });
-  if (password.length < 8)
-    return res.status(400).json({ ok: false, error: 'Password must be at least 8 characters' });
+  const { name, email } = req.body;
+  if (!name || !email)
+    return res.status(400).json({ ok: false, error: 'Name and email required' });
   if (await users.findByEmail(email))
     return res.status(409).json({ ok: false, error: 'Email already registered — please sign in' });
 
-  const passwordHash = await bcrypt.hash(password, 12);
-  // Dev mode (no payment gateway): activate immediately
-  const subscriptionStatus = (useHitPay || stripe) ? 'pending' : 'active';
-  const user = await users.create({ name, email, passwordHash, subscriptionStatus });
+  const user = await users.create({ name, email, passwordHash: null, subscriptionStatus: 'active' });
   req.session.userId = user.id;
   res.json({ ok: true, user: safeUser(user) });
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ ok: false, error: 'Email and password required' });
+  const { email } = req.body;
+  if (!email)
+    return res.status(400).json({ ok: false, error: 'Email required' });
   const user = await users.findByEmail(email);
-  if (!user) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
-  const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) return res.status(401).json({ ok: false, error: 'Invalid email or password' });
+  if (!user) return res.status(401).json({ ok: false, error: 'No account found — please sign up' });
   req.session.userId = user.id;
-  // Dev mode: auto-activate accounts that are still pending
-  if (!useHitPay && !stripe && user.subscriptionStatus === 'pending') {
-    const activated = await users.update(user.id, { subscriptionStatus: 'active' });
-    return req.session.save(err => {
-      if (err) return res.status(500).json({ ok: false, error: 'Session error' });
-      res.json({ ok: true, user: safeUser(activated) });
-    });
-  }
   req.session.save(err => {
     if (err) return res.status(500).json({ ok: false, error: 'Session error' });
     res.json({ ok: true, user: safeUser(user) });
@@ -552,6 +538,16 @@ app.get('/api/news', requireSubscriptionAPI, async (req, res) => {
   } catch (e) {
     console.error('News fetch error:', e.message);
     res.json({ ok: true, articles: _newsCache.articles });
+  }
+});
+
+app.get('/api/macro', requireSubscriptionAPI, async (req, res) => {
+  try {
+    const data = await getMacroContext();
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('Macro fetch error:', e.message);
+    res.json({ ok: false, error: e.message });
   }
 });
 

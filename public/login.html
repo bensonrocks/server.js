@@ -53,18 +53,14 @@
       <img src="/logo.svg" alt="VaultSignals" width="100" height="112" style="filter:drop-shadow(0 0 16px rgba(245,200,66,.15))">
     </div>
     <div class="card-title">Welcome back</div>
-    <div class="card-sub">Sign in to access your Gold &amp; Silver signals.</div>
+    <div class="card-sub">Enter your email to access your Gold &amp; Silver signals.</div>
     <div class="error" id="err"></div>
     <form id="form">
       <div class="field">
         <label>Email</label>
         <input type="email" id="email" placeholder="you@example.com" autocomplete="email" required>
       </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required>
-      </div>
-      <button class="btn-submit" type="submit" id="btn">Sign In</button>
+      <button class="btn-submit" type="submit" id="btn">Access Dashboard</button>
     </form>
     <div class="footer-link">Don't have an account? <a href="/signup">Sign up</a></div>
   </div>
@@ -84,15 +80,15 @@ document.getElementById('form').addEventListener('submit', async e => {
   e.preventDefault();
   const btn=document.getElementById('btn');
   const err=document.getElementById('err');
-  btn.disabled=true; btn.textContent='Signing in…'; err.style.display='none';
+  btn.disabled=true; btn.textContent='Accessing…'; err.style.display='none';
   try {
-    const res = await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})});
+    const res = await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value})});
     const data = await res.json();
-    if (!data.ok) { err.textContent=data.error; err.style.display='block'; btn.disabled=false; btn.textContent='Sign In'; return; }
+    if (!data.ok) { err.textContent=data.error; err.style.display='block'; btn.disabled=false; btn.textContent='Access Dashboard'; return; }
     location.href='/dashboard';
   } catch {
     err.textContent='Network error — please try again.'; err.style.display='block';
-    btn.disabled=false; btn.textContent='Sign In';
+    btn.disabled=false; btn.textContent='Access Dashboard';
   }
 });
 </script>
