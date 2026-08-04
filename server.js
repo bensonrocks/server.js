@@ -3320,6 +3320,13 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
   if (b.type !== undefined)      p.type = ['b2b', 'b2c'].includes(String(b.type).toLowerCase()) ? String(b.type).toLowerCase() : (p.type || '');
   if (b.commodity !== undefined) p.commodity = String(b.commodity).slice(0, 120);
   p.barcodeSearch = b.barcodeSearch !== undefined ? !!b.barcodeSearch : (p.barcodeSearch !== false);
+  // WHOSE SYSTEM HOLDS THIS CLIENT'S STOCK. Default true (undefined reads as
+  // true), so nothing changes for a client already on the books. Turned OFF
+  // for a pick/pack/scan client whose inventory lives in their own WMS: they
+  // can then carry a full item master — real product names on the pick lines,
+  // barcodes for the scanners, a catalogue to push to their store — while
+  // nothing is ever reserved at upload or deducted at completion.
+  if (b.stock_tracking !== undefined) p.stock_tracking = !!b.stock_tracking;
   p.updatedAt = new Date().toISOString();
   writeDb(db);
   logAudit('client_profile_saved', { client, type: p.type, by: req.userId || '' });
@@ -7298,13 +7305,23 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
     try {
       const _cid = invClientId(clientName);
       if (clientName && inventory.available()) {
-        if (!clientHasItemMaster(_cid)) {
-          stockNotice = {
-            kind: 'no-item-master',
-            text: `No item master is loaded for ${clientName}, so there is no stock to allocate. `
-                + `These orders will upload for picking and scanning, but nothing will be reserved `
-                + `and nothing will be deducted when they complete.`,
-          };
+        if (!clientStockTracked(_cid)) {
+          // TWO DIFFERENT REASONS, and they must not read the same. One is a
+          // gap ("load their catalogue"); the other is the arrangement.
+          stockNotice = clientHasItemMaster(_cid)
+            ? {
+                kind: 'stock-elsewhere',
+                text: `${clientName}'s stock is held in their own system, so there is nothing to `
+                    + `allocate here. Their item master is loaded — product names and barcodes work `
+                    + `as normal — but nothing will be reserved and nothing deducted when these `
+                    + `orders complete.`,
+              }
+            : {
+                kind: 'no-item-master',
+                text: `No item master is loaded for ${clientName}, so there is no stock to allocate. `
+                    + `These orders will upload for picking and scanning, but nothing will be reserved `
+                    + `and nothing will be deducted when they complete.`,
+              };
         } else {
           const chk = checkIntakeStock(_cid, orders);
           const zero = chk.unknownSkus.length;
@@ -7401,7 +7418,7 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
       // Same rule as the upload gate: a client we hold no item master for is
       // not an inventory client, and inventing one from their picking list
       // would fabricate a stock position nobody gave us.
-      if (inventory.available() && pcid && clientHasItemMaster(pcid)) {
+      if (inventory.available() && pcid && clientStockTracked(pcid)) {
         for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
           if (!inventory.get(sku, pcid)) { try { inventory.upsert({ sku, name: sku, clientId: pcid }); } catch (_) {} }
         }
@@ -9691,7 +9708,7 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     // Without this it looked identical on the Orders tab but moved nothing.
     {
       const scid = invClientId(batch.client_name);
-      if (inventory.available() && scid && clientHasItemMaster(scid)) {
+      if (inventory.available() && scid && clientStockTracked(scid)) {
         for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
           if (!inventory.get(sku, scid)) { try { inventory.upsert({ sku, name: sku, clientId: scid }); } catch (_) {} }
         }
@@ -15723,7 +15740,7 @@ async function pullZortStore(db, store) {
     // the client has not registered is created at zero rather than skipped —
     // otherwise the sale would silently move no stock at all.
     let tracked = false;
-    if (inventory.available() && clientHasItemMaster(cid)) {
+    if (inventory.available() && clientStockTracked(cid)) {
       for (const sku of new Set(clientOrders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
         if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
       }
@@ -17768,6 +17785,25 @@ function clientHasItemMaster(clientId) {
   catch (e) { console.warn('[intake] item-master check failed:', e.message); return false; }
 }
 
+// Does this client's stock live HERE? Off means their inventory is held in
+// their own WMS and we only pick, pack and scan for them.
+function clientStockTracking(clientId) {
+  const norm = String(clientId || '').trim().toLowerCase();
+  if (!norm) return true;
+  try {
+    const p = clientProfiles(readDb()).find(x => String(x.client || '').trim().toLowerCase() === norm);
+    return !p || p.stock_tracking !== false;      // absent reads as tracked
+  } catch (_) { return true; }
+}
+
+// THE GATE THE INTAKE PATHS ACTUALLY ASK. Two separate reasons to hold back —
+// no catalogue at all, or a catalogue we hold purely for names and barcodes
+// while the client's stock is counted somewhere else. Both mean the same
+// thing here: reserve nothing, deduct nothing, invent no SKUs.
+function clientStockTracked(clientId) {
+  return clientHasItemMaster(clientId) && clientStockTracking(clientId);
+}
+
 function checkIntakeStock(clientId, orders) {
   const problems = { unknownSkus: [], shortOrders: [], okOrders: [], byOrder: {}, noItemMaster: false };
   if (!inventory.available() || !clientId) {
@@ -17781,8 +17817,9 @@ function checkIntakeStock(clientId, orders) {
   // we were never asked to keep. Found the hard way: a 93-order file was
   // refused outright with "every order is short on stock" when not one line
   // was actually short — the client simply had no catalogue loaded.
-  if (!clientHasItemMaster(clientId)) {
+  if (!clientStockTracked(clientId)) {
     problems.noItemMaster = true;
+    problems.stockElsewhere = clientHasItemMaster(clientId);   // a catalogue we hold, stock they hold
     problems.okOrders = (orders || []).map(o => o.order_number);
     return problems;
   }

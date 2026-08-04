@@ -672,6 +672,20 @@
                   <select id="obType"><option value="">—</option><option value="b2b">B2B</option><option value="b2c">B2C</option></select>
                 </div>
                 <div class="form-group"><label>Commodity</label><input type="text" id="obCommodity" placeholder="e.g. Skincare / Electronics" autocomplete="off" /></div>
+                <div class="form-group" style="grid-column:1/3">
+                  <label style="display:flex;align-items:flex-start;gap:.5rem;font-weight:600;cursor:pointer">
+                    <input type="checkbox" id="obStockTracking" checked style="margin-top:.2rem" />
+                    <span>
+                      &#128230; We hold this client's stock
+                      <span class="hint" style="display:block;font-weight:400;margin-top:.15rem">
+                        On: uploads reserve stock and completing an order deducts it.
+                        <b>Off</b>: their stock is counted in their own system &mdash; we only pick, pack and scan.
+                        Their item master still loads, so product names and barcodes work as normal;
+                        nothing is reserved or deducted.
+                      </span>
+                    </span>
+                  </label>
+                </div>
               </div>
               <div style="display:flex;gap:.5rem;align-items:center;margin:.2rem 0 1rem">
                 <button class="btn-primary btn-sm" id="obSaveBtn">Save client</button>

@@ -3563,6 +3563,37 @@ enrichment alone misses every order uploaded before that client's catalogue was
 loaded — the same reason inbound descriptions are filled on read. Suppressed
 when the barcode equals the SKU (nothing gained by printing it twice).
 
+## Whose system holds this client's stock (`stock_tracking`)
+
+Per the user: a 3PL client's item master is worth having for its NAMES and
+BARCODES even when their stock is counted in their own WMS — the pick lines
+need real descriptions, the scanners need barcodes, and their store needs a
+catalogue. But loading a master was an all-or-nothing act: `clientHasItemMaster`
+returns true the moment a client has any inventory row, so the master switched
+stock allocation ON, every quantity read 0, and the next upload met "not enough
+stock" on every order.
+
+`clientProfiles[].stock_tracking` (a tick on the onboarding screen, **default
+true** — absent reads as true, so no existing client changes) separates the two.
+
+- **`clientStockTracked(clientId)`** = has an item master AND the profile allows
+  tracking. THAT is what the four intake paths ask (upload, photo scan,
+  approved client submission, store sync) — reserve nothing, deduct nothing,
+  invent no SKUs at zero. `clientHasItemMaster` keeps answering the literal
+  question and is what tells the two cases apart.
+- **THE TWO REASONS MUST NOT READ THE SAME.** "No item master is loaded" is a
+  gap someone should close; "their stock is held in their own system" is the
+  arrangement. `/api/preview` returns `kind: 'no-item-master'` or
+  `'stock-elsewhere'` and the Confirm modal words each properly — neither ever
+  calls it a shortage.
+- Turning it back on re-arms the gate immediately; nothing is stamped.
+
+Verified 15 checks: the catalogue loads, the notice reads as the arrangement,
+the upload goes through untouched with both orders landing, the pick lines carry
+the REAL product name and the barcode the scanners need, **nothing is reserved
+and no phantom SKU is invented**, switching it back on returns the stock
+judgement, and a client saved without the field stays tracked.
+
 ## A client with NO item master is not a client who has run out
 
 Reported from the floor as *"orders unable to upload"*: a 93-order BETIME GI

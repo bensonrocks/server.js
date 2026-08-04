@@ -10376,6 +10376,7 @@
       $('obDetailBody').classList.remove('hidden');
       $('obName').value = ''; $('obName').disabled = false;
       $('obType').value = ''; $('obCommodity').value = '';
+      $('obStockTracking').checked = true;               // new clients: we hold their stock
       $('obItemCount').textContent = ''; $('obItemStatus').classList.add('hidden');
       $('obInstrList').innerHTML = ''; $('obTestResult').textContent = '';
       $('obSaveStatus').textContent = '';
@@ -10389,6 +10390,8 @@
       $('obDetailBody').classList.remove('hidden');
       $('obName').value = p.client; $('obName').disabled = true; // name is the key
       $('obType').value = p.type || ''; $('obCommodity').value = p.commodity || '';
+      // Absent reads as ON, so an existing client is unchanged by this arriving.
+      $('obStockTracking').checked = p.stock_tracking !== false;
       $('obItemCount').textContent = p.itemCount ? `${p.itemCount} items loaded` : 'no items yet';
       $('obItemStatus').classList.add('hidden'); $('obTestResult').textContent = ''; $('obSaveStatus').textContent = '';
       renderInstr(p.instructions || []);
@@ -10501,7 +10504,8 @@
     async function save() {
       const client = $('obName').value.trim();
       if (!client) { $('obSaveStatus').textContent = 'Name required.'; return; }
-      const body = { client, type: $('obType').value, commodity: $('obCommodity').value.trim() };
+      const body = { client, type: $('obType').value, commodity: $('obCommodity').value.trim(),
+                     stock_tracking: $('obStockTracking').checked };
       const r = await fetch('/api/master/client-profiles', { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
       if (!r.ok) { const d = await r.json(); $('obSaveStatus').textContent = d.error || 'Save failed'; return; }
       $('obSaveStatus').textContent = '✓ Saved';
