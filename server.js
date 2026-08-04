@@ -14,6 +14,7 @@ const { fetchDailyCandles, SYMBOLS } = require('./lib/trading/marketData');
 const users                          = require('./lib/users');
 const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
+const { getMacroContext }            = require('./lib/macro');
 const hitpay                         = require('./lib/hitpay');
 const mtBridge                       = require('./lib/mtBridge');
 
@@ -537,6 +538,16 @@ app.get('/api/news', requireSubscriptionAPI, async (req, res) => {
   } catch (e) {
     console.error('News fetch error:', e.message);
     res.json({ ok: true, articles: _newsCache.articles });
+  }
+});
+
+app.get('/api/macro', requireSubscriptionAPI, async (req, res) => {
+  try {
+    const data = await getMacroContext();
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('Macro fetch error:', e.message);
+    res.json({ ok: false, error: e.message });
   }
 });
 
