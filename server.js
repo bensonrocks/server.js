@@ -2883,15 +2883,25 @@ setInterval(runAuditLogArchive, 24 * 3600 * 1000);  // then daily
 // purge you can undo is not a deletion.
 const PII_PURGE_AFTER_DAYS = 90;
 const PII_FIELDS = ['customer_name', 'delivery_address', 'tel'];
-// OFF UNTIL SWITCHED ON, DELIBERATELY. Erasure is irreversible and the first
-// run sweeps the entire back-catalogue at once, so it must never begin merely
-// because a deploy happened. Until PII_PURGE_ENABLED is set, this REPORTS what
-// it would erase and touches nothing — so the operator can see the scale, take
-// anything they still need out of old orders, and then turn it on knowingly.
-//
-// NOTE: while this is off, the retention commitment it backs is not yet being
-// met. Turning it on is what makes that promise true.
+// NOTHING IS ERASED WITHOUT SOMEONE SAYING SO. Erasure is irreversible and the
+// first sweep takes the whole back-catalogue at once, so the daily schedule
+// never erases on its own — it COUNTS what is due and waits to be confirmed.
+// `db.piiPolicy.mode`:
+//   'prompt' (default) — the schedule reports what is waiting; erasing happens
+//                        only when an operator confirms it on screen.
+//   'auto'             — the schedule erases unattended. Turning this on is
+//                        itself a confirmed action, so the prompt happens once
+//                        instead of every day.
+//   'off'              — not even counted.
+// PII_PURGE_ENABLED=true is still honoured as the STARTING mode for a
+// deployment that already set it, so nothing regresses; the stored policy wins
+// once anyone sets it from the Administrator screen.
 const PII_PURGE_ENABLED = String(process.env.PII_PURGE_ENABLED || '').toLowerCase() === 'true';
+const PII_MODES = ['prompt', 'auto', 'off'];
+function piiMode(db) {
+  const m = db && db.piiPolicy && db.piiPolicy.mode;
+  return PII_MODES.includes(m) ? m : (PII_PURGE_ENABLED ? 'auto' : 'prompt');
+}
 function purgePersonalData(db, { dryRun = false } = {}) {
   const cutoff = Date.now() - PII_PURGE_AFTER_DAYS * 86400000;
   let orders = 0, fields = 0;
@@ -2918,26 +2928,22 @@ function purgePersonalData(db, { dryRun = false } = {}) {
   if (orders && !dryRun) logAudit('personal_data_purged', { orders, fields, afterDays: PII_PURGE_AFTER_DAYS });
   return { orders, fields, dryRun };
 }
-function runPersonalDataPurge() {
+// DEFAULTS TO A DRY RUN. A caller has to ask for the irreversible thing
+// explicitly — the safe direction to be wrong in.
+function runPersonalDataPurge({ dryRun = true } = {}) {
   try {
     const db = readDb();
-    const r = purgePersonalData(db, { dryRun: !PII_PURGE_ENABLED });
-    if (!PII_PURGE_ENABLED) {
-      if (r.orders) {
-        console.log(`[IdealOne] Personal-data purge is OFF. ${r.orders} order(s) / ${r.fields} field(s) are past `
-          + `${PII_PURGE_AFTER_DAYS} days and WOULD be erased. Nothing was changed. `
-          + `Set PII_PURGE_ENABLED=true to begin erasing.`);
-      }
-      return;
-    }
-    if (r.orders) {
+    const r = purgePersonalData(db, { dryRun });
+    if (!dryRun && r.orders) {
       writeDb(db);
       console.log(`[IdealOne] Personal data erased on ${r.orders} order(s) completed over ${PII_PURGE_AFTER_DAYS} days ago`);
     }
-  } catch (e) { console.error('[IdealOne] personal data purge failed:', e.message); }
+    return r;
+  } catch (e) {
+    console.error('[IdealOne] personal data purge failed:', e.message);
+    return { orders: 0, fields: 0, dryRun, error: e.message };
+  }
 }
-setTimeout(runPersonalDataPurge, 120 * 1000);          // shortly after boot
-setInterval(runPersonalDataPurge, 24 * 3600 * 1000);   // then daily
 
 // ── Marketplace (Lazada/ZORT) data-retention purge ──────────────────────────
 // Lazada ISV Q8e: personal data from a COMPLETED marketplace order must be
@@ -2962,9 +2968,9 @@ function _rewriteArchive(file, data) {
   fs.renameSync(tmp, file);
 }
 
-function runMarketplaceDataPurge(overrideDays) {
+function runMarketplaceDataPurge(overrideDays, { dryRun = false } = {}) {
   const days = overrideDays !== undefined ? overrideDays : MARKETPLACE_RETENTION_DAYS;
-  if (!(days > 0)) return { disabled: true };
+  if (!(days > 0)) return { disabled: true, orders: 0, auditEvents: 0 };
   try {
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
     const keys = new Set();          // batchId|order for every marketplace order (any age)
@@ -2972,7 +2978,7 @@ function runMarketplaceDataPurge(overrideDays) {
 
     // 1. Live batches — redact old completed marketplace orders + collect keys.
     const db = readDb();
-    orders += piiPurge.purgeBatches(db.batches || [], cutoff, keys);
+    orders += piiPurge.purgeBatches(db.batches || [], cutoff, keys, { dryRun });
 
     // 2. Archived batch files — redact + finish collecting keys (a live audit
     //    event may reference an already-archived batch, so gather all keys
@@ -2980,34 +2986,67 @@ function runMarketplaceDataPurge(overrideDays) {
     for (const f of _archiveFiles(/^archive-.*\.json$/)) {
       const file = path.join(ARCHIVE_DIR, f);
       let batches; try { batches = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
-      const hits = piiPurge.purgeBatches(batches, cutoff, keys);
-      if (hits) { orders += hits; _rewriteArchive(file, batches); }
+      const hits = piiPurge.purgeBatches(batches, cutoff, keys, { dryRun });
+      if (hits) { orders += hits; if (!dryRun) _rewriteArchive(file, batches); }
     }
 
     // 3. Live audit log.
-    events += piiPurge.purgeAudit(db.auditLog || [], cutoff, keys);
-    if (orders || events) writeDb(db); // persist live redactions (batches + audit)
+    events += piiPurge.purgeAudit(db.auditLog || [], cutoff, keys, { dryRun });
+    if ((orders || events) && !dryRun) writeDb(db); // persist live redactions (batches + audit)
 
     // 4. Archived audit files.
     for (const f of _archiveFiles(/^audit-archive-.*\.json$/)) {
       const file = path.join(ARCHIVE_DIR, f);
       let evs; try { evs = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
-      const hits = piiPurge.purgeAudit(evs, cutoff, keys);
-      if (hits) { events += hits; _rewriteArchive(file, evs); }
+      const hits = piiPurge.purgeAudit(evs, cutoff, keys, { dryRun });
+      if (hits) { events += hits; if (!dryRun) _rewriteArchive(file, evs); }
     }
 
-    if (orders || events) {
+    if ((orders || events) && !dryRun) {
       logAudit('marketplace_data_purged', { retentionDays: days, orders, auditEvents: events });
       console.log(`[IdealOne] Marketplace data purge: redacted PII on ${orders} order(s) + ${events} audit event(s) older than ${days}d`);
     }
-    return { orders, auditEvents: events, retentionDays: days };
+    return { orders, auditEvents: events, retentionDays: days, dryRun };
   } catch (e) {
     console.error('[IdealOne] marketplace data purge failed:', e.message);
-    return { error: e.message };
+    return { error: e.message, orders: 0, auditEvents: 0 };
   }
 }
-setTimeout(runMarketplaceDataPurge, 120 * 1000);         // shortly after boot (staggered)
-setInterval(runMarketplaceDataPurge, 24 * 3600 * 1000);  // then daily
+
+// ── The daily sweep — COUNTS by default, erases only in 'auto' ──────────────
+// Both purges run together so "what is waiting" and "erase it" can never
+// disagree about scope. In 'prompt' mode nothing is touched: the counts are
+// stashed on db.piiDue for the Administrator screen and said in the log.
+function scheduledRetentionSweep() {
+  try {
+    const mode = piiMode(readDb());
+    if (mode === 'off') return;
+    const dryRun = mode !== 'auto';
+    const personal = runPersonalDataPurge({ dryRun });
+    const marketplace = runMarketplaceDataPurge(undefined, { dryRun });
+    if (!dryRun) return;
+    const due = {
+      orders: personal.orders || 0,
+      fields: personal.fields || 0,
+      marketplaceOrders: marketplace.orders || 0,
+      marketplaceEvents: marketplace.auditEvents || 0,
+      afterDays: PII_PURGE_AFTER_DAYS,
+      at: new Date().toISOString(),
+    };
+    const db = readDb();
+    db.piiDue = due;
+    writeDb(db);
+    const total = due.orders + due.marketplaceOrders + due.marketplaceEvents;
+    if (total) {
+      console.log(`[IdealOne] Personal-data retention: ${due.orders} order(s) / ${due.fields} field(s)`
+        + `${due.marketplaceOrders ? ` + ${due.marketplaceOrders} marketplace order(s) / ${due.marketplaceEvents} audit event(s)` : ''}`
+        + ` are past ${PII_PURGE_AFTER_DAYS} days and WAITING FOR CONFIRMATION. Nothing was changed —`
+        + ` Administrator → System → Personal data retention.`);
+    }
+  } catch (e) { console.error('[IdealOne] retention sweep failed:', e.message); }
+}
+setTimeout(scheduledRetentionSweep, 120 * 1000);          // shortly after boot
+setInterval(scheduledRetentionSweep, 24 * 3600 * 1000);   // then daily
 
 // Master: report the retention policy + run the purge on demand (for audits /
 // a compliance reviewer). The `days` override lets a reviewer prove the sweep
@@ -3022,10 +3061,103 @@ app.get('/api/master/data-retention', (req, res) => {
 });
 app.post('/api/master/data-retention/purge-now', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
+  // NO ROUTE ERASES WITHOUT THE WORD. This one predates the confirm gate and
+  // would otherwise be a way around it.
+  if (String((req.body || {}).confirm || '').trim().toUpperCase() !== 'ERASE') {
+    return res.status(400).json({ error: 'Type ERASE to confirm. Nothing was changed.', needsConfirm: true });
+  }
   const days = req.body && req.body.days !== undefined ? Number(req.body.days) : undefined;
   const result = runMarketplaceDataPurge(days);
-  logAudit('marketplace_data_purge_manual', { by: req.userId || '', ...result });
+  logAudit('marketplace_data_purge_manual', { by: req.userId || _tokenUserId(req), ...result });
   res.json({ ok: true, result });
+});
+
+// These routes sit ABOVE the global auth middleware (they are master-key
+// gated), so `req.userId` is never populated for them — the trail would name
+// nobody. Resolve the signed-in staff user from the token directly.
+function _tokenUserId(req) {
+  const token = req.headers['x-auth-token'];
+  if (!token) return '';
+  for (const [userId, t] of activeSessions) {
+    if (userId.startsWith('driver:') || userId.startsWith('portal:')) continue;
+    if (t === token) return userId;
+  }
+  return '';
+}
+
+// ── Personal-data retention: see what is due, then confirm it ───────────────
+// The preview is a LIVE dry run, not a stored count — the number someone
+// confirms against has to be the number that will actually be erased.
+//
+// THE TWO PASSES OVERLAP. `purgePersonalData` clears name/address/phone on
+// EVERY completed order; the marketplace pass clears a WIDER set of fields
+// (tracking, email) on the SUBSET of them that came from a sales channel. With
+// both windows at their default 90 days the marketplace figure is therefore
+// part of the first, not extra to it — `marketplaceSubset` tells the screen
+// which way to word it, so the two numbers are never read as a total.
+app.get('/api/master/pii-purge', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const personal = runPersonalDataPurge({ dryRun: true });
+  const marketplace = runMarketplaceDataPurge(undefined, { dryRun: true });
+  res.json({
+    mode: piiMode(db),
+    modes: PII_MODES,
+    policy: db.piiPolicy || null,
+    afterDays: PII_PURGE_AFTER_DAYS,
+    fields: PII_FIELDS,
+    marketplaceRetentionDays: MARKETPLACE_RETENTION_DAYS,
+    marketplaceSubset: MARKETPLACE_RETENTION_DAYS === PII_PURGE_AFTER_DAYS,
+    due: {
+      orders: personal.orders || 0,
+      fields: personal.fields || 0,
+      marketplaceOrders: marketplace.orders || 0,
+      marketplaceEvents: marketplace.auditEvents || 0,
+    },
+    note: 'Erasing is irreversible. The order, its SKUs, quantities and dates are kept — only the fields that identify a person are cleared. Nightly backups still hold the old values until they rotate off (~14 days).',
+  });
+});
+
+app.post('/api/master/pii-purge/run', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { confirm, reason } = req.body || {};
+  if (String(confirm || '').trim().toUpperCase() !== 'ERASE') {
+    return res.status(400).json({ error: 'Type ERASE to confirm. Nothing was changed.', needsConfirm: true });
+  }
+  // A reason, for the same reason a hand stock adjustment needs one: this is a
+  // change with no document behind it, so the trail is all there is.
+  if (String(reason || '').trim().length < 6) {
+    return res.status(400).json({ error: 'Give a reason (at least 6 characters). Nothing was changed.' });
+  }
+  const personal = runPersonalDataPurge({ dryRun: false });
+  const marketplace = runMarketplaceDataPurge(undefined, { dryRun: false });
+  logAudit('personal_data_purge_confirmed', {
+    by: req.userId || _tokenUserId(req), reason: String(reason).trim(),
+    orders: personal.orders || 0, fields: personal.fields || 0,
+    marketplaceOrders: marketplace.orders || 0, marketplaceEvents: marketplace.auditEvents || 0,
+    afterDays: PII_PURGE_AFTER_DAYS,
+  });
+  const db = readDb();
+  db.piiDue = { orders: 0, fields: 0, marketplaceOrders: 0, marketplaceEvents: 0, afterDays: PII_PURGE_AFTER_DAYS, at: new Date().toISOString() };
+  writeDb(db);
+  res.json({ ok: true, personal, marketplace });
+});
+
+app.post('/api/master/pii-purge/policy', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const mode = String((req.body || {}).mode || '').trim().toLowerCase();
+  if (!PII_MODES.includes(mode)) return res.status(400).json({ error: 'mode must be prompt, auto or off' });
+  // Letting it erase unattended is itself a decision, so it is confirmed once
+  // here instead of every day.
+  if (mode === 'auto' && String((req.body || {}).confirm || '').trim().toUpperCase() !== 'AUTO') {
+    return res.status(400).json({ error: 'Type AUTO to let it erase without asking each time. Nothing was changed.', needsConfirm: true });
+  }
+  const db = readDb();
+  const from = piiMode(db);
+  db.piiPolicy = { mode, updatedBy: req.userId || _tokenUserId(req), updatedAt: new Date().toISOString() };
+  writeDb(db);
+  logAudit('pii_policy_updated', { by: req.userId || _tokenUserId(req), from, to: mode });
+  res.json({ ok: true, mode });
 });
 
 // ── 3PL client billing — rate cards + invoicing ─────────────────────────────
@@ -19174,6 +19306,7 @@ function reverseWaveFromOrders(db, wave, req) {
 app.get('/api/waves', requireAuth, (req, res) => {
   const db = readDb();
   let waves = (db.waves || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
+  waves.forEach(waveLocationStats);   // recount unlocated lines against the resolved bins
   if (req.query.detail === '1') {
     const byOrderNumber = new Map(globalOrdersWithState().map(o => [o.order_number, o]));
     waves = waves.map(w => ({
@@ -19192,7 +19325,7 @@ app.get('/api/waves/:id', requireAuth, (req, res) => {
   const db = readDb();
   const wave = findWave(db, req.params.id);
   if (!wave) return res.status(404).json({ error: 'Wave not found' });
-  res.json(wave);
+  res.json(waveLocationStats(wave));
 });
 
 // Enrich a wave's consolidated pick rows with the ACTUAL bins to pick from
@@ -19239,6 +19372,24 @@ function enrichWaveWithBins(db, wave) {
     const c = waveNaturalCompare(xl, yl);
     return c !== 0 ? c : x.sku.localeCompare(y.sku);
   });
+  waveLocationStats(wave);
+}
+
+// A ROW WITH A BIN IS NOT AN UNLOCATED ROW. `buildWave` counts
+// `stats.unlocatedLines` from the PRINTED location on the order line, which is
+// blank for every order that arrives without one — and that count was never
+// revisited after `enrichWaveWithBins` resolved the real bins. So a wave whose
+// every row showed a bin still announced "6 line(s) have no location"
+// (reported from the floor, with all six bins visible on screen).
+//
+// Recounted here, and called on every READ as well as at creation, so waves
+// built before this fix heal themselves instead of needing a migration. A row
+// is unlocated only when it has NEITHER a resolved bin nor a printed code.
+function waveLocationStats(wave) {
+  if (!wave || !wave.stats) return wave;
+  wave.stats.unlocatedLines = (wave.picks || [])
+    .filter(p => !String(p.bin_location || p.location || '').trim()).length;
+  return wave;
 }
 
 app.post('/api/waves', requireAuth, express.json(), (req, res) => {

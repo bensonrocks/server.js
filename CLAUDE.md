@@ -1599,12 +1599,47 @@ Required by the marketplace's ISV programme and decided by the user: once an
 order is done, personal data may be kept for at most three months and must then
 be permanently deleted.
 
-**OFF UNTIL SWITCHED ON** (`PII_PURGE_ENABLED=true`). Erasure is irreversible
-and the first run sweeps the whole back-catalogue at once, so it must never
-begin merely because a deploy happened. Until the switch is set it REPORTS what
-it would erase and touches nothing — no field cleared, no `pii_purged_at` stamp,
-no audit entry — so the scale is visible before anyone commits to it.
-**While it is off, the retention promise it backs is not being met.**
+**NOTHING IS ERASED WITHOUT SOMEONE SAYING SO** — per the user, "always prompt
+to confirm before executing". Erasure is irreversible and the first sweep takes
+the whole back-catalogue at once, so the daily schedule COUNTS what is due and
+waits. `db.piiPolicy.mode`:
+
+- **`prompt`** (default) — the schedule reports what is waiting (stashed on
+  `db.piiDue`, said in the boot log) and touches nothing. An operator erases it
+  from Administrator → System → **Personal data retention**.
+- **`auto`** — the schedule erases unattended. Turning this on is ITSELF a
+  confirmed action (type `AUTO`), so the prompt happens once instead of daily.
+- **`off`** — not even counted.
+
+`PII_PURGE_ENABLED=true` is still honoured as the STARTING mode for a
+deployment that already set it, mapping to `auto`; the stored policy wins once
+anyone sets it on screen. **While it is in `prompt` and nobody presses the
+button, the retention promise it backs is not being met** — the count on the
+card is what says so.
+
+- **`GET /api/master/pii-purge`** is a LIVE dry run, never a stored count — the
+  number someone confirms against has to be the number that actually goes.
+  Reading it three times changes nothing (asserted).
+- **`POST /api/master/pii-purge/run`** needs the typed word `ERASE` **and** a
+  reason of 6+ characters — same discipline as a hand stock adjustment, and for
+  the same reason: this is a change with no document behind it, so the trail is
+  all there is. Audit-logged `personal_data_purge_confirmed` with who, why and
+  how many.
+- **`POST /api/master/data-retention/purge-now`** (the older marketplace-only
+  route) demands the same word — it predates the gate and would otherwise be a
+  way around it.
+- **THE TWO PASSES OVERLAP AND THE SCREEN MUST NOT ADD THEM UP.**
+  `purgePersonalData` clears name/address/phone on EVERY completed order; the
+  marketplace pass (`lib/pii-purge.js`) clears a WIDER field set (tracking,
+  email) on the SUBSET of them that came from a sales channel. With both windows
+  at the default 90 days the marketplace figure is PART of the first, so the
+  response carries `marketplaceSubset` and the card words it as "including".
+- `lib/pii-purge.js`'s `purgeBatches`/`purgeAudit` take `{dryRun}` — that is
+  what makes the preview possible without a second implementation of the rules.
+- These routes sit ABOVE the global auth middleware (master-key gated), so
+  `req.userId` is never populated — `_tokenUserId(req)` resolves the signed-in
+  staff user from the token, or the trail names nobody. The pre-existing
+  `marketplace_data_purge_manual` had exactly that bug.
 
 **THE ORDER SURVIVES, THE PERSON DOES NOT.** `purgePersonalData(db)` blanks only
 the fields that identify a human — `customer_name`, `delivery_address`, `tel`
@@ -1619,8 +1654,20 @@ keep for 12 months.
   A purge you can undo is not a deletion.
 - Stamped `pii_purged_at` so a second run is a no-op; audit-logged
   `personal_data_purged` with the counts.
-- Runs 2 minutes after boot and daily thereafter, alongside the two archive
-  jobs.
+- `scheduledRetentionSweep()` runs 2 minutes after boot and daily thereafter,
+  alongside the two archive jobs, and runs BOTH purges together so "what is
+  waiting" and "erase it" can never disagree about scope.
+
+Verified 34 API checks (previewing three times changes nothing; no word, the
+wrong word and a non-reason are each refused with the data untouched; the old
+route refuses too; confirming erases and the ORDER SURVIVES with its number,
+SKU and quantity; a recent order and a still-open order are both left alone; the
+marketplace order loses its tracking number as well; the trail names who and
+why; unattended mode is refused without `AUTO` and going back to prompt needs
+nothing) plus 17 browser checks on desktop and a Pixel 5 (cancelling the prompt
+erases nothing, the wrong word is refused on screen, the mode snaps back, the
+card updates itself and the button goes dead once there is nothing left, and no
+banner is pinned to the top of the screen).
 
 CARRIED OVER, NOT SOLVED: nightly gzip backups (kept 14) still contain the
 personal data until they rotate out, so full erasure completes ~14 days after
@@ -3447,6 +3494,27 @@ units exactly once; a fresh run plans from the full shelf again; and a single
 call with no ledger behaves exactly as before) plus 10 end-to-end checks
 through the real upload → wave → pick-list endpoints, asserting the wave AND
 the per-order pick list both ask 24/4 and never exceed what a bin holds.
+
+### A row with a bin is NOT an unlocated row (`waveLocationStats`)
+
+Reported from a photo of the wave screen: "**6 line(s) have no location**" in
+amber, with a bin printed on every one of the six rows.
+
+`buildWave` (lib/wave-pick.js) counts `stats.unlocatedLines` from
+`line.location` — the location PRINTED on the order line, which is blank for
+every order that arrives without one. `enrichWaveWithBins` then resolves the
+real bins into `row.bin_location`/`row.bins` (which is what the screen renders)
+**and the count was never revisited**. So a wave with every row binned still
+announced that none of them were.
+
+`waveLocationStats(wave)` recounts: a row is unlocated only when it has NEITHER
+a resolved bin NOR a printed code. Called at the end of `enrichWaveWithBins`
+**and on every READ** (`GET /api/waves`, `GET /api/waves/:id`) — derive-on-read,
+same discipline as `collection_due` and `fulfilmentSla`, so waves created before
+this fix heal themselves instead of needing a migration.
+
+Verified against the reported shape: 3 rows, 2 with resolved bins and 1 with
+genuinely nothing → 1, not 3, on both the detail and the list.
 
 ### The scan row leads with the PRODUCT BARCODE, not the bin
 

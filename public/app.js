@@ -10222,7 +10222,7 @@
       if (btn.dataset.adminTab === 'comms') loadCommunication();
       if (btn.dataset.adminTab === 'onboarding') obUI.load();
       if (btn.dataset.adminTab === 'outages') outagesUI.load();
-      if (btn.dataset.adminTab === 'danger') loadBackupArchive();
+      if (btn.dataset.adminTab === 'danger') { loadBackupArchive(); loadPiiRetention(); }
     });
   });
 
@@ -13139,6 +13139,95 @@
       else { msg('success', `✓ Saved ${d.file} to the archive`); loadBackupArchive(); }
     } catch (err) { msg('error', err.message); }
     btn.disabled = false; btn.innerHTML = orig;
+  });
+
+  // ── Personal data retention — confirm before anything is erased ──────────
+  // The figure on screen is a LIVE dry run from the server, so the number
+  // someone types ERASE against is the number that actually goes.
+  function piiMsg(kind, text) {
+    const el = document.getElementById('piiMsg');
+    if (!el) return;
+    el.className = 'status-bar ' + kind; el.textContent = text; el.classList.remove('hidden');
+  }
+  async function loadPiiRetention() {
+    const box = document.getElementById('piiDueBox');
+    if (!box) return;
+    try {
+      const r = await fetch('/api/master/pii-purge', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const d = await r.json();
+      if (!r.ok) { box.textContent = d.error || 'Could not read the retention status.'; return; }
+      const sel = document.getElementById('piiModeSel');
+      if (sel) sel.value = d.mode;
+      const due = d.due || {};
+      // THE TWO FIGURES ARE NOT ADDED. The marketplace pass clears extra fields
+      // on orders the first pass already covers, so on the default settings it
+      // reads as "including", never as a second pile.
+      const waiting = d.marketplaceSubset
+        ? Math.max(due.orders || 0, due.marketplaceOrders || 0)
+        : (due.orders || 0) + (due.marketplaceOrders || 0);
+      const bits = [];
+      if (due.orders) bits.push(`<b>${due.orders}</b> order(s) / ${due.fields} personal field(s)`);
+      if (due.marketplaceOrders) {
+        bits.push(`${d.marketplaceSubset ? 'including ' : ''}<b>${due.marketplaceOrders}</b> marketplace order(s)`
+          + ` whose tracking and email go too (${due.marketplaceEvents} audit event(s))`);
+      }
+      box.innerHTML = waiting
+        ? `<span style="color:#d97706">&#9888; ${bits.join(', ')} — completed more than ${d.afterDays} days ago and due for erasure.</span> `
+          + (d.mode === 'auto'
+              ? 'They will be erased on the next daily run.'
+              : d.mode === 'off'
+                ? 'Erasing is switched off, so nothing will go until you switch it back on.'
+                : 'Nothing has been erased — press <b>Erase now</b> when you are ready.')
+        : `<span style="color:#16a34a">&#10003; Nothing is past ${d.afterDays} days. There is nothing to erase right now.</span>`;
+      const btn = document.getElementById('piiRunBtn');
+      if (btn) btn.disabled = !waiting;
+    } catch (e) { box.textContent = e.message; }
+  }
+  document.getElementById('piiRefreshBtn')?.addEventListener('click', loadPiiRetention);
+
+  document.getElementById('piiRunBtn')?.addEventListener('click', async () => {
+    const reason = prompt('Why are you erasing now? This is recorded in the audit trail.');
+    if (reason === null) return;                       // cancelled — nothing happens
+    if (String(reason).trim().length < 6) return piiMsg('error', 'Give a reason of at least 6 characters. Nothing was erased.');
+    const c = prompt('This CANNOT be undone. The orders are kept; the customer name, address and phone are cleared.\n\nType ERASE to confirm.');
+    if (String(c || '').trim().toUpperCase() !== 'ERASE') return piiMsg('error', 'Not confirmed — nothing was erased.');
+    piiMsg('progress', 'Erasing…');
+    try {
+      const r = await fetch('/api/master/pii-purge/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify({ confirm: 'ERASE', reason: String(reason).trim() }),
+      });
+      const d = await r.json();
+      if (!r.ok) return piiMsg('error', d.error || 'Erase failed');
+      const p = d.personal || {}, m = d.marketplace || {};
+      piiMsg('success', `✓ Erased personal fields on ${p.orders || 0} order(s) (${p.fields || 0} field(s))`
+        + (m.orders ? ` and ${m.orders} marketplace order(s) / ${m.auditEvents || 0} audit event(s)` : ''));
+      loadPiiRetention();
+    } catch (e) { piiMsg('error', e.message); }
+  });
+
+  document.getElementById('piiModeSel')?.addEventListener('change', async (e) => {
+    const mode = e.target.value;
+    const body = { mode };
+    if (mode === 'auto') {
+      const c = prompt('Erasing automatically means nobody is asked each day — it just happens.\n\nType AUTO to allow that.');
+      if (String(c || '').trim().toUpperCase() !== 'AUTO') { piiMsg('error', 'Not confirmed — left as it was.'); return loadPiiRetention(); }
+      body.confirm = 'AUTO';
+    }
+    try {
+      const r = await fetch('/api/master/pii-purge/policy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) { piiMsg('error', d.error || 'Could not change it'); return loadPiiRetention(); }
+      piiMsg('success', mode === 'auto' ? '✓ It will now erase automatically each day.'
+        : mode === 'off' ? '✓ Switched off. Nothing will be erased.'
+        : '✓ It will ask you before erasing anything.');
+      loadPiiRetention();
+    } catch (err) { piiMsg('error', err.message); loadPiiRetention(); }
   });
 
   document.getElementById('masterBackupBtn').addEventListener('click', async () => {
