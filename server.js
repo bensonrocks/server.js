@@ -2883,7 +2883,16 @@ setInterval(runAuditLogArchive, 24 * 3600 * 1000);  // then daily
 // purge you can undo is not a deletion.
 const PII_PURGE_AFTER_DAYS = 90;
 const PII_FIELDS = ['customer_name', 'delivery_address', 'tel'];
-function purgePersonalData(db) {
+// OFF UNTIL SWITCHED ON, DELIBERATELY. Erasure is irreversible and the first
+// run sweeps the entire back-catalogue at once, so it must never begin merely
+// because a deploy happened. Until PII_PURGE_ENABLED is set, this REPORTS what
+// it would erase and touches nothing — so the operator can see the scale, take
+// anything they still need out of old orders, and then turn it on knowingly.
+//
+// NOTE: while this is off, the retention commitment it backs is not yet being
+// met. Turning it on is what makes that promise true.
+const PII_PURGE_ENABLED = String(process.env.PII_PURGE_ENABLED || '').toLowerCase() === 'true';
+function purgePersonalData(db, { dryRun = false } = {}) {
   const cutoff = Date.now() - PII_PURGE_AFTER_DAYS * 86400000;
   let orders = 0, fields = 0;
   for (const b of db.batches || []) {
@@ -2898,19 +2907,29 @@ function purgePersonalData(db) {
       if (!done || done > cutoff) continue;
       let hit = false;
       for (const f of PII_FIELDS) {
-        if (o[f] !== undefined && o[f] !== '' && o[f] !== null) { o[f] = ''; fields++; hit = true; }
+        if (o[f] === undefined || o[f] === '' || o[f] === null) continue;
+        fields++; hit = true;
+        if (!dryRun) o[f] = '';
       }
-      o.pii_purged_at = new Date().toISOString();
+      if (!dryRun) o.pii_purged_at = new Date().toISOString();
       if (hit) orders++;
     }
   }
-  if (orders) logAudit('personal_data_purged', { orders, fields, afterDays: PII_PURGE_AFTER_DAYS });
-  return { orders, fields };
+  if (orders && !dryRun) logAudit('personal_data_purged', { orders, fields, afterDays: PII_PURGE_AFTER_DAYS });
+  return { orders, fields, dryRun };
 }
 function runPersonalDataPurge() {
   try {
     const db = readDb();
-    const r = purgePersonalData(db);
+    const r = purgePersonalData(db, { dryRun: !PII_PURGE_ENABLED });
+    if (!PII_PURGE_ENABLED) {
+      if (r.orders) {
+        console.log(`[IdealOne] Personal-data purge is OFF. ${r.orders} order(s) / ${r.fields} field(s) are past `
+          + `${PII_PURGE_AFTER_DAYS} days and WOULD be erased. Nothing was changed. `
+          + `Set PII_PURGE_ENABLED=true to begin erasing.`);
+      }
+      return;
+    }
     if (r.orders) {
       writeDb(db);
       console.log(`[IdealOne] Personal data erased on ${r.orders} order(s) completed over ${PII_PURGE_AFTER_DAYS} days ago`);

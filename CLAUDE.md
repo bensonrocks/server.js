@@ -1571,6 +1571,13 @@ Required by the marketplace's ISV programme and decided by the user: once an
 order is done, personal data may be kept for at most three months and must then
 be permanently deleted.
 
+**OFF UNTIL SWITCHED ON** (`PII_PURGE_ENABLED=true`). Erasure is irreversible
+and the first run sweeps the whole back-catalogue at once, so it must never
+begin merely because a deploy happened. Until the switch is set it REPORTS what
+it would erase and touches nothing — no field cleared, no `pii_purged_at` stamp,
+no audit entry — so the scale is visible before anyone commits to it.
+**While it is off, the retention promise it backs is not being met.**
+
 **THE ORDER SURVIVES, THE PERSON DOES NOT.** `purgePersonalData(db)` blanks only
 the fields that identify a human — `customer_name`, `delivery_address`, `tel`
 (`PII_FIELDS`). The order number, SKUs, quantities, dates and tracking number
