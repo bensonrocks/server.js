@@ -3594,6 +3594,52 @@ the REAL product name and the barcode the scanners need, **nothing is reserved
 and no phantom SKU is invented**, switching it back on returns the stock
 judgement, and a client saved without the field stays tracked.
 
+## The catalogue LEARNS from the orders that pass through (`harvestCatalogueFromOrders`)
+
+Per the user, from a screenshot of the scan screen: a client with NO item
+master showed a full product description on the pick line — the order file
+carries it — while the store push had nothing to send. *"If my order scanning
+can have description, the store can have it too — make it a permanent method."*
+
+Every batch that enters (all FOUR intake doors — file upload, photo scan,
+approved client submission, store sync) now teaches the client's catalogue, and
+`backfillCataloguesFromOrders()` runs once at boot so months of live orders
+already on the books teach it too (in the inventory TDZ zone next to
+`mergeInventoryClientCasing`). Idempotent — a second boot learns nothing and
+logs nothing.
+
+- **CREATE only for untracked clients** (`!clientStockTracked`). For a tracked
+  client, inventing rows would change what the stock gate says about their next
+  upload; their unknown SKUs are already the intake gate's business (created at
+  zero there, a standing rule).
+- **HEAL on any client**: a row whose name is blank or equals its own code (the
+  legacy name-from-SKU placeholder) takes the file's wording. A REAL name is
+  never overwritten — the catalogue stays the master, so the learned name is
+  the FIRST wording seen, not the last (a client renaming a product in their
+  WMS will not update it; that is the price of "catalogue wins" and is
+  deliberate).
+- **LEARNING NEVER FLIPS STOCK ALLOCATION ON.** When the first learned rows
+  bring a master into existence, `stock_tracking` is pinned OFF on the profile
+  (created if needed) and audit-logged `catalogue_learned_tracking_off` —
+  quantities were never given. Turning it on stays a deliberate act on the
+  onboarding screen.
+- **Not everything in a description column is a name**: the SKU echoed back,
+  strings under 3 chars, and pure numbers/dates are refused.
+- The file's wording is read from `source_description` FIRST — once a
+  placeholder name exists, `enrichLinesFromCatalogue` moves the file's words
+  there and puts the placeholder in `description`, so reading `description`
+  would learn the placeholder back.
+- Audit: `catalogue_learned_from_orders` {client, source, created, healed,
+  barcoded} per intake that learned anything.
+
+Verified 16 checks on a seeded copy of the reported shape plus a tracked
+client: boot teaches the catalogue the exact description off the scan screen,
+junk is refused, tracking is pinned off with zero quantities, an upload still
+lands with no prompt and teaches the new SKU as it passes, the store push
+queues the whole learned catalogue with nothing nameless and the mock store
+shows the real name, later different wording does NOT overwrite, a tracked
+client's code-as-name row is healed, and a second boot changes nothing.
+
 ## A client with NO item master is not a client who has run out
 
 Reported from the floor as *"orders unable to upload"*: a 93-order BETIME GI

@@ -7430,6 +7430,7 @@ app.post('/api/ocr/upload', express.json(), async (req, res) => {
     }
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'photo-scan');
+    harvestCatalogueFromOrders(db, batch.client_name, batch.orders, 'photo-scan');
     // Photo-scanned picking lists also feed the Transport tab — but only when
     // the user answered YES to the delivery-arrangement question.
     if (req.body?.arrange_delivery === 'yes' && req.body?.direction !== 'Inbound') {
@@ -7933,6 +7934,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
 
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'file-upload');
+    harvestCatalogueFromOrders(db, batch.client_name, batch.orders, 'file-upload');
     // "Delivery arrangement needed?" — the user answers yes/no in the
     // Confirm-Upload modal. Yes → each order also becomes a Transport job
     // (deduped by order no). No → orders go to scanning only.
@@ -9720,6 +9722,7 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     }
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'client-submission-approved');
+    harvestCatalogueFromOrders(db, batch.client_name, batch.orders, 'client-submission-approved');
     let transportJobsCreated = 0;
     if (req.body?.arrange_delivery === 'yes') {
       transportJobsCreated = createTransportJobsFromOrders(db, orders, batch.client_name, batchId);
@@ -15767,6 +15770,7 @@ async function pullZortStore(db, store) {
     };
     db.batches.unshift(batch);
     addOutboundPoke(db, batch, 'store-sync');
+    harvestCatalogueFromOrders(db, batch.client_name, batch.orders, 'store-sync');
     batchClients.push(`${clientName} (${clientOrders.length})`);
     // THE LABEL FOLLOWS THE ORDER. Queued rather than fetched inline: the
     // channel usually generates the label a few minutes after the order
@@ -17709,6 +17713,7 @@ const inventory = require('./lib/inventory-store');
 inventory.init();
 assertInventoryPath();          // must run here — see the note next to its definition
 mergeInventoryClientCasing();   // likewise: needs `inventory` to exist first
+backfillCataloguesFromOrders(); // the catalogue learns from the orders already on the books — same zone, same reason
 // Reservations held by orders that no longer exist. THIS MUST RUN HERE, not
 // with the db.json reconcile pass at the top of the file: `const inventory` is
 // still in its temporal dead zone up there, so the call throws into a catch and
@@ -17802,6 +17807,113 @@ function clientStockTracking(clientId) {
 // thing here: reserve nothing, deduct nothing, invent no SKUs.
 function clientStockTracked(clientId) {
   return clientHasItemMaster(clientId) && clientStockTracking(clientId);
+}
+
+// ── THE CATALOGUE LEARNS FROM THE ORDERS THAT PASS THROUGH ──────────────────
+// Per the user, from a screenshot of the scan screen: a client with NO item
+// master showed a full product description on the pick line — the ORDER FILE
+// carries it — while the store push had nothing to send. "If my order scanning
+// can have description, the store can have it too — make it a permanent
+// method." So it is: every batch that enters teaches the client's catalogue.
+//
+//   - A SKU never seen before is CREATED with the file's wording — but only
+//     for a client whose stock is NOT tracked here. For a tracked client,
+//     inventing rows would change what the stock gate says about their next
+//     upload; their unknown SKUs are already the intake gate's business.
+//   - A row whose name is blank, or is just its own code (the legacy
+//     name-from-SKU placeholder), takes the file's wording — that HEALS the
+//     "1730 / 1730" rows on any client. A real name is never overwritten:
+//     the catalogue stays the master (see "the item master is the DEFAULT
+//     lookup"), so the learned name is the FIRST wording seen, not the last.
+//   - LEARNING MUST NEVER FLIP STOCK ALLOCATION ON. Quantities were never
+//     given, so when the first learned rows bring a master into existence,
+//     `stock_tracking` is pinned OFF on the profile (created if needed) and
+//     audit-logged. Turning it on stays a deliberate act on the onboarding
+//     screen — found the hard way when a hand-loaded master nearly turned a
+//     93-order client into 93 shortfall prompts.
+//   - Not everything printed in a description column is a name: the SKU
+//     echoed back, pure numbers and date-shaped strings are refused.
+//
+// The file's own wording is read from `source_description` first — once a
+// placeholder name exists, enrichLinesFromCatalogue moves the file's words
+// THERE and puts the (useless) placeholder in `description`.
+function harvestCatalogueFromOrders(db, clientName, orders, source) {
+  try {
+    if (!inventory.available()) return;
+    const name = String(clientName || '').trim();
+    const cid = invClientId(name);
+    if (!name || !cid) return;
+    const hadMaster = clientHasItemMaster(cid);
+    const mayCreate = !clientStockTracked(cid);
+    let created = 0, healed = 0, barcoded = 0;
+    const seen = new Set();
+    for (const o of orders || []) {
+      for (const l of (o.lines || o.items || [])) {
+        const sku = String(l.sku || '').trim();
+        if (!sku || seen.has(sku.toUpperCase())) continue;
+        seen.add(sku.toUpperCase());
+        const desc = String(l.source_description || l.description || '').trim();
+        if (desc.length < 3) continue;
+        if (desc.toUpperCase() === sku.toUpperCase()) continue;   // a code is not a name
+        if (/^[\d\s./-]+$/.test(desc)) continue;                  // numbers/dates are not a name
+        const barcode = String(l.barcode || '').trim();
+        const rec = inventory.get(sku, cid);
+        if (rec) {
+          const placeholder = !String(rec.name || '').trim()
+            || String(rec.name).trim().toUpperCase() === sku.toUpperCase();
+          const wantBar = barcode && !String(rec.barcode || '').trim();
+          if (!placeholder && !wantBar) continue;
+          inventory.upsert({
+            sku, clientId: cid,
+            name: placeholder ? desc : rec.name,
+            ...(wantBar ? { barcode } : {}),
+          });
+          if (placeholder) healed++;
+          if (wantBar) barcoded++;
+        } else if (mayCreate) {
+          inventory.upsert({ sku, clientId: cid, name: desc, ...(barcode ? { barcode } : {}) });
+          created++;
+        }
+      }
+    }
+    if (!created && !healed && !barcoded) return;
+    if (created && !hadMaster) {
+      const list = clientProfiles(db);
+      let p = list.find(x => String(x.client || '').trim().toLowerCase() === name.toLowerCase());
+      if (!p) { p = { client: name, instructions: [], status: 'Deployed', createdAt: new Date().toISOString() }; list.push(p); }
+      if (p.stock_tracking === undefined) {
+        p.stock_tracking = false;
+        p.updatedAt = new Date().toISOString();
+        logAudit('catalogue_learned_tracking_off', {
+          client: name, by: 'system',
+          reason: 'catalogue learned from order files — quantities were never given, so stock stays untracked until switched on deliberately',
+        });
+      }
+    }
+    logAudit('catalogue_learned_from_orders', { client: name, source: source || '', created, healed, barcoded });
+  } catch (e) { console.warn('[catalogue-learn]', e.message); }
+}
+
+// The work already on the books teaches it too — otherwise only the NEXT
+// upload would, and the whole point is that months of live orders already
+// carry the descriptions. Runs at boot (in the inventory zone, see the
+// temporal-dead-zone warnings), idempotent: a second boot learns nothing new
+// and logs nothing.
+function backfillCataloguesFromOrders() {
+  try {
+    if (!inventory.available()) return;
+    const db = readDb();
+    const before = (db.auditLog || []).length;
+    const byClient = new Map();
+    for (const b of db.batches || []) {
+      const c = String(b.client_name || '').trim();
+      if (!c) continue;
+      if (!byClient.has(c)) byClient.set(c, []);
+      byClient.get(c).push(...(b.orders || []));
+    }
+    for (const [c, orders] of byClient) harvestCatalogueFromOrders(db, c, orders, 'backfill');
+    if ((db.auditLog || []).length !== before) writeDb(db);
+  } catch (e) { console.warn('[catalogue-learn] backfill:', e.message); }
 }
 
 function checkIntakeStock(clientId, orders) {
