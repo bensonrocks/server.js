@@ -10708,19 +10708,37 @@
           } catch (err) { zortStatus('error', 'Push stock failed: ' + err.message); }
           e.target.disabled = false;
         });
+        // WHOSE catalogue is a question, not an assumption. One hub account can
+        // hold many fulfilment clients, and a 3PL client with no shop of their
+        // own has no channel to map — so the push is aimed by NAME, picked from
+        // the clients that actually have an item master loaded.
         tr.querySelector('.z-pushprod')?.addEventListener('click', async e => {
-          if (!confirm(`Send ${store.clientName}'s ITEM MASTER to their store as its product list?\n\n`
-            + `Codes, names, barcodes, dimensions and cost — NEVER quantities. Stock is a separate push, `
-            + `so the store keeps one source for each fact.`)) return;
           e.target.disabled = true;
-          zortStatus('progress', `Enqueuing the catalogue for ${store.clientName}…`);
           try {
-            const r2 = await fetch(`/api/master/zort/stores/${id}/push-products`, { method: 'POST', headers: zortHdrs() });
+            const picked = await pickCatalogueClient(store);
+            if (!picked) return;                                  // cancelled
+            const who = picked === '*' ? `${store.clientName} (and any mapped channel)` : picked;
+            if (!confirm(`Send ${who}'s ITEM MASTER to the store as its product list?\n\n`
+              + `Codes, names, barcodes, units and cost — NEVER quantities. Stock is a separate push, `
+              + `so the store keeps one source for each fact.\n\n`
+              + `Products already there are updated; new ones are created.`)) return;
+            zortStatus('progress', `Enqueuing the catalogue for ${who}…`);
+            const r2 = await fetch(`/api/master/zort/stores/${id}/push-products`, {
+              method: 'POST',
+              headers: { ...zortHdrs(), 'Content-Type': 'application/json' },
+              body: JSON.stringify(picked === '*' ? {} : { client: picked }),
+            });
             const d = await r2.json();
-            if (d.ok) { zortStatus('success', `✓ ${d.queued} of ${d.skus} product(s) queued — syncing in the background`); loadZortStores(); }
+            if (d.ok) { zortStatus('success', `✓ ${d.queued} of ${d.skus} product(s) queued for ${who} — syncing in the background`); loadZortStores(); }
             else zortStatus('error', `✗ ${d.error}`);
-          } catch (err) { zortStatus('error', 'Push catalogue failed: ' + err.message); }
-          e.target.disabled = false;
+          } catch (err) {
+            zortStatus('error', 'Push catalogue failed: ' + err.message);
+          } finally {
+            // FINALLY, not a trailing line: backing out of the picker or the
+            // confirm returns early, and without this the button stayed dead
+            // until the page was reloaded.
+            e.target.disabled = false;
+          }
         });
         tr.querySelector('.z-edit').addEventListener('click', () => openZortForm(store));
         tr.querySelector('.z-del').addEventListener('click', async () => {
@@ -10733,6 +10751,51 @@
       tbody.innerHTML = `<tr><td colspan="7" style="color:#ef4444;padding:1rem">Failed to load: ${esc(err.message)}</td></tr>`;
     }
   }
+  // Ask WHOSE catalogue to send. Lists every client with an item master loaded,
+  // so Betime or Mayer can be pushed to a hub account whose only mapped client
+  // is the account label itself. Resolves to a client name, '*' for whatever
+  // the store is already mapped to, or null if the operator backs out.
+  function pickCatalogueClient(store) {
+    return new Promise(async resolve => {
+      let list = [];
+      try {
+        const r = await fetch('/api/master/zort/catalogue-clients', { headers: zortHdrs() });
+        list = r.ok ? await r.json() : [];
+      } catch (_) { list = []; }
+      if (!list.length) {
+        alert('No client has an item master loaded yet.\n\nLoad one under Administrator → Onboard Client, then push it here.');
+        return resolve(null);
+      }
+      const ov = document.createElement('div');
+      ov.className = 'modal-overlay';
+      ov.innerHTML = `
+        <div class="modal-card" style="max-width:460px">
+          <div class="modal-title">&#128230; Send an item master to ${esc(store.clientName || 'the store')}</div>
+          <p class="hint" style="margin:.2rem 0 .8rem">Pick whose catalogue goes. Products already at the store are updated; new ones are created. Quantities are never sent.</p>
+          <div id="zpcList" style="max-height:52vh;overflow:auto"></div>
+          <div class="modal-actions" style="margin-top:.9rem">
+            <button class="btn-secondary" id="zpcCancel">Cancel</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const rows = list.map(c => `
+        <button class="btn-secondary zpc-pick" data-client="${esc(c.client)}"
+                style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:.4rem">
+          <span style="font-weight:600">${esc(c.client)}</span>
+          <span style="color:#94a3b8;font-size:.82rem">${c.skus} item(s)</span>
+        </button>`).join('');
+      ov.querySelector('#zpcList').innerHTML = rows
+        + `<button class="btn-secondary zpc-pick" data-client="*" style="width:100%;margin-top:.5rem">
+             Everything this store is mapped to
+           </button>`;
+      const close = v => { ov.remove(); resolve(v); };
+      ov.querySelector('#zpcCancel').addEventListener('click', () => close(null));
+      ov.addEventListener('click', ev => { if (ev.target === ov) close(null); });
+      ov.querySelectorAll('.zpc-pick').forEach(b =>
+        b.addEventListener('click', () => close(b.dataset.client)));
+    });
+  }
+
   function openZortForm(store) {
     document.getElementById('zortStoreForm').classList.remove('hidden');
     document.getElementById('zortFormTitle').textContent = store ? `Edit — ${store.clientName}` : 'Connect a ZORT store';

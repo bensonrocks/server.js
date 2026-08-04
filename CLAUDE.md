@@ -686,6 +686,22 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   the STOCK fan-out's rule, and using it here meant the offer never appeared
   for a store that wants products but not stock levels. Pass
   `{ requireStockSync: false }`.
+- **THE PUSH IS AIMED BY CLIENT NAME, not by what the store is mapped to.**
+  Reported from the floor: "clients like Betime, Mayer — how to push? I only see
+  IDEALONEMAIN." Correct, and it was a real dead end. `push-products` scoped to
+  `store.clientName` plus the channel mappings, which on a HUB account holding
+  many fulfilment clients under one login is just the account label — and a 3PL
+  client with no online shop of their own has **no channel to map**, so their
+  catalogue could never reach the store at all.
+  `GET /api/master/zort/catalogue-clients` lists every client that HAS an item
+  master (name + SKU count, from `inventory.listClientIds()`), and 📦 Push
+  Catalogue now opens a picker instead of assuming. Picking a name posts
+  `{client}` — the route already supported it — and "Everything this store is
+  mapped to" is still offered as the old behaviour.
+  GOTCHA fixed by the browser test: the handler disabled the button, then
+  `return`ed early when the operator backed out of the picker or the confirm,
+  skipping the trailing re-enable — the button stayed dead until a page reload.
+  It re-enables in a `finally`.
 - **CATALOGUE PUSH IS A REAL UPSERT, not add-only.** The API has SEPARATE
   `Product/AddProduct` and `Product/UpdateProduct?id=`, and Update needs the
   STORE'S OWN product id — which we do not hold, since we only know our SKU. So

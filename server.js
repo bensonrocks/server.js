@@ -16222,6 +16222,27 @@ app.post('/api/master/zort/stores/:id/push-stock', (req, res) => {
 // Outbox status — pending & stalled entries (for the Connections status panel).
 // Push this store's clients' ITEM MASTER into its product list. Manual and
 // explicit — the catalogue is not something to fire off on a timer.
+// Every client that HAS an item master, so the catalogue push can be aimed at
+// one by name. Without this the push could only ever reach the clients the
+// store is already mapped to — which, on a hub account holding many clients
+// under one login, is just the account label. A 3PL client with no online shop
+// of their own has no channel to map, and their catalogue still has to be able
+// to reach the store.
+app.get('/api/master/zort/catalogue-clients', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable.' });
+  const out = [];
+  let ids = [];
+  try { ids = inventory.listClientIds() || []; } catch (_) { ids = []; }
+  for (const cid of ids) {
+    let n = 0;
+    try { n = (inventory.getAll({ clientId: cid }) || []).length; } catch (_) { continue; }
+    if (n) out.push({ client: cid, skus: n });
+  }
+  out.sort((a, b) => a.client.localeCompare(b.client));
+  res.json(out);
+});
+
 app.post('/api/master/zort/stores/:id/push-products', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
