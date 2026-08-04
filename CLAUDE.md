@@ -702,6 +702,23 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   `return`ed early when the operator backed out of the picker or the confirm,
   skipping the trailing re-enable — the button stayed dead until a page reload.
   It re-enables in a `finally`.
+- **A PRODUCT NAME IS MANDATORY, and never faked from the SKU.** Found on a
+  screenshot of a store's own product list: every row read `1730` / "1730",
+  code and name identical. The cause was in OUR importer, not the push — the
+  item-master upload ended `String(r.name ?? r.description ?? r.productname ??
+  sku).trim() || sku`, so a blank Product Name silently became the SKU. From
+  then on nothing could tell a real name from a placeholder, and the code
+  appeared where a description belongs on pick lines, the client portal, the
+  GRN and the store catalogue.
+  Per the user the name is a must. A nameless row is now **refused and reported
+  BY SKU** at three points: the upload response (`noName`, `noNameSkus`, said
+  on the onboarding screen), the picker (`missingName` per client, before
+  anything is sent), and the push itself (`skippedNoName`, plus a defensive
+  `sync_product_no_name` skip in the outbox send branch). A count alone cannot
+  be acted on; a list of codes can.
+  `inventory.upsert` already required a name, so the old fallback was also the
+  only reason the refusal was not already happening — it just happened as an
+  anonymous exception counted under `skipped`.
 - **CATALOGUE PUSH IS A REAL UPSERT, not add-only.** The API has SEPARATE
   `Product/AddProduct` and `Product/UpdateProduct?id=`, and Update needs the
   STORE'S OWN product id — which we do not hold, since we only know our SKU. So

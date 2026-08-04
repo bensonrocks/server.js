@@ -5092,15 +5092,27 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
     }
   } catch (e) { return res.status(400).json({ error: 'Could not parse file: ' + e.message }); }
 
-  let imported = 0, skipped = 0; const errors = [];
+  let imported = 0, skipped = 0; const errors = []; const noName = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
     if (!sku) { skipped++; continue; }
+    // A ROW WITH NO PRODUCT NAME IS REFUSED, NOT RENAMED AFTER ITS OWN CODE.
+    // This used to end `|| sku`, so an empty Product Name silently became the
+    // SKU — and from then on nothing could tell a real name from a
+    // placeholder: pick lines, the client portal, the GRN and a connected
+    // store's catalogue all showed the code where a description belongs
+    // (found by eye on a store's product list, every row reading 1730/"1730").
+    // Per the user the name is mandatory, so the row is refused and REPORTED
+    // BY SKU — a number alone cannot be acted on, a list of codes can.
+    // `inventory.upsert` requires a name too, so this is also what stops the
+    // refusal happening as an anonymous exception.
+    const pname = String(r.name ?? r.description ?? r.productname ?? '').trim();
+    if (!pname) { noName.push(sku); skipped++; continue; }
     try {
       inventory.upsert({
         sku, clientId: cid,
-        name: String(r.name ?? r.description ?? r.productname ?? sku).trim() || sku,
+        name: pname,
         barcode: String(r.barcode ?? r.ean ?? r.upc ?? r.barcodeeanupc ?? '').trim(),
         stock_qty: Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? 0) || 0,
       });
@@ -5110,7 +5122,7 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
   const db = readDb();
   const p = clientProfiles(db).find(x => x.client === client);
   if (p) { p.itemCount = (inventory.getAll({ clientId: cid }) || []).length; p.updatedAt = new Date().toISOString(); writeDb(db); }
-  logAudit('client_item_master_uploaded', { client, imported, skipped, by: req.userId || '' });
+  logAudit('client_item_master_uploaded', { client, imported, skipped, noName: noName.length, by: req.userId || '' });
   // Is there a connected store carrying this client? Only then is there
   // anything to offer. The push is NOT fired here — the operator is asked
   // first, because sending a catalogue outward is a decision, not a side
@@ -5122,7 +5134,12 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
     zortStoresForClient(readDb(), invClientId(req.params.client), { requireStockSync: false })[0];
     if (st && imported) storeOffer = { storeId: st.id, storeName: st.clientName || st.storename || 'the connected store', skus: imported };
   } catch (_) { /* no store — nothing to offer */ }
-  res.json({ imported, skipped, errors: errors.slice(0, 20), itemCount: p ? p.itemCount : imported, storeOffer });
+  res.json({
+    imported, skipped, errors: errors.slice(0, 20),
+    itemCount: p ? p.itemCount : imported,
+    noName: noName.length, noNameSkus: noName.slice(0, 20),
+    storeOffer,
+  });
 });
 
 // Test the SKU↔barcode resolution for a client — paste a code, see what it maps
@@ -15985,6 +16002,17 @@ async function _zortSendOutboxEntry(db, store, entry) {
   if (entry.kind === 'product') {
     const it = inventory.available() ? inventory.get(entry.sku, entry.clientId) : null;
     if (!it) { logAudit('sync_product_skipped', { sku: entry.sku, client: entry.clientId, why: 'no longer in the item master' }); return true; }
+    // A PRODUCT WITHOUT A NAME IS NOT PUSHED. This used to fall back to
+    // `name: it.sku`, which wrote the code into the name field — so a product
+    // with no name arrived at the store looking like it HAD one, and the only
+    // way to notice was reading their screen and seeing code and name
+    // identical. Per the user, the name has to be provided. Skipped and said
+    // out loud instead, so the item master gets fixed rather than the gap
+    // being papered over.
+    if (!String(it.name || '').trim()) {
+      logAudit('sync_product_no_name', { sku: it.sku, client: entry.clientId, why: 'no product name in the item master' });
+      return true;
+    }
     // QUANTITY IS DELIBERATELY NOT SENT. Stock is pushed separately as an
     // absolute available figure; putting a number here as well would give the
     // store two sources for one fact.
@@ -15992,7 +16020,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // unit). Only documented fields are sent — anything else is guesswork that
     // could mean something different to them.
     const fields = {
-      name:          it.name || it.sku,
+      name:          String(it.name).trim(),
       barcode:       it.barcode || '',
       unittext:      it.unit || '',
       purchaseprice: String(Number(it.cost_price) || 0),
@@ -16235,9 +16263,13 @@ app.get('/api/master/zort/catalogue-clients', (req, res) => {
   let ids = [];
   try { ids = inventory.listClientIds() || []; } catch (_) { ids = []; }
   for (const cid of ids) {
-    let n = 0;
-    try { n = (inventory.getAll({ clientId: cid }) || []).length; } catch (_) { continue; }
-    if (n) out.push({ client: cid, skus: n });
+    let rows = [];
+    try { rows = inventory.getAll({ clientId: cid }) || []; } catch (_) { continue; }
+    if (!rows.length) continue;
+    // Said BEFORE the push, not discovered afterwards on the store's screen:
+    // a row with no product name cannot be sent (see the outbox send branch).
+    const missingName = rows.filter(r => !String(r.name || '').trim()).length;
+    out.push({ client: cid, skus: rows.length, missingName });
   }
   out.sort((a, b) => a.client.localeCompare(b.client));
   res.json(out);
@@ -16258,14 +16290,29 @@ app.post('/api/master/zort/stores/:id/push-products', express.json(), (req, res)
     : new Set([store.clientName, ...Object.values(store.channelClients || {})]
         .map(c => String(c || '').trim()).filter(Boolean));
   let queued = 0, skus = 0;
+  const noName = [];
   for (const c of clients) {
     let rows = [];
     try { rows = inventory.getAll({ clientId: invClientId(c) }) || []; } catch (_) { continue; }
-    for (const r of rows) { skus++; if (enqueueZortProduct(db, store.id, c, r.sku)) queued++; }
+    for (const r of rows) {
+      skus++;
+      // Held back rather than sent nameless — the caller is told which, so the
+      // item master can be corrected instead of the store filling up with
+      // products named after their own code.
+      if (!String(r.name || '').trim()) { noName.push(r.sku); continue; }
+      if (enqueueZortProduct(db, store.id, c, r.sku)) queued++;
+    }
   }
   writeDb(db);
-  logAudit('sync_products_queued', { storeId: store.id, clients: [...clients], skus, queued, by: req.userId || 'master' });
-  res.json({ ok: true, clients: [...clients], skus, queued });
+  logAudit('sync_products_queued', {
+    storeId: store.id, clients: [...clients], skus, queued,
+    skippedNoName: noName.length, by: req.userId || 'master',
+  });
+  res.json({
+    ok: true, clients: [...clients], skus, queued,
+    skippedNoName: noName.length,
+    noNameSkus: noName.slice(0, 20),
+  });
 });
 
 // Drain the queue NOW rather than waiting for the next tick — for when someone

@@ -10518,7 +10518,18 @@
           const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/item-master`, { method: 'POST', headers: mk(), body: fd });
           const d = await r.json();
           if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
-          st.className = 'status-bar success'; st.textContent = `✓ ${d.imported} item(s) loaded${d.skipped ? `, ${d.skipped} skipped` : ''}. SKU↔barcode search is on.`;
+          // A MISSING PRODUCT NAME IS SAID AT THE MOMENT THE FILE LANDS. It
+          // used to be filled in with the SKU, so nobody found out until the
+          // code turned up where a description belongs.
+          if (d.noName) {
+            st.className = 'status-bar error';
+            st.textContent = `✓ ${d.imported} item(s) loaded — but ${d.noName} have NO Product Name`
+              + (d.noNameSkus?.length ? ` (${d.noNameSkus.slice(0, 6).join(', ')}${d.noNameSkus.length > 6 ? '…' : ''})` : '')
+              + `. They can still be scanned, but they will not be sent to a store and will show blank where a description belongs. Add the names and upload again.`;
+          } else {
+            st.className = 'status-bar success';
+            st.textContent = `✓ ${d.imported} item(s) loaded${d.skipped ? `, ${d.skipped} skipped` : ''}. SKU↔barcode search is on.`;
+          }
           $('obItemCount').textContent = `${d.itemCount} items loaded`;
           // A connected store carries this client — offer to send the catalogue
           // on. ASKED, never automatic: pushing products outward is a decision,
@@ -10729,7 +10740,20 @@
               body: JSON.stringify(picked === '*' ? {} : { client: picked }),
             });
             const d = await r2.json();
-            if (d.ok) { zortStatus('success', `✓ ${d.queued} of ${d.skus} product(s) queued for ${who} — syncing in the background`); loadZortStores(); }
+            if (d.ok) {
+              // A held-back product is NAMED, not buried in a count — the fix
+              // is a Product Name in the item master, and nobody can make it
+              // without knowing which SKUs are missing one.
+              let note = '';
+              if (d.skippedNoName) {
+                note = ` · ⚠ ${d.skippedNoName} held back with no Product Name`
+                  + (d.noNameSkus?.length ? ` (${d.noNameSkus.slice(0, 5).join(', ')}${d.noNameSkus.length > 5 ? '…' : ''})` : '')
+                  + ' — add it to the item master and push again';
+              }
+              zortStatus(d.skippedNoName ? 'error' : 'success',
+                `✓ ${d.queued} of ${d.skus} product(s) queued for ${who} — syncing in the background${note}`);
+              loadZortStores();
+            }
             else zortStatus('error', `✗ ${d.error}`);
           } catch (err) {
             zortStatus('error', 'Push catalogue failed: ' + err.message);
@@ -10782,7 +10806,8 @@
         <button class="btn-secondary zpc-pick" data-client="${esc(c.client)}"
                 style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:.4rem">
           <span style="font-weight:600">${esc(c.client)}</span>
-          <span style="color:#94a3b8;font-size:.82rem">${c.skus} item(s)</span>
+          <span style="color:#94a3b8;font-size:.82rem">${c.skus} item(s)${
+            c.missingName ? ` · <span style="color:#d97706">${c.missingName} with no name</span>` : ''}</span>
         </button>`).join('');
       ov.querySelector('#zpcList').innerHTML = rows
         + `<button class="btn-secondary zpc-pick" data-client="*" style="width:100%;margin-top:.5rem">
