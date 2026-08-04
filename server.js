@@ -4979,7 +4979,18 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
   const p = clientProfiles(db).find(x => x.client === client);
   if (p) { p.itemCount = (inventory.getAll({ clientId: cid }) || []).length; p.updatedAt = new Date().toISOString(); writeDb(db); }
   logAudit('client_item_master_uploaded', { client, imported, skipped, by: req.userId || '' });
-  res.json({ imported, skipped, errors: errors.slice(0, 20), itemCount: p ? p.itemCount : imported });
+  // Is there a connected store carrying this client? Only then is there
+  // anything to offer. The push is NOT fired here — the operator is asked
+  // first, because sending a catalogue outward is a decision, not a side
+  // effect of loading a spreadsheet.
+  let storeOffer = null;
+  try {
+    const st = // stockSync is the STOCK fan-out's rule and has nothing to do with a
+    // catalogue — a store can want products without wanting stock levels.
+    zortStoresForClient(readDb(), invClientId(req.params.client), { requireStockSync: false })[0];
+    if (st && imported) storeOffer = { storeId: st.id, storeName: st.clientName || st.storename || 'the connected store', skus: imported };
+  } catch (_) { /* no store — nothing to offer */ }
+  res.json({ imported, skipped, errors: errors.slice(0, 20), itemCount: p ? p.itemCount : imported, storeOffer });
 });
 
 // Test the SKU↔barcode resolution for a client — paste a code, see what it maps
@@ -16079,15 +16090,20 @@ app.post('/api/master/zort/stores/:id/push-stock', (req, res) => {
 // Outbox status — pending & stalled entries (for the Connections status panel).
 // Push this store's clients' ITEM MASTER into its product list. Manual and
 // explicit — the catalogue is not something to fire off on a timer.
-app.post('/api/master/zort/stores/:id/push-products', (req, res) => {
+app.post('/api/master/zort/stores/:id/push-products', express.json(), (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
   const store = zortStores(db).find(s => s.id === req.params.id);
   if (!store) return res.status(404).json({ error: 'Store not found' });
   if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable.' });
   // Every client this store carries: its own label plus any mapped channel.
-  const clients = new Set([store.clientName, ...Object.values(store.channelClients || {})]
-    .map(c => String(c || '').trim()).filter(Boolean));
+  // `client` narrows it to one — the import prompt sends only the catalogue
+  // just loaded, not every client the store happens to carry.
+  const only = String(req.body?.client || '').trim();
+  const clients = only
+    ? new Set([only])
+    : new Set([store.clientName, ...Object.values(store.channelClients || {})]
+        .map(c => String(c || '').trim()).filter(Boolean));
   let queued = 0, skus = 0;
   for (const c of clients) {
     let rows = [];
@@ -18270,7 +18286,16 @@ app.post('/api/inventory/import-product-master', upload.single('file'), tenantMi
     catch (e) { errors.push({ row: row.sku, error: e.message }); }
   }
   logAudit('product_master_imported', { imported, skipped: skipped.length, clientId: cid, by: req.userId || '' });
-  res.json({ imported, skipped: skipped.length, errors });
+  // IS THERE A STORE THAT CARRIES THIS CLIENT? Only then is there anything to
+  // offer. The push itself is NOT fired here — the operator is asked first,
+  // because sending a catalogue outward is their decision, not a side effect of
+  // loading a spreadsheet.
+  let storeOffer = null;
+  try {
+    const st = zortStoresForClient(readDb(), cid, { requireStockSync: false })[0];
+    if (st && imported) storeOffer = { storeId: st.id, storeName: st.clientName || st.storename || 'the store', skus: imported };
+  } catch (_) { /* no store, nothing to offer */ }
+  res.json({ imported, skipped: skipped.length, errors, storeOffer });
 });
 app.post('/api/inventory', requireAuth, express.json(), (req, res) => {
   try {

@@ -675,6 +675,17 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   order files to AlphaCo, the BBB-1 order to BetaCo, a SKU nobody owns falls
   back to the store AND is the only one flagged, and the pull splits into one
   batch per client.
+- **IMPORTING AN ITEM MASTER ASKS whether to send it on.** Per the user.
+  Loading a catalogue returns `storeOffer` (store id, name, SKU count) when a
+  connected store carries that client, and the onboarding screen puts a yes/no
+  in front of the operator. **The import itself pushes NOTHING** — sending a
+  catalogue outward is a decision, and the right answer differs between a first
+  onboarding and a correction to two rows. Saying yes posts `{client}` so only
+  THAT client's catalogue goes, not every client the store happens to carry.
+  GOTCHA: `zortStoresForClient` defaults to `requireStockSync: true` — that is
+  the STOCK fan-out's rule, and using it here meant the offer never appeared
+  for a store that wants products but not stock levels. Pass
+  `{ requireStockSync: false }`.
 - **CATALOGUE PUSH IS A REAL UPSERT, not add-only.** The API has SEPARATE
   `Product/AddProduct` and `Product/UpdateProduct?id=`, and Update needs the
   STORE'S OWN product id — which we do not hold, since we only know our SKU. So

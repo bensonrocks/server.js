@@ -10520,6 +10520,33 @@
           if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
           st.className = 'status-bar success'; st.textContent = `✓ ${d.imported} item(s) loaded${d.skipped ? `, ${d.skipped} skipped` : ''}. SKU↔barcode search is on.`;
           $('obItemCount').textContent = `${d.itemCount} items loaded`;
+          // A connected store carries this client — offer to send the catalogue
+          // on. ASKED, never automatic: pushing products outward is a decision,
+          // and the right answer differs between a first onboarding and a
+          // correction to two rows.
+          if (d.storeOffer) {
+            const o = d.storeOffer;
+            if (confirm(`✓ ${d.imported} item(s) loaded for ${current}.\n\n`
+              + `${o.storeName} is connected. Send this item master to their store as well?\n\n`
+              + `Products are created if new and updated if they already exist. `
+              + `Quantities are NOT sent — stock has its own sync.\n\n`
+              + `OK = send now  ·  Cancel = not now (Push Catalogue on Connections does it later)`)) {
+              st.className = 'status-bar progress'; st.textContent = `Sending the catalogue to ${o.storeName}…`;
+              try {
+                const pr = await fetch(`/api/master/zort/stores/${o.storeId}/push-products`, {
+                  method: 'POST', headers: { ...mk(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ client: current }),
+                });
+                const pd = await pr.json();
+                st.className = pr.ok ? 'status-bar success' : 'status-bar error';
+                st.textContent = pr.ok
+                  ? `✓ ${d.imported} item(s) loaded · ${pd.queued} of ${pd.skus} product(s) queued for ${o.storeName} — sending in the background.`
+                  : `Loaded, but the catalogue push failed: ${pd.error || pr.status}`;
+              } catch (e) {
+                st.className = 'status-bar error'; st.textContent = 'Loaded, but the catalogue push failed: ' + e.message;
+              }
+            }
+          }
         } catch (e) { st.className = 'status-bar error'; st.textContent = 'Error: ' + e.message; }
       };
       inp.click();
