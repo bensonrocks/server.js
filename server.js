@@ -8020,6 +8020,11 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
 });
 
 app.get('/api/download-wms/:batchId', (req, res) => {
+  // PATH INJECTION GUARD (flagged by CodeQL): an encoded ..%2F survives the
+  // route split and decodes into a real ../ inside the param, walking out of
+  // WMS_DIR. Batch ids are UUIDs, so anything outside this charset is not a
+  // batch id and gets a 404 before any path is built.
+  if (!/^[A-Za-z0-9_-]+$/.test(req.params.batchId)) return res.status(404).json({ error: 'File not found' });
   const filePath = path.join(WMS_DIR, `${req.params.batchId}.xlsx`);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
   const db    = readDb();
@@ -15243,6 +15248,9 @@ app.delete('/api/master/label-doc-templates/:slug', (req, res) => {
 
 app.get('/api/master/label-doc-templates/:slug/download', (req, res) => {
   if (!checkMaster(req, res)) return;
+  // Same path-injection guard as /api/download-wms — the slug goes into a
+  // filesystem path, so it must be a plain token, never a path.
+  if (!/^[A-Za-z0-9_-]+$/.test(req.params.slug)) return res.status(404).json({ error: 'Template not found' });
   const idx  = readDocTplIndex();
   const name = idx[req.params.slug] || req.params.slug;
   const tplPath = path.join(DOC_TEMPLATE_DIR, `${req.params.slug}.docx`);
