@@ -786,7 +786,7 @@
       document.getElementById('transportSubMenu').style.display = 'none';
     }
     if (name === 'labels') { renderLabelsTab(); }
-    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); }
+    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); }
   }
 
   function lockTabsForDownload() {
@@ -10652,8 +10652,10 @@
     voided: '✓ order cancelled', void_conflict: '⚠ cancel ignored (already worked)',
     waybill_updated: '✓ waybill updated', waybill_locked_done: 'waybill kept (already printed)',
     status_noted: 'status noted', no_match: 'no matching order', product_alert: 'product alert',
-    direct_disabled: 'logged only (direct path off)', error: '⚠ error', null: 'logged only',
+    direct_disabled: 'logged only (direct path off)', unverified_skipped: 'skipped — signature not verified',
+    error: '⚠ error', null: 'logged only',
   };
+  const LAZADA_ACTION_LABEL = SHOPEE_ACTION_LABEL;   // same vocabulary
   async function loadShopeeDirect() {
     const list = document.getElementById('shopeePushList');
     if (!list) return;
@@ -10708,6 +10710,67 @@
       shopeeCfgMsg('success', '✓ Partner key saved. Shopee\'s pushes will now be verified.');
       loadShopeeDirect();
     } catch (err) { shopeeCfgMsg('error', err.message); }
+  });
+
+  // ── Direct-Lazada panel — mirror of the Shopee one. ─────────────────────
+  function lazadaCfgMsg(kind, text) {
+    const el = document.getElementById('lazadaCfgMsg'); if (!el) return;
+    el.className = 'status-bar ' + kind; el.textContent = text; el.classList.remove('hidden');
+  }
+  async function loadLazadaDirect() {
+    const list = document.getElementById('lazadaPushList');
+    if (!list) return;
+    try {
+      const r = await fetch('/api/master/lazada/config', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) { list.innerHTML = '<div class="hint" style="padding:.6rem">Could not load.</div>'; return; }
+      const d = await r.json();
+      const tg = document.getElementById('lazadaDirectToggle'); if (tg) tg.checked = !!d.directEnabled;
+      const ks = document.getElementById('lazadaKeyState');
+      if (ks) ks.innerHTML = d.keyConfigured
+        ? `<span style="color:#16a34a">&#10003; App secret set${d.keyFromEnv ? ' (from server env)' : ''}</span>`
+        : `<span style="color:#d97706">&#9888; No app secret yet — pushes stay unverified</span>`;
+      const rows = (d.recent || []);
+      list.innerHTML = rows.length
+        ? `<table class="dcs-table"><thead><tr><th>When</th><th>Type</th><th>Verified</th><th>What happened</th></tr></thead><tbody>`
+          + rows.map(e => `<tr>
+              <td>${new Date(e.at).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false })}</td>
+              <td>${esc(String(e.code ?? ''))}</td>
+              <td>${e.verified ? '<span style="color:#16a34a">✓</span>' : '<span style="color:#94a3b8">—</span>'}</td>
+              <td>${esc(LAZADA_ACTION_LABEL[e.action] || String(e.action ?? 'logged only'))}</td>
+            </tr>`).join('') + '</tbody></table>'
+        : '<div class="hint" style="padding:.6rem">No pushes received yet.</div>';
+    } catch (e) { list.innerHTML = `<div class="hint" style="padding:.6rem">${esc(e.message)}</div>`; }
+  }
+  document.getElementById('lazadaRefreshBtn')?.addEventListener('click', loadLazadaDirect);
+  document.getElementById('lazadaDirectToggle')?.addEventListener('change', async (e) => {
+    const on = e.target.checked;
+    if (on && !confirm('Turn ON IdealOne\'s own Lazada path?\n\nLazada\'s pushes will start acting on orders (cancellations void, tracking updates the waybill). The Sales Channel Hub stays connected as your backup. You can turn this off again any time.')) {
+      e.target.checked = false; return;
+    }
+    try {
+      const r = await fetch('/api/master/lazada/config', { method: 'POST',
+        headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directEnabled: on }) });
+      const d = await r.json();
+      if (!r.ok) { lazadaCfgMsg('error', d.error || 'Failed'); return loadLazadaDirect(); }
+      lazadaCfgMsg('success', on ? '✓ Direct Lazada path is ON — its pushes now act on orders.' : '✓ Switched off — back to the Hub. Pushes are logged only.');
+      loadLazadaDirect();
+    } catch (err) { lazadaCfgMsg('error', err.message); loadLazadaDirect(); }
+  });
+  document.getElementById('lazadaSaveKeyBtn')?.addEventListener('click', async () => {
+    const inp = document.getElementById('lazadaAppSecret');
+    const key = (inp?.value || '').trim();
+    if (!key) return lazadaCfgMsg('error', 'Paste the Lazada App Secret first.');
+    try {
+      const r = await fetch('/api/master/lazada/config', { method: 'POST',
+        headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appSecret: key }) });
+      const d = await r.json();
+      if (!r.ok) return lazadaCfgMsg('error', d.error || 'Failed');
+      if (inp) inp.value = '';
+      lazadaCfgMsg('success', '✓ App secret saved. Lazada\'s pushes will now be verified.');
+      loadLazadaDirect();
+    } catch (err) { lazadaCfgMsg('error', err.message); }
   });
 
   async function loadZortStores() {

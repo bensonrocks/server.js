@@ -590,6 +590,57 @@ line under the sidebar's Administrator button (`initBuildStamp` in
 app.js) so "did the new deploy actually go live?" is answerable by
 reading the screen instead of digging through deploy logs.
 
+## Direct marketplace webhooks — Shopee & Lazada (own API), admin-gated backup
+
+Per the user: **ZORT stays the live order intake**; IdealOne's OWN direct
+connection to Shopee and Lazada is a **background backup an administrator turns
+on** when ready to port off ZORT, and can turn back off to fall back. The two
+providers are mirrored deliberately, NOT shared — a change to one marketplace's
+rules must never silently alter the other's.
+
+- **Receivers**: `POST/GET /api/shopee/push` and `/api/lazada/callback` (both in
+  `AUTH_PUBLIC` — external callers). ACK 200 fast (Shopee's "Verify and Save"
+  and Lazada both require a quick 2xx). Raw body is captured for signature
+  verification.
+- **Signature**: Shopee = HMAC-SHA256(`<callback_url>|<raw_body>`, push
+  partner_key) in the `Authorization` header — CONFIRMED against Shopee's verify
+  step. Lazada = best-effort HMAC-SHA256(raw_body, app_secret) vs a `sign`
+  field; Lazada's exact scheme varies by app, so the **admin switch is the hard
+  gate** there, and an unsigned push with a secret set is `unverified_skipped`.
+- **TWO GATES before any order is touched**: a verified signature AND
+  `config.shopeeDirectEnabled` / `config.lazadaDirectEnabled` (both **off by
+  default**). While off, every push is received and LOGGED (`direct_disabled`)
+  so the wiring is provably working, but no order changes.
+- **Actions land on EXISTING fields, so they surface in the EXISTING UI, no new
+  screens**: a cancel (`CANCELLED`/`IN_CANCEL`; Lazada `canceled`) voids the
+  matching order and releases its reservation — but ONLY if pending and
+  untouched; a cancel on a scanned/done order is a logged conflict, never
+  regressed (same rule as `handleZortVoid`). A tracking-number push updates
+  `waybill_number` — the SAME field that prints at scan completion — so the
+  packer's label is current; refused on a done order whose label already
+  printed. Product-level pushes (banned item, stock, violation) are
+  alert-only.
+- **Order match** by marketplace order id → `order_number` (what ZORT stamped)
+  or by tracking → `waybill_number`. Unmatched is logged, never dropped. HONEST
+  CAVEAT: if ZORT stored a different `order_number` than the marketplace serial,
+  a cancel comes back `no_match` (harmless) — the push log shows it and the fix
+  is to add the marketplace id as a match key.
+- **Config + viewer**: `GET/POST /api/master/{shopee,lazada}/config`
+  (checkMaster) read state, flip the switch, set the key/secret IN-APP (no
+  redeploy; an env `SHOPEE_PUSH_PARTNER_KEY` / `LAZADA_APP_SECRET` still wins),
+  and return the recent push log. UI: two panels on the **Connections** tab
+  (Administrator-gated) — the on/off switch (confirms before turning on), the
+  key field, and a live table of recent pushes with when/code/verified/what-
+  happened. Answers "where can I see this push?".
+- **Intake stays single-source**: do NOT build direct order PULL from a
+  marketplace while ZORT is the intake, or the same order imports twice. This
+  path is EVENTS-ONLY on orders ZORT already brought in.
+
+Verified 13 Shopee + 14 Lazada API checks (dormant while off, acts once on,
+cancel voids pending / refused on scanned+done, tracking updates open / locked
+on done, unmatched no-op, unverified takes no action) plus 6 browser checks on
+the Shopee panel.
+
 ## ZORT integration — per-client merchant store connections (lib/zort.js + server.js)
 
 ZORT (zortout.com) is the e-commerce OMS the user's merchant CLIENTS use;

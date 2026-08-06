@@ -15559,21 +15559,147 @@ const USER_FEATURE_KEYS = ['upload', 'orders', 'inbound', 'transport', 'labels',
 // arrive unverified until the app is approved and signature checking is
 // wired. The stored log is exactly what we need to build the real Lazada
 // order import against actual payload shapes.
-app.all('/api/lazada/callback', express.json({ limit: '512kb' }), (req, res) => {
-  res.status(200).json({ code: '0', message: 'success' }); // ACK fast — Lazada retries slow endpoints
+// The same treatment as the Shopee path below — verify, act, admin-switch,
+// visible log — mirrored deliberately rather than shared, so a change to one
+// marketplace's rules never silently alters the other's. Orders reach IdealOne
+// through ZORT today; this direct path is a background backup an administrator
+// turns on. Lazada's exact push shape and signature vary by app, so field names
+// are matched defensively and verification is best-effort — the admin switch is
+// the hard gate, exactly as the code caveats throughout this file recommend for
+// an external API not confirmable from here.
+function lazadaDirectEnabled(db) {
+  try { return !!((db || readDb()).config || {}).lazadaDirectEnabled; }
+  catch { return false; }
+}
+function lazadaAppSecret() {
+  if (process.env.LAZADA_APP_SECRET) return process.env.LAZADA_APP_SECRET;
+  try { return (readDb().config || {}).lazadaAppSecret || ''; } catch { return ''; }
+}
+function verifyLazadaPush(req) {
+  const key = lazadaAppSecret();
+  if (!key) return { configured: false, verified: false };
   try {
-    const db = readDb();
-    if (!db.lazadaPushLog) db.lazadaPushLog = [];
-    db.lazadaPushLog.push({
-      at: new Date().toISOString(),
-      method: req.method,
-      query: req.query || {},
-      body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.body || '').slice(0, 2000) },
-    });
-    if (db.lazadaPushLog.length > 200) db.lazadaPushLog.splice(0, db.lazadaPushLog.length - 200);
-    writeDb(db);
-    logAudit('lazada_push_received', { method: req.method, msgType: req.body?.message_type ?? req.body?.type ?? '' });
-  } catch (e) { console.error('[lazada] push log error:', e.message); }
+    const raw = (req.rawBody != null) ? req.rawBody : JSON.stringify(req.body || {});
+    const sign = String((req.body && (req.body.sign || req.body.signature)) || req.headers['x-lazada-sign'] || '').trim();
+    if (!sign) return { configured: true, verified: false };
+    const expected = crypto.createHmac('sha256', key).update(raw).digest('hex');
+    const a = Buffer.from(expected.toLowerCase()), b = Buffer.from(sign.toLowerCase());
+    const verified = a.length === b.length && crypto.timingSafeEqual(a, b);
+    return { configured: true, verified };
+  } catch (e) { return { configured: true, verified: false, error: e.message }; }
+}
+function lazadaFindOrder(db, orderId, tracking) {
+  const id = String(orderId || '').trim(), tr = String(tracking || '').trim();
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (id && String(o.order_number) === id) return { batch: b, ord: o };
+      if (tr && o.waybill_number && String(o.waybill_number) === tr) return { batch: b, ord: o };
+    }
+  }
+  return null;
+}
+function lazadaVoidOrder(db, batch, ord) {
+  const orderNumber = ord.order_number;
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+  if (state.status === 'done' || state.status === 'processing' || scannedTotal > 0) {
+    logAudit('lazada_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
+    return 'void_conflict';
+  }
+  state.status = 'unprocessed';
+  let releasedSkus = [];
+  if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
+    const cid = batch.inventory_client || invClientId(batch.client_name);
+    const items = (ord.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: l.qty }));
+    try { inventory.releaseOrder(cid, { id: orderNumber, items }); state.inventory_released = true; releasedSkus = [...new Set(items.map(i => i.sku))]; }
+    catch (e) { console.warn('[lazada-void] release failed for', orderNumber, e.message); }
+  }
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  logAudit('lazada_order_voided', { order: orderNumber, client: batch.client_name || '', released: releasedSkus.length });
+  if (releasedSkus.length) { try { zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), releasedSkus); } catch (_) {} }
+  return 'voided';
+}
+const LAZADA_CANCEL_STATUSES = new Set(['CANCELED', 'CANCELLED']);
+function handleLazadaPush(db, push) {
+  const data = (push.data && typeof push.data === 'object') ? push.data : push;
+  const orderId = data.trade_order_id || data.order_id || data.orderId || data.orderNumber || '';
+  const status = String(data.status || data.order_status || '').toUpperCase();
+  const tracking = data.tracking_number || data.trackingNumber || data.tracking_no || '';
+  // No order reference at all → a product/system message; record, act on nothing.
+  if (!orderId && !tracking) return 'product_alert';
+  const f = lazadaFindOrder(db, orderId, tracking);
+  if (!f) return 'no_match';
+  if (LAZADA_CANCEL_STATUSES.has(status)) return lazadaVoidOrder(db, f.batch, f.ord);
+  if (tracking) {
+    const st = f.batch.orderStates[f.ord.order_number] || {};
+    if (st.status === 'done') return 'waybill_locked_done';
+    if (f.ord.waybill_number !== tracking) {
+      f.ord.waybill_number = tracking;
+      logAudit('lazada_waybill_updated', { order: f.ord.order_number, tracking });
+    }
+    return 'waybill_updated';
+  }
+  if (status) { f.ord.marketplace_status = status; return 'status_noted'; }
+  return 'status_noted';
+}
+
+app.all('/api/lazada/callback',
+  express.json({ limit: '512kb', verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }),
+  (req, res) => {
+    res.status(200).json({ code: '0', message: 'success' }); // ACK fast — Lazada retries slow endpoints
+    try {
+      const sig = verifyLazadaPush(req);
+      const db = readDb();
+      // TWO GATES, same as Shopee: a best-effort signature check AND the
+      // administrator switch (off by default). While off, received and logged
+      // but no order is touched (`direct_disabled`).
+      let action = null;
+      if (req.body && typeof req.body === 'object') {
+        if (!lazadaDirectEnabled(db)) action = 'direct_disabled';
+        else if (sig.configured && !sig.verified) action = 'unverified_skipped';
+        else { try { action = handleLazadaPush(db, req.body); } catch (e) { console.error('[lazada] push action error:', e.message); action = 'error'; } }
+      }
+      if (!db.lazadaPushLog) db.lazadaPushLog = [];
+      db.lazadaPushLog.push({
+        at: new Date().toISOString(),
+        method: req.method,
+        code: req.body?.message_type ?? req.body?.type ?? '',
+        verified: sig.verified,
+        keyConfigured: sig.configured,
+        action,
+        query: req.query || {},
+        body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
+      });
+      if (db.lazadaPushLog.length > 200) db.lazadaPushLog.splice(0, db.lazadaPushLog.length - 200);
+      writeDb(db);
+      logAudit('lazada_push_received', { method: req.method, msgType: req.body?.message_type ?? req.body?.type ?? '', verified: sig.verified, action });
+    } catch (e) { console.error('[lazada] push log error:', e.message); }
+  });
+
+// Lazada direct — administrator switch, app secret, and recent pushes.
+app.get('/api/master/lazada/config', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const c = db.config || {};
+  res.json({
+    directEnabled: !!c.lazadaDirectEnabled,
+    keyConfigured: !!lazadaAppSecret(),
+    keyFromEnv: !!process.env.LAZADA_APP_SECRET,
+    recent: (db.lazadaPushLog || []).slice(-20).reverse().map(e => ({ at: e.at, code: e.code, verified: e.verified, action: e.action })),
+  });
+});
+app.post('/api/master/lazada/config', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  if (!db.config) db.config = {};
+  const before = !!db.config.lazadaDirectEnabled;
+  if (req.body.directEnabled !== undefined) db.config.lazadaDirectEnabled = !!req.body.directEnabled;
+  if (typeof req.body.appSecret === 'string' && req.body.appSecret.trim()) db.config.lazadaAppSecret = req.body.appSecret.trim();
+  writeDb(db);
+  logAudit('lazada_direct_config', { by: req.userId || _tokenUserId(req) || 'master', from: before, to: !!db.config.lazadaDirectEnabled, keySet: !!db.config.lazadaAppSecret });
+  res.json({ ok: true, directEnabled: !!db.config.lazadaDirectEnabled, keyConfigured: !!lazadaAppSecret() });
 });
 
 // ── Shopee Open Platform — Push (webhook) receiver ──────────────────────────
