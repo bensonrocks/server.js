@@ -4299,14 +4299,42 @@
 
   // Spread routes across TODAY'S AVAILABLE drivers (round-robin, by route).
   // Every stop inherits its route's driver unless the user overrides it.
-  function autoAssignDrivers(routes) {
+  // GEOFENCE-AWARE. If zones are assigned (🧭 Zones & Drivers), each route goes
+  // to a driver who covers that route's majority zone on the plan day. Only
+  // drivers included in "Today's Drivers" are eligible. Falls back to plain
+  // round-robin for a route whose zone nobody covers that day, or when no
+  // geofence is set at all.
+  function autoAssignDrivers(routes, planDow) {
     const drivers = includedDrivers();
     if (!drivers.length) return; // no drivers yet — leave unassigned
-    routes.forEach((route, idx) => {
-      const d = drivers[idx % drivers.length];
+    const dow = (planDow == null) ? new Date().getDay() : planDow;
+    const asn = (window.geofence && window.geofence.assignments) || [];
+    const includedIds = new Set(drivers.map(d => d.id));
+    // region → eligible driver ids covering it on `dow`, still in today's set.
+    const byRegion = {};
+    for (const a of asn) {
+      if (!a.days.includes(dow) || !includedIds.has(a.driverId)) continue;
+      (byRegion[a.region] ||= []).push(a.driverId);
+    }
+    const rrCount = {};   // round-robin cursor per region
+    const routeRegion = route => {
+      const tally = {};
+      route.stops.forEach(s => { const r = s.region || ''; if (r) tally[r] = (tally[r] || 0) + 1; });
+      return Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || '';
+    };
+    let rr = 0;
+    routes.forEach((route) => {
+      const region = routeRegion(route);
+      const pool = byRegion[region];
+      let d;
+      if (pool && pool.length) {
+        const id = pool[(rrCount[region] = (rrCount[region] || 0) + 1) % pool.length];
+        d = drivers.find(x => x.id === id);
+      }
+      if (!d) d = drivers[rr++ % drivers.length];   // fallback: plain round-robin
       route.driverId = d.id;
       route.driverName = d.name;
-      route.stops.forEach(stop => { delete stop.driverId; }); // clear old overrides
+      route.stops.forEach(stop => { delete stop.driverId; });
     });
   }
 
@@ -4479,6 +4507,12 @@
 
   function getPostalCodeCoords(zip) {
     const clean = String(zip || '').trim();
+    // REAL BUILDING COORDINATE when OneMap has geocoded it (filled before route
+    // planning) — this is what makes two Jurong stops a real distance apart
+    // instead of one shared district pixel.
+    const pc = clean.replace(/\D/g, '');
+    const real = (window._geocodeCoords || {})[pc];
+    if (real && real.lat && real.lng) return { lat: real.lat, lng: real.lng };
     const sector = clean.substring(0, 2);
     const district = SG_SECTOR_TO_DISTRICT[sector];
     if (district) {
@@ -4656,6 +4690,19 @@
     // another login.
     await loadDrivers();
     await loadTransportDepot();
+    await loadGeofence();   // zone→driver→day assignments steer the auto-assign
+    // Geocode every stop's postal code up front so the plan uses real
+    // building coordinates (OneMap) instead of district centroids — this is
+    // what stops two Jurong stops reading as 0 km apart.
+    try {
+      const zips = [...new Set((transportRequests || [])
+        .filter(r => r.status !== 'delivered' && r.status !== 'cancelled' && r.shipping?.zip)
+        .map(r => r.shipping.zip))];
+      if (zips.length) {
+        const gr = await fetch('/api/transport/geocode', { method: 'POST', headers: { ...hdrs(), 'Content-Type': 'application/json' }, body: JSON.stringify({ zips }) });
+        if (gr.ok) window._geocodeCoords = (await gr.json()).coords || {};
+      }
+    } catch (_) { /* fall back to district centroids */ }
     const openPlanner = () => {
       document.getElementById('routePlanningModal').classList.remove('hidden');
       // The planner opens ALREADY PLANNED: routes generated and today's
@@ -5601,6 +5648,76 @@
     document.getElementById('abStatus')?.classList.add('hidden');
     document.getElementById('addressBookModal').classList.remove('hidden');
     renderAddressBook();
+  });
+
+  // ── Geofence: zones ⇆ drivers ⇆ days ──────────────────────────────────────
+  window.geofence = window.geofence || { regions: {}, assignments: [] };
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  async function loadGeofence() {
+    try {
+      const r = await fetch('/api/transport/geofence', { headers: hdrs() });
+      if (r.ok) window.geofence = await r.json();
+    } catch (_) {}
+  }
+  function renderGeofence() {
+    const body = document.getElementById('geofenceBody'); if (!body) return;
+    const drivers = window.drivers || [];
+    const regions = window.geofence.regions || { N: 'North', S: 'South', E: 'East', W: 'West', C: 'Central' };
+    const asn = window.geofence.assignments || [];
+    if (!drivers.length) { body.innerHTML = '<div class="hint" style="padding:1rem">Add drivers first (Transport → Driver Details).</div>'; return; }
+    // One block per zone; inside, each driver with day checkboxes.
+    body.innerHTML = Object.entries(regions).map(([code, name]) => `
+      <div style="border:1px solid #e2e8f0;border-radius:10px;padding:.7rem;margin-bottom:.7rem">
+        <div style="font-weight:700;margin-bottom:.4rem">${esc(name)} <span class="hint">(${code})</span></div>
+        ${drivers.map(d => {
+          const a = asn.find(x => x.region === code && x.driverId === d.id);
+          const days = a ? a.days : [];
+          return `<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.3rem">
+            <label style="min-width:150px;display:flex;align-items:center;gap:.4rem">
+              <input type="checkbox" class="gf-drv" data-region="${code}" data-driver="${esc(d.id)}" ${days.length ? 'checked' : ''}>
+              <span>${esc(d.name || d.id)}</span>
+            </label>
+            <span class="gf-days" data-region="${code}" data-driver="${esc(d.id)}" style="display:flex;gap:.25rem">
+              ${DOW.map((dn, i) => `<label style="font-size:.75rem;display:flex;flex-direction:column;align-items:center;cursor:pointer">
+                <span>${dn}</span>
+                <input type="checkbox" class="gf-day" data-day="${i}" ${days.includes(i) ? 'checked' : ''}>
+              </label>`).join('')}
+            </span>
+          </div>`;
+        }).join('')}
+      </div>`).join('');
+    // Ticking a driver on with no days set → default to all weekdays.
+    body.querySelectorAll('.gf-drv').forEach(cb => cb.addEventListener('change', () => {
+      const wrap = body.querySelector(`.gf-days[data-region="${cb.dataset.region}"][data-driver="${cb.dataset.driver}"]`);
+      const anyDay = [...wrap.querySelectorAll('.gf-day')].some(x => x.checked);
+      if (cb.checked && !anyDay) [1, 2, 3, 4, 5].forEach(i => { const x = wrap.querySelector(`.gf-day[data-day="${i}"]`); if (x) x.checked = true; });
+      if (!cb.checked) wrap.querySelectorAll('.gf-day').forEach(x => x.checked = false);
+    }));
+  }
+  document.getElementById('geofenceBtn')?.addEventListener('click', async () => {
+    document.getElementById('geofenceMsg')?.classList.add('hidden');
+    document.getElementById('geofenceModal').classList.remove('hidden');
+    if (!window.drivers) await loadDrivers();
+    await loadGeofence();
+    renderGeofence();
+  });
+  document.getElementById('geofenceCloseBtn')?.addEventListener('click', () => document.getElementById('geofenceModal').classList.add('hidden'));
+  document.getElementById('geofenceSaveBtn')?.addEventListener('click', async () => {
+    const body = document.getElementById('geofenceBody');
+    const assignments = [];
+    body.querySelectorAll('.gf-drv:checked').forEach(cb => {
+      const wrap = body.querySelector(`.gf-days[data-region="${cb.dataset.region}"][data-driver="${cb.dataset.driver}"]`);
+      const days = [...wrap.querySelectorAll('.gf-day:checked')].map(x => Number(x.dataset.day));
+      if (days.length) assignments.push({ region: cb.dataset.region, driverId: cb.dataset.driver, days });
+    });
+    const msg = (k, t) => { const el = document.getElementById('geofenceMsg'); el.className = 'status-bar ' + k; el.textContent = t; el.classList.remove('hidden'); };
+    try {
+      const r = await fetch('/api/transport/geofence', { method: 'POST', headers: { ...hdrs(), 'Content-Type': 'application/json' }, body: JSON.stringify({ assignments }) });
+      const d = await r.json();
+      if (!r.ok) return msg('error', d.error || 'Save failed');
+      window.geofence.assignments = d.assignments;
+      msg('success', `✓ Saved — ${d.assignments.length} zone assignment(s).`);
+    } catch (e) { msg('error', e.message); }
   });
   document.getElementById('addressBookCloseBtn')?.addEventListener('click', () => document.getElementById('addressBookModal').classList.add('hidden'));
   document.getElementById('addressBookCloseBtn2')?.addEventListener('click', () => document.getElementById('addressBookModal').classList.add('hidden'));

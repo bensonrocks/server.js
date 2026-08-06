@@ -1876,6 +1876,7 @@
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="uploadJobsBtn">📦 Upload Jobs</button>
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="driverDetailsBtn">👤 Driver Details</button>
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="addressBookBtn">📒 Address Book</button>
+        <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="geofenceBtn">🧭 Zones &amp; Drivers</button>
         <button class="tab-btn" style="font-size:13px;padding:0.4rem 0.8rem" id="deliveryHistoryBtn">📜 Delivery History</button>
       </div>
       <button class="tab-btn" data-tab="labels"><span class="tab-icon">&#127991;</span>Labels</button>
@@ -2659,6 +2660,20 @@
             <button class="btn-primary" id="routeAssignBtn" style="flex:1">✓ Confirm Plan &amp; Save</button>
             <button class="btn-secondary" id="routeExportBtn" style="flex:1">📥 Export Plan (Excel)</button>
             <button class="btn-secondary" id="routePlanningCloseBtn2" style="flex:1">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Geofence: assign drivers to zones for chosen days, before AI routing -->
+      <div id="geofenceModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width:820px">
+          <div class="modal-title">&#129517; Zones &amp; Drivers</div>
+          <p class="hint" style="margin:.2rem 0 .8rem">Assign each driver to the zones they cover and the days they run them. The AI route planner then steers each zone's stops to the drivers who cover it that day. Multiple drivers can share a zone.</p>
+          <div id="geofenceBody" style="max-height:60vh;overflow:auto"></div>
+          <div id="geofenceMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
+          <div class="modal-actions" style="margin-top:.8rem">
+            <button class="btn-secondary" id="geofenceCloseBtn">Close</button>
+            <button class="btn-primary" id="geofenceSaveBtn">Save</button>
           </div>
         </div>
       </div>

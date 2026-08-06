@@ -2496,6 +2496,63 @@ Verified with real files:
 - ✅ Error handling for missing addresses/fields
 - ✅ Partial import (skip invalid rows, log skipped)
 
+### Real distances — OneMap geocoding + road routing (server.js + lib/onemap.js)
+
+The old distance engine mapped a postal code only to its 2-digit district
+CENTROID (`SG_SECTOR_TO_DISTRICT`, 28 points for all of Singapore), so every
+Jurong address (sectors 60–64 → one district D22) collapsed to a single point
+and two of them read as **~0 km apart** — reported from the floor: 609216 →
+648331 showed 0.7 km when the real road distance is ~4.6.
+
+- **`lib/onemap.js`** (Singapore Land Authority, free, no billing): `geocode()`
+  resolves a full 6-digit postal code to a building-accurate lat/lng (public,
+  no token); `route()` returns real ROAD distance + drive time (token-gated,
+  `getToken()` from a free email/password, ~3-day token).
+- **`db.geocodeCache`** holds coordinates once resolved; `transportPostalCoords`
+  uses them, so the district centroid is now only the FALLBACK for a
+  not-yet-geocoded code or when OneMap was unreachable. `ensureGeocoded(zips)`
+  fills the cache on demand. `roadLegKm(a,b)` returns cached road distance with
+  a straight-line×1.4 estimate fallback — never blocks, never throws.
+- The **client geocodes every stop's postal code before route planning**
+  (`POST /api/transport/geocode` → `window._geocodeCoords`), and
+  `getPostalCodeCoords` prefers the real coordinate over the district pixel — so
+  the map and the plan's distances stop treating two Jurong stops as identical.
+- Token cached in `db.config`, credentials via `POST /api/master/onemap/config`
+  or env `ONEMAP_EMAIL`/`ONEMAP_PASSWORD` (env wins). CAVEAT: the sandbox can't
+  reach onemap.gov.sg, so live calls are unverified — `ONEMAP_BASE` overrides
+  the host and the fallback keeps distances sane until credentials are set.
+
+### Geofencing — five zones, driver ⇆ days, before AI routing
+
+Per the user: assign drivers to zones (North/South/East/West/Central) for chosen
+days of the week BEFORE the AI route generation; multiple drivers may share a
+zone.
+
+- **`regionForZip`** classifies a postal code into N/S/E/W/C via a default
+  district→region map (`REGION_BY_DISTRICT`) — a sensible default an operator
+  sanity-checks on screen (each zone lists its districts); moving a district
+  between zones is a follow-up, not baked policy. `GET /api/transport` now
+  returns `region` on every job.
+- **`db.geofence.assignments`** = `[{id, region, driverId, days:[0-6]}]` —
+  multiple rows per zone = multiple drivers; a driver on two zones = two rows;
+  days are 0=Sun..6=Sat. `GET/POST /api/transport/geofence`
+  (`requireTransportAdmin` to save; warehouse 403).
+- **UI**: Transport → 🧭 Zones & Drivers (`#geofenceModal`) — one block per
+  zone, each driver with a Sun–Sat day row; ticking a driver defaults to the 5
+  weekdays.
+- **Wired into `autoAssignDrivers`**: each route goes to a driver who covers its
+  MAJORITY zone on the plan's day-of-week (round-robin among the eligible, still
+  limited to "Today's Drivers"); falls back to plain round-robin for a zone
+  nobody covers that day or when no geofence is set. A deeper zone-first
+  re-clustering of stops is a possible follow-up; today it steers driver
+  assignment, not the stop grouping.
+
+Verified: 6 OneMap checks (geocode both codes, 609216→648331 is a real 4.62 km /
+11 min not 0.7, flagged real-not-estimated, cached), 7 geofence API checks (five
+zones, Jurong is West, invalid region dropped, multiple drivers per zone each
+with own days, warehouse 403, persisted) and 6 browser checks (editor opens, 5
+zones × 2 drivers, weekday default, multi-driver save).
+
 ### Maps — Leaflet + OpenStreetMap, NOT Google Maps
 
 The Transport tab map (`initTransportMainMap`, `initTransportMap`,

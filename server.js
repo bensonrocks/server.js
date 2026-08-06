@@ -1497,6 +1497,24 @@ async function roadLegKm(zipA, zipB) {
   const fresh = readDb(); if (!fresh.routeCache) fresh.routeCache = {}; fresh.routeCache[key] = result; writeDb(fresh);
   return result;
 }
+// ── Geofencing — five zones, postal sector → region ────────────────────────
+// A sensible DEFAULT mapping of Singapore's postal districts to N/S/E/W/Central,
+// so a delivery's postal code names the zone it belongs to. It is a default an
+// operator can sanity-check on screen (each region lists its districts); moving
+// a district between zones is a follow-up, not baked policy.
+const SG_REGION_NAMES = { N: 'North', S: 'South', E: 'East', W: 'West', C: 'Central' };
+const REGION_BY_DISTRICT = {
+  D01: 'S', D02: 'S', D03: 'S', D04: 'S', D05: 'W', D06: 'C', D07: 'C', D08: 'C',
+  D09: 'C', D10: 'C', D11: 'C', D12: 'C', D13: 'C', D14: 'E', D15: 'E', D16: 'E',
+  D17: 'E', D18: 'E', D19: 'E', D20: 'N', D21: 'W', D22: 'W', D23: 'W', D24: 'W',
+  D25: 'N', D26: 'N', D27: 'N', D28: 'N',
+};
+function regionForZip(zip) {
+  const d = SG_SECTOR_TO_DISTRICT_SRV[String(zip || '').trim().substring(0, 2)];
+  return (d && REGION_BY_DISTRICT[d]) || '';   // '' = unknown, never force a zone
+}
+function transportGeofence(db) { return db.geofence || (db.geofence = { assignments: [] }); }
+
 function transportLegKm(zipA, zipB) {
   const [aLat, aLng] = transportPostalCoords(zipA);
   const [bLat, bLng] = transportPostalCoords(zipB);
@@ -12133,7 +12151,8 @@ app.get('/api/transport', (req, res) => {
     podLocation: req.podLocation || null,
     podPhotos: (req.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
     driverAcceptedAt: req.driverAcceptedAt || null,
-    pendingDeletion: !!req.pending_deletion
+    pendingDeletion: !!req.pending_deletion,
+    region: regionForZip(req.shipping?.zip || ''),   // geofence zone for this stop
   }));
   res.json(transportRequests);
 });
@@ -12930,6 +12949,39 @@ app.post('/api/master/onemap/config', express.json(), (req, res) => {
   writeDb(db); _onemapTokenMem = null;
   logAudit('onemap_config', { by: req.userId || _tokenUserId(req) || 'master' });
   res.json({ ok: true });
+});
+
+// ── Geofence assignments — which driver(s) cover which zone, which days ─────
+// db.geofence.assignments = [{ id, region, driverId, days:[0-6] }]. Multiple
+// drivers per zone = multiple rows with the same region; a driver on two zones
+// = two rows. Days are 0=Sun..6=Sat. Used BEFORE the AI route generation to
+// steer each zone's stops to the driver(s) who cover it that day. Before :id.
+app.get('/api/transport/geofence', (req, res) => {
+  const db = readDb();
+  res.json({
+    regions: SG_REGION_NAMES,
+    regionDistricts: (() => {
+      const out = {}; for (const [d, r] of Object.entries(REGION_BY_DISTRICT)) (out[r] ||= []).push(d); return out;
+    })(),
+    assignments: transportGeofence(db).assignments || [],
+  });
+});
+app.post('/api/transport/geofence', express.json(), (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const incoming = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+  const clean = incoming
+    .filter(a => SG_REGION_NAMES[a.region] && a.driverId)
+    .map(a => ({
+      id: a.id || uuidv4(),
+      region: a.region,
+      driverId: String(a.driverId),
+      days: (Array.isArray(a.days) ? a.days : []).map(Number).filter(n => n >= 0 && n <= 6),
+    }));
+  const db = readDb();
+  transportGeofence(db).assignments = clean;
+  writeDb(db);
+  logAudit('transport_geofence_saved', { by: req.userId || _tokenUserId(req) || '', count: clean.length });
+  res.json({ ok: true, assignments: clean });
 });
 
 // Route templates — SHARED across users (db.transportTemplates), was
