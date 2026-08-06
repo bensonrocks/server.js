@@ -4309,6 +4309,7 @@
     if (!drivers.length) return; // no drivers yet — leave unassigned
     const dow = (planDow == null) ? new Date().getDay() : planDow;
     const asn = (window.geofence && window.geofence.assignments) || [];
+    const hasGeofence = asn.length > 0;   // has the Admin set up any zone rules?
     const includedIds = new Set(drivers.map(d => d.id));
     // region → eligible driver ids covering it on `dow`, still in today's set.
     const byRegion = {};
@@ -4331,9 +4332,15 @@
         const id = pool[(rrCount[region] = (rrCount[region] || 0) + 1) % pool.length];
         d = drivers.find(x => x.id === id);
       }
-      if (!d) d = drivers[rr++ % drivers.length];   // fallback: plain round-robin
-      route.driverId = d.id;
-      route.driverName = d.name;
+      // ZONES-FIRST: when the Admin has set zone rules, the AI only assigns a
+      // route whose majority zone is covered that day. A route no rule matches
+      // is LEFT UNASSIGNED and flagged, for the Admin to assign by hand (every
+      // driver is offered in the row dropdown, not just today's/zone-eligible).
+      // The plain round-robin fallback only applies when NO zones exist at all,
+      // so a warehouse that never set up geofencing keeps its old behaviour.
+      if (!d && !hasGeofence) d = drivers[rr++ % drivers.length];
+      route.driverId = d ? d.id : null;
+      route.driverName = d ? d.name : '';
       route.stops.forEach(stop => { delete stop.driverId; });
     });
   }
@@ -4570,10 +4577,13 @@
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right"><strong>${stop.cumulDistance.toFixed(1)} km</strong></td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;text-align:right">${Math.round(stop.estTime)} min</td>
           <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0;font-weight:600">${stop.delivery.shipping?.zip || 'N/A'}</td>
-          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0">
-            <select class="route-driver-select" data-routeidx="${routeIdx}" data-route="${route.num}" data-stop="${stopIdx}" style="padding:0.4rem;font-size:11px;border:1px solid #ddd;border-radius:3px;width:120px">
-              <option value="">— Unassigned —</option>
-              ${includedDrivers().map(d => `<option value="${d.id}" ${(stop.driverId || route.driverId) === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
+          <td style="padding:0.8rem;border-bottom:1px solid #f0f0f0${(stop.driverId || route.driverId) ? '' : ';background:#fef3c7'}">
+            <select class="route-driver-select" data-routeidx="${routeIdx}" data-route="${route.num}" data-stop="${stopIdx}" style="padding:0.4rem;font-size:11px;border:1px solid ${(stop.driverId || route.driverId) ? '#ddd' : '#f59e0b'};border-radius:3px;width:140px">
+              <option value="">${(stop.driverId || route.driverId) ? '— Unassigned —' : '⚠ Assign driver…'}</option>
+              ${(window.drivers || []).map(d => {
+                const off = activeDriverIds && !activeDriverIds.includes(d.id);
+                return `<option value="${esc(d.id)}" ${(stop.driverId || route.driverId) === d.id ? 'selected' : ''}>${esc(d.name)}${off ? " (not on today's list)" : ''}</option>`;
+              }).join('')}
             </select>
           </td>
         `;
@@ -4809,7 +4819,7 @@
           Final check before saving. To amend, go back and change any driver dropdown or stop order, then confirm again.
           Saving marks every job <strong>Preplanned</strong>; each job becomes a <strong>Confirmed</strong> delivery automatically once its order finishes scanning (live).
         </p>
-        ${unassigned ? `<div style="padding:0.7rem;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;margin-bottom:1rem;font-size:12px">⚠️ ${unassigned} stop(s) have no driver${(window.drivers || []).length ? '' : ' — no drivers exist yet (add them under Driver Details)'}. They will be saved as Preplanned without a driver.</div>` : ''}
+        ${unassigned ? `<div style="padding:0.7rem;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;margin-bottom:1rem;font-size:12px">⚠️ ${unassigned} stop(s) are not covered by a zone rule for this day and need <strong>manual assignment</strong>${(window.drivers || []).length ? ' — go back and pick a driver from any highlighted row (every driver is available, not just today\'s zone-eligible ones)' : ' — no drivers exist yet (add them under Driver Details)'}. Any left unassigned are saved as Preplanned without a driver.</div>` : ''}
         ${Object.entries(byDriver).map(([driverName, jobs]) => `
           <div style="border:1px solid #e2e8f0;border-radius:6px;margin-bottom:0.8rem;overflow:hidden">
             <div style="padding:0.6rem 0.8rem;background:#f1f5f9;font-weight:600;font-size:13px;display:flex;justify-content:space-between">
