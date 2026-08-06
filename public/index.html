@@ -2173,6 +2173,33 @@
         </div>
       </div>
 
+      <!-- Direct Shopee (own API) — background backup, admin-toggled -->
+      <div id="connShopeePanel" style="margin-bottom:1.2rem;border:1px solid #e2e8f0;border-radius:12px;padding:1rem">
+        <div class="admin-section-header" style="margin:0">
+          <div>
+            <div class="admin-section-title">&#128717; Shopee — direct (our own API)</div>
+            <div class="admin-section-sub">A backup path straight to Shopee, separate from the Sales Channel Hub. <b>Off by default</b> &mdash; the Hub stays your live order intake. Turn this on only when you are ready to run on our own Shopee connection; turn it off to fall back to the Hub. While off, Shopee's events are received and logged but change no order.</div>
+          </div>
+          <button class="btn-secondary btn-sm" id="shopeeRefreshBtn">&#8635; Refresh</button>
+        </div>
+        <div style="display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center;margin:.6rem 0">
+          <label style="display:flex;align-items:center;gap:.5rem;font-weight:600;cursor:pointer">
+            <input type="checkbox" id="shopeeDirectToggle" /> Act on Shopee's own pushes
+          </label>
+          <span id="shopeeKeyState" class="hint"></span>
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.4rem">
+          <input type="password" id="shopeePartnerKey" placeholder="Live Push Partner Key (leave blank to keep current)"
+                 style="flex:1;min-width:260px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
+          <button class="btn-primary btn-sm" id="shopeeSaveKeyBtn">Save Key</button>
+        </div>
+        <div id="shopeeCfgMsg" class="status-bar hidden" style="margin:.4rem 0"></div>
+        <div style="margin-top:.6rem">
+          <b style="font-size:.85rem">Recent pushes from Shopee</b>
+          <div id="shopeePushList" class="dcs-wrap" style="margin-top:.4rem"></div>
+        </div>
+      </div>
+
       <div id="connZortPanel">
         <div class="admin-section-header">
           <div>

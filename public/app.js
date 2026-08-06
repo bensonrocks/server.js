@@ -786,7 +786,7 @@
       document.getElementById('transportSubMenu').style.display = 'none';
     }
     if (name === 'labels') { renderLabelsTab(); }
-    if (name === 'connections') { loadZortStores(); }
+    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); }
   }
 
   function lockTabsForDownload() {
@@ -10641,6 +10641,75 @@
     clearTimeout(el._t);
     el._t = setTimeout(() => el.classList.add('hidden'), 6000);
   }
+  // ── Direct-Shopee panel: the administrator on/off switch, the partner key,
+  // and a live view of the pushes Shopee has sent (answering "where can I see
+  // this push?"). Master-gated, same as the store manager beside it.
+  function shopeeCfgMsg(kind, text) {
+    const el = document.getElementById('shopeeCfgMsg'); if (!el) return;
+    el.className = 'status-bar ' + kind; el.textContent = text; el.classList.remove('hidden');
+  }
+  const SHOPEE_ACTION_LABEL = {
+    voided: '✓ order cancelled', void_conflict: '⚠ cancel ignored (already worked)',
+    waybill_updated: '✓ waybill updated', waybill_locked_done: 'waybill kept (already printed)',
+    status_noted: 'status noted', no_match: 'no matching order', product_alert: 'product alert',
+    direct_disabled: 'logged only (direct path off)', error: '⚠ error', null: 'logged only',
+  };
+  async function loadShopeeDirect() {
+    const list = document.getElementById('shopeePushList');
+    if (!list) return;
+    try {
+      const r = await fetch('/api/master/shopee/config', { headers: { 'x-master-key': LOG_PASSWORD } });
+      if (!r.ok) { list.innerHTML = '<div class="hint" style="padding:.6rem">Could not load.</div>'; return; }
+      const d = await r.json();
+      const tg = document.getElementById('shopeeDirectToggle'); if (tg) tg.checked = !!d.directEnabled;
+      const ks = document.getElementById('shopeeKeyState');
+      if (ks) ks.innerHTML = d.keyConfigured
+        ? `<span style="color:#16a34a">&#10003; Partner key set${d.keyFromEnv ? ' (from server env)' : ''}</span>`
+        : `<span style="color:#d97706">&#9888; No partner key yet — pushes stay unverified</span>`;
+      const rows = (d.recent || []);
+      list.innerHTML = rows.length
+        ? `<table class="dcs-table"><thead><tr><th>When</th><th>Code</th><th>Verified</th><th>What happened</th></tr></thead><tbody>`
+          + rows.map(e => `<tr>
+              <td>${new Date(e.at).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false })}</td>
+              <td>${esc(String(e.code ?? ''))}</td>
+              <td>${e.verified ? '<span style="color:#16a34a">✓</span>' : '<span style="color:#94a3b8">—</span>'}</td>
+              <td>${esc(SHOPEE_ACTION_LABEL[e.action] || String(e.action ?? 'logged only'))}</td>
+            </tr>`).join('') + '</tbody></table>'
+        : '<div class="hint" style="padding:.6rem">No pushes received yet. Send one from Shopee → Push Mechanism → "Push Test Data".</div>';
+    } catch (e) { list.innerHTML = `<div class="hint" style="padding:.6rem">${esc(e.message)}</div>`; }
+  }
+  document.getElementById('shopeeRefreshBtn')?.addEventListener('click', loadShopeeDirect);
+  document.getElementById('shopeeDirectToggle')?.addEventListener('change', async (e) => {
+    const on = e.target.checked;
+    if (on && !confirm('Turn ON IdealOne\'s own Shopee path?\n\nShopee\'s pushes will start acting on orders (cancellations void, tracking updates the waybill). The Sales Channel Hub stays connected as your backup. You can turn this off again any time.')) {
+      e.target.checked = false; return;
+    }
+    try {
+      const r = await fetch('/api/master/shopee/config', { method: 'POST',
+        headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directEnabled: on }) });
+      const d = await r.json();
+      if (!r.ok) { shopeeCfgMsg('error', d.error || 'Failed'); return loadShopeeDirect(); }
+      shopeeCfgMsg('success', on ? '✓ Direct Shopee path is ON — its pushes now act on orders.' : '✓ Switched off — back to the Hub. Pushes are logged only.');
+      loadShopeeDirect();
+    } catch (err) { shopeeCfgMsg('error', err.message); loadShopeeDirect(); }
+  });
+  document.getElementById('shopeeSaveKeyBtn')?.addEventListener('click', async () => {
+    const inp = document.getElementById('shopeePartnerKey');
+    const key = (inp?.value || '').trim();
+    if (!key) return shopeeCfgMsg('error', 'Paste the live Push Partner Key first.');
+    try {
+      const r = await fetch('/api/master/shopee/config', { method: 'POST',
+        headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ partnerKey: key }) });
+      const d = await r.json();
+      if (!r.ok) return shopeeCfgMsg('error', d.error || 'Failed');
+      if (inp) inp.value = '';
+      shopeeCfgMsg('success', '✓ Partner key saved. Shopee\'s pushes will now be verified.');
+      loadShopeeDirect();
+    } catch (err) { shopeeCfgMsg('error', err.message); }
+  });
+
   async function loadZortStores() {
     const tbody = document.getElementById('zortStoresTbody');
     try {
