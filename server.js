@@ -15656,6 +15656,13 @@ function shopeeVoidOrder(db, batch, ord) {
   if (releasedSkus.length) { try { zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), releasedSkus); } catch (_) {} }
   return 'voided';
 }
+// THE ADMINISTRATOR SWITCH for the direct Shopee path. Off by default — ZORT
+// stays the source of truth until an administrator deliberately turns this on
+// (and can turn it back off, leaving ZORT as the backup, at any time).
+function shopeeDirectEnabled(db) {
+  try { return !!((db || readDb()).config || {}).shopeeDirectEnabled; }
+  catch { return false; }
+}
 const SHOPEE_CANCEL_STATUSES = new Set(['CANCELLED', 'IN_CANCEL']);
 function handleShopeePush(db, push) {
   const code = Number(push.code ?? push.push_code);
@@ -15709,13 +15716,21 @@ app.all('/api/shopee/push',
     try {
       const sig = verifyShopeePush(req);
       const db = readDb();
-      // ACT ONLY ON A VERIFIED PUSH. Until the partner key is configured we log
-      // but never touch an order — an unauthenticated caller must not be able
-      // to void or re-waybill anything.
+      // TWO GATES before a push touches an order:
+      //   1. VERIFIED signature — an unauthenticated caller can void nothing.
+      //   2. The ADMINISTRATOR SWITCH (`config.shopeeDirectEnabled`, off by
+      //      default). Per the user: ZORT is the live intake; IdealOne's own
+      //      Shopee path stays in the background as a backup and only ACTS when
+      //      an administrator turns it on. Until then every push is received
+      //      and LOGGED (so the wiring is provably working) but changes no
+      //      order — recorded as `direct_disabled`.
       let action = null;
       if (sig.verified && req.body && typeof req.body === 'object') {
-        try { action = handleShopeePush(db, req.body); }
-        catch (e) { console.error('[shopee] push action error:', e.message); action = 'error'; }
+        if (!shopeeDirectEnabled(db)) action = 'direct_disabled';
+        else {
+          try { action = handleShopeePush(db, req.body); }
+          catch (e) { console.error('[shopee] push action error:', e.message); action = 'error'; }
+        }
       }
       if (!db.shopeePushLog) db.shopeePushLog = [];
       db.shopeePushLog.push({
@@ -15736,6 +15751,44 @@ app.all('/api/shopee/push',
       });
     } catch (e) { console.error('[shopee] push log error:', e.message); }
   });
+
+// ── The direct-Shopee administrator switch + recent pushes ──────────────────
+// Master-key gated (the Administrator panel). Lets the operator turn IdealOne's
+// own Shopee path ON when they are ready to port off ZORT, turn it back OFF to
+// fall back to ZORT, and set the live Push Partner Key in-app instead of via a
+// redeploy. The recent push log is returned so "is it actually receiving?" is
+// answerable on screen.
+app.get('/api/master/shopee/config', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const c = db.config || {};
+  res.json({
+    directEnabled: !!c.shopeeDirectEnabled,
+    keyConfigured: !!shopeePartnerKey(),
+    keyFromEnv: !!process.env.SHOPEE_PUSH_PARTNER_KEY,
+    recent: (db.shopeePushLog || []).slice(-20).reverse().map(e => ({
+      at: e.at, code: e.code, verified: e.verified, action: e.action,
+    })),
+  });
+});
+app.post('/api/master/shopee/config', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  if (!db.config) db.config = {};
+  const before = !!db.config.shopeeDirectEnabled;
+  if (req.body.directEnabled !== undefined) db.config.shopeeDirectEnabled = !!req.body.directEnabled;
+  // Blank leaves the stored key alone; an env-set key always wins at read time.
+  if (typeof req.body.partnerKey === 'string' && req.body.partnerKey.trim()) {
+    db.config.shopeePushPartnerKey = req.body.partnerKey.trim();
+  }
+  writeDb(db);
+  logAudit('shopee_direct_config', {
+    by: req.userId || _tokenUserId(req) || 'master',
+    from: before, to: !!db.config.shopeeDirectEnabled,
+    keySet: !!db.config.shopeePushPartnerKey,
+  });
+  res.json({ ok: true, directEnabled: !!db.config.shopeeDirectEnabled, keyConfigured: !!shopeePartnerKey() });
+});
 
 // ── ZORT integration — per-client merchant store connections ────────────────
 // Each fulfillment CLIENT connects their own Zort store (storename/apikey/
