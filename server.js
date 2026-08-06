@@ -6929,6 +6929,7 @@ const AUTH_PUBLIC = new Set([
   '/api/public/config',
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
+  '/api/shopee/push',     // Shopee Open Platform push mechanism (external caller)
   '/api/version',         // deploy verification — commit + boot time, no data
   '/api/errors',          // client error reporting — logs even if a crash happened pre-login
 ]);
@@ -15574,6 +15575,64 @@ app.all('/api/lazada/callback', express.json({ limit: '512kb' }), (req, res) => 
     logAudit('lazada_push_received', { method: req.method, msgType: req.body?.message_type ?? req.body?.type ?? '' });
   } catch (e) { console.error('[lazada] push log error:', e.message); }
 });
+
+// ── Shopee Open Platform — Push (webhook) receiver ──────────────────────────
+// Shopee delivers order/product events by POSTing here; the Push Mechanism
+// "Verify and Save" step fires a test push and requires a fast HTTP 200.
+//
+// AUTHENTICITY: Shopee signs each push. The `Authorization` header carries
+// HMAC-SHA256(`<callback_url>|<raw_body>`, partner_key) in hex. We capture the
+// RAW body (the signature is over the exact bytes, not the re-serialised JSON)
+// and, WHEN a partner key is configured, verify it and record pass/fail. The
+// key never goes to git — it comes from SHOPEE_PUSH_PARTNER_KEY or db.config.
+//
+// We ACK 200 regardless (so Shopee stops retrying and the verify step passes),
+// but we ACT on nothing here yet — this receiver only records. Any future
+// push→order handling must gate on `verified === true`.
+function shopeePartnerKey() {
+  if (process.env.SHOPEE_PUSH_PARTNER_KEY) return process.env.SHOPEE_PUSH_PARTNER_KEY;
+  try { return (readDb().config || {}).shopeePushPartnerKey || ''; } catch { return ''; }
+}
+function verifyShopeePush(req) {
+  const key = shopeePartnerKey();
+  if (!key) return { configured: false, verified: false };
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl.split('?')[0]}`;
+    const raw = (req.rawBody != null) ? req.rawBody : JSON.stringify(req.body || {});
+    const base = `${url}|${raw}`;
+    const expected = crypto.createHmac('sha256', key).update(base).digest('hex');
+    const got = String(req.headers['authorization'] || '').trim();
+    // timing-safe compare when lengths match
+    const a = Buffer.from(expected), b = Buffer.from(got);
+    const verified = a.length === b.length && crypto.timingSafeEqual(a, b);
+    return { configured: true, verified };
+  } catch (e) { return { configured: true, verified: false, error: e.message }; }
+}
+app.all('/api/shopee/push',
+  express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }),
+  (req, res) => {
+    res.status(200).json({ code: 0, message: 'success' });   // ACK fast — Shopee retries slow/failed endpoints
+    try {
+      const sig = verifyShopeePush(req);
+      const db = readDb();
+      if (!db.shopeePushLog) db.shopeePushLog = [];
+      db.shopeePushLog.push({
+        at: new Date().toISOString(),
+        method: req.method,
+        code: req.body?.code ?? req.body?.push_code ?? '',
+        shop_id: req.body?.shop_id ?? '',
+        verified: sig.verified,
+        keyConfigured: sig.configured,
+        body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
+      });
+      if (db.shopeePushLog.length > 200) db.shopeePushLog.splice(0, db.shopeePushLog.length - 200);
+      writeDb(db);
+      logAudit('shopee_push_received', {
+        method: req.method, code: req.body?.code ?? '',
+        verified: sig.verified, keyConfigured: sig.configured,
+      });
+    } catch (e) { console.error('[shopee] push log error:', e.message); }
+  });
 
 // ── ZORT integration — per-client merchant store connections ────────────────
 // Each fulfillment CLIENT connects their own Zort store (storename/apikey/
