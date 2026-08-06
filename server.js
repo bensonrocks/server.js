@@ -1413,8 +1413,89 @@ const SG_SECTOR_TO_DISTRICT_SRV = {};
 ].forEach(([d, sectors]) => sectors.forEach(s => { SG_SECTOR_TO_DISTRICT_SRV[s] = d; }));
 
 function transportPostalCoords(zip) {
+  // REAL COORDINATES WHEN WE HAVE THEM. OneMap geocodes a full 6-digit postal
+  // code to a building-accurate point; once cached (db.geocodeCache), that is
+  // what every distance uses — so two Jurong addresses stop reading as 0 km.
+  // The 28-district centroid is only the FALLBACK, for a postal code not yet
+  // geocoded or when OneMap was unreachable.
+  const pc = String(zip || '').replace(/\D/g, '');
+  if (pc.length === 6) {
+    try { const c = (readDb().geocodeCache || {})[pc]; if (c && c.lat && c.lng) return [c.lat, c.lng]; } catch (_) {}
+  }
   const district = SG_SECTOR_TO_DISTRICT_SRV[String(zip || '').trim().substring(0, 2)];
   return district ? SG_DISTRICT_COORDS_SRV[district] : [1.3521, 103.8198];
+}
+const onemap = require('./lib/onemap');
+function onemapCreds() {
+  const db = (() => { try { return readDb(); } catch { return {}; } })();
+  return {
+    email: process.env.ONEMAP_EMAIL || (db.config || {}).onemapEmail || '',
+    password: process.env.ONEMAP_PASSWORD || (db.config || {}).onemapPassword || '',
+    searchBase: process.env.ONEMAP_BASE || undefined,
+  };
+}
+// Geocode any postal codes we don't already hold, and cache them. Best-effort:
+// a failure just leaves the district-centroid fallback in place. Returns the
+// count newly geocoded.
+async function ensureGeocoded(zips) {
+  const want = [...new Set((zips || []).map(z => String(z || '').replace(/\D/g, '')).filter(z => z.length === 6))];
+  if (!want.length) return 0;
+  const db = readDb();
+  if (!db.geocodeCache) db.geocodeCache = {};
+  const missing = want.filter(z => !db.geocodeCache[z]);
+  if (!missing.length) return 0;
+  const { searchBase } = onemapCreds();
+  let got = 0;
+  for (const pc of missing) {
+    try {
+      const r = await onemap.geocode(pc, { base: searchBase });
+      if (r) { db.geocodeCache[pc] = { lat: r.lat, lng: r.lng, address: r.address, at: new Date().toISOString() }; got++; }
+    } catch (e) { /* leave fallback; try again next time */ }
+  }
+  if (got) writeDb(db);
+  return got;
+}
+// ── OneMap routing token — cached in db.config, refreshed when stale ─────────
+let _onemapTokenMem = null;   // { access_token, expiry } — in-memory to avoid re-reading db
+async function onemapToken() {
+  const now = Math.floor(Date.now() / 1000);
+  if (_onemapTokenMem && _onemapTokenMem.expiry - 300 > now) return _onemapTokenMem.access_token;
+  try {
+    const db = readDb();
+    const stored = (db.config || {}).onemapToken;
+    if (stored && stored.expiry - 300 > now) { _onemapTokenMem = stored; return stored.access_token; }
+    const { email, password, searchBase } = onemapCreds();
+    if (!email || !password) return '';
+    const tok = await onemap.getToken(email, password, { base: searchBase });
+    _onemapTokenMem = tok;
+    if (!db.config) db.config = {};
+    db.config.onemapToken = tok; writeDb(db);
+    return tok.access_token;
+  } catch (e) { console.warn('[onemap] token:', e.message); return ''; }
+}
+// Real ROAD distance (km) + drive time (min) between two postal codes, cached
+// by (from|to). Falls back to straight-line × a road factor when OneMap has no
+// token or is unreachable — never blocks, never throws.
+const ROAD_FACTOR = 1.4;   // straight-line → approx road, when routing unavailable
+async function roadLegKm(zipA, zipB) {
+  const a = String(zipA || '').replace(/\D/g, ''), b = String(zipB || '').replace(/\D/g, '');
+  const key = `${a}|${b}`;
+  const db = readDb();
+  const cache = db.routeCache || (db.routeCache = {});
+  if (cache[key]) return cache[key];
+  const straight = transportLegKm(zipA, zipB);
+  let result = { km: +(straight * ROAD_FACTOR).toFixed(2), min: Math.round(straight * ROAD_FACTOR / 40 * 60), estimated: true };
+  try {
+    await ensureGeocoded([a, b]);
+    const token = await onemapToken();
+    const [aLat, aLng] = transportPostalCoords(a), [bLat, bLng] = transportPostalCoords(b);
+    if (token) {
+      const r = await onemap.route({ lat: aLat, lng: aLng }, { lat: bLat, lng: bLng }, token, { base: onemapCreds().searchBase });
+      if (r && r.distance_m) result = { km: +(r.distance_m / 1000).toFixed(2), min: Math.round(r.time_s / 60), estimated: false };
+    }
+  } catch (e) { /* keep the estimate */ }
+  const fresh = readDb(); if (!fresh.routeCache) fresh.routeCache = {}; fresh.routeCache[key] = result; writeDb(fresh);
+  return result;
 }
 function transportLegKm(zipA, zipB) {
   const [aLat, aLng] = transportPostalCoords(zipA);
@@ -12804,6 +12885,51 @@ app.post('/api/transport/depot', (req, res) => {
   writeDb(db);
   logAudit('transport_depot_updated', { ...db.transportDepot, by: req.userId || '' });
   res.json(db.transportDepot);
+});
+
+// Geocode a set of postal codes (fills db.geocodeCache) and return their real
+// coordinates — the client calls this before route generation so the map and
+// the distances use building-accurate points, not district centroids. Before
+// the :id routes (Express ordering).
+app.post('/api/transport/geocode', express.json(), async (req, res) => {
+  const zips = Array.isArray(req.body?.zips) ? req.body.zips : [];
+  try {
+    await ensureGeocoded(zips);
+    const cache = readDb().geocodeCache || {};
+    const out = {};
+    for (const z of zips) { const pc = String(z || '').replace(/\D/g, ''); if (cache[pc]) out[pc] = { lat: cache[pc].lat, lng: cache[pc].lng }; }
+    res.json({ coords: out, geocoded: Object.keys(out).length, total: zips.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Real road distance + drive time between two postal codes (OneMap routing,
+// cached; straight-line×factor fallback). For a single leg or a UI check.
+app.get('/api/transport/road-distance', async (req, res) => {
+  const from = String(req.query.from || ''), to = String(req.query.to || '');
+  if (!from || !to) return res.status(400).json({ error: 'from and to postal codes are required' });
+  try { res.json(await roadLegKm(from, to)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// OneMap routing credentials (for road distance). Master-gated; env wins.
+app.get('/api/master/onemap/config', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb(); const c = db.config || {};
+  const now = Math.floor(Date.now() / 1000);
+  res.json({
+    hasCreds: !!((process.env.ONEMAP_EMAIL || c.onemapEmail) && (process.env.ONEMAP_PASSWORD || c.onemapPassword)),
+    fromEnv: !!(process.env.ONEMAP_EMAIL && process.env.ONEMAP_PASSWORD),
+    tokenValid: !!(c.onemapToken && c.onemapToken.expiry - 300 > now),
+    geocodeCached: Object.keys(db.geocodeCache || {}).length,
+  });
+});
+app.post('/api/master/onemap/config', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb(); if (!db.config) db.config = {};
+  if (typeof req.body.email === 'string' && req.body.email.trim()) db.config.onemapEmail = req.body.email.trim();
+  if (typeof req.body.password === 'string' && req.body.password.trim()) db.config.onemapPassword = req.body.password.trim();
+  db.config.onemapToken = null;   // force a refresh with the new creds
+  writeDb(db); _onemapTokenMem = null;
+  logAudit('onemap_config', { by: req.userId || _tokenUserId(req) || 'master' });
+  res.json({ ok: true });
 });
 
 // Route templates — SHARED across users (db.transportTemplates), was
