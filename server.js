@@ -15980,7 +15980,7 @@ app.get('/api/connect/lazada/callback', async (req, res) => {
     };
     writeDb(db);
     logAudit('lazada_oauth_connected', { client, account: r.account });
-    res.send(connectResultPage(true, `Your Lazada account is now connected to IdealOne for ${String(client).replace(/[<>&"]/g,"")}.`));
+    res.send(connectResultPage(true, 'Your Lazada account is now connected to IdealOne.'));
   } catch (e) { logAudit('lazada_oauth_error', { client, error: e.message }); res.status(500).send(connectResultPage(false, 'Something went wrong. Please try again.')); }
 });
 
@@ -15999,7 +15999,7 @@ app.get('/api/connect/shopee/callback', async (req, res) => {
     };
     writeDb(db);
     logAudit('shopee_oauth_connected', { client, shop_id: r.shop_id });
-    res.send(connectResultPage(true, `Your Shopee shop is now connected to IdealOne for ${String(client).replace(/[<>&"]/g,"")}.`));
+    res.send(connectResultPage(true, 'Your Shopee shop is now connected to IdealOne.'));
   } catch (e) { logAudit('shopee_oauth_error', { client, error: e.message }); res.status(500).send(connectResultPage(false, 'Something went wrong. Please try again.')); }
 });
 
