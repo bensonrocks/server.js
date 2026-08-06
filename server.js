@@ -15608,6 +15608,100 @@ function verifyShopeePush(req) {
     return { configured: true, verified };
   } catch (e) { return { configured: true, verified: false, error: e.message }; }
 }
+// ── Acting on a Shopee push ─────────────────────────────────────────────────
+// Marketplace orders reach IdealOne through the store sync, carrying the
+// Shopee order serial number as `order_number` and the tracking number as
+// `waybill_number` — the SAME waybill that prints at scan completion. So these
+// actions land on the EXISTING fields and surface in the EXISTING UI (an order
+// that drops off the Active list; a waybill value that flows into the
+// completion print). No new screens.
+//
+// STANDING RULE, honoured: work that has been scanned or completed is NEVER
+// regressed by a push. A cancel on a done/started order is flagged as a
+// conflict for a human, never auto-reversed. A waybill is never changed on a
+// completed order — its label has already printed.
+function shopeeFindOrder(db, ordersn, tracking) {
+  const sn = String(ordersn || '').trim();
+  const tr = String(tracking || '').trim();
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (sn && String(o.order_number) === sn) return { batch: b, ord: o };
+      if (tr && o.waybill_number && String(o.waybill_number) === tr) return { batch: b, ord: o };
+    }
+  }
+  return null;
+}
+// Mirror of handleZortVoid's core — deliberately not shared, so a change to one
+// marketplace's rules can never silently alter the other's.
+function shopeeVoidOrder(db, batch, ord) {
+  const orderNumber = ord.order_number;
+  const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+  if (state.status === 'done' || state.status === 'processing' || scannedTotal > 0) {
+    logAudit('shopee_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
+    return 'void_conflict';
+  }
+  state.status = 'unprocessed';
+  let releasedSkus = [];
+  if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
+    const cid = batch.inventory_client || invClientId(batch.client_name);
+    const items = (ord.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: l.qty }));
+    try { inventory.releaseOrder(cid, { id: orderNumber, items }); state.inventory_released = true; releasedSkus = [...new Set(items.map(i => i.sku))]; }
+    catch (e) { console.warn('[shopee-void] release failed for', orderNumber, e.message); }
+  }
+  state.updated_at = new Date().toISOString();
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  logAudit('shopee_order_voided', { order: orderNumber, client: batch.client_name || '', released: releasedSkus.length });
+  if (releasedSkus.length) { try { zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), releasedSkus); } catch (_) {} }
+  return 'voided';
+}
+const SHOPEE_CANCEL_STATUSES = new Set(['CANCELLED', 'IN_CANCEL']);
+function handleShopeePush(db, push) {
+  const code = Number(push.code ?? push.push_code);
+  const data = (push.data && typeof push.data === 'object') ? push.data : push;
+  const ordersn = data.ordersn || data.order_sn || data.orderSn || '';
+  const status = String(data.status || '').toUpperCase();
+  const tracking = data.tracking_no || data.trackingno || data.tracking_number || '';
+
+  // ORDER STATUS push (code 3) — cancels void a pending order; other statuses
+  // are noted without disturbing the pick.
+  if (code === 3 || status) {
+    const f = shopeeFindOrder(db, ordersn, tracking);
+    if (!f) return 'no_match';
+    if (SHOPEE_CANCEL_STATUSES.has(status)) return shopeeVoidOrder(db, f.batch, f.ord);
+    f.ord.marketplace_status = status || f.ord.marketplace_status || '';
+    // A status push can also carry a fresh tracking number — apply it too,
+    // but never onto an already-printed (done) order.
+    if (tracking) {
+      const st = db.batches && (f.batch.orderStates[f.ord.order_number] || {});
+      if (st && st.status !== 'done' && f.ord.waybill_number !== tracking) {
+        f.ord.waybill_number = tracking;
+        logAudit('shopee_waybill_updated', { order: f.ord.order_number, tracking });
+      }
+    }
+    return 'status_noted';
+  }
+
+  // TRACKING NUMBER push (code 4) — keeps the waybill that prints at scan
+  // completion current; refused on a done order whose label already printed.
+  if (code === 4) {
+    const f = shopeeFindOrder(db, ordersn, tracking);
+    if (!f || !tracking) return 'no_match';
+    const st = f.batch.orderStates[f.ord.order_number] || {};
+    if (st.status === 'done') return 'waybill_locked_done';
+    if (f.ord.waybill_number !== tracking) {
+      f.ord.waybill_number = tracking;
+      logAudit('shopee_waybill_updated', { order: f.ord.order_number, tracking });
+    }
+    return 'waybill_updated';
+  }
+
+  // PRODUCT-LEVEL pushes (banned item / reserved-stock / violation, etc.) —
+  // seller-listing concerns, recorded for visibility, never destructive here.
+  return 'product_alert';
+}
+
 app.all('/api/shopee/push',
   express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }),
   (req, res) => {
@@ -15615,6 +15709,14 @@ app.all('/api/shopee/push',
     try {
       const sig = verifyShopeePush(req);
       const db = readDb();
+      // ACT ONLY ON A VERIFIED PUSH. Until the partner key is configured we log
+      // but never touch an order — an unauthenticated caller must not be able
+      // to void or re-waybill anything.
+      let action = null;
+      if (sig.verified && req.body && typeof req.body === 'object') {
+        try { action = handleShopeePush(db, req.body); }
+        catch (e) { console.error('[shopee] push action error:', e.message); action = 'error'; }
+      }
       if (!db.shopeePushLog) db.shopeePushLog = [];
       db.shopeePushLog.push({
         at: new Date().toISOString(),
@@ -15623,13 +15725,14 @@ app.all('/api/shopee/push',
         shop_id: req.body?.shop_id ?? '',
         verified: sig.verified,
         keyConfigured: sig.configured,
+        action,
         body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
       });
       if (db.shopeePushLog.length > 200) db.shopeePushLog.splice(0, db.shopeePushLog.length - 200);
       writeDb(db);
       logAudit('shopee_push_received', {
         method: req.method, code: req.body?.code ?? '',
-        verified: sig.verified, keyConfigured: sig.configured,
+        verified: sig.verified, keyConfigured: sig.configured, action,
       });
     } catch (e) { console.error('[shopee] push log error:', e.message); }
   });
