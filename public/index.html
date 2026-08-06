@@ -2669,6 +2669,23 @@
         <div class="modal-card" style="max-width:820px">
           <div class="modal-title">&#129517; Zones &amp; Drivers</div>
           <p class="hint" style="margin:.2rem 0 .8rem">Assign each driver to the zones they cover and the days they run them. The AI route planner then steers each zone's stops to the drivers who cover it that day. Multiple drivers can share a zone.</p>
+
+          <details id="onemapPanel" style="border:1px solid var(--border);border-radius:8px;padding:.6rem .8rem;margin-bottom:.9rem;background:var(--card-alt,rgba(0,0,0,.02))">
+            <summary style="cursor:pointer;font-weight:600">&#128506;&#65039; Road distances (OneMap)</summary>
+            <p class="hint" style="margin:.5rem 0 .6rem">Real truck road distances need a OneMap routing token. Postal-code map pins work without one. A token from your OneMap account lasts ~3 days; add your OneMap email &amp; password so it refreshes itself, or paste a token below.</p>
+            <div id="onemapStatus" class="hint" style="margin-bottom:.6rem">&hellip;</div>
+            <div style="display:grid;gap:.5rem;max-width:460px">
+              <input type="email" id="onemapEmail" class="input" placeholder="OneMap account email (for auto-refresh)" autocomplete="off">
+              <input type="password" id="onemapPassword" class="input" placeholder="OneMap account password" autocomplete="new-password">
+              <textarea id="onemapToken" class="input" rows="2" placeholder="…or paste a routing token (starts with eyJ…)" style="resize:vertical;font-family:monospace;font-size:11px"></textarea>
+              <div style="display:flex;gap:.5rem">
+                <button class="btn-primary" id="onemapSaveBtn" style="font-size:13px">Save OneMap</button>
+                <button class="btn-secondary" id="onemapTestBtn" style="font-size:13px" title="Check a sample road distance">Test distance</button>
+              </div>
+              <div id="onemapMsg" class="status-bar hidden"></div>
+            </div>
+          </details>
+
           <div id="geofenceBody" style="max-height:60vh;overflow:auto"></div>
           <div id="geofenceMsg" class="status-bar hidden" style="margin-top:.6rem"></div>
           <div class="modal-actions" style="margin-top:.8rem">

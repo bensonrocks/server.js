@@ -2521,6 +2521,19 @@ and two of them read as **~0 km apart** — reported from the floor: 609216 →
   or env `ONEMAP_EMAIL`/`ONEMAP_PASSWORD` (env wins). CAVEAT: the sandbox can't
   reach onemap.gov.sg, so live calls are unverified — `ONEMAP_BASE` overrides
   the host and the fallback keeps distances sane until credentials are set.
+- **UI + a directly-pasted token.** The `GET/POST /api/master/onemap/config`
+  routes are **admin-or-master** (`requireTransportAdmin`, same guard as the
+  geofence Save beside them — warehouse gets a real 403, not the office red),
+  so the credentials live on a **"🗺️ Road distances (OneMap)"** panel inside
+  the Zones & Drivers modal rather than needing the master key. Three ways in:
+  OneMap email+password (auto-refreshes), OR **paste a routing token** (the
+  short-lived `eyJ…` a OneMap account hands out — its `exp` is read straight
+  out of the JWT so `onemapToken()` knows when it goes stale; WITHOUT
+  email+password it **cannot** auto-refresh and the panel says so). A **Test
+  distance** button hits `/api/transport/road-distance?from=609216&to=648331`
+  and reports the km + whether it was real road routing or the estimate.
+  Geocoding (which fixes the Jurong 0 km collapse) needs **no** token — only
+  road routing does.
 
 ### Geofencing — five zones, driver ⇆ days, before AI routing
 

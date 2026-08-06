@@ -12928,27 +12928,49 @@ app.get('/api/transport/road-distance', async (req, res) => {
   try { res.json(await roadLegKm(from, to)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-// OneMap routing credentials (for road distance). Master-gated; env wins.
+// OneMap routing credentials (for road distance). Admin-or-master (same guard
+// as the geofence save beside it in the Zones & Drivers modal); env wins.
 app.get('/api/master/onemap/config', (req, res) => {
-  if (!checkMaster(req, res)) return;
+  if (!requireTransportAdmin(req, res)) return;
   const db = readDb(); const c = db.config || {};
   const now = Math.floor(Date.now() / 1000);
   res.json({
     hasCreds: !!((process.env.ONEMAP_EMAIL || c.onemapEmail) && (process.env.ONEMAP_PASSWORD || c.onemapPassword)),
     fromEnv: !!(process.env.ONEMAP_EMAIL && process.env.ONEMAP_PASSWORD),
     tokenValid: !!(c.onemapToken && c.onemapToken.expiry - 300 > now),
+    tokenExpiresAt: c.onemapToken?.expiry ? new Date(c.onemapToken.expiry * 1000).toISOString() : null,
+    canRefresh: !!((process.env.ONEMAP_EMAIL || c.onemapEmail) && (process.env.ONEMAP_PASSWORD || c.onemapPassword)),
     geocodeCached: Object.keys(db.geocodeCache || {}).length,
   });
 });
 app.post('/api/master/onemap/config', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
+  if (!requireTransportAdmin(req, res)) return;
   const db = readDb(); if (!db.config) db.config = {};
-  if (typeof req.body.email === 'string' && req.body.email.trim()) db.config.onemapEmail = req.body.email.trim();
-  if (typeof req.body.password === 'string' && req.body.password.trim()) db.config.onemapPassword = req.body.password.trim();
-  db.config.onemapToken = null;   // force a refresh with the new creds
-  writeDb(db); _onemapTokenMem = null;
-  logAudit('onemap_config', { by: req.userId || _tokenUserId(req) || 'master' });
-  res.json({ ok: true });
+  let credsChanged = false;
+  if (typeof req.body.email === 'string' && req.body.email.trim()) { db.config.onemapEmail = req.body.email.trim(); credsChanged = true; }
+  if (typeof req.body.password === 'string' && req.body.password.trim()) { db.config.onemapPassword = req.body.password.trim(); credsChanged = true; }
+  // A DIRECTLY-PASTED token works immediately (routing needs it now); its
+  // expiry is read out of the JWT so onemapToken() knows when it goes stale.
+  // Without email+password it cannot auto-refresh, so we say so on screen.
+  if (typeof req.body.token === 'string' && req.body.token.trim()) {
+    const tok = req.body.token.trim();
+    let expiry = 0;
+    try { expiry = Number(JSON.parse(Buffer.from(tok.split('.')[1] || '', 'base64').toString('utf8')).exp) || 0; } catch (_) {}
+    db.config.onemapToken = { access_token: tok, expiry };
+    _onemapTokenMem = db.config.onemapToken;
+  } else if (credsChanged) {
+    db.config.onemapToken = null;   // new creds → refetch on next use
+    _onemapTokenMem = null;
+  }
+  writeDb(db);
+  logAudit('onemap_config', { by: req.userId || _tokenUserId(req) || 'master', creds: credsChanged, token: !!req.body.token });
+  const now = Math.floor(Date.now() / 1000);
+  res.json({
+    ok: true,
+    tokenValid: !!(db.config.onemapToken && db.config.onemapToken.expiry - 300 > now),
+    tokenExpiresAt: db.config.onemapToken?.expiry ? new Date(db.config.onemapToken.expiry * 1000).toISOString() : null,
+    canRefresh: !!((process.env.ONEMAP_EMAIL || db.config.onemapEmail) && (process.env.ONEMAP_PASSWORD || db.config.onemapPassword)),
+  });
 });
 
 // ── Geofence assignments — which driver(s) cover which zone, which days ─────

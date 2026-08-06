@@ -5700,6 +5700,7 @@
     if (!window.drivers) await loadDrivers();
     await loadGeofence();
     renderGeofence();
+    loadOnemapConfig();
   });
   document.getElementById('geofenceCloseBtn')?.addEventListener('click', () => document.getElementById('geofenceModal').classList.add('hidden'));
   document.getElementById('geofenceSaveBtn')?.addEventListener('click', async () => {
@@ -5719,6 +5720,59 @@
       msg('success', `✓ Saved — ${d.assignments.length} zone assignment(s).`);
     } catch (e) { msg('error', e.message); }
   });
+  // ── OneMap road-distance credentials (inside the Zones & Drivers modal) ──────
+  async function loadOnemapConfig() {
+    const el = document.getElementById('onemapStatus');
+    if (!el) return;
+    try {
+      const r = await fetch('/api/master/onemap/config', { headers: hdrs() });
+      const d = await r.json();
+      if (!r.ok) { el.textContent = d.error || 'Could not load OneMap status.'; return; }
+      let bits = [];
+      if (d.tokenValid) {
+        bits.push(`✓ Routing token active${d.tokenExpiresAt ? ` (expires ${new Date(d.tokenExpiresAt).toLocaleString()})` : ''}`);
+      } else {
+        bits.push('⚠ No valid routing token — pins work, but road distances fall back to an estimate.');
+      }
+      if (d.canRefresh) bits.push('Auto-refreshes from your saved email & password.');
+      else if (d.tokenValid) bits.push('Add email & password so it can refresh itself before it expires.');
+      if (d.fromEnv) bits.push('(credentials set via environment)');
+      bits.push(`${d.geocodeCached || 0} postal code(s) geocoded & cached.`);
+      el.innerHTML = bits.join(' ');
+    } catch (e) { el.textContent = e.message; }
+  }
+  const onemapMsg = (k, t) => { const el = document.getElementById('onemapMsg'); if (!el) return; el.className = 'status-bar ' + k; el.textContent = t; el.classList.remove('hidden'); };
+  document.getElementById('onemapSaveBtn')?.addEventListener('click', async () => {
+    const body = {
+      email: document.getElementById('onemapEmail').value.trim(),
+      password: document.getElementById('onemapPassword').value.trim(),
+      token: document.getElementById('onemapToken').value.trim(),
+    };
+    if (!body.email && !body.password && !body.token) return onemapMsg('error', 'Enter an email & password, or paste a token.');
+    try {
+      const r = await fetch('/api/master/onemap/config', { method: 'POST', headers: { ...hdrs(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) return onemapMsg('error', d.error || 'Save failed');
+      document.getElementById('onemapPassword').value = '';
+      document.getElementById('onemapToken').value = '';
+      let m = '✓ Saved.';
+      if (d.tokenValid) m += ` Routing token active${d.tokenExpiresAt ? ` until ${new Date(d.tokenExpiresAt).toLocaleString()}` : ''}.`;
+      if (d.token && !d.canRefresh) m += ' Add email & password to auto-refresh before it expires.';
+      onemapMsg('success', m);
+      loadOnemapConfig();
+    } catch (e) { onemapMsg('error', e.message); }
+  });
+  document.getElementById('onemapTestBtn')?.addEventListener('click', async () => {
+    onemapMsg('progress', 'Checking a sample road distance…');
+    try {
+      const r = await fetch('/api/transport/road-distance?from=609216&to=648331', { headers: hdrs() });
+      const d = await r.json();
+      if (!r.ok) return onemapMsg('error', d.error || 'Test failed');
+      const km = (d.km != null ? d.km : d.distance_km);
+      onemapMsg('success', `✓ 609216 → 648331 = ${Number(km).toFixed(2)} km${d.estimated ? ' (estimate — road routing unavailable)' : ' by road'}.`);
+    } catch (e) { onemapMsg('error', e.message); }
+  });
+
   document.getElementById('addressBookCloseBtn')?.addEventListener('click', () => document.getElementById('addressBookModal').classList.add('hidden'));
   document.getElementById('addressBookCloseBtn2')?.addEventListener('click', () => document.getElementById('addressBookModal').classList.add('hidden'));
 
