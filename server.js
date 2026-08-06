@@ -6930,6 +6930,8 @@ const AUTH_PUBLIC = new Set([
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
   '/api/shopee/push',     // Shopee Open Platform push mechanism (external caller)
+  '/api/connect/lazada/callback',  // Lazada seller-OAuth redirect (client's browser)
+  '/api/connect/shopee/callback',  // Shopee seller-OAuth redirect (client's browser)
   '/api/version',         // deploy verification — commit + boot time, no data
   '/api/errors',          // client error reporting — logs even if a crash happened pre-login
 ]);
@@ -15697,9 +15699,108 @@ app.post('/api/master/lazada/config', express.json(), (req, res) => {
   const before = !!db.config.lazadaDirectEnabled;
   if (req.body.directEnabled !== undefined) db.config.lazadaDirectEnabled = !!req.body.directEnabled;
   if (typeof req.body.appSecret === 'string' && req.body.appSecret.trim()) db.config.lazadaAppSecret = req.body.appSecret.trim();
+  if (typeof req.body.appKey === 'string' && req.body.appKey.trim()) db.config.lazadaAppKey = req.body.appKey.trim();
   writeDb(db);
   logAudit('lazada_direct_config', { by: req.userId || _tokenUserId(req) || 'master', from: before, to: !!db.config.lazadaDirectEnabled, keySet: !!db.config.lazadaAppSecret });
   res.json({ ok: true, directEnabled: !!db.config.lazadaDirectEnabled, keyConfigured: !!lazadaAppSecret() });
+});
+
+// ── Marketplace seller OAuth — send a client a link, they log in and grant
+//    IdealOne access. Tokens are stored PER CLIENT (the `state` on the link
+//    carries which one). See lib/marketplace-oauth.js for the honest caveat:
+//    the token exchange is built to spec but unverified against a live account.
+const mpOAuth = require('./lib/marketplace-oauth');
+const PUBLIC_ORIGIN = () => (process.env.PUBLIC_ORIGIN || 'https://idealone.tech').replace(/\/+$/, '');
+function marketplaceAuth(db) { return db.marketplaceAuth || (db.marketplaceAuth = { lazada: {}, shopee: {} }); }
+function lazadaAppKey() { return process.env.LAZADA_APP_KEY || (function(){ try { return (readDb().config || {}).lazadaAppKey || ''; } catch { return ''; } })(); }
+function shopeePartnerId() { return process.env.SHOPEE_PARTNER_ID || (function(){ try { return (readDb().config || {}).shopeePartnerId || ''; } catch { return ''; } })(); }
+
+// Generate the authorization link for one client. `state` = the client name,
+// so the callback can file the tokens against them.
+app.get('/api/master/:provider/auth-link', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const provider = req.params.provider;
+  const client = String(req.query.client || '').trim();
+  if (!client) return res.status(400).json({ error: 'client is required' });
+  const state = Buffer.from(client, 'utf8').toString('base64url');
+  try {
+    if (provider === 'lazada') {
+      const appKey = lazadaAppKey();
+      if (!appKey) return res.status(400).json({ error: 'Set the Lazada App Key first.' });
+      const url = mpOAuth.lazadaAuthUrl({ appKey, redirectUri: `${PUBLIC_ORIGIN()}/api/connect/lazada/callback`, state });
+      return res.json({ url, client });
+    }
+    if (provider === 'shopee') {
+      const partnerId = shopeePartnerId(), partnerKey = shopeePartnerKey();
+      if (!partnerId || !partnerKey) return res.status(400).json({ error: 'Set the Shopee Partner ID and Partner Key first.' });
+      // Shopee has no native state param — bake it into the redirect URL.
+      const redirectUri = `${PUBLIC_ORIGIN()}/api/connect/shopee/callback?state=${state}`;
+      const url = mpOAuth.shopeeAuthUrl({ partnerId, partnerKey, redirectUri });
+      return res.json({ url, client });
+    }
+    return res.status(404).json({ error: 'Unknown provider' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Which clients have authorized, per provider (no tokens leaked).
+app.get('/api/master/:provider/authorizations', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const provider = req.params.provider;
+  if (!['lazada', 'shopee'].includes(provider)) return res.status(404).json({ error: 'Unknown provider' });
+  const auth = marketplaceAuth(readDb())[provider] || {};
+  res.json(Object.entries(auth).map(([client, a]) => ({
+    client, authorizedAt: a.at || null, account: a.account || '', shop_id: a.shop_id || '',
+    expiresAt: a.expires_at || null, hasRefresh: !!a.refresh_token,
+  })));
+});
+
+function connectResultPage(ok, msg) {
+  return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+    <div style="font-family:system-ui;max-width:460px;margin:14vh auto;text-align:center;padding:1.5rem">
+      <div style="font-size:2.6rem">${ok ? '✅' : '⚠️'}</div>
+      <h2 style="margin:.4rem 0">${ok ? 'Connected' : 'Could not connect'}</h2>
+      <p style="color:#475569">${msg}</p>
+      <p style="color:#94a3b8;font-size:.85rem">You can close this window.</p>
+    </div>`;
+}
+
+app.get('/api/connect/lazada/callback', async (req, res) => {
+  const code = String(req.query.code || '');
+  const client = (() => { try { return Buffer.from(String(req.query.state || ''), 'base64url').toString('utf8'); } catch { return ''; } })();
+  if (!code || !client) return res.status(400).send(connectResultPage(false, 'Missing authorization code.'));
+  try {
+    const r = await mpOAuth.lazadaExchangeToken({ appKey: lazadaAppKey(), appSecret: lazadaAppSecret(), code, endpointBase: process.env.LAZADA_TOKEN_BASE || undefined });
+    if (!r.ok) { logAudit('lazada_oauth_failed', { client, error: String(r.error).slice(0, 200) }); return res.status(502).send(connectResultPage(false, 'Lazada did not accept the authorization. Please try again.')); }
+    const db = readDb();
+    marketplaceAuth(db).lazada[client] = {
+      access_token: r.access_token, refresh_token: r.refresh_token,
+      expires_at: r.expires_in ? new Date(Date.now() + r.expires_in * 1000).toISOString() : null,
+      refresh_expires_at: r.refresh_expires_in ? new Date(Date.now() + r.refresh_expires_in * 1000).toISOString() : null,
+      account: r.account, at: new Date().toISOString(),
+    };
+    writeDb(db);
+    logAudit('lazada_oauth_connected', { client, account: r.account });
+    res.send(connectResultPage(true, `Your Lazada account is now connected to IdealOne for ${String(client).replace(/[<>&"]/g,"")}.`));
+  } catch (e) { logAudit('lazada_oauth_error', { client, error: e.message }); res.status(500).send(connectResultPage(false, 'Something went wrong. Please try again.')); }
+});
+
+app.get('/api/connect/shopee/callback', async (req, res) => {
+  const code = String(req.query.code || ''), shopId = String(req.query.shop_id || '');
+  const client = (() => { try { return Buffer.from(String(req.query.state || ''), 'base64url').toString('utf8'); } catch { return ''; } })();
+  if (!code || !client) return res.status(400).send(connectResultPage(false, 'Missing authorization code.'));
+  try {
+    const r = await mpOAuth.shopeeExchangeToken({ partnerId: shopeePartnerId(), partnerKey: shopeePartnerKey(), code, shopId, apiBase: process.env.SHOPEE_API_BASE || undefined });
+    if (!r.ok) { logAudit('shopee_oauth_failed', { client, error: String(r.error).slice(0, 200) }); return res.status(502).send(connectResultPage(false, 'Shopee did not accept the authorization. Please try again.')); }
+    const db = readDb();
+    marketplaceAuth(db).shopee[client] = {
+      access_token: r.access_token, refresh_token: r.refresh_token,
+      expires_at: r.expires_in ? new Date(Date.now() + r.expires_in * 1000).toISOString() : null,
+      shop_id: r.shop_id, at: new Date().toISOString(),
+    };
+    writeDb(db);
+    logAudit('shopee_oauth_connected', { client, shop_id: r.shop_id });
+    res.send(connectResultPage(true, `Your Shopee shop is now connected to IdealOne for ${String(client).replace(/[<>&"]/g,"")}.`));
+  } catch (e) { logAudit('shopee_oauth_error', { client, error: e.message }); res.status(500).send(connectResultPage(false, 'Something went wrong. Please try again.')); }
 });
 
 // ── Shopee Open Platform — Push (webhook) receiver ──────────────────────────
@@ -15907,6 +16008,7 @@ app.post('/api/master/shopee/config', express.json(), (req, res) => {
   if (typeof req.body.partnerKey === 'string' && req.body.partnerKey.trim()) {
     db.config.shopeePushPartnerKey = req.body.partnerKey.trim();
   }
+  if (typeof req.body.partnerId === 'string' && req.body.partnerId.trim()) db.config.shopeePartnerId = req.body.partnerId.trim();
   writeDb(db);
   logAudit('shopee_direct_config', {
     by: req.userId || _tokenUserId(req) || 'master',

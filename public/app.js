@@ -10656,6 +10656,39 @@
     error: '⚠ error', null: 'logged only',
   };
   const LAZADA_ACTION_LABEL = SHOPEE_ACTION_LABEL;   // same vocabulary
+
+  // ── Seller-OAuth: generate a login link for one client, list who's connected.
+  // Shared by both marketplace panels — same flow, different provider.
+  async function mpLoadAuthList(provider) {
+    const el = document.getElementById(provider + 'AuthList'); if (!el) return;
+    try {
+      const r = await fetch(`/api/master/${provider}/authorizations`, { headers: { 'x-master-key': LOG_PASSWORD } });
+      const rows = r.ok ? await r.json() : [];
+      el.innerHTML = rows.length
+        ? '<div class="hint" style="margin-top:.2rem">Connected: ' + rows.map(a =>
+            `<b>${esc(a.client)}</b>${a.shop_id ? ' (shop ' + esc(String(a.shop_id)) + ')' : ''}`).join(', ') + '</div>'
+        : '<div class="hint" style="margin-top:.2rem;color:#94a3b8">No clients connected yet.</div>';
+    } catch (_) { el.innerHTML = ''; }
+  }
+  function wireMpAuth(provider) {
+    document.getElementById(provider + 'AuthLinkBtn')?.addEventListener('click', async () => {
+      const client = (document.getElementById(provider + 'AuthClient')?.value || '').trim();
+      const out = document.getElementById(provider + 'AuthLinkOut');
+      if (!client) { if (out) out.innerHTML = '<span class="hint" style="color:#d97706">Type the client name first.</span>'; return; }
+      try {
+        const r = await fetch(`/api/master/${provider}/auth-link?client=${encodeURIComponent(client)}`, { headers: { 'x-master-key': LOG_PASSWORD } });
+        const d = await r.json();
+        if (!r.ok) { if (out) out.innerHTML = `<span class="hint" style="color:#dc2626">${esc(d.error || 'Failed')}</span>`; return; }
+        if (out) out.innerHTML = `
+          <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+            <input readonly value="${esc(d.url)}" style="flex:1;min-width:220px;padding:.4rem .6rem;border:1px solid #e2e8f0;border-radius:6px;font-size:.8rem" onclick="this.select()" />
+            <button class="btn-secondary btn-sm" onclick="navigator.clipboard.writeText('${esc(d.url).replace(/'/g, "\\'")}').then(()=>{this.textContent='Copied ✓'})">Copy</button>
+          </div>
+          <div class="hint" style="margin-top:.2rem">Send this to <b>${esc(client)}</b>. They log in and grant access; you'll see them appear as connected.</div>`;
+      } catch (e) { if (out) out.innerHTML = `<span class="hint" style="color:#dc2626">${esc(e.message)}</span>`; }
+    });
+  }
+  wireMpAuth('shopee'); wireMpAuth('lazada');
   async function loadShopeeDirect() {
     const list = document.getElementById('shopeePushList');
     if (!list) return;
@@ -10678,6 +10711,7 @@
               <td>${esc(SHOPEE_ACTION_LABEL[e.action] || String(e.action ?? 'logged only'))}</td>
             </tr>`).join('') + '</tbody></table>'
         : '<div class="hint" style="padding:.6rem">No pushes received yet. Send one from Shopee → Push Mechanism → "Push Test Data".</div>';
+      mpLoadAuthList('shopee');
     } catch (e) { list.innerHTML = `<div class="hint" style="padding:.6rem">${esc(e.message)}</div>`; }
   }
   document.getElementById('shopeeRefreshBtn')?.addEventListener('click', loadShopeeDirect);
@@ -10698,16 +10732,20 @@
   });
   document.getElementById('shopeeSaveKeyBtn')?.addEventListener('click', async () => {
     const inp = document.getElementById('shopeePartnerKey');
+    const pid = (document.getElementById('shopeePartnerId')?.value || '').trim();
     const key = (inp?.value || '').trim();
-    if (!key) return shopeeCfgMsg('error', 'Paste the live Push Partner Key first.');
+    if (!key && !pid) return shopeeCfgMsg('error', 'Enter the Partner ID and/or Partner Key.');
     try {
+      const body = {};
+      if (key) body.partnerKey = key;
+      if (pid) body.partnerId = pid;
       const r = await fetch('/api/master/shopee/config', { method: 'POST',
         headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partnerKey: key }) });
+        body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) return shopeeCfgMsg('error', d.error || 'Failed');
       if (inp) inp.value = '';
-      shopeeCfgMsg('success', '✓ Partner key saved. Shopee\'s pushes will now be verified.');
+      shopeeCfgMsg('success', '✓ Saved. Shopee credentials updated.');
       loadShopeeDirect();
     } catch (err) { shopeeCfgMsg('error', err.message); }
   });
@@ -10739,6 +10777,7 @@
               <td>${esc(LAZADA_ACTION_LABEL[e.action] || String(e.action ?? 'logged only'))}</td>
             </tr>`).join('') + '</tbody></table>'
         : '<div class="hint" style="padding:.6rem">No pushes received yet.</div>';
+      mpLoadAuthList('lazada');
     } catch (e) { list.innerHTML = `<div class="hint" style="padding:.6rem">${esc(e.message)}</div>`; }
   }
   document.getElementById('lazadaRefreshBtn')?.addEventListener('click', loadLazadaDirect);
@@ -10759,16 +10798,20 @@
   });
   document.getElementById('lazadaSaveKeyBtn')?.addEventListener('click', async () => {
     const inp = document.getElementById('lazadaAppSecret');
+    const appKey = (document.getElementById('lazadaAppKey')?.value || '').trim();
     const key = (inp?.value || '').trim();
-    if (!key) return lazadaCfgMsg('error', 'Paste the Lazada App Secret first.');
+    if (!key && !appKey) return lazadaCfgMsg('error', 'Enter the App Key and/or App Secret.');
     try {
+      const body = {};
+      if (key) body.appSecret = key;
+      if (appKey) body.appKey = appKey;
       const r = await fetch('/api/master/lazada/config', { method: 'POST',
         headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appSecret: key }) });
+        body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) return lazadaCfgMsg('error', d.error || 'Failed');
       if (inp) inp.value = '';
-      lazadaCfgMsg('success', '✓ App secret saved. Lazada\'s pushes will now be verified.');
+      lazadaCfgMsg('success', '✓ Saved. Lazada credentials updated.');
       loadLazadaDirect();
     } catch (err) { lazadaCfgMsg('error', err.message); }
   });

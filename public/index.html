@@ -2189,11 +2189,24 @@
           <span id="shopeeKeyState" class="hint"></span>
         </div>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.4rem">
-          <input type="password" id="shopeePartnerKey" placeholder="Live Push Partner Key (leave blank to keep current)"
-                 style="flex:1;min-width:260px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
-          <button class="btn-primary btn-sm" id="shopeeSaveKeyBtn">Save Key</button>
+          <input type="text" id="shopeePartnerId" placeholder="Partner ID"
+                 style="width:130px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
+          <input type="password" id="shopeePartnerKey" placeholder="Partner Key (leave blank to keep current)"
+                 style="flex:1;min-width:220px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
+          <button class="btn-primary btn-sm" id="shopeeSaveKeyBtn">Save</button>
         </div>
         <div id="shopeeCfgMsg" class="status-bar hidden" style="margin:.4rem 0"></div>
+        <div style="margin:.6rem 0;padding:.6rem;background:#f8fafc;border-radius:8px">
+          <b style="font-size:.85rem">&#128279; Send a client a login link</b>
+          <div class="hint" style="margin:.15rem 0 .4rem">The client clicks it, logs into their own Shopee account, and grants IdealOne access.</div>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+            <input type="text" id="shopeeAuthClient" placeholder="Client name" list="obClientList"
+                   style="flex:1;min-width:180px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+            <button class="btn-secondary btn-sm" id="shopeeAuthLinkBtn">Generate link</button>
+          </div>
+          <div id="shopeeAuthLinkOut" style="margin-top:.4rem"></div>
+          <div id="shopeeAuthList" style="margin-top:.4rem"></div>
+        </div>
         <div style="margin-top:.6rem">
           <b style="font-size:.85rem">Recent pushes from Shopee</b>
           <div id="shopeePushList" class="dcs-wrap" style="margin-top:.4rem"></div>
@@ -2216,11 +2229,24 @@
           <span id="lazadaKeyState" class="hint"></span>
         </div>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.4rem">
-          <input type="password" id="lazadaAppSecret" placeholder="Lazada App Secret (leave blank to keep current)"
-                 style="flex:1;min-width:260px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
-          <button class="btn-primary btn-sm" id="lazadaSaveKeyBtn">Save Secret</button>
+          <input type="text" id="lazadaAppKey" placeholder="App Key"
+                 style="width:130px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
+          <input type="password" id="lazadaAppSecret" placeholder="App Secret (leave blank to keep current)"
+                 style="flex:1;min-width:220px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
+          <button class="btn-primary btn-sm" id="lazadaSaveKeyBtn">Save</button>
         </div>
         <div id="lazadaCfgMsg" class="status-bar hidden" style="margin:.4rem 0"></div>
+        <div style="margin:.6rem 0;padding:.6rem;background:#f8fafc;border-radius:8px">
+          <b style="font-size:.85rem">&#128279; Send a client a login link</b>
+          <div class="hint" style="margin:.15rem 0 .4rem">The client clicks it, logs into their own Lazada account, and grants IdealOne access.</div>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+            <input type="text" id="lazadaAuthClient" placeholder="Client name" list="obClientList"
+                   style="flex:1;min-width:180px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+            <button class="btn-secondary btn-sm" id="lazadaAuthLinkBtn">Generate link</button>
+          </div>
+          <div id="lazadaAuthLinkOut" style="margin-top:.4rem"></div>
+          <div id="lazadaAuthList" style="margin-top:.4rem"></div>
+        </div>
         <div style="margin-top:.6rem">
           <b style="font-size:.85rem">Recent pushes from Lazada</b>
           <div id="lazadaPushList" class="dcs-wrap" style="margin-top:.4rem"></div>
