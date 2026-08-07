@@ -16317,11 +16317,19 @@ function verifyShopeePush(req) {
       xfProto ? `${xfProto}://${host}${path}` : '',
       `${req.protocol}://${host}${path}`,
     ].filter(Boolean))];
-    const candidates = urls.map(u => ({
-      scheme: u.split('://')[0] + '://…' + path,
-      url: u,
-      value: crypto.createHmac('sha256', key).update(`${u}|${raw}`).digest('hex'),
-    }));
+    // Both keys are tried: the push key (documented for webhooks) and, when it
+    // differs, the Live API partner key — console "Push Test Data" pushes have
+    // been observed not to match the push key, so the viewer showing which key
+    // matched settles it empirically instead of by guesswork.
+    const apiKey = shopeeApiPartnerKey();
+    const keyVariants = [{ label: 'push-key', k: key }];
+    if (apiKey && apiKey !== key) keyVariants.push({ label: 'api-key', k: apiKey });
+    const candidates = [];
+    for (const u of urls) for (const kv of keyVariants) candidates.push({
+      scheme: `${kv.label} · ${u.split('://')[0]}://…${path}`,
+      url: `${u} (${kv.label})`,
+      value: crypto.createHmac('sha256', kv.k).update(`${u}|${raw}`).digest('hex'),
+    });
     const got = String(req.headers['authorization'] || '').trim();
     if (!got) return { configured: true, verified: false, computed: candidates };
     const b = Buffer.from(got.toLowerCase());
