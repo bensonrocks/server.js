@@ -16165,7 +16165,19 @@ app.get('/api/master/connections/health', (req, res) => {
       via: a.via || 'oauth',
     }));
     const last = (db[logKey] || []).slice(-1)[0];
-    return { clients, lastPushAt: last?.at || null, lastPushVerified: last?.verified ?? null, lastPushAction: last?.action || null };
+    // Last OAuth attempt, from the audit trail — so a client hitting "Could
+    // not connect" is diagnosable from the health check instead of a mystery.
+    const oauthEvents = (db.auditLog || []).slice(-800).filter(e =>
+      e.type === `${provider}_oauth_connected` || e.type === `${provider}_oauth_failed` ||
+      e.type === `${provider}_oauth_error` || e.type === `${provider}_oauth_manual`);
+    const lo = oauthEvents[oauthEvents.length - 1];
+    const lastOAuth = lo ? {
+      at: lo.at || null,
+      outcome: lo.type.replace(`${provider}_oauth_`, ''),
+      client: lo.client || '',
+      error: lo.error || '',
+    } : null;
+    return { clients, lastPushAt: last?.at || null, lastPushVerified: last?.verified ?? null, lastPushAction: last?.action || null, lastOAuth };
   };
   res.json({
     generatedAt: new Date().toISOString(),

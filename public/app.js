@@ -10907,6 +10907,10 @@
         const rows = [];
         rows.push(`${dot(p.secretSet ? G : A)}${p.secretSet ? 'Credentials set' : 'No app secret/key yet'} · pushes ${p.directEnabled ? '<b style="color:#d97706">ACTING</b>' : 'logged only (off)'}`);
         rows.push(`${dot(p.lastPushAt ? G : N)}Last push: ${when(p.lastPushAt)}${p.lastPushAt ? ` · verified: ${p.lastPushVerified ? '✓' : '—'} · ${esc(String(p.lastPushAction || ''))}` : ''}`);
+        if (p.lastOAuth) {
+          const ok = p.lastOAuth.outcome === 'connected' || p.lastOAuth.outcome === 'manual';
+          rows.push(`${dot(ok ? G : R)}Last authorization: ${ok ? `✓ ${esc(p.lastOAuth.client)} connected` : `<b style="color:#dc2626">failed</b>${p.lastOAuth.client ? ' for ' + esc(p.lastOAuth.client) : ''}${p.lastOAuth.error ? ' — ' + esc(p.lastOAuth.error) : ''}`} (${when(p.lastOAuth.at)})`);
+        }
         if (!p.clients.length) rows.push(`${dot(N)}No clients connected.`);
         p.clients.forEach(c => {
           const col = c.refreshError ? R : c.tokenValid ? G : (c.canRefresh ? A : R);
