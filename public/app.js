@@ -10970,14 +10970,30 @@
         ? `<span style="color:#16a34a">&#10003; App secret set${d.keyFromEnv ? ' (from server env)' : ''}</span>`
         : `<span style="color:#d97706">&#9888; No app secret yet — pushes stay unverified</span>`;
       const rows = (d.recent || []);
+      // Pull full detail (raw body + headers + sign) so each row can expand —
+      // this is what lets us match Lazada's real signing when a push comes back
+      // "signature not verified". Same order as `recent`, so index i aligns.
+      let detail = [];
+      try { const dr = await fetch('/api/master/lazada/push-detail', { headers: { 'x-master-key': LOG_PASSWORD } }); if (dr.ok) detail = (await dr.json()).entries || []; } catch (_) {}
       list.innerHTML = rows.length
-        ? `<table class="dcs-table"><thead><tr><th>When</th><th>Type</th><th>Verified</th><th>What happened</th></tr></thead><tbody>`
-          + rows.map(e => `<tr>
+        ? `<table class="dcs-table"><thead><tr><th>When</th><th>Type</th><th>Verified</th><th>What happened</th><th></th></tr></thead><tbody>`
+          + rows.map((e, i) => {
+              const det = detail[i] || {};
+              const raw = det.rawBody || '';
+              const hdrs = det.headers ? Object.entries(det.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+              const detHtml = `<tr id="lzdDet${i}" style="display:none"><td colspan="5" style="background:#f8fafc">
+                <div style="font-size:11px;margin:.3rem 0"><b>Sign field/header:</b> <code>${esc(det.sign || '(none found)')}</code></div>
+                <div style="font-size:11px;margin:.3rem 0"><b>Raw body (what a signature is computed over):</b><pre style="white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:.5rem;max-height:180px;overflow:auto">${esc(raw || '(empty)')}</pre></div>
+                <div style="font-size:11px;margin:.3rem 0"><b>Headers:</b><pre style="white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:.5rem;max-height:180px;overflow:auto">${esc(hdrs || '(none)')}</pre></div>
+              </td></tr>`;
+              return `<tr>
               <td>${new Date(e.at).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false })}</td>
               <td>${esc(String(e.code ?? ''))}</td>
               <td>${e.verified ? '<span style="color:#16a34a">✓</span>' : '<span style="color:#94a3b8">—</span>'}</td>
               <td>${esc(LAZADA_ACTION_LABEL[e.action] || String(e.action ?? 'logged only'))}</td>
-            </tr>`).join('') + '</tbody></table>'
+              <td><button class="btn-secondary btn-sm" onclick="var d=document.getElementById('lzdDet${i}');d.style.display=d.style.display==='none'?'table-row':'none'">raw</button></td>
+            </tr>${detHtml}`;
+            }).join('') + '</tbody></table>'
         : '<div class="hint" style="padding:.6rem">No pushes received yet.</div>';
       mpLoadAuthList('lazada');
     } catch (e) { list.innerHTML = `<div class="hint" style="padding:.6rem">${esc(e.message)}</div>`; }

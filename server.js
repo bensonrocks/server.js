@@ -696,7 +696,18 @@ setInterval(() => {
   for (const [k, e] of _loginFails) if ((e.seen || 0) < cutoff && (e.blockedUntil || 0) < Date.now()) _loginFails.delete(k);
 }, 10 * 60 * 1000).unref?.();
 
-app.use(express.json());
+// The global JSON parser also STASHES THE RAW BODY for the marketplace webhook
+// paths — a signature is computed over the exact bytes, and without this the
+// global parser consumes the stream before a route-level `verify` can capture
+// it, so verification would fall back to a re-serialised body that never
+// matches. Scoped to the webhook paths so we don't hold a raw copy for every
+// request. (Route-level express.json on those paths still runs harmlessly.)
+const RAW_BODY_PATHS = /^\/api\/(lazada\/callback|shopee\/push)\b/;
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    try { if (buf && buf.length && RAW_BODY_PATHS.test(req.url || '')) req.rawBody = buf.toString('utf8'); } catch (_) {}
+  },
+}));
 // ── Tenant resolution ──────────────────────────────────────────────────────
 // Runs on every request, BEFORE any route. Resolves the caller's tenant from
 // their session token (same x-auth-token header every route already uses)
@@ -15773,6 +15784,19 @@ function lazadaDirectEnabled(db) {
   try { return !!((db || readDb()).config || {}).lazadaDirectEnabled; }
   catch { return false; }
 }
+// Capture webhook headers for signature diagnosis. Keeps everything a signing
+// scheme might use (including Authorization/sign headers — that's the point);
+// drops only cookies, and caps each value so a stray huge header can't bloat db.
+function captureWebhookHeaders(req) {
+  const out = {};
+  try {
+    for (const [k, v] of Object.entries(req.headers || {})) {
+      if (/^cookie$/i.test(k)) continue;
+      out[k] = String(Array.isArray(v) ? v.join(',') : v).slice(0, 400);
+    }
+  } catch (_) {}
+  return out;
+}
 function lazadaAppSecret() {
   if (process.env.LAZADA_APP_SECRET) return process.env.LAZADA_APP_SECRET;
   try { return (readDb().config || {}).lazadaAppSecret || ''; } catch { return ''; }
@@ -15872,6 +15896,12 @@ app.all('/api/lazada/callback',
         keyConfigured: sig.configured,
         action,
         query: req.query || {},
+        // Diagnostic capture so the actual signing scheme can be matched: the
+        // exact raw bytes (what a signature is computed over), the headers (the
+        // sign may ride in one), and the sign field if present in the body.
+        rawBody: String(req.rawBody || '').slice(0, 6000),
+        headers: captureWebhookHeaders(req),
+        sign: String((req.body && (req.body.sign || req.body.signature)) || req.headers['x-lazada-sign'] || '').slice(0, 300),
         body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
       });
       if (db.lazadaPushLog.length > 200) db.lazadaPushLog.splice(0, db.lazadaPushLog.length - 200);
@@ -15988,6 +16018,24 @@ app.post('/api/master/:provider/manual-auth', express.json(), async (req, res) =
     logAudit(`${provider}_oauth_manual`, { by: req.userId || _tokenUserId(req) || 'master', client, mode: req.body.code ? 'code' : 'token' });
     res.json({ ok: true, client, account: record.account || '', expiresAt: record.expires_at || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Full push-log detail (raw body + headers + sign) for signature diagnosis —
+// the raw-push viewer behind each row of the Recent-pushes table. Same order
+// as the config route's `recent` (both slice(-20).reverse()), so row index N
+// on screen maps to entries[N] here. Master-gated (raw bodies + headers).
+app.get('/api/master/:provider/push-detail', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const provider = req.params.provider;
+  const logKey = provider === 'lazada' ? 'lazadaPushLog' : provider === 'shopee' ? 'shopeePushLog' : null;
+  if (!logKey) return res.status(404).json({ error: 'Unknown provider' });
+  const db = readDb();
+  const entries = (db[logKey] || []).slice(-20).reverse().map(e => ({
+    at: e.at, method: e.method, code: e.code, verified: e.verified, action: e.action,
+    sign: e.sign || '', headers: e.headers || {}, rawBody: e.rawBody || '',
+    body: e.body || {}, query: e.query || {},
+  }));
+  res.json({ entries });
 });
 
 // Which clients have authorized, per provider (no tokens leaked).
@@ -16216,6 +16264,9 @@ app.all('/api/shopee/push',
         verified: sig.verified,
         keyConfigured: sig.configured,
         action,
+        rawBody: String(req.rawBody || '').slice(0, 6000),
+        headers: captureWebhookHeaders(req),
+        sign: String(req.headers['authorization'] || req.headers['x-shopee-sign'] || '').slice(0, 300),
         body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
       });
       if (db.shopeePushLog.length > 200) db.shopeePushLog.splice(0, db.shopeePushLog.length - 200);
