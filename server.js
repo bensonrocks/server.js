@@ -15806,12 +15806,22 @@ function verifyLazadaPush(req) {
   if (!key) return { configured: false, verified: false };
   try {
     const raw = (req.rawBody != null) ? req.rawBody : JSON.stringify(req.body || {});
-    const sign = String((req.body && (req.body.sign || req.body.signature)) || req.headers['x-lazada-sign'] || '').trim();
-    if (!sign) return { configured: true, verified: false };
-    const expected = crypto.createHmac('sha256', key).update(raw).digest('hex');
-    const a = Buffer.from(expected.toLowerCase()), b = Buffer.from(sign.toLowerCase());
+    // Lazada delivers the push signature in the AUTHORIZATION header (confirmed
+    // from a captured real push — NOT a body `sign` field or x-lazada-sign).
+    // A scheme prefix (rare) → take the last token. Body/header fallbacks kept.
+    let sign = String(
+      req.headers['authorization'] ||
+      (req.body && (req.body.sign || req.body.signature)) ||
+      req.headers['x-lazada-sign'] || ''
+    ).trim();
+    if (/\s/.test(sign)) sign = sign.split(/\s+/).pop();
+    // HMAC-SHA256 over the exact raw body, hex. `computed` is returned so the
+    // raw-push viewer can show expected-vs-received when it doesn't match.
+    const computed = crypto.createHmac('sha256', key).update(raw, 'utf8').digest('hex');
+    if (!sign) return { configured: true, verified: false, computed };
+    const a = Buffer.from(computed.toLowerCase()), b = Buffer.from(sign.toLowerCase());
     const verified = a.length === b.length && crypto.timingSafeEqual(a, b);
-    return { configured: true, verified };
+    return { configured: true, verified, computed };
   } catch (e) { return { configured: true, verified: false, error: e.message }; }
 }
 function lazadaFindOrder(db, orderId, tracking) {
@@ -15901,7 +15911,8 @@ app.all('/api/lazada/callback',
         // sign may ride in one), and the sign field if present in the body.
         rawBody: String(req.rawBody || '').slice(0, 6000),
         headers: captureWebhookHeaders(req),
-        sign: String((req.body && (req.body.sign || req.body.signature)) || req.headers['x-lazada-sign'] || '').slice(0, 300),
+        sign: String(req.headers['authorization'] || (req.body && (req.body.sign || req.body.signature)) || req.headers['x-lazada-sign'] || '').slice(0, 300),
+        computed: sig.computed || '',
         body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
       });
       if (db.lazadaPushLog.length > 200) db.lazadaPushLog.splice(0, db.lazadaPushLog.length - 200);
@@ -16032,7 +16043,7 @@ app.get('/api/master/:provider/push-detail', (req, res) => {
   const db = readDb();
   const entries = (db[logKey] || []).slice(-20).reverse().map(e => ({
     at: e.at, method: e.method, code: e.code, verified: e.verified, action: e.action,
-    sign: e.sign || '', headers: e.headers || {}, rawBody: e.rawBody || '',
+    sign: e.sign || '', computed: e.computed || '', headers: e.headers || {}, rawBody: e.rawBody || '',
     body: e.body || {}, query: e.query || {},
   }));
   res.json({ entries });

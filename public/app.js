@@ -10981,8 +10981,10 @@
               const det = detail[i] || {};
               const raw = det.rawBody || '';
               const hdrs = det.headers ? Object.entries(det.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+              const match = det.sign && det.computed && det.sign.toLowerCase() === det.computed.toLowerCase();
               const detHtml = `<tr id="lzdDet${i}" style="display:none"><td colspan="5" style="background:#f8fafc">
-                <div style="font-size:11px;margin:.3rem 0"><b>Sign field/header:</b> <code>${esc(det.sign || '(none found)')}</code></div>
+                <div style="font-size:11px;margin:.3rem 0"><b>Signature (Authorization header):</b> <code>${esc(det.sign || '(none found)')}</code></div>
+                ${det.computed ? `<div style="font-size:11px;margin:.3rem 0"><b>We computed (HMAC-SHA256 of raw body):</b> <code>${esc(det.computed)}</code> ${match ? '<span style="color:#16a34a">✓ match</span>' : '<span style="color:#dc2626">✗ differs</span>'}</div>` : ''}
                 <div style="font-size:11px;margin:.3rem 0"><b>Raw body (what a signature is computed over):</b><pre style="white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:.5rem;max-height:180px;overflow:auto">${esc(raw || '(empty)')}</pre></div>
                 <div style="font-size:11px;margin:.3rem 0"><b>Headers:</b><pre style="white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:.5rem;max-height:180px;overflow:auto">${esc(hdrs || '(none)')}</pre></div>
               </td></tr>`;
