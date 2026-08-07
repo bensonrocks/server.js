@@ -10988,12 +10988,15 @@
   });
   document.getElementById('shopeeSaveKeyBtn')?.addEventListener('click', async () => {
     const inp = document.getElementById('shopeePartnerKey');
+    const apiInp = document.getElementById('shopeeApiPartnerKey');
     const pid = (document.getElementById('shopeePartnerId')?.value || '').trim();
     const key = (inp?.value || '').trim();
-    if (!key && !pid) return shopeeCfgMsg('error', 'Enter the Partner ID and/or Partner Key.');
+    const apiKey = (apiInp?.value || '').trim();
+    if (!key && !pid && !apiKey) return shopeeCfgMsg('error', 'Enter the Partner ID and/or a key.');
     try {
       const body = {};
       if (key) body.partnerKey = key;
+      if (apiKey) body.apiPartnerKey = apiKey;
       if (pid) body.partnerId = pid;
       const r = await fetch('/api/master/shopee/config', { method: 'POST',
         headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' },
@@ -11001,6 +11004,7 @@
       const d = await r.json();
       if (!r.ok) return shopeeCfgMsg('error', d.error || 'Failed');
       if (inp) inp.value = '';
+      if (apiInp) apiInp.value = '';
       shopeeCfgMsg('success', '✓ Saved. Shopee credentials updated.');
       loadShopeeDirect();
     } catch (err) { shopeeCfgMsg('error', err.message); }

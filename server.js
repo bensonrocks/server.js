@@ -15988,7 +15988,7 @@ app.get('/api/master/:provider/auth-link', (req, res) => {
       return res.json({ url, client });
     }
     if (provider === 'shopee') {
-      const partnerId = shopeePartnerId(), partnerKey = shopeePartnerKey();
+      const partnerId = shopeePartnerId(), partnerKey = shopeeApiPartnerKey();
       if (!partnerId || !partnerKey) return res.status(400).json({ error: 'Set the Shopee Partner ID and Partner Key first.' });
       // Shopee has no native state param — bake it into the redirect URL.
       const redirectUri = `${PUBLIC_ORIGIN()}/api/connect/shopee/callback?state=${state}`;
@@ -16022,7 +16022,7 @@ app.post('/api/master/:provider/manual-auth', express.json(), async (req, res) =
         if (!r.ok) return res.status(502).json({ error: `Code exchange failed: ${r.error || 'unknown'}` });
         record = { access_token: r.access_token, refresh_token: r.refresh_token, expires_at: r.expires_in ? new Date(Date.now() + r.expires_in * 1000).toISOString() : null, account: r.account, at: new Date().toISOString(), via: 'manual-code' };
       } else {
-        r = await mpOAuth.shopeeExchangeToken({ partnerId: shopeePartnerId(), partnerKey: shopeePartnerKey(), code, shopId: req.body.shopId, apiBase: process.env.SHOPEE_API_BASE || undefined });
+        r = await mpOAuth.shopeeExchangeToken({ partnerId: shopeePartnerId(), partnerKey: shopeeApiPartnerKey(), code, shopId: req.body.shopId, apiBase: process.env.SHOPEE_API_BASE || undefined });
         if (!r.ok) return res.status(502).json({ error: `Code exchange failed: ${r.error || 'unknown'}` });
         record = { access_token: r.access_token, refresh_token: r.refresh_token, expires_at: r.expires_in ? new Date(Date.now() + r.expires_in * 1000).toISOString() : null, shop_id: r.shop_id, at: new Date().toISOString(), via: 'manual-code' };
       }
@@ -16107,7 +16107,7 @@ async function refreshMarketplaceTokens(trigger) {
         try {
           const r = provider === 'lazada'
             ? await mpOAuth.lazadaRefreshToken({ appKey: lazadaAppKey(), appSecret: lazadaAppSecret(), refreshToken: rec.refresh_token, endpointBase: process.env.LAZADA_TOKEN_BASE || undefined })
-            : await mpOAuth.shopeeRefreshToken({ partnerId: shopeePartnerId(), partnerKey: shopeePartnerKey(), refreshToken: rec.refresh_token, shopId: rec.shop_id, apiBase: process.env.SHOPEE_API_BASE || undefined });
+            : await mpOAuth.shopeeRefreshToken({ partnerId: shopeePartnerId(), partnerKey: shopeeApiPartnerKey(), refreshToken: rec.refresh_token, shopId: rec.shop_id, apiBase: process.env.SHOPEE_API_BASE || undefined });
           rec.last_refresh_at = new Date().toISOString();
           if (r.ok) {
             rec.access_token = r.access_token;
@@ -16191,6 +16191,7 @@ app.get('/api/master/connections/health', (req, res) => {
     },
     shopee: {
       partnerIdSet: !!shopeePartnerId(), secretSet: !!shopeePartnerKey(),
+      apiKeySet: !!(process.env.SHOPEE_API_PARTNER_KEY || (db.config || {}).shopeeApiPartnerKey),
       directEnabled: !!(db.config || {}).shopeeDirectEnabled,
       ...provHealth('shopee', 'shopeePushLog'),
     },
@@ -16254,7 +16255,7 @@ app.get('/api/connect/shopee/callback', async (req, res) => {
   const client = (() => { try { return Buffer.from(String(req.query.state || ''), 'base64url').toString('utf8'); } catch { return ''; } })();
   if (!code || !client) return res.status(400).send(connectResultPage(false, 'Missing authorization code.'));
   try {
-    const r = await mpOAuth.shopeeExchangeToken({ partnerId: shopeePartnerId(), partnerKey: shopeePartnerKey(), code, shopId, apiBase: process.env.SHOPEE_API_BASE || undefined });
+    const r = await mpOAuth.shopeeExchangeToken({ partnerId: shopeePartnerId(), partnerKey: shopeeApiPartnerKey(), code, shopId, apiBase: process.env.SHOPEE_API_BASE || undefined });
     if (!r.ok) { logAudit('shopee_oauth_failed', { client, error: String(r.error).slice(0, 200) }); return res.status(502).send(connectResultPage(false, 'Shopee did not accept the authorization. Please try again.')); }
     const db = readDb();
     marketplaceAuth(db).shopee[client] = {
@@ -16284,6 +16285,16 @@ app.get('/api/connect/shopee/callback', async (req, res) => {
 function shopeePartnerKey() {
   if (process.env.SHOPEE_PUSH_PARTNER_KEY) return process.env.SHOPEE_PUSH_PARTNER_KEY;
   try { return (readDb().config || {}).shopeePushPartnerKey || ''; } catch { return ''; }
+}
+// Shopee issues TWO different keys: the LIVE API PARTNER KEY (App console →
+// APP Key section — signs OAuth/token/API calls) and the LIVE PUSH PARTNER KEY
+// (Push Setting → Generate — signs incoming webhooks). Conflating them breaks
+// whichever flow got the wrong key. shopeePartnerKey() above = the PUSH key
+// (verification); this = the API key (auth-link/exchange/refresh), falling
+// back to the push key only so an already-working single-key setup keeps working.
+function shopeeApiPartnerKey() {
+  if (process.env.SHOPEE_API_PARTNER_KEY) return process.env.SHOPEE_API_PARTNER_KEY;
+  try { const c = readDb().config || {}; return c.shopeeApiPartnerKey || c.shopeePushPartnerKey || ''; } catch { return ''; }
 }
 function verifyShopeePush(req) {
   const key = shopeePartnerKey();
@@ -16461,6 +16472,7 @@ app.get('/api/master/shopee/config', (req, res) => {
     directEnabled: !!c.shopeeDirectEnabled,
     keyConfigured: !!shopeePartnerKey(),
     keyFromEnv: !!process.env.SHOPEE_PUSH_PARTNER_KEY,
+    apiKeyConfigured: !!(process.env.SHOPEE_API_PARTNER_KEY || c.shopeeApiPartnerKey),
     recent: (db.shopeePushLog || []).slice(-20).reverse().map(e => ({
       at: e.at, code: e.code, verified: e.verified, action: e.action,
     })),
@@ -16475,6 +16487,11 @@ app.post('/api/master/shopee/config', express.json(), (req, res) => {
   // Blank leaves the stored key alone; an env-set key always wins at read time.
   if (typeof req.body.partnerKey === 'string' && req.body.partnerKey.trim()) {
     db.config.shopeePushPartnerKey = req.body.partnerKey.trim();
+  }
+  // The LIVE API PARTNER KEY (App console → APP Key) — a DIFFERENT key from the
+  // push key; it signs OAuth/token/API calls.
+  if (typeof req.body.apiPartnerKey === 'string' && req.body.apiPartnerKey.trim()) {
+    db.config.shopeeApiPartnerKey = req.body.apiPartnerKey.trim();
   }
   if (typeof req.body.partnerId === 'string' && req.body.partnerId.trim()) db.config.shopeePartnerId = req.body.partnerId.trim();
   writeDb(db);

@@ -2202,10 +2202,13 @@
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.4rem">
           <input type="text" id="shopeePartnerId" placeholder="Partner ID"
                  style="width:130px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
-          <input type="password" id="shopeePartnerKey" placeholder="Partner Key (leave blank to keep current)"
+          <input type="password" id="shopeePartnerKey" placeholder="Push Partner Key (leave blank to keep current)"
+                 style="flex:1;min-width:220px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
+          <input type="password" id="shopeeApiPartnerKey" placeholder="Live API Partner Key (for client logins)"
                  style="flex:1;min-width:220px;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" autocomplete="off" />
           <button class="btn-primary btn-sm" id="shopeeSaveKeyBtn">Save</button>
         </div>
+        <div class="hint" style="margin:-.2rem 0 .4rem">Shopee issues TWO keys: the <b>Push Partner Key</b> (Push Setting &rarr; Generate — verifies incoming pushes) and the <b>Live API Partner Key</b> (APP Key section — signs client logins &amp; token refresh). Enter both.</div>
         <div id="shopeeCfgMsg" class="status-bar hidden" style="margin:.4rem 0"></div>
         <div style="margin:.6rem 0;padding:.6rem;background:#f8fafc;border-radius:8px">
           <b style="font-size:.85rem">&#128279; Send a client a login link</b>
