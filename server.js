@@ -15815,13 +15815,28 @@ function verifyLazadaPush(req) {
       req.headers['x-lazada-sign'] || ''
     ).trim();
     if (/\s/.test(sign)) sign = sign.split(/\s+/).pop();
-    // HMAC-SHA256 over the exact raw body, hex. `computed` is returned so the
-    // raw-push viewer can show expected-vs-received when it doesn't match.
-    const computed = crypto.createHmac('sha256', key).update(raw, 'utf8').digest('hex');
-    if (!sign) return { configured: true, verified: false, computed };
-    const a = Buffer.from(computed.toLowerCase()), b = Buffer.from(sign.toLowerCase());
-    const verified = a.length === b.length && crypto.timingSafeEqual(a, b);
-    return { configured: true, verified, computed };
+    // CANDIDATE SIGNING STRINGS. A captured real push proved the sign is NOT
+    // HMAC(raw body) alone — Lazada's message-push docs describe it as
+    // HMAC-SHA256(app_key + body, app_secret), so that leads. Every candidate
+    // is computed and returned; the verifier accepts whichever matches and
+    // NAMES it (`scheme`), and the raw-push viewer shows each candidate with a
+    // match badge — so a mismatch diagnoses itself instead of reading as a
+    // bare "not verified".
+    const h = s => crypto.createHmac('sha256', key).update(s, 'utf8').digest('hex');
+    const appKey = lazadaAppKey();
+    const candidates = [
+      { scheme: 'HMAC(app_key + body)', value: h(appKey + raw) },
+      { scheme: 'HMAC(body)', value: h(raw) },
+    ];
+    if (!sign) return { configured: true, verified: false, computed: candidates };
+    const b = Buffer.from(sign.toLowerCase());
+    for (const c of candidates) {
+      const a = Buffer.from(c.value.toLowerCase());
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        return { configured: true, verified: true, scheme: c.scheme, computed: candidates };
+      }
+    }
+    return { configured: true, verified: false, computed: candidates };
   } catch (e) { return { configured: true, verified: false, error: e.message }; }
 }
 function lazadaFindOrder(db, orderId, tracking) {
@@ -15912,7 +15927,8 @@ app.all('/api/lazada/callback',
         rawBody: String(req.rawBody || '').slice(0, 6000),
         headers: captureWebhookHeaders(req),
         sign: String(req.headers['authorization'] || (req.body && (req.body.sign || req.body.signature)) || req.headers['x-lazada-sign'] || '').slice(0, 300),
-        computed: sig.computed || '',
+        computed: sig.computed || [],
+        scheme: sig.scheme || '',
         body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
       });
       if (db.lazadaPushLog.length > 200) db.lazadaPushLog.splice(0, db.lazadaPushLog.length - 200);
@@ -16043,7 +16059,7 @@ app.get('/api/master/:provider/push-detail', (req, res) => {
   const db = readDb();
   const entries = (db[logKey] || []).slice(-20).reverse().map(e => ({
     at: e.at, method: e.method, code: e.code, verified: e.verified, action: e.action,
-    sign: e.sign || '', computed: e.computed || '', headers: e.headers || {}, rawBody: e.rawBody || '',
+    sign: e.sign || '', computed: e.computed || [], scheme: e.scheme || '', headers: e.headers || {}, rawBody: e.rawBody || '',
     body: e.body || {}, query: e.query || {},
   }));
   res.json({ entries });
