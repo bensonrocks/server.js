@@ -10869,7 +10869,28 @@
       } catch (e) { if (out) out.innerHTML = `<span class="hint" style="color:#dc2626">${esc(e.message)}</span>`; }
     });
   }
+  function wireMpManualAuth(provider) {
+    document.getElementById(provider + 'ManualSaveBtn')?.addEventListener('click', async () => {
+      const g = id => (document.getElementById(provider + id)?.value || '').trim();
+      const out = document.getElementById(provider + 'ManualOut');
+      const setOut = (color, msg) => { if (out) out.innerHTML = `<span class="hint" style="color:${color}">${esc(msg)}</span>`; };
+      const client = g('ManualClient');
+      if (!client) return setOut('#d97706', 'Type the client name first.');
+      const body = { client, accessToken: g('ManualToken'), refreshToken: g('ManualRefresh'), account: g('ManualAccount'), code: g('ManualCode') };
+      if (!body.accessToken && !body.code) return setOut('#d97706', 'Paste an access token, or an authorization code.');
+      setOut('#64748b', 'Connecting…');
+      try {
+        const r = await fetch(`/api/master/${provider}/manual-auth`, { method: 'POST', headers: { 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) return setOut('#dc2626', d.error || 'Failed');
+        setOut('#16a34a', `✓ Connected ${d.client}${d.account ? ' (' + d.account + ')' : ''}.`);
+        ['ManualToken', 'ManualRefresh', 'ManualAccount', 'ManualCode'].forEach(s => { const el = document.getElementById(provider + s); if (el) el.value = ''; });
+        mpLoadAuthList(provider);
+      } catch (e) { setOut('#dc2626', e.message); }
+    });
+  }
   wireMpAuth('shopee'); wireMpAuth('lazada');
+  wireMpManualAuth('lazada'); wireMpManualAuth('shopee');
   async function loadShopeeDirect() {
     const list = document.getElementById('shopeePushList');
     if (!list) return;

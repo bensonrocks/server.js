@@ -15942,6 +15942,54 @@ app.get('/api/master/:provider/auth-link', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Manual authorization — connect a client by PASTING a token or an auth code,
+// instead of the browser OAuth. This is the escape hatch for sandbox loaned
+// test accounts, which authenticate via the Open Platform's own "Login"/token
+// tools and can't complete the auth.lazada.com password login in a browser.
+// Same store as the OAuth callback (marketplaceAuth[provider][client]).
+app.post('/api/master/:provider/manual-auth', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const provider = req.params.provider;
+  if (!['lazada', 'shopee'].includes(provider)) return res.status(404).json({ error: 'Unknown provider' });
+  const client = String(req.body.client || '').trim();
+  if (!client) return res.status(400).json({ error: 'client is required' });
+  const db = readDb();
+  try {
+    let record;
+    if (req.body.code && String(req.body.code).trim()) {
+      // Exchange a pasted authorization code (needs App Key/Secret set).
+      const code = String(req.body.code).trim();
+      let r;
+      if (provider === 'lazada') {
+        r = await mpOAuth.lazadaExchangeToken({ appKey: lazadaAppKey(), appSecret: lazadaAppSecret(), code, endpointBase: process.env.LAZADA_TOKEN_BASE || undefined });
+        if (!r.ok) return res.status(502).json({ error: `Code exchange failed: ${r.error || 'unknown'}` });
+        record = { access_token: r.access_token, refresh_token: r.refresh_token, expires_at: r.expires_in ? new Date(Date.now() + r.expires_in * 1000).toISOString() : null, account: r.account, at: new Date().toISOString(), via: 'manual-code' };
+      } else {
+        r = await mpOAuth.shopeeExchangeToken({ partnerId: shopeePartnerId(), partnerKey: shopeePartnerKey(), code, shopId: req.body.shopId, apiBase: process.env.SHOPEE_API_BASE || undefined });
+        if (!r.ok) return res.status(502).json({ error: `Code exchange failed: ${r.error || 'unknown'}` });
+        record = { access_token: r.access_token, refresh_token: r.refresh_token, expires_at: r.expires_in ? new Date(Date.now() + r.expires_in * 1000).toISOString() : null, shop_id: r.shop_id, at: new Date().toISOString(), via: 'manual-code' };
+      }
+    } else if (req.body.accessToken && String(req.body.accessToken).trim()) {
+      // Store a pasted access token directly.
+      const exp = Number(req.body.expiresIn) || 0;
+      record = {
+        access_token: String(req.body.accessToken).trim(),
+        refresh_token: String(req.body.refreshToken || '').trim(),
+        expires_at: exp ? new Date(Date.now() + exp * 1000).toISOString() : null,
+        account: String(req.body.account || '').trim(),
+        shop_id: String(req.body.shopId || '').trim(),
+        at: new Date().toISOString(), via: 'manual-token',
+      };
+    } else {
+      return res.status(400).json({ error: 'Provide an access token or an authorization code.' });
+    }
+    marketplaceAuth(db)[provider][client] = record;
+    writeDb(db);
+    logAudit(`${provider}_oauth_manual`, { by: req.userId || _tokenUserId(req) || 'master', client, mode: req.body.code ? 'code' : 'token' });
+    res.json({ ok: true, client, account: record.account || '', expiresAt: record.expires_at || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Which clients have authorized, per provider (no tokens leaked).
 app.get('/api/master/:provider/authorizations', (req, res) => {
   if (!checkMaster(req, res)) return;

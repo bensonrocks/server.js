@@ -2247,6 +2247,22 @@
           </div>
           <div id="lazadaAuthLinkOut" style="margin-top:.4rem"></div>
           <div id="lazadaAuthList" style="margin-top:.4rem"></div>
+          <details style="margin-top:.5rem">
+            <summary style="cursor:pointer;font-size:.8rem;color:#475569">Advanced / sandbox — connect a client by pasting a token or code</summary>
+            <div class="hint" style="margin:.3rem 0">For testing with a sandbox account that can't complete the browser login: paste an <b>access token</b> (from the Open Platform's API Explorer / token tool), OR an <b>authorization code</b> (IdealOne will exchange it). The App Key &amp; Secret above must be set for a code exchange.</div>
+            <div style="display:grid;gap:.4rem;max-width:520px">
+              <input type="text" id="lazadaManualClient" placeholder="Client name (e.g. Test)" list="obClientList" style="padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+              <input type="text" id="lazadaManualToken" placeholder="Access token (paste here)…" style="padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px;font-family:monospace;font-size:11px" />
+              <input type="text" id="lazadaManualRefresh" placeholder="Refresh token (optional)" style="padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px;font-family:monospace;font-size:11px" />
+              <div style="display:flex;gap:.5rem;align-items:center">
+                <input type="text" id="lazadaManualAccount" placeholder="Account label (optional)" style="flex:1;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+                <span style="font-size:.72rem;color:#94a3b8">— or —</span>
+                <input type="text" id="lazadaManualCode" placeholder="Auth code (exchanged)" style="flex:1;padding:.5rem .7rem;border:1px solid #e2e8f0;border-radius:8px;font-family:monospace;font-size:11px" />
+              </div>
+              <div><button class="btn-secondary btn-sm" id="lazadaManualSaveBtn">Connect client</button></div>
+              <div id="lazadaManualOut"></div>
+            </div>
+          </details>
         </div>
         <div style="margin-top:.6rem">
           <b style="font-size:.85rem">Recent pushes from Lazada</b>
