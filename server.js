@@ -16300,15 +16300,38 @@ function verifyShopeePush(req) {
   const key = shopeePartnerKey();
   if (!key) return { configured: false, verified: false };
   try {
-    const url = `${req.protocol}://${req.get('host')}${req.originalUrl.split('?')[0]}`;
+    // Shopee signs HMAC-SHA256(`<callback_url>|<raw_body>`, push partner key).
+    // THE URL MUST MATCH THE REGISTERED ONE EXACTLY. Behind Railway's proxy
+    // `req.protocol` is 'http' (TLS terminates at the proxy, no trust-proxy
+    // set), so the old single-candidate check hashed "http://…" against a
+    // signature over "https://…" and could NEVER match. Candidate URLs are
+    // tried instead — https-forced first (what's registered), then the
+    // forwarded/express-derived forms — accepted timing-safe, with the
+    // matched scheme NAMED and all candidates returned for the raw viewer.
+    const host = req.get('host');
+    const path = req.originalUrl.split('?')[0];
     const raw = (req.rawBody != null) ? req.rawBody : JSON.stringify(req.body || {});
-    const base = `${url}|${raw}`;
-    const expected = crypto.createHmac('sha256', key).update(base).digest('hex');
+    const xfProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const urls = [...new Set([
+      `https://${host}${path}`,
+      xfProto ? `${xfProto}://${host}${path}` : '',
+      `${req.protocol}://${host}${path}`,
+    ].filter(Boolean))];
+    const candidates = urls.map(u => ({
+      scheme: u.split('://')[0] + '://…' + path,
+      url: u,
+      value: crypto.createHmac('sha256', key).update(`${u}|${raw}`).digest('hex'),
+    }));
     const got = String(req.headers['authorization'] || '').trim();
-    // timing-safe compare when lengths match
-    const a = Buffer.from(expected), b = Buffer.from(got);
-    const verified = a.length === b.length && crypto.timingSafeEqual(a, b);
-    return { configured: true, verified };
+    if (!got) return { configured: true, verified: false, computed: candidates };
+    const b = Buffer.from(got.toLowerCase());
+    for (const c of candidates) {
+      const a = Buffer.from(c.value.toLowerCase());
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        return { configured: true, verified: true, scheme: c.url, computed: candidates };
+      }
+    }
+    return { configured: true, verified: false, computed: candidates };
   } catch (e) { return { configured: true, verified: false, error: e.message }; }
 }
 // ── Acting on a Shopee push ─────────────────────────────────────────────────
@@ -16447,6 +16470,8 @@ app.all('/api/shopee/push',
         rawBody: String(req.rawBody || '').slice(0, 6000),
         headers: captureWebhookHeaders(req),
         sign: String(req.headers['authorization'] || req.headers['x-shopee-sign'] || '').slice(0, 300),
+        computed: sig.computed || [],
+        scheme: sig.scheme || '',
         body: (req.body && typeof req.body === 'object') ? req.body : { raw: String(req.rawBody || '').slice(0, 2000) },
       });
       if (db.shopeePushLog.length > 200) db.shopeePushLog.splice(0, db.shopeePushLog.length - 200);

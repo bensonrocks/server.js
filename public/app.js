@@ -10955,17 +10955,37 @@
       const tg = document.getElementById('shopeeDirectToggle'); if (tg) tg.checked = !!d.directEnabled;
       const ks = document.getElementById('shopeeKeyState');
       if (ks) ks.innerHTML = d.keyConfigured
-        ? `<span style="color:#16a34a">&#10003; Partner key set${d.keyFromEnv ? ' (from server env)' : ''}</span>`
+        ? `<span style="color:#16a34a">&#10003; Push key set${d.apiKeyConfigured ? ' · ✓ API key set' : ' · <span style="color:#d97706">⚠ no API key (client logins need it)</span>'}${d.keyFromEnv ? ' (from server env)' : ''}</span>`
         : `<span style="color:#d97706">&#9888; No partner key yet — pushes stay unverified</span>`;
       const rows = (d.recent || []);
+      // Full detail (raw body + headers + sign vs computed candidates) — same
+      // diagnosis view as Lazada's, aligned by index with `recent`.
+      let detail = [];
+      try { const dr = await fetch('/api/master/shopee/push-detail', { headers: { 'x-master-key': LOG_PASSWORD } }); if (dr.ok) detail = (await dr.json()).entries || []; } catch (_) {}
       list.innerHTML = rows.length
-        ? `<table class="dcs-table"><thead><tr><th>When</th><th>Code</th><th>Verified</th><th>What happened</th></tr></thead><tbody>`
-          + rows.map(e => `<tr>
+        ? `<table class="dcs-table"><thead><tr><th>When</th><th>Code</th><th>Verified</th><th>What happened</th><th></th></tr></thead><tbody>`
+          + rows.map((e, i) => {
+              const det = detail[i] || {};
+              const cands = Array.isArray(det.computed) ? det.computed : [];
+              const candHtml = cands.map(c => {
+                const m = det.sign && c.value && det.sign.toLowerCase() === c.value.toLowerCase();
+                return `<div style="font-size:11px;margin:.3rem 0"><b>HMAC(${esc(c.url || c.scheme)} | body):</b> <code>${esc(c.value)}</code> ${m ? '<span style="color:#16a34a">✓ match</span>' : '<span style="color:#dc2626">✗ differs</span>'}</div>`;
+              }).join('');
+              const hdrs = det.headers ? Object.entries(det.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+              const detHtml = `<tr id="shpDet${i}" style="display:none"><td colspan="5" style="background:#f8fafc">
+                <div style="font-size:11px;margin:.3rem 0"><b>Signature (Authorization header):</b> <code>${esc(det.sign || '(none found)')}</code>${det.scheme ? ` <span style="color:#16a34a">— verified via ${esc(det.scheme)}</span>` : ''}</div>
+                ${candHtml}
+                <div style="font-size:11px;margin:.3rem 0"><b>Raw body:</b><pre style="white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:.5rem;max-height:180px;overflow:auto">${esc(det.rawBody || '(empty)')}</pre></div>
+                <div style="font-size:11px;margin:.3rem 0"><b>Headers:</b><pre style="white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:.5rem;max-height:180px;overflow:auto">${esc(hdrs || '(none)')}</pre></div>
+              </td></tr>`;
+              return `<tr>
               <td>${new Date(e.at).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false })}</td>
               <td>${esc(String(e.code ?? ''))}</td>
               <td>${e.verified ? '<span style="color:#16a34a">✓</span>' : '<span style="color:#94a3b8">—</span>'}</td>
               <td>${esc(SHOPEE_ACTION_LABEL[e.action] || String(e.action ?? 'logged only'))}</td>
-            </tr>`).join('') + '</tbody></table>'
+              <td><button class="btn-secondary btn-sm" onclick="var d=document.getElementById('shpDet${i}');d.style.display=d.style.display==='none'?'table-row':'none'">raw</button></td>
+            </tr>${detHtml}`;
+            }).join('') + '</tbody></table>'
         : '<div class="hint" style="padding:.6rem">No pushes received yet. Send one from Shopee → Push Mechanism → "Push Test Data".</div>';
       mpLoadAuthList('shopee');
     } catch (e) { list.innerHTML = `<div class="hint" style="padding:.6rem">${esc(e.message)}</div>`; }
