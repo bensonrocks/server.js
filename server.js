@@ -16176,6 +16176,8 @@ app.get('/api/master/connections/health', (req, res) => {
       outcome: lo.type.replace(`${provider}_oauth_`, ''),
       client: lo.client || '',
       error: lo.error || '',
+      requestId: lo.requestId || '',
+      code: lo.code || '',
     } : null;
     return { clients, lastPushAt: last?.at || null, lastPushVerified: last?.verified ?? null, lastPushAction: last?.action || null, lastOAuth };
   };
@@ -16228,7 +16230,12 @@ app.get('/api/connect/lazada/callback', async (req, res) => {
   if (!code || !client) return res.status(400).send(connectResultPage(false, 'Missing authorization code.'));
   try {
     const r = await mpOAuth.lazadaExchangeToken({ appKey: lazadaAppKey(), appSecret: lazadaAppSecret(), code, endpointBase: process.env.LAZADA_TOKEN_BASE || undefined });
-    if (!r.ok) { logAudit('lazada_oauth_failed', { client, error: String(r.error).slice(0, 200) }); return res.status(502).send(connectResultPage(false, 'Lazada did not accept the authorization. Please try again.')); }
+    if (!r.ok) {
+      // Keep Lazada's request_id — their support tickets require it.
+      const requestId = String(r.raw?.request_id || r.raw?.requestId || '').slice(0, 60);
+      logAudit('lazada_oauth_failed', { client, error: String(r.error).slice(0, 200), requestId, code: String(r.raw?.code || '').slice(0, 40) });
+      return res.status(502).send(connectResultPage(false, 'Lazada did not accept the authorization. Please try again.'));
+    }
     const db = readDb();
     marketplaceAuth(db).lazada[client] = {
       access_token: r.access_token, refresh_token: r.refresh_token,

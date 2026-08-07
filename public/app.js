@@ -10909,7 +10909,7 @@
         rows.push(`${dot(p.lastPushAt ? G : N)}Last push: ${when(p.lastPushAt)}${p.lastPushAt ? ` · verified: ${p.lastPushVerified ? '✓' : '—'} · ${esc(String(p.lastPushAction || ''))}` : ''}`);
         if (p.lastOAuth) {
           const ok = p.lastOAuth.outcome === 'connected' || p.lastOAuth.outcome === 'manual';
-          rows.push(`${dot(ok ? G : R)}Last authorization: ${ok ? `✓ ${esc(p.lastOAuth.client)} connected` : `<b style="color:#dc2626">failed</b>${p.lastOAuth.client ? ' for ' + esc(p.lastOAuth.client) : ''}${p.lastOAuth.error ? ' — ' + esc(p.lastOAuth.error) : ''}`} (${when(p.lastOAuth.at)})`);
+          rows.push(`${dot(ok ? G : R)}Last authorization: ${ok ? `✓ ${esc(p.lastOAuth.client)} connected` : `<b style="color:#dc2626">failed</b>${p.lastOAuth.client ? ' for ' + esc(p.lastOAuth.client) : ''}${p.lastOAuth.error ? ' — ' + esc(p.lastOAuth.error) : ''}${p.lastOAuth.code ? ` · code: ${esc(p.lastOAuth.code)}` : ''}${p.lastOAuth.requestId ? ` · request id: <code>${esc(p.lastOAuth.requestId)}</code>` : ''}`} (${when(p.lastOAuth.at)})`);
         }
         if (!p.clients.length) rows.push(`${dot(N)}No clients connected.`);
         p.clients.forEach(c => {
