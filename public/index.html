@@ -2174,6 +2174,16 @@
         </div>
       </div>
 
+      <!-- Connections health check — read-only, touches nothing -->
+      <div id="connHealthPanel" style="margin-bottom:1.2rem;border:1px solid #e2e8f0;border-radius:12px;padding:1rem">
+        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+          <button class="btn-secondary" id="connHealthBtn">&#129657; Health Check</button>
+          <button class="btn-secondary btn-sm" id="connRefreshTokensBtn" title="Run the token-refresh sweep now instead of waiting for the schedule">&#8635; Refresh tokens now</button>
+          <span class="hint">Read-only — checks every connection's stored state (tokens, switches, last push, queue). It changes nothing and cannot touch orders or stock.</span>
+        </div>
+        <div id="connHealthOut" style="margin-top:.8rem"></div>
+      </div>
+
       <!-- Direct Shopee (own API) — background backup, admin-toggled -->
       <div id="connShopeePanel" style="margin-bottom:1.2rem;border:1px solid #e2e8f0;border-radius:12px;padding:1rem">
         <div class="admin-section-header" style="margin:0">

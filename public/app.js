@@ -10891,6 +10891,56 @@
   }
   wireMpAuth('shopee'); wireMpAuth('lazada');
   wireMpManualAuth('lazada'); wireMpManualAuth('shopee');
+
+  // ── Connections health check — read-only snapshot of every connection ──────
+  async function loadConnHealth() {
+    const out = document.getElementById('connHealthOut'); if (!out) return;
+    out.innerHTML = '<div class="hint">Checking…</div>';
+    const dot = c => `<span style="display:inline-block;width:8px;height:8px;border-radius:99px;background:${c};margin-right:.4rem"></span>`;
+    const G = '#16a34a', A = '#f59e0b', R = '#dc2626', N = '#94a3b8';
+    const when = iso => iso ? new Date(iso).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false }) : 'never';
+    try {
+      const r = await fetch('/api/master/connections/health', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const h = await r.json();
+      if (!r.ok) { out.innerHTML = `<div class="hint" style="color:#dc2626">${esc(h.error || 'Failed')}</div>`; return; }
+      const mpSection = (name, p) => {
+        const rows = [];
+        rows.push(`${dot(p.secretSet ? G : A)}${p.secretSet ? 'Credentials set' : 'No app secret/key yet'} · pushes ${p.directEnabled ? '<b style="color:#d97706">ACTING</b>' : 'logged only (off)'}`);
+        rows.push(`${dot(p.lastPushAt ? G : N)}Last push: ${when(p.lastPushAt)}${p.lastPushAt ? ` · verified: ${p.lastPushVerified ? '✓' : '—'} · ${esc(String(p.lastPushAction || ''))}` : ''}`);
+        if (!p.clients.length) rows.push(`${dot(N)}No clients connected.`);
+        p.clients.forEach(c => {
+          const col = c.refreshError ? R : c.tokenValid ? G : (c.canRefresh ? A : R);
+          let txt = `<b>${esc(c.client)}</b> — token ${c.tokenValid ? 'valid until ' + when(c.expiresAt) : 'EXPIRED'}`;
+          if (!c.canRefresh) txt += ' · pasted token, cannot auto-refresh';
+          else txt += ` · auto-refresh ${c.refreshError ? `<span style="color:#dc2626">failing: ${esc(c.refreshError)}</span>` : 'on'} (last: ${when(c.lastRefreshAt)})`;
+          rows.push(`${dot(col)}${txt}`);
+        });
+        return `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">${name}</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${rows.map(x => `<div>${x}</div>`).join('')}</div></div>`;
+      };
+      const hubRows = (h.hub || []).map(s =>
+        `${dot(!s.enabled ? N : s.outboxStalled ? R : G)}<b>${esc(s.client || s.id)}</b> — ${s.enabled ? 'enabled' : 'off'} · last pull: ${when(s.lastPullAt)} · queue: ${s.outboxPending} pending${s.outboxStalled ? `, <span style="color:#dc2626">${s.outboxStalled} stalled</span>` : ''}`);
+      const om = h.onemap || {};
+      out.innerHTML =
+        mpSection('Lazada — direct', h.lazada) +
+        mpSection('Shopee — direct', h.shopee) +
+        `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">TikTok</b><div style="font-size:12px;margin-top:.25rem">${dot(N)}${esc(h.tiktok?.note || 'Via the Sales Channel Hub.')}</div></div>` +
+        `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Sales Channel Hub</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${hubRows.length ? hubRows.map(x => `<div>${x}</div>`).join('') : `<div>${dot(N)}No stores connected.</div>`}</div></div>` +
+        `<div><b style="font-size:.85rem">Road distances (OneMap)</b><div style="font-size:12px;margin-top:.25rem">${dot(om.tokenValid ? G : A)}${om.tokenValid ? `Routing token valid until ${when(om.expiresAt)}${om.canRefresh ? ' · auto-refreshes' : ' · no auto-refresh (add email+password)'}` : 'No routing token — distances fall back to estimates'} · ${om.geocodeCached || 0} postal code(s) cached</div></div>` +
+        `<div class="hint" style="margin-top:.6rem;color:#94a3b8">Snapshot at ${when(h.generatedAt)} — read-only, nothing was changed.</div>`;
+    } catch (e) { out.innerHTML = `<div class="hint" style="color:#dc2626">${esc(e.message)}</div>`; }
+  }
+  document.getElementById('connHealthBtn')?.addEventListener('click', loadConnHealth);
+  document.getElementById('connRefreshTokensBtn')?.addEventListener('click', async () => {
+    const out = document.getElementById('connHealthOut');
+    if (out) out.innerHTML = '<div class="hint">Refreshing tokens…</div>';
+    try {
+      const r = await fetch('/api/master/connections/refresh-tokens', { method: 'POST', headers: { 'x-master-key': LOG_PASSWORD } });
+      const d = await r.json();
+      const done = (d.results || []);
+      if (out) out.innerHTML = `<div class="hint">${done.length ? done.map(x => `${x.provider}/${esc(x.client)}: ${x.ok ? '✓ refreshed' : '✗ ' + esc(x.error || 'failed')}`).join(' · ') : 'Nothing due for refresh.'}</div>`;
+      setTimeout(loadConnHealth, 600);
+    } catch (e) { if (out) out.innerHTML = `<div class="hint" style="color:#dc2626">${esc(e.message)}</div>`; }
+  });
   async function loadShopeeDirect() {
     const list = document.getElementById('shopeePushList');
     if (!list) return;

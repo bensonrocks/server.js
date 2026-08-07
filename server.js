@@ -16077,6 +16077,129 @@ app.get('/api/master/:provider/authorizations', (req, res) => {
   })));
 });
 
+// ── Marketplace token auto-refresh ──────────────────────────────────────────
+// Lazada's app console shows access tokens lasting 1 DAY (refresh 5 days), so
+// without this sweep every client authorization silently dies within 24h and
+// the client has to re-authorize. Provider-agnostic over marketplaceAuth's
+// {provider: {client: record}} store — Lazada + Shopee wired now; a future
+// TikTok (or any) direct app slots in by adding its refresh call here.
+// Entries connected via a pasted token (no refresh_token) are skipped — the
+// health check names them so a stale one is visible, not mysterious.
+const MP_REFRESH_AHEAD_MS = { lazada: 6 * 3600 * 1000, shopee: 3600 * 1000 };
+let _mpRefreshing = false;   // same reentry-guard idiom as the ZORT schedulers
+async function refreshMarketplaceTokens(trigger) {
+  if (_mpRefreshing) return { skipped: true };
+  _mpRefreshing = true;
+  const results = [];
+  try {
+    const db = readDb();
+    const auth = marketplaceAuth(db);
+    let changed = false;
+    for (const provider of ['lazada', 'shopee']) {
+      const ahead = MP_REFRESH_AHEAD_MS[provider] || 3600 * 1000;
+      for (const [client, rec] of Object.entries(auth[provider] || {})) {
+        if (!rec || !rec.refresh_token) continue;   // pasted-token entries can't refresh
+        const exp = rec.expires_at ? Date.parse(rec.expires_at) : 0;
+        const lastTry = rec.last_refresh_at ? Date.parse(rec.last_refresh_at) : 0;
+        // Due when expiring inside the window; with no known expiry, try twice a day.
+        const due = exp ? (exp - Date.now() < ahead) : (lastTry < Date.now() - 12 * 3600 * 1000);
+        if (!due) continue;
+        try {
+          const r = provider === 'lazada'
+            ? await mpOAuth.lazadaRefreshToken({ appKey: lazadaAppKey(), appSecret: lazadaAppSecret(), refreshToken: rec.refresh_token, endpointBase: process.env.LAZADA_TOKEN_BASE || undefined })
+            : await mpOAuth.shopeeRefreshToken({ partnerId: shopeePartnerId(), partnerKey: shopeePartnerKey(), refreshToken: rec.refresh_token, shopId: rec.shop_id, apiBase: process.env.SHOPEE_API_BASE || undefined });
+          rec.last_refresh_at = new Date().toISOString();
+          if (r.ok) {
+            rec.access_token = r.access_token;
+            if (r.refresh_token) rec.refresh_token = r.refresh_token;   // both providers rotate it
+            if (r.expires_in) rec.expires_at = new Date(Date.now() + r.expires_in * 1000).toISOString();
+            rec.refresh_error = null;
+            logAudit(`${provider}_token_refreshed`, { client, expiresAt: rec.expires_at || '', trigger: trigger || 'schedule' });
+            results.push({ provider, client, ok: true, expiresAt: rec.expires_at || null });
+          } else {
+            rec.refresh_error = String(r.error || 'refresh failed').slice(0, 200);
+            logAudit(`${provider}_token_refresh_failed`, { client, error: rec.refresh_error, trigger: trigger || 'schedule' });
+            results.push({ provider, client, ok: false, error: rec.refresh_error });
+          }
+          changed = true;
+        } catch (e) {
+          rec.last_refresh_at = new Date().toISOString();
+          rec.refresh_error = String(e.message || e).slice(0, 200);
+          changed = true;
+          logAudit(`${provider}_token_refresh_failed`, { client, error: rec.refresh_error, trigger: trigger || 'schedule' });
+          results.push({ provider, client, ok: false, error: rec.refresh_error });
+        }
+      }
+    }
+    if (changed) writeDb(db);
+  } catch (e) { console.error('[mp-refresh]', e.message); }
+  finally { _mpRefreshing = false; }
+  return { results };
+}
+setTimeout(() => refreshMarketplaceTokens('boot'), 90 * 1000);
+setInterval(() => refreshMarketplaceTokens('schedule'), 15 * 60 * 1000);
+
+// On-demand sweep — "refresh my tokens now", for when someone is watching.
+app.post('/api/master/connections/refresh-tokens', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const out = await refreshMarketplaceTokens('manual');
+  res.json({ ok: true, ...out });
+});
+
+// ── Connections health check — READ-ONLY, one call, no side effects ─────────
+// Per the user: "when I do a health check for my connections my main script is
+// not affected." This endpoint only READS stored state — it mutates nothing,
+// calls no external API, and cannot touch orders/stock whatever it finds.
+app.get('/api/master/connections/health', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const now = Date.now();
+  const provHealth = (provider, logKey) => {
+    const clients = Object.entries(marketplaceAuth(db)[provider] || {}).map(([client, a]) => ({
+      client,
+      tokenValid: !!(a.expires_at && Date.parse(a.expires_at) > now),
+      expiresAt: a.expires_at || null,
+      canRefresh: !!a.refresh_token,
+      lastRefreshAt: a.last_refresh_at || null,
+      refreshError: a.refresh_error || null,
+      via: a.via || 'oauth',
+    }));
+    const last = (db[logKey] || []).slice(-1)[0];
+    return { clients, lastPushAt: last?.at || null, lastPushVerified: last?.verified ?? null, lastPushAction: last?.action || null };
+  };
+  res.json({
+    generatedAt: new Date().toISOString(),
+    readOnly: true,
+    lazada: {
+      appKeySet: !!lazadaAppKey(), secretSet: !!lazadaAppSecret(),
+      directEnabled: !!(db.config || {}).lazadaDirectEnabled,
+      ...provHealth('lazada', 'lazadaPushLog'),
+    },
+    shopee: {
+      partnerIdSet: !!shopeePartnerId(), secretSet: !!shopeePartnerKey(),
+      directEnabled: !!(db.config || {}).shopeeDirectEnabled,
+      ...provHealth('shopee', 'shopeePushLog'),
+    },
+    tiktok: { direct: false, note: 'No direct TikTok app yet — TikTok flows through the Sales Channel Hub.' },
+    hub: (db.zortStores || []).map(s => ({
+      id: s.id, client: s.clientName, enabled: !!s.enabled,
+      autoPullMinutes: s.autoPullMinutes || 0, lastPullAt: s.lastPullAt || null,
+      lastResultOk: s.lastResult ? !s.lastResult.error : null,
+      outboxPending: (db.zortOutbox || []).filter(o => o.storeId === s.id && !o.stalled).length,
+      outboxStalled: (db.zortOutbox || []).filter(o => o.storeId === s.id && o.stalled).length,
+    })),
+    onemap: (() => {
+      const t = (db.config || {}).onemapToken; const nowS = Math.floor(now / 1000);
+      return {
+        tokenValid: !!(t && t.expiry - 300 > nowS),
+        expiresAt: t?.expiry ? new Date(t.expiry * 1000).toISOString() : null,
+        canRefresh: !!((process.env.ONEMAP_EMAIL || (db.config || {}).onemapEmail) && (process.env.ONEMAP_PASSWORD || (db.config || {}).onemapPassword)),
+        geocodeCached: Object.keys(db.geocodeCache || {}).length,
+      };
+    })(),
+  });
+});
+
 function connectResultPage(ok, msg) {
   return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
     <div style="font-family:system-ui;max-width:460px;margin:14vh auto;text-align:center;padding:1.5rem">

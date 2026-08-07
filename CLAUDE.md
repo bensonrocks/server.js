@@ -651,6 +651,46 @@ cancel voids pending / refused on scanned+done, tracking updates open / locked
 on done, unmatched no-op, unverified takes no action) plus 6 browser checks on
 the Shopee panel.
 
+### Marketplace token auto-refresh + Connections health check
+
+- **WITHOUT A REFRESH SWEEP, EVERY SELLER AUTHORIZATION DIES IN A DAY.** The
+  Lazada app console shows access tokens lasting **1 day** (refresh 5 days) —
+  far shorter than the ~7d the exchange response implies. `refreshMarketplaceTokens()`
+  (server.js, next to the OAuth routes) sweeps `marketplaceAuth`'s
+  {provider → client → record} store every 15 min (+ once ~90s after boot,
+  `_mpRefreshing` reentry guard): an entry is DUE when its `expires_at` is
+  inside the provider window (`MP_REFRESH_AHEAD_MS` — Lazada 6h, Shopee 1h),
+  or twice a day when the expiry is unknown. Refresh calls live in
+  lib/marketplace-oauth.js (`lazadaRefreshToken` — `/auth/token/refresh`,
+  same signing as create; `shopeeRefreshToken` — `/api/v2/auth/access_token/get`).
+  **Both providers ROTATE the refresh token on every call — store both halves
+  back or the next refresh fails.** Failures are recorded on the record
+  (`refresh_error`) and audit-logged (`{provider}_token_refresh_failed`), and
+  the entry retries each sweep while its refresh token still lives. Entries
+  connected via a PASTED token have no refresh_token and are skipped — the
+  health check names them as "cannot auto-refresh" rather than leaving a
+  mystery. TikTok has NO direct app yet (flows via the Hub) — deliberately no
+  fake TikTok code; a future app slots into the same sweep.
+- **`GET /api/master/connections/health` is READ-ONLY by contract** — per the
+  user, a health check must never affect the main flow. It only reads stored
+  state (no external calls, no writes): per-provider credentials/switch state,
+  per-client token validity + refresh status, last push received (+verified?),
+  Hub stores with last pull + outbox pending/stalled, and the OneMap token.
+  UI: 🩺 Health Check panel at the top of Connections, with a "↻ Refresh
+  tokens now" button (`POST /api/master/connections/refresh-tokens`) for
+  on-demand sweeps.
+- WHERE TO AMEND a marketplace: credentials/switches/URLs are all IN-APP on
+  the Connections tab (db.config, no redeploy); per-provider protocol logic
+  (auth URLs, signing, token exchange/refresh) is isolated in
+  lib/marketplace-oauth.js; the receivers + sweep wiring are the marketplace
+  block of server.js. One provider's change never touches another's code.
+
+Verified with a mock refresh endpoint: a due Lazada entry and a due Shopee
+entry refresh (rotated refresh tokens stored back), a not-yet-due entry and a
+pasted-token entry are untouched, a bad refresh token records its error and
+keeps retrying, a second sweep is otherwise a no-op, and the health endpoint
+returns the full shape while writing nothing.
+
 ## ZORT integration — per-client merchant store connections (lib/zort.js + server.js)
 
 ZORT (zortout.com) is the e-commerce OMS the user's merchant CLIENTS use;
