@@ -604,9 +604,19 @@ rules must never silently alter the other's.
   verification.
 - **Signature**: Shopee = HMAC-SHA256(`<callback_url>|<raw_body>`, push
   partner_key) in the `Authorization` header — CONFIRMED against Shopee's verify
-  step. Lazada = best-effort HMAC-SHA256(raw_body, app_secret) vs a `sign`
-  field; Lazada's exact scheme varies by app, so the **admin switch is the hard
-  gate** there, and an unsigned push with a secret set is `unverified_skipped`.
+  step. Lazada = **HMAC-SHA256(`app_key + raw_body`, app_secret), hex, in the
+  `Authorization` header — CONFIRMED against a real captured push** (verified ✓
+  on the live site, 2026-08-08). Two traps that each cost a debugging round,
+  found via the raw-push viewer (each log row's "raw" button shows the raw
+  body, headers, sign, and every computed candidate with a ✓/✗ badge):
+  (1) the global `app.use(express.json())` consumed the stream before the
+  route's verify could capture `req.rawBody`, so verification compared against
+  a RE-SERIALISED body that could never match — the global parser now stashes
+  the raw bytes for the webhook paths (`RAW_BODY_PATHS`); (2) the sign rides in
+  the `Authorization` HEADER, not a body `sign` field. `verifyLazadaPush` tries
+  candidate signing strings (app_key+body first, body alone as fallback),
+  accepts timing-safe whichever matches, and NAMES the scheme on the log entry.
+  An unsigned push with a secret set is `unverified_skipped`.
 - **TWO GATES before any order is touched**: a verified signature AND
   `config.shopeeDirectEnabled` / `config.lazadaDirectEnabled` (both **off by
   default**). While off, every push is received and LOGGED (`direct_disabled`)
