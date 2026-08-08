@@ -16318,12 +16318,28 @@ function verifyShopeePush(req) {
       `${req.protocol}://${host}${path}`,
     ].filter(Boolean))];
     // Both keys are tried: the push key (documented for webhooks) and, when it
-    // differs, the Live API partner key — console "Push Test Data" pushes have
-    // been observed not to match the push key, so the viewer showing which key
-    // matched settles it empirically instead of by guesswork.
+    // differs, the Live API partner key. Shopee DISPLAYS keys hex-encoded
+    // (the console strings decode to 32-char ASCII), so for any key that is
+    // pure hex (or shpk+hex) the DECODED-bytes variant is also tried — if
+    // Shopee signs with the raw bytes rather than the displayed text, only
+    // that variant matches. The matched (url, key-variant) is NAMED on the
+    // log entry. KNOWN LIMITATION, established empirically across three
+    // captured console test pushes: Shopee's "Push Test Data"/Verify pushes
+    // are signed with TEST-side credentials the console does not expose, so
+    // they will show unverified regardless — only a REAL authorized shop's
+    // push is a valid verification oracle.
     const apiKey = shopeeApiPartnerKey();
-    const keyVariants = [{ label: 'push-key', k: key }];
-    if (apiKey && apiKey !== key) keyVariants.push({ label: 'api-key', k: apiKey });
+    const keyVariants = [];
+    const addKey = (label, k) => {
+      if (!k) return;
+      keyVariants.push({ label, k });
+      const hexPart = /^shpk/i.test(k) ? k.slice(4) : k;
+      if (/^[0-9a-f]+$/i.test(hexPart) && hexPart.length % 2 === 0) {
+        try { keyVariants.push({ label: label + '-decoded', k: Buffer.from(hexPart, 'hex') }); } catch (_) {}
+      }
+    };
+    addKey('push-key', key);
+    if (apiKey && apiKey !== key) addKey('api-key', apiKey);
     const candidates = [];
     for (const u of urls) for (const kv of keyVariants) candidates.push({
       scheme: `${kv.label} · ${u.split('://')[0]}://…${path}`,
