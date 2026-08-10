@@ -12967,7 +12967,13 @@ app.post('/api/master/onemap/config', express.json(), (req, res) => {
     const tok = req.body.token.trim();
     let expiry = 0;
     try { expiry = Number(JSON.parse(Buffer.from(tok.split('.')[1] || '', 'base64').toString('utf8')).exp) || 0; } catch (_) {}
-    db.config.onemapToken = { access_token: tok, expiry };
+    // Not a decodable JWT → treat as a STATIC key: give it a far-future expiry
+    // so onemapToken() actually uses it (expiry 0 read as already-expired and
+    // silently ignored the paste). Whether it genuinely authorises routing is
+    // proven by the Test-distance button, not assumed here.
+    const isStatic = !expiry;
+    if (isStatic) expiry = Math.floor(Date.now() / 1000) + 180 * 24 * 3600;
+    db.config.onemapToken = { access_token: tok, expiry, static: isStatic };
     _onemapTokenMem = db.config.onemapToken;
   } else if (credsChanged) {
     db.config.onemapToken = null;   // new creds → refetch on next use
