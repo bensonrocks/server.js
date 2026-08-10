@@ -5781,6 +5781,7 @@
       if (!r.ok) return onemapMsg('error', d.error || 'Test failed');
       const km = (d.km != null ? d.km : d.distance_km);
       onemapMsg('success', `✓ 609216 → 648331 = ${Number(km).toFixed(2)} km${d.estimated ? ' (estimate — road routing unavailable)' : ' by road'}.`);
+      loadOnemapConfig();   // the test may have just minted the token — refresh the status line
     } catch (e) { onemapMsg('error', e.message); }
   });
 
