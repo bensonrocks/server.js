@@ -12386,7 +12386,9 @@
           : '';
         lastDue = r.collection_due;
         return head + `<tr class="${r.overdue ? 'pk-late' : ''}">
-          <td><input type="checkbox" class="pk-tick" data-order="${esc(r.order_number)}" ${sel.has(r.order_number) ? 'checked' : ''}></td>
+          <td>${r.api_source
+            ? '<span title="Synced from the platform — its status relays back automatically; close only by scanning the waybill at handover" style="font-size:10px;font-weight:800;color:#7c3aed;letter-spacing:.03em">API</span>'
+            : `<input type="checkbox" class="pk-tick" data-order="${esc(r.order_number)}" ${sel.has(r.order_number) ? 'checked' : ''}>`}</td>
           <td><b>${esc(r.order_number)}</b>${r.idealscan_code ? `<div class="hint">${esc(r.idealscan_code)}</div>` : ''}</td>
           <td>${esc(r.client_name || '—')}</td>
           <td>${esc(r.waybill_number || '—')}</td>
@@ -12406,7 +12408,8 @@
       syncAll();
     }
     function syncAll() {
-      const all = rows.length > 0 && rows.every(r => sel.has(r.order_number));
+      const tickable = rows.filter(r => !r.api_source);
+      const all = tickable.length > 0 && tickable.every(r => sel.has(r.order_number));
       $('pickupPickAll').checked = all;
       $('pickupMarkBtn').textContent = sel.size ? `✓ Mark ${sel.size} Picked Up` : '✓ Mark Picked Up';
     }
@@ -12507,7 +12510,7 @@
     }
 
     return { load, openPolicy, savePolicy, markSelected, scanClose, refreshBadge,
-             selectAll: on => { rows.forEach(r => on ? sel.add(r.order_number) : sel.delete(r.order_number)); render(); } };
+             selectAll: on => { rows.forEach(r => { if (r.api_source) return; on ? sel.add(r.order_number) : sel.delete(r.order_number); }); render(); } };
   })();
   // switchTab runs earlier in this file than the const above, so it reaches the
   // module through window rather than the binding (a bare reference would hit

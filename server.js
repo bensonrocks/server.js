@@ -14802,6 +14802,9 @@ app.get('/api/orders/pickup-queue', (req, res) => {
       const due = collectionDayFor(state.endTime, policy);
       rows.push({
         order_number: ord.order_number,
+        // Synced marketplace orders are closed by WAYBILL SCAN only — their
+        // status relays to the platform, so a hand-tick must not touch them.
+        api_source:   !!(ord.zort_id || batch.uploaded_by === 'zort-sync'),
         client_name:  batch.client_name || '',
         customer_name: ord.customer_name || '',
         waybill_number: ord.waybill_number || '',
@@ -14854,6 +14857,19 @@ app.post('/api/orders/pickup', express.json(), (req, res) => {
       continue;
     }
     if (state.pickup) { refused.push({ order: num, error: 'Already picked up' }); continue; }
+    // API-SYNCED ORDERS: the collection status feeds the platform relay, so a
+    // hand-tick is disallowed — closing one requires SCANNING its waybill (an
+    // observed physical handover), never a checkbox. Uploaded orders keep the
+    // manual tick exactly as before.
+    {
+      const ord = (batch.orders || []).find(o => String(o.order_number) === num);
+      const apiSource = !!(ord?.zort_id || batch.uploaded_by === 'zort-sync');
+      const method = String(req.body?.method || 'manual');
+      if (apiSource && method !== 'scan') {
+        refused.push({ order: num, error: 'API order — close by scanning its waybill, not by tick' });
+        continue;
+      }
+    }
     state.pickup = {
       at, by: req.userId || '',
       method: String(req.body?.method || 'manual').slice(0, 20),
