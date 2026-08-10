@@ -1468,9 +1468,11 @@ async function ensureGeocoded(zips) {
 }
 // ── OneMap routing token — cached in db.config, refreshed when stale ─────────
 let _onemapTokenMem = null;   // { access_token, expiry } — in-memory to avoid re-reading db
+let _onemapTokenFailUntil = 0;   // negative cache: don't hammer getToken after a failure
 async function onemapToken() {
   const now = Math.floor(Date.now() / 1000);
   if (_onemapTokenMem && _onemapTokenMem.expiry - 300 > now) return _onemapTokenMem.access_token;
+  if (Date.now() < _onemapTokenFailUntil) return '';
   try {
     const db = readDb();
     const stored = (db.config || {}).onemapToken;
@@ -1480,9 +1482,23 @@ async function onemapToken() {
     const tok = await onemap.getToken(email, password, { base: searchBase });
     _onemapTokenMem = tok;
     if (!db.config) db.config = {};
-    db.config.onemapToken = tok; writeDb(db);
+    db.config.onemapToken = tok;
+    db.config.onemapTokenError = null;   // a success clears the recorded failure
+    writeDb(db);
     return tok.access_token;
-  } catch (e) { console.warn('[onemap] token:', e.message); return ''; }
+  } catch (e) {
+    console.warn('[onemap] token:', e.message);
+    // Record WHY, so the panel can say "credentials rejected" instead of the
+    // failure silently reading as "estimate mode"; back off 5 min so a bad
+    // credential can't add a network round-trip to every planned leg.
+    _onemapTokenFailUntil = Date.now() + 5 * 60 * 1000;
+    try {
+      const db = readDb(); if (!db.config) db.config = {};
+      db.config.onemapTokenError = { at: new Date().toISOString(), message: String(e.message || e).slice(0, 200) };
+      writeDb(db);
+    } catch (_) {}
+    return '';
+  }
 }
 // Real ROAD distance (km) + drive time (min) between two postal codes, cached
 // by (from|to). Falls back to straight-line × a road factor when OneMap has no
@@ -1493,7 +1509,12 @@ async function roadLegKm(zipA, zipB) {
   const key = `${a}|${b}`;
   const db = readDb();
   const cache = db.routeCache || (db.routeCache = {});
-  if (cache[key]) return cache[key];
+  // Only a REAL road result is cached forever. An estimate was cached before
+  // any token existed — serving it permanently meant fixing the credentials
+  // could never improve a pair already looked at (found live: 609216→648331
+  // pinned at the 5.94 estimate). Estimated entries are re-attempted; the
+  // token-failure backoff above keeps that cheap when routing is still down.
+  if (cache[key] && !cache[key].estimated) return cache[key];
   const straight = transportLegKm(zipA, zipB);
   let result = { km: +(straight * ROAD_FACTOR).toFixed(2), min: Math.round(straight * ROAD_FACTOR / 40 * 60), estimated: true };
   try {
@@ -12951,6 +12972,7 @@ app.get('/api/master/onemap/config', (req, res) => {
     tokenValid: !!(c.onemapToken && c.onemapToken.expiry - 300 > now),
     tokenExpiresAt: c.onemapToken?.expiry ? new Date(c.onemapToken.expiry * 1000).toISOString() : null,
     canRefresh: !!((process.env.ONEMAP_EMAIL || c.onemapEmail) && (process.env.ONEMAP_PASSWORD || c.onemapPassword)),
+    tokenError: c.onemapTokenError || null,
     geocodeCached: Object.keys(db.geocodeCache || {}).length,
   });
 });

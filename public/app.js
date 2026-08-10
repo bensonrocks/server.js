@@ -5748,6 +5748,7 @@
       else if (d.tokenValid) bits.push('Add email & password so it can refresh itself before it expires.');
       if (d.fromEnv) bits.push('(credentials set via environment)');
       bits.push(`${d.geocodeCached || 0} postal code(s) geocoded & cached.`);
+      if (d.tokenError) bits.push(`<span style="color:#dc2626">⚠ Last token request failed: ${esc(d.tokenError.message)} (${new Date(d.tokenError.at).toLocaleString()})</span>`);
       el.innerHTML = bits.join(' ');
     } catch (e) { el.textContent = e.message; }
   }
