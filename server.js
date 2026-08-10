@@ -16666,7 +16666,7 @@ async function pullZortStore(db, store) {
   const zortMeta = {};
   // Built once for the whole pull — one query per client, not one per order.
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
-  let fetched = 0, skippedExisting = 0, skippedVoid = 0;
+  let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0;
   for (let page = 1; page <= 20; page++) {
     const resp = await zortApi.getOrders(store, { ...query, page });
     const list = resp.list || resp.orders || resp.data || [];
@@ -16678,7 +16678,28 @@ async function pullZortStore(db, store) {
       // new order, but if we ALREADY imported this order, reconcile the
       // cancellation (release its reservation if it hasn't been worked yet).
       if (Number(o.status) === 2) { skippedVoid++; handleZortVoid(db, number, o.id, store); continue; }
-      if (existing.has(number)) { skippedExisting++; continue; }
+      if (existing.has(number)) {
+        skippedExisting++;
+        // LATE TRACKING NUMBERS: the platform generates the waybill MINUTES
+        // after the order exists, so an order pulled promptly often arrives
+        // before its tracking does — and skipping it here left the waybill
+        // empty forever. If the hub now carries a tracking number the imported
+        // order lacks, fill it in — but never on a DONE order, whose label has
+        // already printed (same rule as the direct marketplace push).
+        const lateTracking = String(o.trackingno || o.tracking_no || o.trackingnumber || '').trim();
+        if (lateTracking) {
+          const f = lazadaFindOrder(db, number, '');
+          if (f && !String(f.ord.waybill_number || '').trim()) {
+            const st = f.batch.orderStates?.[f.ord.order_number] || {};
+            if (st.status !== 'done') {
+              f.ord.waybill_number = lateTracking;
+              updatedTracking++;
+              logAudit('sync_waybill_backfilled', { order: number, tracking: lateTracking, storeId: store.id });
+            }
+          }
+        }
+        continue;
+      }
       const lines = o.list || o.orderlist || [];
       if (!lines.length) continue;
       // WHICH CLIENT DOES THIS ORDER BELONG TO?
@@ -16807,7 +16828,7 @@ async function pullZortStore(db, store) {
   // and portal visibility against the wrong account, and nobody would know.
   const unsure = orders.filter(o => o._attribution_unsure)
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
-  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid,
+  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
   if (unsure.length) {
     logAudit('sync_client_attribution_unsure', { storeId: store.id, count: unsure.length, orders: unsure.slice(0, 20) });
