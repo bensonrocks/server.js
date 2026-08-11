@@ -17184,6 +17184,24 @@ function _zortBackoffMs(attempts) {
 }
 
 // Send one outbox entry. Returns true on success (entry should be removed).
+// The marketplace shipment channel of a ZORT order, read off its detail —
+// the v4 spec wants it named on Pack/ReadyToShip for marketplace orders. The
+// exact field name is not documented, so several candidates are tried;
+// best-effort by design: '' (cached by the caller) means "none found, call
+// without it", which is exactly the pre-spec behaviour. Never throws — a
+// missing channel name must not stall the pack itself.
+async function zortShipmentChannel(store, zortId) {
+  try {
+    const d = await zortApi.getOrderDetail(store, zortId);
+    const o = d?.order || d || {};
+    for (const k of ['shippingchannel', 'shippingname', 'shipmentname', 'shippingchannelname', 'shipping_channel', 'saleschannel']) {
+      const v = String(o[k] ?? '').trim();
+      if (v) return v;
+    }
+  } catch (e) { console.error('[zort-shipment]', zortId, e.message); }
+  return '';
+}
+
 async function _zortSendOutboxEntry(db, store, entry) {
   // ── THE CARRIER LABEL FOR A SYNCED ORDER ──────────────────────────────────
   // Fetched here rather than during the pull for two reasons: the label often
@@ -17212,7 +17230,12 @@ async function _zortSendOutboxEntry(db, store, entry) {
   }
   if (entry.kind === 'arrange') {
     // Arrangement/pack ONLY — never readyToShip (see enqueueZortArrange).
-    await zortApi.packOrder(store, { id: entry.zortId });
+    // Per the v4 spec, a marketplace order should name its marketplace
+    // shipment channel on the Pack call — resolved from the order detail and
+    // cached on the entry so a retry does not refetch. If no channel field is
+    // found the call goes out without one (the pre-spec behaviour).
+    if (entry.shipment === undefined) entry.shipment = await zortShipmentChannel(store, entry.zortId);
+    await zortApi.packOrder(store, { id: entry.zortId, shipment: entry.shipment || undefined });
     logAudit('sync_arranged_at_intake', { order: entry.orderNumber, client: store.clientName || '', storeId: store.id });
     // Chase the results: the platform assigns tracking shortly after packing.
     enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
@@ -17242,8 +17265,14 @@ async function _zortSendOutboxEntry(db, store, entry) {
   }
   if (entry.kind === 'completion') {
     const t = entry.tracking || undefined;
-    if (entry.action === 'pack')        await zortApi.packOrder(store, { id: entry.zortId, trackingno: t });
-    else if (entry.action === 'readytoship') await zortApi.readyToShip(store, { id: entry.zortId, trackingno: t });
+    if (entry.action === 'pack' || entry.action === 'readytoship') {
+      // Same spec rule as the arrange path: marketplace orders name their
+      // marketplace shipment channel; cached on the entry across retries.
+      if (entry.shipment === undefined) entry.shipment = await zortShipmentChannel(store, entry.zortId);
+      const args = { id: entry.zortId, trackingno: t, shipment: entry.shipment || undefined };
+      if (entry.action === 'pack') await zortApi.packOrder(store, args);
+      else                         await zortApi.readyToShip(store, args);
+    }
     else await zortApi.updateOrderStatus(store, { id: entry.zortId, status: store.completeStatusCode ?? 1, actionDate: new Date().toISOString().slice(0, 10) });
     logAudit('zort_completion_pushed', { order: entry.orderNumber, client: store.clientName || '', action: entry.action });
     return true;
