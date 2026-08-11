@@ -868,6 +868,49 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
 - Webhook/UpdateWebhook exists in the API — a future push-based
   alternative to polling, not yet used.
 
+### ZORT order status — words, the import filter, and the cross-check tool
+
+CONFIRMED against developers.zortout.com/api-reference/order (read 2026-08-11
+via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
+
+- **The GetOrders REQUEST filter uses numbers; the RESPONSE carries WORDS**
+  ("Pending", "Voided", "Shipping"…). The original void check
+  `Number(o.status) === 2` could NEVER match live data — it only ever passed
+  because the mock used numeric statuses. `zortStatusWord()` normalizes both
+  shapes; every status comparison must go through it.
+- Lifecycle: **Pending(0) → Packed(5) → Waiting(3, = RTS'd) → Shipping(6) →
+  Success(1)**; Voided(2) / Returned(4) / Failed Shipment(7) / "Partial
+  Transfer" sit alongside. "Waiting" comes AFTER Packed — it means Ready to
+  Ship was pressed, not "new work waiting".
+- **Import filter** (`ZORT_IMPORT_SKIP_STATUSES` = success, shipping, returned,
+  failed shipment): new orders in these states are never imported as floor
+  work — the first pull's 7-day reachback once dragged in ~dozens of orders the
+  client had fulfilled themselves, which sat as phantom pending backlog.
+  Counted per status in `lastResult.skippedByStatus` + sampled in
+  `skippedHandledSample`, shown as a blue "⤳ not imported (already handled)"
+  line on the store row. **"waiting" is deliberately still imported** — during
+  the handover period a client may RTS work meant for us; the cross-check tool
+  is where that ambiguity is resolved by a human.
+- **🔎 Cross-check** (store-row button; `POST /api/master/zort/stores/:id/
+  cross-check`, read-only): asks the hub the current status of every open
+  synced order here (GetOrders `numberlist` HEADER, 100 per call — a header,
+  not a query param) and verdicts each: fulfilled-elsewhere / rts-elsewhere /
+  voided / active / not-found, with the marketplace's own `integrationStatus`
+  alongside. `POST .../settle {orders[]}` then marks the listed ones
+  `unprocessed` ("Fulfilled outside IdealOne (ZORT cross-check)") — GUARDS:
+  zero-scan orders only (anything the floor touched is refused BY NAME), done
+  orders never touched, reservations released via the standing reconciler.
+  Audited `zort_cross_check` / `sync_orders_settled_crosscheck`.
+- **Pack/ReadyToShip `shipment` is REQUIRED for RTS** per the docs, and the
+  order detail's `shippingchannel` is THE field (NOT `shippingname` — that is
+  the recipient's name). Lazada fallback when blank, per the doc verbatim:
+  `"lex"`. Shopee/TikTok want "pickup"/"dropoff" — a business choice, never
+  guessed, left blank. `zortShipmentChannel()` implements this; the outbox
+  drainer resolves it once per entry and caches it across retries.
+- The RTS response returns `detail.trackingno` AND `detail.link` (label URL) —
+  a future shortcut past the tracking/label polling. PackOrder is in the
+  Postman collection but NOT on the docs site; its params mirror RTS.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture

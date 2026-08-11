@@ -16682,6 +16682,27 @@ function zortStorePublic(s, db) {
 // Standing rule: completed/in-progress work is never silently regressed. Only
 // a still-pending, never-scanned order is auto-cancelled (and its reservation
 // released); anything worked on is flagged for a human via an audit conflict.
+// ── ZORT order status, normalized ───────────────────────────────────────────
+// The v4 docs (developers.zortout.com/api-reference/order, read 2026-08-11):
+// request FILTER uses numbers (0-7), the RESPONSE carries WORDS. Lifecycle:
+// Pending(0) → Packed(5) → Waiting(3, = RTS'd) → Shipping(6) → Success(1);
+// Voided(2), Returned(4), Failed Shipment(7), Partial Transfer sit alongside.
+// One normalizer accepts either shape so a mock, an old payload and live data
+// all read the same.
+const ZORT_STATUS_WORDS = { 0: 'pending', 1: 'success', 2: 'voided', 3: 'waiting', 4: 'returned', 5: 'packed', 6: 'shipping', 7: 'failed shipment' };
+function zortStatusWord(s) {
+  const raw = String(s ?? '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return ZORT_STATUS_WORDS[Number(raw)] || raw;
+  return raw.toLowerCase();
+}
+// New orders in these states are never imported as floor work — they are
+// already fulfilled/left/returned on the hub's side. 'waiting' (RTS'd) is
+// deliberately NOT here: during handover a client may RTS work meant for us,
+// so it imports and the cross-check tool arbitrates. 'voided' is handled
+// separately (it also cancels an existing copy).
+const ZORT_IMPORT_SKIP_STATUSES = new Set(['success', 'shipping', 'returned', 'failed shipment']);
+
 function handleZortVoid(db, orderNumber, zortId, store) {
   try {
     let batch = null, ord = null;
@@ -16733,6 +16754,7 @@ async function pullZortStore(db, store) {
   // Built once for the whole pull — one query per client, not one per order.
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
   let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0;
+  const skippedByStatus = {}; const skippedHandledSample = [];
   for (let page = 1; page <= 20; page++) {
     const resp = await zortApi.getOrders(store, { ...query, page });
     const list = resp.list || resp.orders || resp.data || [];
@@ -16743,7 +16765,12 @@ async function pullZortStore(db, store) {
       // Zort status 2 = voided/cancelled in their scheme — never import as a
       // new order, but if we ALREADY imported this order, reconcile the
       // cancellation (release its reservation if it hasn't been worked yet).
-      if (Number(o.status) === 2) { skippedVoid++; handleZortVoid(db, number, o.id, store); continue; }
+      // NORMALIZED status — the v4 docs' RESPONSE carries a WORD ("Voided",
+      // "Shipping"), while the request filter and the old mock used numbers.
+      // The original `Number(o.status) === 2` could never match a word, so
+      // void handling silently never fired against live data.
+      const stw = zortStatusWord(o.status);
+      if (stw === 'voided') { skippedVoid++; handleZortVoid(db, number, o.id, store); continue; }
       if (existing.has(number)) {
         skippedExisting++;
         // LATE TRACKING NUMBERS: the platform generates the waybill MINUTES
@@ -16764,6 +16791,19 @@ async function pullZortStore(db, store) {
             }
           }
         }
+        continue;
+      }
+      // ALREADY HANDLED ON THE HUB'S SIDE — never import as fresh floor work.
+      // The ZORT lifecycle is Pending → Packed → Waiting (RTS'd) → Shipping →
+      // Success; the first pull's 7-day reachback dragged in orders the client
+      // had fulfilled themselves, which then sat as phantom pending backlog.
+      // Skipped, counted per status, and sampled so the store row can say
+      // exactly what was left out. "Waiting" (RTS'd) is deliberately still
+      // imported: during the handover period a client may RTS work meant for
+      // us, and the cross-check tool is where that ambiguity is resolved.
+      if (ZORT_IMPORT_SKIP_STATUSES.has(stw)) {
+        skippedByStatus[stw] = (skippedByStatus[stw] || 0) + 1;
+        if (skippedHandledSample.length < 20) skippedHandledSample.push({ order: number, status: stw });
         continue;
       }
       const lines = o.list || o.orderlist || [];
@@ -16907,6 +16947,7 @@ async function pullZortStore(db, store) {
   const unsure = orders.filter(o => o._attribution_unsure)
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
+                       skippedByStatus, skippedHandledSample,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
   if (unsure.length) {
     logAudit('sync_client_attribution_unsure', { storeId: store.id, count: unsure.length, orders: unsure.slice(0, 20) });
@@ -17194,10 +17235,17 @@ async function zortShipmentChannel(store, zortId) {
   try {
     const d = await zortApi.getOrderDetail(store, zortId);
     const o = d?.order || d || {};
-    for (const k of ['shippingchannel', 'shippingname', 'shipmentname', 'shippingchannelname', 'shipping_channel', 'saleschannel']) {
-      const v = String(o[k] ?? '').trim();
-      if (v) return v;
-    }
+    // CONFIRMED against the v4 docs: `shippingchannel` is THE field. (An
+    // earlier candidate list here included `shippingname` — that is the
+    // RECIPIENT'S name per the docs, and sending it as the shipment channel
+    // would have been wrong every time.)
+    const ch = String(o.shippingchannel ?? '').trim();
+    if (ch) return ch;
+    // Lazada, per the ReadyToShip doc verbatim: "If in order doesn't have
+    // shipping channel please use 'lex'". Shopee/TikTok want "pickup" or
+    // "dropoff" — a business choice we must not guess, so those stay blank.
+    const chan = `${o.saleschannel || ''} ${o.integrationName || ''}`.toLowerCase();
+    if (chan.includes('lazada')) return 'lex';
   } catch (e) { console.error('[zort-shipment]', zortId, e.message); }
   return '';
 }
@@ -17508,6 +17556,105 @@ app.post('/api/master/zort/stores/:id/pull', async (req, res) => {
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });
   }
+});
+
+// ── Cross-check: what does the hub say about OUR open synced orders? ────────
+// For every pending/processing order this store imported, ask ZORT its current
+// status (GetOrders numberlist header, 100 per call). This is how "fulfilled
+// outside IdealOne" backlog — orders the client packed and shipped themselves,
+// dragged in by the pull — is identified against the hub's own record instead
+// of guesswork. READ-ONLY: it changes nothing; settling is a separate,
+// explicit call below.
+app.post('/api/master/zort/stores/:id/cross-check', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  // Our open synced orders for this store.
+  const ours = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (!o.zort_id || String(o.zort_store_id || '') !== String(store.id)) continue;
+      const st = b.orderStates?.[o.order_number] || {};
+      const status = st.status || 'pending';
+      if (status !== 'pending' && status !== 'processing') continue;
+      const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      ours.push({ order: o.order_number, client: b.client_name || '', our_status: status, scanned_qty: scanned });
+    }
+  }
+  if (!ours.length) return res.json({ ok: true, rows: [], counts: {}, checked: 0 });
+  // Ask the hub in batches of 100.
+  const hub = new Map();
+  try {
+    for (let i = 0; i < ours.length; i += 100) {
+      const nums = ours.slice(i, i + 100).map(r => r.order);
+      const d = await zortApi.getOrdersByNumbers(store, nums);
+      for (const z of d.list || d.orders || []) {
+        hub.set(String(z.number || '').trim(), {
+          status: zortStatusWord(z.status),
+          integration_status: String(z.integrationStatus || '').trim(),
+          tracking: String(z.trackingno || '').trim(),
+          success_date: z.successDateString || '',
+        });
+      }
+    }
+  } catch (err) {
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+  const counts = {};
+  const rows = ours.map(r => {
+    const z = hub.get(r.order);
+    // fulfilled-elsewhere = the hub says it left or finished; rts-elsewhere =
+    // someone (during handover, the client) already called Ready to Ship;
+    // active = genuinely our work; voided = cancelled on the hub.
+    const verdict = !z ? 'not-found'
+      : (z.status === 'success' || z.status === 'shipping') ? 'fulfilled-elsewhere'
+      : z.status === 'waiting' ? 'rts-elsewhere'
+      : z.status === 'voided' ? 'voided'
+      : 'active';
+    counts[verdict] = (counts[verdict] || 0) + 1;
+    return { ...r, zort_status: z?.status || '', integration_status: z?.integration_status || '',
+             tracking: z?.tracking || '', success_date: z?.success_date || '', verdict,
+             settleable: r.scanned_qty === 0 && (verdict === 'fulfilled-elsewhere' || verdict === 'rts-elsewhere' || verdict === 'voided') };
+  });
+  logAudit('zort_cross_check', { storeId: store.id, checked: rows.length, counts });
+  res.json({ ok: true, rows, counts, checked: rows.length });
+});
+
+// Settle orders the cross-check proved are not our work: mark them
+// `unprocessed` (cancelled) with the reason recorded. GUARDS: only orders with
+// ZERO scans — anything the floor has touched is never auto-settled (standing
+// rule) — and only numbers explicitly listed by the caller, so the human saw
+// the list before it moved. Reservations release via the standing reconciler.
+app.post('/api/master/zort/stores/:id/settle', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  const wanted = new Set((req.body?.orders || []).map(String));
+  if (!wanted.size) return res.status(400).json({ error: 'No orders listed' });
+  const settled = [], refused = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (!wanted.has(String(o.order_number))) continue;
+      if (!o.zort_id || String(o.zort_store_id || '') !== String(store.id)) { refused.push({ order: o.order_number, why: 'not a synced order of this store' }); continue; }
+      const st = b.orderStates?.[o.order_number] || (b.orderStates[o.order_number] = {});
+      const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      if (st.status === 'done') { refused.push({ order: o.order_number, why: 'completed here — never auto-settled' }); continue; }
+      if (scanned > 0) { refused.push({ order: o.order_number, why: `${scanned} pc(s) already scanned — finish or cancel it by hand` }); continue; }
+      st.status = 'unprocessed';
+      st.unprocessed_reason = 'Fulfilled outside IdealOne (ZORT cross-check)';
+      st.unprocessed_at = new Date().toISOString();
+      settled.push(o.order_number);
+    }
+  }
+  for (const n of wanted) {
+    if (!settled.includes(n) && !refused.some(r => r.order === n)) refused.push({ order: n, why: 'not found' });
+  }
+  try { releaseOrphanReservations(db); } catch (e) { console.error('[settle-reservations]', e.message); }
+  writeDb(db);
+  logAudit('sync_orders_settled_crosscheck', { storeId: store.id, settled: settled.length, orders: settled.slice(0, 50), refused: refused.slice(0, 20), by: req.userId || '' });
+  res.json({ ok: true, settled, refused });
 });
 
 // Initial / manual FULL stock sync — enqueue a stock push for every SKU this

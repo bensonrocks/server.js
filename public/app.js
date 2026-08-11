@@ -11180,11 +11180,12 @@
           <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
           <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
           <td>${stockBadge}${labelBadge}</td>
-          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
+          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
+            <button class="btn-secondary btn-sm z-crosscheck" title="Ask the hub the current status of every open synced order here — finds orders the client fulfilled themselves, and offers to settle them">&#128270; Cross-check</button>
             ${s.stockSync ? '<button class="btn-secondary btn-sm z-pushstock" title="Enqueue current stock levels for every SKU to the store">⇪ Push Stock</button>' : ''}
             <button class="btn-secondary btn-sm z-pushprod" title="Send this client's item master to the store as its product list (codes, names, barcodes — never quantities)">&#128230; Push Catalogue</button>
             <button class="btn-secondary btn-sm z-edit">&#9998;</button>
@@ -11224,6 +11225,39 @@
               loadZortStores();
             } else zortStatus('error', `✗ ${d.error}`);
           } catch (err) { zortStatus('error', 'Pull failed: ' + err.message); }
+          e.target.disabled = false;
+        });
+        // "What does the hub say about our open synced orders?" — read-only
+        // check, then an explicit settle of the ones the hub already handled.
+        tr.querySelector('.z-crosscheck').addEventListener('click', async e => {
+          e.target.disabled = true;
+          zortStatus('progress', `Cross-checking ${store.clientName}'s open orders against the hub…`);
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/cross-check`, { method: 'POST', headers: zortHdrs() });
+            const d = await r2.json();
+            if (!d.ok) throw new Error(d.error || 'Cross-check failed');
+            if (!d.checked) { zortStatus('success', 'No open synced orders to check.'); e.target.disabled = false; return; }
+            const c = d.counts || {};
+            const settleable = d.rows.filter(r => r.settleable);
+            const summary = `Checked ${d.checked} open order(s) against the hub:\n` +
+              `  • genuinely ours (pending/packed): ${c['active'] || 0}\n` +
+              `  • fulfilled elsewhere (shipping/success): ${c['fulfilled-elsewhere'] || 0}\n` +
+              `  • already Ready-to-Shipped elsewhere: ${c['rts-elsewhere'] || 0}\n` +
+              `  • voided on the hub: ${c['voided'] || 0}\n` +
+              `  • not found on the hub: ${c['not-found'] || 0}`;
+            if (!settleable.length) { alert(summary + '\n\nNothing needs settling.'); zortStatus('success', '✓ Cross-check done — nothing to settle.'); e.target.disabled = false; return; }
+            const preview = settleable.slice(0, 15).map(r => `  ${r.order} — ${r.zort_status}${r.integration_status ? ` (${r.integration_status})` : ''}`).join('\n');
+            const go = confirm(summary + `\n\nSettle ${settleable.length} order(s) the hub already handled? They will be marked "unprocessed — fulfilled outside IdealOne" and leave the packers' list. Orders with any scans are never touched.\n\n${preview}${settleable.length > 15 ? `\n  …and ${settleable.length - 15} more` : ''}\n\nOK = settle · Cancel = leave everything as it is`);
+            if (!go) { zortStatus('success', '✓ Cross-check done — nothing changed.'); e.target.disabled = false; return; }
+            const r3 = await fetch(`/api/master/zort/stores/${id}/settle`, {
+              method: 'POST', headers: zortHdrs(),
+              body: JSON.stringify({ orders: settleable.map(r => r.order) }),
+            });
+            const d3 = await r3.json();
+            if (!d3.ok) throw new Error(d3.error || 'Settle failed');
+            zortStatus('success', `✓ ${d3.settled.length} order(s) settled as fulfilled outside IdealOne${d3.refused.length ? ` · ${d3.refused.length} refused (see audit log)` : ''}`);
+            if (typeof refreshOrders === 'function') refreshOrders();
+          } catch (err) { zortStatus('error', 'Cross-check failed: ' + err.message); }
           e.target.disabled = false;
         });
         tr.querySelector('.z-pushstock')?.addEventListener('click', async e => {
