@@ -16735,7 +16735,8 @@ async function pullZortStore(db, store) {
       const att = attributeSyncClient(skuOwners, lines, channel, store);
       const clientForOrder = att.client;
       zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder,
-                           attributed_via: att.via, attribution_unsure: att.unsure || null };
+                           attributed_via: att.via, attribution_unsure: att.unsure || null,
+                           attribution_hint: att.hint || null };
       for (const l of lines) {
         rows.push({
           order_number:     number,
@@ -16771,6 +16772,9 @@ async function pullZortStore(db, store) {
     o._client = m.client || store.clientName || 'ZORT';
     o._attributed_via = m.attributed_via || 'default';
     o._attribution_unsure = m.attribution_unsure || null;
+    // Kept on the stored order (clean name, no underscore) so the Orders list
+    // can render the fallen-back row as CLIENT (probable owner).
+    o.attribution_hint = m.attribution_hint || null;
   }
 
   // ONE ZORT account carries MANY clients' sales channels — group the pull
@@ -16926,6 +16930,15 @@ function attributeSyncClient(skuOwners, lines, channel, store) {
     }
   }
   if (owners.size === 1 && !ambiguous) return { client: [...owners][0], via: 'sku' };
+  // What the SKUs point at, even when it isn't conclusive — shown on the
+  // Orders row as "IDEALONEMAIN (Mayer2026)" so a fallen-back order still
+  // says who it probably belongs to. Display-only; filing is unchanged.
+  const dupOwners = new Set();
+  for (const l of lines || []) {
+    const om = skuOwners.get(String(l.sku || l.barcode || '').trim().toUpperCase());
+    if (om && om.size > 1) for (const n of om.values()) dupOwners.add(n);
+  }
+  const hint = [...new Set([...owners, ...dupOwners])].join(' / ') || null;
   const mapped = (store.channelClients || {})[channel];
   if (mapped) {
     // Lines pointing at a DIFFERENT client than the channel map is worth
@@ -16934,10 +16947,10 @@ function attributeSyncClient(skuOwners, lines, channel, store) {
     return { client: mapped, via: 'channel', unsure: clash ? `SKUs suggest ${[...owners][0]}` : null };
   }
   if (owners.size > 1) {
-    return { client: store.clientName || channel || 'ZORT', via: 'unresolved',
+    return { client: store.clientName || channel || 'ZORT', via: 'unresolved', hint,
              unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}` };
   }
-  return { client: store.clientName || channel || 'ZORT', via: 'default',
+  return { client: store.clientName || channel || 'ZORT', via: 'default', hint,
            unsure: ambiguous ? `a SKU is registered to more than one client: ${dupDetails.slice(0, 3).join('; ')}`
                              : 'no SKU on this order is in any client item master' };
 }
