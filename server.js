@@ -13587,6 +13587,73 @@ app.post('/api/scan/save', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── The ONE completion implementation ───────────────────────────────────────
+// Everything "this order is finished" entails: state flip, carton close-off,
+// journal, transport confirm, stock deduction + reservation release, auto
+// pickup settle, audit, ZORT push-back, stock-change fan-out, alert email.
+// Called by /api/scan/complete (the normal path) AND the Administrator-gated
+// mass-complete below — one implementation, because a second copy is exactly
+// how the two paths would drift.
+function completeOrderCore(db, batch, ord, state, { startTime, endTime, operator } = {}) {
+  const orderNumber = ord.order_number;
+  state.status     = 'done';
+  delete state.claimedBy;
+  delete state.claimedAt;
+  if (state.cartons && state.cartons.length) {
+    const last = state.cartons[state.cartons.length - 1];
+    // A stray "New Carton" tap with nothing scanned into it yet (e.g. the
+    // packer's last action before Complete) shouldn't leave a phantom
+    // empty carton on the slip — drop it rather than close it.
+    if (state.cartons.length > 1 && Object.keys(last.scans).length === 0) {
+      state.cartons.pop();
+    }
+    // Close every carton still open — covers the normal case (last one)
+    // AND a packer who switched back to an earlier carton to edit it and
+    // completed the order without switching forward again.
+    const closeTime = new Date().toISOString();
+    for (const c of state.cartons) if (!c.closedAt) c.closedAt = closeTime;
+  }
+  state.updated_at = new Date().toISOString();
+  if (startTime) state.startTime = startTime;
+  if (endTime)   state.endTime   = endTime;
+  if (operator)  state.operator  = operator;
+  batch.orderStates[orderNumber] = state;
+  journalOrderState(orderNumber, state);
+  updateTransportOnOrderCompletion(db, ord, state);
+
+  // The order shipped — deduct physical stock and release its reservation
+  // (deductOrder does both). Guarded so a re-fire (e.g. offline replay) can
+  // never double-deduct. Only for inventory-tracked batches. Records the
+  // SKUs whose availability changed so we can notify ZORT below.
+  let deductedSkus = [];
+  if (batch.inventory_tracked && !state.inventory_deducted && inventory.available()) {
+    const cid = batch.inventory_client || invClientId(batch.client_name);
+    try {
+      inventory.deductOrder(cid, { id: orderNumber, items: (ord.lines || []).map(l => ({ sku: l.sku, qty: l.qty })) });
+      state.inventory_deducted = true;
+      deductedSkus = [...new Set((ord.lines || []).map(l => l.sku).filter(Boolean))];
+      // Bin lots are decremented LIVE per-scan (reconcileBinConsumption). Here we
+      // just do a final reconcile per SKU to catch any gap — e.g. an order marked
+      // done without scanning every unit — so bins always match the final count.
+      for (const sku of new Set((ord.lines || []).map(l => l.sku).filter(Boolean))) {
+        reconcileBinConsumption(db, batch, ord, state, sku);
+      }
+    } catch (e) { console.warn('[scan/complete] inventory deduct failed for', orderNumber, e.message); }
+  }
+
+  // Finished on a day we drive to the drop-off point ourselves? Then it has
+  // already left as part of being finished — settle it now rather than
+  // leaving Saturday's work to be closed by hand on Monday.
+  applyAutoPickups(db);
+  writeDb(db);
+  logAudit('order_completed', completionAuditData(batch, ord, state));
+  // Zort-sourced order? Push the completion back to the client's store
+  // (async, never blocks completion; failures are audit-logged).
+  pushZortCompletion(db, ord, state);
+  // Shipped stock changed availability → notify ZORT stock-sync stores.
+  if (deductedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), deductedSkus);
+}
+
 app.post('/api/scan/complete', (req, res) => {
   const { orderNumber, startTime, endTime, operator } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
@@ -13604,62 +13671,7 @@ app.post('/api/scan/complete', (req, res) => {
   const holder = claimBlocker(state, req.userId);
   if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
   if (!mismatches.length) {
-    state.status     = 'done';
-    delete state.claimedBy;
-    delete state.claimedAt;
-    if (state.cartons && state.cartons.length) {
-      const last = state.cartons[state.cartons.length - 1];
-      // A stray "New Carton" tap with nothing scanned into it yet (e.g. the
-      // packer's last action before Complete) shouldn't leave a phantom
-      // empty carton on the slip — drop it rather than close it.
-      if (state.cartons.length > 1 && Object.keys(last.scans).length === 0) {
-        state.cartons.pop();
-      }
-      // Close every carton still open — covers the normal case (last one)
-      // AND a packer who switched back to an earlier carton to edit it and
-      // completed the order without switching forward again.
-      const closeTime = new Date().toISOString();
-      for (const c of state.cartons) if (!c.closedAt) c.closedAt = closeTime;
-    }
-    state.updated_at = new Date().toISOString();
-    if (startTime) state.startTime = startTime;
-    if (endTime)   state.endTime   = endTime;
-    if (operator)  state.operator  = operator;
-    batch.orderStates[orderNumber] = state;
-    journalOrderState(orderNumber, state);
-    updateTransportOnOrderCompletion(db, ord, state);
-
-    // The order shipped — deduct physical stock and release its reservation
-    // (deductOrder does both). Guarded so a re-fire (e.g. offline replay) can
-    // never double-deduct. Only for inventory-tracked batches. Records the
-    // SKUs whose availability changed so we can notify ZORT below.
-    let deductedSkus = [];
-    if (batch.inventory_tracked && !state.inventory_deducted && inventory.available()) {
-      const cid = batch.inventory_client || invClientId(batch.client_name);
-      try {
-        inventory.deductOrder(cid, { id: orderNumber, items: (ord.lines || []).map(l => ({ sku: l.sku, qty: l.qty })) });
-        state.inventory_deducted = true;
-        deductedSkus = [...new Set((ord.lines || []).map(l => l.sku).filter(Boolean))];
-        // Bin lots are decremented LIVE per-scan (reconcileBinConsumption). Here we
-        // just do a final reconcile per SKU to catch any gap — e.g. an order marked
-        // done without scanning every unit — so bins always match the final count.
-        for (const sku of new Set((ord.lines || []).map(l => l.sku).filter(Boolean))) {
-          reconcileBinConsumption(db, batch, ord, state, sku);
-        }
-      } catch (e) { console.warn('[scan/complete] inventory deduct failed for', orderNumber, e.message); }
-    }
-
-    // Finished on a day we drive to the drop-off point ourselves? Then it has
-    // already left as part of being finished — settle it now rather than
-    // leaving Saturday's work to be closed by hand on Monday.
-    applyAutoPickups(db);
-    writeDb(db);
-    logAudit('order_completed', completionAuditData(batch, ord, state));
-    // Zort-sourced order? Push the completion back to the client's store
-    // (async, never blocks completion; failures are audit-logged).
-    pushZortCompletion(db, ord, state);
-    // Shipped stock changed availability → notify ZORT stock-sync stores.
-    if (deductedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), deductedSkus);
+    completeOrderCore(db, batch, ord, state, { startTime, endTime, operator });
     sendCompletionAlert(orderNumber, ord, operator).then(result => {
       const db2    = readDb();
       const batch2 = findBatchForOrder(db2, orderNumber);
@@ -13687,6 +13699,53 @@ app.post('/api/scan/complete', (req, res) => {
     return res.json({ ok: true, mismatches: [] });
   }
   res.json({ ok: false, mismatches });
+});
+
+// ── Mass complete — bypass scanning, Administrator password ONLY ────────────
+// Per the user: complete selected orders in one action without the scan step,
+// gated on the Administrator password (checkMaster), not any admin's own —
+// skipping the physical check is a management override, and the trail says so.
+// A MASS COMPLETE IS NOT A COUNT (same honesty rule as inbound mass-receive):
+// nobody scanned these pieces. Quantities are set to the ordered figures so
+// totals reconcile, and the bypass is recorded on the order (scan log +
+// mass_completed stamp) and in the audit trail. Runs the SAME
+// completeOrderCore as a scanned completion — stock deducts, reservations
+// release, transport confirms, and a synced order still reports back to its
+// store — so a bypassed order is indistinguishable downstream except for the
+// honest markers. Completion alert emails are deliberately NOT sent per order
+// (a bulk backfill would spam the client with N mails at once).
+app.post('/api/master/orders/mass-complete', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const wanted = [...new Set((req.body?.orders || []).map(String))];
+  if (!wanted.length) return res.status(400).json({ error: 'No orders listed' });
+  const db = readDb();
+  // Master-key routes never get req.userId populated (the standing gotcha the
+  // PII routes hit) — resolve the signed-in staff user from the token, or the
+  // trail names nobody.
+  const who = req.userId || _tokenUserId(req) || '';
+  const now = new Date().toISOString();
+  const completed = [], refused = [];
+  for (const orderNumber of wanted) {
+    const batch = findBatchForOrder(db, orderNumber);
+    if (!batch) { refused.push({ order: orderNumber, why: 'not found' }); continue; }
+    const ord = batch.orders.find(o => o.order_number === orderNumber);
+    if (!batch.orderStates) batch.orderStates = {};
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    if (state.status === 'done')        { refused.push({ order: orderNumber, why: 'already completed' }); continue; }
+    if (state.status === 'unprocessed') { refused.push({ order: orderNumber, why: 'cancelled' }); continue; }
+    // Someone mid-pick at a station keeps their order — an override must not
+    // yank work out of a packer's hands. Refused by name; retry after.
+    const holder = claimBlocker(state, req.userId);
+    if (holder) { refused.push({ order: orderNumber, why: `being packed by ${holder} right now` }); continue; }
+    if (!state.scanned) state.scanned = {};
+    for (const item of uniqueSkuLines(ord)) state.scanned[item.sku] = item.qty;
+    appendScanLog(state, { kind: 'mass_completed', by: who, note: 'completed without scanning (Administrator override)' });
+    state.mass_completed = { by: who, at: now };
+    completeOrderCore(db, batch, ord, state, { startTime: state.startTime || now, endTime: now, operator: who });
+    completed.push(orderNumber);
+  }
+  logAudit('orders_mass_completed', { count: completed.length, orders: completed.slice(0, 100), refused: refused.slice(0, 30), by: who });
+  res.json({ ok: true, completed, refused });
 });
 
 app.post('/api/scan/cancel', (req, res) => {

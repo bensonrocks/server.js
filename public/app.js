@@ -2403,6 +2403,7 @@
         <button id="ordersBulkWave" class="btn-primary btn-sm" title="Create a wave pick from the selected orders — it appears in Wave Management like any other wave">&#127754; Create Wave</button>
         <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print waybill/label for each selected order that has one">&#128438; Print Labels</button>
         <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
+        <button id="ordersBulkComplete" class="btn-secondary btn-sm" title="Complete the selected orders WITHOUT scanning — Administrator password required. Stock deducts and synced orders report back to their store exactly as a scanned completion would.">&#9989; Complete (skip scan)</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
       </div>` : '';
@@ -2623,6 +2624,41 @@
         .filter(o => o && o.scan_status !== 'done' && !o.pending_deletion && !o.archived);
       if (!selectable.length) { alert('None of the selected orders can be deleted (completed/archived/already pending are skipped).'); return; }
       openBulkDeleteOrdersModal(selectable.map(o => ({ orderNumber: o.order_number, batchId: o.batchId || '' })));
+    });
+    // Mass complete — bypass scanning entirely, Administrator password only.
+    // The password is asked for EVERY time, deliberately: skipping the
+    // physical check is a management override, not a routine click.
+    document.getElementById('ordersBulkComplete')?.addEventListener('click', async () => {
+      const eligible = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status !== 'done' && o.scan_status !== 'unprocessed');
+      if (!eligible.length) { alert('None of the selected orders can be completed (already done or cancelled).'); return; }
+      const syncCount = eligible.filter(o => o.api_source).length;
+      const warn = `Complete ${eligible.length} order(s) WITHOUT scanning?\n\n` +
+        `• Nobody has counted these pieces — quantities are taken from the order file as-is.\n` +
+        `• Stock will be deducted and reservations released, exactly as a scanned completion.\n` +
+        (syncCount ? `• ⚠ ${syncCount} of them are marketplace-synced: their store will be told the parcel is packed/Ready to Ship. Only do this if the parcels genuinely left.\n` : '') +
+        `• The bypass is recorded on every order and in the audit trail.\n\n` +
+        `First 10: ${eligible.slice(0, 10).map(o => o.order_number).join(', ')}${eligible.length > 10 ? '…' : ''}`;
+      if (!confirm(warn)) return;
+      const pw = prompt('Administrator password to authorise completing without scanning:');
+      if (!pw) return;
+      const btn = document.getElementById('ordersBulkComplete'); if (btn) btn.disabled = true;
+      try {
+        const r = await fetch('/api/master/orders/mass-complete', {
+          method: 'POST',
+          headers: { ...hdrs(), 'Content-Type': 'application/json', 'x-master-key': pw },
+          body: JSON.stringify({ orders: eligible.map(o => o.order_number) }),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || 'Mass complete refused.'); return; }
+        let msg = `✓ ${d.completed.length} order(s) completed without scanning.`;
+        if (d.refused?.length) msg += `\n\nNot completed:\n` + d.refused.slice(0, 10).map(x => `  ${x.order} — ${x.why}`).join('\n') + (d.refused.length > 10 ? `\n  …and ${d.refused.length - 10} more` : '');
+        alert(msg);
+        orderSelection.clear();
+        renderOrdersDash();
+      } catch (e) { alert('Mass complete failed: ' + e.message); }
+      finally { if (btn) btn.disabled = false; }
     });
     // Can-Fulfil report — what the selection can ship from current stock vs
     // what is short. One client per report: fulfillability is judged against
