@@ -2402,6 +2402,7 @@
         <span id="ordersBulkCount" class="obb-count">0 selected</span>
         <button id="ordersBulkWave" class="btn-primary btn-sm" title="Create a wave pick from the selected orders — it appears in Wave Management like any other wave">&#127754; Create Wave</button>
         <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print waybill/label for each selected order that has one">&#128438; Print Labels</button>
+        <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
       </div>` : '';
@@ -2622,6 +2623,32 @@
         .filter(o => o && o.scan_status !== 'done' && !o.pending_deletion && !o.archived);
       if (!selectable.length) { alert('None of the selected orders can be deleted (completed/archived/already pending are skipped).'); return; }
       openBulkDeleteOrdersModal(selectable.map(o => ({ orderNumber: o.order_number, batchId: o.batchId || '' })));
+    });
+    // Can-Fulfil report — what the selection can ship from current stock vs
+    // what is short. One client per report: fulfillability is judged against
+    // ONE client's stock account, so a mixed selection is refused by name.
+    document.getElementById('ordersBulkFulfil')?.addEventListener('click', async () => {
+      const chosen = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status !== 'done' && o.scan_status !== 'unprocessed');
+      if (!chosen.length) { alert('Select the orders first (completed/cancelled ones are not judged — they already shipped or never will).'); return; }
+      const clients = [...new Set(chosen.map(o => o.client_name).filter(Boolean))];
+      if (clients.length !== 1) { alert(`The selection spans ${clients.length} clients (${clients.slice(0, 4).join(', ')}…).\n\nFulfillability is judged against ONE client's stock — filter to a single client (sidebar) and select again.`); return; }
+      // Date range = the chips currently applied, so the file matches the screen.
+      const sgDay = d => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+      const today = sgDay(new Date());
+      let from = '', to = '';
+      if (ordersDateFilter === 'today') { from = to = today; }
+      else if (ordersDateFilter === 'yesterday') { from = to = sgDay(new Date(Date.now() - 86400000)); }
+      else if (ordersDateFilter === 'week') { from = sgDay(new Date(Date.now() - 6 * 86400000)); to = today; }
+      else if (ordersDateFilter === 'range') { from = ordersDateFrom || ''; to = ordersDateTo || ''; }
+      const btn = document.getElementById('ordersBulkFulfil'); if (btn) btn.disabled = true;
+      try {
+        const qs = new URLSearchParams({ client: clients[0], orders: chosen.map(o => o.order_number).join(',') });
+        if (from) qs.set('from', from);
+        if (to) qs.set('to', to);
+        await authDownload(`/api/fulfillability/export?${qs}`, `Fulfillability_${clients[0].replace(/[^A-Za-z0-9_-]+/g, '_')}_${today}.xlsx`);
+      } finally { if (btn) btn.disabled = false; }
     });
     updateOrdersBulkBar();
   }

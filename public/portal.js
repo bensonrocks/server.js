@@ -1039,7 +1039,9 @@
   let dlKind = null;
   function openDownload(kind) {
     dlKind = kind;
-    $('dlTitle').textContent = kind === 'orders' ? 'Download orders report' : 'Download inbound report';
+    $('dlTitle').textContent = kind === 'orders' ? 'Download orders report'
+      : kind === 'fulfillability' ? 'Download: what can ship from stock'
+      : 'Download inbound report';
     $('dlHint').textContent = `Pick any period up to ${exportMaxDays} days. The screen shows the last ${screenDays} days — reports can reach further back.`;
     const to = sgToday();
     const from = new Date(Date.now() - 89 * 86400000).toLocaleDateString('en-CA', SGT);
@@ -1532,6 +1534,9 @@
     if (!r.ok) alert(r.error || 'Could not prepare the download.');
   });
   $('orExport').addEventListener('click', () => openDownload('orders'));
+  // What can ship — fulfillability of the client's open orders against the
+  // stock we hold, same sheets the office sees.
+  $('orFulfilExport').addEventListener('click', () => openDownload('fulfillability'));
   $('ibExport').addEventListener('click', () => openDownload('inbound'));
   $('dlCancel').addEventListener('click', closeDownload);
   $('dlModal').addEventListener('click', e => { if (e.target === $('dlModal')) closeDownload(); });

@@ -4760,6 +4760,177 @@ app.get('/api/portal/movements', requirePortalAuthMiddleware, (req, res) => {
   });
 });
 
+// ── Fulfillability — what can ship from current stock, what cannot ─────────
+// Per the user: a per-client report of what is able to fulfil against our
+// inventory holdings vs what cannot be fulfilled for lack of stock, filtered
+// by date range, downloadable by the office AND by the client themselves.
+// DERIVED ON EVERY READ (the house discipline): stock moves all day, so a
+// stored verdict would lie within the hour. Open orders only — a completed
+// order already proved it could ship.
+//
+// ALLOCATION RULE: an order that reserved units at intake is guaranteed them —
+// its own open reservation is credited to it FIRST; any remainder draws on the
+// free pool, OLDEST ORDER FIRST (the same first-come rule the intake gate
+// applies, so this report and the upload prompt can never rank two competing
+// orders differently).
+function computeFulfillability(db, clientName, { from, to, orderNumbers } = {}) {
+  const clientNorm = String(clientName || '').trim().toLowerCase();
+  const cid = invClientId(clientName);
+  const want = orderNumbers && orderNumbers.length ? new Set(orderNumbers.map(String)) : null;
+  const inRange = iso => {
+    if (!from && !to) return true;
+    if (!iso) return false;
+    const d = sgDateStr(new Date(iso));
+    return (!from || d >= from) && (!to || d <= to);
+  };
+  const scope = [];
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+    for (const o of b.orders || []) {
+      const st = b.orderStates?.[o.order_number] || {};
+      const status = st.status || 'pending';
+      if (status !== 'pending' && status !== 'processing') continue;
+      if (want && !want.has(String(o.order_number))) continue;
+      const when = o.date || b.uploaded_at;
+      if (!inRange(when)) continue;
+      scope.push({ order: o.order_number, date: when ? sgDateStr(new Date(when)) : '', status,
+                   waybill: o.waybill_number || '',
+                   lines: (o.lines || []).map(l => ({ sku: String(l.sku || ''), desc: l.description || '', qty: Number(l.qty) || 0 })) });
+    }
+  }
+  scope.sort((a, b2) => a.date.localeCompare(b2.date) || String(a.order).localeCompare(String(b2.order)));
+
+  const tracked = inventory.available() && clientStockTracked(cid);
+  if (!tracked) {
+    // "No stock tracked" is an ARRANGEMENT, not a shortage — same distinction
+    // the Confirm-Upload notice draws. The report says so instead of marking
+    // every order unfulfillable.
+    return { tracked: false, counts: { notTracked: scope.length },
+             orders: scope.map(o => ({ ...o, verdict: 'Stock not tracked here',
+               lines: o.lines.map(l => ({ ...l, covered: null, short: null, note: '' })) })), skus: [] };
+  }
+
+  const stock = new Map();
+  try { for (const it of inventory.getAll({ clientId: cid })) stock.set(String(it.sku).toUpperCase(), it); } catch (_) {}
+  const ownRes = new Map();                       // `${order}|${SKU}` → units held for it
+  const inScopeRes = new Map();                   // SKU → total held by in-scope orders
+  try {
+    const inScope = new Set(scope.map(o => String(o.order)));
+    for (const r of inventory.openReservations(cid)) {
+      if (!inScope.has(String(r.order_id))) continue;
+      const key = String(r.sku).toUpperCase();
+      const k = `${r.order_id}|${key}`;
+      const q = Number(r.open_qty) || 0;
+      ownRes.set(k, (ownRes.get(k) || 0) + q);
+      inScopeRes.set(key, (inScopeRes.get(key) || 0) + q);
+    }
+  } catch (_) {}
+  // THE POOL IS PHYSICAL ON-HAND, never the reservation ledger. An intake
+  // shortfall reserves the FULL promise and raises a backorder — so a
+  // reservation can legitimately exceed the shelf, and crediting it as supply
+  // would mark a short order fulfillable (caught by the test: 5 reserved
+  // against 3 on hand read as covered). Units promised to orders OUTSIDE this
+  // scope are subtracted first; what remains is what these orders can draw.
+  const pool = new Map();
+  for (const [sku, it] of stock) {
+    const reservedByOthers = Math.max(0, (Number(it.reserved_qty) || 0) - (inScopeRes.get(sku) || 0));
+    pool.set(sku, Math.max(0, (Number(it.stock_qty) || 0) - reservedByOthers));
+  }
+  const orders = scope.map(o => ({ ...o, lines: o.lines.map(l => ({ ...l, covered: 0 })) }));
+  // Pass 1 — reservation holders draw first (their units are promised), capped
+  // by what physically exists. Pass 2 — remaining need tops up from what is
+  // left, oldest order first.
+  for (const o of orders) for (const l of o.lines) {
+    const key = l.sku.toUpperCase();
+    const take = Math.min(l.qty, ownRes.get(`${o.order}|${key}`) || 0, pool.get(key) || 0);
+    l.covered += take; pool.set(key, (pool.get(key) || 0) - take);
+  }
+  for (const o of orders) for (const l of o.lines) {
+    const key = l.sku.toUpperCase();
+    const take = Math.min(l.qty - l.covered, pool.get(key) || 0);
+    l.covered += take; pool.set(key, (pool.get(key) || 0) - take);
+  }
+  const skuAgg = new Map();
+  const counts = { fulfillable: 0, partial: 0, none: 0 };
+  for (const o of orders) {
+    let anyShort = false, allNone = true;
+    for (const l of o.lines) {
+      const key = l.sku.toUpperCase();
+      const it = stock.get(key);
+      l.short = l.qty - l.covered;
+      l.note = !it ? 'not in item master' : '';
+      if (l.short > 0) anyShort = true;
+      if (l.covered > 0) allNone = false;
+      const agg = skuAgg.get(key) || { sku: l.sku, desc: l.desc || it?.name || '',
+        on_hand: Number(it?.stock_qty) || 0, reserved: Number(it?.reserved_qty) || 0,
+        available: Number(it?.available_qty) || 0, demand: 0, covered: 0, short: 0, inMaster: !!it };
+      agg.demand += l.qty; agg.covered += l.covered; agg.short += l.short;
+      if (!agg.desc) agg.desc = l.desc || it?.name || '';
+      skuAgg.set(key, agg);
+    }
+    o.verdict = !anyShort ? 'Fulfillable now' : allNone ? 'No stock' : 'Partial — short on stock';
+    counts[!anyShort ? 'fulfillable' : allNone ? 'none' : 'partial']++;
+  }
+  return { tracked: true, orders, counts,
+           skus: [...skuAgg.values()].sort((a, b2) => b2.short - a.short || a.sku.localeCompare(b2.sku)) };
+}
+
+// Three sheets — the order verdicts, the line detail, and the SKU stock-vs-
+// demand rollup someone reorders against. Wording is client-safe; the office
+// and the portal download the SAME sheets so the two can never tell a
+// different story.
+function fulfillabilitySheets(client, data, from, to) {
+  const gen = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' });
+  const head = [[`${client} — Fulfillability: what can ship from current stock`],
+    [from || to ? `Open orders dated ${from || 'the start'} to ${to || 'today'} (Singapore time)` : 'All open orders'],
+    [`Computed live at ${gen} SGT — verdicts move as stock moves.`], []];
+  if (!data.tracked) {
+    return [{ name: 'Summary', aoa: [...head,
+      ['Stock for this account is not tracked in IdealOne (it is managed in the client\'s own system), so fulfillability cannot be judged here.'], [],
+      ['Order', 'Date', 'Waybill', 'Verdict'],
+      ...data.orders.map(o => [o.order, o.date, o.waybill, o.verdict])] }];
+  }
+  return [
+    { name: 'Summary', aoa: [...head,
+      [`${data.counts.fulfillable || 0} order(s) fulfillable now · ${data.counts.partial || 0} partially coverable · ${data.counts.none || 0} with no stock`], [],
+      ['Order', 'Date', 'Waybill', 'Pieces ordered', 'Pieces covered', 'Pieces short', 'Verdict'],
+      ...data.orders.map(o => {
+        const need = o.lines.reduce((s, l) => s + l.qty, 0);
+        const cov  = o.lines.reduce((s, l) => s + (l.covered || 0), 0);
+        return [o.order, o.date, o.waybill, need, cov, need - cov, o.verdict];
+      })] },
+    { name: 'Lines', aoa: [...head,
+      ['Covered = units this order can draw from stock: its own reservation first, then free stock, oldest order first.'], [],
+      ['Order', 'Date', 'SKU', 'Product', 'Ordered', 'Covered', 'Short', 'Note'],
+      ...data.orders.flatMap(o => o.lines.map(l => [o.order, o.date, l.sku, l.desc, l.qty, l.covered, l.short, l.note || '']))] },
+    { name: 'Stock vs demand', aoa: [...head,
+      ['One row per SKU these orders need. Short > 0 is what cannot be fulfilled until stock arrives — the replenishment list.'], [],
+      ['SKU', 'Product', 'On hand', 'Reserved (all orders)', 'Available', 'Demand (these orders)', 'Covered', 'Short', 'In item master'],
+      ...data.skus.map(s => [s.sku, s.desc, s.on_hand, s.reserved, s.available, s.demand, s.covered, s.short, s.inMaster ? 'Yes' : 'NO'])] },
+  ];
+}
+
+// Office download — client required (never a silent all-client dump), date
+// range and an optional explicit order list (the Orders-tab selection).
+app.get('/api/fulfillability/export', (req, res) => {
+  const client = String(req.query.client || '').trim();
+  if (!client) return res.status(400).json({ error: 'client is required' });
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : '';
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : '';
+  const orderNumbers = String(req.query.orders || '').split(',').map(s => s.trim()).filter(Boolean);
+  const db = readDb();
+  const data = computeFulfillability(db, client, { from, to, orderNumbers });
+  const wb = XLSX.utils.book_new();
+  for (const sh of fulfillabilitySheets(client, data, from, to)) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sh.aoa), sh.name);
+  }
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  logAudit('fulfillability_report', { client, from, to, selected: orderNumbers.length, orders: data.orders.length, by: req.userId || '' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Fulfillability_${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${sgDateStr()}.xlsx"`);
+  res.send(buf);
+});
+
 app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient;
   const clientNorm = client.trim().toLowerCase();
@@ -4888,6 +5059,19 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
        'Submitted', `SLA due (D+${INBOUND_SLA_WORKING_DAYS} working days)`, 'Received at (SGT)', 'SLA', 'SLA detail'],
       ...out];
     sheet = 'Inbound'; name = 'Inbound';
+  } else if (kind === 'fulfillability') {
+    // What can ship vs what is short — the SAME sheets the office downloads,
+    // scoped to this client, so the two can never tell a different story.
+    // Multi-sheet, so it builds its own workbook and returns here.
+    const data = computeFulfillability(db, client, { from, to });
+    const wb2 = XLSX.utils.book_new();
+    for (const sh of fulfillabilitySheets(client, data, from, to)) {
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet(sh.aoa), sh.name);
+    }
+    const buf2 = XLSX.write(wb2, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_Fulfillability_${sgDateStr()}.xlsx"`);
+    return res.send(buf2);
   } else {
     return res.status(400).json({ error: 'Unknown export' });
   }
