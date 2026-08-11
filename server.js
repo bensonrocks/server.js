@@ -6364,6 +6364,47 @@ async function rematchLabelImport(id, rematchAll) {
   return { newMatches, matched, unmatched, ocrCount };
 }
 
+// ── Labels can arrive BEFORE their orders ───────────────────────────────────
+// A client sends one big label PDF while the orders themselves trickle in via
+// the 5-minute store pulls (or a later upload/approval). Matching only ever ran
+// at label-import time or when someone pressed ⚡ Auto Match — so a page whose
+// order landed AFTER the PDF sat "unmatched" forever, even though both halves
+// were in the system. Whenever new orders are created, sweep every recent
+// import that still has unmatched pages against the fresh order list.
+// Debounced (one sweep per burst of batches) and re-entry guarded; pages whose
+// text is already cached rematch in milliseconds, and permanently-failed OCR
+// pages are skipped by rematchLabelImport itself, so the sweep stays cheap.
+// Imports older than 30 days stay manual — their unmatched pages are labels
+// for orders that never came, and re-scanning them every pull buys nothing.
+let _labelAutoRematchTimer = null;
+let _labelAutoRematching   = false;
+function scheduleLabelAutoRematch(trigger) {
+  if (_labelAutoRematchTimer) return;
+  _labelAutoRematchTimer = setTimeout(async () => {
+    _labelAutoRematchTimer = null;
+    if (_labelAutoRematching) return;
+    _labelAutoRematching = true;
+    try {
+      const db = readDb();
+      const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+      const due = (db.labelImports || [])
+        .filter(i => (Date.parse(i.uploadedAt || '') || 0) > cutoff &&
+                     (i.pages || []).some(p => p.matchStatus === 'unmatched'))
+        .map(i => i.id);
+      for (const id of due) {
+        try {
+          const r = await rematchLabelImport(id, false);
+          if (r && r.newMatches > 0) {
+            console.log(`[label-auto-rematch] ${trigger}: import ${id} +${r.newMatches} match(es)`);
+            logAudit('labels_auto_matched', { importId: id, newMatches: r.newMatches, trigger });
+          }
+        } catch (e) { console.error('[label-auto-rematch]', id, e.message); }
+      }
+    } catch (e) { console.error('[label-auto-rematch]', e.message); }
+    finally { _labelAutoRematching = false; }
+  }, 5000);
+}
+
 app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
   try {
     const result = await rematchLabelImport(req.params.id, req.body?.all === true);
@@ -8126,6 +8167,8 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     }));
 
     logAudit('upload', { batchId, jobCode: batch.idealscan_code, filename: orderFile.originalname, by: req.userId || '', client: clientName, orders: orders.length, lines: mapped.length, adjustments: adjustmentsApplied });
+    // Earlier-uploaded label pages may have been waiting for exactly these orders.
+    if (orders.length) scheduleLabelAutoRematch('upload');
 
     // Visibility for wave picking: how many lines actually carry a warehouse
     // location, since a wave built from a file with no/partial location data
@@ -9882,6 +9925,8 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
       id: s.id, code: s.code, client: batch.client_name, batchId,
       job: batch.idealscan_code, orders: orders.length, by: req.userId || '',
     });
+    // Earlier-uploaded label pages may have been waiting for exactly these orders.
+    if (orders.length) scheduleLabelAutoRematch('client-approval');
 
     // THE ATTACHED WAYBILLS, PROCESSED AFTER THE BATCH EXISTS. Order matters:
     // processLabelPdf matches against LIVE orders, so running it before
@@ -16872,6 +16917,10 @@ async function pullZortStore(db, store) {
   // Lazada-visible number for the same client).
   for (const [cid, skuSet] of reservedByClient) zortNotifyStockChange(db, cid, [...skuSet]);
   logAudit('zort_pull', { storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients.slice(0, 20) });
+  // New orders — or a waybill backfilled onto an existing one — may be exactly
+  // what earlier-uploaded label pages were waiting for (the labels arrive in
+  // one PDF; the orders and their tracking numbers trickle in per pull).
+  if (orders.length || updatedTracking) scheduleLabelAutoRematch('store-sync');
   return store.lastResult;
 }
 
@@ -17184,6 +17233,9 @@ async function _zortSendOutboxEntry(db, store, entry) {
       if (st.status !== 'done') {
         f.ord.waybill_number = t;
         logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking: t, storeId: store.id, via: 'intake-arrange' });
+        // The tracking number is a fresh match key — a label page uploaded
+        // earlier may have been waiting for exactly it.
+        scheduleLabelAutoRematch('waybill-backfill');
       }
     }
     return true;
