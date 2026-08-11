@@ -2400,6 +2400,7 @@
     const bulkBarHTML = isAdminView ? `
       <div id="ordersBulkBar" class="orders-bulk-bar hidden">
         <span id="ordersBulkCount" class="obb-count">0 selected</span>
+        <button id="ordersBulkWave" class="btn-primary btn-sm" title="Create a wave pick from the selected orders — it appears in Wave Management like any other wave">&#127754; Create Wave</button>
         <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print waybill/label for each selected order that has one">&#128438; Print Labels</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
@@ -2537,6 +2538,16 @@
       delBtn.disabled = selectable.length === 0;
       delBtn.textContent = `\u{1F5D1} Request Deletion${selectable.length ? ` (${selectable.length})` : ''}`;
     }
+    // "Create Wave" takes orders that still have picking to do and are not
+    // already inside a live wave.
+    const waveable = [...orderSelection]
+      .map(nm => loadedOrders.find(o => o.order_number === nm))
+      .filter(o => o && o.scan_status !== 'done' && o.scan_status !== 'unprocessed' && !o.active_wave_id);
+    const waveBtn = document.getElementById('ordersBulkWave');
+    if (waveBtn) {
+      waveBtn.disabled = waveable.length === 0;
+      waveBtn.textContent = `\u{1F30A} Create Wave${waveable.length ? ` (${waveable.length})` : ''}`;
+    }
     // Sync the header select-all checkbox to the current state
     const all = document.getElementById('ordSelectAll');
     if (all) {
@@ -2580,6 +2591,30 @@
         if (o.has_order_label) showPrintOrderLabelModal(o);
         else if (o.has_waybill_pdf && o.batchId) showPrintWaybillModal(o);
       });
+    });
+    document.getElementById('ordersBulkWave')?.addEventListener('click', async () => {
+      const waveable = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status !== 'done' && o.scan_status !== 'unprocessed' && !o.active_wave_id);
+      if (!waveable.length) { alert('None of the selected orders can join a wave (already done, cancelled, or in a live wave).'); return; }
+      const clients = [...new Set(waveable.map(o => o.client_name).filter(Boolean))];
+      const name = clients.length === 1
+        ? `${clients[0]} — ${waveable.length} order(s)`
+        : `Mixed — ${waveable.length} order(s)`;
+      if (!confirm(`Create a wave from ${waveable.length} selected order(s)` +
+        (clients.length ? `\n\nClient(s): ${clients.join(', ')}` : '') +
+        `\n\nIt will appear in Wave Management as "${name}".`)) return;
+      const btn = document.getElementById('ordersBulkWave'); if (btn) btn.disabled = true;
+      try {
+        const r = await fetch('/api/waves', { method: 'POST', headers: { ...hdrs(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, order_numbers: waveable.map(o => o.order_number) }) });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || 'Could not create the wave.'); return; }
+        orderSelection.clear();
+        // Jump straight into the new wave in Wave Management.
+        resumeWavePick(d.id || d.wave?.id);
+      } catch (e) { alert('Could not create the wave: ' + e.message); }
+      finally { if (btn) btn.disabled = false; }
     });
     document.getElementById('ordersBulkDelete')?.addEventListener('click', () => {
       const selectable = [...orderSelection]
