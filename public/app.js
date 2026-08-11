@@ -14804,7 +14804,12 @@
       );
 
       body.querySelectorAll('.lri-match-btn').forEach(btn =>
-        btn.addEventListener('click', () => openManualMatchModal(importId, parseInt(btn.dataset.page)))
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.page);
+          // The page's own extracted tracking/order number ranks the right
+          // order to the top of the manual-match list.
+          openManualMatchModal(importId, idx, (imp.pages[idx] || {}).extracted || {});
+        })
       );
       body.querySelectorAll('.lri-unmatch-btn').forEach(btn =>
         btn.addEventListener('click', async () => {
@@ -14843,29 +14848,63 @@
     if (e.key === 'Escape' && !document.getElementById('labelLightbox').classList.contains('hidden')) closeLabelLightbox();
   });
 
-  function openManualMatchModal(importId, pageIdx) {
+  async function openManualMatchModal(importId, pageIdx, pageHints) {
     const modal = document.getElementById('labelManualMatchOverlay');
     const list  = document.getElementById('labelMatchOrderList');
     const input = document.getElementById('labelMatchSearchInput');
     input.value = '';
+    // The candidate list must be the LIVE order list, not whatever the last
+    // fetch (or a just-finished upload, which replaces loadedOrders with only
+    // its own batch) left in memory — orders synced/uploaded since then are
+    // exactly the ones an unmatched label is usually waiting for.
+    list.innerHTML = '<p class="hint" style="padding:.75rem">Loading orders…</p>';
+    modal.classList.remove('hidden');
+    try { await refreshOrders(); } catch {}
+
+    // What the label itself says — used to rank the right order to the top.
+    // The old list was newest-batch-first cut at 60 rows, so one big upload
+    // from another client filled every visible slot and the order this label
+    // belongs to (loaded, further down) never appeared on screen.
+    const hintKeys = [pageHints?.trackingNumber, pageHints?.orderNumber]
+      .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
+    const orderKeys = o => [o.order_number, o.waybill_number, o.issue_no, o.po_number]
+      .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
+    const hintScore = o => {
+      if (!hintKeys.length) return 0;
+      const keys = orderKeys(o);
+      for (const h of hintKeys) {
+        if (keys.includes(h)) return 2;                                   // exact
+        if (keys.some(k => k.includes(h) || h.includes(k))) return 1;     // partial
+      }
+      return 0;
+    };
 
     function renderList(filter) {
       const q = filter.trim().toLowerCase();
       const filtered = loadedOrders.filter(o =>
         !q ||
         o.order_number.toLowerCase().includes(q) ||
+        (o.waybill_number || '').toLowerCase().includes(q) ||
+        (o.issue_no || '').toLowerCase().includes(q) ||
         (o.customer_name || '').toLowerCase().includes(q) ||
+        (o.client_name || '').toLowerCase().includes(q) ||
         (o.carrier || '').toLowerCase().includes(q)
       );
-      list.innerHTML = filtered.slice(0, 60).map(o => `
+      // Stable sort: label-suggested orders first, otherwise keep server order
+      const ranked = filtered.map((o, i) => ({ o, i, s: hintScore(o) }))
+        .sort((a, b) => b.s - a.s || a.i - b.i);
+      const truncated = ranked.length > 60;
+      list.innerHTML = ranked.slice(0, 60).map(({ o, s }) => `
         <div class="lmm-order-row" data-order="${esc(o.order_number)}">
-          <div class="lmm-order-no">${esc(o.order_number)}</div>
+          <div class="lmm-order-no">${esc(o.order_number)}${s ? ' <span style="color:#d97706;font-size:.72rem;font-weight:700" title="Matches the number read off this label">★ suggested</span>' : ''}</div>
           <div class="lmm-order-meta">
+            ${o.client_name ? `<span class="chip">${esc(o.client_name)}</span>` : ''}
             ${o.customer_name ? `<span>${esc(o.customer_name)}</span>` : ''}
+            ${o.waybill_number ? `<span class="hint">${esc(o.waybill_number)}</span>` : ''}
             ${o.carrier ? `<span class="chip chip-carrier">${esc(o.carrier)}</span>` : ''}
             <span class="status-badge ${esc(o.scan_status)}">${esc(o.scan_status)}</span>
           </div>
-        </div>`).join('') || '<p class="hint" style="padding:.75rem">No orders match.</p>';
+        </div>`).join('') + (truncated ? `<p class="hint" style="padding:.5rem .75rem">Showing 60 of ${ranked.length} — type to narrow.</p>` : '') || '<p class="hint" style="padding:.75rem">No orders match.</p>';
       list.querySelectorAll('.lmm-order-row').forEach(row =>
         row.addEventListener('click', async () => {
           const orderNumber = row.dataset.order;
@@ -14885,9 +14924,9 @@
     }
 
     renderList('');
-    const onInput = () => renderList(input.value);
-    input.addEventListener('input', onInput);
-    modal.classList.remove('hidden');
+    // Assignment, not addEventListener — the modal reopens many times and
+    // stacked listeners would re-render once per previous opening.
+    input.oninput = () => renderList(input.value);
     setTimeout(() => input.focus(), 100);
   }
 
