@@ -16876,7 +16876,15 @@ async function pullZortStore(db, store) {
 // owner outright. A SKU appearing under TWO clients is recorded as ambiguous
 // rather than resolved — guessing there would misfile someone's order.
 function buildSkuOwnerIndex(db) {
-  const idx = new Map();   // SKU (upper) -> client name, or '' when ambiguous
+  // SKU (upper) -> Map(lowercased owner name -> display name). Keeping the
+  // owner SET rather than collapsing to ''-means-ambiguous does two things:
+  // (1) the SAME client enumerated under two case-spellings (Mayer2026 /
+  // MAYER2026 — the names come from profiles, batches AND inventory ids, so
+  // historic spellings linger) no longer reads as two owners and poisons
+  // every SKU into ambiguity; (2) a REAL duplicate can be NAMED — which SKU,
+  // which clients — instead of a bare "more than one client" that sends a
+  // human hunting through the Inventory dropdown.
+  const idx = new Map();
   if (!inventory.available()) return idx;
   const names = new Set();
   for (const p of db.clientProfiles || []) if (p.client) names.add(String(p.client).trim());
@@ -16891,9 +16899,9 @@ function buildSkuOwnerIndex(db) {
     for (const r of rows) {
       const k = String(r.sku || '').trim().toUpperCase();
       if (!k) continue;
-      const cur = idx.get(k);
-      if (cur === undefined) idx.set(k, name);
-      else if (cur && cur !== name) idx.set(k, '');   // two owners → decide nothing
+      let owners = idx.get(k);
+      if (!owners) idx.set(k, owners = new Map());
+      owners.set(name.toLowerCase(), name);   // case-variants collapse to one owner
     }
   }
   return idx;
@@ -16904,12 +16912,18 @@ function buildSkuOwnerIndex(db) {
 function attributeSyncClient(skuOwners, lines, channel, store) {
   const owners = new Set();
   let ambiguous = false;
+  const dupDetails = [];   // "SKU → clientA + clientB", so the store row can say it
   for (const l of lines || []) {
     const k = String(l.sku || l.barcode || '').trim().toUpperCase();
     if (!k) continue;
-    const owner = skuOwners.get(k);
-    if (owner === '') ambiguous = true;          // SKU registered to more than one client
-    else if (owner) owners.add(owner);
+    const ownerMap = skuOwners.get(k);
+    if (!ownerMap || !ownerMap.size) continue;
+    if (ownerMap.size > 1) {                     // SKU registered to more than one client
+      ambiguous = true;
+      dupDetails.push(`${k} → ${[...ownerMap.values()].join(' + ')}`);
+    } else {
+      owners.add([...ownerMap.values()][0]);
+    }
   }
   if (owners.size === 1 && !ambiguous) return { client: [...owners][0], via: 'sku' };
   const mapped = (store.channelClients || {})[channel];
@@ -16924,7 +16938,7 @@ function attributeSyncClient(skuOwners, lines, channel, store) {
              unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}` };
   }
   return { client: store.clientName || channel || 'ZORT', via: 'default',
-           unsure: ambiguous ? 'a SKU is registered to more than one client'
+           unsure: ambiguous ? `a SKU is registered to more than one client: ${dupDetails.slice(0, 3).join('; ')}`
                              : 'no SKU on this order is in any client item master' };
 }
 

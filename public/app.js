@@ -11180,7 +11180,7 @@
           <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
           <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
           <td>${stockBadge}${labelBadge}</td>
-          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>` : 'never'}</td>
+          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
