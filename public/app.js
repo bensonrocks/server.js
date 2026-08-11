@@ -11321,6 +11321,7 @@
     document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', (store?.completeAction || 'none') !== 'status');
     document.getElementById('zfStockSync').checked = !!store?.stockSync;
     document.getElementById('zfLabelSync').checked = !!store?.labelSync;
+    document.getElementById('zfArrangeIntake').checked = !!store?.arrangeAtIntake;
     document.getElementById('zfLabelPath').value = store?.labelPath || '';
   }
   document.getElementById('zortAddStoreBtn')?.addEventListener('click', () => openZortForm(null));
@@ -11375,6 +11376,7 @@
       completeStatusCode: parseInt(document.getElementById('zfStatusCode').value, 10) || 1,
       stockSync: document.getElementById('zfStockSync').checked,
       labelSync: document.getElementById('zfLabelSync').checked,
+      arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
       labelPath: document.getElementById('zfLabelPath').value.trim(),
       enabled: true,
     };

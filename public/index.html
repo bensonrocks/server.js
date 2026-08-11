@@ -2328,6 +2328,11 @@
               <input type="checkbox" id="zfLabelSync" style="width:16px;height:16px" />
               <span><b>&#127991; Pull carrier labels for synced orders</b></span>
             </label>
+            <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
+              <input type="checkbox" id="zfArrangeIntake" style="width:16px;height:16px" />
+              <span><b>&#9889; Arrange shipment at intake (instant waybill + label)</b></span>
+            </label>
+            <div class="hint" style="margin:.3rem 0 0">An order that imports without a tracking number gets the store's pack/arrange step triggered immediately, so the platform issues the waybill and label BEFORE picking starts instead of after completion. Never marks Ready-to-Ship &mdash; that still happens when the scan completes.</div>
             <div class="hint" style="margin:.3rem 0 0">Each synced order's shipping label is fetched and run through the SAME matching as an uploaded label PDF, so it attaches to the order automatically. Queued with retry &mdash; a channel usually generates the label minutes after the order, so it is normal for the first few attempts to find nothing.</div>
             <label style="margin-top:.5rem">Label endpoint <span class="hint-inline">(only if the default 404s)</span></label>
             <input type="text" id="zfLabelPath" placeholder="Order/GetOrderLabel?id={id}" />

@@ -16616,6 +16616,7 @@ function zortStorePublic(s, db) {
     apikeyMasked: zortMask(s.apikey), apisecretMasked: zortMask(s.apisecret),
     endpoint: s.endpoint || '', enabled: !!s.enabled,
     labelSync: !!s.labelSync, labelPath: s.labelPath || '',
+    arrangeAtIntake: !!s.arrangeAtIntake,
     channelClients: s.channelClients || {},
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
@@ -16841,6 +16842,14 @@ async function pullZortStore(db, store) {
         }
       }
     }
+    // ⚡ Arrange at intake (per-store, off by default): see enqueueZortArrange.
+    if (store.arrangeAtIntake) {
+      for (const o of clientOrders) {
+        if (o.zort_id && !String(o.waybill_number || '').trim()) {
+          enqueueZortArrange(db, store.id, { orderNumber: o.order_number, zortId: o.zort_id });
+        }
+      }
+    }
   }
   store.lastPullAt = new Date().toISOString();
   // WHICH ORDERS COULD NOT BE PLACED WITH CONFIDENCE. Reported rather than
@@ -17016,6 +17025,34 @@ function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking }) {
   return true;
 }
 
+// ⚡ ARRANGE AT INTAKE — trigger the store's pack/arrangement step the moment
+// an order imports WITHOUT a tracking number, so the platform mints the
+// waybill + label BEFORE picking starts instead of minutes after completion.
+// Deliberately calls PackOrder (arrangement) and NEVER readyToShip: declaring
+// ready-to-ship before the parcel is physically packed would start the
+// platform's handover clock — RTS remains the completion push's job.
+function enqueueZortArrange(db, storeId, { orderNumber, zortId }) {
+  const ob = zortOutbox(db);
+  if (ob.some(e => e.kind === 'arrange' && e.storeId === storeId && e.orderNumber === orderNumber && !e.stalled)) return false;
+  ob.push({
+    id: uuidv4(), kind: 'arrange', storeId, orderNumber, zortId,
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  return true;
+}
+// Follow-up to an arrangement: poll the order until the platform has assigned
+// its tracking number, then backfill the imported order's waybill immediately
+// (instead of waiting for the next scheduled pull's backfill).
+function enqueueZortTracking(db, storeId, { orderNumber, zortId }) {
+  const ob = zortOutbox(db);
+  if (ob.some(e => e.kind === 'tracking' && e.storeId === storeId && e.orderNumber === orderNumber && !e.stalled)) return false;
+  ob.push({
+    id: uuidv4(), kind: 'tracking', storeId, orderNumber, zortId,
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  return true;
+}
+
 // Public hook: "stock for this client's SKUs changed" — fan out to every
 // matching ZORT store. Provider-agnostic at the call sites (they just say what
 // changed); this function decides who needs to hear it. Persists the outbox.
@@ -17095,6 +17132,33 @@ async function _zortSendOutboxEntry(db, store, entry) {
       order: entry.orderNumber, client: store.clientName || '',
       importId: out.importId, pages: out.pageCount, matched: out.matched,
     });
+    return true;
+  }
+  if (entry.kind === 'arrange') {
+    // Arrangement/pack ONLY — never readyToShip (see enqueueZortArrange).
+    await zortApi.packOrder(store, { id: entry.zortId });
+    logAudit('sync_arranged_at_intake', { order: entry.orderNumber, client: store.clientName || '', storeId: store.id });
+    // Chase the results: the platform assigns tracking shortly after packing.
+    enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
+    enqueueZortLabel(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: '' });
+    return true;
+  }
+  if (entry.kind === 'tracking') {
+    const d = await zortApi.getOrderDetail(store, entry.zortId);
+    const t = String(d?.trackingno || d?.order?.trackingno || d?.trackingnumber || d?.tracking_no || '').trim();
+    if (!t) {
+      const e = new Error('Tracking not assigned yet');
+      e.notReady = true;   // flat retry, same treatment as a label that isn't ready
+      throw e;
+    }
+    const f = lazadaFindOrder(db, entry.orderNumber, '');
+    if (f && !String(f.ord.waybill_number || '').trim()) {
+      const st = f.batch.orderStates?.[f.ord.order_number] || {};
+      if (st.status !== 'done') {
+        f.ord.waybill_number = t;
+        logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking: t, storeId: store.id, via: 'intake-arrange' });
+      }
+    }
     return true;
   }
   if (entry.kind === 'completion') {
@@ -17264,6 +17328,7 @@ app.post('/api/master/zort/stores', (req, res) => {
   // label matching. `labelPath` overrides the endpoint if the default 404s —
   // correctable from this screen without a redeploy.
   if (b.labelSync !== undefined) store.labelSync = !!b.labelSync;
+  if (b.arrangeAtIntake !== undefined) store.arrangeAtIntake = !!b.arrangeAtIntake;
   if (b.labelPath !== undefined) store.labelPath = String(b.labelPath || '').trim();
   store.enabled = b.enabled !== undefined ? !!b.enabled : (store.enabled ?? true);
   // Sales-channel → client mapping: orders from the channel named e.g.
