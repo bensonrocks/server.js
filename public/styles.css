@@ -2811,6 +2811,15 @@ body.ls-open { overflow: hidden; }
 }
 .ord-jobcode { margin-top: .15rem; }
 
+/* Marketplace-synced order — same purple as the Collection screen's badge, so
+   the two read as one concept: "status relays to the platform; scan-close only". */
+.api-pill {
+  display: inline-block; vertical-align: middle; margin-left: .3rem;
+  font-size: .62rem; font-weight: 800; letter-spacing: .04em;
+  color: #7c3aed; background: #f5f3ff; border: 1px solid #ddd6fe;
+  border-radius: 5px; padding: .04rem .32rem;
+}
+
 /* ── Order claim chip: which station is packing this order right now ── */
 .chip-claimed { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
 .chip-pending-delete { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); font-weight: 700; }

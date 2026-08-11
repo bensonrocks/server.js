@@ -2363,7 +2363,7 @@
         <td class="ord-stripe-cell"></td>
         ${isAdminView ? `<td class="ord-select-cell"><input type="checkbox" class="ord-select" data-order="${esc(ord.order_number)}" ${orderSelection.has(ord.order_number) ? 'checked' : ''} onclick="event.stopPropagation()" /></td>` : ''}
         <td class="col-order">
-          <span class="ord-no-link">${esc(ord.order_number)}</span>
+          <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — status relays back to the platform; collection is closed by scanning the waybill, never by tick">API</span>' : ''}
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
           ${ord.issue_no ? `<div class="ord-jobcode" title="GI number"><code class="job-code">GI: ${esc(ord.issue_no)}</code></div>` : ''}
           ${ord.transport_id ? `<div class="ord-jobcode" title="Linked Transport delivery job"><code class="job-code job-code-tr">🚚 ${esc(ord.transport_id)}</code></div>` : ''}

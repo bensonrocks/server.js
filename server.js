@@ -2474,6 +2474,10 @@ function globalOrdersWithState(keep) {
         alert_email_error: state.alert_email_error || null,
         batchId:           batch.id,
         client_name:       batch.client_name       || '',
+        // Synced from a marketplace via the store sync — the Orders list shows
+        // an API pill so the team knows BEFORE completion that this order's
+        // collection status is scan-close-only and relays to the platform.
+        api_source:        !!(ord.zort_id || batch.uploaded_by === 'zort-sync'),
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
