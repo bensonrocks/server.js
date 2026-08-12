@@ -2345,9 +2345,14 @@
           </div>
           <div class="form-group" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:.6rem .8rem">
             <label style="margin:0"><b>&#9003; Do NOT import orders for these clients</b></label>
-            <input type="text" id="zfSkipClients" placeholder="e.g. Mayer2026, AnotherClient — comma separated, leave blank for none" />
-            <div class="hint" style="margin:.3rem 0 0">For clients who fulfil their own orders from their end. Their orders are never brought in, so they cannot reappear on the packers' list. Matched against the client the SKUs resolve to, so it follows attribution rather than the channel label. Everything already here is left alone.
+            <input type="text" id="zfSkipClients" placeholder="e.g. AnotherClient — comma separated, leave blank for none" />
+            <div class="hint" style="margin:.3rem 0 0">For clients who fulfil their own orders from their end AND need no record here. Their orders are never brought in at all. Matched against the client the SKUs resolve to, so it follows attribution rather than the channel label. Everything already here is left alone.
             <div class="hint" style="margin:.25rem 0 0"><code>{id}</code> and <code>{tracking}</code> are substituted. Leave blank for the default.</div>
+          </div>
+          <div class="form-group" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.6rem .8rem">
+            <label style="margin:0"><b>&#128209; Import as RECORD ONLY for these clients</b></label>
+            <input type="text" id="zfRecordClients" placeholder="e.g. Mayer2026 — comma separated, leave blank for none" />
+            <div class="hint" style="margin:.3rem 0 0">The client fulfils from their end, but their orders are still drawn in and KEPT ON THE BOOKS — so the list of orders we could not fulfil is maintained for them (Completed tab &rarr; Cancelled, reports, their portal). They arrive already closed: never on the packers' Active list, no stock reserved, no label fetched, no handover countdown. Matched by SKU attribution, same as the box above.</div>
           </div>
           <div style="display:flex;gap:.6rem">
             <button class="btn-primary btn-sm" id="zortSaveStoreBtn">Save</button>

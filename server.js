@@ -17424,6 +17424,7 @@ function zortStorePublic(s, db) {
     labelSync: !!s.labelSync, labelPath: s.labelPath || '',
     arrangeAtIntake: !!s.arrangeAtIntake,
     skipClients: s.skipClients || [],
+    recordOnlyClients: s.recordOnlyClients || [],
     channelClients: s.channelClients || {},
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
@@ -17535,6 +17536,13 @@ async function pullZortStore(db, store) {
   // Clients this store must not bring in at all — they fulfil their own orders.
   const skipClients = new Set((store.skipClients || [])
     .map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
+  // Clients whose orders are drawn in AS A RECORD ONLY — imported and kept on
+  // the books (so the client's list of unfulfillable orders is maintained and
+  // the dedup check stops re-imports), but they arrive already closed
+  // ('unprocessed'): never floor work, no reservation, no label fetch, no SLA.
+  const recordClients = new Set((store.recordOnlyClients || [])
+    .map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
+  let recordOnlyOrders = 0;
   for (let page = 1; page <= 20; page++) {
     const resp = await zortApi.getOrders(store, { ...query, page });
     const list = resp.list || resp.orders || resp.data || [];
@@ -17611,7 +17619,12 @@ async function pullZortStore(db, store) {
         if (skippedClientSample.length < 20) skippedClientSample.push({ order: number, client: clientForOrder });
         continue;
       }
-      zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder,
+      // RECORD ONLY: imported (so the record exists and the dedup check holds),
+      // flagged so the batch loop below files it already closed.
+      const recordOnly = recordClients.size && recordClients.has(String(clientForOrder || '').trim().toLowerCase());
+      if (recordOnly) recordOnlyOrders++;
+      zortMeta[number] = { record_only: recordOnly || undefined,
+                           zort_id: o.id, zort_status: o.status, client: clientForOrder,
                            attributed_via: att.via, attribution_unsure: att.unsure || null,
                            attribution_hint: att.hint || null, placed_at: _zortPlacedAt(o) };
       for (const l of lines) {
@@ -17651,6 +17664,7 @@ async function pullZortStore(db, store) {
     const m = zortMeta[o.order_number] || {};
     o.zort_id = m.zort_id;
     o.zort_store_id = store.id;
+    o._record_only = m.record_only || false;
     o._client = m.client || store.clientName || 'ZORT';
     o._attributed_via = m.attributed_via || 'default';
     o._attribution_unsure = m.attribution_unsure || null;
@@ -17665,9 +17679,12 @@ async function pullZortStore(db, store) {
   // see each merchant separately (batch.client_name is the client identity
   // everywhere else in the app).
   const byClient = new Map();
+  const recordOnlyByClient = new Map();
   for (const o of orders) {
     const c = o._client;
     delete o._client;
+    if (o._record_only) recordOnlyByClient.set(c, true);
+    delete o._record_only;
     if (!byClient.has(c)) byClient.set(c, []);
     byClient.get(c).push(o);
   }
@@ -17676,6 +17693,13 @@ async function pullZortStore(db, store) {
   const reservedByClient = new Map(); // clientId -> Set(sku) reserved this pull
   for (const [clientName, clientOrders] of byClient) {
     const cid = invClientId(clientName);
+    // RECORD ONLY (per-store client list): the client fulfils from their end,
+    // but their unfulfillable orders still need to be ON THE BOOKS — per the
+    // user, the record of what could not be fulfilled is maintained for them.
+    // So the orders import and stay (which is also what stops re-imports),
+    // but arrive already closed: no reservation, no floor work, no label
+    // fetch, no SLA clock, no "new work" poke.
+    const recordOnly = recordOnlyByClient.get(clientName) === true;
     // Reserve stock for every pulled order (marketplace sale) exactly like an
     // upload — but only when the SKU already exists in this client's inventory
     // (a Zort pull never invents catalog items). Reservations lower available,
@@ -17685,7 +17709,7 @@ async function pullZortStore(db, store) {
     // the client has not registered is created at zero rather than skipped —
     // otherwise the sale would silently move no stock at all.
     let tracked = false;
-    if (inventory.available() && clientStockTracked(cid)) {
+    if (!recordOnly && inventory.available() && clientStockTracked(cid)) {
       for (const sku of new Set(clientOrders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
         if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
       }
@@ -17709,18 +17733,32 @@ async function pullZortStore(db, store) {
       orders: clientOrders,
       inventory_tracked: tracked,
       inventory_client: tracked ? cid : undefined,
+      record_only: recordOnly || undefined,
     };
+    if (recordOnly) {
+      // Filed already closed — the same shape "⌫ Not ours (client ships)"
+      // writes, so display, reports and the portal treat both identically.
+      const now = new Date().toISOString();
+      for (const o of clientOrders) {
+        batch.orderStates[o.order_number] = {
+          status: 'unprocessed', scanned: {},
+          unprocessed_reason: 'Client fulfils from their end (record-only import)',
+          unprocessed_at: now, updated_at: now,
+        };
+      }
+    }
     db.batches.unshift(batch);
-    addOutboundPoke(db, batch, 'store-sync');
+    // A record-only batch is not new work — nobody should be poked to pick it.
+    if (!recordOnly) addOutboundPoke(db, batch, 'store-sync');
     harvestCatalogueFromOrders(db, batch.client_name, batch.orders, 'store-sync');
-    batchClients.push(`${clientName} (${clientOrders.length})`);
+    batchClients.push(`${clientName} (${clientOrders.length}${recordOnly ? ', record only' : ''})`);
     // THE LABEL FOLLOWS THE ORDER. Queued rather than fetched inline: the
     // channel usually generates the label a few minutes after the order
     // exists, so a fetch here would find nothing on most of them. The outbox
     // waits and retries, and the bytes then go through the SAME label pipeline
     // as an office upload. Off by default — a store whose labels are printed
     // elsewhere should not be polled for them.
-    if (store.labelSync) {
+    if (store.labelSync && !recordOnly) {
       for (const o of clientOrders) {
         if (o.zort_id || o.waybill_number) {
           enqueueZortLabel(db, store.id, {
@@ -17730,7 +17768,9 @@ async function pullZortStore(db, store) {
       }
     }
     // ⚡ Arrange at intake (per-store, off by default): see enqueueZortArrange.
-    if (store.arrangeAtIntake) {
+    // Never for a record-only client — arranging would make the platform issue
+    // a waybill for an order we are explicitly not fulfilling.
+    if (store.arrangeAtIntake && !recordOnly) {
       for (const o of clientOrders) {
         if (o.zort_id && !String(o.waybill_number || '').trim()) {
           enqueueZortArrange(db, store.id, { orderNumber: o.order_number, zortId: o.zort_id });
@@ -17746,7 +17786,7 @@ async function pullZortStore(db, store) {
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
                        skippedByStatus, skippedHandledSample,
-                       skippedClientOrders, skippedClientSample,
+                       skippedClientOrders, skippedClientSample, recordOnlyOrders,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
   if (unsure.length) {
     logAudit('sync_client_attribution_unsure', { storeId: store.id, count: unsure.length, orders: unsure.slice(0, 20) });
@@ -18346,6 +18386,11 @@ app.post('/api/master/zort/stores', (req, res) => {
   // Clients this store must NOT bring in — they fulfil their own orders.
   if (b.skipClients !== undefined) {
     store.skipClients = String(b.skipClients || '').split(',').map(x => x.trim()).filter(Boolean);
+  }
+  // Clients imported AS A RECORD ONLY — kept on the books for the client's
+  // unfulfillable-orders list, but filed already closed: never floor work.
+  if (b.recordOnlyClients !== undefined) {
+    store.recordOnlyClients = String(b.recordOnlyClients || '').split(',').map(x => x.trim()).filter(Boolean);
   }
   if (b.labelPath !== undefined) store.labelPath = String(b.labelPath || '').trim();
   store.enabled = b.enabled !== undefined ? !!b.enabled : (store.enabled ?? true);

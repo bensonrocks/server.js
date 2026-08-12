@@ -891,6 +891,17 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   line on the store row. **"waiting" is deliberately still imported** — during
   the handover period a client may RTS work meant for us; the cross-check tool
   is where that ambiguity is resolved by a human.
+- **RECORD-ONLY CLIENTS** (`store.recordOnlyClients`, blue box on the store
+  form next to `skipClients`): per the user, a client who fulfils from their
+  own end may still need the record — *"the customer still needs to maintain a
+  list of unable to be fulfilled orders"*. Their orders ARE imported (which is
+  also what makes the dedup hold, so they can never re-import) but arrive
+  already `unprocessed` with reason "Client fulfils from their end
+  (record-only import)" — the SAME state shape as ⌫ Not ours, so display,
+  reports and the portal treat both identically. Skipped for them: stock
+  reservation, the label outbox, arrange-at-intake, and the New Work poke.
+  `skipClients` remains the harder switch for clients who need NO record here.
+  Both are matched on SKU attribution, after `clientForOrder` resolves.
 - **🔎 Cross-check** (store-row button; `POST /api/master/zort/stores/:id/
   cross-check`, read-only): asks the hub the current status of every open
   synced order here (GetOrders `numberlist` HEADER, 100 per call — a header,
