@@ -2370,7 +2370,7 @@
           ${chips ? `<div class="ord-chips">${chips}</div>` : ''}
           ${isDone && elapsed ? `<div class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</div>` : ''}
         </td>
-        <td class="ord-client-cell col-client">${esc(ord.client_name || '—')}${ord.attribution_hint ? ` <span style="color:#d97706;font-size:.72rem;font-weight:700" title="Suggested by this order's SKUs — filing fell back to the account label. Fix the item master (one owner per SKU) and re-pull to file it properly.">(${esc(ord.attribution_hint)})</span>` : ''}</td>
+        <td class="ord-client-cell col-client"><span class="ord-client-name" title="${esc(ord.client_name || '')}">${esc(ord.client_name || '—')}</span>${ord.attribution_hint ? `<span class="client-hint" title="Suggested by this order's SKUs — filing fell back. The SKUs point at: ${esc(ord.attribution_hint)}. Fix the item master (one owner per SKU) and re-pull to file it properly.">SKUs → ${esc(ord.attribution_hint)}</span>` : ''}</td>
         <td class="ord-customer-cell col-customer">${esc(ord.customer_name || '—')}</td>
         <td class="ord-waybill-cell col-waybill">${esc(ord.waybill_number || '—')}</td>
         <td class="col-items">${itemsCell} ${carrierBadge}</td>

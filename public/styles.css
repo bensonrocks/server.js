@@ -1388,7 +1388,19 @@ body.log-open { overflow: hidden; }
 
 .ord-no-link { font-weight: 700; color: var(--primary); font-size: .83rem; word-break: break-all; }
 .ord-waybill-cell { font-size: .76rem; color: #0369a1; font-family: monospace; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
-.ord-client-cell  { font-size: .75rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+/* The client cell stacks two self-truncating lines — the name, and (only when
+   attribution fell back) the amber SKU-suggestion pill. Each line clips with
+   an ellipsis inside ITS OWN box: the cell used to be white-space:nowrap with
+   the hint inline, and a long suggestion ("MAYER2026 / MAYER(MISTRAL)") bled
+   straight across the CUSTOMER column (reported from a real phone screenshot). */
+.ord-client-cell  { font-size: .75rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .03em; max-width: 160px; }
+.ord-client-cell .ord-client-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ord-client-cell .client-hint {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 2px; padding: 0 .3rem; max-width: 100%; width: fit-content;
+  color: #b45309; background: #fef3c7; border: 1px solid #fde68a; border-radius: 4px;
+  font-size: .66rem; font-weight: 700; text-transform: none; letter-spacing: 0;
+}
 .ord-customer-cell { font-size: .8rem; color: var(--text-light); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ord-items-cell   { white-space: nowrap; font-size: .78rem; color: var(--text-muted); }
 .ord-status-cell  { white-space: nowrap; }
