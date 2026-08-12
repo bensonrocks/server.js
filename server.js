@@ -2431,6 +2431,25 @@ function _zortPushState(db, ord, state) {
   return null;                                               // not finished yet — nothing due
 }
 
+// WHY HAS THIS ORDER NO LABEL? Same problem the completion push had: the
+// Label chip appears when a PDF is attached and there is nothing at all when
+// it is not — so "still being fetched", "the fetch failed", and "we never
+// asked" all looked identical. Asked twice from the floor.
+function _zortLabelState(db, ord) {
+  if (!ord || !ord.zort_id) return null;                    // not a synced order
+  if ((db.orderLabels || {})[ord.order_number]) return null; // attached — the Label chip says so
+  const store = (db.zortStores || []).find(s => s.id === ord.zort_store_id);
+  if (!store || !store.enabled) return { state: 'off', why: 'the connection is switched off' };
+  if (!store.labelSync) return { state: 'off', why: 'this store is not set to pull carrier labels' };
+  const entry = (db.zortOutbox || []).find(e => e.kind === 'label' && String(e.orderNumber) === String(ord.order_number));
+  if (entry) {
+    return entry.stalled
+      ? { state: 'failed', attempts: entry.attempts || 0, error: entry.lastError || '' }
+      : { state: 'queued', attempts: entry.attempts || 0, error: entry.lastError || '' };
+  }
+  return { state: 'missing', why: 'nothing is queued to fetch it' };
+}
+
 function _makeSkuLookup() {
   const EMPTY = { found: false, barcode: '', name: '', stock: null, available: null };
   const cache = new Map();   // `${cid}|${sku}` -> hit
@@ -2612,6 +2631,7 @@ function globalOrdersWithState(keep) {
         // back — sent / queued / failed / never configured — instead of the
         // operator having to compare two screens and guess.
         zort_push:         _zortPushState(db, ord, state),
+        zort_label:        _zortLabelState(db, ord),
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,

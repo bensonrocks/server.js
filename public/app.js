@@ -2165,6 +2165,19 @@
   // completed here while the hub's status looked unchanged, with no way to
   // tell whether the relay had fired, was queued, had failed, or was never
   // switched on. Now the order says so itself.
+  // WHY THIS ORDER HAS NO LABEL — queued, failed, or never asked for. Silence
+  // where a Label chip should be was indistinguishable from a fetch still in
+  // flight; the tooltip carries the real error when there is one.
+  function zortLabelChip(ord) {
+    const l = ord.zort_label;
+    if (!l) return '';
+    if (l.state === 'queued') return `<span class="chip chip-sync-queued" title="Fetching the carrier label from the sales channel — a channel usually generates it minutes after the order, so early attempts finding nothing is normal. Attempts: ${l.attempts || 0}.${l.error ? ' Last message: ' + esc(l.error) : ''}">&#8987; Getting label…</span>`;
+    if (l.state === 'failed') return `<span class="chip chip-sync-failed" title="Could not fetch the carrier label after ${l.attempts} attempt(s): ${esc(l.error || 'unknown error')}. Check the Label endpoint on the store in Connections, or upload the label PDF by hand.">&#9888; No label — fetch failed</span>`;
+    if (l.state === 'missing') return `<span class="chip chip-sync-failed" title="No label is attached and nothing is queued to fetch one — ${esc(l.why || '')}. Pull again, or upload the label PDF on the Labels tab.">&#9888; No label queued</span>`;
+    if (l.state === 'off') return `<span class="chip chip-sync-off" title="Carrier labels are not pulled for this order — ${esc(l.why || '')}.">&#9723; Label pull off</span>`;
+    return '';
+  }
+
   function zortPushChip(ord) {
     const p = ord.zort_push;
     if (!p) return '';
@@ -2435,6 +2448,8 @@
         (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord) : '',
         // Marketplace push-back state — only ever on synced orders.
         zortPushChip(ord),
+        // …and why the carrier label is missing, when it is.
+        zortLabelChip(ord),
         // FULFILMENT KPI. The countdown to this order's handover, so a packer
         // can see at a glance which of a screenful is actually urgent.
         fulfilmentChip(ord),
