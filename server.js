@@ -4975,80 +4975,124 @@ function computeFulfillability(db, clientName, { from, to, orderNumbers } = {}) 
       const when = o.date || b.uploaded_at;
       if (!inRange(when)) continue;
       scope.push({ order: o.order_number, date: when ? sgDateStr(new Date(when)) : '', status,
-                   waybill: o.waybill_number || '',
+                   waybill: o.waybill_number || '', _batch: b,
                    lines: (o.lines || []).map(l => ({ sku: String(l.sku || ''), desc: l.description || '', qty: Number(l.qty) || 0 })) });
     }
   }
   scope.sort((a, b2) => a.date.localeCompare(b2.date) || String(a.order).localeCompare(String(b2.order)));
 
-  const tracked = inventory.available() && clientStockTracked(cid);
-  if (!tracked) {
-    // "No stock tracked" is an ARRANGEMENT, not a shortage — same distinction
-    // the Confirm-Upload notice draws. The report says so instead of marking
-    // every order unfulfillable.
+  // WHERE THE STOCK ACTUALLY IS — the SAME resolution the Orders screen uses
+  // (_makeSkuLookup: the order's own client first, then the account that truly
+  // holds the SKU). Reported: this report said "stock is not tracked for this
+  // account" for orders whose pill on screen read "Stock OK — balances read
+  // from Mayer2026". Two answers to one question, because the report resolved
+  // stock ONLY under the client name the order happened to be filed under. It
+  // now judges LINE BY LINE, so a misfiled order is still reported honestly.
+  const lookup = inventory.available() ? _makeSkuLookup() : null;
+  const hits = new Map();                         // `${order}|${SKU}` -> hit
+  const owners = new Set();
+  for (const o of scope) {
+    for (const l of o.lines) {
+      const hit = lookup ? lookup(o._batch, l.sku) : null;
+      hits.set(`${o.order}|${l.sku.toUpperCase()}`, hit);
+      if (hit && hit.found && hit.owner) owners.add(hit.owner);
+    }
+  }
+  const anyTracked = [...hits.values()].some(h => h && h.found);
+  if (!anyTracked) {
+    // Nothing on these orders is in ANY item master. That is an arrangement
+    // (the client's stock lives in their own system) or an onboarding gap —
+    // never a shortage, so the report says so rather than marking every order
+    // unfulfillable.
     return { tracked: false, counts: { notTracked: scope.length },
              orders: scope.map(o => ({ ...o, verdict: 'Stock not tracked here',
                lines: o.lines.map(l => ({ ...l, covered: null, short: null, note: '' })) })), skus: [] };
   }
 
-  const stock = new Map();
-  try { for (const it of inventory.getAll({ clientId: cid })) stock.set(String(it.sku).toUpperCase(), it); } catch (_) {}
-  const ownRes = new Map();                       // `${order}|${SKU}` → units held for it
-  const inScopeRes = new Map();                   // SKU → total held by in-scope orders
-  try {
-    const inScope = new Set(scope.map(o => String(o.order)));
-    for (const r of inventory.openReservations(cid)) {
-      if (!inScope.has(String(r.order_id))) continue;
-      const key = String(r.sku).toUpperCase();
-      const k = `${r.order_id}|${key}`;
-      const q = Number(r.open_qty) || 0;
-      ownRes.set(k, (ownRes.get(k) || 0) + q);
-      inScopeRes.set(key, (inScopeRes.get(key) || 0) + q);
-    }
-  } catch (_) {}
+  // Stock keyed by the account that HOLDS it, not by the order's client.
+  const stock = new Map();                        // `${owner}|${SKU}` -> {stock, available}
+  for (const owner of owners) {
+    try {
+      for (const it of inventory.getAll({ clientId: owner }) || []) {
+        stock.set(`${owner}|${String(it.sku).toUpperCase()}`, it);
+      }
+    } catch (_) {}
+  }
+  const ownRes = new Map();                       // `${order}|${owner}|${SKU}` → units held for it
+  const inScopeRes = new Map();                   // `${owner}|${SKU}` → total held in scope
+  const inScope = new Set(scope.map(o => String(o.order)));
+  for (const owner of owners) {
+    try {
+      for (const r of inventory.openReservations(owner) || []) {
+        if (!inScope.has(String(r.order_id))) continue;
+        const key = `${owner}|${String(r.sku).toUpperCase()}`;
+        const q = Number(r.open_qty) || 0;
+        ownRes.set(`${r.order_id}|${key}`, (ownRes.get(`${r.order_id}|${key}`) || 0) + q);
+        inScopeRes.set(key, (inScopeRes.get(key) || 0) + q);
+      }
+    } catch (_) {}
+  }
   // THE POOL IS PHYSICAL ON-HAND, never the reservation ledger. An intake
   // shortfall reserves the FULL promise and raises a backorder — so a
   // reservation can legitimately exceed the shelf, and crediting it as supply
   // would mark a short order fulfillable (caught by the test: 5 reserved
   // against 3 on hand read as covered). Units promised to orders OUTSIDE this
   // scope are subtracted first; what remains is what these orders can draw.
-  const pool = new Map();
-  for (const [sku, it] of stock) {
-    const reservedByOthers = Math.max(0, (Number(it.reserved_qty) || 0) - (inScopeRes.get(sku) || 0));
-    pool.set(sku, Math.max(0, (Number(it.stock_qty) || 0) - reservedByOthers));
+  const pool = new Map();                         // `${owner}|${SKU}` -> units these orders may draw
+  for (const [key, it] of stock) {
+    const reservedByOthers = Math.max(0, (Number(it.reserved_qty) || 0) - (inScopeRes.get(key) || 0));
+    pool.set(key, Math.max(0, (Number(it.stock_qty) || 0) - reservedByOthers));
   }
   const orders = scope.map(o => ({ ...o, lines: o.lines.map(l => ({ ...l, covered: 0 })) }));
+  const keyOf = (o, l) => {
+    const hit = hits.get(`${o.order}|${l.sku.toUpperCase()}`);
+    return hit && hit.found && hit.owner ? `${hit.owner}|${l.sku.toUpperCase()}` : null;
+  };
   // Pass 1 — reservation holders draw first (their units are promised), capped
   // by what physically exists. Pass 2 — remaining need tops up from what is
   // left, oldest order first.
   for (const o of orders) for (const l of o.lines) {
-    const key = l.sku.toUpperCase();
+    const key = keyOf(o, l); if (!key) continue;
     const take = Math.min(l.qty, ownRes.get(`${o.order}|${key}`) || 0, pool.get(key) || 0);
     l.covered += take; pool.set(key, (pool.get(key) || 0) - take);
   }
   for (const o of orders) for (const l of o.lines) {
-    const key = l.sku.toUpperCase();
+    const key = keyOf(o, l); if (!key) continue;
     const take = Math.min(l.qty - l.covered, pool.get(key) || 0);
     l.covered += take; pool.set(key, (pool.get(key) || 0) - take);
   }
   const skuAgg = new Map();
-  const counts = { fulfillable: 0, partial: 0, none: 0 };
+  const counts = { fulfillable: 0, partial: 0, none: 0, untracked: 0 };
   for (const o of orders) {
-    let anyShort = false, allNone = true;
+    let anyShort = false, allNone = true, judged = 0;
     for (const l of o.lines) {
-      const key = l.sku.toUpperCase();
-      const it = stock.get(key);
+      const key = keyOf(o, l);
+      let it = key ? stock.get(key) : null;
+      // A row our own catalogue-learning invented, carrying no stock, is not
+      // evidence of anything — reporting it as "no stock" would blame the
+      // shelf for a product nobody ever registered. Judge it as untracked.
+      if (it && Number(it.learned_from_orders) === 1 && !(Number(it.stock_qty) > 0)) it = null;
+      const hit = hits.get(`${o.order}|${l.sku.toUpperCase()}`);
+      l.owner = hit && hit.found ? (hit.owner || '') : '';
+      if (!it) {
+        // Not in ANY item master — never judged, and never counted as short.
+        l.covered = null; l.short = null; l.note = 'not in any item master';
+        continue;
+      }
+      judged++;
       l.short = l.qty - l.covered;
-      l.note = !it ? 'not in item master' : '';
+      l.note = '';
       if (l.short > 0) anyShort = true;
       if (l.covered > 0) allNone = false;
-      const agg = skuAgg.get(key) || { sku: l.sku, desc: l.desc || it?.name || '',
-        on_hand: Number(it?.stock_qty) || 0, reserved: Number(it?.reserved_qty) || 0,
-        available: Number(it?.available_qty) || 0, demand: 0, covered: 0, short: 0, inMaster: !!it };
+      const aggKey = l.sku.toUpperCase();
+      const agg = skuAgg.get(aggKey) || { sku: l.sku, desc: l.desc || it.name || '', owner: l.owner,
+        on_hand: Number(it.stock_qty) || 0, reserved: Number(it.reserved_qty) || 0,
+        available: Number(it.available_qty) || 0, demand: 0, covered: 0, short: 0, inMaster: true };
       agg.demand += l.qty; agg.covered += l.covered; agg.short += l.short;
-      if (!agg.desc) agg.desc = l.desc || it?.name || '';
-      skuAgg.set(key, agg);
+      if (!agg.desc) agg.desc = l.desc || it.name || '';
+      skuAgg.set(aggKey, agg);
     }
+    if (!judged) { o.verdict = 'Stock not tracked here'; counts.untracked++; continue; }
     o.verdict = !anyShort ? 'Fulfillable now' : allNone ? 'No stock' : 'Partial — short on stock';
     counts[!anyShort ? 'fulfillable' : allNone ? 'none' : 'partial']++;
   }
@@ -5073,7 +5117,8 @@ function fulfillabilitySheets(client, data, from, to) {
   }
   return [
     { name: 'Summary', aoa: [...head,
-      [`${data.counts.fulfillable || 0} order(s) fulfillable now · ${data.counts.partial || 0} partially coverable · ${data.counts.none || 0} with no stock`], [],
+      [`${data.counts.fulfillable || 0} order(s) fulfillable now · ${data.counts.partial || 0} partially coverable · ${data.counts.none || 0} with no stock`
+        + ((data.counts.untracked || 0) ? ` · ${data.counts.untracked} with nothing in any item master` : '')], [],
       ['Order', 'Date', 'Waybill', 'Pieces ordered', 'Pieces covered', 'Pieces short', 'Verdict'],
       ...data.orders.map(o => {
         const need = o.lines.reduce((s, l) => s + l.qty, 0);
@@ -5081,13 +5126,15 @@ function fulfillabilitySheets(client, data, from, to) {
         return [o.order, o.date, o.waybill, need, cov, need - cov, o.verdict];
       })] },
     { name: 'Lines', aoa: [...head,
-      ['Covered = units this order can draw from stock: its own reservation first, then free stock, oldest order first.'], [],
-      ['Order', 'Date', 'SKU', 'Product', 'Ordered', 'Covered', 'Short', 'Note'],
-      ...data.orders.flatMap(o => o.lines.map(l => [o.order, o.date, l.sku, l.desc, l.qty, l.covered, l.short, l.note || '']))] },
+      ['Covered = units this order can draw from stock: its own reservation first, then free stock, oldest order first.'],
+      ['Stock account = where the balance was read. It can differ from the client the order is filed under when a SKU is registered to another account.'], [],
+      ['Order', 'Date', 'SKU', 'Product', 'Ordered', 'Covered', 'Short', 'Stock account', 'Note'],
+      ...data.orders.flatMap(o => o.lines.map(l => [o.order, o.date, l.sku, l.desc, l.qty,
+        l.covered === null ? '' : l.covered, l.short === null ? '' : l.short, l.owner || '', l.note || '']))] },
     { name: 'Stock vs demand', aoa: [...head,
       ['One row per SKU these orders need. Short > 0 is what cannot be fulfilled until stock arrives — the replenishment list.'], [],
-      ['SKU', 'Product', 'On hand', 'Reserved (all orders)', 'Available', 'Demand (these orders)', 'Covered', 'Short', 'In item master'],
-      ...data.skus.map(s => [s.sku, s.desc, s.on_hand, s.reserved, s.available, s.demand, s.covered, s.short, s.inMaster ? 'Yes' : 'NO'])] },
+      ['SKU', 'Product', 'Stock account', 'On hand', 'Reserved (all orders)', 'Available', 'Demand (these orders)', 'Covered', 'Short'],
+      ...data.skus.map(s => [s.sku, s.desc, s.owner || '', s.on_hand, s.reserved, s.available, s.demand, s.covered, s.short])] },
   ];
 }
 
