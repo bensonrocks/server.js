@@ -798,6 +798,7 @@
       document.getElementById('transportSubMenu').style.display = 'none';
     }
     if (name === 'labels') { renderLabelsTab(); }
+    if (name === 'reports') { window.fillTxnClientPicker?.(); }
     if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); }
   }
 
@@ -10680,6 +10681,7 @@
       // Administrator panel has been unlocked, so loading it early 403'd and
       // left the picker permanently empty (caught by the browser test).
       if (btn.dataset.adminTab === 'wipe') window.wipeUI?.loadClientList?.();
+      if (btn.dataset.adminTab === 'reports') window.fillTxnClientPicker?.();
     });
   });
 
@@ -14044,7 +14046,14 @@
     // The client list for the transaction statement — a statement is per
     // account, so the picker is filled from every client that actually has
     // one, not from whatever orders happen to be on screen.
-    (async () => {
+    // NEVER fetch before login: this IIFE runs at script parse, and the
+    // global fetch wrapper reloads the page on 401 — an unguarded fetch here
+    // put the LOGIN PAGE itself into an infinite refresh loop (same trap as
+    // the init-time loadDrivers(), which carries the identical guard).
+    let _txnClientsLoaded = false;
+    window.fillTxnClientPicker = async function fillTxnClientPicker(force) {
+      if (!localStorage.getItem('wms_token')) return;   // signed out — do nothing
+      if (_txnClientsLoaded && !force) return;
       const sels = document.querySelectorAll('.rep-txn-client');
       if (!sels.length) return;
       let names = [];
@@ -14056,12 +14065,17 @@
         // Fall back to the clients visible on the orders already loaded.
         names = [...new Set((loadedOrders || []).map(o => o.client_name).filter(Boolean))];
       }
+      if (!names.length) return;                        // keep retrying on next open
+      _txnClientsLoaded = true;
       names.sort((a, b) => String(a).localeCompare(String(b)));
       for (const sel of sels) {
+        const prev = sel.value;
         sel.innerHTML = '<option value="">— pick a client —</option>' +
           names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+        if (prev) sel.value = prev;
       }
-    })();
+    };
+    window.fillTxnClientPicker();
 
     document.querySelectorAll('.report-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
