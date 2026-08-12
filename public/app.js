@@ -15298,6 +15298,22 @@
         body: JSON.stringify({ arrange_delivery: arrange ? 'yes' : 'no' }),
       });
       let j = await r.json();
+      const resend = extra => fetch(`/api/client-submissions/${encodeURIComponent(current.id)}/approve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+        body: JSON.stringify({ arrange_delivery: arrange ? 'yes' : 'no', ...extra }),
+      });
+      // ALREADY PICKED AND COMPLETED HERE — never re-imported. The only way
+      // forward is to leave those out; there is no "approve anyway".
+      if (r.status === 422 && j.needsDuplicateSkip) {
+        const list = (j.lines || []).join('\n');
+        const ok = confirm(`${j.message}\n\n${list}\n\n` +
+          (j.newCount > 0
+            ? `OK = import the ${j.newCount} genuinely new order(s) and leave these out\nCancel = do nothing`
+            : `There is nothing else in this file to import.\n\nOK = import nothing (then reject the submission)\nCancel = do nothing`));
+        if (!ok) return;
+        r = await resend({ skip_duplicates: 'yes' });
+        j = await r.json();
+      }
       if (r.status === 409 && j.needsDuplicateConfirm) {
         // The same lines the CLIENT was shown — which numbers, and when we last
         // saw them — plus whether they were warned and went ahead anyway.
@@ -15305,20 +15321,29 @@
         const cc = j.clientConfirmed
           ? `\n\nThe client was shown this on ${new Date(j.clientConfirmed.at).toLocaleString()} and sent it anyway.`
           : '';
-        if (!confirm(`${j.message}${cc}\n\n${list}\n\nApprove anyway?`)) return;
-        r = await fetch(`/api/client-submissions/${encodeURIComponent(current.id)}/approve`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
-          body: JSON.stringify({ arrange_delivery: arrange ? 'yes' : 'no', confirm_duplicates: 'yes' }),
-        });
+        // THREE-WAY, not all-or-nothing: the old prompt forced a choice
+        // between losing real orders and creating a twin, and the twin won.
+        const skip = confirm(`${j.message}${cc}\n\n${list}\n\n` +
+          `OK = import only the ${j.newCount} new order(s), skipping the ${j.duplicates.length} already here (recommended)\n` +
+          `Cancel = choose whether to import everything`);
+        if (skip) {
+          r = await resend({ skip_duplicates: 'yes' });
+        } else {
+          if (!confirm(`Import ALL of them, including the ${j.duplicates.length} already with us?\n\nThis creates a second copy of work we already hold — only right if these are genuinely different orders that happen to share a number.`)) return;
+          r = await resend({ confirm_duplicates: 'yes' });
+        }
         j = await r.json();
       }
       if (!r.ok) { alert(j.error || 'Could not approve.'); return; }
+      const dupMsg = (j.skippedDuplicates && j.skippedDuplicates.length)
+        ? `\n\nAlready with us, so left out: ${j.skippedDuplicates.slice(0, 8).join(', ')}${j.skippedDuplicates.length > 8 ? ` …and ${j.skippedDuplicates.length - 8} more` : ''}`
+        : '';
       const labMsg = j.labels
         ? (j.labels.error
             ? `\n\nThe attached waybills could not be processed: ${j.labels.error}\nThe orders are live — re-upload the label PDF from Labels.`
             : `\n\nWaybills: ${j.labels.matched} of ${j.labels.pageCount} page(s) matched.`)
         : '';
-      alert(`Approved — job ${j.job} created with ${j.orderCount} order(s).${labMsg}`);
+      alert(`Approved — job ${j.job} created with ${j.orderCount} order(s).${dupMsg}${labMsg}`);
       document.getElementById('clientSubPreviewOverlay').classList.add('hidden');
       current = null;
       await load(); render();

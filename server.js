@@ -9806,19 +9806,40 @@ app.post('/api/portal/submissions/:id/transmit', express.json(), (req, res) => {
 // now looking at.
 function findDuplicateOrderNumbers(db, orders, clientName) {
   const want = new Map();
+  const wantWaybill = new Map();     // waybill -> the submitted order number
   for (const o of orders || []) {
     const n = String(o.order_number || '').trim();
     if (n) want.set(n, true);
+    // THE WAYBILL IS A SECOND IDENTITY, and on marketplace work the stronger
+    // one: the same parcel reaching us twice (once from the sales-channel
+    // sync, once uploaded by the client) carries the SAME tracking number
+    // even if the two sources number the order differently. Matching on the
+    // order number alone missed that pair.
+    const w = String(o.waybill_number || '').trim();
+    if (w && n) wantWaybill.set(w.toUpperCase(), n);
   }
-  if (!want.size) return [];
+  if (!want.size && !wantWaybill.size) return [];
   const out = [];
   for (const b of db.batches || []) {
     for (const o of b.orders || []) {
       const n = String(o.order_number || '').trim();
-      if (!want.has(n)) continue;
+      const w = String(o.waybill_number || '').trim().toUpperCase();
+      const byNumber  = want.has(n);
+      const byWaybill = !byNumber && w && wantWaybill.has(w);
+      if (!byNumber && !byWaybill) continue;
       const st = (b.orderStates || {})[n] || {};
       out.push({
         order_number: n,
+        // Which of the submitted orders this collides with, and how — a
+        // waybill match names a DIFFERENT order number, so saying so is the
+        // difference between "you sent this twice" and "this parcel is
+        // already with us under another number".
+        submitted_as: byWaybill ? wantWaybill.get(w) : n,
+        matched_on: byWaybill ? 'waybill' : 'order number',
+        waybill_number: o.waybill_number || '',
+        // Work that reached us through the sales-channel sync rather than a
+        // person — the usual other half of a portal duplicate.
+        from_api: !!(o.zort_id || b.uploaded_by === 'zort-sync'),
         status: st.status || 'pending',
         // WHEN — what the client actually asks. Completion is the meaningful
         // date when there is one; otherwise when it was uploaded.
@@ -10139,12 +10160,12 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
 
   try {
     const parsed = await parseOrderFileToRows(buf, s0.filename);
-    const rows = parsed.allRows;
+    let rows = parsed.allRows;
     if (!rows.length) return res.status(400).json({ error: 'The stored file no longer yields any order lines.' });
     const cid = invClientId(s0.client_name);
     normalizeOrderRowsToInhouseSku(rows, () => cid);
     enrichLinesFromCatalogue(rows, s0.client_name);
-    const orders = summarizeOrders(rows);
+    let orders = summarizeOrders(rows);
 
     const db = readDb();
     // ── LAYER TWO: tell the OFFICE, at approval ─────────────────────────
@@ -10152,22 +10173,63 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     // facts — and so "the client already confirmed this" means they confirmed
     // what is on this screen. The office decides independently: a client
     // clicking through is not our approval.
-    const clash = findDuplicateOrderNumbers(db, orders, s0.client_name);
+    let clash = findDuplicateOrderNumbers(db, orders, s0.client_name);
+    // ── COMPLETED WORK IS NEVER RE-IMPORTED, and this path used to let it ──
+    // Seen live: a marketplace order arrived through the sales-channel sync,
+    // the floor picked and COMPLETED it in the morning, then the client
+    // uploaded the same order through their portal and approving it created a
+    // fresh PENDING twin — the same parcel queued to be picked a second time,
+    // with its stock deducted twice. /api/upload has always hard-aborted a
+    // duplicate against DONE work (422, no override); this path only warned,
+    // and a warning loses to an approver who has three genuinely new orders in
+    // the same file. Now the two paths enforce the same rule.
+    const doneClash = clash.filter(d => d.status === 'done');
+    const skipDupes = req.body?.skip_duplicates === 'yes';
+    if (doneClash.length && !skipDupes) {
+      return res.status(422).json({
+        needsDuplicateSkip: true,
+        duplicates: doneClash.slice(0, 100),
+        lines: doneClash.slice(0, 100).map(describeDuplicate),
+        completedCount: doneClash.length,
+        newCount: orders.length - new Set(doneClash.map(d => d.submitted_as)).size,
+        message: `${doneClash.length} order(s) in this submission have ALREADY BEEN PICKED AND COMPLETED here`
+          + (doneClash.some(d => d.from_api) ? ' (they reached us automatically from the sales channel)' : '')
+          + '. Completed work is never imported again — it would queue the same parcel to be packed twice and deduct its stock twice.',
+      });
+    }
+    // TAKE ONLY WHAT IS NEW. The old gate was all-or-nothing, which is exactly
+    // how the twins got in: with 3 genuinely new orders beside 1 already here,
+    // rejecting the file loses real work, so the duplicate was waved through.
+    let skippedDuplicates = [];
+    if (skipDupes && clash.length) {
+      const drop = new Set(clash.map(d => String(d.submitted_as || d.order_number)));
+      skippedDuplicates = orders.filter(o => drop.has(String(o.order_number))).map(o => o.order_number);
+      orders = orders.filter(o => !drop.has(String(o.order_number)));
+      rows   = rows.filter(r => !drop.has(String(r.order_number)));
+      clash  = [];
+      if (!orders.length) {
+        return res.status(409).json({
+          error: `Every order in this submission is already with us (${skippedDuplicates.length}). Nothing new to import — reject the submission instead.`,
+          allDuplicates: true, skipped: skippedDuplicates.slice(0, 100),
+        });
+      }
+    }
     if (clash.length && req.body?.confirm_duplicates !== 'yes') {
-      const done = clash.filter(d => d.status === 'done');
       return res.status(409).json({
         needsDuplicateConfirm: true,
         duplicates: clash.slice(0, 100),
         lines: clash.slice(0, 100).map(describeDuplicate),
-        completedCount: done.length,
+        completedCount: 0,
+        apiCount: clash.filter(d => d.from_api).length,
+        newCount: orders.length - new Set(clash.map(d => d.submitted_as)).size,
         clientConfirmed: s0.client_confirmed_duplicates || null,
-        message: `${clash.length} order number(s) in this submission already exist`
-          + (done.length ? `, ${done.length} of them on work that is already COMPLETED` : '')
+        message: `${clash.length} order(s) in this submission are already with us`
+          + (clash.some(d => d.from_api) ? ' — they came in automatically from the sales channel' : '')
           + '. '
           + (s0.client_confirmed_duplicates
               ? 'The client was shown this and chose to send it anyway. '
               : '')
-          + 'Approve only if these are genuinely new orders.',
+          + 'Import only the new ones, unless these are genuinely different orders.',
       });
     }
 
@@ -10259,7 +10321,8 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     }
 
     res.json({ ok: true, batchId, job: batch.idealscan_code, orderCount: orders.length,
-               transportJobsCreated, labels: labelsResult, submission: clientSubPublic(readDb(), s) });
+               transportJobsCreated, labels: labelsResult, skippedDuplicates,
+               submission: clientSubPublic(readDb(), s) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
