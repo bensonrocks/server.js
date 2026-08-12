@@ -14222,6 +14222,50 @@ app.post('/api/master/orders/mass-complete', (req, res) => {
   res.json({ ok: true, completed, refused });
 });
 
+// ── "THESE ARE NOT OURS TO FULFIL" — the sticky way to say it ──────────────
+// Reported from the floor: a client's orders were being DELETED because the
+// client fulfils them at their own end, and they came straight back on the
+// next pull. Of course they did — the pull skips order numbers it already
+// holds, so deleting an order is precisely how you make it look new again.
+// Marking it CANCELLED keeps the record (so the dedup still sees it), takes it
+// off the packers' list, and releases anything it had reserved. That is the
+// primitive this needs, in bulk, with the reason on the trail.
+app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
+  const wanted = [...new Set((req.body?.orders || []).map(String))];
+  const reason = String(req.body?.reason || '').trim();
+  if (!wanted.length) return res.status(400).json({ error: 'No orders listed' });
+  if (reason.length < 6) return res.status(400).json({ error: 'Give a reason — it goes on the trail and is the only record of why these were not fulfilled.' });
+  const db = readDb();
+  const who = req.userId || _tokenUserId(req) || '';
+  const now = new Date().toISOString();
+  const cancelled = [], refused = [];
+  for (const orderNumber of wanted) {
+    const batch = findBatchForOrder(db, orderNumber);
+    if (!batch) { refused.push({ order: orderNumber, why: 'not found' }); continue; }
+    if (!batch.orderStates) batch.orderStates = {};
+    const st = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    // COMPLETED WORK IS NEVER UNDONE — the standing rule everywhere else.
+    if (st.status === 'done') { refused.push({ order: orderNumber, why: 'already completed' }); continue; }
+    if (st.status === 'unprocessed') { refused.push({ order: orderNumber, why: 'already cancelled' }); continue; }
+    const holder = claimBlocker(st, req.userId);
+    if (holder) { refused.push({ order: orderNumber, why: `open at ${holder}'s station` }); continue; }
+    st.status = 'unprocessed';
+    st.unprocessed_reason = reason;
+    st.unprocessed_at = now;
+    st.updated_at = now;
+    delete st.claimedBy; delete st.claimedAt;
+    batch.orderStates[orderNumber] = st;
+    cancelled.push(orderNumber);
+  }
+  // Give back whatever they had promised — same reconciler every other
+  // removal path uses.
+  try { releaseOrphanReservations(db); } catch (e) { console.error('[bulk-cancel]', e.message); }
+  try { closeSettledBackorders(db); } catch (_) {}
+  writeDb(db);
+  logAudit('orders_bulk_cancelled', { count: cancelled.length, orders: cancelled.slice(0, 100), reason, refused: refused.slice(0, 20), by: who });
+  res.json({ ok: true, cancelled, refused });
+});
+
 app.post('/api/scan/cancel', (req, res) => {
   const { orderNumber, startTime, endTime, operator, mismatches } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });

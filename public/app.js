@@ -2513,6 +2513,7 @@
         <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
         <button id="ordersBulkTxn" class="btn-secondary btn-sm" title="Download this client's transaction statement — everything in and out over the date range, with opening and closing balances">&#129534; Transactions</button>
         <button id="ordersBulkComplete" class="btn-secondary btn-sm" title="Complete the selected orders WITHOUT scanning — Administrator password required. Stock deducts and synced orders report back to their store exactly as a scanned completion would.">&#9989; Complete (skip scan)</button>
+        <button id="ordersBulkNotOurs" class="btn-secondary btn-sm" title="Mark these as not ours to fulfil — the client ships them at their end. They leave the packers' list and, unlike deleting, they do NOT come back on the next sync.">&#9003; Not ours (client ships)</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
       </div>` : '';
@@ -2733,6 +2734,40 @@
         .filter(o => o && o.scan_status !== 'done' && !o.pending_deletion && !o.archived);
       if (!selectable.length) { alert('None of the selected orders can be deleted (completed/archived/already pending are skipped).'); return; }
       openBulkDeleteOrdersModal(selectable.map(o => ({ orderNumber: o.order_number, batchId: o.batchId || '' })));
+    });
+    // NOT OURS — the sticky alternative to deleting. Deleting an order is how
+    // it comes BACK on the next sync (the pull skips numbers it already
+    // holds); cancelling keeps the record and takes it off the floor.
+    document.getElementById('ordersBulkNotOurs')?.addEventListener('click', async () => {
+      const chosen = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status !== 'done' && o.scan_status !== 'unprocessed');
+      if (!chosen.length) { alert('None of the selected orders can be cancelled (already completed or already cancelled).'); return; }
+      const scanned = chosen.filter(o => Object.values(o.scanned || {}).some(n => Number(n) > 0));
+      const msg = `Mark ${chosen.length} order(s) as NOT OURS to fulfil?\n\n` +
+        `• They leave the packers' list and stop counting as work.\n` +
+        `• Anything they reserved goes back to available stock.\n` +
+        `• Unlike deleting, they will NOT be re-imported on the next sync — that is the point.\n` +
+        (scanned.length ? `\n⚠ ${scanned.length} of them already have pieces scanned. Cancelling keeps that record but stops the order.\n` : '') +
+        `\nFirst 10: ${chosen.slice(0, 10).map(o => o.order_number).join(', ')}${chosen.length > 10 ? '…' : ''}`;
+      if (!confirm(msg)) return;
+      const reason = prompt('Why are these not ours to fulfil? (goes on the audit trail)', 'Client fulfils these from their own end');
+      if (!reason || reason.trim().length < 6) { if (reason !== null) alert('Give a real reason — at least 6 characters.'); return; }
+      const btn = document.getElementById('ordersBulkNotOurs'); if (btn) btn.disabled = true;
+      try {
+        const r = await fetch('/api/orders/bulk-cancel', {
+          method: 'POST', headers: { ...hdrs(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orders: chosen.map(o => o.order_number), reason: reason.trim() }),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || 'Could not cancel those orders.'); return; }
+        let m = `✓ ${d.cancelled.length} order(s) marked as not ours.`;
+        if (d.refused?.length) m += `\n\nNot changed:\n` + d.refused.slice(0, 10).map(x => `  ${x.order} — ${x.why}`).join('\n');
+        alert(m);
+        orderSelection.clear();
+        renderOrdersDash();
+      } catch (e) { alert('Could not cancel those orders: ' + e.message); }
+      finally { if (btn) btn.disabled = false; }
     });
     // Transaction statement for the selected orders' client — the date chips
     // give the period, so the file matches the window on screen.
@@ -14004,6 +14039,27 @@
     document.querySelectorAll('.rep-from').forEach(el => el.value = daysAgo(30));
     document.querySelectorAll('.rep-to').forEach(el => el.value = today());
     document.querySelectorAll('.rep-mdate').forEach(el => el.value = today());
+    // The client list for the transaction statement — a statement is per
+    // account, so the picker is filled from every client that actually has
+    // one, not from whatever orders happen to be on screen.
+    (async () => {
+      const sels = document.querySelectorAll('.rep-txn-client');
+      if (!sels.length) return;
+      let names = [];
+      try {
+        const r = await fetch('/api/putaway/clients');
+        if (r.ok) { const d = await r.json(); names = (d.clients || []).map(c => c.name || c).filter(Boolean); }
+      } catch (_) {}
+      if (!names.length) {
+        // Fall back to the clients visible on the orders already loaded.
+        names = [...new Set((loadedOrders || []).map(o => o.client_name).filter(Boolean))];
+      }
+      names.sort((a, b) => String(a).localeCompare(String(b)));
+      for (const sel of sels) {
+        sel.innerHTML = '<option value="">— pick a client —</option>' +
+          names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+      }
+    })();
 
     document.querySelectorAll('.report-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -14017,6 +14073,24 @@
         const st   = pane.querySelector('.report-status');
         st.className = 'status-bar report-status'; st.textContent = 'Generating report…';
         try {
+          // The transaction statement is per CLIENT and has its own route —
+          // it is built from the stock ledger, not the activity log the other
+          // reports read, so it does not live under /api/master/report.
+          if (kind === 'transactions') {
+            const client = pane.querySelector('.rep-txn-client')?.value || '';
+            if (!client) {
+              st.className = 'status-bar report-status error';
+              st.textContent = 'Pick a client first — a statement is per account.';
+              setTimeout(() => st.classList.add('hidden'), 4000);
+              return;
+            }
+            const q2 = new URLSearchParams({ client, from, to });
+            await authDownload(`/api/transactions/export?${q2}`,
+              `Transactions_${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${from}_${to}.xlsx`);
+            st.className = 'status-bar report-status success'; st.textContent = 'Statement downloaded.';
+            setTimeout(() => st.classList.add('hidden'), 4000);
+            return;
+          }
           const qs = kind === 'carrier-manifest'
             ? `date=${encodeURIComponent(md)}`
             : `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
