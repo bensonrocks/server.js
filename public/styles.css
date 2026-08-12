@@ -3640,3 +3640,6 @@ tr.pa-split-row td { border-top: 0; }
 .chip-sync-queued { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; font-weight: 700; }
 .chip-sync-failed { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; font-weight: 700; }
 .chip-sync-off    { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; font-weight: 600; }
+/* When the buyer ordered, shown under the import date only when they differ —
+   an order placed yesterday and pulled today used to read as today's work. */
+.ord-placed-sub { font-size: .68rem; color: #b45309; font-weight: 600; margin-top: 2px; white-space: nowrap; }

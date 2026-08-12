@@ -2442,6 +2442,15 @@
 
       // Date
       const dateStr = ord.uploadedAt ? new Date(ord.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—';
+      // WHEN THE BUYER ORDERED, when that is not the day we imported it. The
+      // column has always shown OUR import date, so a marketplace order placed
+      // yesterday and pulled today read as today's work and did not reconcile
+      // with the hub's screen. The countdown runs from the placed time.
+      const _placedD = ord.placed_at ? new Date(ord.placed_at) : null;
+      const placedSub = (_placedD && !isNaN(_placedD) &&
+        _placedD.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) !== dateStr)
+        ? `<div class="ord-placed-sub" title="The buyer placed this order on the marketplace at ${esc(_placedD.toLocaleString('en-GB', { hour12: false }))} — the fulfilment countdown runs from then, not from when we imported it.">placed ${esc(_placedD.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}</div>`
+        : '';
 
       return `<tr class="orders-tr status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
         <td class="ord-stripe-cell"></td>
@@ -2459,7 +2468,7 @@
         <td class="ord-waybill-cell col-waybill" title="${esc(ord.waybill_number || '')}">${esc(ord.waybill_number || '—')}</td>
         <td class="col-items">${itemsCell} ${carrierBadge}</td>
         <td class="ord-status-cell col-status"><span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span></td>
-        <td class="ord-date-cell col-date">${dateStr}</td>
+        <td class="ord-date-cell col-date">${dateStr}${placedSub}</td>
         <td class="ord-actions-cell col-actions">
           ${canScan ? `<button class="btn-scan-now" data-order="${esc(ord.order_number)}">Scan &#8594;</button>` : ''}
           ${canScan ? `<button class="btn-secondary btn-sm btn-picklist" data-order="${esc(ord.order_number)}"

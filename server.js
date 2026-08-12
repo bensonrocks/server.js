@@ -2828,7 +2828,14 @@ function fulfilmentSla(order, fpol, ppol, nowIso) {
   // commitment, so putting a countdown on it invents a deadline nobody agreed
   // to — and buries the orders that DO have one under a pile that does not.
   if (!String(order.waybill_number || '').trim()) return null;
-  const arrived = order.uploadedAt || order.uploaded_at || null;
+  // THE CLOCK RUNS FROM WHEN THE BUYER ORDERED, not from when we pulled it.
+  // A marketplace order can sit in the hub for hours (or a day, if it arrived
+  // before the first pull of the morning) — measuring from our import handed
+  // us slack the platform never gave, so an order Lazada already flagged as
+  // about to breach could read "1d 2h left" here. `placed_at` is captured at
+  // pull; uploadedAt remains the fallback for staff uploads that carry no
+  // order time of their own.
+  const arrived = order.placed_at || order.uploadedAt || order.uploaded_at || null;
   const t = sgParts(arrived);
   if (!t) return null;
 
@@ -17257,6 +17264,20 @@ function zortStorePublic(s, db) {
 // Voided(2), Returned(4), Failed Shipment(7), Partial Transfer sit alongside.
 // One normalizer accepts either shape so a mock, an old payload and live data
 // all read the same.
+// The moment the buyer placed the order, as an ISO timestamp. ZORT sends
+// several shapes ("2026-08-11T12:31:32", "2026-08-11 12:31:32", a bare day);
+// anything that parses wins, and a bare day is still better than our import
+// time. Null when nothing usable is present — the caller then falls back.
+function _zortPlacedAt(o) {
+  for (const v of [o.orderdate, o.createdatetime, o.orderdateString, o.createdatetimeString]) {
+    const raw = String(v || '').trim();
+    if (!raw) continue;
+    const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
 const ZORT_STATUS_WORDS = { 0: 'pending', 1: 'success', 2: 'voided', 3: 'waiting', 4: 'returned', 5: 'packed', 6: 'shipping', 7: 'failed shipment' };
 function zortStatusWord(s) {
   const raw = String(s ?? '').trim();
@@ -17389,7 +17410,7 @@ async function pullZortStore(db, store) {
       const clientForOrder = att.client;
       zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder,
                            attributed_via: att.via, attribution_unsure: att.unsure || null,
-                           attribution_hint: att.hint || null };
+                           attribution_hint: att.hint || null, placed_at: _zortPlacedAt(o) };
       for (const l of lines) {
         rows.push({
           order_number:     number,
@@ -17404,6 +17425,11 @@ async function pullZortStore(db, store) {
           platform:         String(o.saleschannel || o.channel || '').trim(),
           waybill_number:   String(o.trackingno || '').trim(),
           date:             String(o.orderdate || '').slice(0, 10),
+          // WHEN THE BUYER ACTUALLY ORDERED, with its time. `date` is sliced
+          // to a day, which is useless for a KPI whose bands are 12:00 and
+          // 14:00 — and the fulfilment clock was falling back to OUR import
+          // time, handing us up to a day of slack the marketplace never gave.
+          placed_at:        _zortPlacedAt(o),
         });
       }
     }
@@ -17428,6 +17454,7 @@ async function pullZortStore(db, store) {
     // Kept on the stored order (clean name, no underscore) so the Orders list
     // can render the fallen-back row as CLIENT (probable owner).
     o.attribution_hint = m.attribution_hint || null;
+    o.placed_at = m.placed_at || null;
   }
 
   // ONE ZORT account carries MANY clients' sales channels — group the pull
