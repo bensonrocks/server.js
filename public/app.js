@@ -11330,7 +11330,9 @@
           <td><b>${esc(s.clientName)}</b>${s.enabled ? '' : ' <span style="color:#ef4444">(disabled)</span>'}</td>
           <td>${esc(s.storename)}</td>
           <td><code>${esc(s.apikeyMasked)}</code></td>
-          <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
+          <td>${s.autoPullMinutes
+            ? 'every ' + s.autoPullMinutes + ' min'
+            : `<span style="color:#b45309;font-weight:700" title="Auto-pull is 0, so orders only arrive when someone presses Pull now — nothing comes in by itself. Set a minute interval (edit ✏) for hands-off intake. Completions still push back on their own 30-second sync.">&#9888; manual only</span>`}</td>
           <td>${(s.completeAction || 'none') === 'none'
             ? `<span style="color:#b45309;font-weight:700" title="When the floor completes an order from this store, NOTHING is sent back — the sales channel is never told the parcel is ready. Set this to Ready to Ship (edit ✏) if the channel should be updated.">&#9888; nothing sent back</span>`
             : esc(actLbl[s.completeAction] || s.completeAction) + (s.completeAction === 'status' ? ' ' + s.completeStatusCode : '')}</td>
