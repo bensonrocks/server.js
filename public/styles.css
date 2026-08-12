@@ -3632,3 +3632,11 @@ tr.pa-split-row td { border-top: 0; }
    show a verdict. */
 .chip-stock-untracked      { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; font-weight: 600; }
 .meta-pill-stock-untracked { background: #f1f5f9; color: #475569; border-color: #e2e8f0; font-weight: 600; }
+
+/* Did the sales channel hear that we finished the order? Reported live: an
+   order completed here while the hub's status looked unchanged, and nothing
+   on any screen could say whether the relay fired. */
+.chip-sync-sent   { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; font-weight: 700; }
+.chip-sync-queued { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; font-weight: 700; }
+.chip-sync-failed { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; font-weight: 700; }
+.chip-sync-off    { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; font-weight: 600; }

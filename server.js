@@ -2406,6 +2406,31 @@ function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 // answers is the owner. `found: false` means no catalogue anywhere knows the
 // SKU — the screen shows NO stock pill then, because "we don't track this"
 // must never be dressed up as "no stock".
+// The completion push-back state of one synced order, derived on read.
+// Deliberately reports 'off' and 'missing' as loudly as 'failed': a relay that
+// was never configured, and one that silently never enqueued, both look
+// exactly like success on every screen otherwise.
+function _zortPushState(db, ord, state) {
+  if (!ord || !ord.zort_id) return null;                     // not a synced order
+  if (state.zort_pushed_at) {
+    return { state: 'sent', at: state.zort_pushed_at, action: state.zort_push_action || '' };
+  }
+  const store = (db.zortStores || []).find(s => s.id === ord.zort_store_id);
+  if (!store || !store.enabled) return { state: 'off', why: 'the connection is switched off' };
+  const action = store.completeAction || 'none';
+  if (action === 'none') return { state: 'off', why: 'this store is set to push nothing back on completion (Complete action = none)' };
+  const entry = (db.zortOutbox || []).find(e => e.kind === 'completion' && String(e.orderNumber) === String(ord.order_number));
+  if (entry) {
+    return entry.stalled || (entry.attempts || 0) >= 3
+      ? { state: 'failed', attempts: entry.attempts || 0, error: entry.lastError || '', action }
+      : { state: 'queued', attempts: entry.attempts || 0, action };
+  }
+  if (state.status === 'done') {
+    return { state: 'missing', why: 'the order was completed but nothing was queued for the hub', action };
+  }
+  return null;                                               // not finished yet — nothing due
+}
+
 function _makeSkuLookup() {
   const EMPTY = { found: false, barcode: '', name: '', stock: null, available: null };
   const cache = new Map();   // `${cid}|${sku}` -> hit
@@ -2581,6 +2606,12 @@ function globalOrdersWithState(keep) {
         // an API pill so the team knows BEFORE completion that this order's
         // collection status is scan-close-only and relays to the platform.
         api_source:        !!(ord.zort_id || batch.uploaded_by === 'zort-sync'),
+        // DID THE HUB HEAR ABOUT THIS ONE? Derived on read from the stamp the
+        // drainer writes, the outbox, and the store's own setting, so a
+        // completed marketplace order says plainly whether its status went
+        // back — sent / queued / failed / never configured — instead of the
+        // operator having to compare two screens and guess.
+        zort_push:         _zortPushState(db, ord, state),
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
@@ -17741,6 +17772,19 @@ async function _zortSendOutboxEntry(db, store, entry) {
       else                         await zortApi.readyToShip(store, args);
     }
     else await zortApi.updateOrderStatus(store, { id: entry.zortId, status: store.completeStatusCode ?? 1, actionDate: new Date().toISOString().slice(0, 10) });
+    // STAMP THE ORDER, not just the log. "Did the hub actually hear about
+    // this one?" was unanswerable from any screen — the audit log is a
+    // haystack and the outbox entry is deleted on success, so a completed
+    // order looked identical whether the push landed, was still queued, had
+    // failed, or was never configured at all. Reported live: a completed
+    // order whose ZORT status appeared unchanged, with no way to tell which.
+    try {
+      const f = lazadaFindOrder(db, entry.orderNumber, '');
+      if (f) {
+        const st = f.batch.orderStates?.[f.ord.order_number];
+        if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
+      }
+    } catch (_) {}
     logAudit('zort_completion_pushed', { order: entry.orderNumber, client: store.clientName || '', action: entry.action });
     return true;
   }

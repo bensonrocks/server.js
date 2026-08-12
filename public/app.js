@@ -2161,6 +2161,24 @@
     if (!v) return '';
     return `<span class="chip chip-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>`;
   }
+  // DID THE MARKETPLACE HEAR THAT WE FINISHED IT? Reported live: an order
+  // completed here while the hub's status looked unchanged, with no way to
+  // tell whether the relay had fired, was queued, had failed, or was never
+  // switched on. Now the order says so itself.
+  function zortPushChip(ord) {
+    const p = ord.zort_push;
+    if (!p) return '';
+    const act = p.action === 'readytoship' ? 'Ready to Ship' : p.action === 'pack' ? 'Packed' : 'status update';
+    if (p.state === 'sent') {
+      const when = p.at ? new Date(p.at).toLocaleString('en-GB', { hour12: false }) : '';
+      return `<span class="chip chip-sync-sent" title="The sales channel was told this order is ${esc(act)} at ${esc(when)}.">&#8599; Channel told</span>`;
+    }
+    if (p.state === 'queued') return `<span class="chip chip-sync-queued" title="Waiting to tell the sales channel (${esc(act)}) — the background sync retries until it lands. Attempts so far: ${p.attempts || 0}.">&#8987; Telling channel…</span>`;
+    if (p.state === 'failed') return `<span class="chip chip-sync-failed" title="Could not tell the sales channel after ${p.attempts} attempt(s): ${esc(p.error || 'unknown error')}. It keeps retrying; check Connections.">&#9888; Channel not told</span>`;
+    if (p.state === 'missing') return `<span class="chip chip-sync-failed" title="This order is finished here but nothing was queued for the sales channel — ${esc(p.why || '')}. Check the store's Complete action in Connections.">&#9888; Channel not told</span>`;
+    if (p.state === 'off') return `<span class="chip chip-sync-off" title="Nothing is pushed back for this order — ${esc(p.why || '')}. Set the store's Complete action in Connections if the channel should be told.">&#9723; Channel push off</span>`;
+    return '';
+  }
 
   function fulfilmentChip(ord) {
     const f = ord.fulfilment;
@@ -2415,6 +2433,8 @@
         // answer is visible before anyone walks. Only on work still to do —
         // a finished order already proved it could ship.
         (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord) : '',
+        // Marketplace push-back state — only ever on synced orders.
+        zortPushChip(ord),
         // FULFILMENT KPI. The countdown to this order's handover, so a packer
         // can see at a glance which of a screenful is actually urgent.
         fulfilmentChip(ord),
@@ -11311,7 +11331,9 @@
           <td>${esc(s.storename)}</td>
           <td><code>${esc(s.apikeyMasked)}</code></td>
           <td>${s.autoPullMinutes ? 'every ' + s.autoPullMinutes + ' min' : 'manual'}</td>
-          <td>${actLbl[s.completeAction] || s.completeAction}${s.completeAction === 'status' ? ' ' + s.completeStatusCode : ''}</td>
+          <td>${(s.completeAction || 'none') === 'none'
+            ? `<span style="color:#b45309;font-weight:700" title="When the floor completes an order from this store, NOTHING is sent back — the sales channel is never told the parcel is ready. Set this to Ready to Ship (edit ✏) if the channel should be updated.">&#9888; nothing sent back</span>`
+            : esc(actLbl[s.completeAction] || s.completeAction) + (s.completeAction === 'status' ? ' ' + s.completeStatusCode : '')}</td>
           <td>${stockBadge}${labelBadge}</td>
           <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
           <td style="white-space:nowrap">
