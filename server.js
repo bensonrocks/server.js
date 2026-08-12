@@ -4958,26 +4958,44 @@ function computeFulfillability(db, clientName, { from, to, orderNumbers } = {}) 
   const clientNorm = String(clientName || '').trim().toLowerCase();
   const cid = invClientId(clientName);
   const want = orderNumbers && orderNumbers.length ? new Set(orderNumbers.map(String)) : null;
+  // AN EXPLICIT SELECTION IS THE SCOPE — the date window must not narrow it.
+  // Reported with the file: six orders ticked on screen, one in the report.
+  // The window filters on the ORDER DATE (when the buyer placed it on the
+  // marketplace) while the Orders screen's chips filter on when we IMPORTED
+  // it, so anything bought yesterday and pulled in today was silently
+  // dropped from a file the operator had hand-picked.
   const inRange = iso => {
+    if (want) return true;
     if (!from && !to) return true;
     if (!iso) return false;
     const d = sgDateStr(new Date(iso));
     return (!from || d >= from) && (!to || d <= to);
   };
+  // What was asked for but did not make it, and why — so a short report
+  // explains itself instead of leaving someone counting rows.
+  const omitted = [];
   const scope = [];
   for (const b of db.batches || []) {
     if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
     for (const o of b.orders || []) {
       const st = b.orderStates?.[o.order_number] || {};
       const status = st.status || 'pending';
-      if (status !== 'pending' && status !== 'processing') continue;
       if (want && !want.has(String(o.order_number))) continue;
+      if (status !== 'pending' && status !== 'processing') {
+        if (want) omitted.push({ order: o.order_number, why: status === 'done' ? 'already completed' : status === 'unprocessed' ? 'cancelled' : status });
+        continue;
+      }
       const when = o.date || b.uploaded_at;
       if (!inRange(when)) continue;
       scope.push({ order: o.order_number, date: when ? sgDateStr(new Date(when)) : '', status,
                    waybill: o.waybill_number || '', _batch: b,
                    lines: (o.lines || []).map(l => ({ sku: String(l.sku || ''), desc: l.description || '', qty: Number(l.qty) || 0 })) });
     }
+  }
+  if (want) {
+    const seen = new Set(scope.map(o => String(o.order)));
+    const flagged = new Set(omitted.map(o => String(o.order)));
+    for (const n of want) if (!seen.has(n) && !flagged.has(n)) omitted.push({ order: n, why: 'not found' });
   }
   scope.sort((a, b2) => a.date.localeCompare(b2.date) || String(a.order).localeCompare(String(b2.order)));
 
@@ -5004,7 +5022,7 @@ function computeFulfillability(db, clientName, { from, to, orderNumbers } = {}) 
     // (the client's stock lives in their own system) or an onboarding gap —
     // never a shortage, so the report says so rather than marking every order
     // unfulfillable.
-    return { tracked: false, counts: { notTracked: scope.length },
+    return { tracked: false, counts: { notTracked: scope.length }, omitted,
              orders: scope.map(o => ({ ...o, verdict: 'Stock not tracked here',
                lines: o.lines.map(l => ({ ...l, covered: null, short: null, note: '' })) })), skus: [] };
   }
@@ -5096,7 +5114,7 @@ function computeFulfillability(db, clientName, { from, to, orderNumbers } = {}) 
     o.verdict = !anyShort ? 'Fulfillable now' : allNone ? 'No stock' : 'Partial — short on stock';
     counts[!anyShort ? 'fulfillable' : allNone ? 'none' : 'partial']++;
   }
-  return { tracked: true, orders, counts,
+  return { tracked: true, orders, counts, omitted,
            skus: [...skuAgg.values()].sort((a, b2) => b2.short - a.short || a.sku.localeCompare(b2.sku)) };
 }
 
@@ -5118,7 +5136,13 @@ function fulfillabilitySheets(client, data, from, to) {
   return [
     { name: 'Summary', aoa: [...head,
       [`${data.counts.fulfillable || 0} order(s) fulfillable now · ${data.counts.partial || 0} partially coverable · ${data.counts.none || 0} with no stock`
-        + ((data.counts.untracked || 0) ? ` · ${data.counts.untracked} with nothing in any item master` : '')], [],
+        + ((data.counts.untracked || 0) ? ` · ${data.counts.untracked} with nothing in any item master` : '')],
+      // A SHORT REPORT EXPLAINS ITSELF. Six orders picked, one in the file,
+      // and nothing said why — that is how a report loses trust.
+      ...((data.omitted || []).length
+        ? [[`Not included (${data.omitted.length}): ` + data.omitted.map(o => `${o.order} — ${o.why}`).join(' · ')]]
+        : []),
+      [],
       ['Order', 'Date', 'Waybill', 'Pieces ordered', 'Pieces covered', 'Pieces short', 'Verdict'],
       ...data.orders.map(o => {
         const need = o.lines.reduce((s, l) => s + l.qty, 0);
