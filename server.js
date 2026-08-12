@@ -17423,6 +17423,7 @@ function zortStorePublic(s, db) {
     endpoint: s.endpoint || '', enabled: !!s.enabled,
     labelSync: !!s.labelSync, labelPath: s.labelPath || '',
     arrangeAtIntake: !!s.arrangeAtIntake,
+    skipClients: s.skipClients || [],
     channelClients: s.channelClients || {},
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
@@ -17530,6 +17531,10 @@ async function pullZortStore(db, store) {
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
   let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0;
   const skippedByStatus = {}; const skippedHandledSample = [];
+  let skippedClientOrders = 0; const skippedClientSample = [];
+  // Clients this store must not bring in at all — they fulfil their own orders.
+  const skipClients = new Set((store.skipClients || [])
+    .map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
   for (let page = 1; page <= 20; page++) {
     const resp = await zortApi.getOrders(store, { ...query, page });
     const list = resp.list || resp.orders || resp.data || [];
@@ -17594,6 +17599,18 @@ async function pullZortStore(db, store) {
       const channel = String(o.saleschannel || o.channel || '').trim();
       const att = attributeSyncClient(skuOwners, lines, channel, store);
       const clientForOrder = att.client;
+      // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
+      // the client should be fulfilling from their end" — and their orders kept
+      // reappearing because every removal (row bin, batch delete, Clear Test
+      // Data) takes away the very record that stops a re-import. Deleting can
+      // never mean "not ours"; this switch can. Checked AFTER attribution, so
+      // it follows the client the SKUs name rather than whatever label the
+      // channel happened to carry.
+      if (skipClients.size && skipClients.has(String(clientForOrder || '').trim().toLowerCase())) {
+        skippedClientOrders++;
+        if (skippedClientSample.length < 20) skippedClientSample.push({ order: number, client: clientForOrder });
+        continue;
+      }
       zortMeta[number] = { zort_id: o.id, zort_status: o.status, client: clientForOrder,
                            attributed_via: att.via, attribution_unsure: att.unsure || null,
                            attribution_hint: att.hint || null, placed_at: _zortPlacedAt(o) };
@@ -17729,6 +17746,7 @@ async function pullZortStore(db, store) {
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
                        skippedByStatus, skippedHandledSample,
+                       skippedClientOrders, skippedClientSample,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
   if (unsure.length) {
     logAudit('sync_client_attribution_unsure', { storeId: store.id, count: unsure.length, orders: unsure.slice(0, 20) });
@@ -18325,6 +18343,10 @@ app.post('/api/master/zort/stores', (req, res) => {
   // correctable from this screen without a redeploy.
   if (b.labelSync !== undefined) store.labelSync = !!b.labelSync;
   if (b.arrangeAtIntake !== undefined) store.arrangeAtIntake = !!b.arrangeAtIntake;
+  // Clients this store must NOT bring in — they fulfil their own orders.
+  if (b.skipClients !== undefined) {
+    store.skipClients = String(b.skipClients || '').split(',').map(x => x.trim()).filter(Boolean);
+  }
   if (b.labelPath !== undefined) store.labelPath = String(b.labelPath || '').trim();
   store.enabled = b.enabled !== undefined ? !!b.enabled : (store.enabled ?? true);
   // Sales-channel → client mapping: orders from the channel named e.g.

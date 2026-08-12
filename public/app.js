@@ -11466,7 +11466,7 @@
             ? `<span style="color:#b45309;font-weight:700" title="When the floor completes an order from this store, NOTHING is sent back — the sales channel is never told the parcel is ready. Set this to Ready to Ship (edit ✏) if the channel should be updated.">&#9888; nothing sent back</span>`
             : esc(actLbl[s.completeAction] || s.completeAction) + (s.completeAction === 'status' ? ' ' + s.completeStatusCode : '')}</td>
           <td>${stockBadge}${labelBadge}</td>
-          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
+          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.skippedClientOrders || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.skippedClientSample || []).map(x => `${x.order} (${x.client})`).join('\n'))}">&#9003; ${s.lastResult.skippedClientOrders} order(s) not imported — client fulfils their own</span>` : ''}${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
@@ -11678,6 +11678,7 @@
     document.getElementById('zfLabelSync').checked = !!store?.labelSync;
     document.getElementById('zfArrangeIntake').checked = !!store?.arrangeAtIntake;
     document.getElementById('zfLabelPath').value = store?.labelPath || '';
+    document.getElementById('zfSkipClients').value = (store?.skipClients || []).join(', ');
   }
   document.getElementById('zortAddStoreBtn')?.addEventListener('click', () => openZortForm(null));
   document.getElementById('zortCancelStoreBtn')?.addEventListener('click', () => document.getElementById('zortStoreForm').classList.add('hidden'));
@@ -11733,6 +11734,7 @@
       labelSync: document.getElementById('zfLabelSync').checked,
       arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
       labelPath: document.getElementById('zfLabelPath').value.trim(),
+      skipClients: document.getElementById('zfSkipClients').value.trim(),
       enabled: true,
     };
     try {
