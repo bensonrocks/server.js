@@ -745,7 +745,10 @@ tr:hover td { background: var(--surface-2); }
 
 /* ── Chips ── */
 .chip-client  { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border); }
-.chip-carrier { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); font-size: .7rem; }
+.chip-carrier { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); font-size: .7rem;
+  /* one line, self-truncating — the raw arrangement string used to wrap into a
+     four-line badge on every phone row */
+  display: inline-block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .chip-waybill { background: var(--success-bg); color: #15803d; border: 1px solid var(--success-border); font-size: .7rem; font-weight: 600; border-radius: 99px; padding: .15em .6em; white-space: nowrap; display: inline-block; }
 .chip-done    { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .chip-unproc  { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }

@@ -222,6 +222,18 @@
   function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+  // Carrier strings off marketplace files arrive as the whole arrangement —
+  // "Pickup: SpeedPost, Delivery: SpeedPost" — which wrapped into a four-line
+  // green badge on EVERY phone row. Same courier both legs → just its name;
+  // genuinely different legs → "A ⇄ B". The raw value stays in the tooltip
+  // and in the filter's data attribute, so filtering is unchanged.
+  function carrierLabel(raw) {
+    const c = String(raw || '').trim();
+    const m = c.match(/^pickup:\s*(.+?)\s*,\s*delivery:\s*(.+)$/i);
+    if (!m) return c;
+    const [a, b] = [m[1].trim(), m[2].trim()];
+    return a.toLowerCase() === b.toLowerCase() ? a : `${a} ⇄ ${b}`;
+  }
   function fmtMs(ms) {
     if (!ms) return '—';
     const s = Math.floor(ms / 1000);
@@ -1775,7 +1787,7 @@
       carrierRow.innerHTML = `
         <span class="filter-label">Carrier:</span>
         <button class="filter-chip ${activeCarrierFilter === 'all' ? 'active' : ''}" data-carrier="all">All</button>
-        ${carriers.map(c => `<button class="filter-chip ${activeCarrierFilter === c ? 'active' : ''}" data-carrier="${esc(c)}">${esc(c) || 'Unspecified'}</button>`).join('')}`;
+        ${carriers.map(c => `<button class="filter-chip ${activeCarrierFilter === c ? 'active' : ''}" data-carrier="${esc(c)}" title="${esc(c)}">${esc(carrierLabel(c)) || 'Unspecified'}</button>`).join('')}`;
       carrierRow.querySelectorAll('.filter-chip[data-carrier]').forEach(btn => {
         btn.addEventListener('click', () => {
           activeCarrierFilter = btn.dataset.carrier;
@@ -2325,7 +2337,7 @@
       const itemsCell = `<span class="ord-items-cell">${itemCount} item${itemCount !== 1 ? 's' : ''} <span class="ord-prog">${scannedTotal}/${ord.total_qty}</span></span>`;
 
       // Carrier badge
-      const carrierBadge = ord.carrier ? `<span class="chip chip-carrier">${esc(ord.carrier)}</span>` : '';
+      const carrierBadge = ord.carrier ? `<span class="chip chip-carrier" title="${esc(ord.carrier)}">${esc(carrierLabel(ord.carrier))}</span>` : '';
 
       // Chips under order number
       const cartonCount = (ord.cartons || []).length;
@@ -2372,7 +2384,7 @@
         </td>
         <td class="ord-client-cell col-client"><span class="ord-client-name" title="${esc(ord.client_name || '')}">${esc(ord.client_name || '—')}</span>${ord.attribution_hint ? `<span class="client-hint" title="Suggested by this order's SKUs — filing fell back. The SKUs point at: ${esc(ord.attribution_hint)}. Fix the item master (one owner per SKU) and re-pull to file it properly.">SKUs → ${esc(ord.attribution_hint)}</span>` : ''}</td>
         <td class="ord-customer-cell col-customer">${esc(ord.customer_name || '—')}</td>
-        <td class="ord-waybill-cell col-waybill">${esc(ord.waybill_number || '—')}</td>
+        <td class="ord-waybill-cell col-waybill" title="${esc(ord.waybill_number || '')}">${esc(ord.waybill_number || '—')}</td>
         <td class="col-items">${itemsCell} ${carrierBadge}</td>
         <td class="ord-status-cell col-status"><span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span></td>
         <td class="ord-date-cell col-date">${dateStr}</td>
@@ -14998,7 +15010,7 @@
             ${o.client_name ? `<span class="chip">${esc(o.client_name)}</span>` : ''}
             ${o.customer_name ? `<span>${esc(o.customer_name)}</span>` : ''}
             ${o.waybill_number ? `<span class="hint">${esc(o.waybill_number)}</span>` : ''}
-            ${o.carrier ? `<span class="chip chip-carrier">${esc(o.carrier)}</span>` : ''}
+            ${o.carrier ? `<span class="chip chip-carrier" title="${esc(o.carrier)}">${esc(carrierLabel(o.carrier))}</span>` : ''}
             <span class="status-badge ${esc(o.scan_status)}">${esc(o.scan_status)}</span>
           </div>
         </div>`).join('') + (truncated ? `<p class="hint" style="padding:.5rem .75rem">Showing 60 of ${ranked.length} — type to narrow.</p>` : '') || '<p class="hint" style="padding:.75rem">No orders match.</p>';
