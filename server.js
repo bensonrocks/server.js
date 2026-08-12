@@ -2409,30 +2409,43 @@ function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 function _makeSkuLookup() {
   const EMPTY = { found: false, barcode: '', name: '', stock: null, available: null };
   const cache = new Map();   // `${cid}|${sku}` -> hit
-  let clientIds = null;      // lazy — only listed once an own-client lookup misses
-  const read = (sku, cid) => {
-    try {
-      const r = inventory.get(sku, cid);
-      if (!r) return null;
-      const name = String(r.name || '').trim();
-      return { found: true, barcode: String(r.barcode || '').trim(),
-               name: name === sku ? '' : name,          // code-as-name placeholder is not a name
-               stock: Number(r.stock_qty) || 0, available: Number(r.available_qty) || 0 };
-    } catch (_) { return null; }
+  let global = null;         // SKU(upper) -> hit, built ONCE on the first own-client miss
+  const shape = r => {
+    const name = String(r.name || '').trim();
+    return { found: true, barcode: String(r.barcode || '').trim(),
+             name: name === String(r.sku || '') ? '' : name,   // code-as-name placeholder is not a name
+             stock: Number(r.stock_qty) || 0, available: Number(r.available_qty) || 0 };
+  };
+  // THE CROSS-CATALOGUE FALLBACK IS ONE SWEEP, NOT A PROBE PER SKU. This runs
+  // on every Orders refresh, and a client with NO item master (BETIME) misses
+  // on every line — probing each catalogue per SKU would be
+  // (unique SKUs × clients) point queries per request, hundreds of them on a
+  // real day's list. One getAll per client, built lazily and only when a miss
+  // actually happens, is a handful of queries instead.
+  const buildGlobal = () => {
+    const m = new Map();
+    let ids = [];
+    try { ids = inventory.listClientIds(); } catch (_) { ids = []; }
+    for (const cid of ids) {
+      let rows = [];
+      try { rows = inventory.getAll({ clientId: cid }); } catch (_) { continue; }
+      for (const r of rows) {
+        const k = String(r.sku || '').toUpperCase();
+        if (k && !m.has(k)) m.set(k, shape(r));   // a SKU has exactly one owner
+      }
+    }
+    return m;
   };
   return (batch, sku) => {
     if (!sku || !inventory.available()) return EMPTY;
     const own = batch.inventory_client || invClientId(batch.client_name || '');
     const key = (own || '') + '|' + sku;
     if (cache.has(key)) return cache.get(key);
-    let hit = own ? read(sku, own) : null;
+    let hit = null;
+    if (own) { try { const r = inventory.get(sku, own); if (r) hit = shape(r); } catch (_) {} }
     if (!hit) {
-      if (clientIds === null) { try { clientIds = inventory.listClientIds(); } catch (_) { clientIds = []; } }
-      for (const cid of clientIds) {
-        if (cid === own) continue;
-        hit = read(sku, cid);
-        if (hit) break;
-      }
+      if (global === null) global = buildGlobal();
+      hit = global.get(String(sku).toUpperCase()) || null;
     }
     hit = hit || EMPTY;
     cache.set(key, hit);
