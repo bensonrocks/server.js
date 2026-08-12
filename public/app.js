@@ -10594,6 +10594,11 @@
       if (btn.dataset.adminTab === 'onboarding') obUI.load();
       if (btn.dataset.adminTab === 'outages') outagesUI.load();
       if (btn.dataset.adminTab === 'danger') { loadBackupArchive(); loadPiiRetention(); }
+      // Load the account list when the tab is OPENED, not at page load: the
+      // list is master-key gated and the key is only known once the
+      // Administrator panel has been unlocked, so loading it early 403'd and
+      // left the picker permanently empty (caught by the browser test).
+      if (btn.dataset.adminTab === 'wipe') window.wipeUI?.loadClientList?.();
     });
   });
 
@@ -11788,18 +11793,88 @@
       }
     }
 
+    // EVERY account that exists anywhere, from the server — not just the ones
+    // with orders on screen. Reported: a duplicate account that existed only
+    // as an item master could not be found to delete, because the suggestions
+    // came from the loaded order list and it had no orders. They are rendered
+    // as clickable chips so a phantom account can be SEEN, with what it holds.
+    async function loadClientList() {
+      const dl = $$('wipeClientList');
+      const box = $$('wipeClientChips');
+      try {
+        const r = await fetchT('/api/master/client-data/clients', { headers: { 'x-master-key': LOG_PASSWORD } });
+        if (!r.ok) throw new Error('list failed');
+        const { clients = [] } = await r.json();
+        if (dl) dl.innerHTML = clients.map(c => `<option value="${esc(c.name)}"></option>`).join('');
+        if (box) {
+          box.innerHTML = clients.length
+            ? `<div style="font-size:.72rem;color:#64748b;margin:.35rem 0 .2rem">Every client account that exists anywhere — tap one:</div>` +
+              clients.map(c => {
+                const bits = [c.orders ? `${c.orders} order(s)` : '', c.inbound ? `${c.inbound} inbound` : '',
+                              c.skus ? `${c.skus} SKU(s)` : '', c.profile ? 'profile' : ''].filter(Boolean).join(' · ');
+                const warn = c.itemMasterOnly;
+                // A phantom account — catalogue only, nothing operational —
+                // gets a one-click removal beside it, because that is the whole
+                // job for a duplicate or channel-placeholder name and walking
+                // the full scope form for it is friction with no upside. Any
+                // account holding real work has no shortcut: the chip loads the
+                // scope form so what would be lost is on screen first.
+                return `<span style="display:inline-flex;align-items:center;margin:.15rem .25rem .15rem 0">`
+                  + `<button type="button" class="btn-secondary btn-sm wipe-client-chip" data-client="${esc(c.name)}"
+                       style="${warn ? 'border-color:#fbbf24;background:#fffbeb;color:#92400e;font-weight:700;border-top-right-radius:0;border-bottom-right-radius:0' : ''}"
+                       title="${esc(bits || 'nothing recorded')}${warn ? ' — item master only: no orders, no inbound, no profile. Usually a duplicate or placeholder account.' : ''}">${esc(c.name)}${warn ? ' ⚠' : ''}</button>`
+                  + (warn ? `<button type="button" class="btn-danger btn-sm wipe-client-del" data-client="${esc(c.name)}" data-skus="${c.skus}"
+                       style="border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-1px"
+                       title="Remove this account outright — its ${c.skus} catalogue row(s) and any stock. It holds no orders, no inbound and no profile.">&#128465;</button>` : '')
+                  + `</span>`;
+              }).join('')
+            : '<div style="font-size:.72rem;color:#64748b">No client accounts found.</div>';
+          box.querySelectorAll('.wipe-client-chip').forEach(b => b.addEventListener('click', () => {
+            $$('wipeClient').value = b.dataset.client;
+            loadSummary();
+          }));
+          box.querySelectorAll('.wipe-client-del').forEach(b => b.addEventListener('click', async () => {
+            const name = b.dataset.client, skus = b.dataset.skus;
+            if (!confirm(`Remove the account "${name}" completely?\n\n` +
+              `It holds ${skus} catalogue row(s) and no orders, no inbound and no onboarding profile — the shape of a duplicate or placeholder account.\n\n` +
+              `Its item master and any stock positions go. This cannot be undone.`)) return;
+            const typed = prompt(`Type the account name to confirm removal:\n\n${name}`);
+            if (!typed || typed.trim().toLowerCase() !== name.toLowerCase()) {
+              if (typed !== null) alert('That did not match — nothing was removed.');
+              return;
+            }
+            b.disabled = true;
+            try {
+              // item_master implies stock; profile clears the onboarding record
+              // if one was ever created under this spelling.
+              const r = await fetchT('/api/master/client-data/wipe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD },
+                body: JSON.stringify({ client: name, scopes: ['item_master', 'stock', 'profile'], confirm: name }),
+              });
+              const d = await r.json();
+              if (!r.ok) { alert(d.error || 'Could not remove that account.'); return; }
+              alert(`✓ "${name}" removed.`);
+              loadClientList();
+            } catch (e) { alert('Could not remove that account: ' + e.message); }
+            finally { b.disabled = false; }
+          }));
+        }
+      } catch (_) {
+        // Fall back to the old on-screen-orders suggestions rather than nothing.
+        const src = document.getElementById('invClientList');
+        if (dl && src) dl.innerHTML = src.innerHTML;
+      }
+    }
+
     function init() {
       $$('wipeLoadBtn')?.addEventListener('click', loadSummary);
       $$('wipeConfirm')?.addEventListener('input', paint);
       $$('wipeGoBtn')?.addEventListener('click', go);
-      // Reuse the client names the Inventory tab already collects.
-      const dl = $$('wipeClientList');
-      if (dl) {
-        const src = document.getElementById('invClientList');
-        if (src) dl.innerHTML = src.innerHTML;
-      }
+      // NOT loaded here — see the admin-tab hook. The list needs the master
+      // key, which does not exist until the Administrator panel is unlocked.
     }
-    return { init, loadSummary };
+    return { init, loadSummary, loadClientList };
   })();
   window.wipeUI = wipeUI;
   document.addEventListener('DOMContentLoaded', () => wipeUI.init());

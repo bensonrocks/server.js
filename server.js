@@ -3845,6 +3845,53 @@ app.get('/api/master/client-data/summary', (req, res) => {
   res.json(clientWipeSummary(readDb(), client));
 });
 
+// ── EVERY client account that exists anywhere, and where it exists ──────────
+// Reported: "I can't find Mayer(Mistral) to delete." Of course not — the
+// picker was built from the orders currently loaded on screen, so an account
+// that exists ONLY as an item master (which is exactly what a stray duplicate
+// is, and exactly what needs cleaning up) could never be typed because it was
+// never suggested. This lists names from every source that can hold a client:
+// profiles, order batches, inbound receipts and the inventory store itself,
+// and says which of those each name appears in — so a phantom account is
+// visible AS a phantom rather than being invisible.
+app.get('/api/master/client-data/clients', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const byLc = new Map();   // lowercased -> { name, orders, inbound, profile, skus }
+  const touch = (raw, patch) => {
+    const name = String(raw || '').trim();
+    if (!name) return;
+    const k = name.toLowerCase();
+    const cur = byLc.get(k) || { name, orders: 0, inbound: 0, profile: false, skus: 0, spellings: new Set() };
+    cur.spellings.add(name);
+    if (patch.orders)  cur.orders  += patch.orders;
+    if (patch.inbound) cur.inbound += patch.inbound;
+    if (patch.profile) cur.profile = true;
+    if (patch.skus)    cur.skus    += patch.skus;
+    byLc.set(k, cur);
+  };
+  for (const p of clientProfiles(db)) touch(p.client, { profile: true });
+  for (const b of db.batches || []) touch(b.client_name, { orders: (b.orders || []).length });
+  for (const r of db.inbound || []) touch(r.client_name, { inbound: 1 });
+  if (inventory.available()) {
+    let ids = [];
+    try { ids = inventory.listClientIds() || []; } catch (_) {}
+    for (const cid of ids) {
+      let n = 0;
+      try { n = (inventory.getAll({ clientId: cid }) || []).length; } catch (_) {}
+      touch(cid, { skus: n });
+    }
+  }
+  const out = [...byLc.values()].map(c => ({
+    name: c.name, orders: c.orders, inbound: c.inbound, profile: c.profile, skus: c.skus,
+    spellings: [...c.spellings],
+    // Nothing but an item master — the shape of a duplicate or a
+    // channel-placeholder account, which is what usually wants clearing.
+    itemMasterOnly: c.skus > 0 && !c.orders && !c.inbound && !c.profile,
+  })).sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ clients: out });
+});
+
 // ── Put the daily job-code counters back in step with what SURVIVES ─────────
 // After clearing a client's test data, the day's numbering should reflect what
 // is actually left — otherwise today's next upload is CS-260803-04 when the
