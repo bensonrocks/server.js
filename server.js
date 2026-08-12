@@ -2398,24 +2398,51 @@ function batchWaybillSet(batchId) {
 function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 
 // sku -> barcode, per client, for the life of ONE globalOrdersWithState call.
-function _makeBarcodeLookup() {
-  const cache = new Map();   // `${cid}|${sku}` -> barcode ('' when unknown)
+// Read-time SKU lookup for the Orders list / scan overlay: barcode, real
+// product name AND the live stock balance in one memoised hit. Tries the
+// order's own client first; when that catalogue misses (e.g. the order filed
+// under a channel-placeholder name), it falls back ACROSS catalogues — a SKU
+// belongs to exactly ONE client (the attribution rule), so whichever account
+// answers is the owner. `found: false` means no catalogue anywhere knows the
+// SKU — the screen shows NO stock pill then, because "we don't track this"
+// must never be dressed up as "no stock".
+function _makeSkuLookup() {
+  const EMPTY = { found: false, barcode: '', name: '', stock: null, available: null };
+  const cache = new Map();   // `${cid}|${sku}` -> hit
+  let clientIds = null;      // lazy — only listed once an own-client lookup misses
+  const read = (sku, cid) => {
+    try {
+      const r = inventory.get(sku, cid);
+      if (!r) return null;
+      const name = String(r.name || '').trim();
+      return { found: true, barcode: String(r.barcode || '').trim(),
+               name: name === sku ? '' : name,          // code-as-name placeholder is not a name
+               stock: Number(r.stock_qty) || 0, available: Number(r.available_qty) || 0 };
+    } catch (_) { return null; }
+  };
   return (batch, sku) => {
-    if (!sku) return '';
-    const cid = batch.inventory_client || invClientId(batch.client_name || '');
-    if (!cid) return '';
-    const key = cid + '|' + sku;
+    if (!sku || !inventory.available()) return EMPTY;
+    const own = batch.inventory_client || invClientId(batch.client_name || '');
+    const key = (own || '') + '|' + sku;
     if (cache.has(key)) return cache.get(key);
-    let bc = '';
-    try { bc = String((inventory.get(sku, cid) || {}).barcode || '').trim(); } catch (_) { bc = ''; }
-    cache.set(key, bc);
-    return bc;
+    let hit = own ? read(sku, own) : null;
+    if (!hit) {
+      if (clientIds === null) { try { clientIds = inventory.listClientIds(); } catch (_) { clientIds = []; } }
+      for (const cid of clientIds) {
+        if (cid === own) continue;
+        hit = read(sku, cid);
+        if (hit) break;
+      }
+    }
+    hit = hit || EMPTY;
+    cache.set(key, hit);
+    return hit;
   };
 }
 
 function globalOrdersWithState(keep) {
   const db          = readDb();
-  const _lineBarcode = _makeBarcodeLookup();
+  const _lineLookup = _makeSkuLookup();
   const orderLabels = db.orderLabels || {};
   const _pol        = pickupPolicy(db);
   const _fpol       = fulfilmentPolicy(db);
@@ -2462,15 +2489,23 @@ function globalOrdersWithState(keep) {
         const stored = l.description || '';
         // Ignore stored description if it equals the SKU (legacy data bug)
         const realDesc = (stored && stored !== l.sku) ? stored : '';
+        // Barcode, real product name AND live stock balance, filled at READ
+        // time from the item master (own client first, then the SKU's actual
+        // owner — see _makeSkuLookup). Upload-time enrichment alone misses
+        // every order uploaded before the catalogue was loaded, and an order
+        // filed under a placeholder client name would otherwise show a bare
+        // dash where the product name belongs. Memoised per (client, SKU)
+        // for the whole call, so a 900-order page is one lookup each.
+        const hit = _lineLookup(batch, l.sku);
         return {
           ...l,
-          description: realDesc || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
-          // The PRODUCT BARCODE, filled at READ time from the client's item
-          // master. Upload-time enrichment alone misses every order uploaded
-          // before that client's catalogue was loaded — the same reason
-          // inbound descriptions are filled on read. Memoised per (client,
-          // SKU) for the whole call, so a 900-order page is one lookup each.
-          barcode: l.barcode || _lineBarcode(batch, l.sku),
+          description: realDesc || hit.name || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
+          barcode: l.barcode || hit.barcode,
+          // Live balance for the fulfillability pill: PHYSICAL on-hand (the
+          // packer's question is "is it on the shelf"; available would read 0
+          // for stock this very order correctly reserved). null = not tracked.
+          stock_onhand:    hit.found ? hit.stock     : null,
+          stock_available: hit.found ? hit.available : null,
         };
       });
       out.push({

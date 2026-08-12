@@ -8331,7 +8331,7 @@
       <div class="scan-meta-primary">
         <span class="meta-pill">${esc(order.customer_name || '—')}</span>
         ${order.client_name ? `<span class="meta-pill">${esc(order.client_name)}</span>` : ''}
-        <span class="meta-pill meta-pill-carrier">${esc(order.carrier || '—')}</span>
+        <span class="meta-pill meta-pill-carrier" title="${esc(order.carrier || '')}">${esc(carrierLabel(order.carrier) || '—')}</span>
         ${order.waybill_number ? `<span class="meta-pill meta-pill-waybill">${esc(order.waybill_number)}${order.has_waybill_pdf ? ' &#10003;' : ''}</span>` : ''}
         ${order.issue_no ? `<span class="meta-pill meta-pill-gi" title="GI number">GI: ${esc(order.issue_no)}</span>` : ''}
         ${details ? `<button class="meta-details-btn" id="scanMetaDetailsBtn">&#9432; Details</button>` : ''}
@@ -8806,6 +8806,18 @@
       // Filled from the client's item master at upload (enrichLinesFromCatalogue).
       if (item.barcode && String(item.barcode).trim() && String(item.barcode).trim() !== item.sku) {
         lotParts.push(`<span class="lot-badge lot-barcode" title="Product barcode — scan this off the item" style="background:#ecfdf5;color:#065f46;font-weight:700">&#9646;&#9614;&#9646; ${esc(String(item.barcode).trim())}</span>`);
+      }
+      // FULFILLABILITY — the live IdealOne stock balance, always looked up
+      // (per the user): GREEN = enough on hand for this line, AMBER = some
+      // but not enough, RED = none. No pill at all when the SKU is in no
+      // item master — "we don't track this" must never read as "no stock".
+      if (item.stock_onhand !== null && item.stock_onhand !== undefined) {
+        const oh = Number(item.stock_onhand) || 0;
+        const [bg, fg, mark, label] =
+          oh >= item.qty ? ['#dcfce7', '#166534', '&#10003;', `${oh} in stock`]
+          : oh > 0       ? ['#fef3c7', '#92400e', '&#9888;', `only ${oh} in stock (need ${item.qty})`]
+          :                ['#fee2e2', '#991b1b', '&#10007;', 'no stock'];
+        lotParts.push(`<span class="lot-badge stock-pill" title="Live IdealOne inventory balance: ${oh} on hand for this SKU" style="background:${bg};color:${fg};font-weight:700">${mark} ${label}</span>`);
       }
       if (item.pick_locations && item.pick_locations.length) {
         const binPicks = item.pick_locations.filter(pl => pl.location_id !== 'STAGING');
