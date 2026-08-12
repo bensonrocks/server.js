@@ -18077,7 +18077,17 @@ async function _zortSendOutboxEntry(db, store, entry) {
   // attaches exactly like every other label. One implementation, no parallel
   // path that could drift.
   if (entry.kind === 'label') {
-    const pdf = await zortApi.getShippingLabel(store, { id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking });
+    // THREE WAYS TO GET A LABEL, not one. The single-file endpoint returns
+    // nothing on a store that serves labels as a URL or as inline data, and
+    // "nothing" was indistinguishable from "not generated yet" — which is how
+    // orders sat with a waybill and no printable label. fetchLabelPdf tries
+    // the file endpoint, then the documented list endpoint's linkurl and
+    // inline Data, and only reports absence when all three come back empty.
+    const got = await zortApi.fetchLabelPdf(store, { id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking });
+    const pdf = got && got.pdf;
+    if (got && got.via && got.via !== 'file') {
+      logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: got.via });
+    }
     if (!pdf) {
       // Not generated yet. That is not a failure — it is "come back later", so
       // it is thrown to get the normal backoff rather than dropped.
