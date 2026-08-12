@@ -2180,6 +2180,7 @@
         <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
           <button class="btn-secondary" id="connHealthBtn">&#129657; Health Check</button>
           <button class="btn-secondary btn-sm" id="connRefreshTokensBtn" title="Run the token-refresh sweep now instead of waiting for the schedule">&#8635; Refresh tokens now</button>
+          <button class="btn-secondary btn-sm" id="connOutboxBtn" title="What is still waiting to be sent to the stores — and, for anything that has given up, the actual error">&#128228; Sync queue</button>
           <span class="hint">Read-only — checks every connection's stored state (tokens, switches, last push, queue). It changes nothing and cannot touch orders or stock.</span>
         </div>
         <div id="connHealthOut" style="margin-top:.8rem"></div>

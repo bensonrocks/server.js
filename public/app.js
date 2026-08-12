@@ -11055,6 +11055,49 @@
 
   // ── ZORT merchant connections (Administrator → ZORT) ───────────────────────
   const zortHdrs = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
+
+  // ── WHAT IS STILL WAITING TO BE SENT, and why anything has given up ───────
+  // The health check counts the queue ("3 stalled, 37 pending") but a count
+  // cannot be acted on: the operator still cannot see WHICH order has no
+  // label or WHAT the hub said. The endpoint has always returned the detail;
+  // nothing rendered it.
+  const OUTBOX_KIND = { stock: 'Stock level', completion: 'Order completed', label: 'Carrier label',
+                        product: 'Product', arrange: 'Arrange shipment', tracking: 'Tracking number' };
+  async function showZortOutbox() {
+    const out = document.getElementById('connHealthOut');
+    if (!out) return;
+    out.innerHTML = '<p class="hint">Loading the sync queue…</p>';
+    try {
+      const r = await fetch('/api/master/zort/outbox', { headers: { 'x-master-key': LOG_PASSWORD } });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Could not read the queue');
+      const entries = d.entries || [];
+      if (!entries.length) { out.innerHTML = '<p class="hint">✓ Nothing waiting — everything has been sent.</p>'; return; }
+      const byKind = {};
+      for (const e of entries) (byKind[e.kind] = byKind[e.kind] || []).push(e);
+      out.innerHTML = `
+        <div style="font-size:.8rem;margin-bottom:.5rem">
+          <b>${d.pending} waiting</b>${d.stalled ? ` · <span style="color:#b91c1c;font-weight:700">${d.stalled} given up</span>` : ''}
+        </div>
+        ${Object.entries(byKind).map(([kind, list]) => `
+          <div style="margin-bottom:.7rem">
+            <div style="font-weight:700;font-size:.78rem;margin-bottom:.25rem">${esc(OUTBOX_KIND[kind] || kind)} — ${list.length}</div>
+            <div class="dcs-wrap"><table class="dcs-table"><thead><tr>
+              <th>What</th><th>Attempts</th><th>Next try</th><th>Last message</th>
+            </tr></thead><tbody>
+            ${list.slice(0, 40).map(e => `<tr${e.stalled ? ' style="background:#fef2f2"' : ''}>
+              <td>${esc(e.orderNumber || e.sku || '—')}${e.stalled ? ' <b style="color:#b91c1c">given up</b>' : ''}</td>
+              <td>${e.attempts || 0}</td>
+              <td>${e.nextAttemptAt ? new Date(e.nextAttemptAt).toLocaleTimeString('en-GB', { hour12: false }) : '—'}</td>
+              <td style="max-width:340px;word-break:break-word">${esc(e.lastError || '—')}</td>
+            </tr>`).join('')}
+            ${list.length > 40 ? `<tr><td colspan="4" class="hint">…and ${list.length - 40} more</td></tr>` : ''}
+            </tbody></table></div>
+          </div>`).join('')}
+        <p class="hint">"Given up" means it stopped retrying after repeated failures — the message is what the store actually said. Fix the cause, then press Pull now or re-save the store to queue fresh work.</p>`;
+    } catch (e) { out.innerHTML = `<p class="hint" style="color:var(--danger)">${esc(e.message)}</p>`; }
+  }
+  document.getElementById('connOutboxBtn')?.addEventListener('click', showZortOutbox);
   function zortStatus(kind, msg) {
     const el = document.getElementById('zortStoreStatus');
     el.className = `status-bar ${kind}`;

@@ -18008,6 +18008,22 @@ async function zortShipmentChannel(store, zortId) {
 }
 
 async function _zortSendOutboxEntry(db, store, entry) {
+  // THE SWITCH IS RE-READ AT SEND TIME, not just when the entry was queued.
+  // Found live: stock sync was turned OFF to stop us broadcasting an
+  // incomplete count onto a client's marketplace listings — and 37 already-
+  // queued pushes would still have gone out, because the drainer only checked
+  // that the store was enabled. Turning a switch off has to mean the thing
+  // stops, including the work already in flight. Dropped rather than held: if
+  // it is switched back on the operator wants CURRENT numbers, and
+  // "⇪ Push All Stock" exists for exactly that.
+  if (entry.kind === 'stock' && !store.stockSync) {
+    logAudit('zort_stock_push_cancelled', { storeId: store.id, sku: entry.sku, why: 'stock sync switched off after this was queued' });
+    return true;
+  }
+  if (entry.kind === 'label' && !store.labelSync) {
+    logAudit('sync_label_fetch_cancelled', { storeId: store.id, order: entry.orderNumber, why: 'label pull switched off after this was queued' });
+    return true;
+  }
   // ── THE CARRIER LABEL FOR A SYNCED ORDER ──────────────────────────────────
   // Fetched here rather than during the pull for two reasons: the label often
   // does not exist yet at the moment the order does (the channel generates it
