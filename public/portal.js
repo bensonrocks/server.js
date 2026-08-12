@@ -1041,6 +1041,7 @@
     dlKind = kind;
     $('dlTitle').textContent = kind === 'orders' ? 'Download orders report'
       : kind === 'fulfillability' ? 'Download: what can ship from stock'
+      : kind === 'transactions' ? 'Download transaction statement'
       : 'Download inbound report';
     $('dlHint').textContent = `Pick any period up to ${exportMaxDays} days. The screen shows the last ${screenDays} days — reports can reach further back.`;
     const to = sgToday();
@@ -1537,6 +1538,8 @@
   // What can ship — fulfillability of the client's open orders against the
   // stock we hold, same sheets the office sees.
   $('orFulfilExport').addEventListener('click', () => openDownload('fulfillability'));
+  // Month-end statement: everything in and out, with balances that reconcile.
+  $('orTxnExport').addEventListener('click', () => openDownload('transactions'));
   $('ibExport').addEventListener('click', () => openDownload('inbound'));
   $('dlCancel').addEventListener('click', closeDownload);
   $('dlModal').addEventListener('click', e => { if (e.target === $('dlModal')) closeDownload(); });

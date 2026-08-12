@@ -2336,7 +2336,7 @@
             <div class="hint" style="margin:.3rem 0 0">An order that imports without a tracking number gets the store's pack/arrange step triggered immediately, so the platform issues the waybill and label BEFORE picking starts instead of after completion. Never marks Ready-to-Ship &mdash; that still happens when the scan completes.</div>
             <div class="hint" style="margin:.3rem 0 0">Each synced order's shipping label is fetched and run through the SAME matching as an uploaded label PDF, so it attaches to the order automatically. Queued with retry &mdash; a channel usually generates the label minutes after the order, so it is normal for the first few attempts to find nothing.</div>
             <label style="margin-top:.5rem">Label endpoint <span class="hint-inline">(only if the default 404s)</span></label>
-            <input type="text" id="zfLabelPath" placeholder="Order/GetOrderLabel?id={id}" />
+            <input type="text" id="zfLabelPath" placeholder="Order/GetShipmentLabelFile?id={id} (default — leave blank)" />
             <div class="hint" style="margin:.25rem 0 0"><code>{id}</code> and <code>{tracking}</code> are substituted. Leave blank for the default.</div>
           </div>
           <div style="display:flex;gap:.6rem">

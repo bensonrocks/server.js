@@ -5169,6 +5169,115 @@ function fulfillabilitySheets(client, data, from, to) {
   ];
 }
 
+// ── THE CLIENT'S TRANSACTION STATEMENT ─────────────────────────────────────
+// What a 3PL client asks for at month end: everything that happened to their
+// goods, and a balance that reconciles. Built from `stock_movements` — the
+// same ledger the stock figures come from — so the statement and the live
+// position can never tell different stories.
+//
+// OPENING IS DERIVED, NOT STORED: closing balance is the live count, and the
+// opening is that count worked backwards through the period's movements. A
+// stored nightly snapshot would be faster and would drift the moment anyone
+// backdated a correction; this always reconciles to what the client can see.
+const TXN_LABEL = {
+  inbound:    'Received',
+  outbound:   'Shipped',
+  adjust:     'Adjustment',
+  adjustment: 'Adjustment',
+  transfer:   'Moved between locations',
+  putaway:    'Put away',
+  writeoff:   'Written off',
+  return:     'Returned',
+  count:      'Stock count correction',
+};
+function txnLabel(t) { return TXN_LABEL[String(t || '').toLowerCase()] || String(t || 'Movement'); }
+
+function computeTransactions(db, clientName, { from, to } = {}) {
+  const cid = invClientId(clientName);
+  if (!inventory.available() || !cid) return { available: false, rows: [], skus: [], totals: {} };
+  let rows = [], live = [], before = new Map(), net = new Map();
+  try { rows   = inventory.transactionMovements(cid, { from, to }) || []; } catch (e) { console.warn('[txn]', e.message); }
+  try { live   = inventory.getAll({ clientId: cid }) || []; } catch (_) {}
+  try { before = inventory.movementNetBefore(cid, from) || new Map(); } catch (_) {}
+  try { net    = inventory.movementNetIn(cid, { from, to }) || new Map(); } catch (_) {}
+
+  const onHandNow = new Map(live.map(r => [String(r.sku), Number(r.stock_qty) || 0]));
+  const nameOf    = new Map(live.map(r => [String(r.sku), r.name || '']));
+  const skus = new Set([...onHandNow.keys(), ...net.keys(), ...rows.map(r => String(r.sku))]);
+  const out = [];
+  const totals = { in: 0, out: 0, opening: 0, closing: 0, movements: rows.length };
+  for (const sku of skus) {
+    const n = net.get(sku) || { in: 0, out: 0 };
+    const closing = onHandNow.has(sku) ? onHandNow.get(sku) : 0;
+    // Opening = what is there now, minus what came in during the period, plus
+    // what left. Anything moved AFTER the period (a report run for last month)
+    // would distort that, so it is subtracted back out via the pre-period net.
+    const opening = from ? Math.max(0, closing - n.in + n.out) : Math.max(0, (before.get(sku) || 0));
+    if (!n.in && !n.out && !closing && !opening) continue;      // nothing to say
+    out.push({ sku, name: nameOf.get(sku) || '', opening, received: n.in, shipped: n.out, closing });
+    totals.in += n.in; totals.out += n.out; totals.opening += opening; totals.closing += closing;
+  }
+  out.sort((a, b) => (b.received + b.shipped) - (a.received + a.shipped) || a.sku.localeCompare(b.sku));
+  return { available: true, rows, skus: out, totals };
+}
+
+function transactionSheets(client, data, from, to) {
+  const gen = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' });
+  const head = [[`${client} — Transaction statement`],
+    [from || to ? `Period ${from || 'the beginning'} to ${to || 'today'} (Singapore time)` : 'All movements to date'],
+    [`Generated ${gen} SGT`], []];
+  if (!data.available) {
+    return [{ name: 'Statement', aoa: [...head, ['No stock is tracked in IdealOne for this account, so there are no transactions to report.']] }];
+  }
+  const t = data.totals;
+  return [
+    { name: 'Statement', aoa: [...head,
+      ['Opening balance (units)', t.opening],
+      ['Received in period',      t.in],
+      ['Shipped in period',       t.out],
+      ['Closing balance (units)', t.closing],
+      [],
+      ['Closing = opening + received − shipped. Balances are unit totals across every SKU; the by-SKU sheet shows the same figures per product.'],
+      ['Reservations are not listed: setting stock aside for an order moves nothing off the shelf.'],
+      [],
+      ['SKU', 'Product', 'Opening', 'Received', 'Shipped', 'Closing'],
+      ...data.skus.map(r => [r.sku, r.name, r.opening, r.received, r.shipped, r.closing])] },
+    { name: 'Movements', aoa: [...head,
+      ['Every movement in the period, oldest first.'], [],
+      ['Date (SGT)', 'Type', 'SKU', 'Product', 'In', 'Out', 'Reference', 'Location', 'By', 'Note'],
+      ...data.rows.map(m => {
+        // Signed ledger: negative is out. Shown as a positive figure in the
+        // Out column, which is what a statement reader expects.
+        const q = Number(m.qty) || 0;
+        return [
+          m.at ? new Date(String(m.at).replace(' ', 'T') + (String(m.at).endsWith('Z') ? '' : 'Z')).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '',
+          txnLabel(m.type), m.sku, m.product || '',
+          q > 0 ? q : '', q < 0 ? -q : '',
+          m.order_id || '', [m.from_location, m.to_location].filter(Boolean).join(' → '),
+          m.operator || '', m.reason || '',
+        ];
+      })] },
+  ];
+}
+
+// Office download — one client, date range, same sheets the client can pull.
+app.get('/api/transactions/export', (req, res) => {
+  const client = String(req.query.client || '').trim();
+  if (!client) return res.status(400).json({ error: 'client is required' });
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : '';
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : '';
+  const data = computeTransactions(readDb(), client, { from, to });
+  const wb = XLSX.utils.book_new();
+  for (const sh of transactionSheets(client, data, from, to)) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sh.aoa), sh.name);
+  }
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  logAudit('transaction_statement', { client, from, to, movements: data.rows.length, by: req.userId || '' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Transactions_${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${from || 'all'}_${to || sgDateStr()}.xlsx"`);
+  res.send(buf);
+});
+
 // Office download — client required (never a silent all-client dump), date
 // range and an optional explicit order list (the Orders-tab selection).
 app.get('/api/fulfillability/export', (req, res) => {
@@ -5318,6 +5427,19 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
        'Submitted', `SLA due (D+${INBOUND_SLA_WORKING_DAYS} working days)`, 'Received at (SGT)', 'SLA', 'SLA detail'],
       ...out];
     sheet = 'Inbound'; name = 'Inbound';
+  } else if (kind === 'transactions') {
+    // THE CLIENT'S OWN STATEMENT — the same sheets the office pulls, so a
+    // month-end query can be answered by pointing at their own download
+    // rather than by two people comparing two files.
+    const data = computeTransactions(db, client, { from, to });
+    const wb3 = XLSX.utils.book_new();
+    for (const sh of transactionSheets(client, data, from, to)) {
+      XLSX.utils.book_append_sheet(wb3, XLSX.utils.aoa_to_sheet(sh.aoa), sh.name);
+    }
+    const buf3 = XLSX.write(wb3, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_Transactions_${sgDateStr()}.xlsx"`);
+    return res.send(buf3);
   } else if (kind === 'fulfillability') {
     // What can ship vs what is short — the SAME sheets the office downloads,
     // scoped to this client, so the two can never tell a different story.
