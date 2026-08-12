@@ -2114,6 +2114,38 @@
     const h = Math.floor(a / 60), mm = a % 60;
     return h < 24 ? (mm ? `${h}h ${mm}m` : `${h}h`) : `${Math.floor(h / 24)}d ${h % 24}h`;
   }
+  // ── Can this ORDER be fulfilled from the stock we hold? ───────────────────
+  // Per the user the verdict belongs at ORDER-SUMMARY level, not buried on a
+  // line: the packer's question before walking is "can I finish this one",
+  // and one pill answers it. Green = every line covered, amber = some but not
+  // all (the tooltip names what is short), red = nothing on the shelf. Lines
+  // whose SKU is in no item master carry `stock_onhand: null` and are simply
+  // not judged — "we don't track this" must never read as "no stock", and an
+  // order with nothing trackable gets no pill at all.
+  function orderStockVerdict(ord) {
+    const lines = (ord.lines || ord.items || []).filter(l => l && l.stock_onhand !== null && l.stock_onhand !== undefined);
+    if (!lines.length) return null;
+    const short = [], none = [];
+    for (const l of lines) {
+      const oh = Number(l.stock_onhand) || 0, need = Number(l.qty) || 0;
+      if (oh >= need) continue;
+      (oh <= 0 ? none : short).push(`${l.sku}: ${oh} of ${need}`);
+    }
+    if (!short.length && !none.length) {
+      return { kind: 'ok', label: '&#10003; Stock OK', title: `Every line can be picked from stock on hand (${lines.length} line(s) checked).` };
+    }
+    const detail = [...none, ...short].join(' · ');
+    if (none.length === lines.length) {
+      return { kind: 'none', label: '&#10007; No stock', title: `Nothing on this order is on the shelf — ${detail}` };
+    }
+    return { kind: 'short', label: `&#9888; Short ${none.length + short.length} of ${lines.length}`, title: `Not enough stock to finish this order — ${detail}` };
+  }
+  function stockChip(ord) {
+    const v = orderStockVerdict(ord);
+    if (!v) return '';
+    return `<span class="chip chip-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>`;
+  }
+
   function fulfilmentChip(ord) {
     const f = ord.fulfilment;
     if (!f || f.status === 'cancelled' || f.status === 'unknown') return '';
@@ -2363,6 +2395,10 @@
         // Only ever shown on finished work — an order still being picked has
         // nothing to collect.
         pickupChip(ord),
+        // CAN IT BE PICKED? One order-level verdict against live stock, so the
+        // answer is visible before anyone walks. Only on work still to do —
+        // a finished order already proved it could ship.
+        (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord) : '',
         // FULFILMENT KPI. The countdown to this order's handover, so a packer
         // can see at a glance which of a screenful is actually urgent.
         fulfilmentChip(ord),
@@ -8332,6 +8368,7 @@
         <span class="meta-pill">${esc(order.customer_name || '—')}</span>
         ${order.client_name ? `<span class="meta-pill">${esc(order.client_name)}</span>` : ''}
         <span class="meta-pill meta-pill-carrier" title="${esc(order.carrier || '')}">${esc(carrierLabel(order.carrier) || '—')}</span>
+        ${(() => { const v = orderStockVerdict(order); return v ? `<span class="meta-pill meta-pill-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>` : ''; })()}
         ${order.waybill_number ? `<span class="meta-pill meta-pill-waybill">${esc(order.waybill_number)}${order.has_waybill_pdf ? ' &#10003;' : ''}</span>` : ''}
         ${order.issue_no ? `<span class="meta-pill meta-pill-gi" title="GI number">GI: ${esc(order.issue_no)}</span>` : ''}
         ${details ? `<button class="meta-details-btn" id="scanMetaDetailsBtn">&#9432; Details</button>` : ''}
@@ -8807,18 +8844,11 @@
       if (item.barcode && String(item.barcode).trim() && String(item.barcode).trim() !== item.sku) {
         lotParts.push(`<span class="lot-badge lot-barcode" title="Product barcode — scan this off the item" style="background:#ecfdf5;color:#065f46;font-weight:700">&#9646;&#9614;&#9646; ${esc(String(item.barcode).trim())}</span>`);
       }
-      // FULFILLABILITY — the live IdealOne stock balance, always looked up
-      // (per the user): GREEN = enough on hand for this line, AMBER = some
-      // but not enough, RED = none. No pill at all when the SKU is in no
-      // item master — "we don't track this" must never read as "no stock".
-      if (item.stock_onhand !== null && item.stock_onhand !== undefined) {
-        const oh = Number(item.stock_onhand) || 0;
-        const [bg, fg, mark, label] =
-          oh >= item.qty ? ['#dcfce7', '#166534', '&#10003;', `${oh} in stock`]
-          : oh > 0       ? ['#fef3c7', '#92400e', '&#9888;', `only ${oh} in stock (need ${item.qty})`]
-          :                ['#fee2e2', '#991b1b', '&#10007;', 'no stock'];
-        lotParts.push(`<span class="lot-badge stock-pill" title="Live IdealOne inventory balance: ${oh} on hand for this SKU" style="background:${bg};color:${fg};font-weight:700">${mark} ${label}</span>`);
-      }
+      // NOTE: the stock verdict is deliberately NOT repeated per line — per
+      // the user it belongs at ORDER-SUMMARY level (the header pill built in
+      // enterItemsPhase), where one glance answers "can I finish this order".
+      // A per-line copy on a one-line order was pure duplication, and on a
+      // long order it buried the row's real job: SKU, barcode, bin, counts.
       if (item.pick_locations && item.pick_locations.length) {
         const binPicks = item.pick_locations.filter(pl => pl.location_id !== 'STAGING');
         const stagePicks = item.pick_locations.filter(pl => pl.location_id === 'STAGING');

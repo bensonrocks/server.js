@@ -3616,3 +3616,14 @@ tr.pa-split-row td { border-top: 0; }
 .pa-card.pa-done { background: var(--surface); }
 .pa-card.pa-done .pa-head:hover { background: var(--surface-2); border-radius: 8px; }
 .pa-hist-detail { margin-top: .5rem; overflow-x: auto; }
+
+/* ── Can this order be picked from stock we hold? ─────────────────────────
+   ONE verdict per ORDER (per the user), shown on the Orders row and in the
+   scan overlay header — never repeated per line. Green every line covered,
+   amber some but not all, red nothing on the shelf. */
+.chip-stock-ok    { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; font-weight: 700; }
+.chip-stock-short { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-weight: 700; }
+.chip-stock-none  { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; font-weight: 700; }
+.meta-pill-stock-ok    { background: #dcfce7; color: #166534; border-color: #bbf7d0; font-weight: 700; }
+.meta-pill-stock-short { background: #fef3c7; color: #92400e; border-color: #fde68a; font-weight: 700; }
+.meta-pill-stock-none  { background: #fee2e2; color: #991b1b; border-color: #fecaca; font-weight: 700; }

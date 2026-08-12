@@ -2510,9 +2510,17 @@ function globalOrdersWithState(keep) {
         // dash where the product name belongs. Memoised per (client, SKU)
         // for the whole call, so a 900-order page is one lookup each.
         const hit = _lineLookup(batch, l.sku);
+        // A SKU IS ALWAYS PAIRED WITH A DESCRIPTION, whatever door the order
+        // came through (per the user). In order of authority: the stored
+        // description, the catalogue's real name, then THE ORDER FILE'S OWN
+        // WORDING — `source_description`, which is where a real product name
+        // ends up whenever a code-as-name catalogue placeholder displaced it.
+        // Without that third step a live Lazada line rendered "—" while its
+        // real name sat in the record unused.
         return {
           ...l,
-          description: realDesc || hit.name || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
+          description: realDesc || hit.name || String(l.source_description || '').trim()
+                       || _skuDescMap[l.sku] || _skuDescMap[(l.sku || '').trim()] || '',
           barcode: l.barcode || hit.barcode,
           // Live balance for the fulfillability pill: PHYSICAL on-hand (the
           // packer's question is "is it on the shelf"; available would read 0
@@ -9353,10 +9361,20 @@ function enrichLinesFromCatalogue(lines, clientName) {
     // line has resolved to a catalogue product, the catalogue knows what that
     // product is better than the order file does. Whatever the file said is
     // kept as source_description so nothing is silently thrown away.
-    if (rec.name) {
+    // …EXCEPT when the catalogue's "name" is the CODE-AS-NAME placeholder the
+    // old importer wrote (name === sku). That is not a name, and letting it
+    // win overwrote the real product name the order file carried — parking it
+    // in source_description where nothing displayed it, so the pick line read
+    // a bare "—". Reported from the floor on a live Lazada order. A real
+    // catalogue name still wins; a placeholder never does.
+    const catName = String(rec.name || '').trim();
+    const catIsPlaceholder = !catName
+      || catName === String(rec.sku || '').trim()
+      || catName === String(l.sku || '').trim();
+    if (catName && !catIsPlaceholder) {
       const given = String(l.description || '').trim();
-      if (given && given !== rec.name) l.source_description = given;
-      l.description = rec.name;
+      if (given && given !== catName) l.source_description = given;
+      l.description = catName;
     }
     delete l.unknown_product;
     matched++;
