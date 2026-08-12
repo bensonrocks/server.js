@@ -708,6 +708,23 @@ app.use(express.json({
     try { if (buf && buf.length && RAW_BODY_PATHS.test(req.url || '')) req.rawBody = buf.toString('utf8'); } catch (_) {}
   },
 }));
+// A body that is not valid JSON must not take the request down inside the
+// parser (seen live: "Expected ',' or '}' after property value" with a stack
+// in the deploy log and nothing anywhere else).
+// - WEBHOOK paths: NEVER reject — the raw bytes were already captured by the
+//   verify hook above (it runs before parsing), and the receiver logs every
+//   push; a marketplace sending imperfect JSON must still land in the push
+//   log where it can be diagnosed, not vanish as a parser 400.
+// - Everything else: a clean 400 naming the problem, instead of falling
+//   through to the generic error handler as a mystery 500.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.parse.failed' || (err instanceof SyntaxError && err.status === 400))) {
+    if (RAW_BODY_PATHS.test(req.url || '')) { req.body = {}; return next(); }
+    console.warn(`[body-parse] invalid JSON on ${req.method} ${req.url}: ${err.message}`);
+    return res.status(400).json({ error: 'Request body is not valid JSON.' });
+  }
+  next(err);
+});
 // ── Tenant resolution ──────────────────────────────────────────────────────
 // Runs on every request, BEFORE any route. Resolves the caller's tenant from
 // their session token (same x-auth-token header every route already uses)
