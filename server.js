@@ -2410,9 +2410,9 @@ function _makeSkuLookup() {
   const EMPTY = { found: false, barcode: '', name: '', stock: null, available: null };
   const cache = new Map();   // `${cid}|${sku}` -> hit
   let global = null;         // SKU(upper) -> hit, built ONCE on the first own-client miss
-  const shape = r => {
+  const shape = (r, cid) => {
     const name = String(r.name || '').trim();
-    return { found: true, barcode: String(r.barcode || '').trim(),
+    return { found: true, owner: cid || '', barcode: String(r.barcode || '').trim(),
              name: name === String(r.sku || '') ? '' : name,   // code-as-name placeholder is not a name
              stock: Number(r.stock_qty) || 0, available: Number(r.available_qty) || 0 };
   };
@@ -2431,7 +2431,21 @@ function _makeSkuLookup() {
       try { rows = inventory.getAll({ clientId: cid }); } catch (_) { continue; }
       for (const r of rows) {
         const k = String(r.sku || '').toUpperCase();
-        if (k && !m.has(k)) m.set(k, shape(r));   // a SKU has exactly one owner
+        if (!k) continue;
+        const cand = shape(r, cid);
+        const cur = m.get(k);
+        if (!cur) { m.set(k, cand); continue; }
+        // A SKU SHOULD have exactly one owner — but DUPLICATE ACCOUNTS ARE A
+        // DATA FACT (the same client under two spellings, which the amber
+        // attribution pill already warns about). Taking whichever catalogue
+        // happened to be listed FIRST reported an empty duplicate's 0 while
+        // the real quantity sat under the other spelling — a false "No stock"
+        // on the floor, reported from a live screen. The account that
+        // ACTUALLY HOLDS the goods answers; name/barcode fill from whichever
+        // row has them.
+        const best = cand.stock > cur.stock ? cand : cur;
+        const other = best === cand ? cur : cand;
+        m.set(k, { ...best, name: best.name || other.name, barcode: best.barcode || other.barcode });
       }
     }
     return m;
@@ -2442,10 +2456,23 @@ function _makeSkuLookup() {
     const key = (own || '') + '|' + sku;
     if (cache.has(key)) return cache.get(key);
     let hit = null;
-    if (own) { try { const r = inventory.get(sku, own); if (r) hit = shape(r); } catch (_) {} }
-    if (!hit) {
+    if (own) { try { const r = inventory.get(sku, own); if (r) hit = shape(r, own); } catch (_) {} }
+    // THE OWN-CLIENT ROW IS NOT THE LAST WORD WHEN IT HOLDS NO STOCK. Two
+    // everyday situations register a SKU at ZERO under an account that does
+    // not hold the goods: the catalogue learned from passing orders
+    // (harvestCatalogueFromOrders, which writes a row for a client with no
+    // item master), and a duplicate account spelling. Reporting that zero as
+    // "No stock" hid the real quantity sitting under the client's proper
+    // account — seen live on Lazada orders filed under a channel-placeholder
+    // client, every one of them flagged red while the stock was on the shelf.
+    // So whenever the own row is missing or empty, consult every catalogue
+    // and let the account that ACTUALLY HOLDS the goods answer.
+    if (!hit || hit.stock <= 0) {
       if (global === null) global = buildGlobal();
-      hit = global.get(String(sku).toUpperCase()) || null;
+      const g = global.get(String(sku).toUpperCase());
+      if (g && (!hit || g.stock > hit.stock)) {
+        hit = { ...g, name: g.name || (hit ? hit.name : ''), barcode: g.barcode || (hit ? hit.barcode : '') };
+      }
     }
     hit = hit || EMPTY;
     cache.set(key, hit);
@@ -2527,6 +2554,9 @@ function globalOrdersWithState(keep) {
           // for stock this very order correctly reserved). null = not tracked.
           stock_onhand:    hit.found ? hit.stock     : null,
           stock_available: hit.found ? hit.available : null,
+          // WHICH ACCOUNT answered — so the pill can say where it looked
+          // instead of leaving "no stock" as an unexplained verdict.
+          stock_owner:     hit.found ? (hit.owner || '') : null,
         };
       });
       out.push({

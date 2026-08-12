@@ -3627,3 +3627,8 @@ tr.pa-split-row td { border-top: 0; }
 .meta-pill-stock-ok    { background: #dcfce7; color: #166534; border-color: #bbf7d0; font-weight: 700; }
 .meta-pill-stock-short { background: #fef3c7; color: #92400e; border-color: #fde68a; font-weight: 700; }
 .meta-pill-stock-none  { background: #fee2e2; color: #991b1b; border-color: #fecaca; font-weight: 700; }
+/* Not in any item master — grey, because it is not a stock verdict at all:
+   nothing was judged. Silence here read as a glitch next to rows that did
+   show a verdict. */
+.chip-stock-untracked      { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; font-weight: 600; }
+.meta-pill-stock-untracked { background: #f1f5f9; color: #475569; border-color: #e2e8f0; font-weight: 600; }

@@ -2123,8 +2123,24 @@
   // not judged — "we don't track this" must never read as "no stock", and an
   // order with nothing trackable gets no pill at all.
   function orderStockVerdict(ord) {
-    const lines = (ord.lines || ord.items || []).filter(l => l && l.stock_onhand !== null && l.stock_onhand !== undefined);
-    if (!lines.length) return null;
+    const all   = (ord.lines || ord.items || []).filter(l => l && l.sku);
+    const lines = all.filter(l => l.stock_onhand !== null && l.stock_onhand !== undefined);
+    // NOT IN ANY ITEM MASTER is its own answer, not silence. A row with no
+    // pill beside rows that have one reads as a glitch; it actually means
+    // IdealOne holds no catalogue entry for these products, which is
+    // actionable (load the client's item master) and completely different
+    // from "the shelf is empty".
+    if (!lines.length) {
+      if (!all.length) return null;
+      return { kind: 'untracked', label: '&#9679; Not in item master',
+               title: `IdealOne holds no catalogue entry for ${all.map(l => l.sku).slice(0, 6).join(', ')}${all.length > 6 ? '…' : ''}, so stock cannot be judged. Load this client's item master (Administrator → Onboard Client) to see balances here.` };
+    }
+    // WHERE the balances came from — with duplicate client accounts about,
+    // "no stock" is only meaningful alongside the account that was read.
+    const owners = [...new Set(lines.map(l => String(l.stock_owner || '').trim()).filter(Boolean))];
+    const from = owners.length ? ` Balances read from ${owners.join(' + ')}.` : '';
+    const untracked = all.length - lines.length;
+    const alsoUntracked = untracked > 0 ? ` ${untracked} line(s) are in no item master and were not judged.` : '';
     const short = [], none = [];
     for (const l of lines) {
       const oh = Number(l.stock_onhand) || 0, need = Number(l.qty) || 0;
@@ -2132,13 +2148,13 @@
       (oh <= 0 ? none : short).push(`${l.sku}: ${oh} of ${need}`);
     }
     if (!short.length && !none.length) {
-      return { kind: 'ok', label: '&#10003; Stock OK', title: `Every line can be picked from stock on hand (${lines.length} line(s) checked).` };
+      return { kind: 'ok', label: '&#10003; Stock OK', title: `Every line can be picked from stock on hand (${lines.length} line(s) checked).${from}${alsoUntracked}` };
     }
     const detail = [...none, ...short].join(' · ');
     if (none.length === lines.length) {
-      return { kind: 'none', label: '&#10007; No stock', title: `Nothing on this order is on the shelf — ${detail}` };
+      return { kind: 'none', label: '&#10007; No stock', title: `Nothing on this order is on the shelf — ${detail}.${from}${alsoUntracked}` };
     }
-    return { kind: 'short', label: `&#9888; Short ${none.length + short.length} of ${lines.length}`, title: `Not enough stock to finish this order — ${detail}` };
+    return { kind: 'short', label: `&#9888; Short ${none.length + short.length} of ${lines.length}`, title: `Not enough stock to finish this order — ${detail}.${from}${alsoUntracked}` };
   }
   function stockChip(ord) {
     const v = orderStockVerdict(ord);
