@@ -17443,10 +17443,30 @@ function buildSkuOwnerIndex(db) {
     for (const r of rows) {
       const k = String(r.sku || '').trim().toUpperCase();
       if (!k) continue;
+      // A LEARNED ROW IS NOT OWNERSHIP. harvestCatalogueFromOrders writes a
+      // catalogue row for any client whose orders pass through without an item
+      // master — so an order misfiled under a channel-placeholder client
+      // ("Lazada") taught that name the SKUs, and from the next pull on the SKU
+      // looked like it had two owners, attribution went ambiguous, and the
+      // orders misfiled again. Self-reinforcing, and it deepened every five
+      // minutes. Only a catalogue somebody LOADED confers ownership. Kept as a
+      // fallback below when nothing else claims the SKU, so a client whose
+      // master was only ever learned can still be placed.
+      const learned = Number(r.learned_from_orders) === 1;
       let owners = idx.get(k);
       if (!owners) idx.set(k, owners = new Map());
+      if (learned) {
+        if (!owners._learned) owners._learned = new Map();
+        owners._learned.set(name.toLowerCase(), name);
+        continue;
+      }
       owners.set(name.toLowerCase(), name);   // case-variants collapse to one owner
     }
+  }
+  // Nothing but learned rows knows this SKU — better a learned owner than none.
+  for (const owners of idx.values()) {
+    if (!owners.size && owners._learned) for (const [k2, v2] of owners._learned) owners.set(k2, v2);
+    delete owners._learned;
   }
   return idx;
 }
@@ -19708,7 +19728,15 @@ function harvestCatalogueFromOrders(db, clientName, orders, source) {
           if (placeholder) healed++;
           if (wantBar) barcoded++;
         } else if (mayCreate) {
-          inventory.upsert({ sku, clientId: cid, name: desc, ...(barcode ? { barcode } : {}) });
+          // MARKED AS LEARNED, and that mark is load-bearing. A row invented
+          // from an order passing through proves nothing about who owns the
+          // SKU — and left unmarked it did real harm: orders misfiled under a
+          // channel-placeholder client taught that client the SKUs, which made
+          // the SKU look like it had two owners, which made attribution
+          // ambiguous, which misfiled the NEXT pull the same way. A loop that
+          // deepened itself every five minutes. buildSkuOwnerIndex now ignores
+          // these for ownership.
+          inventory.upsert({ sku, clientId: cid, name: desc, learned_from_orders: 1, ...(barcode ? { barcode } : {}) });
           created++;
         }
       }
