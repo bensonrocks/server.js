@@ -1861,6 +1861,27 @@ CARRIED OVER, NOT SOLVED: nightly gzip backups (kept 14) still contain the
 personal data until they rotate out, so full erasure completes ~14 days after
 the purge. Say so if asked rather than claiming instant deletion.
 
+## "Deploy Crashed" emails — the app never crashed; PID 1 did not forward SIGTERM
+
+Three days of Railway "Deployment crashed" emails, each ~90s after a push and
+NONE in between: every one was the OLD container's teardown at redeploy, not a
+crash. The graceful-shutdown handler (exit 0 on SIGTERM) never ran because the
+start command put a shell/npm wrapper at PID 1, which does not forward SIGTERM
+to node; Railway SIGKILLed the container and read the kill as a crash.
+
+- **`railway.json` → `deploy.startCommand: "exec node server.js"`** — the shell
+  replaces itself with node, node IS PID 1, receives SIGTERM directly, exits 0.
+  Do not remove this file or revert the start command to bare `npm start`.
+- **Crash forensics are real, not decorative** (commit 6a33999): every clean
+  shutdown drops `.clean-shutdown.marker`; a boot that follows a previous boot
+  WITHOUT it files a recurring "Server restarted without a clean shutdown" row
+  in System Outages and counts `uncleanStops` on `/api/version`. So: crash
+  email + no Outages row = platform noise; crash email + row = genuinely dying
+  (suspect OOM in label OCR first).
+- Verified by deploy: the first push after railway.json produced ZERO crash
+  emails (checked in the actual inbox), where every prior push produced
+  exactly one.
+
 ## Data lifecycle (server.js)
 
 - ATOMIC WRITES: db.json persists via tmp+rename (`_persistDb`), serialized. Never
