@@ -18528,6 +18528,51 @@ app.post('/api/master/zort/stores/:id/cross-check', async (req, res) => {
   res.json({ ok: true, rows, counts, checked: rows.length });
 });
 
+// ASK THE HUB ABOUT SPECIFIC ORDER NUMBERS — the diagnostic for "ZORT's
+// screen shows this order but IdealOne never got it". Queries the hub's API
+// directly (numberlist) and reports, per number: whether the API returns it
+// at all (a hub UI row the API withholds is a HUB fault, not an import one),
+// its status word, what our import filter would do with that status, and
+// whether it is already on our books. Read-only — imports nothing.
+app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  const numbers = [...new Set((req.body?.numbers || []).map(n => String(n).trim()).filter(Boolean))].slice(0, 50);
+  if (!numbers.length) return res.status(400).json({ error: 'Give at least one order number' });
+  let list = [];
+  try {
+    const d = await zortApi.getOrdersByNumbers(store, numbers);
+    list = d.list || d.orders || d.data || [];
+  } catch (err) {
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+  const byNum = new Map(list.map(z => [String(z.number || '').trim(), z]));
+  const rows = numbers.map(n => {
+    const here = findBatchForOrder(db, n);
+    const hereStatus = here ? (here.orderStates?.[n]?.status || 'pending') : null;
+    const z = byNum.get(n);
+    if (!z) {
+      return { number: n, apiReturns: false, inIdealOne: !!here, ourStatus: hereStatus,
+               verdict: here
+                 ? 'On our books, but the hub API no longer returns it.'
+                 : 'The hub API does NOT return this order — it can never sync. If ZORT\'s screen shows it, that is a question for ZORT support.' };
+    }
+    const stw = zortStatusWord(z.status);
+    let would;
+    if (stw === 'voided') would = 'voided on the hub — never imported as work';
+    else if (ZORT_IMPORT_SKIP_STATUSES.has(stw)) would = `import would SKIP it — already handled on the hub (${stw})`;
+    else would = 'import would bring it in on the next pull';
+    return { number: n, apiReturns: true, inIdealOne: !!here, ourStatus: hereStatus,
+             zortStatus: stw || String(z.status || ''), zortId: z.id,
+             tracking: String(z.trackingno || '').trim(), channel: String(z.saleschannel || '').trim(),
+             verdict: here ? `Already on our books (${hereStatus}).` : would };
+  });
+  logAudit('zort_order_lookup', { storeId: store.id, numbers });
+  res.json({ ok: true, rows });
+});
+
 // Settle orders the cross-check proved are not our work: mark them
 // `unprocessed` (cancelled) with the reason recorded. GUARDS: only orders with
 // ZERO scans — anything the floor has touched is never auto-settled (standing

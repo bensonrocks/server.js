@@ -11474,6 +11474,7 @@
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
             <button class="btn-secondary btn-sm z-crosscheck" title="Ask the hub the current status of every open synced order here — finds orders the client fulfilled themselves, and offers to settle them">&#128270; Cross-check</button>
+            <button class="btn-secondary btn-sm z-find" title="Ask the hub's API about specific order number(s) — answers 'ZORT shows it but IdealOne never got it': does the API even return it, what status, and what the import would do">&#128269; Find order</button>
             ${s.stockSync ? '<button class="btn-secondary btn-sm z-pushstock" title="Enqueue current stock levels for every SKU to the store">⇪ Push Stock</button>' : ''}
             <button class="btn-secondary btn-sm z-pushprod" title="Send this client's item master to the store as its product list (codes, names, barcodes — never quantities)">&#128230; Push Catalogue</button>
             <button class="btn-secondary btn-sm z-edit">&#9998;</button>
@@ -11517,6 +11518,31 @@
         });
         // "What does the hub say about our open synced orders?" — read-only
         // check, then an explicit settle of the ones the hub already handled.
+        tr.querySelector('.z-find').addEventListener('click', async e => {
+          const raw = prompt('Order number(s) to look up on the hub — comma separated:');
+          if (!raw || !raw.trim()) return;
+          const numbers = raw.split(',').map(s => s.trim()).filter(Boolean);
+          e.target.disabled = true;
+          zortStatus('progress', 'Asking the hub…');
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/lookup`, {
+              method: 'POST', headers: { ...zortHdrs(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ numbers }),
+            });
+            const d = await r2.json();
+            if (!d.ok) throw new Error(d.error || 'Lookup failed');
+            const lines = (d.rows || []).map(r => {
+              const bits = [`${r.number}:`];
+              if (!r.apiReturns) bits.push('NOT returned by the hub API.');
+              else bits.push(`hub status "${r.zortStatus}"${r.tracking ? `, tracking ${r.tracking}` : ''}${r.channel ? `, channel ${r.channel}` : ''}.`);
+              bits.push(r.verdict);
+              return bits.join(' ');
+            });
+            zortStatus('success', 'Lookup done — see the details below.');
+            alert(lines.join('\n\n'));
+          } catch (err) { zortStatus('error', `Lookup failed: ${err.message}`); }
+          e.target.disabled = false;
+        });
         tr.querySelector('.z-crosscheck').addEventListener('click', async e => {
           e.target.disabled = true;
           zortStatus('progress', `Cross-checking ${store.clientName}'s open orders against the hub…`);
