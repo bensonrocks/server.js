@@ -12068,6 +12068,15 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
   const db = readDb();
   const cid = invClientId(canonicalClientName(db, client));
 
+  // MODE — per the user: uploading inventory, new account or old, is a choice
+  // of ADD (on top of what is held), SUPERSEDE (the sheet states the position)
+  // or REDUCE (subtract the sheet's quantities). Supersede/reduce only make
+  // sense as direct stock writes, so they skip the propose-into-putaway flow.
+  const modeRaw = String(req.body?.mode || 'add').trim().toLowerCase();
+  const mode = (modeRaw === 'set' || modeRaw === 'supersede') ? 'set'
+             : modeRaw === 'reduce' ? 'reduce' : 'add';
+  const MODE_WORD = { add: 'MASS ADD', set: 'MASS SUPERSEDE', reduce: 'MASS REDUCE' };
+
   // ── DEFAULT: PROPOSE, DO NOT WRITE ────────────────────────────────────────
   // Per the user, the locations in the file are reflected INTO the open inbound
   // job so the crew can complete the putaway (which increments the bins) or
@@ -12077,7 +12086,7 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
   //
   // Writing straight to stock is still available for OPENING STOCK, where there
   // is no inbound job to reflect into, but it has to be asked for explicitly.
-  const wantsDirect = String(req.body?.apply || '') === 'positions';
+  const wantsDirect = String(req.body?.apply || '') === 'positions' || mode !== 'add';
   if (!wantsDirect) {
     const queue = putawayQueue(db).filter(g => invClientId(g.client_name) === cid);
     const bySku = new Map();                       // sku -> file location + qty
@@ -12125,50 +12134,166 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
     });
   }
 
-  // ADDING means a second upload of the same sheet genuinely doubles the stock.
-  // That is the intended behaviour for a real second delivery, so it is not
-  // blocked — but the commonest way to do it by accident is re-sending the same
-  // file, so that exact case is named and confirmed rather than waved through.
+  // ── SAY IT BEFORE DOING IT ────────────────────────────────────────────────
+  // Per the user: every mass upload is CONFIRMED against a preview — the rows,
+  // units, errors and shortfalls the write would produce, computed the same
+  // way the write computes them. Nothing moves until the confirmed resend.
+  const who = req.userId || _tokenUserId(req) || '';
+  if (String(req.body?.confirm_apply || '') !== 'yes') {
+    let pv;
+    try { pv = inventory.previewStockPositions(cid, rows, mode); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+    return res.status(409).json({
+      needsApplyConfirm: true, mode, client: cid, filename: req.file.originalname,
+      preview: {
+        rows: pv.rows, units: pv.units, skus: pv.skus.length,
+        newSkus: pv.newSkus.slice(0, 30), newSkuCount: pv.newSkus.length,
+        newBins: pv.newBins.slice(0, 30), newBinCount: pv.newBins.length,
+        errors: pv.errors.slice(0, 30), errorCount: pv.errors.length,
+        short: pv.short.slice(0, 30), shortCount: pv.short.length,
+        sample: pv.cells.slice(0, 12),
+      },
+    });
+  }
+
+  // ADDING means a second upload of the same sheet genuinely doubles the stock
+  // (and REDUCING doubles the write-off). That is the intended behaviour for a
+  // real second pass, so it is not blocked — but the commonest way to do it by
+  // accident is re-sending the same file, so that exact case is named and
+  // confirmed rather than waved through.
   const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
   db.stockImports = db.stockImports || [];
   const prior = db.stockImports.find(x => x.hash === hash && x.clientId === cid);
   if (prior && String(req.body?.confirm_reimport || '') !== 'yes') {
     return res.status(409).json({
-      needsReimportConfirm: true, prior,
-      message: `This exact file was already put away for ${cid} on `
+      needsReimportConfirm: true, prior: { at: prior.at, units: prior.units, by: prior.by, mode: prior.mode || 'add' },
+      message: `This exact file was already uploaded for ${cid} on `
         + `${new Date(prior.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })} SGT `
-        + `(${prior.units} pcs). Uploading it again ADDS those quantities a second time.`,
+        + `(${prior.units} pcs, ${MODE_WORD[prior.mode] || 'MASS ADD'}). Uploading it again applies it a SECOND time.`,
     });
   }
   let result;
   try {
     result = inventory.setStockPositions(cid, rows, {
-      operator: req.userId || '',
-      reason: `putaway by file — ${req.file.originalname}`,
-      mode: req.body?.mode === 'set' ? 'set' : 'add',
+      operator: who,
+      reason: `${MODE_WORD[mode]} by file — ${req.file.originalname}`,
+      mode,
     });
   } catch (e) { return res.status(400).json({ error: e.message }); }
+  // The import is a TRANSACTION with a 3-day reversal window: the snapshot of
+  // the touched position rides on the record, and expires with the window so
+  // db.json does not carry old snapshots forever.
+  const txnId = uuidv4();
+  const nowIso = new Date().toISOString();
   db.stockImports.unshift({
-    hash, clientId: cid, filename: req.file.originalname,
-    at: new Date().toISOString(), by: req.userId || '',
+    id: txnId, hash, clientId: cid, filename: req.file.originalname,
+    at: nowIso, by: who, mode,
     lines: result.placed, units: result.units,
+    snapshot: result.snapshot,
+    reversible_until: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
   });
+  pruneStockImportSnapshots(db);
   if (db.stockImports.length > 500) db.stockImports.length = 500;
   writeDb(db);
-  logAudit('stock_positions_imported', {
-    clientId: cid, filename: req.file.originalname,
+  // AUDIT AS WHAT IT WAS — a mass action, named by kind, with who did it.
+  logAudit(mode === 'set' ? 'stock_mass_superseded' : mode === 'reduce' ? 'stock_mass_reduced' : 'stock_mass_added', {
+    txnId, clientId: cid, filename: req.file.originalname,
     lines: result.placed, units: result.units, skus: result.skus.length,
     skusCreated: result.skusCreated, binsCreated: result.binsCreated,
-    skipped: result.skipped.length, by: req.userId || '',
+    skipped: result.skipped.length, short: (result.short || []).length, by: who,
   });
   zortNotifyStockChange(db, cid, result.skus.slice(0, 200));
   res.json({
-    ok: true, client: cid, filename: req.file.originalname,
+    ok: true, txnId, mode, client: cid, filename: req.file.originalname,
     lines: result.placed, units: result.units, skus: result.skus.length,
     skusCreated: result.skusCreated, binsCreated: result.binsCreated,
     skipped: result.skipped.slice(0, 50),
-    note: 'These quantities were ADDED to what each bin already held.',
+    short: (result.short || []).slice(0, 50),
+    reversibleUntil: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
+    note: mode === 'set' ? 'The sheet\'s quantities REPLACED each bin\'s position.'
+        : mode === 'reduce' ? 'The sheet\'s quantities were SUBTRACTED from each bin.'
+        : 'These quantities were ADDED to what each bin already held.',
   });
+});
+
+// The reversal window on mass stock uploads. 3 days, per the user — inside it
+// a mass add / supersede / reduce can be put back exactly; after it the
+// snapshot is dropped and the upload is permanent.
+const STOCK_IMPORT_REVERSE_HOURS = 72;
+function pruneStockImportSnapshots(db) {
+  const now = Date.now();
+  for (const x of db.stockImports || []) {
+    if (x.snapshot && (!x.reversible_until || new Date(x.reversible_until).getTime() < now || x.reversed_at)) {
+      delete x.snapshot;
+    }
+  }
+}
+
+// Recent mass uploads, newest first — what feeds the "Recent stock uploads"
+// list with each one's reverse button and time left on its window.
+app.get('/api/putaway/imports', (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const cn = String(req.query.client || '').trim().toLowerCase();
+  const now = Date.now();
+  const rows = (db.stockImports || [])
+    .filter(x => x.id) // pre-feature records carry no txn id and no snapshot — nothing to reverse
+    .filter(x => !cn || String(x.clientId || '').toLowerCase() === cn)
+    .slice(0, 30)
+    .map(x => ({
+      id: x.id, at: x.at, by: x.by || '', mode: x.mode || 'add', client: x.clientId,
+      filename: x.filename, lines: x.lines, units: x.units,
+      reversed_at: x.reversed_at || null, reversed_by: x.reversed_by || null,
+      reversible: !!x.snapshot && !x.reversed_at && x.reversible_until && new Date(x.reversible_until).getTime() > now,
+      hoursLeft: x.reversible_until ? Math.max(0, Math.round((new Date(x.reversible_until).getTime() - now) / 3600000)) : 0,
+    }));
+  res.json({ rows });
+});
+
+// REVERSE a mass upload — clean by default: if any touched SKU has physically
+// moved since (shipped, received, adjusted), the reversal refuses NAMING the
+// SKUs, and `skip_moved=yes` reverses the rest while leaving those alone.
+// Reserve/release don't count as movement — allocating moves no piece.
+app.post('/api/putaway/imports/:id/reverse', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const txn = (db.stockImports || []).find(x => x.id === req.params.id);
+  if (!txn) return res.status(404).json({ error: 'Upload not found' });
+  if (txn.reversed_at) return res.status(409).json({ error: `Already reversed on ${txn.reversed_at.slice(0, 10)} by ${txn.reversed_by || 'unknown'}.` });
+  if (!txn.snapshot || !txn.reversible_until || new Date(txn.reversible_until).getTime() < Date.now()) {
+    return res.status(410).json({ error: 'The 3-day reversal window has passed — this upload is permanent now. Corrections go through a fresh upload or a hand adjustment.' });
+  }
+  const skus = (txn.snapshot.skus || []).map(s => s.sku);
+  const moved = inventory.movedSkusSince(txn.clientId, skus, txn.snapshot.asOfMovementId);
+  if (moved.length && String(req.body?.skip_moved || '') !== 'yes') {
+    return res.status(409).json({
+      needsSkipMoved: true, movedSkus: moved.slice(0, 50), movedCount: moved.length,
+      message: `${moved.length} SKU(s) have physically moved since this upload (shipped, received or adjusted) — `
+        + `putting their old position back would erase real work. Reverse the rest and leave those ${moved.length} alone?`,
+    });
+  }
+  const who = req.userId || _tokenUserId(req) || '';
+  let result;
+  try {
+    result = inventory.reverseStockPositions(txn.clientId, txn.snapshot, {
+      operator: who,
+      reason: `reversal of ${txn.mode === 'set' ? 'MASS SUPERSEDE' : txn.mode === 'reduce' ? 'MASS REDUCE' : 'MASS ADD'} — ${txn.filename}`,
+      excludeSkus: moved,
+    });
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  txn.reversed_at = new Date().toISOString();
+  txn.reversed_by = who;
+  if (moved.length) txn.reversed_partial_skipped = moved;
+  delete txn.snapshot;
+  writeDb(db);
+  logAudit('stock_mass_upload_reversed', {
+    txnId: txn.id, clientId: txn.clientId, uploadMode: txn.mode || 'add', filename: txn.filename,
+    cellsRestored: result.cells, skusRestored: result.skus,
+    skippedMoved: moved.slice(0, 50), skippedMovedCount: moved.length, by: who,
+  });
+  zortNotifyStockChange(db, txn.clientId, skus.filter(s => !moved.includes(s)).slice(0, 200));
+  res.json({ ok: true, cells: result.cells, skus: result.skus, skippedMoved: moved,
+             note: moved.length ? `Reversed except ${moved.length} SKU(s) that moved since — left as they are.` : 'Fully reversed — the position is back to what it was before the upload.' });
 });
 
 app.get('/api/putaway/queue', (req, res) => {

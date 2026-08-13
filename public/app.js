@@ -784,7 +784,7 @@
     if (name === 'inbound') { renderInboundTab(); }
     // switchTab runs earlier in the file than the const, so the module is
     // reached through window (the temporal-dead-zone trap waveUI documented).
-    if (name === 'putaway') { window.putawayUI?.load().catch(() => {}); }
+    if (name === 'putaway') { window.putawayUI?.load().catch(() => {}); window.loadPaImports?.().catch(() => {}); }
     if (name === 'inventory') { renderInventory(); }
     // Inventory's functions live in a sidebar sub-menu (same pattern as
     // Transport) instead of stacked on one very long page.
@@ -12736,15 +12736,21 @@
     } catch (e) { sel.innerHTML = '<option value="">Could not load the client list</option>'; }
     paImportPaint();
   }
-  async function runPaImport(confirmReimport) {
+  async function runPaImport(opts = {}) {
     const err = _paImp('paImportError');
     const show = m => { err.textContent = m; err.classList.remove('hidden'); };
     const client = _paImp('paImportClient').value;
     if (!client || !_paImportFile) return;
+    const modeChoice = document.querySelector('input[name="paImportMode"]:checked')?.value || 'plan';
     const btn = _paImp('paImportGo'); btn.disabled = true;
     const fd = new FormData();
     fd.append('file', _paImportFile); fd.append('client', client);
-    if (confirmReimport) fd.append('confirm_reimport', 'yes');
+    if (modeChoice !== 'plan') {
+      fd.append('mode', modeChoice === 'supersede' ? 'set' : modeChoice);
+      fd.append('apply', 'positions');
+    }
+    if (opts.confirmApply) fd.append('confirm_apply', 'yes');
+    if (opts.confirmReimport) fd.append('confirm_reimport', 'yes');
     try {
       const r = await fetchT('/api/putaway/import', {
         method: 'POST',
@@ -12752,10 +12758,32 @@
         body: fd,
       }, 60000);
       const d = await r.json().catch(() => ({}));
-      // The one accident that ADDING makes expensive: the same file twice.
+      // SAY IT BEFORE DOING IT: the preview of what the mass action would do \u2014
+      // rows, units, errors, shortfalls \u2014 confirmed before anything moves.
+      if (r.status === 409 && d.needsApplyConfirm) {
+        btn.disabled = false;
+        const p = d.preview || {};
+        const word = d.mode === 'set' ? 'SUPERSEDE (replace each listed bin with the sheet\u2019s figure)'
+                   : d.mode === 'reduce' ? 'REDUCE (subtract the sheet\u2019s quantities)'
+                   : 'ADD (on top of what each bin holds)';
+        let msg = `MASS ${word}\n\nClient: ${d.client}\nFile: ${d.filename}\n`
+          + `${p.rows} row(s), ${p.units} pc(s), ${p.skus} SKU(s).`;
+        if (p.newSkuCount) msg += `\n${p.newSkuCount} new SKU(s) will be created: ${(p.newSkus || []).join(', ')}${p.newSkuCount > (p.newSkus || []).length ? '\u2026' : ''}`;
+        if (p.newBinCount) msg += `\n${p.newBinCount} new bin(s) will be created.`;
+        if (p.errorCount) msg += `\n\n\u26a0 ${p.errorCount} row(s) have ERRORS and will be skipped:\n`
+          + (p.errors || []).map(x => `\u2022 ${x.sku || '(no SKU)'} @ ${x.location || '?'} \u2014 ${x.reason}`).join('\n')
+          + (p.errorCount > (p.errors || []).length ? '\n\u2026' : '');
+        if (p.shortCount) msg += `\n\n\u26a0 ${p.shortCount} bin(s) hold LESS than the sheet reduces \u2014 they floor at zero:\n`
+          + (p.short || []).map(x => `\u2022 ${x.sku} @ ${x.location}: reduce ${x.wanted}, holds ${x.had}`).join('\n')
+          + (p.shortCount > (p.short || []).length ? '\n\u2026' : '');
+        msg += `\n\nYou can REVERSE this cleanly for 3 days (Putaway \u2192 Recent stock uploads).\n\nOK = apply \u00b7 Cancel = nothing happens`;
+        if (confirm(msg)) return runPaImport({ ...opts, confirmApply: true });
+        return;
+      }
+      // The one accident that ADDING (or REDUCING) makes expensive: the same file twice.
       if (r.status === 409 && d.needsReimportConfirm) {
-        if (confirm(`\u26a0 ${d.message}\n\nOK = add it again (a genuine second delivery)\nCancel = stop`)) {
-          return runPaImport(true);
+        if (confirm(`\u26a0 ${d.message}\n\nOK = apply it again (a genuine second pass)\nCancel = stop`)) {
+          return runPaImport({ ...opts, confirmApply: true, confirmReimport: true });
         }
         btn.disabled = false; return;
       }
@@ -12774,14 +12802,70 @@
         await putawayUI.applyImportPlan(d);
         return;
       }
-      alert(`Put away ${d.lines} line(s) — ${d.units} pc(s) across ${d.skus} SKU(s) for ${d.client}.`
+      const MW = { add: 'MASS ADD', set: 'MASS SUPERSEDE', reduce: 'MASS REDUCE' };
+      alert(`${MW[d.mode] || 'Import'} done: ${d.lines} line(s) — ${d.units} pc(s) across ${d.skus} SKU(s) for ${d.client}.`
         + (d.skusCreated ? `\n${d.skusCreated} SKU(s) added to the item master.` : '')
         + (d.binsCreated ? `\n${d.binsCreated} new bin location(s) created from the sheet.` : '')
         + (d.skipped && d.skipped.length ? `\n${d.skipped.length} row(s) skipped.` : '')
-        + `\n\n${d.note}`);
+        + (d.short && d.short.length ? `\n${d.short.length} bin(s) held less than the sheet reduced (floored at zero).` : '')
+        + `\n\n${d.note}`
+        + (d.reversibleUntil ? `\n\nReversible until ${new Date(d.reversibleUntil).toLocaleString()} — Putaway → Recent stock uploads.` : ''));
       putawayUI.load().catch(() => {});
+      loadPaImports().catch(() => {});
     } catch (e) { show('Could not reach the server — nothing was imported.'); btn.disabled = false; }
   }
+
+  // ── RECENT STOCK UPLOADS — the 3-day reversal window ─────────────────────
+  // One row per mass upload: what it was, who did it, and — while the window
+  // is open and nothing has shipped against it — a Reverse button that puts
+  // the position back exactly as it was.
+  async function loadPaImports() {
+    const box = document.getElementById('paImportsRecent');
+    if (!box) return;
+    const r = await fetchT('/api/putaway/imports', {
+      headers: { 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+    });
+    if (!r.ok) { box.innerHTML = ''; return; }
+    const d = await r.json();
+    const rows = d.rows || [];
+    if (!rows.length) { box.innerHTML = '<div class="hint">No mass stock uploads yet.</div>'; return; }
+    const MW = { add: '&#10133; ADD', set: '&#9851; SUPERSEDE', reduce: '&#10134; REDUCE' };
+    box.innerHTML = rows.map(x => `
+      <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.45rem .6rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.4rem;font-size:.82rem">
+        <span style="font-weight:700">${MW[x.mode] || esc(x.mode)}</span>
+        <span>${esc(x.client)}</span>
+        <span class="hint">${esc(x.filename)} · ${x.units} pc(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
+        ${x.reversed_at
+          ? `<span style="color:#b45309;font-weight:600">reversed ${new Date(x.reversed_at).toLocaleDateString()} by ${esc(x.reversed_by || '?')}</span>`
+          : x.reversible
+            ? `<button class="btn-secondary btn-sm pa-imp-reverse" data-id="${esc(x.id)}" title="Put the stock position back exactly as it was before this upload">&#9100; Reverse (${x.hoursLeft}h left)</button>`
+            : `<span class="hint">window closed</span>`}
+      </div>`).join('');
+    box.querySelectorAll('.pa-imp-reverse').forEach(b => b.addEventListener('click', async () => {
+      const id = b.dataset.id;
+      if (!confirm('Reverse this upload?\n\nThe stock position goes back EXACTLY as it was before it — bins and on-hand figures included. This is recorded on the audit trail.')) return;
+      b.disabled = true;
+      const send = (skipMoved) => fetchT(`/api/putaway/imports/${id}/reverse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify(skipMoved ? { skip_moved: 'yes' } : {}),
+      });
+      try {
+        let r2 = await send(false);
+        let d2 = await r2.json().catch(() => ({}));
+        if (r2.status === 409 && d2.needsSkipMoved) {
+          if (!confirm(`⚠ ${d2.message}\n\nMoved: ${(d2.movedSkus || []).join(', ')}${d2.movedCount > (d2.movedSkus || []).length ? '…' : ''}\n\nOK = reverse the rest · Cancel = nothing happens`)) { b.disabled = false; return; }
+          r2 = await send(true);
+          d2 = await r2.json().catch(() => ({}));
+        }
+        if (!r2.ok) { alert(d2.error || 'Could not reverse.'); b.disabled = false; return; }
+        alert(d2.note || 'Reversed.');
+        loadPaImports().catch(() => {});
+        putawayUI.load().catch(() => {});
+      } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
+    }));
+  }
+  window.loadPaImports = loadPaImports;
   document.getElementById('putawayImportBtn')?.addEventListener('click', openPaImport);
   document.getElementById('paHistApply')?.addEventListener('click', () => putawayUI.loadHistory());
   document.getElementById('paHistExport')?.addEventListener('click', () => {

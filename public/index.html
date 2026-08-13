@@ -1764,8 +1764,18 @@
        into a phantom one. -->
   <div id="paImportOverlay" class="modal-overlay hidden">
     <div class="modal-card" style="max-width:560px">
-      <h3 style="margin:0 0 .2rem">Put away by file</h3>
-      <div class="hint" style="margin-bottom:.9rem">SKU, Location and quantity — the quantities are <b>added</b> to whatever each bin already holds.</div>
+      <h3 style="margin:0 0 .2rem">Upload stock by file</h3>
+      <div class="hint" style="margin-bottom:.7rem">SKU, Location and quantity. Pick what the upload should do — you will be shown exactly what will happen before anything moves, and a mass upload can be <b>reversed for 3 days</b>.</div>
+      <div style="display:flex;flex-direction:column;gap:.35rem;margin-bottom:.8rem;font-size:.85rem">
+        <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="plan" checked style="margin-top:.2rem" />
+          <span><b>Fill the open putaway job</b> — proposes bins on the receiving job; the crew completes or aborts. Nothing moves on upload.</span></label>
+        <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="add" style="margin-top:.2rem" />
+          <span><b>&#10133; Mass ADD</b> — the sheet's quantities go on top of what each bin already holds (a delivery, opening stock).</span></label>
+        <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="supersede" style="margin-top:.2rem" />
+          <span><b>&#9851; Mass SUPERSEDE</b> — the sheet states the position; each listed bin is replaced with the sheet's figure (a stock-take).</span></label>
+        <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="reduce" style="margin-top:.2rem" />
+          <span><b>&#10134; Mass REDUCE</b> — the sheet's quantities are subtracted from each bin (a write-off / correction list).</span></label>
+      </div>
       <label style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">CLIENT (whose stock this is)</label>
       <select id="paImportClient" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.95rem;margin-bottom:.7rem">
         <option value="">Loading…</option>
@@ -2108,7 +2118,7 @@
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
           <button class="btn-secondary btn-sm" id="putawayRefreshBtn">&#8635; Refresh</button>
         <button class="btn-secondary btn-sm" id="putawayImportBtn"
-          title="Bin a whole stock position from a spreadsheet — SKU, Location and quantity. It SETS the position, so re-uploading the same sheet does not double it.">&#8679; Put away by file</button>
+          title="Upload a stock position from a spreadsheet — SKU, Location and quantity. Choose whether it fills the open putaway job, mass ADDS, mass SUPERSEDES or mass REDUCES; you confirm a preview first, and a mass upload is reversible for 3 days.">&#8679; Upload stock by file</button>
         </div>
       </div>
       <p class="hint" style="margin:.1rem 0 .8rem">
@@ -2131,6 +2141,15 @@
       </div>
       <div id="paHistStats" class="pk-stats" style="margin-bottom:.6rem"></div>
       <div id="paHistList"></div>
+      <div class="section-header" style="margin-top:1.1rem">
+        <h2 style="font-size:1rem">&#8679; Recent stock uploads</h2>
+      </div>
+      <p class="hint" style="margin:.1rem 0 .6rem">
+        Mass add / supersede / reduce by file. Each can be <b>reversed for 3 days</b> &mdash; the position goes back
+        exactly as it was, unless the stock has since physically moved (those SKUs are named and left alone).
+        Every upload and reversal is on the audit trail with who did it.
+      </p>
+      <div id="paImportsRecent"></div>
     </section>
 
     <section id="tab-inbound" class="tab">

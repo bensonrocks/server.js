@@ -3679,6 +3679,50 @@ outlives what it describes. And a file input whose `value` is never cleared
 fires NO change event when the same file is picked again, so a second upload of
 the same sheet silently never armed the button.
 
+### Mass ADD / SUPERSEDE / REDUCE — preview-confirm + 3-day reversal
+
+Per the user: uploading inventory, new account or old, is a CHOICE — add on
+top, supersede the position, or reduce (write-off list) — with errors flagged,
+a confirm before anything moves, a 3-day window to reverse cleanly, and an
+audit trail that reads as the mass action it was, with who did it.
+
+- The upload overlay has FOUR radio modes: fill-the-putaway-job (the old
+  propose flow, still default), mass ADD, mass SUPERSEDE (`mode=set`), mass
+  REDUCE. Supersede/reduce force the direct path (`wantsDirect`).
+- **PREVIEW-CONFIRM**: without `confirm_apply=yes` the route answers 409
+  `{needsApplyConfirm, preview}` computed by `inventory.previewStockPositions`
+  — rows/units/SKUs, new SKUs and bins that would be created, ERROR rows
+  (missing fields; on reduce also unknown SKU / missing bin), and reduce
+  SHORTFALLS (bin holds less than the sheet subtracts — floored at zero,
+  never negative). The client confirms against those numbers, which are
+  computed the same way the write computes them.
+- **REDUCE never invents**: an unknown SKU or missing bin is an error row,
+  not a create-then-subtract-from-zero.
+- **3-DAY REVERSAL** (`STOCK_IMPORT_REVERSE_HOURS` = 72):
+  `setStockPositions` returns a before-`snapshot` (each touched (sku,bin)
+  cell's exact lot rows + each SKU's on-hand + `asOfMovementId`, the ledger
+  high-water mark when the import finished). Stored on the `db.stockImports`
+  txn with `reversible_until`; `pruneStockImportSnapshots` drops expired /
+  used snapshots so db.json never carries them forever.
+  `POST /api/putaway/imports/:id/reverse` restores the snapshot —
+  import-created SKUs are deleted again only if nothing else gave them stock.
+  **CLEAN means clean**: `movedSkusSince` (reserve/release excluded — they
+  move no piece) refuses 409 naming SKUs that physically moved since;
+  `skip_moved=yes` reverses the rest and leaves those exactly as they are.
+  Past the window → 410, permanent. Already reversed → 409.
+- **AUDIT names the act**: `stock_mass_added` / `stock_mass_superseded` /
+  `stock_mass_reduced` / `stock_mass_upload_reversed`, each with `by`.
+- UI: Putaway → "Recent stock uploads" (`#paImportsRecent`) — one row per
+  mass upload with mode, client, file, units, who, and a ⏌ Reverse button
+  showing hours left; reversed rows say when and by whom.
+
+Verified 30 API checks: preview writes nothing and flags the bad row, add
+lands and reverses to exactly nothing (created SKU removed), supersede
+replaces only listed bins, reduce subtracts with unknown-SKU error +
+shortfall flag, a hand adjustment after the upload makes the reversal refuse
+BY NAME then skip_moved preserves the adjusted figure, double-reverse
+refused, and all four audit event types present with the operator's id.
+
 ## A text field must never render a raw JavaScript Date (`textVal`)
 
 From a photo of the scan screen: a BETIME line showed
