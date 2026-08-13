@@ -12041,6 +12041,10 @@ app.get('/api/putaway/clients', requireAuth, (req, res) => {
   for (const p of clientProfiles(db)) { add(p.client); const e = seen.get(String(p.client).trim().toLowerCase()); if (e) e.hasProfile = true; }
   for (const b of db.batches || []) { add(b.client_name); const e = seen.get(String(b.client_name || '').trim().toLowerCase()); if (e) e.orders += (b.orders || []).length; }
   for (const r of db.inbound || []) { add(r.client_name); const e = seen.get(String(r.client_name || '').trim().toLowerCase()); if (e) e.inbound++; }
+  // A client can exist ONLY in inventory — e.g. their first-ever action was a
+  // mass stock upload or an item-master load. Without this they could never be
+  // PICKED for their second upload (the picker deliberately has no free-text).
+  try { for (const c of inventory.listClientIds() || []) add(c); } catch (_) {}
   let withStock = new Set();
   try { withStock = new Set(Object.keys(inventory.stockByClientTotals() || {})); } catch (_) {}
   res.json({
