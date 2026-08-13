@@ -843,10 +843,36 @@ const PERSISTENCE = { bootCount: 1, survivedRestart: false, previousBootAt: null
   } else {
     PERSISTENCE.firstBootAt = new Date().toISOString();
   }
+  // CRASH vs CLEAN STOP — gracefulShutdown drops a marker file on its way
+  // out; a boot that follows a previous boot WITHOUT that marker means the
+  // process died some other way (a real crash, an out-of-memory kill, or a
+  // forced stop). Recorded so "I keep receiving crash emails" is answerable
+  // from System Outages instead of guesswork: if the emails line up with
+  // rows here, the restarts are real; if there are no rows, the emails are
+  // the platform misreading ordinary redeploys.
+  const cleanFile = path.join(DATA_DIR, '.clean-shutdown.marker');
+  PERSISTENCE.uncleanStops = (prev && prev.uncleanStops) || 0;
+  PERSISTENCE.lastStopClean = null;                       // null = first boot, nothing to judge
+  // A marker written by PRE-FEATURE code carries no uncleanStops field and its
+  // shutdown never wrote a clean marker — judging that boot would false-alarm
+  // exactly once on the deploy that ships this. Unknown, not a crash.
+  if (prev && prev.uncleanStops === undefined) prev = null;
+  if (prev) {
+    let clean = false;
+    try { fs.readFileSync(cleanFile); clean = true; } catch {}
+    PERSISTENCE.lastStopClean = clean;
+    if (!clean) {
+      PERSISTENCE.uncleanStops += 1;
+      PERSISTENCE.lastUncleanBootAt = prev.lastBootAt || null;
+      console.warn(`[persistence] ⚠ previous stop was NOT clean (crash / OOM kill / forced restart). Unclean stops so far: ${PERSISTENCE.uncleanStops}. Previous boot: ${prev.lastBootAt || 'unknown'}`);
+    }
+  }
+  try { fs.unlinkSync(cleanFile); } catch {}              // each boot consumes the marker
   const marker = {
     bootCount:   PERSISTENCE.bootCount,
     firstBootAt: PERSISTENCE.firstBootAt,
     lastBootAt:  new Date().toISOString(),
+    uncleanStops: PERSISTENCE.uncleanStops,
   };
   // Write SYNCHRONOUSLY at boot so the marker is durable before we serve any
   // request (mkdir first — DATA_DIR may not exist yet on a fresh volume).
@@ -1135,6 +1161,9 @@ function gracefulShutdown(signal) {
   const done = () => {
     // Final safety flush of the global store (users/sessions) before exit.
     try { _persistGlobalDbSync(); } catch {}
+    // Leave the clean-stop marker — its ABSENCE at the next boot is what
+    // identifies a genuine crash (see the persistence self-test).
+    try { fs.writeFileSync(path.join(DATA_DIR, '.clean-shutdown.marker'), new Date().toISOString()); } catch {}
     process.exit(0);
   };
   setTimeout(done, 3000); // hard cap so a stuck flush can never hang the deploy
@@ -7723,6 +7752,11 @@ app.get('/api/version', (req, res) => {
       ephemeralRisk,                                   // config looks unsafe
       dataLostOnLastRestart,                           // proven data loss happened
     },
+    // Crash forensics: was the stop before this boot a clean shutdown
+    // (redeploy handoff) or a genuine death (crash / OOM kill)? null on the
+    // very first boot. uncleanStops counts them over the marker's lifetime.
+    lastStopClean: PERSISTENCE.lastStopClean,
+    uncleanStops:  PERSISTENCE.uncleanStops || 0,
   });
 });
 
@@ -22515,3 +22549,22 @@ app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`))
 
 // Initialize MySQL in the background (non-blocking)
 initMysqlPool().catch(err => console.error('[Startup] MySQL init failed:', err.message));
+
+// UNCLEAN RESTART → a System Outage row. Same fixed wording every time so
+// repeats COUNT on one row instead of spamming the list; the previous boot
+// time rides in `page` so each occurrence is still traceable. This is what
+// turns "I keep receiving crash emails" into evidence: rows here = the
+// process really is dying (crash / out-of-memory kill); no rows = the emails
+// are the platform misreading ordinary redeploy handoffs.
+if (PERSISTENCE.lastStopClean === false) {
+  setTimeout(() => {
+    try {
+      recordSystemError({
+        app: 'office', context: 'server-restart',
+        message: 'Server restarted without a clean shutdown — a real crash, an out-of-memory kill, or a forced stop. If crash emails from the host line up with this row\'s times, the restarts are genuine.',
+        page: `previous boot ${PERSISTENCE.lastUncleanBootAt || 'unknown'} → restarted ${SERVER_BOOTED_AT}`,
+      });
+      logAudit('server_unclean_restart', { previousBootAt: PERSISTENCE.lastUncleanBootAt || '', restartedAt: SERVER_BOOTED_AT, uncleanStops: PERSISTENCE.uncleanStops });
+    } catch (e) { console.error('[persistence] could not record unclean restart:', e.message); }
+  }, 5000);
+}
