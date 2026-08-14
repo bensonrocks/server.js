@@ -13326,13 +13326,30 @@
     } catch (e) { alert(e.message); }
   });
   document.getElementById('acSweep')?.addEventListener('click', async () => {
+    const mins = Math.max(0, Number(document.getElementById('acRunMins')?.value ?? 60) || 0);
+    // CANCELLING IS NOT UNDOABLE IN BULK, so the confirmation states the
+    // cut-off in the words of what it will do — and a zero cut-off says so
+    // plainly, because that is the one that takes everything at once.
+    const what = mins === 0
+      ? 'EVERY API order with no stock right now — including ones that have only just arrived'
+      : `API orders that have had no stock for more than ${mins} minute(s)`;
+    if (!confirm(`Purge now?\n\nThis cancels ${what}.\n\nUploaded orders, clients whose stock is not held here, and anything already being picked are never touched. Each one can be reopened afterwards.\n\nThe standing rule above is not changed.`)) return;
+    const btn = document.getElementById('acSweep');
+    if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
     try {
-      const r = await fetchT('/api/master/orders/auto-cancel-sweep', { method: 'POST', headers: _acHdrs(), body: '{}' });
+      const r = await fetchT('/api/master/orders/auto-cancel-sweep', {
+        method: 'POST', headers: _acHdrs(), body: JSON.stringify({ minutes: mins }),
+      });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || 'Could not run');
-      alert(`Checked.\n\nCancelled now: ${(d.cancelled || []).length}\nOn the clock: ${d.armed}`);
+      const list = (d.cancelled || []).slice(0, 12).map(c => `• ${c.order} (${c.client})`).join('\n');
+      alert(`Purge done — cut-off ${d.waitUsed} minute(s).\n\nCancelled: ${(d.cancelled || []).length}`
+        + (list ? `\n${list}${(d.cancelled || []).length > 12 ? '\n…' : ''}` : '')
+        + `\nStill on the clock: ${d.armed}`);
       loadAutoCancelPanel();
+      renderOrdersDash().catch(() => {});
     } catch (e) { alert(e.message); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '▶ Run'; } }
   });
   document.getElementById('pickupPickAll')?.addEventListener('change', e => pickupUI.selectAll(e.target.checked));
   document.getElementById('ppCancel')?.addEventListener('click', () =>

@@ -2610,8 +2610,19 @@ function autoCancelPolicy(db) {
     reason: p.reason || 'No stock to fulfil — cancelled automatically',
   };
 }
-function applyNoStockAutoCancel(db) {
+// `opts.minutes` runs THIS sweep against a different wait without touching the
+// saved policy — the difference between "clear the ones that have been short
+// since this morning" and permanently making the rule twitchy. 0 means now:
+// anything short at this moment goes, armed or not, which is what someone
+// pressing the button after checking the list actually means.
+function applyNoStockAutoCancel(db, opts = {}) {
   const pol = autoCancelPolicy(db);
+  const override = (opts.minutes === undefined || opts.minutes === null || opts.minutes === '')
+    ? null : Math.max(0, Number(opts.minutes) || 0);
+  const waitMins = override === null ? pol.minutes : override;
+  // A manual run with an explicit wait is a decision someone just made, so it
+  // proceeds even when the scheduled rule is switched off.
+  const manual = override !== null;
   if (!inventory.available()) return { cancelled: [], armed: 0 };   // cannot judge → do nothing
   const lookup = _makeSkuLookup();
   const now = Date.now();
@@ -2661,15 +2672,20 @@ function applyNoStockAutoCancel(db) {
       if (!st.no_stock_since) {
         st.no_stock_since = new Date().toISOString();
         b.orderStates[o.order_number] = st;      // persist the (possibly new) state
-        changed = true; armed++; continue;
+        changed = true;
+        // An ad-hoc run with a zero wait means "clear what is short NOW", so a
+        // never-armed order is not spared on a technicality. Any other wait
+        // still needs time to have passed, so it only arms.
+        if (!(manual && waitMins === 0)) { armed++; continue; }
       }
-      if (!pol.enabled) { armed++; continue; }
+      if (!pol.enabled && !manual) { armed++; continue; }
       const waited = (now - new Date(st.no_stock_since).getTime()) / 60000;
-      if (waited < pol.minutes) { armed++; continue; }
+      if (waited < waitMins) { armed++; continue; }
       st.status = 'unprocessed';
       st.unprocessed_reason = pol.reason;
       st.unprocessed_at = new Date().toISOString();
-      st.auto_cancelled = { at: st.unprocessed_at, why: 'no_stock', waitedMins: Math.round(waited) };
+      st.auto_cancelled = { at: st.unprocessed_at, why: 'no_stock', waitedMins: Math.round(waited),
+                            manual: manual || undefined, waitUsed: waitMins };
       st.updated_at = st.unprocessed_at;
       delete st.no_stock_since;
       b.orderStates[o.order_number] = st;
@@ -2681,18 +2697,21 @@ function applyNoStockAutoCancel(db) {
     try { releaseOrphanReservations(db); } catch (_) {}
     try { closeSettledBackorders(db); } catch (_) {}
     logAudit('orders_auto_cancelled_no_stock', {
-      count: cancelled.length, minutes: pol.minutes, orders: cancelled.slice(0, 100),
+      count: cancelled.length, minutes: waitMins, manual: manual || undefined,
+      orders: cancelled.slice(0, 100),
     });
     for (const c of cancelled) {
       addPoke(db, {
         kind: 'order_auto_cancelled', client: c.client, direction: 'outbound',
         ref: c.order, orders: 1,
-        note: `Cancelled automatically — no stock for ${pol.minutes} minutes`,
+        note: manual
+          ? `Cancelled — no stock (run by hand, ${waitMins} min cut-off)`
+          : `Cancelled automatically — no stock for ${waitMins} minutes`,
       });
     }
   }
   if (changed) writeDb(db);
-  return { cancelled, armed };
+  return { cancelled, armed, waitUsed: waitMins, manual };
 }
 // Runs on its own clock so the rule holds whether or not anyone is looking,
 // and once shortly after boot so a restart does not reset every timer.
@@ -18650,7 +18669,16 @@ app.post('/api/master/orders/auto-cancel/policy', express.json(), (req, res) => 
 });
 app.post('/api/master/orders/auto-cancel-sweep', express.json(), (req, res) => {
   if (!requireInboundAdmin(req, res)) return;
-  const out = applyNoStockAutoCancel(readDb());
+  // An AD-HOC purge: run against a wait chosen for this run only. Omit it and
+  // the saved policy applies, exactly as the scheduled sweep does.
+  const mins = req.body?.minutes;
+  const out = applyNoStockAutoCancel(readDb(), { minutes: mins });
+  if (out.manual) {
+    logAudit('orders_auto_cancel_run_manually', {
+      minutes: out.waitUsed, cancelled: out.cancelled.length,
+      by: req.userId || _tokenUserId(req) || '',
+    });
+  }
   res.json({ ok: true, ...out });
 });
 // What the rule has cancelled lately — the list the Reopen button works from.

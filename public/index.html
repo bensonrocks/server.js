@@ -2341,8 +2341,20 @@
             <input type="number" id="acMinutes" min="5" max="10080" style="width:80px;padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px"> minutes
           </label>
           <button class="btn-primary btn-sm" id="acSave">Save</button>
-          <button class="btn-secondary btn-sm" id="acSweep" title="Run the check now instead of waiting for the next five-minute sweep">&#9654; Run now</button>
-          <span class="hint" id="acArmed"></span>
+          <span class="hint">&larr; the standing rule, checked every 5 minutes</span>
+        </div>
+        <!-- AD-HOC PURGE. Separate from the schedule on purpose: clearing what
+             has been short since this morning is a one-off decision, and doing
+             it by editing the standing rule and putting it back afterwards is
+             how the rule ends up left in the wrong place. -->
+        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.1rem 0 .5rem;padding:.45rem .6rem;background:#fff;border:1px solid #fde68a;border-radius:8px">
+          <b style="font-size:.82rem">Purge now</b>
+          <label style="font-size:.85rem">cancel orders short for more than
+            <input type="number" id="acRunMins" min="0" max="10080" value="60" style="width:80px;padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px"> minutes
+          </label>
+          <button class="btn-secondary btn-sm" id="acSweep">&#9654; Run</button>
+          <span class="hint">0 = everything with no stock right now. Does not change the rule above.</span>
+          <span class="hint" id="acArmed" style="flex-basis:100%"></span>
         </div>
         <!-- WHICH orders are counting down, not just how many. A number alone
              cannot be acted on; these can be spared one by one. -->
