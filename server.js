@@ -2450,9 +2450,13 @@ function _zortPushState(db, ord, state) {
   if (action === 'none') return { state: 'off', why: 'this store is set to push nothing back on completion (Complete action = none)' };
   const entry = (db.zortOutbox || []).find(e => e.kind === 'completion' && String(e.orderNumber) === String(ord.order_number));
   if (entry) {
+    // The REASON travels even while it is still retrying. A hub that REFUSED
+    // (a business error inside a 200 — see zortBodyError) is not the same as
+    // "waiting its turn", and nobody should have to wait out three attempts
+    // to be told the channel said no.
     return entry.stalled || (entry.attempts || 0) >= 3
       ? { state: 'failed', attempts: entry.attempts || 0, error: entry.lastError || '', action }
-      : { state: 'queued', attempts: entry.attempts || 0, action };
+      : { state: 'queued', attempts: entry.attempts || 0, error: entry.lastError || '', action };
   }
   if (state.status === 'done') {
     return { state: 'missing', why: 'the order was completed but nothing was queued for the hub', action };
@@ -18176,6 +18180,49 @@ function enqueueZortProduct(db, storeId, clientId, sku) {
   });
   return true;
 }
+
+// RE-PUSH ONE ORDER TO THE CHANNEL. The floor's answer to a push that did not
+// land: a false green (see zortBodyError — the hub used to refuse inside a 200
+// and we recorded success) leaves an order stamped as told when the hub never
+// changed, and nothing on the screen could undo that. Clears the stamp and
+// queues the push again, so the next drain reports the truth either way.
+app.post('/api/master/zort/orders/:orderNumber/repush', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const db = readDb();
+  const f = lazadaFindOrder(db, orderNumber, '');
+  if (!f) return res.status(404).json({ error: 'Order not found' });
+  const ord = f.ord;
+  if (!ord.zort_id || !ord.zort_store_id) {
+    return res.status(400).json({ error: 'This order did not come from a connected store — there is no channel to tell.' });
+  }
+  const store = zortStores(db).find(s => s.id === ord.zort_store_id);
+  if (!store) return res.status(404).json({ error: 'The store this order came from is no longer connected.' });
+  const action = store.completeAction || 'none';
+  if (action === 'none') {
+    return res.status(400).json({ error: 'This store is set to send nothing back on completion. Set its Complete action in Connections first.' });
+  }
+  const st = f.batch.orderStates?.[ord.order_number] || {};
+  if (st.status !== 'done') return res.status(409).json({ error: 'Only a completed order is pushed to the channel.' });
+  // Drop any stale claim of success, and any spent entry for this order.
+  delete st.zort_pushed_at; delete st.zort_push_action;
+  const ob = zortOutbox(db);
+  for (let i = ob.length - 1; i >= 0; i--) {
+    if (ob[i].kind === 'completion' && ob[i].orderNumber === orderNumber) ob.splice(i, 1);
+  }
+  ob.push({
+    id: uuidv4(), kind: 'completion', storeId: store.id, clientId: invClientId(store.clientName),
+    orderNumber, zortId: ord.zort_id, action,
+    tracking: String(ord.waybill_number || '').trim(),
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  writeDb(db);
+  logAudit('zort_completion_repushed', { order: orderNumber, action, by: req.userId || _tokenUserId(req) || '' });
+  // Run the queue now rather than waiting up to 30s — someone is standing
+  // there watching the chip.
+  setImmediate(() => { drainZortOutbox().catch(() => {}); });
+  res.json({ ok: true, action, note: 'Queued — the chip will show the result within a few seconds.' });
+});
 
 // Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so
 // a re-pull cannot queue the same label twice. When a `labelUrl` arrives (the

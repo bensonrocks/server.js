@@ -882,6 +882,24 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   Success(1)**; Voided(2) / Returned(4) / Failed Shipment(7) / "Partial
   Transfer" sit alongside. "Waiting" comes AFTER Packed — it means Ready to
   Ship was pressed, not "new work waiting".
+- **A 200 IS NOT A SUCCESS — `zortBodyError` (lib/zort.js).** ZORT reports
+  business refusals INSIDE a 200 body (`resCode` ≠ 200: "shipment channel
+  required", order not packable, already RTS'd). `zortRequest` only checked
+  the HTTP status, so a **failed RTS was recorded as done**: outbox entry
+  dropped, order stamped `zort_pushed_at` → green "↗ Channel told", hub
+  unchanged, no label, and nothing anywhere saying why. Reported live (Prem
+  Kumar, 2026-08-14). Every response is now inspected: a `resCode`/`success`
+  verdict that is not success THROWS, so the entry retries and the reason
+  reaches the screen. A body carrying NO verdict (GetOrders and friends) is
+  still success — silence there must keep meaning what it always meant.
+  - The refusal reason travels while **queued**, not only once stalled — the
+    chip reads **⚠ Channel refused** with the hub's own words.
+  - **`POST /api/master/zort/orders/:orderNumber/repush`** (admin or master)
+    clears the stale stamp, requeues the completion push and drains at once.
+    The push chip is CLICKABLE for exactly this — a green chip is a claim
+    about the hub, so when the hub disagrees the floor can say "tell them
+    again" from the row. (The row's other **Resend** button is the completion
+    ALERT EMAIL — unrelated, and mistaken for this more than once.)
 - **THE ZORT SCREEN's "Waiting for the transfer" IS NOT API STATUS `waiting`.**
   Verified live (2026-08-14, 🔍 Find order on 171347763939855): the Sale Items
   screen showed "Waiting for the transfer" while the API returned `pending` —

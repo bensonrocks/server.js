@@ -2183,12 +2183,24 @@
     const p = ord.zort_push;
     if (!p) return '';
     const act = p.action === 'readytoship' ? 'Ready to Ship' : p.action === 'pack' ? 'Packed' : 'status update';
+    // A push can be RE-SENT from the row. Reachable on both "sent" and
+    // "failed": a green chip is a claim about the hub, and when the hub
+    // disagrees the floor needs a way to say "tell them again" without
+    // hunting through Connections.
+    const rp = ` data-repush="${esc(ord.order_number)}" style="cursor:pointer"`;
     if (p.state === 'sent') {
       const when = p.at ? new Date(p.at).toLocaleString('en-GB', { hour12: false }) : '';
-      return `<span class="chip chip-sync-sent" title="The sales channel was told this order is ${esc(act)} at ${esc(when)}.">&#8599; Channel told</span>`;
+      return `<span class="chip chip-sync-sent"${rp} title="The sales channel was told this order is ${esc(act)} at ${esc(when)}. Click to tell them again if the channel's own screen disagrees.">&#8599; Channel told</span>`;
     }
-    if (p.state === 'queued') return `<span class="chip chip-sync-queued" title="Waiting to tell the sales channel (${esc(act)}) — the background sync retries until it lands. Attempts so far: ${p.attempts || 0}.">&#8987; Telling channel…</span>`;
-    if (p.state === 'failed') return `<span class="chip chip-sync-failed" title="Could not tell the sales channel after ${p.attempts} attempt(s): ${esc(p.error || 'unknown error')}. It keeps retrying; check Connections.">&#9888; Channel not told</span>`;
+    if (p.state === 'queued') {
+      // A hub that REFUSED reads differently from one we simply have not
+      // reached yet — say so on the chip, not just in the tooltip.
+      if (p.error) {
+        return `<span class="chip chip-sync-failed"${rp} title="The sales channel REFUSED this (${esc(act)}): ${esc(p.error)}. Retrying — click to try again now.">&#9888; Channel refused</span>`;
+      }
+      return `<span class="chip chip-sync-queued" title="Waiting to tell the sales channel (${esc(act)}) — the background sync retries until it lands. Attempts so far: ${p.attempts || 0}.">&#8987; Telling channel…</span>`;
+    }
+    if (p.state === 'failed') return `<span class="chip chip-sync-failed"${rp} title="Could not tell the sales channel after ${p.attempts} attempt(s): ${esc(p.error || 'unknown error')}. It keeps retrying — click to try again now.">&#9888; Channel not told</span>`;
     if (p.state === 'missing') return `<span class="chip chip-sync-failed" title="This order is finished here but nothing was queued for the sales channel — ${esc(p.why || '')}. Check the store's Complete action in Connections.">&#9888; Channel not told</span>`;
     if (p.state === 'off') return `<span class="chip chip-sync-off" title="Nothing is pushed back for this order — ${esc(p.why || '')}. Set the store's Complete action in Connections if the channel should be told.">&#9723; Channel push off</span>`;
     return '';
@@ -2591,6 +2603,27 @@
       btn.addEventListener('click', e => {
         e.stopPropagation();
         openDeleteOrderModal(btn.dataset.order, btn.dataset.batchid);
+      });
+    });
+
+    // Tell the sales channel again. The chip sits inside the clickable row, so
+    // the click must not also open the order.
+    document.querySelectorAll('[data-repush]').forEach(chip => {
+      chip.addEventListener('click', async e => {
+        e.stopPropagation();
+        const orderNumber = chip.dataset.repush;
+        if (!confirm(`Tell the sales channel about ${orderNumber} again?\n\nUse this when the channel's own screen does not show the status we sent. Nothing else about the order changes.`)) return;
+        const was = chip.textContent;
+        chip.textContent = '⏳ Telling channel…';
+        try {
+          const r = await fetch(`/api/master/zort/orders/${encodeURIComponent(orderNumber)}/repush`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || 'Could not re-send');
+          setTimeout(() => renderOrdersDash().catch(() => {}), 4000);
+        } catch (err) { chip.textContent = was; alert('Re-send failed: ' + err.message); }
       });
     });
 
