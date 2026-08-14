@@ -18178,12 +18178,28 @@ function enqueueZortProduct(db, storeId, clientId, sku) {
 }
 
 // Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so
-// a re-pull cannot queue the same label twice.
-function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking }) {
+// a re-pull cannot queue the same label twice. When a `labelUrl` arrives (the
+// hub's OWN link from the Pack/RTS response), an EXISTING entry — stalled or
+// not — is revived with it and retried immediately: the hub just told us the
+// label exists and where it is, so any earlier failure history is obsolete.
+function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking, labelUrl }) {
   const ob = zortOutbox(db);
-  if (ob.some(e => e.kind === 'label' && e.storeId === storeId && e.orderNumber === orderNumber && !e.stalled)) return false;
+  const existing = ob.find(e => e.kind === 'label' && e.storeId === storeId && e.orderNumber === orderNumber);
+  if (existing) {
+    if (labelUrl || existing.stalled) {
+      if (labelUrl) existing.labelUrl = labelUrl;
+      if (tracking) existing.tracking = existing.tracking || tracking;
+      existing.stalled = false;
+      existing.attempts = 0;
+      existing.nextAttemptAt = new Date().toISOString();
+      delete existing.lastError;
+      return true;
+    }
+    return false;
+  }
   ob.push({
     id: uuidv4(), kind: 'label', storeId, orderNumber, zortId, tracking: tracking || '',
+    labelUrl: labelUrl || undefined,
     attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
   });
   return true;
@@ -18329,7 +18345,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // orders sat with a waybill and no printable label. fetchLabelPdf tries
     // the file endpoint, then the documented list endpoint's linkurl and
     // inline Data, and only reports absence when all three come back empty.
-    const got = await zortApi.fetchLabelPdf(store, { id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking });
+    const got = await zortApi.fetchLabelPdf(store, { id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking, labelUrl: entry.labelUrl });
     const pdf = got && got.pdf;
     if (got && got.via && got.via !== 'file') {
       logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: got.via });
@@ -18386,13 +18402,22 @@ async function _zortSendOutboxEntry(db, store, entry) {
   }
   if (entry.kind === 'completion') {
     const t = entry.tracking || undefined;
+    let rtsDetail = null;
     if (entry.action === 'pack' || entry.action === 'readytoship') {
       // Same spec rule as the arrange path: marketplace orders name their
       // marketplace shipment channel; cached on the entry across retries.
       if (entry.shipment === undefined) entry.shipment = await zortShipmentChannel(store, entry.zortId);
       const args = { id: entry.zortId, trackingno: t, shipment: entry.shipment || undefined };
-      if (entry.action === 'pack') await zortApi.packOrder(store, args);
-      else                         await zortApi.readyToShip(store, args);
+      const resp = entry.action === 'pack'
+        ? await zortApi.packOrder(store, args)
+        : await zortApi.readyToShip(store, args);
+      // THE RTS RESPONSE CARRIES THE LABEL: per the v4 docs it returns
+      // detail.trackingno AND detail.link (the label URL). This is the hub
+      // TELLING US where this order's label is — worth more than every
+      // guessed label endpoint, which on some live accounts return nothing
+      // even after the AWB exists (found live: an order Done, Channel told,
+      // waybill known, and the label fetch stalling forever).
+      rtsDetail = resp?.detail || resp?.Detail || null;
     }
     else await zortApi.updateOrderStatus(store, { id: entry.zortId, status: store.completeStatusCode ?? 1, actionDate: new Date().toISOString().slice(0, 10) });
     // STAMP THE ORDER, not just the log. "Did the hub actually hear about
@@ -18406,8 +18431,25 @@ async function _zortSendOutboxEntry(db, store, entry) {
       if (f) {
         const st = f.batch.orderStates?.[f.ord.order_number];
         if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
+        // Backfill the tracking number off the RTS response if we never had it.
+        const rtsTracking = String(rtsDetail?.trackingno || rtsDetail?.trackingNo || '').trim();
+        if (rtsTracking && !String(f.ord.waybill_number || '').trim()) {
+          f.ord.waybill_number = rtsTracking;
+          logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking: rtsTracking, storeId: store.id, via: 'rts-response' });
+        }
       }
     } catch (_) {}
+    // Feed the RTS response's label link to the label queue — it revives a
+    // stalled fetch and is tried FIRST. The label provably exists from this
+    // moment (the order is RTS'd), so also (re)queue even without a link.
+    if (store.labelSync) {
+      const link = String(rtsDetail?.link || rtsDetail?.Link || '').trim();
+      enqueueZortLabel(db, store.id, {
+        orderNumber: entry.orderNumber, zortId: entry.zortId,
+        tracking: entry.tracking || String(rtsDetail?.trackingno || '').trim(),
+        labelUrl: /^https?:\/\//i.test(link) ? link : undefined,
+      });
+    }
     logAudit('zort_completion_pushed', { order: entry.orderNumber, client: store.clientName || '', action: entry.action });
     return true;
   }
