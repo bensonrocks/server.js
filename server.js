@@ -18679,6 +18679,35 @@ app.get('/api/master/orders/cancelled', (req, res) => {
   rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
   res.json({ rows: rows.slice(0, 200), total: rows.length });
 });
+// KEEP — spare an order the rule is about to cancel. The other half of
+// Reopen: undoing a cancellation is useful, but stopping one BEFORE it
+// happens is better, and someone watching the clock run down needs a way to
+// say "not this one" without turning the whole rule off.
+app.post('/api/master/orders/:orderNumber/keep', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+  const db = readDb();
+  for (const b of db.batches || []) {
+    const ord = (b.orders || []).find(o => o.order_number === orderNumber);
+    if (!ord) continue;
+    if (!b.orderStates) b.orderStates = {};
+    const st = b.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    if (st.status === 'done')        return res.status(409).json({ error: 'This order is already completed.' });
+    if (st.status === 'unprocessed') return res.status(409).json({ error: 'This order is already cancelled — use Reopen.' });
+    st.autocancel_exempt = true;
+    delete st.no_stock_since;                      // off the clock immediately
+    st.autocancel_kept_at = new Date().toISOString();
+    st.autocancel_kept_by = req.userId || _tokenUserId(req) || '';
+    if (reason) st.autocancel_kept_reason = reason.slice(0, 200);
+    b.orderStates[orderNumber] = st;
+    writeDb(db);
+    logAudit('order_autocancel_exempted', { order: orderNumber, client: b.client_name || '', reason: reason.slice(0, 200), by: st.autocancel_kept_by });
+    return res.json({ ok: true, order: orderNumber, note: 'Off the clock. The rule will not cancel this order.' });
+  }
+  res.status(404).json({ error: 'Order not found' });
+});
+
 // REOPEN — put a cancelled order back on the floor. Admin or master: a
 // cancellation is a decision, and undoing one is too.
 app.post('/api/master/orders/:orderNumber/reopen', express.json(), (req, res) => {

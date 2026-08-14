@@ -2344,6 +2344,9 @@
           <button class="btn-secondary btn-sm" id="acSweep" title="Run the check now instead of waiting for the next five-minute sweep">&#9654; Run now</button>
           <span class="hint" id="acArmed"></span>
         </div>
+        <!-- WHICH orders are counting down, not just how many. A number alone
+             cannot be acted on; these can be spared one by one. -->
+        <div id="acArmedList" class="dcs-wrap" style="margin-bottom:.5rem"></div>
         <div style="border-top:1px solid #fde68a;padding-top:.5rem">
           <b style="font-size:.85rem">Cancelled orders &mdash; reopen to put one back on the floor</b>
           <div class="hint" style="margin:.15rem 0 .4rem">

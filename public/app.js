@@ -13238,6 +13238,38 @@
             ? `⏳ ${d.armedCount} order(s) on the clock${soonest < 9999 ? ` — next in ${soonest} min` : ''}`
             : 'Nothing on the clock.';
         }
+        // WHICH ones, not just how many — a count cannot be acted on. Soonest
+        // first, and each can be spared without switching the rule off.
+        const al = document.getElementById('acArmedList');
+        if (al) {
+          const rows = [...(d.armed || [])].sort((a, b) => (a.minutesLeft ?? 0) - (b.minutesLeft ?? 0));
+          al.innerHTML = rows.length ? `
+            <table class="dcs-table"><thead><tr>
+              <th>Order</th><th>Client</th><th>Cancels in</th><th></th>
+            </tr></thead><tbody>${rows.map(a => `
+              <tr>
+                <td><b>${esc(a.order)}</b></td>
+                <td>${esc(a.client)}</td>
+                <td${a.minutesLeft <= 10 ? ' style="color:#b91c1c;font-weight:700"' : ''}>${a.minutesLeft} min</td>
+                <td><button class="btn-secondary btn-sm ac-keep" data-order="${esc(a.order)}" title="Take this order off the clock — the rule will not cancel it">&#128274; Keep</button></td>
+              </tr>`).join('')}</tbody></table>` : '';
+          al.querySelectorAll('.ac-keep').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const num = btn.dataset.order;
+              const why = prompt(`Keep ${num}?\n\nIt comes off the clock and the rule will not cancel it.\n\nWhy? (optional, goes on the trail)`);
+              if (why === null) return;
+              btn.disabled = true;
+              try {
+                const rr = await fetchT(`/api/master/orders/${encodeURIComponent(num)}/keep`, {
+                  method: 'POST', headers: _acHdrs(), body: JSON.stringify({ reason: why }),
+                });
+                const dd = await rr.json().catch(() => ({}));
+                if (!rr.ok) throw new Error(dd.error || 'Could not keep it');
+                loadAutoCancelPanel();
+              } catch (e) { btn.disabled = false; alert(e.message); }
+            });
+          });
+        }
       }
       const r2 = await fetchT('/api/master/orders/cancelled', { headers: _acHdrs() });
       if (!r2.ok) { box.innerHTML = '<div class="hint">Could not load cancelled orders.</div>'; return; }
