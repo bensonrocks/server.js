@@ -2557,6 +2557,31 @@ function _makeSkuLookup() {
   };
 }
 
+// CAN THIS ORDER ACTUALLY BE PICKED? One verdict from the live shelf balance,
+// used by BOTH the office row and the client's portal — per the user, the
+// client must see the same truth we do, whether the order arrived by API or by
+// upload. Physical on-hand is the measure (the packer's question is "is it on
+// the shelf"); `null` means this client's stock is not tracked here, which is
+// an arrangement, not a shortage, and must never read as one.
+function orderStockStateSrv(batch, lines, lookup) {
+  let tracked = false, shortLines = 0, zeroLines = 0, counted = 0;
+  const short = [];
+  for (const l of lines || []) {
+    if (!l || !l.sku) continue;
+    const hit = lookup(batch, l.sku);
+    if (!hit || !hit.found || hit.stock === null) continue;
+    tracked = true; counted++;
+    const need = Number(l.qty) || 0;
+    const have = Number(hit.stock) || 0;
+    if (have <= 0)      { zeroLines++;  short.push({ sku: l.sku, need, have }); }
+    else if (have < need) { shortLines++; short.push({ sku: l.sku, need, have }); }
+  }
+  if (!tracked) return null;                                   // not tracked here
+  if (!short.length) return { state: 'ok', short: [] };
+  if (zeroLines >= counted) return { state: 'none', short };    // nothing on the shelf
+  return { state: 'partial', short };
+}
+
 function globalOrdersWithState(keep) {
   const db          = readDb();
   const _lineLookup = _makeSkuLookup();
@@ -4645,6 +4670,9 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   const activity = [];
   let openOrders = 0, doneOrders = 0, openPieces = 0;
   let shipped30Orders = 0, shipped30Pieces = 0, shipped30Lines = 0;
+  let waitingStockOrders = 0, waitingStockPieces = 0;
+  const waitingStockSample = [];
+  const _ovLookup = _makeSkuLookup();
   const since30 = Date.now() - 30 * 86400000;
 
   for (const b of db.batches || []) {
@@ -4665,6 +4693,22 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
         }
       } else if (status !== 'unprocessed') {
         openOrders++; openPieces += qty;
+        // AN ORDER WE CANNOT PICK IS NOT "BEING PICKED". Per the user, the
+        // client's screen must reflect what we actually see — an order whose
+        // goods are not on the shelf is waiting for stock, however it arrived
+        // (API or upload), and saying "in progress" of it is a promise we are
+        // not keeping.
+        const sk = orderStockStateSrv(b, o.lines, _ovLookup);
+        if (sk && sk.state !== 'ok') {
+          waitingStockOrders++; waitingStockPieces += qty;
+          if (waitingStockSample.length < 20) {
+            waitingStockSample.push({
+              order: o.order_number,
+              state: sk.state,
+              skus: sk.short.slice(0, 5).map(s => s.sku),
+            });
+          }
+        }
       }
     }
   }
@@ -4697,6 +4741,7 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
 
   res.json({
     client, stock, openOrders, doneOrders, openPieces, inboundOpen, quarantineOpen,
+    waitingStockOrders, waitingStockPieces, waitingStockSample,
     openDiscrepancies,
     agingDays,
     inboundSlaSummary: { met: slaMet, missed: slaMissed, overdue: slaOverdue, workingDays: INBOUND_SLA_WORKING_DAYS },
@@ -4824,9 +4869,18 @@ function transportJobForOrder(db, orderNumber) {
   )[0];
 }
 
+// The client's own words for what we can see on the shelf. Per the user: an
+// order we cannot pick must say so on THEIR screen too — "in progress" while
+// the goods are not here is a promise we are not keeping.
+const PORTAL_STOCK_LABEL = {
+  ok:      { label: 'Stock ready',        tone: 'good' },
+  partial: { label: 'Partly out of stock', tone: 'warn' },
+  none:    { label: 'Awaiting stock',      tone: 'bad'  },
+};
 app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
   const db = readDb();
+  const _lookup = _makeSkuLookup();
   // Reconcile before answering, so a self-drop day can never show the client a
   // parcel as still sitting here — same reason the office queue does it.
   if (applyAutoPickups(db)) writeDb(db);
@@ -4856,12 +4910,18 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         remarks: String(job.podRemarks || '').trim(),
         driver: job.assignedDriverName || '',
       } : null;
+      // WHAT WE CAN SEE ON THE SHELF — only while the order is still open. Once
+      // it is picked and gone, a stock verdict is history and would only
+      // confuse. Same computation as the office row, so the two cannot differ.
+      const _sk = (st.status === 'done' || st.status === 'unprocessed')
+        ? null : orderStockStateSrv(b, o.lines, _lookup);
       out.push({
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
         delivery,
         pickup: _pk,
+        stock: _sk ? { ...PORTAL_STOCK_LABEL[_sk.state], state: _sk.state, short: _sk.short.slice(0, 20) } : null,
         // The waybill we matched to this order, if any — so the client can see
         // the actual label rather than take the number on trust.
         has_label: !!(db.orderLabels || {})[o.order_number],
@@ -9012,6 +9072,60 @@ app.get('/api/orders', (req, res) => {
 // Completed-tab search across ARCHIVED orders (older than 60 days)
 app.get('/api/orders/archived', (req, res) => {
   res.json(searchArchivedOrders(req.query.q));
+});
+
+// ── SYNC ACTIVITY — what IdealOne sent to the sales channel, and when ───────
+// Per the user: the chips say where an order STANDS, but not who put it there.
+// A status set by hand at the channel looks identical to one our sync pushed,
+// so "did the automation actually do this?" was unanswerable — which is no
+// basis for trusting it. This is the plain trail, straight from the audit log:
+// every call we made for this order, in order, with what came back.
+const SYNC_ACTIVITY_EVENTS = {
+  sync_arranged_at_intake:      { what: 'Asked the channel to PACK it at intake', good: true },
+  zort_packed_before_rts:       { what: 'Packed it at the channel (required before Ready to Ship)', good: true },
+  zort_completion_pushed:       { what: 'Told the channel the order is ready', good: true },
+  zort_completion_push_failed:  { what: 'The channel REFUSED', good: false },
+  zort_completion_repushed:     { what: 'Someone re-sent it by hand from the order row', good: true },
+  sync_waybill_backfilled:      { what: 'Waybill number received from the channel', good: true },
+  sync_label_imported:          { what: 'Carrier label fetched and attached', good: true },
+  sync_label_via_fallback:      { what: 'Label located', good: true },
+  sync_label_never_arrived:     { what: 'The channel never produced a label', good: false },
+  sync_label_fetch_cancelled:   { what: 'Label fetch cancelled (label pull switched off)', good: false },
+  zort_order_voided:            { what: 'The channel cancelled this order', good: false },
+  zort_order_void_conflict:     { what: 'The channel cancelled it but work had started here', good: false },
+  order_completed:              { what: 'Completed here (picked, packed, scanned)', good: true },
+};
+app.get('/api/orders/:orderNumber/sync-activity', (req, res) => {
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const db = readDb();
+  const f = lazadaFindOrder(db, orderNumber, '');
+  const rows = [];
+  for (const e of db.auditLog || []) {
+    const spec = SYNC_ACTIVITY_EVENTS[e.type];
+    if (!spec) continue;
+    if (String(e.order || e.orderNumber || '') !== orderNumber) continue;
+    const bits = [];
+    if (e.action)   bits.push(e.action === 'readytoship' ? 'Ready to Ship' : e.action === 'pack' ? 'Pack' : String(e.action));
+    if (e.via)      bits.push(`via ${e.via}`);
+    if (e.tracking) bits.push(`tracking ${e.tracking}`);
+    if (e.hubStatus) bits.push(`hub was "${e.hubStatus}"`);
+    if (e.pages)    bits.push(`${e.pages} page(s)`);
+    if (e.error)    bits.push(String(e.error).slice(0, 200));
+    if (e.why)      bits.push(String(e.why).slice(0, 200));
+    rows.push({ at: e.at, type: e.type, what: spec.what, good: spec.good, detail: bits.join(' · '), by: e.by || '' });
+  }
+  rows.sort((a, b) => new Date(a.at) - new Date(b.at));
+  // What the CURRENT state claims, so the trail can be compared against it.
+  const st = f ? (f.batch.orderStates?.[f.ord.order_number] || {}) : {};
+  res.json({
+    order: orderNumber,
+    synced: !!(f && f.ord.zort_id),
+    push: f ? _zortPushState(db, f.ord, st) : null,
+    label: f ? _zortLabelState(db, f.ord) : null,
+    labelAttached: !!(db.orderLabels || {})[orderNumber],
+    rows,
+    note: rows.length ? '' : 'Nothing was sent to the sales channel for this order.',
+  });
 });
 
 app.post('/api/waybill-lookup', (req, res) => {

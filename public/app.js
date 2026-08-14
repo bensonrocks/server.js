@@ -2206,6 +2206,50 @@
     return '';
   }
 
+  // ── SYNC ACTIVITY ─────────────────────────────────────────────────────────
+  // Every call IdealOne made to the sales channel for one order, oldest first.
+  // Nothing here is inferred: it is the audit trail, so an empty list is a
+  // real answer — we sent nothing, and whatever the channel shows was done
+  // some other way.
+  async function openSyncActivity(orderNumber) {
+    const ov = document.getElementById('syncActivityOverlay');
+    const sub = document.getElementById('syncActivitySub');
+    const body = document.getElementById('syncActivityBody');
+    sub.textContent = `Order ${orderNumber}`;
+    body.innerHTML = '<div class="hint">Loading…</div>';
+    ov.classList.remove('hidden');
+    try {
+      const r = await fetch(`/api/orders/${encodeURIComponent(orderNumber)}/sync-activity`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Could not load');
+      if (!d.synced) {
+        body.innerHTML = '<div class="hint">This order did not come from a connected store, so nothing is ever sent to a sales channel for it.</div>';
+        return;
+      }
+      const now = [];
+      if (d.push) now.push(`Channel push: <b>${esc(d.push.state)}</b>${d.push.error ? ` — ${esc(d.push.error)}` : ''}`);
+      now.push(`Carrier label: <b>${d.labelAttached ? 'attached' : (d.label ? esc(d.label.state) : 'none')}</b>`);
+      const head = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.5rem .7rem;margin-bottom:.7rem;font-size:.85rem">${now.join('<br>')}</div>`;
+      if (!d.rows.length) {
+        body.innerHTML = head + `<div class="hint" style="color:#b45309"><b>${esc(d.note)}</b><br>If the channel shows this order as packed or shipped, that was done somewhere else — not by IdealOne.</div>`;
+        return;
+      }
+      body.innerHTML = head + d.rows.map(x => `
+        <div style="display:flex;gap:.6rem;padding:.45rem .2rem;border-bottom:1px solid #f1f5f9;font-size:.85rem">
+          <span style="flex:0 0 130px;color:#64748b">${new Date(x.at).toLocaleString('en-GB', { hour12: false })}</span>
+          <span style="flex:1">
+            <b style="color:${x.good ? '#059669' : '#dc2626'}">${x.good ? '✓' : '⚠'} ${esc(x.what)}</b>
+            ${x.detail ? `<br><span class="hint">${esc(x.detail)}</span>` : ''}
+            ${x.by ? `<br><span class="hint">by ${esc(x.by)}</span>` : ''}
+          </span>
+        </div>`).join('');
+    } catch (err) {
+      body.innerHTML = `<div class="login-error">${esc(err.message)}</div>`;
+    }
+  }
+  document.getElementById('syncActivityClose')?.addEventListener('click', () =>
+    document.getElementById('syncActivityOverlay').classList.add('hidden'));
+
   function fulfilmentChip(ord) {
     const f = ord.fulfilment;
     if (!f || f.status === 'cancelled' || f.status === 'unknown') return '';
@@ -2423,6 +2467,13 @@
           ? `<span class="kf-closed-badge">&#10003; KF</span>`
           : `<button class="btn-kf-close" data-order="${esc(ord.order_number)}" title="Close in Keyfields">KF</button>`
         : '';
+      // WHAT DID *WE* SEND, AND WHEN? On a synced order the chips say where
+      // things stand, but not who did it — so a status someone set by hand at
+      // the channel is indistinguishable from one our sync pushed. This opens
+      // the trail: every call IdealOne made for this order, timestamped.
+      const syncBtn = ord.api_source
+        ? `<button class="btn-sync-activity" data-order="${esc(ord.order_number)}" title="What IdealOne sent to the sales channel for this order, and when">&#128260;</button>`
+        : '';
 
       // Items column
       const itemCount = (ord.items || []).length;
@@ -2507,6 +2558,7 @@
           ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991;</button>` : ''}
           ${ord.archived ? '' : emailIndicator}
           ${ord.archived ? '' : kfBtn}
+          ${ord.archived ? '' : syncBtn}
           ${currentUser?.role === 'admin' && !ord.archived && !isDone && !ord.pending_deletion ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Request deletion">&#128465;</button>` : ''}
         </td>
       </tr>`;
@@ -2603,6 +2655,14 @@
       btn.addEventListener('click', e => {
         e.stopPropagation();
         openDeleteOrderModal(btn.dataset.order, btn.dataset.batchid);
+      });
+    });
+
+    // The trail of what we sent to the channel for one order.
+    document.querySelectorAll('.btn-sync-activity').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        await openSyncActivity(btn.dataset.order);
       });
     });
 

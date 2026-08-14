@@ -1762,6 +1762,19 @@
   <!-- Put away by file. The client is PICKED, never typed: "Mayer" and
        "Mayer2026" are different accounts, and a typo files a whole delivery
        into a phantom one. -->
+  <!-- What IdealOne sent to the sales channel for one order, from the audit
+       trail. Answers "did the automation do this, or did someone by hand?" -->
+  <div id="syncActivityOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:620px">
+      <h3 style="margin:0 0 .2rem">&#128260; Sync activity</h3>
+      <div class="hint" id="syncActivitySub" style="margin-bottom:.8rem"></div>
+      <div id="syncActivityBody" style="max-height:60vh;overflow:auto"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="syncActivityClose">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="paImportOverlay" class="modal-overlay hidden">
     <div class="modal-card" style="max-width:560px">
       <h3 style="margin:0 0 .2rem">Upload stock by file</h3>

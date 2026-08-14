@@ -290,8 +290,21 @@
     // reads, and it must make sense when every number is zero.
     let line;
     if (o.openOrders > 0) {
-      line = `${num(o.openOrders)} order${o.openOrders === 1 ? '' : 's'} in progress`
-        + (o.openPieces ? ` — ${num(o.openPieces)} pieces being picked and packed.` : '.');
+      // AN ORDER WAITING FOR STOCK IS NOT BEING PICKED. Saying "being picked
+      // and packed" of goods that are not on our shelf is a promise we are not
+      // keeping — so the sentence separates the two, in the client's words.
+      const waiting = Number(o.waitingStockOrders) || 0;
+      const moving = Math.max(0, o.openOrders - waiting);
+      if (waiting > 0 && moving > 0) {
+        line = `${num(moving)} order${moving === 1 ? '' : 's'} being picked and packed`
+          + ` — and ${num(waiting)} waiting for stock to arrive.`;
+      } else if (waiting > 0) {
+        line = `${num(waiting)} order${waiting === 1 ? '' : 's'} waiting for stock to arrive`
+          + (o.openPieces ? ` — ${num(o.openPieces)} pieces cannot be picked until it does.` : '.');
+      } else {
+        line = `${num(o.openOrders)} order${o.openOrders === 1 ? '' : 's'} in progress`
+          + (o.openPieces ? ` — ${num(o.openPieces)} pieces being picked and packed.` : '.');
+      }
     } else if (o.inboundOpen > 0) {
       line = `No outbound orders queued. ${num(o.inboundOpen)} inbound shipment${o.inboundOpen === 1 ? '' : 's'} being received.`;
     } else if (s.skus > 0) {
@@ -333,6 +346,17 @@
 
     // ── Alerts (only when there is genuinely something to act on)
     const alerts = [];
+    // THE MOST ACTIONABLE THING ON THE PAGE: orders that cannot move until
+    // stock arrives. Named, so it is a job to do rather than a number to read.
+    if (o.waitingStockOrders > 0) {
+      const eg = (o.waitingStockSample || []).slice(0, 3)
+        .map(x => `${esc(x.order)}${(x.skus || []).length ? ` (${esc((x.skus || []).slice(0, 2).join(', '))})` : ''}`)
+        .join(', ');
+      alerts.push(`<div class="alert a-bad"><span>&#128230;</span><div>
+        <b>${num(o.waitingStockOrders)} order${o.waitingStockOrders === 1 ? '' : 's'} waiting for stock</b>
+        We cannot pick ${o.waitingStockPieces ? num(o.waitingStockPieces) + ' piece(s)' : 'these'} until the goods reach us.
+        ${eg ? `For example: ${eg}.` : ''} Open the Orders tab to see each one.</div></div>`);
+    }
     if (s.outOfStock > 0) alerts.push(`<div class="alert a-bad"><span>&#9888;</span><div>
       <b>${num(s.outOfStock)} SKU${s.outOfStock === 1 ? '' : 's'} out of stock</b>
       Nothing available to pick. Send a replenishment shipment to keep orders moving.</div></div>`);
@@ -658,6 +682,7 @@
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>
+            ${stockPill(o.stock)}
             ${pickupPill(o.pickup)}
             ${deliveryPill(o.delivery)}
             <div class="muted" style="font-size:.68rem;margin-top:.3rem">${isOpen ? '▲ hide' : '▼ details'}</div>
@@ -673,6 +698,21 @@
   // the server so the client reads exactly the words the office reads, and the
   // colours match the office list: green once it has left, amber while it is
   // still on our shelf, red once its collection day has passed.
+  // WHAT WE CAN SEE ON THE SHELF, in the client's words. Only on OPEN orders —
+  // the wording and the verdict both come from the server, computed the same
+  // way the office row computes it, so the two screens cannot disagree.
+  // Nothing is shown when the client's stock is not held here: that is an
+  // arrangement, not a shortage, and a red pill would misrepresent it.
+  function stockPill(sk) {
+    if (!sk || !sk.label) return '';
+    if (sk.state === 'ok') return '';   // the good case needs no pill — silence is fine
+    const bg = sk.state === 'none' ? '#fee2e2' : '#fef3c7';
+    const fg = sk.state === 'none' ? '#b91c1c' : '#92400e';
+    const eg = (sk.short || []).slice(0, 4)
+      .map(x => `${x.sku}: need ${x.need}, we hold ${x.have}`).join('\n');
+    return `<span class="pill" style="background:${bg};color:${fg}" title="${esc(eg)}">${esc(sk.label)}</span>`;
+  }
+
   function pickupPill(pk) {
     if (!pk || !pk.label) return '';
     // Ready for Collection is GREEN — the pick is done and the parcel is on the
