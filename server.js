@@ -2647,6 +2647,8 @@ function applyNoStockAutoCancel(db) {
       if (!b.orderStates) b.orderStates = {};
       const st = b.orderStates[o.order_number] || { status: 'pending', scanned: {} };
       if (st.status !== 'pending' && st.status !== 'processing') continue;
+      // Reopened by hand once? Then it is never auto-cancelled again.
+      if (st.autocancel_exempt) continue;
       const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
       const busy = scanned > 0 || !!claimHolder(st) || !!st.wave_id;
       const sk = orderStockStateSrv(b, o.lines, lookup);
@@ -18638,6 +18640,69 @@ app.post('/api/master/orders/auto-cancel-sweep', express.json(), (req, res) => {
   if (!requireInboundAdmin(req, res)) return;
   const out = applyNoStockAutoCancel(readDb());
   res.json({ ok: true, ...out });
+});
+// What the rule has cancelled lately — the list the Reopen button works from.
+app.get('/api/master/orders/cancelled', (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const rows = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      const st = (b.orderStates || {})[o.order_number];
+      if (!st || st.status !== 'unprocessed') continue;
+      rows.push({
+        order: o.order_number, client: b.client_name || '',
+        at: st.unprocessed_at || st.updated_at || null,
+        reason: st.unprocessed_reason || '',
+        automatic: !!st.auto_cancelled,
+        api_source: !!(o.zort_id || b.uploaded_by === 'zort-sync'),
+        pieces: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+        skus: (o.lines || []).map(l => l.sku).filter(Boolean).slice(0, 8),
+        reopened_before: !!st.reopened_at,
+        exempt: !!st.autocancel_exempt,
+        reassigned_to: st.client_reassigned_to || '',
+      });
+    }
+  }
+  rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  res.json({ rows: rows.slice(0, 200), total: rows.length });
+});
+// REOPEN — put a cancelled order back on the floor. Admin or master: a
+// cancellation is a decision, and undoing one is too.
+app.post('/api/master/orders/:orderNumber/reopen', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+  const db = readDb();
+  for (const b of db.batches || []) {
+    const ord = (b.orders || []).find(o => o.order_number === orderNumber);
+    if (!ord) continue;
+    const st = (b.orderStates || {})[orderNumber];
+    if (!st || st.status !== 'unprocessed') {
+      return res.status(409).json({ error: 'Only a cancelled order can be reopened.' });
+    }
+    st.status = 'pending';
+    delete st.unprocessed_reason; delete st.unprocessed_at;
+    delete st.auto_cancelled; delete st.no_stock_since;
+    delete st.client_cancelled;
+    st.reopened_at = new Date().toISOString();
+    st.reopened_by = req.userId || _tokenUserId(req) || '';
+    if (reason) st.reopened_reason = reason.slice(0, 200);
+    // A HUMAN DECISION OUTRANKS THE RULE. Without this the sweep would simply
+    // re-arm and cancel it again an hour later — the order would bounce, and
+    // the person who reopened it would look ignored. Exempt from then on;
+    // cancelling it again is a deliberate act, not an automatic one.
+    st.autocancel_exempt = true;
+    b.orderStates[orderNumber] = st;
+    writeDb(db);
+    logAudit('order_reopened', {
+      order: orderNumber, client: b.client_name || '', reason: reason.slice(0, 200),
+      by: st.reopened_by,
+    });
+    return res.json({ ok: true, order: orderNumber, status: 'pending',
+      note: 'Back on the floor. It will not be auto-cancelled again — reopening it is treated as a decision.' });
+  }
+  res.status(404).json({ error: 'Order not found' });
 });
 
 // Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so

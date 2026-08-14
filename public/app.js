@@ -799,7 +799,7 @@
     }
     if (name === 'labels') { renderLabelsTab(); }
     if (name === 'reports') { window.fillTxnClientPicker?.(); }
-    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); }
+    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); }
   }
 
   function lockTabsForDownload() {
@@ -13193,6 +13193,96 @@
   document.getElementById('pickupPolicyBtn')?.addEventListener('click', () => pickupUI.openPolicy());
   document.getElementById('pickupClient')?.addEventListener('change', () =>
     pickupUI.load().catch(e => alert(e.message)));
+
+  // ── No-stock auto-cancel: the policy, and the way back ───────────────────
+  // Lives on Connections because a reopen is the undo of what this rule did,
+  // and the policy is only judgeable next to its consequences.
+  const _acHdrs = () => ({ 'Content-Type': 'application/json',
+    'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD });
+  async function loadAutoCancelPanel() {
+    const box = document.getElementById('acCancelledList');
+    if (!box) return;
+    try {
+      const r = await fetchT('/api/master/orders/auto-cancel', { headers: _acHdrs() });
+      if (r.ok) {
+        const d = await r.json();
+        const en = document.getElementById('acEnabled');
+        const mi = document.getElementById('acMinutes');
+        if (en) en.checked = !!d.policy?.enabled;
+        if (mi) mi.value = d.policy?.minutes ?? 60;
+        const armed = document.getElementById('acArmed');
+        if (armed) {
+          // What is ON THE CLOCK right now, and how long the nearest one has —
+          // the number that tells someone whether to intervene.
+          const soonest = (d.armed || []).reduce((m, a) => Math.min(m, a.minutesLeft ?? 9999), 9999);
+          armed.textContent = d.armedCount
+            ? `⏳ ${d.armedCount} order(s) on the clock${soonest < 9999 ? ` — next in ${soonest} min` : ''}`
+            : 'Nothing on the clock.';
+        }
+      }
+      const r2 = await fetchT('/api/master/orders/cancelled', { headers: _acHdrs() });
+      if (!r2.ok) { box.innerHTML = '<div class="hint">Could not load cancelled orders.</div>'; return; }
+      const d2 = await r2.json();
+      const rows = d2.rows || [];
+      if (!rows.length) { box.innerHTML = '<div class="hint">No cancelled orders.</div>'; return; }
+      box.innerHTML = `<table class="dcs-table"><thead><tr>
+          <th>Order</th><th>Client</th><th>Cancelled</th><th>Why</th><th>Pieces</th><th></th>
+        </tr></thead><tbody>${rows.map(x => `
+          <tr>
+            <td><b>${esc(x.order)}</b>${x.api_source ? ' <span class="chip chip-api">API</span>' : ''}</td>
+            <td>${esc(x.client)}</td>
+            <td>${x.at ? new Date(x.at).toLocaleString('en-GB', { hour12: false }) : ''}</td>
+            <td>${esc(x.reason || '')}${x.automatic ? ' <i>(automatic)</i>' : ''}${x.reassigned_to ? `<br><span class="hint">Client moved it to: ${esc(x.reassigned_to)}</span>` : ''}</td>
+            <td>${x.pieces}</td>
+            <td>${x.exempt
+                ? '<span class="hint">reopened before</span>'
+                : `<button class="btn-secondary btn-sm ac-reopen" data-order="${esc(x.order)}">&#8634; Reopen</button>`}</td>
+          </tr>`).join('')}</tbody></table>
+        ${d2.total > rows.length ? `<div class="hint">Showing ${rows.length} of ${d2.total}.</div>` : ''}`;
+      box.querySelectorAll('.ac-reopen').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const num = btn.dataset.order;
+          const why = prompt(`Reopen ${num}?\n\nIt goes back to Pending and will NOT be auto-cancelled again.\n\nWhy are you reopening it? (optional, goes on the trail)`);
+          if (why === null) return;
+          btn.disabled = true;
+          try {
+            const rr = await fetchT(`/api/master/orders/${encodeURIComponent(num)}/reopen`, {
+              method: 'POST', headers: _acHdrs(), body: JSON.stringify({ reason: why }),
+            });
+            const dd = await rr.json().catch(() => ({}));
+            if (!rr.ok) throw new Error(dd.error || 'Could not reopen');
+            alert(`✅ ${num}\n\n${dd.note}`);
+            loadAutoCancelPanel();
+          } catch (e) { btn.disabled = false; alert(e.message); }
+        });
+      });
+    } catch (e) { box.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
+  }
+  window.loadAutoCancelPanel = loadAutoCancelPanel;
+  document.getElementById('acSave')?.addEventListener('click', async () => {
+    try {
+      const r = await fetchT('/api/master/orders/auto-cancel/policy', {
+        method: 'POST', headers: _acHdrs(),
+        body: JSON.stringify({
+          enabled: document.getElementById('acEnabled')?.checked,
+          minutes: Number(document.getElementById('acMinutes')?.value) || 60,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Could not save');
+      alert(`Saved. The rule is ${d.policy.enabled ? 'ON' : 'OFF'}, waiting ${d.policy.minutes} minutes.`);
+      loadAutoCancelPanel();
+    } catch (e) { alert(e.message); }
+  });
+  document.getElementById('acSweep')?.addEventListener('click', async () => {
+    try {
+      const r = await fetchT('/api/master/orders/auto-cancel-sweep', { method: 'POST', headers: _acHdrs(), body: '{}' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Could not run');
+      alert(`Checked.\n\nCancelled now: ${(d.cancelled || []).length}\nOn the clock: ${d.armed}`);
+      loadAutoCancelPanel();
+    } catch (e) { alert(e.message); }
+  });
   document.getElementById('pickupPickAll')?.addEventListener('change', e => pickupUI.selectAll(e.target.checked));
   document.getElementById('ppCancel')?.addEventListener('click', () =>
     document.getElementById('pickupPolicyOverlay').classList.add('hidden'));

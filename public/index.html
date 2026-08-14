@@ -2322,6 +2322,37 @@
         </div>
       </div>
 
+      <!-- THE RULE THAT CANCELS, AND THE WAY BACK. Both live here because a
+           reopen is the undo of what this rule did, and reading the policy
+           next to its consequences is how someone judges whether it is set
+           right. Administrator-gated with the rest of this tab. -->
+      <div class="conn-card" style="margin-bottom:1rem;border:1px solid #fde68a;background:#fffbeb">
+        <div class="admin-section-header">
+          <div>
+            <div class="admin-section-title">&#9203; No-stock auto-cancel</div>
+            <div class="admin-section-sub">API orders with nothing on the shelf are cancelled after a grace period, and the client's portal is updated with them. Never for uploaded orders, never for clients whose stock lives in their own system, never once picking has started.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.5rem 0">
+          <label style="display:flex;gap:.35rem;align-items:center;font-size:.85rem">
+            <input type="checkbox" id="acEnabled"> <b>Rule is on</b>
+          </label>
+          <label style="font-size:.85rem">Wait
+            <input type="number" id="acMinutes" min="5" max="10080" style="width:80px;padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px"> minutes
+          </label>
+          <button class="btn-primary btn-sm" id="acSave">Save</button>
+          <button class="btn-secondary btn-sm" id="acSweep" title="Run the check now instead of waiting for the next five-minute sweep">&#9654; Run now</button>
+          <span class="hint" id="acArmed"></span>
+        </div>
+        <div style="border-top:1px solid #fde68a;padding-top:.5rem">
+          <b style="font-size:.85rem">Cancelled orders &mdash; reopen to put one back on the floor</b>
+          <div class="hint" style="margin:.15rem 0 .4rem">
+            Reopening returns the order to Pending and <b>exempts it from the rule from then on</b>, so it cannot bounce back an hour later. Recorded on the audit trail with who did it.
+          </div>
+          <div id="acCancelledList" class="dcs-wrap"></div>
+        </div>
+      </div>
+
       <div id="connZortPanel">
         <div class="admin-section-header">
           <div>
