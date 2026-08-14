@@ -890,8 +890,25 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   unchanged, no label, and nothing anywhere saying why. Reported live (Prem
   Kumar, 2026-08-14). Every response is now inspected: a `resCode`/`success`
   verdict that is not success THROWS, so the entry retries and the reason
-  reaches the screen. A body carrying NO verdict (GetOrders and friends) is
-  still success — silence there must keep meaning what it always meant.
+  reaches the screen.
+  - **A RESPONSE THAT CARRIES DATA HAS SUCCEEDED — do not narrow this.** ZORT
+    attaches `resCode: 100, resDesc: "API Request Limits (50000 requests/day)"`
+    to READ endpoints as a routine quota notice, riding alongside the orders on
+    every GetOrders. Judging by the code alone declared every successful read a
+    failure and **stopped the pull dead within minutes of shipping** (caught
+    live). So: any body with a data key (`list`/`order`/`detail`/`data`/`count`…)
+    is success, code 100 is never a failure, and the verdict only decides when
+    the body carries nothing else — which is exactly the shape Pack /
+    ReadyToShip / UpdateOrderStatus answer with.
+  - **RTS IS ONLY LEGAL FROM PACKED** (Pending → Packed → Waiting). Asking a
+    still-`pending` order to go ready-to-ship is refused, which is what happened
+    to every order completed before arrange-at-intake began packing them. The
+    completion push now reads the hub status first and Packs before RTS when
+    needed (`zortHubStatus`); an "already packed" refusal on that Pack is not an
+    error — it is the state we wanted.
+  - **The re-push REPORTS WHAT THE HUB SAID, in a dialog.** It drains
+    synchronously and returns `{sent, error}` — a tooltip is unreadable on a
+    phone, which is where the floor works.
   - The refusal reason travels while **queued**, not only once stalled — the
     chip reads **⚠ Channel refused** with the hub's own words.
   - **`POST /api/master/zort/orders/:orderNumber/repush`** (admin or master)

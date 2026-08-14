@@ -18186,7 +18186,7 @@ function enqueueZortProduct(db, storeId, clientId, sku) {
 // and we recorded success) leaves an order stamped as told when the hub never
 // changed, and nothing on the screen could undo that. Clears the stamp and
 // queues the push again, so the next drain reports the truth either way.
-app.post('/api/master/zort/orders/:orderNumber/repush', express.json(), (req, res) => {
+app.post('/api/master/zort/orders/:orderNumber/repush', express.json(), async (req, res) => {
   if (!requireInboundAdmin(req, res)) return;
   const orderNumber = String(req.params.orderNumber || '').trim();
   const db = readDb();
@@ -18218,10 +18218,19 @@ app.post('/api/master/zort/orders/:orderNumber/repush', express.json(), (req, re
   });
   writeDb(db);
   logAudit('zort_completion_repushed', { order: orderNumber, action, by: req.userId || _tokenUserId(req) || '' });
-  // Run the queue now rather than waiting up to 30s — someone is standing
-  // there watching the chip.
-  setImmediate(() => { drainZortOutbox().catch(() => {}); });
-  res.json({ ok: true, action, note: 'Queued — the chip will show the result within a few seconds.' });
+  // SEND IT NOW AND SAY WHAT THE HUB ANSWERED. Someone is standing there
+  // watching, and the reason cannot live in a tooltip — a phone has no hover.
+  try { await drainZortOutbox(); } catch (_) {}
+  const after = readDb();
+  const still = (after.zortOutbox || []).find(e => e.kind === 'completion' && e.orderNumber === orderNumber);
+  const f2 = lazadaFindOrder(after, orderNumber, '');
+  const sent = !!f2 && !!(f2.batch.orderStates?.[f2.ord.order_number]?.zort_pushed_at);
+  if (sent) return res.json({ ok: true, sent: true, action, note: `Done — the channel accepted this order as ${action === 'readytoship' ? 'Ready to Ship' : action}.` });
+  res.json({
+    ok: true, sent: false, action,
+    error: still?.lastError || 'the hub did not accept it',
+    note: 'The channel did NOT accept it. It stays queued and keeps retrying.',
+  });
 });
 
 // Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so
@@ -18341,6 +18350,18 @@ function _zortBackoffMs(attempts) {
 // best-effort by design: '' (cached by the caller) means "none found, call
 // without it", which is exactly the pre-spec behaviour. Never throws — a
 // missing channel name must not stall the pack itself.
+// The hub's CURRENT status word for an order, '' when it cannot be read.
+// Ready-to-Ship is only legal from Packed (Pending → Packed → Waiting), so the
+// push has to know where the order actually stands before it asks.
+async function zortHubStatus(store, zortId) {
+  try {
+    const d = await zortApi.getOrderDetail(store, zortId);
+    const o = d?.order || d || {};
+    return zortStatusWord(o.status);
+  } catch (e) { console.error('[zort-status]', zortId, e.message); }
+  return '';
+}
+
 async function zortShipmentChannel(store, zortId) {
   try {
     const d = await zortApi.getOrderDetail(store, zortId);
@@ -18455,9 +18476,29 @@ async function _zortSendOutboxEntry(db, store, entry) {
       // marketplace shipment channel; cached on the entry across retries.
       if (entry.shipment === undefined) entry.shipment = await zortShipmentChannel(store, entry.zortId);
       const args = { id: entry.zortId, trackingno: t, shipment: entry.shipment || undefined };
-      const resp = entry.action === 'pack'
-        ? await zortApi.packOrder(store, args)
-        : await zortApi.readyToShip(store, args);
+      let resp;
+      if (entry.action === 'pack') {
+        resp = await zortApi.packOrder(store, args);
+      } else {
+        // READY-TO-SHIP IS ONLY LEGAL FROM PACKED. The hub's lifecycle is
+        // Pending → Packed → Waiting(RTS'd), so asking a still-PENDING order
+        // to go ready-to-ship is refused — which is exactly what happened to
+        // every order completed before arrange-at-intake started packing them
+        // (and, before the 200-body check, was recorded as success). Pack it
+        // first, then RTS. An order already past Pending skips straight to
+        // RTS, and a Pack that is refused because it is ALREADY packed is not
+        // an error — that is the state we wanted.
+        const hubStatus = await zortHubStatus(store, entry.zortId);
+        if (!hubStatus || hubStatus === 'pending') {
+          try {
+            await zortApi.packOrder(store, args);
+            logAudit('zort_packed_before_rts', { order: entry.orderNumber, storeId: store.id, hubStatus: hubStatus || 'unknown' });
+          } catch (e) {
+            if (!/already|packed/i.test(e.message || '')) throw e;
+          }
+        }
+        resp = await zortApi.readyToShip(store, args);
+      }
       // THE RTS RESPONSE CARRIES THE LABEL: per the v4 docs it returns
       // detail.trackingno AND detail.link (the label URL). This is the hub
       // TELLING US where this order's label is — worth more than every

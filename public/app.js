@@ -2622,7 +2622,12 @@
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.error || 'Could not re-send');
-          setTimeout(() => renderOrdersDash().catch(() => {}), 4000);
+          // Say what the channel ANSWERED, in a dialog — a tooltip is
+          // unreadable on a phone, which is where the floor works.
+          alert(d.sent
+            ? `✅ ${orderNumber}\n\n${d.note}`
+            : `⚠ ${orderNumber}\n\nThe sales channel did NOT accept it.\n\nWhat it said:\n${d.error}\n\nIt stays queued and keeps retrying.`);
+          await renderOrdersDash().catch(() => {});
         } catch (err) { chip.textContent = was; alert('Re-send failed: ' + err.message); }
       });
     });
