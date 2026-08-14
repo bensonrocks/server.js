@@ -2320,12 +2320,16 @@
     // Active / Completed sub-tabs — completed orders leave the main list and
     // live in their own searchable view for reference and label reprinting
     const doneOrders   = orders.filter(o => o.scan_status === 'done');
+    // CANCELLED IS ITS OWN VIEW. Per the user: an order we are not doing is
+    // not work in progress, so it leaves the Active list and the counts
+    // entirely and lives in a third tab where it can still be looked at.
+    const cancelledOrders = orders.filter(o => o.scan_status === 'unprocessed');
     // MOST URGENT FIRST. A packer works down this list, so the order that has
     // to leave soonest belongs at the top — a countdown chip nobody scrolls to
     // is a countdown nobody acts on. Orders carrying no promise keep their
     // existing relative position at the end. Sorting a COPY: `orders` is a
     // filtered array, but its elements are shared with loadedOrders.
-    const activeOrders = orders.filter(o => o.scan_status !== 'done')
+    const activeOrders = orders.filter(o => o.scan_status !== 'done' && o.scan_status !== 'unprocessed')
       .map((o, i) => [o, i])
       .sort((a, b) => {
         const ma = a[0].fulfilment?.closed === false ? a[0].fulfilment.minutesLeft : null;
@@ -2360,10 +2364,17 @@
       <div class="orders-subtabs">
         <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
+        <button class="subtab-btn ${ordersView === 'cancelled' ? 'active' : ''}" data-oview="cancelled" title="Orders we are not fulfilling — cancelled by the no-stock rule, taken off the floor, or withdrawn. Not counted as work.">&#9003; Cancelled <span class="subtab-count">${cancelledOrders.length}</span></button>
         ${ordersView === 'completed' ? `<input type="search" id="completedSearchInput" class="completed-search" placeholder="Search waybill, GI / order no, pick ticket, customer&hellip;" value="${esc(completedSearch)}" autocomplete="off" />` : ''}
       </div>`;
 
-    if (ordersView === 'completed') {
+    if (ordersView === 'cancelled') {
+      // Most recently cancelled first — the ones someone is most likely to be
+      // asked about.
+      orders = [...cancelledOrders].sort((a, b) =>
+        String(b.unprocessed_at || b.endTime || b.uploadedAt || '')
+          .localeCompare(String(a.unprocessed_at || a.endTime || a.uploadedAt || '')));
+    } else if (ordersView === 'completed') {
       orders = doneOrders;
       const norm = s => String(s || '').toLowerCase().replace(/[\s\-_]/g, '');
       const q = norm(completedSearch);
@@ -2396,13 +2407,14 @@
       orders = [...orders].sort((a, b) => new Date(b.endTime || 0) - new Date(a.endTime || 0));
     } else {
       orders = activeOrders;
-      const sortPriority = { processing: 0, pending: 1, unprocessed: 2 };
+      // 'unprocessed' cannot appear here any more — it has its own view.
+      const sortPriority = { processing: 0, pending: 1 };
       orders = [...orders].sort((a, b) =>
         (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
       );
     }
 
-    const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Unprocessed' };
+    const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Cancelled' };
     const isAdminView = (currentUser?.role || 'admin') === 'admin';
 
     function wireOrdersSubtabs() {
@@ -2439,9 +2451,11 @@
     if (!orders.length) {
       document.getElementById('ordersDashList').innerHTML = subTabsHTML +
         `<p class="empty-state" style="padding:2rem">${
-          ordersView === 'completed'
-            ? (completedSearch ? 'No completed orders match the search.' : 'No completed orders yet.')
-            : 'No active orders match the selected filters.'
+          ordersView === 'cancelled'
+            ? 'No cancelled orders. Nothing has been taken off the floor.'
+            : ordersView === 'completed'
+              ? (completedSearch ? 'No completed orders match the search.' : 'No completed orders yet.')
+              : 'No active orders match the selected filters.'
         }</p>`;
       wireOrdersSubtabs();
       return;
@@ -2512,6 +2526,11 @@
         (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord) : '',
         // Marketplace push-back state — only ever on synced orders.
         zortPushChip(ord),
+        // WHY this one is not being fulfilled. A list of cancelled orders
+        // with no reason on them is a list of questions.
+        ord.scan_status === 'unprocessed'
+          ? `<span class="chip chip-sync-failed" title="${esc(ord.unprocessed_reason || 'Not processed')}${ord.unprocessed_at ? ` — ${new Date(ord.unprocessed_at).toLocaleString('en-GB', { hour12: false })}` : ''}">&#9003; ${esc((ord.unprocessed_reason || 'Cancelled').slice(0, 42))}${ord.auto_cancelled ? ' (auto)' : ''}</span>`
+          : '',
         // …and why the carrier label is missing, when it is.
         zortLabelChip(ord),
         // FULFILMENT KPI. The countdown to this order's handover, so a packer

@@ -2813,6 +2813,12 @@ function globalOrdersWithState(keep) {
         // Cancelled by the client from their own portal. Kept for the trail,
         // filtered off the everyday screens by whoever reads this list.
         client_cancelled:  state.client_cancelled  || null,
+        // WHY it is not being fulfilled, for the Cancelled view — a list of
+        // cancelled orders with no reason on them is a list of questions.
+        unprocessed_at:     state.unprocessed_at     || null,
+        unprocessed_reason: state.unprocessed_reason || '',
+        auto_cancelled:     !!state.auto_cancelled,
+        reopened_at:        state.reopened_at        || null,
         cartons:           state.cartons           || [],
         active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
         wave_id:           state.wave_id || doneWaveByOrder.get(ord.order_number)?.id || null,
@@ -9176,7 +9182,7 @@ app.get('/api/stats', (_req, res) => {
   const yesterdayStr = sgDateStr(new Date(Date.now() - 86400000));
 
   let todayPending = 0, todayDone = 0, yesterdayDone = 0, totalScanMs = 0, scanCount = 0;
-  let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0, totalDone = 0;
+  let totalOrders  = 0, totalLines   = 0, pendingBacklog = 0, totalDone = 0, totalCancelled = 0;
   const clientMap  = {};   // { [name]: { todayUploaded, todayPending, yesterdayBalance } }
   // Fulfilment KPI — how much of the open work is running out of time, and how
   // today's finished work did against the promise. Same derivation as the
@@ -9194,12 +9200,18 @@ app.get('/api/stats', (_req, res) => {
     if (!clientMap[cname]) clientMap[cname] = { todayUploaded: 0, todayPending: 0, yesterdayBalance: 0 };
     const cs = clientMap[cname];
 
-    totalOrders += batch.order_count || 0;
     totalLines  += batch.row_count   || 0;
 
     for (const ord of batchOrders) {
       const state  = states[ord.order_number];
       if (isClientCancelled(state)) continue;   // withdrawn by the client — not our work
+      // A CANCELLED ORDER IS NOT WORK WE HAVE. Per the user it leaves the
+      // totals and the Active list entirely and lives in its own view — so
+      // the count is of orders that are ours to do or have done, not of rows
+      // that happen to exist. (Counted from the ORDERS rather than
+      // batch.order_count for the same reason: that figure includes them.)
+      if (state?.status === 'unprocessed') { totalCancelled++; continue; }
+      totalOrders++;
       const isPending = !state || state.status === 'pending' || state.status === 'processing';
       if (isPending) pendingBacklog++; // ANY day — feeds the sidebar Orders badge
       if (_fpol.enabled) {
@@ -9250,7 +9262,7 @@ app.get('/api/stats', (_req, res) => {
     .map(([name, v]) => ({ name, ...v }));
 
   res.json({ todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
-    pendingBacklog, totalDone,
+    pendingBacklog, totalDone, totalCancelled,
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats, kpi });
 });
 
