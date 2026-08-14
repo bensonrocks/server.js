@@ -882,6 +882,13 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   Success(1)**; Voided(2) / Returned(4) / Failed Shipment(7) / "Partial
   Transfer" sit alongside. "Waiting" comes AFTER Packed — it means Ready to
   Ship was pressed, not "new work waiting".
+- **THE ZORT SCREEN's "Waiting for the transfer" IS NOT API STATUS `waiting`.**
+  Verified live (2026-08-14, 🔍 Find order on 171347763939855): the Sale Items
+  screen showed "Waiting for the transfer" while the API returned `pending` —
+  the screen label describes the MARKETPLACE side (Lazada "To Arrange
+  Shipment", waiting on the seller), not ZORT's own order status. Reading it
+  as RTS'd produced a false "client RTS'd before packing" alarm once. Judge
+  status ONLY from the API word (the lookup tool / cross-check show it).
 - **Import filter** (`ZORT_IMPORT_SKIP_STATUSES` = success, shipping, returned,
   failed shipment): new orders in these states are never imported as floor
   work — the first pull's 7-day reachback once dragged in ~dozens of orders the
