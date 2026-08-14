@@ -12999,10 +12999,27 @@
     };
 
     async function load() {
-      const r = await fetchT('/api/orders/pickup-queue', { headers: hdrs() });
+      // Filtering server-side keeps the TILES whole-warehouse (what is
+      // outstanding here) while the LIST narrows to the client being collected.
+      const cf = document.getElementById('pickupClient')?.value || '';
+      const qs = cf ? `?client=${encodeURIComponent(cf)}` : '';
+      const r = await fetchT('/api/orders/pickup-queue' + qs, { headers: hdrs() });
       if (!r.ok) throw new Error('Could not load the collection list.');
       const d = await r.json();
       rows = d.rows || []; policy = d.policy;
+      const sel = document.getElementById('pickupClient');
+      if (sel) {
+        const keep = sel.value;
+        sel.innerHTML = '<option value="">All clients</option>'
+          + (d.clients || []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+        sel.value = keep;                       // the filter survives every reload
+      }
+      const showEl = document.getElementById('pickupShowing');
+      if (showEl) {
+        // A filtered list SAYS SO — the same rule as the KPI tiles: a short
+        // list with no explanation reads as "nothing to collect".
+        showEl.textContent = cf ? `Showing ${d.showing} of ${d.awaiting} — ${cf} only` : '';
+      }
       $('pickupStats').innerHTML = `
         <div class="pk-stat"><b>${d.awaiting}</b><span>Awaiting collection</span></div>
         <div class="pk-stat"><b>${d.dueToday}</b><span>Leaving today</span></div>
@@ -13174,6 +13191,8 @@
     document.getElementById('pickupOverlay').classList.add('hidden'));
   document.getElementById('pickupMarkBtn')?.addEventListener('click', () => pickupUI.markSelected());
   document.getElementById('pickupPolicyBtn')?.addEventListener('click', () => pickupUI.openPolicy());
+  document.getElementById('pickupClient')?.addEventListener('change', () =>
+    pickupUI.load().catch(e => alert(e.message)));
   document.getElementById('pickupPickAll')?.addEventListener('change', e => pickupUI.selectAll(e.target.checked));
   document.getElementById('ppCancel')?.addEventListener('click', () =>
     document.getElementById('pickupPolicyOverlay').classList.add('hidden'));

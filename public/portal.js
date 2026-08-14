@@ -688,9 +688,50 @@
             <div class="muted" style="font-size:.68rem;margin-top:.3rem">${isOpen ? '▲ hide' : '▼ details'}</div>
           </div>
         </div>
+        ${o.cancelled ? `
+          <div style="border-top:1px solid #f1f5f9;margin-top:.45rem;padding-top:.45rem">
+            <div class="muted" style="font-size:.74rem">
+              Not fulfilled${o.cancelled.reason ? ` — ${esc(o.cancelled.reason)}` : ''}${o.cancelled.automatic ? ' (automatic)' : ''}
+            </div>
+            <label class="muted" style="font-size:.7rem;display:block;margin:.35rem 0 .15rem">WHERE DID YOU RE-PLACE THIS ORDER?</label>
+            <div style="display:flex;gap:.4rem;align-items:center">
+              <input class="reassign-in" data-order="${esc(o.order_number)}"
+                     value="${esc(o.reassigned_to || '')}" maxlength="300"
+                     placeholder="e.g. fulfilled from our own warehouse / moved to Shopee 3PL"
+                     style="flex:1;min-width:0;padding:.35rem .5rem;border:1px solid #e2e8f0;border-radius:6px;font-size:.8rem"
+                     ${canWrite() ? '' : 'disabled'}>
+              ${canWrite() ? `<button class="btn-sm reassign-save" data-order="${esc(o.order_number)}">Save</button>` : ''}
+            </div>
+            <div class="muted" style="font-size:.68rem;margin-top:.2rem">Saved here and included in your downloaded report.</div>
+          </div>` : ''}
         ${isOpen ? `<div class="detail">${d ? orderDetailHtml(d) : '<div class="skel" style="height:58px"></div>'}</div>` : ''}
       </div>`;
     }).join('');
+    // The note is the CLIENT'S record of where the order went — free text
+    // because we cannot know, and a dropdown of our guesses would only collect
+    // wrong answers. Clicks must not bubble: the row itself is expandable.
+    document.querySelectorAll('.reassign-in').forEach(el =>
+      el.addEventListener('click', e => e.stopPropagation()));
+    document.querySelectorAll('.reassign-save').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const num = btn.dataset.order;
+        const input = document.querySelector(`.reassign-in[data-order="${CSS.escape(num)}"]`);
+        const text = (input?.value || '').trim();
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+          const r = await api(`/api/portal/orders/${encodeURIComponent(num)}/reassign`, {
+            method: 'POST', body: JSON.stringify({ text }),
+          });
+          const d2 = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d2.error || 'Could not save');
+          const row = orders.find(x => x.order_number === num);
+          if (row) row.reassigned_to = text;
+          btn.textContent = 'Saved';
+          setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; }, 1500);
+        } catch (err) { btn.textContent = 'Save'; btn.disabled = false; alert(err.message); }
+      });
+    });
     syncSel('orders');
   }
 
@@ -1574,12 +1615,11 @@
     const r = await download('stock', e.currentTarget);
     if (!r.ok) alert(r.error || 'Could not prepare the download.');
   });
-  $('orExport').addEventListener('click', () => openDownload('orders'));
+  $('orExport').addEventListener('click', () => openDownload('report'));
   // What can ship — fulfillability of the client's open orders against the
   // stock we hold, same sheets the office sees.
   $('orFulfilExport').addEventListener('click', () => openDownload('fulfillability'));
   // Month-end statement: everything in and out, with balances that reconcile.
-  $('orTxnExport').addEventListener('click', () => openDownload('transactions'));
   $('ibExport').addEventListener('click', () => openDownload('inbound'));
   $('dlCancel').addEventListener('click', closeDownload);
   $('dlModal').addEventListener('click', e => { if (e.target === $('dlModal')) closeDownload(); });

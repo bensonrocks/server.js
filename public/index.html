@@ -3920,6 +3920,16 @@
 
       <div id="pickupStats" class="pk-stats"></div>
 
+      <!-- A courier usually collects ONE client's parcels. Closing them out of
+           a mixed pile is how the wrong parcel gets marked as gone. -->
+      <div style="display:flex;gap:.5rem;align-items:center;margin:.5rem 0;flex-wrap:wrap">
+        <label style="font-size:.75rem;color:#64748b;font-weight:700">CLIENT</label>
+        <select id="pickupClient" style="flex:1;min-width:180px;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.88rem">
+          <option value="">All clients</option>
+        </select>
+        <span id="pickupShowing" class="hint"></span>
+      </div>
+
       <div class="item-scan-wrap" style="margin:.6rem 0">
         <span class="scan-icon-prefix">&#9524;</span>
         <input type="text" id="pickupScanInput" class="big-scan-input" autocomplete="off" autocorrect="off"

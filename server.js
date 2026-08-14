@@ -2582,6 +2582,121 @@ function orderStockStateSrv(batch, lines, lookup) {
   return { state: 'partial', short };
 }
 
+// ── AUTO-CANCEL: a synced order with no stock, after a grace period ─────────
+// Per the user: an API order sitting on "no stock" for an hour is cancelled
+// automatically, everywhere — office and client portal alike.
+//
+// THE GUARDS MATTER MORE THAN THE RULE. Cancelling is not reversible from any
+// screen, so every one of these is a refusal to act on a guess:
+//  • ONLY API-sourced orders. An uploaded order is someone's deliberate
+//    instruction and is never cancelled behind their back.
+//  • ONLY when the client's stock is actually TRACKED here. For a client whose
+//    goods live in their own system every SKU reads "unknown", which is an
+//    arrangement, not a shortage — cancelling those would be catastrophic.
+//  • ONLY 'none' — nothing at all on the shelf for the whole order. A partly
+//    short order can still be picked in part and is a human decision.
+//  • ONLY untouched work: nothing scanned, not claimed, not in a wave.
+//  • The clock runs from when we FIRST SAW it short (`no_stock_since`), not
+//    from when the order arrived — an order that goes short later gets its own
+//    full hour, and stock arriving clears the clock instead of racing it.
+//  • Inventory unreadable → do nothing at all. A lookup failure must never
+//    read as an empty shelf.
+const AUTOCANCEL_DEFAULT_MINS = 60;
+function autoCancelPolicy(db) {
+  const p = db.autoCancelPolicy || {};
+  return {
+    enabled: p.enabled !== false,                      // on by default, per the user
+    minutes: Math.max(5, Number(p.minutes) || AUTOCANCEL_DEFAULT_MINS),
+    reason: p.reason || 'No stock to fulfil — cancelled automatically',
+  };
+}
+function applyNoStockAutoCancel(db) {
+  const pol = autoCancelPolicy(db);
+  if (!inventory.available()) return { cancelled: [], armed: 0 };   // cannot judge → do nothing
+  const lookup = _makeSkuLookup();
+  const now = Date.now();
+  const cancelled = [];
+  let armed = 0, changed = false;
+  const trackedCache = new Map();
+  const isTracked = (b) => {
+    const cid = b.inventory_client || invClientId(b.client_name || '');
+    if (!cid) return false;
+    if (!trackedCache.has(cid)) {
+      let v = false;
+      try { v = clientStockTracked(cid); } catch (_) { v = false; }
+      trackedCache.set(cid, v);
+    }
+    return trackedCache.get(cid);
+  };
+  for (const b of db.batches || []) {
+    // THE CLIENT'S STOCK MUST GENUINELY BE TRACKED HERE. A lookup "hit" is not
+    // enough: harvestCatalogueFromOrders writes a catalogue row at zero for
+    // any client whose orders pass through WITHOUT an item master, which makes
+    // an untracked client look like one holding nothing. Caught in testing —
+    // it cancelled the untracked client's order, which for a 3PL client
+    // fulfilling from their own system would be a disaster. clientStockTracked
+    // is the established answer (harvest pins the flag OFF for exactly this).
+    if (!isTracked(b)) continue;
+    for (const o of b.orders || []) {
+      const api = !!(o.zort_id || b.uploaded_by === 'zort-sync');
+      if (!api) continue;
+      // A FRESHLY IMPORTED ORDER HAS NO STATE ENTRY YET — and those are
+      // exactly the ones this rule is about. Missing means pending, the same
+      // default the Orders list uses; the record is created when the clock is
+      // armed, never before.
+      if (!b.orderStates) b.orderStates = {};
+      const st = b.orderStates[o.order_number] || { status: 'pending', scanned: {} };
+      if (st.status !== 'pending' && st.status !== 'processing') continue;
+      const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      const busy = scanned > 0 || !!claimHolder(st) || !!st.wave_id;
+      const sk = orderStockStateSrv(b, o.lines, lookup);
+      if (!sk || sk.state !== 'none' || busy) {
+        // Stock arrived, someone started it, or it is not tracked — the clock
+        // stops and is forgotten rather than paused.
+        if (st.no_stock_since) { delete st.no_stock_since; changed = true; }
+        continue;
+      }
+      if (!st.no_stock_since) {
+        st.no_stock_since = new Date().toISOString();
+        b.orderStates[o.order_number] = st;      // persist the (possibly new) state
+        changed = true; armed++; continue;
+      }
+      if (!pol.enabled) { armed++; continue; }
+      const waited = (now - new Date(st.no_stock_since).getTime()) / 60000;
+      if (waited < pol.minutes) { armed++; continue; }
+      st.status = 'unprocessed';
+      st.unprocessed_reason = pol.reason;
+      st.unprocessed_at = new Date().toISOString();
+      st.auto_cancelled = { at: st.unprocessed_at, why: 'no_stock', waitedMins: Math.round(waited) };
+      st.updated_at = st.unprocessed_at;
+      delete st.no_stock_since;
+      b.orderStates[o.order_number] = st;
+      changed = true;
+      cancelled.push({ order: o.order_number, client: b.client_name || '', skus: sk.short.map(s => s.sku).slice(0, 10) });
+    }
+  }
+  if (cancelled.length) {
+    try { releaseOrphanReservations(db); } catch (_) {}
+    try { closeSettledBackorders(db); } catch (_) {}
+    logAudit('orders_auto_cancelled_no_stock', {
+      count: cancelled.length, minutes: pol.minutes, orders: cancelled.slice(0, 100),
+    });
+    for (const c of cancelled) {
+      addPoke(db, {
+        kind: 'order_auto_cancelled', client: c.client, direction: 'outbound',
+        ref: c.order, orders: 1,
+        note: `Cancelled automatically — no stock for ${pol.minutes} minutes`,
+      });
+    }
+  }
+  if (changed) writeDb(db);
+  return { cancelled, armed };
+}
+// Runs on its own clock so the rule holds whether or not anyone is looking,
+// and once shortly after boot so a restart does not reset every timer.
+setInterval(() => { try { applyNoStockAutoCancel(readDb()); } catch (e) { console.error('[auto-cancel]', e.message); } }, 5 * 60000);
+setTimeout(() => { try { applyNoStockAutoCancel(readDb()); } catch (_) {} }, 90000);
+
 function globalOrdersWithState(keep) {
   const db          = readDb();
   const _lineLookup = _makeSkuLookup();
@@ -4893,6 +5008,9 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       // Cancelled by this client: the record stays for the trail but leaves
       // every everyday screen, theirs included.
       if (isClientCancelled(st)) continue;
+      // AN ORDER WE CANCELLED IS THE CLIENT'S BUSINESS. They need to see it
+      // (and re-place it elsewhere), so `unprocessed` rows are shown with the
+      // reason rather than quietly dropped.
       // Delivery, when we are moving it ourselves. Same words the office sees.
       const job = transportJobForOrder(db, o.order_number);
       const _pk = portalPickup(st, _pol);
@@ -4922,6 +5040,13 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         delivery,
         pickup: _pk,
         stock: _sk ? { ...PORTAL_STOCK_LABEL[_sk.state], state: _sk.state, short: _sk.short.slice(0, 20) } : null,
+        // Why it was cancelled, and where the client says they moved it to.
+        cancelled: st.status === 'unprocessed' ? {
+          at: st.unprocessed_at || st.updated_at || null,
+          reason: st.unprocessed_reason || '',
+          automatic: !!st.auto_cancelled,
+        } : null,
+        reassigned_to: String(st.client_reassigned_to || '').slice(0, 300),
         // The waybill we matched to this order, if any — so the client can see
         // the actual label rather than take the number on trust.
         has_label: !!(db.orderLabels || {})[o.order_number],
@@ -5412,6 +5537,36 @@ app.get('/api/fulfillability/export', (req, res) => {
   res.send(buf);
 });
 
+// WHERE THE CLIENT RE-PLACED A CANCELLED ORDER. Free text, their words — we
+// cannot know where it went, and a dropdown of our guesses would only produce
+// wrong data. Written by them, shown back to them, and carried into their
+// download so the record is theirs end to end. Only on an order we did NOT
+// fulfil: on live or completed work it would mean nothing.
+app.post('/api/portal/orders/:orderNumber/reassign', requirePortalAuthMiddleware, requirePortalWrite, express.json(), (req, res) => {
+  const client = req.portalClient.trim().toLowerCase();
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const text = String(req.body?.text ?? '').trim().slice(0, 300);
+  const db = readDb();
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
+    const ord = (b.orders || []).find(o => o.order_number === orderNumber);
+    if (!ord) continue;
+    const st = (b.orderStates || {})[orderNumber] || {};
+    if (st.status !== 'unprocessed') {
+      return res.status(409).json({ error: 'This only applies to an order we did not fulfil.' });
+    }
+    st.client_reassigned_to = text;
+    st.client_reassigned_at = text ? new Date().toISOString() : null;
+    b.orderStates[orderNumber] = st;
+    writeDb(db);
+    logAudit('portal_order_reassigned', { order: orderNumber, client: b.client_name || '', text: text.slice(0, 120) });
+    return res.json({ ok: true, reassigned_to: text });
+  }
+  // Ownership failures read as "not found" so a client cannot probe for
+  // another client's order numbers — the standing rule on every portal route.
+  res.status(404).json({ error: 'Order not found' });
+});
+
 app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient;
   const clientNorm = client.trim().toLowerCase();
@@ -5510,6 +5665,36 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     out.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
     aoa = [...title('Orders'), ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)', 'Collection', 'Picked up (SGT)'], ...out];
     sheet = 'Orders'; name = 'Orders';
+  } else if (kind === 'cancelled') {
+    // THE ORDERS WE DID NOT FULFIL — the list the client re-places elsewhere.
+    // Carries WHY, whether it was automatic, and THEIR OWN note of where the
+    // order went, so the sheet is a complete record without them re-keying it.
+    const out = [];
+    for (const b of db.batches || []) {
+      if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+      for (const o of b.orders || []) {
+        const st = b.orderStates?.[o.order_number] || {};
+        if (st.status !== 'unprocessed') continue;
+        const when = st.unprocessed_at || st.updated_at || o.date || b.uploaded_at;
+        if (!inRange(when)) continue;
+        out.push([o.order_number,
+          sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
+          when ? new Date(when).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
+          st.unprocessed_reason || 'Not processed',
+          st.auto_cancelled ? 'Automatic' : 'By arrangement',
+          (o.lines || []).length,
+          o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+          (o.lines || []).map(l => l.sku).filter(Boolean).slice(0, 20).join(', '),
+          o.waybill_number || '',
+          st.client_reassigned_to || '',
+          st.client_reassigned_at ? new Date(st.client_reassigned_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
+      }
+    }
+    out.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
+    aoa = [...title('Cancelled orders'),
+      ['Order no', 'Order date', 'Cancelled (SGT)', 'Reason', 'How', 'Lines', 'Pieces', 'SKUs', 'Waybill', 'Re-assigned to', 'Noted (SGT)'],
+      ...out];
+    sheet = 'Cancelled'; name = 'Cancelled_orders';
   } else if (kind === 'inbound') {
     const out = (db.inbound || [])
       .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
@@ -5566,6 +5751,64 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_Fulfillability_${sgDateStr()}.xlsx"`);
     return res.send(buf2);
+  } else if (kind === 'report') {
+    // ONE REPORT, TABS INSIDE. Per the user: Transactions and the order
+    // reports were separate downloads with much the same shape, so a client
+    // wanting the month's picture collected three files and reconciled them
+    // by hand. Now one action, one workbook, one period — Orders, Cancelled
+    // and the full stock statement as tabs. Each tab is built by the SAME
+    // code as its standalone download, so nothing can drift between them.
+    const wbR = XLSX.utils.book_new();
+    const add = (nm, rows) => XLSX.utils.book_append_sheet(wbR, XLSX.utils.aoa_to_sheet(rows), nm);
+    const _pol = pickupPolicy(db);
+    const ordersOut = [], cancelledOut = [];
+    for (const b of db.batches || []) {
+      if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+      for (const o of b.orders || []) {
+        const st = b.orderStates?.[o.order_number] || {};
+        const pcs = o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
+        if (st.status === 'unprocessed') {
+          const when = st.unprocessed_at || st.updated_at || o.date || b.uploaded_at;
+          if (!inRange(when)) continue;
+          cancelledOut.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
+            when ? new Date(when).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
+            st.unprocessed_reason || 'Not processed', st.auto_cancelled ? 'Automatic' : 'By arrangement',
+            (o.lines || []).length, pcs,
+            (o.lines || []).map(l => l.sku).filter(Boolean).slice(0, 20).join(', '),
+            o.waybill_number || '', st.client_reassigned_to || '',
+            st.client_reassigned_at ? new Date(st.client_reassigned_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
+          continue;
+        }
+        const when = st.endTime || o.date || b.uploaded_at;
+        if (!inRange(when)) continue;
+        const pk = portalPickup(st, _pol);
+        ordersOut.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
+          PORTAL_STATUS_LABEL[st.status || 'pending'] || PORTAL_STATUS_LABEL.pending,
+          (o.lines || []).length, pcs, o.waybill_number || '', o.po_number || '',
+          st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
+          pk ? pk.label : '', pk?.at ? new Date(pk.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
+      }
+    }
+    ordersOut.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
+    cancelledOut.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
+    add('Orders', [...title('Orders'),
+      ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)', 'Collection', 'Picked up (SGT)'],
+      ...ordersOut]);
+    add('Cancelled', [...title('Cancelled orders'),
+      ['Order no', 'Order date', 'Cancelled (SGT)', 'Reason', 'How', 'Lines', 'Pieces', 'SKUs', 'Waybill', 'Re-assigned to', 'Noted (SGT)'],
+      ...cancelledOut]);
+    try {
+      const tx = computeTransactions(db, client, { from, to });
+      for (const sh of transactionSheets(client, tx, from, to)) {
+        add(String(sh.name).slice(0, 28), sh.aoa);
+      }
+    } catch (e) {
+      add('Transactions', [['Transactions could not be built for this period.'], [String(e.message || e)]]);
+    }
+    const bufR = XLSX.write(wbR, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_Report_${from}_to_${to}.xlsx"`);
+    return res.send(bufR);
   } else {
     return res.status(400).json({ error: 'Unknown export' });
   }
@@ -15912,13 +16155,24 @@ app.get('/api/orders/pickup-queue', (req, res) => {
   // Oldest first — the parcel that has been here longest is the one to chase.
   rows.sort((a, b) => String(a.collection_due || '').localeCompare(String(b.collection_due || ''))
                    || String(a.done_at || '').localeCompare(String(b.done_at || '')));
+  // Per the user: close off by CLIENT. A courier usually collects one
+  // client's parcels, so the list is filtered to that account rather than
+  // ticked out of a mixed pile — which is how the wrong parcel gets closed.
+  const clients = [...new Set(rows.map(r => r.client_name).filter(Boolean))].sort();
+  const want = String(req.query.client || '').trim().toLowerCase();
+  const shown = want ? rows.filter(r => String(r.client_name || '').trim().toLowerCase() === want) : rows;
   res.json({
     policy, today,
+    // The TILES stay whole-warehouse — they answer "what is outstanding here",
+    // and narrowing them to the filter would hide the rest of the backlog.
     awaiting: rows.length,
     dueToday: rows.filter(r => r.collection_due === today).length,
     overdue: rows.filter(r => r.overdue).length,
     pickedToday,
-    rows: rows.slice(0, 500),
+    clients,
+    filteredClient: want ? (clients.find(c => c.toLowerCase() === want) || req.query.client) : '',
+    showing: shown.length,
+    rows: shown.slice(0, 500),
   });
 });
 
@@ -18345,6 +18599,45 @@ app.post('/api/master/zort/orders/:orderNumber/repush', express.json(), async (r
     error: still?.lastError || 'the hub did not accept it',
     note: 'The channel did NOT accept it. It stays queued and keeps retrying.',
   });
+});
+
+// Run the no-stock auto-cancel sweep now, and say what it did. Also how the
+// rule is configured: GET reports the policy and what is currently on the
+// clock; POST /policy changes it (admin or master — this cancels a client's
+// orders, so it is not floor work).
+app.get('/api/master/orders/auto-cancel', (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const pol = autoCancelPolicy(db);
+  const armed = [];
+  for (const b of db.batches || []) {
+    for (const [num, st] of Object.entries(b.orderStates || {})) {
+      if (st.no_stock_since && (st.status === 'pending' || st.status === 'processing')) {
+        armed.push({ order: num, client: b.client_name || '', since: st.no_stock_since,
+                     minutesLeft: Math.max(0, Math.round(pol.minutes - (Date.now() - new Date(st.no_stock_since).getTime()) / 60000)) });
+      }
+    }
+  }
+  res.json({ policy: pol, armed: armed.slice(0, 200), armedCount: armed.length });
+});
+app.post('/api/master/orders/auto-cancel/policy', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const cur = autoCancelPolicy(db);
+  const mins = req.body?.minutes === undefined ? cur.minutes : Math.max(5, Number(req.body.minutes) || cur.minutes);
+  db.autoCancelPolicy = {
+    enabled: req.body?.enabled === undefined ? cur.enabled : !!req.body.enabled,
+    minutes: mins,
+    reason: String(req.body?.reason || cur.reason).slice(0, 200),
+  };
+  writeDb(db);
+  logAudit('auto_cancel_policy_updated', { ...db.autoCancelPolicy, by: req.userId || _tokenUserId(req) || '' });
+  res.json({ ok: true, policy: autoCancelPolicy(db) });
+});
+app.post('/api/master/orders/auto-cancel-sweep', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const out = applyNoStockAutoCancel(readDb());
+  res.json({ ok: true, ...out });
 });
 
 // Enqueue a label fetch for ONE synced order. Coalesced per (store, order) so
