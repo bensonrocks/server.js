@@ -17742,6 +17742,26 @@ async function pullZortStore(db, store) {
             }
           }
         }
+        // A PRE-ASSIGNED TRACKING NUMBER DOES NOT MEAN THE LABEL EXISTS.
+        // Lazada mints the tracking at order creation, but the AWB only
+        // becomes printable once PACK is declared — so an imported order
+        // still `pending` on the hub sits label-less forever ("Getting
+        // label…" retrying against nothing, and ZORT itself cannot print).
+        // Arrange it now — Pack only, never RTS. Self-limiting: once the
+        // hub reports it packed, this stops firing; the outbox dedups the
+        // retries in between. Never for done/cancelled work or for clients
+        // whose orders we do not fulfil.
+        if (store.arrangeAtIntake && stw === 'pending') {
+          const f2 = lazadaFindOrder(db, number, '');
+          if (f2 && f2.ord.zort_id) {
+            const st2 = f2.batch.orderStates?.[f2.ord.order_number] || {};
+            const cn = String(f2.batch.client_name || '').trim().toLowerCase();
+            if (st2.status !== 'done' && st2.status !== 'unprocessed'
+                && !skipClients.has(cn) && !recordClients.has(cn)) {
+              enqueueZortArrange(db, store.id, { orderNumber: number, zortId: f2.ord.zort_id });
+            }
+          }
+        }
         continue;
       }
       // ALREADY HANDLED ON THE HUB'S SIDE — never import as fresh floor work.
@@ -17933,9 +17953,14 @@ async function pullZortStore(db, store) {
     // ⚡ Arrange at intake (per-store, off by default): see enqueueZortArrange.
     // Never for a record-only client — arranging would make the platform issue
     // a waybill for an order we are explicitly not fulfilling.
+    // Fires when the hub still reports the order `pending` — a PRE-ASSIGNED
+    // tracking number is NOT proof the label exists (Lazada mints tracking at
+    // order creation but only makes the AWB printable after Pack), so judging
+    // by "has tracking" left exactly those orders label-less.
     if (store.arrangeAtIntake && !recordOnly) {
       for (const o of clientOrders) {
-        if (o.zort_id && !String(o.waybill_number || '').trim()) {
+        const stw2 = zortStatusWord(zortMeta[o.order_number]?.zort_status);
+        if (o.zort_id && (stw2 === 'pending' || !String(o.waybill_number || '').trim())) {
           enqueueZortArrange(db, store.id, { orderNumber: o.order_number, zortId: o.zort_id });
         }
       }
