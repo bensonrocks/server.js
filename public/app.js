@@ -2091,7 +2091,9 @@
       const when = ord.picked_up_at
         ? new Date(ord.picked_up_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
         : '';
-      const how = ord.pickup_method === 'self-drop' ? ' (dropped off by us)' : '';
+      const how = ord.pickup_method === 'self-drop' ? ' (dropped off by us)'
+                : ord.pickup_method === 'courier-scan' ? " (the platform's courier collected it — the hub reported it shipped)"
+                : '';
       return `<span class="chip chip-picked-up" title="Left us ${esc(when)}${how}">&#10003; Picked Up</span>`;
     }
     if (ord.pickup_status !== 'awaiting') return '';
@@ -11585,7 +11587,7 @@
             ? `<span style="color:#b45309;font-weight:700" title="When the floor completes an order from this store, NOTHING is sent back — the sales channel is never told the parcel is ready. Set this to Ready to Ship (edit ✏) if the channel should be updated.">&#9888; nothing sent back</span>`
             : esc(actLbl[s.completeAction] || s.completeAction) + (s.completeAction === 'status' ? ' ' + s.completeStatusCode : '')}</td>
           <td>${stockBadge}${labelBadge}</td>
-          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.skippedClientOrders || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.skippedClientSample || []).map(x => `${x.order} (${x.client})`).join('\n'))}">&#9003; ${s.lastResult.skippedClientOrders} order(s) not imported — client fulfils their own</span>` : ''}${(s.lastResult?.recordOnlyOrders || 0) ? `<br><span style="color:#2563eb;font-size:.72rem" title="Imported and kept on the books (Completed tab → Cancelled) as the client's record of unfulfillable orders — never floor work, no stock reserved, no label fetched.">&#128209; ${s.lastResult.recordOnlyOrders} order(s) imported as record only</span>` : ''}${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}` : 'never'}</td>
+          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.skippedClientOrders || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.skippedClientSample || []).map(x => `${x.order} (${x.client})`).join('\n'))}">&#9003; ${s.lastResult.skippedClientOrders} order(s) not imported — client fulfils their own</span>` : ''}${(s.lastResult?.recordOnlyOrders || 0) ? `<br><span style="color:#2563eb;font-size:.72rem" title="Imported and kept on the books (Completed tab → Cancelled) as the client's record of unfulfillable orders — never floor work, no stock reserved, no label fetched.">&#128209; ${s.lastResult.recordOnlyOrders} order(s) imported as record only</span>` : ''}${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}${(s.lastResult?.collectionsClosed || 0) ? `<br><span style="color:#059669;font-size:.72rem" title="The hub reported these as shipped, so the finished orders were closed off as collected (method: courier-scan). Nobody here ticked them.">&#128666; ${s.lastResult.collectionsClosed} closed off as collected</span>` : ''}${(s.lastResult?.collectionConflicts || 0) ? `<br><span style="color:#dc2626;font-size:.72rem" title="The hub says these shipped, but they are not finished here. Nothing was changed — look at them.">&#9888; ${s.lastResult.collectionConflicts} shipped on the hub but not finished here</span>` : ''}` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
@@ -11822,6 +11824,10 @@
     document.getElementById('zfStockSync').checked = !!store?.stockSync;
     document.getElementById('zfLabelSync').checked = !!store?.labelSync;
     document.getElementById('zfArrangeIntake').checked = !!store?.arrangeAtIntake;
+    // Default ON for a NEW store and for one saved before this existed —
+    // a marketplace parcel has no other way of ever being closed off.
+    const zfCol = document.getElementById('zfCollectionSync');
+    if (zfCol) zfCol.checked = store ? store.collectionSync !== false : true;
     document.getElementById('zfLabelPath').value = store?.labelPath || '';
     document.getElementById('zfSkipClients').value = (store?.skipClients || []).join(', ');
     const zfRec = document.getElementById('zfRecordClients');
@@ -11880,6 +11886,7 @@
       stockSync: document.getElementById('zfStockSync').checked,
       labelSync: document.getElementById('zfLabelSync').checked,
       arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
+      collectionSync: document.getElementById('zfCollectionSync')?.checked ?? true,
       labelPath: document.getElementById('zfLabelPath').value.trim(),
       skipClients: document.getElementById('zfSkipClients').value.trim(),
       recordOnlyClients: document.getElementById('zfRecordClients')?.value.trim() ?? undefined,

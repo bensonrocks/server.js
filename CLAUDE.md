@@ -307,6 +307,54 @@ Sunday nothing leaves.
   timezone can never pull a completion back a day (SGT everywhere — see
   "Day-bucketing is SGT").
 
+### A marketplace parcel closes itself — `courier-scan` (`closeCollectionFromHub`)
+
+Nobody here can tick a marketplace parcel off: the platform's own courier takes
+it and we observe nothing. `/api/orders/pickup` already REFUSES a hand-tick on
+an API order for exactly that reason — so a finished Lazada/Shopee order sat at
+**Awaiting collection** forever and then turned red **Not collected** days after
+it had actually shipped. The courier's scan does reach ZORT; that is the
+handover we could not see.
+
+- **STAMPED `method: 'courier-scan'`**, never `manual` and never `self-drop`.
+  The trail must never claim we handed the parcel over ourselves or that
+  somebody here ticked it — nobody did either. `via: 'zort'` and `hub_status`
+  ride along, so the record says where the fact came from.
+- **API ORDERS ONLY, structurally**: the order has to carry a `zort_id` that
+  MATCHES the hub record. An uploaded order merely sharing an order number is
+  not this order and carries no channel relationship at all — there is no flag
+  to forget, the gate is the data.
+- **`shipping` and `success` only** (`ZORT_LEFT_STATUSES`). **`waiting` (RTS'd)
+  is deliberately excluded** — Ready-to-Ship is US declaring the parcel ready,
+  not the courier taking it, and closing on it would record a collection that
+  has not happened. `returned` is left out too: it did leave, but a returned
+  parcel is its own story and calling it a clean collection overstates what we
+  know.
+- **THE HUB SAYS SHIPPED AND WE HAVE NOT FINISHED PACKING IT** is a real
+  disagreement, not a collection: audited `zort_collection_conflict` and
+  counted on the store row, nothing changed. A FRESH IMPORT HAS NO STATE RECORD
+  AT ALL and those are the loudest case (somebody shipped it outside the
+  system), so a missing state reads as pending rather than as "nothing to do" —
+  the same trap the no-stock sweep hit.
+- **WHEN it left**: the hub's own timestamp when it gives one, else now (when
+  we learned of it) flagged `at_estimated` with `noticed_at` beside it, and
+  never earlier than `endTime` — a parcel cannot leave before it was packed.
+  This matters because `fulfilmentSla` judges the promise on the day it left.
+- Never re-stamps an existing pickup, so a re-pull cannot move a closed record.
+- **`store.collectionSync`, default ON** (absent reads as on): off by default
+  would leave every already-connected store with the bug. Turn it off per store
+  on Connections → the ZORT store form.
+- The client is told **Picked Up** in our own words, with `by_courier: true`
+  ("collected by the platform's courier") alongside the existing `by_us`
+  self-drop wording — so the two ways a parcel can leave never read the same.
+
+Verified 31 API checks against a hub whose orders move (closes on Shipping with
+the right method/by/via, dated from the hub's own timestamp, clamped when that
+timestamp precedes the pack, flagged estimated when there is none, RTS'd does
+NOT close, an unfinished order is refused and reported, a second pull changes
+nothing, the switch turns it off, and the client sees the courier wording) plus
+10 browser checks on desktop and a Pixel 5.
+
 ### The screens
 
 - Order-row chips: green **✓ Picked Up**, amber **📦 Awaiting collection**,

@@ -4722,6 +4722,10 @@ function portalPickup(state, policy) {
       // Told plainly rather than dressed up: a Saturday parcel went with us to
       // the drop-off point, it was not handed to a courier here.
       by_us: state.pickup.method === 'self-drop',
+      // A marketplace parcel is taken by the platform's own courier. Saying so
+      // is the difference between "it left" and "somebody here says it left" —
+      // and it is the only collection nobody at either end ticked by hand.
+      by_courier: state.pickup.method === 'courier-scan',
     };
   }
   const due = collectionDayFor(state.endTime, policy);
@@ -18000,6 +18004,10 @@ function zortStorePublic(s, db) {
     endpoint: s.endpoint || '', enabled: !!s.enabled,
     labelSync: !!s.labelSync, labelPath: s.labelPath || '',
     arrangeAtIntake: !!s.arrangeAtIntake,
+    // Default ON (absent reads as on): a marketplace parcel has no other way
+    // of ever being closed off, so leaving it off by default would leave the
+    // bug in place for every store already connected.
+    collectionSync: s.collectionSync !== false,
     skipClients: s.skipClients || [],
     recordOnlyClients: s.recordOnlyClients || [],
     channelClients: s.channelClients || {},
@@ -18057,6 +18065,99 @@ function zortStatusWord(s) {
 // separately (it also cancels an existing copy).
 const ZORT_IMPORT_SKIP_STATUSES = new Set(['success', 'shipping', 'returned', 'failed shipment']);
 
+// ── THE PARCEL HAS LEFT, ACCORDING TO THE HUB ───────────────────────────────
+// A marketplace parcel is collected by the platform's own courier, so nobody
+// here ever ticks it off — it sat as "Awaiting collection" forever, and then
+// as red "Not collected" once the due day passed, on an order that shipped
+// days ago. The courier's scan reaches ZORT, and ZORT moves the order to
+// Shipping (and later Success). That is the handover we could not observe.
+//
+// 'waiting' (RTS'd) is deliberately NOT here — Ready-to-Ship is US declaring
+// the parcel ready, not the courier taking it. Closing on that would record a
+// collection that has not happened. 'returned' is left out too: it did leave,
+// but a returned parcel is its own story and calling it a clean collection
+// would overstate what we know.
+const ZORT_LEFT_STATUSES = new Set(['shipping', 'success']);
+
+// The moment the hub says the parcel moved, when it tells us. Undocumented
+// field names, so several candidates are tried — and it is only ever used to
+// date something we already know happened, never to decide whether it did.
+function _zortShippedAt(o) {
+  for (const v of [o?.shippingdate, o?.shipdate, o?.senddate, o?.deliverydate, o?.updateddatetime, o?.updateddate]) {
+    const raw = String(v || '').trim();
+    if (!raw) continue;
+    const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
+// Close an order off as collected because the HUB says it shipped.
+//
+// STAMPED `method: 'courier-scan'`, never 'manual' and never 'self-drop'. The
+// audit trail must never claim we handed the parcel over ourselves or that
+// somebody here ticked it: nobody did either. The word says exactly what
+// happened — a courier scanned it and the hub told us.
+//
+// API ORDERS ONLY, structurally: the order has to carry a `zort_id` matching
+// the hub record. An uploaded order that merely shares an order number is not
+// this order, and an upload carries no channel relationship at all.
+//
+// Returns 'closed' | 'conflict' | '' (nothing to do).
+function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubOrder) {
+  try {
+    if (!ZORT_LEFT_STATUSES.has(statusWord)) return '';
+    const f = lazadaFindOrder(db, orderNumber, '');
+    if (!f) return '';
+    // API-ONLY GATE. No zort_id, or a different one, means this is not the
+    // order the hub is talking about.
+    if (!f.ord.zort_id) return '';
+    if (zortId && String(f.ord.zort_id) !== String(zortId)) return '';
+    // A FRESHLY IMPORTED ORDER HAS NO STATE RECORD AT ALL, and those are
+    // exactly the ones worth flagging: the hub says it shipped and nobody here
+    // has even started it. Reading a missing state as "nothing to do" hid the
+    // loudest case (the same trap the no-stock sweep hit). Nothing is written
+    // — this only decides what to report.
+    const state = f.batch.orderStates?.[f.ord.order_number] || { status: 'pending' };
+    if (state.pickup) return '';                    // already closed — never re-stamp
+    // THE HUB SAYS IT LEFT AND WE HAVE NOT FINISHED PACKING IT. That is a real
+    // disagreement, not a collection: flag it for a human rather than banking
+    // an unfinished pick as gone (same discipline as a void on worked stock).
+    if (state.status !== 'done') {
+      logAudit('zort_collection_conflict', {
+        order: orderNumber, client: f.batch.client_name || '',
+        hubStatus: statusWord, localStatus: state.status, storeId: store?.id || '',
+      });
+      return 'conflict';
+    }
+    // WHEN it left: the hub's own timestamp when it gives one, otherwise now
+    // (which is when we learned of it). Never earlier than the moment we
+    // finished packing — a parcel cannot leave before it exists.
+    const nowIso = new Date().toISOString();
+    let at = _zortShippedAt(hubOrder) || nowIso;
+    const estimated = !_zortShippedAt(hubOrder);
+    if (state.endTime && at < state.endTime) at = state.endTime;
+    const day = sgParts(at)?.day || null;
+    state.pickup = {
+      at,
+      by: 'system',
+      method: 'courier-scan',
+      collection_day: day,
+      via: 'zort',
+      hub_status: statusWord,
+      noticed_at: nowIso,
+      ...(estimated ? { at_estimated: true } : {}),
+    };
+    logAudit('orders_picked_up', {
+      orders: 1, sample: [orderNumber], at, method: 'courier-scan', by: 'system',
+      client: f.batch.client_name || '', hubStatus: statusWord,
+      storeId: store?.id || '', at_estimated: estimated || undefined,
+    });
+    return 'closed';
+  } catch (e) { console.error('[zort-collection]', orderNumber, e.message); }
+  return '';
+}
+
 function handleZortVoid(db, orderNumber, zortId, store) {
   try {
     let batch = null, ord = null;
@@ -18108,6 +18209,7 @@ async function pullZortStore(db, store) {
   // Built once for the whole pull — one query per client, not one per order.
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
   let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0;
+  let collectionsClosed = 0, collectionConflicts = 0;
   const skippedByStatus = {}; const skippedHandledSample = [];
   let skippedClientOrders = 0; const skippedClientSample = [];
   // Clients this store must not bring in at all — they fulfil their own orders.
@@ -18175,6 +18277,17 @@ async function pullZortStore(db, store) {
               enqueueZortArrange(db, store.id, { orderNumber: number, zortId: f2.ord.zort_id });
             }
           }
+        }
+        // THE COURIER TOOK IT. Nobody here can tick a marketplace parcel off —
+        // the platform's own courier collects it and we observe nothing. The
+        // hub moving to Shipping/Success IS that observation, so a finished
+        // order stops sitting at "Awaiting collection" (and never turns red as
+        // "Not collected" days after it actually shipped). Default ON; turn it
+        // off per store on the Connections screen.
+        if (store.collectionSync !== false) {
+          const r = closeCollectionFromHub(db, number, o.id, stw, store, o);
+          if (r === 'closed') collectionsClosed++;
+          else if (r === 'conflict') collectionConflicts++;
         }
         continue;
       }
@@ -18387,6 +18500,7 @@ async function pullZortStore(db, store) {
   const unsure = orders.filter(o => o._attribution_unsure)
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
+                       collectionsClosed, collectionConflicts,
                        skippedByStatus, skippedHandledSample,
                        skippedClientOrders, skippedClientSample, recordOnlyOrders,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
@@ -19251,6 +19365,8 @@ app.post('/api/master/zort/stores', (req, res) => {
   // correctable from this screen without a redeploy.
   if (b.labelSync !== undefined) store.labelSync = !!b.labelSync;
   if (b.arrangeAtIntake !== undefined) store.arrangeAtIntake = !!b.arrangeAtIntake;
+  // Close a finished order off as collected when the hub reports it shipped.
+  if (b.collectionSync !== undefined) store.collectionSync = !!b.collectionSync;
   // Clients this store must NOT bring in — they fulfil their own orders.
   if (b.skipClients !== undefined) {
     store.skipClients = String(b.skipClients || '').split(',').map(x => x.trim()).filter(Boolean);

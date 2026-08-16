@@ -761,7 +761,7 @@
     // final rather than as one more green pill.
     const cls = pk.status === 'picked_up' ? 'p-gone' : pk.status === 'late' ? 'p-sla-miss' : 'p-ready';
     const tip = pk.status === 'picked_up'
-      ? `Left us ${fmtDateTime(pk.at)}${pk.by_us ? ' — delivered to the drop-off point by us' : ''}`
+      ? `Left us ${fmtDateTime(pk.at)}${pk.by_us ? ' — delivered to the drop-off point by us' : ''}${pk.by_courier ? ' — collected by the platform\'s courier' : ''}`
       : pk.due ? `Due to leave ${fmtDate(pk.due)}` : 'Packed and waiting for collection';
     return `<div style="margin-top:.25rem"><span class="pill ${cls}" title="${esc(tip)}">&#128230; ${esc(pk.label)}</span></div>`;
   }
@@ -793,7 +793,7 @@
     if (d.cartons) meta.push(`${d.cartons} carton${d.cartons === 1 ? '' : 's'}`);
     if (d.completed_at) meta.push(`Packed ${fmtDateTime(d.completed_at)}`);
     if (d.pickup?.status === 'picked_up') {
-      meta.push(`Picked up ${fmtDateTime(d.pickup.at)}${d.pickup.by_us ? ' (to the drop-off point by us)' : ''}`);
+      meta.push(`Picked up ${fmtDateTime(d.pickup.at)}${d.pickup.by_us ? ' (to the drop-off point by us)' : ''}${d.pickup.by_courier ? " (collected by the platform's courier)" : ''}`);
     } else if (d.pickup?.due) {
       meta.push(`Due to leave ${fmtDate(d.pickup.due)}`);
     }
