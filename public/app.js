@@ -16185,6 +16185,13 @@
     if (h.inventoryAvailable === false) out.push({ sev: 'crit',
       title: 'Inventory store is DOWN',
       text: 'Stock levels and reservations are not being tracked. Bin locations and quantities cannot be read or written until this recovers.' });
+    // A new movement type nobody has classified counts as client-visible by
+    // default. That default is what put warehouse bin picks onto client
+    // statements and made every shipped unit count twice. Warn the day it
+    // appears, not the day a client queries a number.
+    if (h.unclassifiedMovementTypes && h.unclassifiedMovementTypes.length) out.push({ sev: 'warn',
+      title: `Unclassified stock movement type: ${h.unclassifiedMovementTypes.join(', ')}`,
+      text: 'A movement type is being recorded that has not been classified as either a real change to a client\'s stock or an internal warehouse move. Until it is, it COUNTS on client statements — which may overstate what was shipped or received. Classify it in MOVEMENT_KINDS (lib/inventory-store.js).' });
     if (h.inventoryPathMismatch) out.push({ sev: 'crit',
       title: 'DATA LOSS RISK — inventory is on a different disk',
       text: 'Bin locations and stock are being saved to a different, non-persistent folder than the main database, so they will be lost on the next restart. Set DATA_DIR in Railway so both use the same volume.' });

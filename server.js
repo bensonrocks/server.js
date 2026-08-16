@@ -8283,6 +8283,15 @@ app.get('/api/system-health', (req, res) => {
         portalErrorLastAt: open.map(e => e.lastAt).sort().pop() || null,
       };
     })(),
+    // A MOVEMENT TYPE NOBODY HAS CLASSIFIED is counting as client-visible by
+    // default — which is exactly how bin picks silently joined client
+    // statements and made every unit count twice. Surfaced so the next one is
+    // noticed the day it appears, instead of the day a client queries a
+    // figure. See MOVEMENT_KINDS in lib/inventory-store.js.
+    unclassifiedMovementTypes: (() => {
+      try { return inventory.available() ? inventory.unclassifiedMovementTypes() : []; }
+      catch (_) { return []; }
+    })(),
   });
 });
 
