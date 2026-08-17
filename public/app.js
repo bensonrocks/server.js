@@ -3051,6 +3051,7 @@
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grn-id="${esc(job.id)}" title="Goods Received Note — expected vs received vs damaged, printable proof of receipt">&#128196; GRN</button>` : ''}
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grndl-id="${esc(job.id)}" title="Download the GRN as a putaway worksheet — the Location column is left blank to write in">&#11015; GRN</button>` : ''}
+                  ${job.status === 'done' && isAdmin ? `<button class="btn-secondary btn-sm" data-inbound-dmg-id="${esc(job.id)}" title="Damage found after this receipt was closed — record it against THIS receipt so it reflects in inventory and the client sees it as an event">&#9888; Record damage</button>` : ''}
                   ${job.status !== 'done' ? `<button class="btn-secondary btn-sm" data-inbound-split-id="${esc(job.id)}" title="Share this receipt out across the team">&#128101; Split${(job.assignments || []).length ? ` (${(job.assignments || []).length})` : ''}</button>` : ''}
                   ${job.lead ? `<span class="cs-pill" title="Leading this receipt">&#11088; ${esc(job.lead.name || job.lead.user)}</span>` : ''}
                   ${isAdmin && job.status !== 'done' && !job.pending_deletion ? `<button class="btn-del-order" data-inbound-del-id="${esc(job.id)}" data-inbound-del-ref="${esc(job.reference || job.id.slice(0, 8))}" title="Request deletion">&#128465;</button>` : ''}
@@ -3076,6 +3077,9 @@
     });
     list.querySelectorAll('[data-inbound-grndl-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); grnDownload(btn.dataset.inboundGrndlId); });
+    });
+    list.querySelectorAll('[data-inbound-dmg-id]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); recordLateDamage(btn.dataset.inboundDmgId); });
     });
     wireMassReceive(list);
     list.querySelectorAll('[data-inbound-split-id]').forEach(btn => {
@@ -3294,6 +3298,55 @@
     _splitJob = (inboundJobs || []).find(x => x.id === _splitJob.id) || _splitJob;
     renderSplitLines(); renderSplitCurrent();
   });
+
+  // ── DAMAGE FOUND AFTER THE RECEIPT CLOSED ─────────────────────────────────
+  // Per the user: record it against THIS receipt so it is attributable, reflects
+  // in inventory, and the client sees an event rather than an unexplained number.
+  // While a receipt is still open the right answer is the Damaged condition at
+  // scan time — the server says so if this is called on one.
+  async function recordLateDamage(id) {
+    const job = (inboundJobs || []).find(j => j.id === id);
+    // The received lines are the only SKUs damage can be attributed to, so they
+    // are offered rather than left to memory. Falls back to a plain prompt when
+    // the list route does not carry them.
+    const counts = job?.scanned || {};
+    const skus = Object.keys(counts).length ? Object.keys(counts)
+               : (job?.lines || []).map(l => l.sku).filter(Boolean);
+    const sku = prompt(`Which SKU was damaged?${skus.length ? `\n\nOn this receipt:\n${skus.slice(0, 25).map(k => `• ${k}${counts[k] ? ` (${counts[k]} received)` : ''}`).join('\n')}` : ''}`);
+    if (!sku || !sku.trim()) return;
+    const qtyRaw = prompt(`How many units of ${sku.trim()} were damaged?`);
+    if (!qtyRaw) return;
+    const qty = parseInt(qtyRaw, 10);
+    if (!Number.isFinite(qty) || qty <= 0) { alert('That is not a number of units.'); return; }
+    const reason = prompt('Why? This goes on the client\'s record and is the only account of why the number changed.\n(e.g. "crushed in transit, 2 cartons")');
+    if (!reason || reason.trim().length < 6) { alert('A real reason is needed — it is what the client will read.'); return; }
+    // THE ONE QUESTION THAT MATTERS: has the stock already been taken off? If it
+    // has and we deduct again, the correction doubles — the exact trap that put a
+    // client on zero earlier. So it is asked plainly rather than assumed.
+    const already = confirm(
+      `Has this stock ALREADY been taken off inventory by hand?\n\n`
+      + `OK  = yes, it is already off — just attribute it to this receipt\n`
+      + `Cancel = no, take ${qty} unit(s) off now\n\n`
+      + `Getting this wrong deducts twice.`);
+    const send = extra => fetch(`/api/inbound/${id}/damage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+      body: JSON.stringify({ sku: sku.trim(), qty, reason: reason.trim(), already_adjusted: already, ...extra }),
+    });
+    try {
+      let r = await send({});
+      let d = await r.json().catch(() => ({}));
+      if (r.status === 409 && d.needsPhoto) {
+        const why = prompt(`${d.error}\n\nIf the goods are gone and no photo is possible, say why here (it goes on the record):`);
+        if (!why || why.trim().length < 6) { alert('Not recorded — attach a photo with the 📷 button, or give a reason there is none.'); return; }
+        r = await send({ no_photo_reason: why.trim() });
+        d = await r.json().catch(() => ({}));
+      }
+      if (!r.ok) { alert(d.error || 'Could not record it.'); return; }
+      alert(d.note || 'Recorded.');
+      renderInboundTab();
+    } catch (e) { alert('Could not reach the server.'); }
+  }
 
   // The GRN popup is a separate window, so it reaches back through window.opener
   // for the download — an <a href> could not carry the session token header.

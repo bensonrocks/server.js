@@ -11222,6 +11222,119 @@ app.get('/api/inbound', (req, res) => {
 // for a general shot of the box/shipment. Bytes are written to disk
 // (INBOUND_PHOTO_DIR/<jobId>/<photoId>.<ext>) rather than into db.json,
 // same reasoning as WMS/waybill files — keeps the JSON blob small.
+// ── DAMAGE FOUND AFTER THE RECEIPT WAS CLOSED ───────────────────────────────
+// Per the user: two units were damaged during an inbound and taken out by hand,
+// and they want it ATTRIBUTABLE — recorded against the receipt it happened on,
+// reflected in inventory, and visible to the client as an event rather than as
+// an unexplained number.
+//
+// Scanning with the damaged condition is still the right way while a receipt is
+// OPEN — it needs no correction at all, because the units never become sellable.
+// This is for the case that cannot use it: the receipt is already closed.
+//
+// It writes the SAME records that path writes, so nothing downstream has to know
+// the difference: conditionTotals on the receipt (which is what the client's
+// "N damaged / held" pill and the GRN read), a quarantine row awaiting
+// disposition, and a stock movement naming the receipt.
+app.post('/api/inbound/:id/damage', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const state = rec.state || (rec.state = { status: 'pending', scanned: {}, conditionTotals: {} });
+  if (state.status !== 'done') {
+    return res.status(409).json({ error: 'This receipt is still open — scan the damaged pieces with the Damaged condition instead. They then never become sellable stock and no correction is needed.' });
+  }
+  const sku = String(req.body?.sku || '').trim();
+  const qty = Math.floor(Number(req.body?.qty));
+  const condition = req.body?.condition === 'kiv' ? 'kiv' : 'damaged';
+  const reason = String(req.body?.reason || '').trim();
+  if (!sku) return res.status(400).json({ error: 'Which SKU?' });
+  if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'How many units? (a positive whole number)' });
+  // Same discipline as a hand stock adjustment: this changes a client's count
+  // with no document behind it, so the trail is all there is.
+  if (reason.length < 6) {
+    return res.status(400).json({ error: 'Give a real reason — it goes on the client\'s record and is the only account of why the number changed.' });
+  }
+  // NEVER MORE THAN WAS RECEIVED. Attributing 5 damaged units to a receipt that
+  // took 3 of that SKU is not a correction, it is a different event.
+  const received = Number((state.scanned || {})[sku] || 0);
+  const already = Number(((state.conditionTotals || {})[sku] || {})[condition] || 0);
+  if (!received) return res.status(400).json({ error: `${sku} was not received on this receipt, so damage cannot be attributed to it.` });
+  if (already + qty > received) {
+    return res.status(409).json({ error: `${sku} received ${received} on this receipt and ${already} ${condition} already recorded — ${qty} more would exceed what arrived.` });
+  }
+  // EVIDENCE, same rule as End Receipt. A photo of the goods is best; when they
+  // are long gone, the absence has to be explained rather than skipped.
+  const hasPhoto = (rec.photos || []).some(p => p.sku === sku);
+  const noPhotoWhy = String(req.body?.no_photo_reason || '').trim();
+  if (!hasPhoto && noPhotoWhy.length < 6) {
+    return res.status(409).json({
+      needsPhoto: true, sku,
+      error: `${sku} has no photo on this receipt. Attach one with the 📷 button, or say why there is none — damage is a claim on a supplier and a deduction on a client's account, so the evidence, or its absence, has to be on the record.`,
+    });
+  }
+  // ALREADY TAKEN OFF BY HAND? Then attribute it and DO NOT deduct again —
+  // otherwise this doubles a correction somebody has already made, which is
+  // exactly the trap that put a client on zero earlier today.
+  const alreadyAdjusted = req.body?.already_adjusted === true;
+  const cid = invClientId(rec.client_name);
+  const who = req.userId || _tokenUserId(req) || '';
+  let stockAfter = null, deducted = 0;
+  if (!alreadyAdjusted) {
+    if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+    const it = inventory.get(sku, cid);
+    if (!it) return res.status(404).json({ error: `${sku} is not in ${rec.client_name}'s item master, so there is no stock to take off.` });
+    const have = Number(it.stock_qty) || 0;
+    deducted = Math.min(qty, have);
+    if (deducted > 0) {
+      inventory.adjust(sku, cid, -deducted, 'adjustment',
+        `${condition === 'kiv' ? 'Held' : 'Damaged'} at receipt ${rec.serial || rec.id} — ${reason}`);
+    }
+    stockAfter = Number(inventory.get(sku, cid)?.stock_qty) || 0;
+    // Short is reported, never silently floored at a number nobody asked for.
+    if (deducted < qty) {
+      // fall through — the attribution still stands; the shortfall is named below
+    }
+  }
+  // The receipt itself now carries it, so the GRN, the client's pill and every
+  // report read the same figure without knowing where it came from.
+  state.conditionTotals = state.conditionTotals || {};
+  state.conditionTotals[sku] = state.conditionTotals[sku] || {};
+  state.conditionTotals[sku][condition] = already + qty;
+  const good = Number(state.conditionTotals[sku].straight_to_inventory || 0);
+  if (good > 0) state.conditionTotals[sku].straight_to_inventory = Math.max(0, good - qty);
+  (rec.late_damage = rec.late_damage || []).push({
+    at: new Date().toISOString(), by: who, sku, qty, condition, reason,
+    already_adjusted: alreadyAdjusted, deducted, no_photo_reason: hasPhoto ? '' : noPhotoWhy,
+  });
+  appendScanLog(state, { kind: 'late_damage', sku, qty, by: who,
+    note: `${qty} ${condition} recorded after the receipt closed — ${reason}` });
+  (db.quarantine = db.quarantine || []).unshift({
+    id: uuidv4().slice(0, 8), clientId: cid, sku, qty, condition,
+    source: rec.serial || rec.reference || rec.id, sourceId: rec.id,
+    createdAt: new Date().toISOString(), status: 'open',
+    note: `recorded after the receipt closed — ${reason}`,
+  });
+  if (db.quarantine.length > 500) db.quarantine.length = 500;
+  writeDb(db);
+  logAudit('inbound_damage_recorded_late', {
+    inboundId: rec.id, serial: rec.serial || '', client: rec.client_name || '',
+    sku, qty, condition, reason, alreadyAdjusted, deducted,
+    noPhoto: !hasPhoto || undefined, noPhotoReason: hasPhoto ? undefined : noPhotoWhy, by: who,
+  });
+  res.json({
+    ok: true, sku, qty, condition, deducted, stockAfter,
+    short: deducted < qty && !alreadyAdjusted ? qty - deducted : 0,
+    note: `${qty} ${condition === 'kiv' ? 'held' : 'damaged'} recorded against ${rec.serial || rec.id}.`
+      + (alreadyAdjusted
+          ? ' Stock was left alone — you said it had already been taken off.'
+          : ` ${deducted} unit(s) taken off stock${stockAfter !== null ? ` (now ${stockAfter})` : ''}.`)
+      + (deducted < qty && !alreadyAdjusted ? ` Only ${deducted} were still on hand, so the rest could not be taken off.` : '')
+      + ' The client sees it on this receipt and on their stock movements.',
+  });
+});
+
 app.post('/api/inbound/:id/photo', upload.single('photo'), tenantMiddleware, (req, res) => {
   const { id } = req.params;
   if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });

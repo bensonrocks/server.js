@@ -4548,10 +4548,48 @@ to it is their business, and the reason typed at the time is what explains it.
   what an adjustment is — a note referring to a column that does not exist is
   its own bug.
 
-Verified 23 checks end to end: the photo gate refuses and then admits the close,
-only the 8 good units land, the quarantine row is raised, the client sees the
-damaged pill and the per-line GRN, and a hand write-off afterwards appears on
-their movements AND in their download reading "Out / 2" with the reason.
+### RECORD DAMAGE AGAINST A CLOSED RECEIPT (`POST /api/inbound/:id/damage`)
+
+Per the user: make it **attributable** — recorded against the receipt it happened
+on, reflected in inventory, and an event the client can see. Scanning with the
+Damaged condition stays the right answer while a receipt is OPEN (an open one is
+**told so**, 409, rather than quietly accepted); this is for the case that cannot
+use it.
+
+It writes the SAME records that path writes, so nothing downstream needs to know
+the difference: `conditionTotals` on the receipt (which is what the client's
+pill and the GRN read), a quarantine row **naming the receipt serial**, and a
+stock movement whose reason names the receipt too.
+
+- **"HAS IT ALREADY BEEN TAKEN OFF?" IS ASKED, NEVER ASSUMED** — the floor's own
+  case was stock already corrected by hand, and deducting again would double the
+  correction. That is the exact trap that put a client on zero earlier the same
+  day. `already_adjusted: true` attributes it and leaves stock alone, and the
+  response says which it did.
+- **NEVER MORE THAN ARRIVED.** Attributing 5 damaged units to a receipt that took
+  3 of that SKU is not a correction, it is a different event (409, with both
+  numbers).
+- **EVIDENCE, OR AN EXPLANATION OF ITS ABSENCE.** Same rule as End Receipt: a
+  photo for that SKU, or a `no_photo_reason` recorded on the trail — for a
+  receipt closed days ago the goods may be gone, and a hard block would just push
+  people back to the silent hand adjustment this exists to replace.
+- Reason floor of 6 characters (same as a hand adjustment), admin or master,
+  audited `inbound_damage_recorded_late`, and `rec.late_damage[]` keeps a dated
+  entry saying it was recorded after the close rather than pretending it was
+  found at the dock.
+- A short deduction (fewer units still on hand than the damage) is **reported by
+  name**, never silently floored.
+- UI: **⚠ Record damage** on any closed receipt's row, admin only.
+
+Verified 23 checks on the scan-time path (the photo gate refuses and then admits
+the close, only the 8 good units land, the quarantine row is raised, the client
+sees the damaged pill and the per-line GRN, and a hand write-off afterwards
+appears on their movements AND in their download reading "Out / 2" with the
+reason) plus 25 on the after-the-fact path (an open receipt refused, the photo
+gate, the already-adjusted case NOT deducting twice, the receipt/quarantine/trail
+all carrying it, the client's row and GRN updated, the over-attribution ceiling,
+a fresh write-off genuinely coming off inventory, and warehouse 403 with nothing
+changed).
 
 ### Cancelled orders are opt-in; aging is not a client's business
 
