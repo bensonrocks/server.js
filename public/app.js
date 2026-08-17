@@ -16716,6 +16716,7 @@
         $('invBody').classList.remove('hidden');
         $('invNoClientHint')?.classList.add('hidden');
         renderList();
+        loadInvImports();   // the undo list follows whichever client is loaded
       } catch (e) { alert('Load failed: ' + e.message); }
     }
 
@@ -16873,9 +16874,56 @@
         if (d.skipped) msg += `, skipped ${d.skipped}`;
         if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
+        if (d.txnId) msg += ` · undoable for ${d.reversibleHours || 72}h below`;
         st.className = 'status-bar success'; st.textContent = msg;
         load(); // refresh totals + table
+        loadInvImports();
       } catch (e) { st.className = 'status-bar error'; st.textContent = 'Upload error: ' + e.message; }
+    }
+
+    // ── UNDO A STOCK UPLOAD ───────────────────────────────────────────────
+    // Reported: staff loaded stock here instead of receiving it through
+    // Inbound, and there was no way back. The list sits right under the
+    // uploader, because that is where the mistake is made and where somebody
+    // will look for it — not on another tab.
+    async function loadInvImports() {
+      const box = $('invImportsRecent');
+      if (!box || !clientId) return;
+      try {
+        const r = await fetch('/api/putaway/imports?client=' + encodeURIComponent(clientId),
+          { headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
+        if (!r.ok) { box.innerHTML = ''; return; }
+        const rows = ((await r.json()).rows || []).filter(x => x.source === 'inventory');
+        if (!rows.length) { box.innerHTML = '<div class="hint">No stock uploads for this client yet.</div>'; return; }
+        box.innerHTML = rows.map(x => `
+          <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
+            <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
+            ${x.reversed_at
+              ? `<span style="color:#b45309;font-weight:600">undone ${new Date(x.reversed_at).toLocaleDateString()} by ${esc(x.reversed_by || '?')}</span>`
+              : x.reversible
+                ? `<button class="btn-danger btn-sm inv-imp-undo" data-id="${esc(x.id)}" title="Put every SKU this file touched back to the on-hand figure it had before">&#9100; Undo (${x.hoursLeft}h left)</button>`
+                : `<span class="hint">window closed</span>`}
+          </div>`).join('');
+        box.querySelectorAll('.inv-imp-undo').forEach(b => b.addEventListener('click', async () => {
+          if (!confirm('Undo this stock upload?\n\nEvery SKU it touched goes back to the on-hand figure it had before — including SKUs it created, which are removed again if nothing else gave them stock.\n\nThis is recorded on the audit trail.')) return;
+          b.disabled = true;
+          const send = skipMoved => fetch(`/api/putaway/imports/${b.dataset.id}/reverse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '' },
+            body: JSON.stringify(skipMoved ? { skip_moved: 'yes' } : {}),
+          });
+          try {
+            let r2 = await send(false); let d2 = await r2.json().catch(() => ({}));
+            if (r2.status === 409 && d2.needsSkipMoved) {
+              if (!confirm(`\u26a0 ${d2.message}\n\nMoved: ${(d2.movedSkus || []).join(', ')}\n\nOK = undo the rest \u00b7 Cancel = nothing happens`)) { b.disabled = false; return; }
+              r2 = await send(true); d2 = await r2.json().catch(() => ({}));
+            }
+            if (!r2.ok) { alert(d2.error || 'Could not undo it.'); b.disabled = false; return; }
+            alert(d2.note || 'Undone.');
+            load(); loadInvImports();
+          } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
+        }));
+      } catch (_) { box.innerHTML = ''; }
     }
 
     // ── Bundles / BOM ───────────────────────────────────────────────────────

@@ -12732,7 +12732,7 @@ app.get('/api/putaway/imports', (req, res) => {
       filename: x.filename, lines: x.lines, units: x.units,
       reversed_at: x.reversed_at || null, reversed_by: x.reversed_by || null,
       completed_at: x.completed_at || null, completed_by: x.completed_by || null,
-      whole_position: !!x.whole_position,
+      whole_position: !!x.whole_position, source: x.source || 'putaway',
       completes_txn: x.completes_txn || null,
       reversible: !!x.snapshot && !x.reversed_at && x.reversible_until && new Date(x.reversible_until).getTime() > now,
       hoursLeft: x.reversible_until ? Math.max(0, Math.round((new Date(x.reversible_until).getTime() - now) / 3600000)) : 0,
@@ -12806,6 +12806,9 @@ app.post('/api/putaway/imports/:id/complete-supersede', express.json(), (req, re
   if (!txn.snapshot) return res.status(410).json({ error: 'The record of which cells that upload touched has expired, so it cannot be rebuilt. Re-upload the sheet as a supersede instead.' });
   if (txn.completed_at) return res.status(409).json({ error: `Already completed on ${txn.completed_at.slice(0, 10)} by ${txn.completed_by || 'unknown'}.` });
   if (txn.whole_position) return res.status(409).json({ error: 'That supersede already replaced the whole position — there is nothing left over to finish.' });
+  if (txn.source === 'inventory' || !(txn.snapshot.cells || []).length) {
+    return res.status(400).json({ error: 'That upload set on-hand figures directly and named no bins, so there is nothing to rebuild a position from. Reverse it instead.' });
+  }
 
   const cid = txn.clientId;
   let rows;
@@ -22403,6 +22406,14 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   const qtyOf = r => Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? r.onhand ?? r.available ?? 0) || 0;
   let applied = 0, skipped = 0; const errors = []; const affected = new Set();
   const additions = {}; // sku -> positive stock increase (for backorder release)
+  // ── AN UPLOAD NOBODY CAN UNDO IS A TRAP ──────────────────────────────────
+  // Reported: staff put stock straight in here instead of receiving it through
+  // Inbound, and there was no way back — this route kept no snapshot and no
+  // transaction record, only an audit line with counts. The mass putaway upload
+  // has had a 3-day reversal all along; this one, which is the easier of the
+  // two to reach by accident, had nothing. Same treatment, same window, same
+  // Reverse button.
+  const beforeStock = new Map();   // sku -> on-hand before (null = SKU did not exist)
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
@@ -22411,6 +22422,7 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     const nm  = String(r.name ?? r.description ?? sku).trim() || sku;
     try {
       const existing = inventory.get(sku, cid);
+      if (!beforeStock.has(sku)) beforeStock.set(sku, existing ? Number(existing.stock_qty) || 0 : null);
       if (mode === 'set') {
         const delta = qty - (existing ? existing.stock_qty : 0);
         inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty });
@@ -22436,8 +22448,41 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     zortNotifyStockChange(db, cid, [...affected]);
     pushed = ((readDb().zortOutbox || []).length) - before;
   }
-  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '' });
-  res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed, errors: errors.slice(0, 20) });
+  // The reversal record. `cells: []` because this route writes on-hand figures
+  // directly and never touches bins — reverseStockPositions restores exactly
+  // what it finds, so one implementation covers both kinds of upload.
+  let txnId = null;
+  if (beforeStock.size) {
+    const rdb = readDb();
+    rdb.stockImports = rdb.stockImports || [];
+    txnId = uuidv4();
+    rdb.stockImports.unshift({
+      id: txnId, hash: `inv:${txnId}`, clientId: cid,
+      filename: req.file.originalname || 'stock upload',
+      at: new Date().toISOString(), by: req.userId || _tokenUserId(req) || '',
+      mode, source: 'inventory', lines: applied,
+      units: [...beforeStock.keys()].reduce((n, sku) => {
+        const it = inventory.get(sku, cid); return n + (Number(it?.stock_qty) || 0);
+      }, 0),
+      snapshot: {
+        at: new Date().toISOString(), cells: [],
+        skus: [...beforeStock.entries()].map(([sku, before_stock]) => ({ sku, before_stock })),
+        // TAKEN AFTER THE WRITES, not before — the ledger mark says "where
+        // things stood when this import FINISHED", so that a later check for
+        // "has anything moved since" does not count the import's own rows and
+        // refuse to undo itself. (setStockPositions does the same; taking it
+        // early made every undo ask to skip every SKU.)
+        asOfMovementId: inventory.movementHighWater(),
+      },
+      reversible_until: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
+    });
+    pruneStockImportSnapshots(rdb);
+    if (rdb.stockImports.length > 500) rdb.stockImports.length = 500;
+    writeDb(rdb);
+  }
+  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '', txnId });
+  res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed,
+             txnId, reversibleHours: STOCK_IMPORT_REVERSE_HOURS, errors: errors.slice(0, 20) });
 });
 
 // ── Backorders — the "awaiting stock" queue ──────────────────────────────────

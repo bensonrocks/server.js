@@ -3969,6 +3969,42 @@ outlives what it describes. And a file input whose `value` is never cleared
 fires NO change event when the same file is picked again, so a second upload of
 the same sheet silently never armed the button.
 
+### Undoing a stock upload that bypassed Inbound (Inventory tab)
+
+Reported: staff loaded stock straight in from **Inventory → ⬆ Upload stock
+file** instead of receiving it through Inbound, and there was no way back.
+Correct — that is a DIFFERENT route from the mass putaway upload
+(`/api/inventory/import-file`, not `/api/putaway/import`), and it kept **no
+snapshot and no transaction record at all**, only an audit line with counts.
+The harder-to-reach uploader had a 3-day reversal; the easier one had nothing.
+
+- It now writes the SAME kind of `db.stockImports` record, tagged
+  `source: 'inventory'`, with a per-SKU before-snapshot and the same 3-day
+  window — so `reverseStockPositions` undoes it with no second implementation.
+  `cells: []` because this route writes on-hand figures directly and never
+  touches bins; the reverser restores exactly what it finds.
+- **THE LEDGER MARK IS TAKEN AFTER THE WRITES, NOT BEFORE.** Taking it early
+  made the import count as its own movement, so every undo asked to skip every
+  SKU it had just touched. (`setStockPositions` had this right; the new code
+  had to match it. Caught by the test, not by reading.)
+- **The list sits directly under the uploader** (`#invImportsRecent`), not on
+  the Putaway tab — that is where the mistake is made and where somebody will
+  look for the way out. It follows whichever client is loaded.
+- **Finish-supersede refuses these** — that action rebuilds a position from the
+  bins a sheet named, and this upload named none. Said in words rather than
+  doing something odd.
+- A SKU the upload CREATED is removed again on undo (existing
+  `reverseStockPositions` rule), so the catalogue is not left with phantom rows.
+
+Verified 18 API checks (the upload returns a txn id and a stated window, is
+listed and tagged, undoes back to the exact prior figures, deletes the SKU it
+invented, refuses a second undo, and is on the audit trail) plus 14 browser
+checks on desktop and a Pixel 5.
+
+TEST GOTCHA: one active device per user — a browser signing in as `demo`
+invalidates an API token held by the test harness, so a seeder that runs
+between browser contexts must re-authenticate.
+
 ### Mass ADD / SUPERSEDE / REDUCE — preview-confirm + 3-day reversal
 
 Per the user: uploading inventory, new account or old, is a CHOICE — add on
