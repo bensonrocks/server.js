@@ -8151,6 +8151,91 @@
   });
 
   // ── Scan Overlay ───────────────────────────────────────────────────────────
+
+  // THE WAYBILL, AT THE MOMENT IT MATTERS. A packer has just opened the order
+  // and is about to put things in a box; a missing label discovered at
+  // completion is a repacked carton. So the header always SAYS where the
+  // waybill stands on a synced order, instead of showing a pill when there is
+  // one and silence when there is not — and the pill is the button.
+  function waybillPillHtml(order) {
+    const hasLabel = !!(order.has_order_label || order.has_waybill_pdf);
+    const num = String(order.waybill_number || '').trim();
+    // An UPLOADED order's waybill comes from the client's file or an uploaded
+    // label PDF. There is no channel to ask, so nothing changes for it.
+    if (!order.api_source) {
+      return num ? `<span class="meta-pill meta-pill-waybill">${esc(num)}${hasLabel ? ' &#10003;' : ''}</span>` : '';
+    }
+    if (hasLabel) return `<span class="meta-pill meta-pill-waybill" title="The carrier label is attached — print it from the &#8681; Label button.">${esc(num || 'Label')} &#10003;</span>`;
+    const tap = ' data-waybill-now="1" style="cursor:pointer"';
+    if (num) return `<span class="meta-pill meta-pill-waybill-warn"${tap} title="The channel gave a tracking number but no printable label yet. Tap to ask it now — this packs the order on the channel, which is what makes the label exist.">${esc(num)} &middot; &#9888; no label yet &mdash; tap</span>`;
+    return `<span class="meta-pill meta-pill-waybill-none"${tap} title="This order came from a sales channel and has no waybill yet. Tap to ask the channel now.">&#9888; No waybill yet &mdash; tap to get it</span>`;
+  }
+
+  // The header's download button follows the same facts as the pill.
+  function setScanLabelBtn(ord) {
+    const waybillBtn = document.getElementById('scanWaybillPdfBtn');
+    if (!waybillBtn) return;
+    const token = localStorage.getItem('wms_token') || '';
+    if (ord.has_order_label) {
+      waybillBtn.href = `/api/order-label/${encodeURIComponent(ord.order_number)}/pdf?token=${encodeURIComponent(token)}&dl=1`;
+      waybillBtn.setAttribute('download', `${ord.order_number}_label.pdf`);
+      waybillBtn.innerHTML = '&#8681; Label';
+      waybillBtn.classList.remove('hidden');
+    } else if (ord.has_waybill_pdf && ord.batchId) {
+      waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}?dl=1`;
+      waybillBtn.setAttribute('download', `${ord.order_number}_waybill.pdf`);
+      waybillBtn.innerHTML = '&#8681; Waybill';
+      waybillBtn.classList.remove('hidden');
+    } else {
+      waybillBtn.classList.add('hidden');
+    }
+  }
+
+  function repaintWaybillPill(order) {
+    const slot = document.getElementById('scanWaybillPill');
+    if (slot) slot.innerHTML = waybillPillHtml(order);
+    setScanLabelBtn(order);
+  }
+
+  let _waybillNowBusy = false;
+  // `auto` = fired by opening the order rather than by a tap. An automatic
+  // attempt never interrupts with a dialog (the packer did not ask); a tapped
+  // one always reports what the channel said, because somebody is waiting.
+  async function getWaybillNow(orderNumber, auto) {
+    if (_waybillNowBusy) return;
+    _waybillNowBusy = true;
+    const slot = document.getElementById('scanWaybillPill');
+    if (slot) slot.innerHTML = '<span class="meta-pill meta-pill-waybill-busy">&#8987; Asking the channel&hellip;</span>';
+    try {
+      const r = await fetch(`/api/orders/${encodeURIComponent(orderNumber)}/waybill-now`,
+        { method: 'POST', headers: hdrs(), body: JSON.stringify({ auto: !!auto }) });
+      const d = await r.json();
+      if (!r.ok) {
+        if (activeOrder && activeOrder.order_number === orderNumber) repaintWaybillPill(activeOrder);
+        if (!auto) alert(d.error || 'Could not fetch the waybill.');
+        return;
+      }
+      if (activeOrder && activeOrder.order_number === orderNumber) {
+        if (d.waybill) activeOrder.waybill_number = d.waybill;
+        activeOrder.has_order_label = !!d.hasLabel;
+        repaintWaybillPill(activeOrder);
+      }
+      // The steps are the answer — "packed it, number is X, label attached" or
+      // "the channel has not generated it yet". A tooltip is unreadable on the
+      // phone the floor works from.
+      if (!auto) alert((d.steps || []).join('\n') || 'Nothing to report.');
+    } catch (e) {
+      if (activeOrder && activeOrder.order_number === orderNumber) repaintWaybillPill(activeOrder);
+      if (!auto) alert(e.message);
+    } finally { _waybillNowBusy = false; }
+  }
+
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-waybill-now]');
+    if (!el || !activeOrder) return;
+    getWaybillNow(activeOrder.order_number, false);
+  });
+
   async function openScanOverlay(orderNumber) {
     if (!currentUser) { requireLogin(() => openScanOverlay(orderNumber)); return; }
     const ord = loadedOrders.find(o => o.order_number === orderNumber);
@@ -8169,22 +8254,7 @@
       }
     } catch {} // network hiccup — proceed; every scan re-checks the claim server-side
     activeOrder = ord;
-    // Show/hide the waybill/label PDF button in the scan header
-    const waybillBtn = document.getElementById('scanWaybillPdfBtn');
-    if (ord.has_order_label) {
-      const token = localStorage.getItem('wms_token') || '';
-      waybillBtn.href = `/api/order-label/${encodeURIComponent(ord.order_number)}/pdf?token=${encodeURIComponent(token)}&dl=1`;
-      waybillBtn.setAttribute('download', `${ord.order_number}_label.pdf`);
-      waybillBtn.innerHTML = '&#8681; Label';
-      waybillBtn.classList.remove('hidden');
-    } else if (ord.has_waybill_pdf && ord.batchId) {
-      waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}?dl=1`;
-      waybillBtn.setAttribute('download', `${ord.order_number}_waybill.pdf`);
-      waybillBtn.innerHTML = '&#8681; Waybill';
-      waybillBtn.classList.remove('hidden');
-    } else {
-      waybillBtn.classList.add('hidden');
-    }
+    setScanLabelBtn(ord);
     // Unhide BEFORE rendering — the adaptive page-fit measures the visible
     // list height, which is 0 while the overlay is display:none
     document.getElementById('scanOverlay').classList.remove('hidden');
@@ -8192,6 +8262,14 @@
     enterItemsPhase(ord);
     attachGlobalScanCapture();
     loadResolveCache(); // keep the offline barcode cache fresh (non-blocking)
+    // ASK FOR THE LABEL THE MOMENT THE ORDER IS OPENED, not at completion.
+    // Only for a synced order that has none and is still being worked — a
+    // finished order's label has already printed, and an uploaded order has no
+    // channel to ask. Non-blocking and silent: it repaints the pill when it
+    // lands, and never interrupts a packer who did not ask for anything.
+    if (ord.api_source && !ord.has_order_label && !ord.has_waybill_pdf && ord.scan_status !== 'done') {
+      getWaybillNow(ord.order_number, true);
+    }
   }
 
   function focusWaybillInput() {
@@ -8606,7 +8684,7 @@
         ${order.client_name ? `<span class="meta-pill">${esc(order.client_name)}</span>` : ''}
         <span class="meta-pill meta-pill-carrier" title="${esc(order.carrier || '')}">${esc(carrierLabel(order.carrier) || '—')}</span>
         ${(() => { const v = orderStockVerdict(order); return v ? `<span class="meta-pill meta-pill-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>` : ''; })()}
-        ${order.waybill_number ? `<span class="meta-pill meta-pill-waybill">${esc(order.waybill_number)}${order.has_waybill_pdf ? ' &#10003;' : ''}</span>` : ''}
+        <span id="scanWaybillPill">${waybillPillHtml(order)}</span>
         ${order.issue_no ? `<span class="meta-pill meta-pill-gi" title="GI number">GI: ${esc(order.issue_no)}</span>` : ''}
         ${details ? `<button class="meta-details-btn" id="scanMetaDetailsBtn">&#9432; Details</button>` : ''}
       </div>

@@ -916,6 +916,66 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
 - Webhook/UpdateWebhook exists in the API — a future push-based
   alternative to polling, not yet used.
 
+### The waybill has to be there WHEN THE PACKER OPENS THE ORDER (`/api/orders/:orderNumber/waybill-now`)
+
+Every other path that gets a waybill is a BACKGROUND queue — the pull notices
+it, the outbox retries every 30s with backoff. That is right for unattended
+catch-up and wrong at the one moment it matters: a packer has just opened the
+order and is about to put things in a box. Waiting out a retry cycle at the
+bench is how a carton gets packed with no label on it, and the screen used to
+say NOTHING — the waybill pill appeared when there was one and there was blank
+space when there was not.
+
+- **THE PILL IS ALWAYS THERE ON A SYNCED ORDER, AND THE PILL IS THE BUTTON.**
+  Red **⚠ No waybill yet — tap to get it**, amber **`<number>` · ⚠ no label yet
+  — tap**, or the number with a ✓ once the label is attached. An UPLOADED order
+  is untouched: its waybill comes from the client's file or an uploaded label
+  PDF and there is no channel to ask (said in those words if the route is
+  called anyway, rather than left as a dead button).
+- **ASKED AUTOMATICALLY THE MOMENT THE ORDER IS OPENED** — synced, no label, not
+  yet done. Non-blocking and silent: it repaints the pill and reveals the ⇩
+  Label button when it lands, and never interrupts a packer who did not ask.
+  A TAP always reports what the channel said, in a dialog — a tooltip is
+  unreadable on the phone the floor works from.
+- **IT PACKS, AND IT NEVER READY-TO-SHIPS.** Lazada mints the tracking number at
+  order creation but the AWB only becomes PRINTABLE once Pack is declared, so an
+  order left Pending has a number and no label forever — Pack is the step that
+  produces the label. RTS says the parcel is finished and ready for the courier,
+  which is a lie told before a single piece has been picked; the test asserts
+  ReadyToShip is never called on this path.
+- **"NOW" HAS TO MEAN NOW.** Two things quietly made it a no-op: a label entry
+  already waiting out its flat 60s retry is SKIPPED by the drainer as not due
+  (so the tap did nothing for up to a minute), and `drainZortOutbox` holds a
+  reentry guard for the 30s scheduler, so a single call lands as a silent no-op
+  whenever it collides with one — which read as "the channel has no label" when
+  the truth was "we never asked". The route makes the entry due, then drains
+  until the entry has genuinely been attempted (its next-attempt time moves, or
+  it succeeds and disappears), bounded at 8s so a wedged drain cannot hold the
+  packer's screen.
+- **A LABEL WE ASKED FOR BY ORDER IS NOT ORPHANED BY A MISREAD.**
+  `processLabelPdf(..., { forOrder })`: we asked the hub for THAT order's label
+  and it handed one back, so which order it belongs to is not a guess. A
+  ONE-PAGE document is attached directly when the text match missed (OCR on a
+  scanned AWB garbles a digit and the label would otherwise import and attach to
+  nothing). A MULTI-PAGE document is never blind-attached — which page is whose
+  IS a guess, and a guess puts the wrong label on a box; it is still imported so
+  a human sorts it out on the Labels tab. Text matching stays the rule for bulk
+  PDFs, where it is the only evidence there is.
+- Any signed-in user, deliberately: a packer who cannot print a label must not
+  have to find an admin. An 8s per-order cooldown keeps a double-open from
+  asking the hub twice, and says so rather than pretending to work.
+- Audited `sync_packed_on_demand`, `sync_waybill_backfilled` (`via:'waybill-now'`),
+  `sync_label_attached_by_request`.
+
+Verified 26 API checks against a hub that behaves like the live one (the order
+arrives Pending with NO tracking and NO label; one call packs it, gets the
+number and attaches the label; Pack was called and RTS never was; the label is
+only served after the pack; a hub that refuses to pack relays its own reason and
+invents nothing; a one-page label fetched for an order attaches, a six-page one
+does not) plus 18 browser checks on desktop and a Pixel 5 (the warning pill is
+red by computed style and fully on screen, the pill is the button, and opening
+the order fills the waybill in and reveals the Label button with no reload).
+
 ### ZORT order status — words, the import filter, and the cross-check tool
 
 CONFIRMED against developers.zortout.com/api-reference/order (read 2026-08-11

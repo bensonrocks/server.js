@@ -2504,6 +2504,11 @@ body.ls-open { overflow: hidden; }
 .meta-pill-carrier { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
 .meta-pill-waybill { background: #eff6ff; color: #1d4ed8; font-family: Consolas, monospace; }
 .meta-pill-gi       { background: #fff7ed; color: #c2410c; font-family: Consolas, monospace; border: 1px solid #fed7aa; }
+/* A synced order with no printable label yet. Loud on purpose: the packer is
+   about to fill a box, and finding out at completion is too late. */
+.meta-pill-waybill-warn { background: #fffbeb; color: #b45309; border: 1px solid #fcd34d; font-weight: 700; }
+.meta-pill-waybill-none { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; font-weight: 700; }
+.meta-pill-waybill-busy { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; font-weight: 700; }
 .meta-details-btn {
   border: 1px solid var(--border, #cbd5e1); background: var(--surface, #fff);
   border-radius: 20px; padding: .26rem .8rem; color: var(--primary, #2563eb);

@@ -6819,7 +6819,11 @@ function matchLabelPage(rawText, extracted, index) {
 // approval — same page split, same extraction, same match index, same
 // first-write-wins rules. A second implementation would have drifted the first
 // time either side learned something.
-async function processLabelPdf(buffer, filename, uploadedBy) {
+// `forOrder` is set when the bytes were fetched FOR a specific order (the
+// per-order sync fetch): we asked the hub for THAT order's label and it handed
+// one back, so which order it belongs to is not a guess. Text matching stays
+// the rule for a bulk PDF, where it is the only evidence there is.
+async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) {
   const contentHash = crypto.createHash('sha256').update(buffer).digest('hex');
   const importId  = uuidv4();
   const importDir = path.join(LABEL_IMPORT_DIR, importId);
@@ -6896,6 +6900,26 @@ async function processLabelPdf(buffer, filename, uploadedBy) {
     // rawText kept (truncated) so later rematches can reverse-scan without
     // re-parsing the PDF from the volume
     pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000), matchStatus, matchedOrderNumber, matchMethod });
+  }
+
+  // A LABEL WE ASKED FOR BY ORDER MUST NOT BE ORPHANED BY A MISREAD.
+  // A one-page PDF fetched for a named order IS that order's label; if the
+  // tracking number on it came back garbled (OCR on a scanned AWB) it would
+  // otherwise be imported and attached to nothing, leaving the packer with the
+  // "no label" they asked us to fix. ONE page only — a multi-page document is
+  // not obviously all one order's, and guessing which page is worse than
+  // saying so on the Labels tab.
+  if (forOrder && numPages === 1 && !db.orderLabels[forOrder] && pages[0] && pages[0].matchStatus !== 'matched') {
+    pages[0].matchStatus       = 'matched';
+    pages[0].matchedOrderNumber = forOrder;
+    pages[0].matchMethod       = 'fetched-for-order';
+    db.orderLabels[forOrder] = {
+      importId, pageIndex: 0, pageFile: pages[0].pageFile,
+      attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
+      attachedVia: 'fetched-for-order',
+    };
+    logAudit('sync_label_attached_by_request', { order: forOrder, importId,
+      why: 'fetched from the channel for this order; the text on it did not match' });
   }
 
   const importRecord = {
@@ -18705,6 +18729,168 @@ function enqueueZortProduct(db, storeId, clientId, sku) {
   return true;
 }
 
+// ── "GET ME THE WAYBILL, NOW" ───────────────────────────────────────────────
+// Everything else that fetches a waybill is a BACKGROUND queue: the pull sees
+// it, the outbox retries it every 30s with backoff. That is right for
+// unattended catch-up and wrong for the one moment it matters most — a packer
+// has just opened the order and is about to put things in a box. Waiting out a
+// retry cycle at the bench is how a carton gets packed with no label on it.
+//
+// So this does the whole chain SYNCHRONOUSLY and reports each step in words:
+//   1. the hub is still Pending  → PACK it. Lazada mints the tracking number at
+//      order creation, but the AWB only becomes PRINTABLE once Pack is
+//      declared — an order left Pending has a number and no label, forever.
+//   2. read the order detail     → backfill the tracking number
+//   3. queue + drain the label   → run it through the SAME processLabelPdf
+//      pipeline as every other label, so it matches and attaches identically
+//
+// NEVER Ready-to-Ship. RTS says the parcel is finished and ready for the
+// courier, which is a lie told before a single piece has been picked. Pack is
+// the step that produces the label; that is the one that fires here.
+//
+// ANY SIGNED-IN USER, deliberately: this is floor work. A packer who cannot
+// print a label must not have to find an admin.
+const _waybillNowAt = new Map();          // orderNumber -> last run, for a light rate limit
+const WAYBILL_NOW_COOLDOWN_MS = 8000;
+app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res) => {
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const auto = req.body?.auto === true;    // fired by opening the order, not by a tap
+  const db = readDb();
+  const f = lazadaFindOrder(db, orderNumber, '');
+  if (!f) return res.status(404).json({ error: 'Order not found' });
+  const ord = f.ord;
+  const steps = [];
+  const done = (extra = {}) => {
+    const after = readDb();
+    const f2 = lazadaFindOrder(after, orderNumber, '');
+    res.json({
+      ok: true, order: orderNumber,
+      waybill: String(f2?.ord?.waybill_number || '').trim(),
+      hasLabel: !!(after.orderLabels || {})[orderNumber],
+      steps, ...extra,
+    });
+  };
+
+  if (!ord.zort_id || !ord.zort_store_id) {
+    // An UPLOADED order's waybill comes from the client's own file or a label
+    // PDF someone uploads — there is no channel to ask. Said plainly rather
+    // than left as a dead button.
+    return res.status(400).json({
+      error: 'This order did not come from a connected store, so there is no channel to ask. Its waybill comes from the client\'s file or an uploaded label PDF.',
+    });
+  }
+  const store = zortStores(db).find(s => s.id === ord.zort_store_id);
+  if (!store || !store.enabled) return res.status(400).json({ error: 'The store this order came from is not connected right now.' });
+
+  // A LIGHT RATE LIMIT, not a lock. Opening the order fires this, and a packer
+  // may open the same order twice in a minute; the hub does not need to hear
+  // about it twice in eight seconds. A hand-tapped request says so and is
+  // never silently swallowed — it just reports the cooldown.
+  const last = _waybillNowAt.get(orderNumber) || 0;
+  if (Date.now() - last < WAYBILL_NOW_COOLDOWN_MS) {
+    steps.push('Asked a moment ago — waiting for that to land.');
+    return done({ cooled: true });
+  }
+  _waybillNowAt.set(orderNumber, Date.now());
+
+  try {
+    // 1. PACK IT IF THE HUB HAS NOT. This is what makes the label exist.
+    const hubStatus = await zortHubStatus(store, ord.zort_id);
+    if (!hubStatus) steps.push('Could not read the order on the hub — trying the label anyway.');
+    else if (hubStatus === 'pending') {
+      try {
+        const shipment = await zortShipmentChannel(store, ord.zort_id);
+        await zortApi.packOrder(store, { id: ord.zort_id, shipment: shipment || undefined });
+        steps.push('Told the channel this order is Packed, so it issues the waybill.');
+        logAudit('sync_packed_on_demand', { order: orderNumber, storeId: store.id, by: req.userId || '', auto: auto || undefined });
+      } catch (e) {
+        // "Already packed" is the state we wanted, not a failure.
+        if (/already|packed/i.test(e.message || '')) steps.push('The channel already had it packed.');
+        else steps.push(`The channel refused to pack it: ${e.message}`);
+      }
+    } else steps.push(`The channel already has it as ${hubStatus}.`);
+
+    // 2. THE TRACKING NUMBER. Never overwrite one we already hold — a label
+    //    may already be printed against it.
+    if (!String(ord.waybill_number || '').trim()) {
+      try {
+        const d = await zortApi.getOrderDetail(store, ord.zort_id);
+        const t = String(d?.trackingno || d?.order?.trackingno || d?.trackingnumber || d?.tracking_no || '').trim();
+        if (t) {
+          const db2 = readDb();
+          const f3 = lazadaFindOrder(db2, orderNumber, '');
+          if (f3 && !String(f3.ord.waybill_number || '').trim()) {
+            f3.ord.waybill_number = t;
+            writeDb(db2);
+            logAudit('sync_waybill_backfilled', { order: orderNumber, tracking: t, storeId: store.id, via: 'waybill-now' });
+            scheduleLabelAutoRematch('waybill-now');
+          }
+          steps.push(`Waybill number ${t}.`);
+        } else steps.push('The channel has not assigned a tracking number yet.');
+      } catch (e) { steps.push(`Could not read the tracking number: ${e.message}`); }
+    }
+
+    // 3. THE LABEL ITSELF. Queued through the normal outbox entry so a failure
+    //    keeps retrying in the background after we answer, then drained at
+    //    once because somebody is waiting for it.
+    if ((readDb().orderLabels || {})[orderNumber]) {
+      steps.push('The label is already attached.');
+      return done();
+    }
+    if (!store.labelSync) {
+      steps.push('This store is not set to pull carrier labels — switch it on in Connections, or upload the label PDF on the Labels tab.');
+      return done();
+    }
+    let queuedAt = '';
+    {
+      const db4 = readDb();
+      const f4 = lazadaFindOrder(db4, orderNumber, '');
+      enqueueZortLabel(db4, store.id, {
+        orderNumber, zortId: ord.zort_id,
+        tracking: String(f4?.ord?.waybill_number || '').trim(),
+      });
+      // "NOW" HAS TO MEAN NOW. A label entry that is already waiting out its
+      // flat 60s retry would be SKIPPED by the drainer as not-yet-due, so the
+      // tap would do nothing at all for up to a minute — the exact dead button
+      // this endpoint exists to remove. An explicit ask makes it due.
+      const e4 = (db4.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
+      if (e4) { e4.nextAttemptAt = new Date().toISOString(); e4.stalled = false; queuedAt = e4.nextAttemptAt; }
+      writeDb(db4);
+    }
+    // AND THE DRAIN HAS TO ACTUALLY RUN. drainZortOutbox holds a reentry guard
+    // for the 30s scheduler, so a single call lands as a silent no-op whenever
+    // it collides with one — which read as "the channel has no label" when the
+    // truth was "we never asked". Try until the entry has genuinely been
+    // attempted (its next attempt time moves, or it succeeds and disappears),
+    // then answer. Bounded, so a wedged drain cannot hold the packer's screen.
+    {
+      const until = Date.now() + 8000;
+      for (;;) {
+        try { await drainZortOutbox(); } catch (_) {}
+        const now = readDb();
+        if ((now.orderLabels || {})[orderNumber]) break;
+        const e = (now.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
+        if (!e) break;                                   // gone = sent
+        if (queuedAt && e.nextAttemptAt !== queuedAt) break;   // tried, and answered
+        if (Date.now() >= until) break;
+        await new Promise(r => setTimeout(r, 250));
+      }
+    }
+    const after = readDb();
+    if ((after.orderLabels || {})[orderNumber]) steps.push('Label fetched and attached.');
+    else {
+      const e = (after.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
+      steps.push(e?.lastError && !/waiting for the channel|not available yet/i.test(e.lastError)
+        ? `The label could not be fetched: ${e.lastError} — it keeps retrying.`
+        : 'The channel has not generated the label yet. It keeps trying in the background.');
+    }
+    return done();
+  } catch (err) {
+    steps.push(err.message);
+    return done({ failed: true });
+  }
+});
+
 // RE-PUSH ONE ORDER TO THE CHANNEL. The floor's answer to a push that did not
 // land: a false green (see zortBodyError — the hub used to refuse inside a 200
 // and we recorded success) leaves an order stamped as told when the hub never
@@ -19090,7 +19276,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
       throw e;
     }
     const name = `${entry.orderNumber || entry.tracking || 'label'}.pdf`;
-    const out = await processLabelPdf(pdf, name, `sync:${store.clientName || store.storename || ''}`);
+    const out = await processLabelPdf(pdf, name, `sync:${store.clientName || store.storename || ''}`, { forOrder: entry.orderNumber });
     logAudit('sync_label_imported', {
       order: entry.orderNumber, client: store.clientName || '',
       importId: out.importId, pages: out.pageCount, matched: out.matched,
