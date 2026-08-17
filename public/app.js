@@ -11731,7 +11731,12 @@
             const lines = (d.rows || []).map(r => {
               const bits = [`${r.number}:`];
               if (!r.apiReturns) bits.push('NOT returned by the hub API.');
-              else bits.push(`hub status "${r.zortStatus}"${r.tracking ? `, tracking ${r.tracking}` : ''}${r.channel ? `, channel ${r.channel}` : ''}.`);
+              else {
+                bits.push(`hub status "${r.zortStatus}"${r.tracking ? `, tracking ${r.tracking}` : ''}${r.channel ? `, channel ${r.channel}` : ''}.`);
+                // WHICH CLIENT it files to is usually the answer when a fresh
+                // order does not appear — the two skip lists are keyed on it.
+                bits.push(`Files to "${r.client || '(could not attribute)'}"${r.attributedVia ? ` (by ${r.attributedVia})` : ''}, ${r.lines} line(s).`);
+              }
               bits.push(r.verdict);
               return bits.join(' ');
             });

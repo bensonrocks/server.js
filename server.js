@@ -20112,6 +20112,17 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
     return res.status(502).json({ ok: false, error: err.message });
   }
   const byNum = new Map(list.map(z => [String(z.number || '').trim(), z]));
+  // THE SAME RULES THE PULL USES, or this tool answers a different question
+  // from the one asked. "Would it import?" has to account for the client the
+  // SKUs attribute to and the two skip lists — otherwise it cheerfully reports
+  // "would import" about an order that never can, which is precisely the case
+  // somebody reaches for this tool to explain.
+  const skipClients = new Set((store.skipClients || [])
+    .map(x => String(x || '').trim().toLowerCase()).filter(Boolean));
+  const recordClients = new Set((store.recordOnlyClients || [])
+    .map(x => String(x || '').trim().toLowerCase()).filter(Boolean));
+  let skuOwners = new Map();
+  try { skuOwners = buildSkuOwnerIndex(db); } catch (_) {}
   const rows = numbers.map(n => {
     const here = findBatchForOrder(db, n);
     const hereStatus = here ? (here.orderStates?.[n]?.status || 'pending') : null;
@@ -20123,13 +20134,21 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
                  : 'The hub API does NOT return this order — it can never sync. If ZORT\'s screen shows it, that is a question for ZORT support.' };
     }
     const stw = zortStatusWord(z.status);
+    const channel = String(z.saleschannel || z.channel || '').trim();
+    const att = attributeSyncClient(skuOwners, z.list || z.orderlist || [], channel, store);
+    const cn = String(att.client || '').trim().toLowerCase();
     let would;
     if (stw === 'voided') would = 'voided on the hub — never imported as work';
     else if (ZORT_IMPORT_SKIP_STATUSES.has(stw)) would = `import would SKIP it — already handled on the hub (${stw})`;
+    else if (skipClients.has(cn)) would = `import would SKIP it — "${att.client}" is on this store's "do NOT import" list (the amber box on the store form)`;
+    else if (recordClients.has(cn)) would = `import would bring it in AS A RECORD ONLY — "${att.client}" is on this store's record-only list, so it arrives already closed and never reaches the floor`;
+    else if (!(z.list || z.orderlist || []).length) would = 'the hub returns this order with NO product lines, so there is nothing to import';
     else would = 'import would bring it in on the next pull';
     return { number: n, apiReturns: true, inIdealOne: !!here, ourStatus: hereStatus,
              zortStatus: stw || String(z.status || ''), zortId: z.id,
-             tracking: String(z.trackingno || '').trim(), channel: String(z.saleschannel || '').trim(),
+             tracking: String(z.trackingno || '').trim(), channel,
+             client: att.client || '', attributedVia: att.via || '',
+             lines: (z.list || z.orderlist || []).length,
              verdict: here ? `Already on our books (${hereStatus}).` : would };
   });
   logAudit('zort_order_lookup', { storeId: store.id, numbers });

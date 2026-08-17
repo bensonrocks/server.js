@@ -1171,6 +1171,15 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   reservation, the label outbox, arrange-at-intake, and the New Work poke.
   `skipClients` remains the harder switch for clients who need NO record here.
   Both are matched on SKU attribution, after `clientForOrder` resolves.
+- **🔍 Find order** (store-row button; `POST .../stores/:id/lookup`, read-only)
+  answers "ZORT shows it and IdealOne never got it". It applies **the same
+  rules the pull uses** — status, the two skip lists, and the client the SKUs
+  attribute to — because a tool that reports "would import" about an order that
+  never can explains nothing, which is exactly the moment somebody reaches for
+  it. It names the client it files to and how it was attributed, since the skip
+  lists are keyed on that and it is usually the answer. Also distinguishes an
+  order the API does not return at all (a question for ZORT, not for us) and one
+  the hub returns with no product lines.
 - **🔎 Cross-check** (store-row button; `POST /api/master/zort/stores/:id/
   cross-check`, read-only): asks the hub the current status of every open
   synced order here (GetOrders `numberlist` HEADER, 100 per call — a header,
