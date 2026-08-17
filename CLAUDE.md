@@ -976,6 +976,58 @@ does not) plus 18 browser checks on desktop and a Pixel 5 (the warning pill is
 red by computed style and fully on screen, the pill is the button, and opening
 the order fills the waybill in and reveals the Label button with no reload).
 
+### A 200 FROM PACK IS NOT A PACK (`sync_arrange_not_taking`)
+
+Reported live from the Sync-activity dialog: **fourteen consecutive green
+"✓ Asked the channel to PACK it at intake"** rows, six minutes apart, on an
+order the hub still showed as Pending. Three defects, all in the same place:
+
+1. **SUCCESS WAS CLAIMED WITHOUT VERIFICATION.** `sync_arranged_at_intake` was
+   logged the instant `packOrder` RESOLVED, which asserts nothing about whether
+   the hub moved. Exactly the lesson `zortBodyError` taught one level up — the
+   call returning is not the outcome. The hub is now asked where the order
+   stands **before and after**: still `pending` afterwards is not a success and
+   is never recorded as one.
+2. **NOTHING RECORDED WHAT THE HUB SAID.** Fourteen identical rows could not
+   explain why the fifteenth would differ. `_zortSaid(resp)` puts the hub's own
+   `resCode`/`resDesc` on the trail — only documented fields, so the record is
+   never a guess.
+3. **THERE WAS NO STOP CONDITION.** Success DROPS the outbox entry, so the next
+   pull saw `pending` again and enqueued again, for ever. After
+   `ZORT_ARRANGE_MAX_TRIES` (4) the order is stamped `state.arrange_blocked`
+   and the pull skips it — a request repeated hourly with no effect is not a
+   sync, it is noise burying the one line somebody needed to read.
+
+- **The first failure to move is treated as LAG, not as a fault** — it retries
+  on the normal backoff, and the before-read turns the retry into a no-op the
+  moment it does land. Only a persistent non-mover is flagged.
+- An order **already past Pending is never asked at all** (we packed it
+  earlier, or the client did) — recorded as such, and tracking/label are still
+  chased.
+- The same read-back went into `/waybill-now`, which had the same overclaim in
+  its own words ("Told the channel this order is Packed").
+- **A FRESH IMPORT HAS NO STATE RECORD**, and those are exactly the orders this
+  fires on — the flag write silently did nothing until the record was created
+  lazily. Third time this trap has bitten; see also the no-stock sweep and
+  `closeCollectionFromHub`.
+- `ZORT_BACKOFF_MS` overrides the retry ladder flat, for tests only — the same
+  escape hatch `ZORT_LABEL_RETRY_MS` already had, since a ladder measured in
+  minutes cannot otherwise be exercised.
+
+HONEST LIMIT: this makes the failure visible and stops the loop; it does not
+explain WHY the live hub refuses to move. `PackOrder` is in the Postman
+collection but NOT on the docs site, so it is unverified against a live
+account. The next occurrence now carries the hub's own words on the trail,
+which is what a diagnosis needs.
+
+Verified 20 API checks against a hub that answers Pack with a clean
+`resCode 200 / Success` and leaves the order Pending: it is retried 4 times and
+stops, NOT ONE attempt is recorded as green, the real outcome is on the trail
+with the hub's status and its answer, the order is flagged, a later pull does
+not restart it, an order the hub really does pack still succeeds in ONE call
+and is never flagged, one already Packed is not asked at all, Ready-to-Ship is
+never called, and the floor reads the failure in words on the order.
+
 ### ZORT order status — words, the import filter, and the cross-check tool
 
 CONFIRMED against developers.zortout.com/api-reference/order (read 2026-08-11

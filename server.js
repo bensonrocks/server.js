@@ -9395,6 +9395,9 @@ app.get('/api/orders/archived', (req, res) => {
 // every call we made for this order, in order, with what came back.
 const SYNC_ACTIVITY_EVENTS = {
   sync_arranged_at_intake:      { what: 'Asked the channel to PACK it at intake', good: true },
+  sync_arrange_not_taking:      { what: 'The channel ACCEPTED the Pack call but never changed the order — stopped asking', good: false },
+  sync_packed_on_demand:        { what: 'Packed at the channel because a packer asked for the waybill', good: true },
+  sync_label_attached_by_request: { what: 'Label attached to this order (fetched for it by name)', good: true },
   zort_packed_before_rts:       { what: 'Packed it at the channel (required before Ready to Ship)', good: true },
   zort_completion_pushed:       { what: 'Told the channel the order is ready', good: true },
   zort_completion_push_failed:  { what: 'The channel REFUSED', good: false },
@@ -9422,6 +9425,9 @@ app.get('/api/orders/:orderNumber/sync-activity', (req, res) => {
     if (e.via)      bits.push(`via ${e.via}`);
     if (e.tracking) bits.push(`tracking ${e.tracking}`);
     if (e.hubStatus) bits.push(`hub was "${e.hubStatus}"`);
+    if (e.said)     bits.push(`channel said: ${e.said}`);
+    if (e.tries)    bits.push(`after ${e.tries} attempt(s)`);
+    if (e.note)     bits.push(String(e.note));
     if (e.pages)    bits.push(`${e.pages} page(s)`);
     if (e.error)    bits.push(String(e.error).slice(0, 200));
     if (e.why)      bits.push(String(e.why).slice(0, 200));
@@ -18296,7 +18302,11 @@ async function pullZortStore(db, store) {
           if (f2 && f2.ord.zort_id) {
             const st2 = f2.batch.orderStates?.[f2.ord.order_number] || {};
             const cn = String(f2.batch.client_name || '').trim().toLowerCase();
+            // A FLAGGED ORDER IS NOT ASKED AGAIN. The hub accepted the Pack
+            // call repeatedly and never moved; asking every six minutes for
+            // ever is noise, and it buried the audit trail it was written to.
             if (st2.status !== 'done' && st2.status !== 'unprocessed'
+                && !st2.arrange_blocked
                 && !skipClients.has(cn) && !recordClients.has(cn)) {
               enqueueZortArrange(db, store.id, { orderNumber: number, zortId: f2.ord.zort_id });
             }
@@ -18800,9 +18810,17 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
     else if (hubStatus === 'pending') {
       try {
         const shipment = await zortShipmentChannel(store, ord.zort_id);
-        await zortApi.packOrder(store, { id: ord.zort_id, shipment: shipment || undefined });
-        steps.push('Told the channel this order is Packed, so it issues the waybill.');
-        logAudit('sync_packed_on_demand', { order: orderNumber, storeId: store.id, by: req.userId || '', auto: auto || undefined });
+        const packResp = await zortApi.packOrder(store, { id: ord.zort_id, shipment: shipment || undefined });
+        // SAME RULE AS THE INTAKE ARRANGE: the call returning is not the
+        // outcome. Read the status back and say what actually happened, rather
+        // than reporting a pack that the hub quietly ignored.
+        const now = await zortHubStatus(store, ord.zort_id);
+        if (now && now === 'pending') {
+          steps.push(`The channel took the Pack request but the order is still Pending${_zortSaid(packResp) ? ` (it said: ${_zortSaid(packResp)})` : ''} — no waybill will be issued until it moves.`);
+        } else {
+          steps.push(`Told the channel this order is Packed${now ? ` (now ${now})` : ''}, so it issues the waybill.`);
+        }
+        logAudit('sync_packed_on_demand', { order: orderNumber, storeId: store.id, by: req.userId || '', auto: auto || undefined, hubStatus: now || '', said: _zortSaid(packResp) });
       } catch (e) {
         // "Already packed" is the state we wanted, not a failure.
         if (/already|packed/i.test(e.message || '')) steps.push('The channel already had it packed.');
@@ -19189,6 +19207,10 @@ function pushZortCompletion(db, ord, state) {
 
 // Backoff schedule for a failed send (minutes), then hourly.
 function _zortBackoffMs(attempts) {
+  // Flat override for tests, same escape hatch ZORT_LABEL_RETRY_MS already has
+  // — a retry ladder measured in minutes cannot be exercised otherwise.
+  const flat = Number(process.env.ZORT_BACKOFF_MS);
+  if (flat > 0) return flat;
   const mins = [1, 5, 15, 60][Math.min(attempts, 3)] ?? 60;
   return mins * 60000;
 }
@@ -19203,6 +19225,25 @@ function _zortBackoffMs(attempts) {
 // The hub's CURRENT status word for an order, '' when it cannot be read.
 // Ready-to-Ship is only legal from Packed (Pending → Packed → Waiting), so the
 // push has to know where the order actually stands before it asks.
+// How many times a Pack that the hub accepts but does not act on is retried
+// before the order is flagged and left alone. Low on purpose: the point is to
+// surface it, not to keep asking.
+const ZORT_ARRANGE_MAX_TRIES = 4;
+
+// WHAT THE HUB ACTUALLY SAID, in one short string for the trail. The audit
+// entry used to carry only "we asked" — so fourteen identical green rows said
+// nothing about why the fifteenth would be any different. Only the fields ZORT
+// documents are read; anything else would be guesswork on the record.
+function _zortSaid(resp) {
+  if (!resp || typeof resp !== 'object') return '';
+  const code = resp.resCode ?? resp.rescode ?? resp.code;
+  const desc = String(resp.resDesc ?? resp.resdesc ?? resp.message ?? '').trim();
+  const bits = [];
+  if (code !== undefined && code !== null && String(code) !== '') bits.push(`code ${code}`);
+  if (desc) bits.push(desc);
+  return bits.join(' — ').slice(0, 200);
+}
+
 async function zortHubStatus(store, zortId) {
   try {
     const d = await zortApi.getOrderDetail(store, zortId);
@@ -19284,18 +19325,83 @@ async function _zortSendOutboxEntry(db, store, entry) {
     return true;
   }
   if (entry.kind === 'arrange') {
+    // ── A 200 FROM PACK IS NOT A PACK ────────────────────────────────────────
+    // Reported live: fourteen consecutive green "Asked the channel to PACK it
+    // at intake" entries, six minutes apart, on an order the hub still showed
+    // as Pending. Every one of them was recorded as a success the instant
+    // packOrder RESOLVED — which asserts nothing about whether the hub moved.
+    // Same lesson as zortBodyError, one level up: the call returning is not the
+    // outcome. So the hub is asked where the order stands, before and after.
+    const before = await zortHubStatus(store, entry.zortId);
+    if (before && before !== 'pending') {
+      // Already past Pending — we packed it on an earlier attempt, or the
+      // client did. Nothing to ask for; chase the results and stop.
+      logAudit('sync_arranged_at_intake', {
+        order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+        hubStatus: before, note: 'already past pending — not asked again',
+      });
+      enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
+      enqueueZortLabel(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: '' });
+      return true;
+    }
     // Arrangement/pack ONLY — never readyToShip (see enqueueZortArrange).
     // Per the v4 spec, a marketplace order should name its marketplace
     // shipment channel on the Pack call — resolved from the order detail and
     // cached on the entry so a retry does not refetch. If no channel field is
     // found the call goes out without one (the pre-spec behaviour).
     if (entry.shipment === undefined) entry.shipment = await zortShipmentChannel(store, entry.zortId);
-    await zortApi.packOrder(store, { id: entry.zortId, shipment: entry.shipment || undefined });
-    logAudit('sync_arranged_at_intake', { order: entry.orderNumber, client: store.clientName || '', storeId: store.id });
-    // Chase the results: the platform assigns tracking shortly after packing.
-    enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
-    enqueueZortLabel(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: '' });
-    return true;
+    const packResp = await zortApi.packOrder(store, { id: entry.zortId, shipment: entry.shipment || undefined });
+    const said = _zortSaid(packResp);
+    const after = await zortHubStatus(store, entry.zortId);
+    if (after && after !== 'pending') {
+      logAudit('sync_arranged_at_intake', {
+        order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+        hubStatus: after, shipment: entry.shipment || '', said,
+      });
+      // Chase the results: the platform assigns tracking shortly after packing.
+      enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
+      enqueueZortLabel(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: '' });
+      return true;
+    }
+    // ── THE HUB TOOK THE CALL AND DID NOT MOVE ───────────────────────────────
+    // The first time this happens it may simply be lag, so it retries on the
+    // normal backoff (and the read-back above turns the retry into a no-op the
+    // moment it does land). But it must not go round for ever: after
+    // ZORT_ARRANGE_MAX_TRIES the order is FLAGGED and the pull stops asking,
+    // because a request repeated hourly with no effect is not a sync, it is
+    // noise that buries the one line somebody needed to read.
+    entry.arrangeTries = (entry.arrangeTries || 0) + 1;
+    const why = said || 'the channel answered without an error but left the order Pending';
+    if (entry.arrangeTries >= ZORT_ARRANGE_MAX_TRIES) {
+      try {
+        const f = lazadaFindOrder(db, entry.orderNumber, '');
+        // A FRESHLY IMPORTED ORDER HAS NO STATE RECORD AT ALL, and those are
+        // exactly the orders this fires on — reading a missing state as
+        // "nowhere to write it" silently dropped the flag and the six-minute
+        // loop carried on. Create it the way every other lazy writer does.
+        if (f) {
+          if (!f.batch.orderStates) f.batch.orderStates = {};
+          if (!f.batch.orderStates[f.ord.order_number]) {
+            f.batch.orderStates[f.ord.order_number] = { status: 'pending', scanned: {} };
+          }
+        }
+        const st = f && f.batch.orderStates[f.ord.order_number];
+        if (st) {
+          st.arrange_blocked = {
+            at: new Date().toISOString(), tries: entry.arrangeTries,
+            hubStatus: after || 'unreadable', said: why, shipment: entry.shipment || '',
+          };
+        }
+      } catch (_) {}
+      logAudit('sync_arrange_not_taking', {
+        order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+        tries: entry.arrangeTries, hubStatus: after || 'unreadable', said: why,
+        shipment: entry.shipment || '',
+      });
+      return true;   // stop asking; the order now carries the flag
+    }
+    const e = new Error(`Pack was accepted but the order is still ${after || 'unreadable'} on the channel — ${why}`);
+    throw e;
   }
   if (entry.kind === 'tracking') {
     const d = await zortApi.getOrderDetail(store, entry.zortId);
