@@ -1014,11 +1014,36 @@ order the hub still showed as Pending. Three defects, all in the same place:
   escape hatch `ZORT_LABEL_RETRY_MS` already had, since a ladder measured in
   minutes cannot otherwise be exercised.
 
-HONEST LIMIT: this makes the failure visible and stops the loop; it does not
-explain WHY the live hub refuses to move. `PackOrder` is in the Postman
-collection but NOT on the docs site, so it is unverified against a live
-account. The next occurrence now carries the hub's own words on the trail,
-which is what a diagnosis needs.
+### ROOT CAUSE: `Order/PackOrder` DOES NOT EXIST IN THE v4 API
+
+Found by reading the live docs (developers.zortout.com/api-reference/order via
+the docs MCP, 2026-08-17). The Order page lists every POST it has — AddOrder,
+UpdateOrderStatus, UpdateOrderPayment, VerifySlip, UpdatePartialOrder,
+EditOrderInfo, EditOrder, VoidOrder, VoidOrderPayment, **ReadyToShip**,
+BookOrderShipment, UpdateOrderSerialNo, UpdateOrderExpiry/Lot, … — and
+**PackOrder appears nowhere on it.** It came from the old Postman collection.
+
+That is the whole mystery: **ZORT's gateway answers 200 for a route it does not
+implement**, so there was nothing to detect at the HTTP layer OR in the body,
+and fourteen calls "succeeded" while changing nothing.
+
+- **PACKED IS STATUS 5, SET THROUGH `Order/UpdateOrderStatus`** — the
+  documented way, and the only one. `packOrder()` now posts that.
+- **`shipment` is NOT a parameter of UpdateOrderStatus.** It belongs to
+  ReadyToShip (where the docs mark it REQUIRED, and confirm the Lazada `"lex"`
+  fallback verbatim). The arrange path no longer resolves or sends it.
+- **CONSEQUENCE, STATED PLAINLY: this makes the status flip, and it does NOT
+  produce an AWB.** UpdateOrderStatus is ZORT's own bookkeeping and never
+  touches the marketplace. Only ReadyToShip "will try to update order in
+  marketplace to Ready to ship", and only ReadyToShip returns
+  `detail.trackingno` + `detail.link`. So the premise arrange-at-intake was
+  built on — pack early, get the label early — **cannot work against the real
+  API**; there is no marketplace pack step to call. Getting the label early
+  would mean RTS'ing before anything is picked, which is the one thing this
+  system must not do. That trade-off is the user's call, not a silent change.
+- `Order/BookOrderShipment` mints a waybill without RTS but is explicitly
+  **"Support only non-marketplace order"** and Thai carriers only — no use for
+  a Lazada order.
 
 Verified 20 API checks against a hub that answers Pack with a clean
 `resCode 200 / Success` and leaves the order Pending: it is retried 4 times and

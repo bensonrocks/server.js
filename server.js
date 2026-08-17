@@ -18809,8 +18809,7 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
     if (!hubStatus) steps.push('Could not read the order on the hub — trying the label anyway.');
     else if (hubStatus === 'pending') {
       try {
-        const shipment = await zortShipmentChannel(store, ord.zort_id);
-        const packResp = await zortApi.packOrder(store, { id: ord.zort_id, shipment: shipment || undefined });
+        const packResp = await zortApi.packOrder(store, { id: ord.zort_id });
         // SAME RULE AS THE INTAKE ARRANGE: the call returning is not the
         // outcome. Read the status back and say what actually happened, rather
         // than reporting a pack that the hub quietly ignored.
@@ -19349,14 +19348,16 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // shipment channel on the Pack call — resolved from the order detail and
     // cached on the entry so a retry does not refetch. If no channel field is
     // found the call goes out without one (the pre-spec behaviour).
-    if (entry.shipment === undefined) entry.shipment = await zortShipmentChannel(store, entry.zortId);
-    const packResp = await zortApi.packOrder(store, { id: entry.zortId, shipment: entry.shipment || undefined });
+    // No `shipment` here: Packed is set through UpdateOrderStatus, which takes
+    // no shipment channel. That parameter belongs to ReadyToShip, which this
+    // path deliberately never calls.
+    const packResp = await zortApi.packOrder(store, { id: entry.zortId });
     const said = _zortSaid(packResp);
     const after = await zortHubStatus(store, entry.zortId);
     if (after && after !== 'pending') {
       logAudit('sync_arranged_at_intake', {
         order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
-        hubStatus: after, shipment: entry.shipment || '', said,
+        hubStatus: after, said,
       });
       // Chase the results: the platform assigns tracking shortly after packing.
       enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
@@ -19389,14 +19390,13 @@ async function _zortSendOutboxEntry(db, store, entry) {
         if (st) {
           st.arrange_blocked = {
             at: new Date().toISOString(), tries: entry.arrangeTries,
-            hubStatus: after || 'unreadable', said: why, shipment: entry.shipment || '',
+            hubStatus: after || 'unreadable', said: why,
           };
         }
       } catch (_) {}
       logAudit('sync_arrange_not_taking', {
         order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
         tries: entry.arrangeTries, hubStatus: after || 'unreadable', said: why,
-        shipment: entry.shipment || '',
       });
       return true;   // stop asking; the order now carries the flag
     }
