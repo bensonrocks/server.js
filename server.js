@@ -5207,11 +5207,17 @@ app.get('/api/portal/movements', requirePortalAuthMiddleware, (req, res) => {
   const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : today;
   let rows = [];
   try { rows = inventory.outboundMovements(cid, { from, to, limit: 2000 }); } catch (_) {}
-  const LABEL = { reserve: 'Reserved', release: 'Released', outbound: 'Shipped' };
+  // A write-off has to read as what it was, in the client's own words. The
+  // reason typed at the time carries the detail; the label says the shape of it.
+  const LABEL = { reserve: 'Reserved', release: 'Released', outbound: 'Shipped',
+                  adjustment: 'Stock adjusted', quarantine_release: 'Released from hold' };
   res.json({
     rows: rows.map(m => ({
       at: m.at, order_number: m.order_id || '', sku: m.sku, product: m.product || '',
       kind: m.type, label: LABEL[m.type] || m.type, qty: Math.abs(Number(m.qty) || 0),
+      // Direction and reason: an adjustment without them is a number nobody can
+      // reconcile, and a write-off is exactly the row a client will query.
+      direction: (Number(m.qty) || 0) < 0 ? 'out' : 'in', reason: m.reason || '',
     })),
     from, to, screenDays: PORTAL_SCREEN_DAYS,
   });
@@ -5653,15 +5659,22 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     let mv = [];
     try { mv = inventory.outboundMovements(cid, { from, to }); } catch (_) {}
     const LABEL = { reserve: 'Reserved for your order', release: 'Released (order cancelled)',
-                    outbound: 'Shipped — stock deducted' };
+                    outbound: 'Shipped — stock deducted',
+                    adjustment: 'Stock adjusted (see reason)',
+                    quarantine_release: 'Released from hold into sellable stock' };
     aoa = [
       ...title('Stock movements on your orders'),
       ['Reserved means the units are set aside for that order and no longer available to promise elsewhere. They are deducted when the order is picked, packed and completed.'],
+      ['A stock adjustment is a correction to the count made outside an order \u2014 damage found at receiving, a recount, a write-off. The reason recorded at the time is in the Reason column.'],
       [],
-      ['When (SGT)', 'Order No', 'SKU', 'Product', 'What happened', 'Units'],
+      // IN / OUT and the REASON are what make an adjustment readable. Without the
+      // direction a write-off and a correction upward look identical, and without
+      // the reason "Stock adjusted, 2" tells the client nothing they can act on.
+      ['When (SGT)', 'Order No', 'SKU', 'Product', 'What happened', 'In / Out', 'Units', 'Reason'],
       ...mv.map(m => [
         new Date(String(m.at).replace(' ', 'T') + 'Z').toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }),
-        m.order_id || '', m.sku, m.product || '', LABEL[m.type] || m.type, Math.abs(Number(m.qty) || 0),
+        m.order_id || '', m.sku, m.product || '', LABEL[m.type] || m.type,
+        (Number(m.qty) || 0) < 0 ? 'Out' : 'In', Math.abs(Number(m.qty) || 0), m.reason || '',
       ]),
     ];
     sheet = 'Movements'; name = 'Stock_Movements';

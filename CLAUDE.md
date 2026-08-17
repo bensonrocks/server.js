@@ -4518,6 +4518,41 @@ TEST GOTCHA: portal accounts are **one place at a time**, so a multi-viewport
 Playwright run must free the seat (`.../portal-users/:id/release`) or sign out
 between contexts — the second browser gets a 409 otherwise.
 
+### Damage at receiving — already an event chain; the write-off was the gap
+
+Asked from the floor: two units were adjusted out as damaged during an inbound,
+the balance is right, "how do I include that so the client knows". Most of the
+answer is that the system ALREADY does it, provided the pieces are scanned with
+the **damaged** condition:
+
+- `good = scanned − damaged − kiv` on a PO, so damaged units **never become
+  sellable stock** — the balance is right without anyone adjusting anything.
+- **End Receipt REFUSES to close until the damage is photographed**, naming the
+  SKU. Damage is a claim against a supplier and a deduction on a client's
+  account; the evidence is not optional.
+- A **quarantine row** is raised per SKU×condition, `status: 'open'`, awaiting a
+  disposition (release to stock / dispose / return to client).
+- The client's inbound row shows a red **"2 damaged / held"** pill, the GRN
+  carries damaged/KIV **per line**, and Overview raises a held-stock alert. The
+  receipt still says all 10 arrived — both facts, not one.
+
+**THE REAL GAP: a write-off done any other way was invisible to the client.**
+`outboundMovements` selected only `reserve`/`release`/`outbound`, so damage found
+AFTER a receipt closed — or corrected by hand — left no trace on their side. It
+now includes `adjustment` and `quarantine_release`: it is their stock, a change
+to it is their business, and the reason typed at the time is what explains it.
+- The screen and the export both carry **direction and reason**. Without the
+  direction a write-off and a correction upward look identical; without the
+  reason "Stock adjusted, 2" tells the client nothing they can act on.
+- The export gained an `In / Out` and a `Reason` column, and a line explaining
+  what an adjustment is — a note referring to a column that does not exist is
+  its own bug.
+
+Verified 23 checks end to end: the photo gate refuses and then admits the close,
+only the 8 good units land, the quarantine row is raised, the client sees the
+damaged pill and the per-line GRN, and a hand write-off afterwards appears on
+their movements AND in their download reading "Out / 2" with the reason.
+
 ### Cancelled orders are opt-in; aging is not a client's business
 
 Two things asked for on the floor.
