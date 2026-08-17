@@ -4043,8 +4043,18 @@ nothing offered a way home. Both halves of that were the bug:
   (`source: 'ledger-undo'`, 3-day window), so it appears on the same list with
   **⎌ Put the stock back**. An undo with no way back is a one-way door, and the
   floor walked through two in a row.
-- **PUTTING IT BACK RE-ARMS THE POSTING IT UNDID** — the marker is cleared, so
-  the correction is not a dead end. Without this the stock would be restored
+- **A TAKE-OFF MADE BEFORE ANY OF THIS IS STILL RECOVERABLE.** The live site was
+  already on zero when the snapshot shipped, so there was no put-back record —
+  but a take-off writes a compensating NEGATIVE adjustment per SKU, which is all
+  that is needed. `ledgerUploads` surfaces those as a `takeoff` kind, matched on
+  the reasons this system writes (never on negative adjustments in general: a
+  hand correction someone made on purpose is not something to offer to reverse).
+  **No sign flip** — the rows are already negative, so reading them as they
+  stand makes the same code add the stock back; a flip was tried first and
+  silently took MORE off.
+- **PUTTING IT BACK RE-ARMS THE POSTING IT UNDID** — the marker is cleared (for
+  a pre-snapshot take-off, by parsing the key back out of the reason it wrote),
+  so the correction is not a dead end. Without this the stock would be restored
   while the posting stayed marked as given-back, and the double could never be
   fixed after one wrong move. (Asserted end to end: take off → refused twice →
   put back → takeable off again → lands on the right figure.)
@@ -4056,6 +4066,10 @@ never what gets tidied.
   route back — its before-snapshot lives on it and nowhere else. Deleting one in
   that state is refused unless the caller says plainly that is what they want
   (`force: 'yes'`), and the trail records `gaveUpUndo`.
+- **THE LEDGER ROW IS DEDUPED AGAINST REAL UPLOADS ONLY.** A take-off record
+  landing in the same MINUTE as the upload it undid was hiding that upload from
+  the list — precisely the row somebody needs to see. Found by rendering the
+  page and reading it, not from the API, which was correct all along.
 - **A LEDGER ROW IS HIDDEN, NEVER DELETED** — it is derived from
   `stock_movements`, and erasing rows out of the ledger to tidy a list would be
   destroying the record. The dismissal is stored beside it instead.

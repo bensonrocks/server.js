@@ -22467,7 +22467,7 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   // gave back exactly what its own posting added — but nothing stopped the
   // second one, and nothing said the first had already happened. A posting can
   // only be given back once; asking again is refused with when and by whom.
-  {
+  if (kind !== 'takeoff') {
     const seen = (readDb().undoneLedgerPostings || {})[`${cid}|${kind}|${key}`];
     if (seen) {
       return res.status(409).json({
@@ -22483,7 +22483,9 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   try {
     out = inventory.reverseLedgerUpload(cid, { kind, key }, {
       operator: who,
-      reason: kind === 'inbound' ? `stock of ${key} backed out (booked twice)` : `stock upload of ${key} undone`,
+      reason: kind === 'takeoff' ? `stock put back on (reversing: ${key})`
+            : kind === 'inbound' ? `stock of ${key} backed out (booked twice)`
+            : `stock upload of ${key} undone`,
     });
   } catch (e) { return res.status(400).json({ error: e.message }); }
   logAudit('inventory_upload_undone_from_ledger', {
@@ -22495,9 +22497,21 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   // the zero the floor landed on.
   const db = readDb();
   db.undoneLedgerPostings = db.undoneLedgerPostings || {};
-  db.undoneLedgerPostings[`${cid}|${kind}|${key}`] = { at: new Date().toISOString(), by: who, units: out.units };
+  if (kind === 'takeoff') {
+    // PUTTING A TAKE-OFF BACK RE-ARMS THE POSTING IT UNDID — the key is written
+    // into the reason, which is the only record a pre-snapshot take-off left.
+    // Without this the stock returns but the posting stays marked as
+    // given-back, and the correction is a dead end.
+    const m = /^stock upload of (.+) undone$/.exec(key) || /^stock of (.+) backed out/.exec(key);
+    if (m) {
+      const of = /^stock upload of /.test(key) ? 'upload' : 'inbound';
+      delete db.undoneLedgerPostings[`${cid}|${of}|${m[1]}`];
+    }
+  } else {
+    db.undoneLedgerPostings[`${cid}|${kind}|${key}`] = { at: new Date().toISOString(), by: who, units: out.units };
+  }
   let undoTxnId = null;
-  if (out.snapshot && (out.snapshot.skus || []).length) {
+  if (kind !== 'takeoff' && out.snapshot && (out.snapshot.skus || []).length) {
     db.stockImports = db.stockImports || [];
     undoTxnId = uuidv4();
     db.stockImports.unshift({
@@ -22514,9 +22528,9 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   zortNotifyStockChange(db, cid, []);
   res.json({
     ok: true, undoTxnId, ...out,
-    note: `Took ${out.units} pc(s) back off ${out.skus} SKU(s).`
+    note: (kind === 'takeoff' ? `Put ${out.units} pc(s) back on ${out.skus} SKU(s).` : `Took ${out.units} pc(s) back off ${out.skus} SKU(s).`)
       + (kind === 'inbound' ? ' The receipt itself, its GRN and its trail are untouched — only the stock posting was backed out.' : '')
-      + ' This can be put back for 3 days from the same list.'
+      + (kind === 'takeoff' ? ' The posting it came from is available to take off again.' : ' This can be put back for 3 days from the same list.')
       + (out.floored.length ? ` ${out.floored.length} SKU(s) no longer held all of it — something shipped since, so those floored at what was there.` : '')
       + ((out.created || []).length ? ` ${(out.created || []).length} SKU(s) were CREATED by that upload and carry no movement row, so their quantity could not be worked out from the ledger — they are listed for you to set by hand.` : ''),
   });

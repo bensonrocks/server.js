@@ -16893,7 +16893,9 @@
         const r = await fetch('/api/putaway/imports?client=' + encodeURIComponent(clientId),
           { headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
         if (!r.ok) { box.innerHTML = ''; return; }
-        const rows = ((await r.json()).rows || []).filter(x => x.source === 'inventory');
+        // 'ledger-undo' rows are how stock comes BACK — they belong on this
+        // list, or a take-off that went too far has no visible way home.
+        const rows = ((await r.json()).rows || []).filter(x => x.source === 'inventory' || x.source === 'ledger-undo');
         // OLDER UPLOADS HAVE NO TRANSACTION RECORD — they predate it. The
         // ledger still holds what each one added, so they are offered too,
         // clearly marked as the rougher recovery that they are.
@@ -16906,14 +16908,21 @@
         })();
         // An upload that already has a tracked record is not offered twice; an
         // inbound receipt has no such record and is always offered.
-        const seenMinutes = new Set(rows.map(x => String(x.at).slice(0, 16).replace('T', ' ')));
+        // Dedupe the ledger row against REAL uploads only. A take-off record
+        // landing in the same minute was hiding the posting it undid — which is
+        // precisely the row somebody needs to see.
+        const seenMinutes = new Set(rows.filter(x => x.source === 'inventory')
+          .map(x => String(x.at).slice(0, 16).replace('T', ' ')));
         const legacyRows = legacy.filter(l => l.kind !== 'upload' || !seenMinutes.has(l.key));
         const legacyHtml = legacyRows.map(l => `
           <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px dashed ${l.kind === 'inbound' ? '#bfdbfe' : '#cbd5e1'};border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
-            <span style="font-weight:700;color:${l.kind === 'inbound' ? '#1d4ed8' : '#475569'}">${l.kind === 'inbound' ? '&#128229; Inbound receipt' : '&#8679; File upload'}</span>
-            <span class="hint">${esc(l.kind === 'inbound' ? String(l.key).replace(/^Receipt /, '') : l.key)} · ${l.skus} SKU(s) · +${l.units} pc(s)${l.kind === 'upload' ? ' <b>(before uploads were tracked)</b>' : ''}</span>
-            <button class="btn-danger btn-sm inv-led-undo" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
-              title="${l.kind === 'inbound' ? 'Back this receipt\u2019s stock off the books. The receipt, its GRN and its trail stay exactly as they are — only the stock posting is undone.' : 'Give back exactly what this upload added, SKU by SKU, from the movement ledger'}">&#9100; Undo stock</button>
+            <span style="font-weight:700;color:${l.kind === 'inbound' ? '#1d4ed8' : l.kind === 'takeoff' ? '#b45309' : '#475569'}">${
+              l.kind === 'inbound' ? '&#128229; Inbound receipt' : l.kind === 'takeoff' ? '&#9100; Stock taken off' : '&#8679; File upload'}</span>
+            <span class="hint">${esc(l.kind === 'inbound' ? String(l.key).replace(/^Receipt /, '') : l.key)} · ${l.skus} SKU(s) · ${l.kind === 'takeoff' ? '&minus;' : '+'}${l.units} pc(s)${l.kind === 'upload' ? ' <b>(before uploads were tracked)</b>' : ''}</span>
+            ${l.undone
+              ? `<span style="color:#b45309;font-weight:700">already taken off ${new Date(l.undone.at).toLocaleDateString()}${l.undone.by ? ' by ' + esc(l.undone.by) : ''}</span>`
+              : `<button class="btn-${l.kind === 'takeoff' ? 'primary' : 'danger'} btn-sm inv-led-undo" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
+              title="${l.kind === 'takeoff' ? 'Put this stock back on. The posting it came from becomes available to take off again.' : l.kind === 'inbound' ? 'Back this receipt\u2019s stock off the books. The receipt, its GRN and its trail stay exactly as they are — only the stock posting is undone.' : 'Give back exactly what this upload added, SKU by SKU, from the movement ledger'}">&#9100; ${l.kind === 'takeoff' ? 'Put the stock back' : 'Undo stock'}</button>`}
             <button class="btn-secondary btn-sm inv-led-del" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
               title="Hide this from the list. The movements themselves stay — they are the record of what happened.">&#128465;</button>
           </div>`).join('');
@@ -16921,11 +16930,12 @@
         if (!rows.length) { box.innerHTML = legacyHtml; wireLedgerUndo(box); wireRowDelete(box); return; }
         box.innerHTML = rows.map(x => `
           <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
+            ${x.source === 'ledger-undo' ? '<span style="font-weight:700;color:#b45309">&#9100; Stock taken off</span>' : ''}
             <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
             ${x.reversed_at
               ? `<span style="color:#b45309;font-weight:600">undone ${new Date(x.reversed_at).toLocaleDateString()} by ${esc(x.reversed_by || '?')}</span>`
               : x.reversible
-                ? `<button class="btn-danger btn-sm inv-imp-undo" data-id="${esc(x.id)}" title="Put every SKU this file touched back to the on-hand figure it had before">&#9100; Undo (${x.hoursLeft}h left)</button>`
+                ? `<button class="btn-${x.source === 'ledger-undo' ? 'primary' : 'danger'} btn-sm inv-imp-undo" data-id="${esc(x.id)}" data-put="${x.source === 'ledger-undo' ? '1' : ''}" title="${x.source === 'ledger-undo' ? 'Put the stock back on — this reverses the take-off' : 'Put every SKU this file touched back to the on-hand figure it had before'}">&#9100; ${x.source === 'ledger-undo' ? 'Put the stock back' : 'Undo'} (${x.hoursLeft}h left)</button>`
                 : `<span class="hint">window closed</span>`}
             <button class="btn-secondary btn-sm inv-imp-del" data-id="${esc(x.id)}" data-live="${x.reversible && !x.reversed_at ? '1' : ''}"
               title="Remove this entry from the list. Housekeeping only — the audit trail keeps what happened.">&#128465;</button>
@@ -16997,7 +17007,9 @@
     function wireLedgerUndo(box) {
       box.querySelectorAll('.inv-led-undo').forEach(b => b.addEventListener('click', async () => {
         const kind = b.dataset.kind || 'upload', key = b.dataset.key;
-        const msg = kind === 'inbound'
+        const msg = kind === 'takeoff'
+          ? `Put this stock back on?\n\nThis reverses a take-off: every SKU gets back exactly what was removed, and the posting it came from becomes available to take off again.\n\nRecorded on the audit trail.`
+          : kind === 'inbound'
           ? `Back the stock of ${key} off the books?\n\nUse this when the same goods were booked TWICE — once by this receipt and once by a file upload — and only one should stand.\n\nThe receipt itself, its GRN and its trail are NOT touched. The goods really were received; this only undoes the stock it posted.\n\nA SKU that has shipped since floors at what is left, and will be named.\n\nRecorded on the audit trail.`
           : `Undo the stock upload of ${key}?\n\nThis upload predates upload tracking, so it is recovered from the movement ledger: every SKU it topped up gives back exactly what it added.\n\nTwo things it cannot do, and it will tell you which:\n\u2022 a SKU that has SHIPPED since floors at what is left\n\u2022 a SKU the upload CREATED carries no movement row, so its quantity has to be set by hand\n\nRecorded on the audit trail.`;
         if (!confirm(msg)) return;
