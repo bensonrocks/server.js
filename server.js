@@ -5123,6 +5123,13 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
         expected: (rec.lines || []).reduce((s, l) => s + (l.expected_qty || 0), 0),
         received: Object.values(state.scanned || {}).reduce((s, q) => s + q, 0),
         damaged, discrepancies: (rec.discrepancies || []).length,
+        // THE REMARK, NOT JUST THE COUNT. "2 damaged" tells a client something
+        // happened; the words tell them WHAT. These are the reasons recorded at
+        // the time, per SKU, so the receipt explains itself without anyone
+        // having to ring us.
+        damage_notes: (rec.late_damage || []).map(d => ({
+          sku: d.sku, qty: d.qty, condition: d.condition, reason: d.reason, at: d.at,
+        })),
         can_delete: portalDeletable('inbound', rec) === null,
       };
     })
@@ -13390,6 +13397,18 @@ function grnData(rec) {
       expected: exp ? Number(exp.expected_qty || 0) : null,   // null = unlisted extra
       received, good: Math.max(0, received - damaged - kiv), damaged, kiv,
       diff: exp ? received - Number(exp.expected_qty || 0) : null,
+      // The remark against THIS line, so the receipt note says why the good
+      // count is lower than what arrived rather than leaving a bare number.
+      // The QUANTITY is already in the Damaged/Held column on the same row, so a
+      // single remark is just the reason — repeating "1 damaged" beside a column
+      // that already says 1 reads as two different facts. Only when a line
+      // carries more than one write-off does each one need naming.
+      note: (() => {
+        const ds = (rec.late_damage || []).filter(d => d.sku === sku);
+        if (!ds.length) return '';
+        if (ds.length === 1) return String(ds[0].reason || '');
+        return ds.map(d => `${d.qty} ${d.condition === 'kiv' ? 'held' : 'damaged'}: ${d.reason}`).join('; ');
+      })(),
     };
   }).sort((a, b) => a.sku.localeCompare(b.sku));
   const tot = k => lines.reduce((s, l) => s + (Number(l[k]) || 0), 0);
@@ -13476,7 +13495,7 @@ app.get('/api/inbound/:id/grn/export', (req, res) => {
     [],
   ];
   const header = ['SKU', 'Description', 'Expected', 'Received', 'Good', 'Damaged', 'KIV', 'Tally status',
-    'How counted', 'Location (write in)', 'Qty put away', 'By', 'Time'];
+    'How counted', 'Remarks', 'Location (write in)', 'Qty put away', 'By', 'Time'];
   const body = g.lines.map(l => [
     l.sku, l.description || '',
     l.expected === null ? 'unlisted' : l.expected,
@@ -13487,15 +13506,22 @@ app.get('/api/inbound/:id/grn/export', (req, res) => {
       : l.diff === 0 ? 'OK'
       : l.diff > 0 ? `${l.diff} over` : `${Math.abs(l.diff)} short`,
     viaLabel[l.via] || 'Scanned',
+    // WHY the good count is lower than what arrived. A bare number invites the
+    // question; the remark recorded at the time answers it on the same row.
+    l.note || '',
     '', '', '', '',                                   // deliberately blank for the crew
   ]);
   const foot = [[], ['TOTALS', '', g.totals.expected, g.totals.received, g.totals.good, g.totals.damaged, g.totals.kiv],
+    ...((g.totals.damaged || g.totals.kiv) ? [[], ['NOT SELLABLE — these pieces arrived but are not available stock:'],
+      ...g.lines.filter(l => l.damaged || l.kiv).map(l => ['', `${l.sku}: ${
+        [l.damaged ? `${l.damaged} damaged` : '', l.kiv ? `${l.kiv} held` : ''].filter(Boolean).join(', ')
+      }${l.note ? ` — ${l.note}` : ''}`])] : []),
     [], ['Received by (warehouse): ____________________', '', '', 'Put away by: ____________________'],
     ['Date / time: ____________________', '', '', 'Date / time: ____________________']];
 
   const ws = XLSX.utils.aoa_to_sheet([...head, header, ...body, ...foot]);
   ws['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 8 },
-    { wch: 11 }, { wch: 26 }, { wch: 22 }, { wch: 13 }, { wch: 14 }, { wch: 18 }];
+    { wch: 11 }, { wch: 26 }, { wch: 38 }, { wch: 22 }, { wch: 13 }, { wch: 14 }, { wch: 18 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'GRN');
   if ((g.discrepancies || []).length || (g.extras || []).length) {

@@ -1043,6 +1043,12 @@
             ${r.status === 'done' ? `<button class="link ib-grn" data-id="${esc(r.id)}">&#128196; Receipt note</button>` : ''}
           </span>
         </div>
+        ${(r.damage_notes || []).length ? `
+          <div class="dmg-note">
+            <b>&#9888; Not all of this shipment is sellable</b>
+            ${r.damage_notes.map(d => `<div>${esc(d.sku)} &mdash; ${num(d.qty)} ${d.condition === 'kiv' ? 'held for inspection' : 'damaged'}: ${esc(d.reason)}</div>`).join('')}
+            <div class="muted" style="font-size:.72rem;margin-top:.2rem">These pieces were received but taken out of sellable stock. The receipt note lists them per line.</div>
+          </div>` : ''}
       </div>`;
     }).join('');
     document.querySelectorAll('.ib-grn').forEach(b =>
@@ -1105,7 +1111,8 @@
       <td class="mono">${esc(l.sku)}</td><td>${esc(l.description)}</td>
       <td class="n">${l.expected ?? '—'}</td><td class="n">${l.received}</td><td class="n">${l.good}</td>
       <td class="n">${l.damaged || ''}</td><td class="n">${l.kiv || ''}</td>
-      <td class="ts">${tallyStatus(l)}</td></tr>`).join('');
+      <td class="ts">${tallyStatus(l)}</td>
+      <td class="rm">${esc(l.note || '')}</td></tr>`).join('');
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
       <title>Goods Received Note ${esc(g.serial || g.reference)}</title><style>
       body{font-family:-apple-system,Arial,sans-serif;margin:26px;font-size:12.5px;color:#0b1220}
@@ -1119,6 +1126,7 @@
       th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left}
       td.n,th.n{text-align:right} thead{background:#eff6ff} th{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
       td.ts{text-align:center;white-space:nowrap}
+      td.rm{color:#b91c1c;font-size:11px}
       tr.flag{background:#fef2f2} .mono{font-family:ui-monospace,Menlo,monospace}
       .tot{margin-top:12px;padding:9px 11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px}
       .ft{margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px}
@@ -1135,7 +1143,8 @@
         <b>Photos on file:</b> ${g.photos}
       </div>
       <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th>
-        <th class="n">Good</th><th class="n">Damaged</th><th class="n">Held</th><th>Tally Status</th></tr></thead>
+        <th class="n">Good</th><th class="n">Damaged</th><th class="n">Held</th><th>Tally Status</th>
+        <th>Remarks</th></tr></thead>
         <tbody>${rows}</tbody></table>
       <div class="tot"><b>Totals</b> — expected ${g.totals.expected} · received ${g.totals.received} ·
         good ${g.totals.good} · damaged ${g.totals.damaged} · held ${g.totals.kiv}</div>
@@ -1143,7 +1152,23 @@
         ? `<h3 style="margin-top:16px;font-size:13px">&#9888; Discrepancies</h3><ul style="line-height:1.8">
             ${g.discrepancies.map(m => `<li>${esc(m.sku)} — expected ${m.expected_qty}, received ${m.scanned_qty}</li>`).join('')}
             ${g.extras.map(x => `<li>${esc(x.sku)} — ${x.scanned_qty} received but not on the paperwork</li>`).join('')}</ul>`
-        : '<p style="margin-top:14px;color:#059669;font-weight:700">&#10003; No discrepancies — received exactly as documented.</p>'}
+        : `<p style="margin-top:14px;color:#059669;font-weight:700">&#10003; No discrepancies — all ${
+            g.totals.received} piece(s) arrived as documented.${
+            // The tally agreeing to the piece is not the same as all of it being
+            // sellable, and a lone green tick would read as if it were.
+            (g.totals.damaged || g.totals.kiv) ? ' <span style="color:#b45309">Not all of it is sellable — see below.</span>' : ''}</p>`}
+      ${(g.totals.damaged || g.totals.kiv)
+        // The tally can agree to the piece and still not all be sellable. Saying
+        // "no discrepancies" alone would read as "all of it is good stock", so
+        // the write-off is stated in its own right, with the remark that
+        // explains it.
+        ? `<h3 style="margin-top:16px;font-size:13px">&#9888; Taken out of sellable stock</h3>
+           <ul style="line-height:1.8">${g.lines.filter(l => l.damaged || l.kiv).map(l => `
+             <li><b>${esc(l.sku)}</b> — ${l.damaged ? `${l.damaged} damaged` : ''}${l.damaged && l.kiv ? ', ' : ''}${
+               l.kiv ? `${l.kiv} held for inspection` : ''} of the ${l.received} received${
+               l.note ? ` &mdash; ${esc(l.note)}` : ''}</li>`).join('')}</ul>
+           <p style="color:#475569">These pieces arrived but are not counted as available stock.</p>`
+        : ''}
       <div class="ft">Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT from the IDEALONE Client Portal.</div>
       </body></html>`);
     w.document.close();

@@ -3381,6 +3381,7 @@
         : l.diff > 0 ? `<span style="color:#b45309;font-weight:700">${l.diff} over</span>`
         : `<span style="color:#b91c1c;font-weight:700">${Math.abs(l.diff)} short</span>`}</td>
       <td${l.via !== 'scanned' ? ' style="color:#9a3412"' : ''}>${({scanned:'Scanned',declared:'Declared',mixed:'Part declared'})[l.via] || 'Scanned'}</td>
+      <td style="color:#b91c1c;font-size:11px">${esc(l.note || '')}</td>
       <td class="blank"></td><td class="blank"></td></tr>`).join('');
     // Everyone who counted a piece, not just whoever closed the receipt — on a
     // split receipt those are different people.
@@ -3391,7 +3392,17 @@
       ? `<h3>⚠ Discrepancies</h3><ul>
           ${g.discrepancies.map(m => `<li>${esc(m.sku)}: expected ${m.expected_qty}, received ${m.scanned_qty}</li>`).join('')}
           ${g.extras.map(x => `<li>${esc(x.sku)}: ${x.scanned_qty} received but not on the paperwork</li>`).join('')}</ul>`
-      : '<p>✓ No discrepancies — received exactly as expected.</p>';
+      : `<p>✓ No discrepancies — all ${g.totals.received} piece(s) arrived as expected.${
+          (g.totals.damaged || g.totals.kiv) ? ' <span style="color:#b45309">Not all of it is sellable — see below.</span>' : ''}</p>`;
+    // The tally can agree to the piece and still not all be sellable, so the
+    // write-off is stated in its own right rather than left to be inferred from
+    // a Good column that is lower than Received.
+    const notSellable = (g.totals.damaged || g.totals.kiv)
+      ? `<h3>⚠ Taken out of sellable stock</h3><ul>
+          ${g.lines.filter(l => l.damaged || l.kiv).map(l => `<li>${esc(l.sku)}: ${
+            [l.damaged ? `${l.damaged} damaged` : '', l.kiv ? `${l.kiv} held` : ''].filter(Boolean).join(', ')
+          } of the ${l.received} received${l.note ? ` — ${esc(l.note)}` : ''}</li>`).join('')}</ul>`
+      : '';
     w.document.write(`<html><head><title>GRN ${esc(g.serial || g.reference)}</title><style>
       body{font-family:sans-serif;margin:24px;font-size:13px}
       h2{margin:.1em 0}.meta{color:#555;margin-bottom:14px}
@@ -3410,10 +3421,10 @@
       Received by: ${who} · Closed by: ${esc(g.received_by || '—')}<br>
       Started: ${g.started ? new Date(g.started).toLocaleString() : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString() : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
       <p class="note">Putaway — write the bin used against each line, or scan it on the Putaway screen.</p>
-      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th>Tally Status</th><th>How counted</th><th>Location</th><th>Qty / by</th></tr></thead>
+      <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th>Tally Status</th><th>How counted</th><th>Remarks</th><th>Location</th><th>Qty / by</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <div class="tot">Totals — expected ${g.totals.expected} · received ${g.totals.received} · good ${g.totals.good} · damaged ${g.totals.damaged} · KIV ${g.totals.kiv}</div>
-      ${disc}
+      ${disc}${notSellable}
       <div class="sig"><div>Received by (warehouse)</div><div>Acknowledged by (client)</div></div>
     </body></html>`);
     w.document.close();
