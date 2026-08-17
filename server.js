@@ -22369,6 +22369,43 @@ app.post('/api/inventory/seed', requireAuth, (req, res) => {
 // required (all stock is client-owned). If push_to_zort is set, the affected
 // SKUs' new available levels are enqueued to that client's ZORT stock-sync
 // store(s) after the load.
+// ── UNDO AN UPLOAD MADE BEFORE THE TRANSACTION RECORD EXISTED ───────────────
+// Per the user: staff loaded stock here bypassing Inbound, and that already
+// happened — a fix that only covers FUTURE uploads does not answer the
+// question. Those uploads left `type='upload'` movements carrying the delta per
+// SKU, so the ledger says what to give back. Read-only listing; the undo is
+// admin-or-master and confirmed.
+app.get('/api/inventory/ledger-uploads', (req, res) => {
+  const cid = String(req.query.clientId || '').trim();
+  if (!cid) return res.status(400).json({ error: 'clientId is required' });
+  if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+  res.json({ rows: inventory.ledgerUploads(cid, { days: Number(req.query.days) || 30 }) });
+});
+
+app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const cid = String(req.body?.clientId || '').trim();
+  const minute = String(req.body?.minute || '').trim();
+  if (!cid || !minute) return res.status(400).json({ error: 'clientId and minute are required' });
+  if (String(req.body?.confirm || '') !== 'yes') return res.status(409).json({ needsConfirm: true });
+  const who = req.userId || _tokenUserId(req) || '';
+  let out;
+  try { out = inventory.reverseLedgerUpload(cid, minute, { operator: who, reason: `stock upload of ${minute} undone` }); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  logAudit('inventory_upload_undone_from_ledger', {
+    clientId: cid, minute, skus: out.skus, units: out.units,
+    floored: out.floored.length, createdSkus: (out.created || []).map(x => x.sku).slice(0, 50), by: who,
+  });
+  const db = readDb();
+  zortNotifyStockChange(db, cid, []);
+  res.json({
+    ok: true, ...out,
+    note: `Took ${out.units} pc(s) back off ${out.skus} SKU(s).`
+      + (out.floored.length ? ` ${out.floored.length} SKU(s) no longer held all of it — something shipped since, so those floored at what was there.` : '')
+      + ((out.created || []).length ? ` ${(out.created || []).length} SKU(s) were CREATED by that upload and carry no movement row, so their quantity could not be worked out from the ledger — they are listed for you to set by hand.` : ''),
+  });
+});
+
 app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const cid  = String(req.body?.clientId || '').trim();

@@ -16894,7 +16894,26 @@
           { headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
         if (!r.ok) { box.innerHTML = ''; return; }
         const rows = ((await r.json()).rows || []).filter(x => x.source === 'inventory');
-        if (!rows.length) { box.innerHTML = '<div class="hint">No stock uploads for this client yet.</div>'; return; }
+        // OLDER UPLOADS HAVE NO TRANSACTION RECORD — they predate it. The
+        // ledger still holds what each one added, so they are offered too,
+        // clearly marked as the rougher recovery that they are.
+        const legacy = await (async () => {
+          try {
+            const lr = await fetch('/api/inventory/ledger-uploads?clientId=' + encodeURIComponent(clientId),
+              { headers: { 'x-auth-token': localStorage.getItem('wms_token') || '' } });
+            return lr.ok ? ((await lr.json()).rows || []) : [];
+          } catch (_) { return []; }
+        })();
+        const seenMinutes = new Set(rows.map(x => String(x.at).slice(0, 16).replace('T', ' ')));
+        const legacyRows = legacy.filter(l => !seenMinutes.has(l.minute));
+        const legacyHtml = legacyRows.map(l => `
+          <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px dashed #cbd5e1;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
+            <span class="hint">${esc(l.minute)} · ${l.skus} SKU(s) · +${l.units} pc(s) <b>(before uploads were tracked)</b></span>
+            <button class="btn-danger btn-sm inv-led-undo" data-min="${esc(l.minute)}"
+              title="Give back exactly what this upload added, SKU by SKU, from the movement ledger">&#9100; Undo from ledger</button>
+          </div>`).join('');
+        if (!rows.length && !legacyRows.length) { box.innerHTML = '<div class="hint">No stock uploads for this client yet.</div>'; return; }
+        if (!rows.length) { box.innerHTML = legacyHtml; wireLedgerUndo(box); return; }
         box.innerHTML = rows.map(x => `
           <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
             <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
@@ -16903,7 +16922,8 @@
               : x.reversible
                 ? `<button class="btn-danger btn-sm inv-imp-undo" data-id="${esc(x.id)}" title="Put every SKU this file touched back to the on-hand figure it had before">&#9100; Undo (${x.hoursLeft}h left)</button>`
                 : `<span class="hint">window closed</span>`}
-          </div>`).join('');
+          </div>`).join('') + legacyHtml;
+        wireLedgerUndo(box);
         box.querySelectorAll('.inv-imp-undo').forEach(b => b.addEventListener('click', async () => {
           if (!confirm('Undo this stock upload?\n\nEvery SKU it touched goes back to the on-hand figure it had before — including SKUs it created, which are removed again if nothing else gave them stock.\n\nThis is recorded on the audit trail.')) return;
           b.disabled = true;
@@ -16924,6 +16944,28 @@
           } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
         }));
       } catch (_) { box.innerHTML = ''; }
+    }
+
+    function wireLedgerUndo(box) {
+      box.querySelectorAll('.inv-led-undo').forEach(b => b.addEventListener('click', async () => {
+        const minute = b.dataset.min;
+        if (!confirm(`Undo the stock upload of ${minute}?\n\nThis upload predates upload tracking, so it is recovered from the movement ledger: every SKU it topped up gives back exactly what it added.\n\nTwo things it cannot do, and it will tell you which:\n\u2022 a SKU that has SHIPPED since floors at what is left\n\u2022 a SKU the upload CREATED carries no movement row, so its quantity has to be set by hand\n\nRecorded on the audit trail.`)) return;
+        b.disabled = true;
+        try {
+          const r = await fetch('/api/inventory/ledger-uploads/undo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+            body: JSON.stringify({ clientId, minute, confirm: 'yes' }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) { alert(d.error || 'Could not undo it.'); b.disabled = false; return; }
+          let msg = d.note || 'Undone.';
+          if ((d.created || []).length) msg += `\n\nSet by hand:\n` + d.created.map(x => `\u2022 ${x.sku} (now ${x.stock_qty})`).join('\n');
+          if ((d.floored || []).length) msg += `\n\nShort:\n` + d.floored.map(x => `\u2022 ${x.sku}: added ${x.added}, could take back ${x.could_take}`).join('\n');
+          alert(msg);
+          load(); loadInvImports();
+        } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
+      }));
     }
 
     // ── Bundles / BOM ───────────────────────────────────────────────────────

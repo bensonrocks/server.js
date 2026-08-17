@@ -3996,10 +3996,35 @@ The harder-to-reach uploader had a 3-day reversal; the easier one had nothing.
 - A SKU the upload CREATED is removed again on undo (existing
   `reverseStockPositions` rule), so the catalogue is not left with phantom rows.
 
-Verified 18 API checks (the upload returns a txn id and a stated window, is
+**AN UPLOAD MADE BEFORE ANY OF THIS STILL HAS TO BE UNDOABLE** — the one the
+floor is actually asking about already happened, so a fix covering only future
+uploads does not answer the question. It is not lost: each SKU the uploader
+topped up wrote a `type='upload'` movement carrying **the delta**, so the ledger
+itself says what to give back. `ledgerUploads()` groups those by minute (one
+upload writes its rows within a second or two) and `reverseLedgerUpload()`
+hands each back with its own compensating movement, so the ledger keeps both
+halves rather than pretending the upload never happened.
+- **NEVER BELOW ZERO**: a SKU that has shipped since floors at what is left, and
+  the shortfall is reported by name (`added` vs `could_take`).
+- **HONEST LIMIT, REPORTED NOT HIDDEN**: a SKU the upload CREATED went in
+  through `upsert`, which writes no movement row, so the ledger cannot say how
+  much of its stock came from that upload. Those are NAMED for a human to set,
+  never guessed at.
+- Shown as a dashed row marked "(before uploads were tracked)", so the rougher
+  recovery is never mistaken for the exact one.
+
+**TWO MOVEMENT TYPES WERE UNCLASSIFIED** and turned up while looking at this —
+`upload` and `quarantine_release`. Both are account-level and were counting in
+client statements with nothing saying what they were. Classified. That is
+`unclassifiedMovementTypes()` doing exactly the job it was built for.
+
+Verified 18 API checks on the new-upload path (a txn id and a stated window, is
 listed and tagged, undoes back to the exact prior figures, deletes the SKU it
-invented, refuses a second undo, and is on the audit trail) plus 14 browser
-checks on desktop and a Pixel 5.
+invented, refuses a second undo, on the audit trail), 18 on the ledger recovery
+(the transaction record genuinely removed first, so it is the pre-tracking case:
+the ledger still finds the 250 pcs, gives them back, names the created SKU
+instead of guessing, floors a shipped-since SKU at zero and reports the
+shortfall by name) plus 14 browser checks on desktop and a Pixel 5.
 
 TEST GOTCHA: one active device per user — a browser signing in as `demo`
 invalidates an API token held by the test harness, so a seeder that runs
