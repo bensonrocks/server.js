@@ -9396,6 +9396,7 @@ app.get('/api/orders/archived', (req, res) => {
 const SYNC_ACTIVITY_EVENTS = {
   sync_arranged_at_intake:      { what: 'Asked the channel to PACK it at intake', good: true },
   sync_arrange_not_taking:      { what: 'The channel ACCEPTED the Pack call but never changed the order — stopped asking', good: false },
+  sync_rts_at_intake:           { what: 'Declared READY TO SHIP at intake, before picking (switch is on)', good: true },
   sync_packed_on_demand:        { what: 'Packed at the channel because a packer asked for the waybill', good: true },
   sync_label_attached_by_request: { what: 'Label attached to this order (fetched for it by name)', good: true },
   zort_packed_before_rts:       { what: 'Packed it at the channel (required before Ready to Ship)', good: true },
@@ -18038,6 +18039,9 @@ function zortStorePublic(s, db) {
     // of ever being closed off, so leaving it off by default would leave the
     // bug in place for every store already connected.
     collectionSync: s.collectionSync !== false,
+    // OFF unless deliberately turned on — it declares a parcel ready for the
+    // courier before anything has been picked. See the arrange branch.
+    rtsAtIntake: !!s.rtsAtIntake,
     skipClients: s.skipClients || [],
     recordOnlyClients: s.recordOnlyClients || [],
     channelClients: s.channelClients || {},
@@ -18297,7 +18301,10 @@ async function pullZortStore(db, store) {
         // hub reports it packed, this stops firing; the outbox dedups the
         // retries in between. Never for done/cancelled work or for clients
         // whose orders we do not fulfil.
-        if (store.arrangeAtIntake && stw === 'pending') {
+        // `pending` is the normal case. `packed` is offered ONLY while
+        // Ready-to-Ship-at-intake is on, so switching it on picks up the
+        // orders that were merely marked Packed while it was off.
+        if (store.arrangeAtIntake && (stw === 'pending' || (store.rtsAtIntake && stw === 'packed'))) {
           const f2 = lazadaFindOrder(db, number, '');
           if (f2 && f2.ord.zort_id) {
             const st2 = f2.batch.orderStates?.[f2.ord.order_number] || {};
@@ -19252,6 +19259,23 @@ async function zortHubStatus(store, zortId) {
   return '';
 }
 
+// WHICH MARKETPLACE, AND WHAT SHIPMENT NAME — one fetch, both facts. RTS
+// requires `shipment` (the docs mark it required), and only Lazada has a
+// documented safe default, so the caller has to be able to tell them apart.
+async function zortShipmentInfo(store, zortId) {
+  try {
+    const d = await zortApi.getOrderDetail(store, zortId);
+    const o = d?.order || d || {};
+    const chan = `${o.saleschannel || ''} ${o.integrationName || ''}`.toLowerCase();
+    const marketplace = /lazada/.test(chan) ? 'lazada'
+                      : /shopee/.test(chan) ? 'shopee'
+                      : /tiktok/.test(chan) ? 'tiktok' : '';
+    const ch = String(o.shippingchannel ?? '').trim();
+    return { shipment: ch || (marketplace === 'lazada' ? 'lex' : ''), marketplace };
+  } catch (e) { console.error('[zort-shipment]', zortId, e.message); }
+  return { shipment: '', marketplace: '' };
+}
+
 async function zortShipmentChannel(store, zortId) {
   try {
     const d = await zortApi.getOrderDetail(store, zortId);
@@ -19269,6 +19293,33 @@ async function zortShipmentChannel(store, zortId) {
     if (chan.includes('lazada')) return 'lex';
   } catch (e) { console.error('[zort-shipment]', zortId, e.message); }
   return '';
+}
+
+// GIVE UP ON AN ORDER THE HUB WILL NOT MOVE, and say so once. Shared by both
+// the Packed and the Ready-to-Ship paths so a change to how it is reported can
+// never apply to one and not the other.
+function _blockArrange(db, entry, store, hubStatus, why, how) {
+  try {
+    const f = lazadaFindOrder(db, entry.orderNumber, '');
+    // A FRESHLY IMPORTED ORDER HAS NO STATE RECORD AT ALL, and those are
+    // exactly the orders this fires on — reading a missing state as "nowhere to
+    // write it" silently dropped the flag and the six-minute loop carried on.
+    if (f) {
+      if (!f.batch.orderStates) f.batch.orderStates = {};
+      if (!f.batch.orderStates[f.ord.order_number]) {
+        f.batch.orderStates[f.ord.order_number] = { status: 'pending', scanned: {} };
+      }
+      const st = f.batch.orderStates[f.ord.order_number];
+      st.arrange_blocked = {
+        at: new Date().toISOString(), tries: entry.arrangeTries,
+        hubStatus: hubStatus || 'unreadable', said: why, how,
+      };
+    }
+  } catch (_) {}
+  logAudit('sync_arrange_not_taking', {
+    order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+    tries: entry.arrangeTries, hubStatus: hubStatus || 'unreadable', said: why, how,
+  });
 }
 
 async function _zortSendOutboxEntry(db, store, entry) {
@@ -19332,7 +19383,13 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // Same lesson as zortBodyError, one level up: the call returning is not the
     // outcome. So the hub is asked where the order stands, before and after.
     const before = await zortHubStatus(store, entry.zortId);
-    if (before && before !== 'pending') {
+    // AN ORDER ALREADY MARKED PACKED STILL WANTS READY-TO-SHIP when the switch
+    // is on. Packed is ZORT bookkeeping and mints nothing; without this, every
+    // order arranged before the switch was turned on would sit packed and
+    // label-less for ever, and turning the switch on would look like it did
+    // nothing at all.
+    const wantsRts = !!store.rtsAtIntake;
+    if (before && before !== 'pending' && !(wantsRts && before === 'packed')) {
       // Already past Pending — we packed it on an earlier attempt, or the
       // client did. Nothing to ask for; chase the results and stop.
       logAudit('sync_arranged_at_intake', {
@@ -19343,14 +19400,65 @@ async function _zortSendOutboxEntry(db, store, entry) {
       enqueueZortLabel(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: '' });
       return true;
     }
-    // Arrangement/pack ONLY — never readyToShip (see enqueueZortArrange).
-    // Per the v4 spec, a marketplace order should name its marketplace
-    // shipment channel on the Pack call — resolved from the order detail and
-    // cached on the entry so a retry does not refetch. If no channel field is
-    // found the call goes out without one (the pre-spec behaviour).
+    // ── READY-TO-SHIP AT INTAKE ──────────────────────────────────────────────
+    // OFF BY DEFAULT, AND THE USER'S DECISION. Setting Packed (UpdateOrderStatus
+    // 5) is ZORT's own bookkeeping and never reaches the marketplace, so it
+    // cannot produce an AWB — only ReadyToShip does, and only ReadyToShip
+    // returns detail.trackingno + detail.link. Getting the label before picking
+    // therefore MEANS declaring the parcel ready before a single piece is in the
+    // box. That is a real cost, it was stated plainly, and the user chose it.
+    //
+    // So it is a switch they hold, not a default we imposed:
+    //   • `store.rtsAtIntake`, off unless deliberately turned on
+    //   • RE-READ AT SEND TIME, so suspending it stops entries already queued
+    //   • LAZADA ONLY — Shopee and TikTok want "pickup" or "dropoff", a
+    //     business choice this system must not guess, and RTS requires the
+    //     shipment name. Lazada is the one channel with a documented default.
+    //   • audited under its OWN event, never as a pack: the trail must say what
+    //     was actually declared to the marketplace.
+    const info = await zortShipmentInfo(store, entry.zortId);
+    if (wantsRts && info.marketplace === 'lazada') {
+      const rts = await zortApi.readyToShip(store, { id: entry.zortId, shipment: info.shipment || 'lex' });
+      const rtsSaid = _zortSaid(rts);
+      const nowStatus = await zortHubStatus(store, entry.zortId);
+      if (nowStatus && nowStatus !== 'pending') {
+        const detail = rts?.detail || rts?.Detail || null;
+        const tracking = String(detail?.trackingno || detail?.trackingNo || '').trim();
+        const link = String(detail?.link || detail?.Link || '').trim();
+        logAudit('sync_rts_at_intake', {
+          order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+          hubStatus: nowStatus, shipment: info.shipment || 'lex', tracking, said: rtsSaid,
+        });
+        // The RTS response carries the waybill AND the label URL — the whole
+        // reason for doing this at intake. Use both rather than going back to
+        // polling for what we have just been handed.
+        if (tracking) {
+          const f = lazadaFindOrder(db, entry.orderNumber, '');
+          if (f && !String(f.ord.waybill_number || '').trim()) {
+            f.ord.waybill_number = tracking;
+            logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking, storeId: store.id, via: 'rts-at-intake' });
+            scheduleLabelAutoRematch('rts-at-intake');
+          }
+        }
+        enqueueZortLabel(db, store.id, {
+          orderNumber: entry.orderNumber, zortId: entry.zortId, tracking,
+          labelUrl: /^https?:\/\//i.test(link) ? link : undefined,
+        });
+        if (!tracking) enqueueZortTracking(db, store.id, { orderNumber: entry.orderNumber, zortId: entry.zortId });
+        return true;
+      }
+      // Refused or ignored — same treatment as a pack that does not take:
+      // retried a few times in case it is lag, then flagged and left alone.
+      const rtsWhy = rtsSaid || 'the channel answered without an error but left the order Pending';
+      entry.arrangeTries = (entry.arrangeTries || 0) + 1;
+      if (entry.arrangeTries >= ZORT_ARRANGE_MAX_TRIES) {
+        _blockArrange(db, entry, store, nowStatus, rtsWhy, 'rts');
+        return true;
+      }
+      throw new Error(`Ready-to-Ship was accepted but the order is still ${nowStatus || 'unreadable'} — ${rtsWhy}`);
+    }
     // No `shipment` here: Packed is set through UpdateOrderStatus, which takes
-    // no shipment channel. That parameter belongs to ReadyToShip, which this
-    // path deliberately never calls.
+    // no shipment channel. That parameter belongs to ReadyToShip.
     const packResp = await zortApi.packOrder(store, { id: entry.zortId });
     const said = _zortSaid(packResp);
     const after = await zortHubStatus(store, entry.zortId);
@@ -19374,30 +19482,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     entry.arrangeTries = (entry.arrangeTries || 0) + 1;
     const why = said || 'the channel answered without an error but left the order Pending';
     if (entry.arrangeTries >= ZORT_ARRANGE_MAX_TRIES) {
-      try {
-        const f = lazadaFindOrder(db, entry.orderNumber, '');
-        // A FRESHLY IMPORTED ORDER HAS NO STATE RECORD AT ALL, and those are
-        // exactly the orders this fires on — reading a missing state as
-        // "nowhere to write it" silently dropped the flag and the six-minute
-        // loop carried on. Create it the way every other lazy writer does.
-        if (f) {
-          if (!f.batch.orderStates) f.batch.orderStates = {};
-          if (!f.batch.orderStates[f.ord.order_number]) {
-            f.batch.orderStates[f.ord.order_number] = { status: 'pending', scanned: {} };
-          }
-        }
-        const st = f && f.batch.orderStates[f.ord.order_number];
-        if (st) {
-          st.arrange_blocked = {
-            at: new Date().toISOString(), tries: entry.arrangeTries,
-            hubStatus: after || 'unreadable', said: why,
-          };
-        }
-      } catch (_) {}
-      logAudit('sync_arrange_not_taking', {
-        order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
-        tries: entry.arrangeTries, hubStatus: after || 'unreadable', said: why,
-      });
+      _blockArrange(db, entry, store, after, why, 'pack');
       return true;   // stop asking; the order now carries the flag
     }
     const e = new Error(`Pack was accepted but the order is still ${after || 'unreadable'} on the channel — ${why}`);
@@ -19445,6 +19530,22 @@ async function _zortSendOutboxEntry(db, store, entry) {
         // RTS, and a Pack that is refused because it is ALREADY packed is not
         // an error — that is the state we wanted.
         const hubStatus = await zortHubStatus(store, entry.zortId);
+        // ALREADY READY-TO-SHIP (or past it). With rtsAtIntake on, every order
+        // reaches completion already `waiting` — asking again would be refused
+        // and the entry would retry until it stalled, on every single order.
+        // The thing this push exists to achieve has already happened.
+        if (hubStatus && ['waiting', 'shipping', 'success'].includes(hubStatus)) {
+          logAudit('zort_completion_pushed', {
+            order: entry.orderNumber, client: store.clientName || '', action: entry.action,
+            hubStatus, note: 'already ready to ship on the channel — nothing more to send',
+          });
+          try {
+            const f = lazadaFindOrder(db, entry.orderNumber, '');
+            const st = f && f.batch.orderStates?.[f.ord.order_number];
+            if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
+          } catch (_) {}
+          return true;
+        }
         if (!hubStatus || hubStatus === 'pending') {
           try {
             await zortApi.packOrder(store, args);
@@ -19659,6 +19760,17 @@ app.post('/api/master/zort/stores', (req, res) => {
   if (b.arrangeAtIntake !== undefined) store.arrangeAtIntake = !!b.arrangeAtIntake;
   // Close a finished order off as collected when the hub reports it shipped.
   if (b.collectionSync !== undefined) store.collectionSync = !!b.collectionSync;
+  // Ready-to-Ship the moment a Lazada order imports, to get its label before
+  // picking. Suspendable at any time; the drainer re-reads it per send.
+  if (b.rtsAtIntake !== undefined && !!b.rtsAtIntake !== !!store.rtsAtIntake) {
+    store.rtsAtIntake = !!b.rtsAtIntake;
+    // Turning this on declares parcels ready for the courier before they are
+    // picked. Who changed it, and when, belongs on the record.
+    logAudit('zort_rts_at_intake_changed', {
+      storeId: store.id, client: store.clientName || '',
+      enabled: store.rtsAtIntake, by: req.userId || _tokenUserId(req) || '',
+    });
+  } else if (b.rtsAtIntake !== undefined) store.rtsAtIntake = !!b.rtsAtIntake;
   // Clients this store must NOT bring in — they fulfil their own orders.
   if (b.skipClients !== undefined) {
     store.skipClients = String(b.skipClients || '').split(',').map(x => x.trim()).filter(Boolean);

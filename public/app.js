@@ -11906,6 +11906,26 @@
     // a marketplace parcel has no other way of ever being closed off.
     const zfCol = document.getElementById('zfCollectionSync');
     if (zfCol) zfCol.checked = store ? store.collectionSync !== false : true;
+    const zfRts = document.getElementById('zfRtsAtIntake');
+    if (zfRts) {
+      zfRts.checked = !!store?.rtsAtIntake;
+      if (!zfRts.dataset.wired) {
+        zfRts.dataset.wired = '1';
+        // ASKED ONCE ON THE WAY ON, NEVER ON THE WAY OFF. Suspending has to be
+        // frictionless — that is the whole point of the switch.
+        zfRts.addEventListener('change', e => {
+          if (!e.target.checked) return;
+          const ok = confirm(
+            'Ready-to-Ship at intake\n\n'
+            + 'Every Lazada order will be declared READY FOR THE COURIER the moment it '
+            + 'imports — before a single piece has been picked.\n\n'
+            + 'You get the waybill and the printable label straight away. Lazada is told '
+            + 'the parcel is ready when it is not yet packed.\n\n'
+            + 'Turn this on?');
+          if (!ok) e.target.checked = false;
+        });
+      }
+    }
     document.getElementById('zfLabelPath').value = store?.labelPath || '';
     document.getElementById('zfSkipClients').value = (store?.skipClients || []).join(', ');
     const zfRec = document.getElementById('zfRecordClients');
@@ -11965,6 +11985,7 @@
       labelSync: document.getElementById('zfLabelSync').checked,
       arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
       collectionSync: document.getElementById('zfCollectionSync')?.checked ?? true,
+      rtsAtIntake: document.getElementById('zfRtsAtIntake')?.checked ?? false,
       labelPath: document.getElementById('zfLabelPath').value.trim(),
       skipClients: document.getElementById('zfSkipClients').value.trim(),
       recordOnlyClients: document.getElementById('zfRecordClients')?.value.trim() ?? undefined,

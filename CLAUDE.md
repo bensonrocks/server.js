@@ -1053,6 +1053,48 @@ not restart it, an order the hub really does pack still succeeds in ONE call
 and is never flagged, one already Packed is not asked at all, Ready-to-Ship is
 never called, and the floor reads the failure in words on the order.
 
+### Ready-to-Ship at intake — the user's trade-off, behind a switch they hold
+
+Once `PackOrder` turned out not to exist, the choice became explicit and was put
+to the user: Packed (UpdateOrderStatus 5) is ZORT's own bookkeeping and mints no
+waybill, so **the only way to have a label before picking is to declare the
+parcel Ready to Ship before anything is in the box**. The cost was stated
+plainly; the user chose it, and asked for a way to suspend it. So:
+
+- **`store.rtsAtIntake`, OFF unless deliberately turned on.** Never a default.
+  Turning it ON is a confirm that spells out what it means; turning it OFF asks
+  **nothing** — suspending has to be frictionless, that is the point of it.
+- **RE-READ AT SEND TIME**, so switching it off stops entries already queued
+  rather than only affecting future orders.
+- **LAZADA ONLY.** RTS requires `shipment`, and Lazada is the one channel with a
+  documented default (`"lex"`, per the doc verbatim). Shopee and TikTok want
+  "pickup" or "dropoff" — a business choice this system must not guess, so their
+  orders are never RTS'd here (asserted).
+- **THE RTS RESPONSE IS THE WHOLE POINT**: `detail.trackingno` and
+  `detail.link` come straight back, so the waybill is filled in and the label
+  fetched from the link the hub just handed us — no polling for what we were
+  already given.
+- **AN ORDER ALREADY MARKED PACKED IS STILL OFFERED**, both by the pull
+  (`stw === 'packed'` while the switch is on) and by the arrange branch's
+  early-return. Without this, everything arranged while the switch was off would
+  sit packed and label-less for ever, and turning the switch on would look like
+  it did nothing. Caught by the test, not by reading.
+- **COMPLETION DOES NOT ASK AGAIN.** With this on, every order reaches
+  completion already `waiting`; the push now treats `waiting`/`shipping`/
+  `success` as already satisfied instead of retrying a refusal until it stalls —
+  which would otherwise have happened on every single order.
+- Audited under its **own** event (`sync_rts_at_intake`), never as a pack: the
+  trail must say what was actually declared to the marketplace. Flipping the
+  switch is audited too (`zort_rts_at_intake_changed`, with who).
+
+Verified 20 API checks against a hub that behaves like the docs (Packed mints
+nothing; RTS returns the tracking number and the label link): off by default and
+nothing declared, on and the Lazada order is RTS'd with `lex` and gets both
+waybill and label before any picking, Shopee untouched, completion asks nothing
+more and leaves no stalled entry, and suspending stops it — plus 20 browser
+checks on desktop and a Pixel 5 (off by default, the cost written on the form,
+cancelling the confirm leaves it off, and switching it off never asks).
+
 ### ZORT order status — words, the import filter, and the cross-check tool
 
 CONFIRMED against developers.zortout.com/api-reference/order (read 2026-08-11
