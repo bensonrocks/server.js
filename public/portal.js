@@ -17,7 +17,7 @@
   let portalUser = (() => { try { return JSON.parse(localStorage.getItem('portal_user') || 'null'); } catch { return null; } })();
   const canWrite = () => (portalUser?.access || 'full') !== 'view';
   let overview = null, stock = [], orders = [], inbound = [];
-  let stFilter = 'all', orFilter = 'all', ibFilter = 'all';
+  let stFilter = 'all', orFilter = 'all', ibFilter = 'all', orDay = '';
   let agingDays = 15, screenDays = 90, exportMaxDays = 365, slaWorkingDays = 2;
   const openOrder = new Set();      // order numbers expanded on screen
   const orderDetail = new Map();    // order_number -> line detail (lazy loaded)
@@ -123,6 +123,9 @@
   const fmtDate = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { ...SGT, day: '2-digit', month: 'short', year: 'numeric' }); };
   const fmtDateTime = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('en-GB', { ...SGT, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); };
   const sgToday = () => new Date().toLocaleDateString('en-CA', SGT);
+  // The SGT calendar day an instant falls on, as YYYY-MM-DD. Never
+  // toISOString() — that puts anything before 08:00 SGT on the previous day.
+  const sgDay = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString('en-CA', SGT); };
   // A bare YYYY-MM-DD day string (SLA due dates, ETAs) — already a calendar
   // day, so it must NOT be pushed through a timezone conversion again.
   const fmtDay = s => {
@@ -634,12 +637,79 @@
   };
   const statusOf = st => STATUS[st] || STATUS.pending;
 
+  // WHICH DAY DOES AN ORDER BELONG TO? The day that matters differs by what
+  // happened to it — an order we cancelled belongs to the day we cancelled it
+  // (that is the day the client has to re-place it), a completed one to the day
+  // it was finished, and one still being worked to the day it arrived, which is
+  // what makes a backlog visible. Same rule the office uses on its own list, so
+  // the two can never disagree about which day a job counts on.
+  function orderDay(o) {
+    if (o.status === 'unprocessed') return sgDay(o.cancelled?.at || o.date);
+    if (o.status === 'done')        return sgDay(o.completed_at || o.date);
+    return sgDay(o.date);
+  }
+
+  const DAY_ROWS = 14;   // on screen; the full period is in the ⬇ Report
+  function ordersByDay() {
+    const m = new Map();
+    for (const o of orders) {
+      const day = orderDay(o);
+      if (!day) continue;
+      const b = m.get(day) || { open: 0, done: 0, cancelled: 0, pcs: 0 };
+      if (o.status === 'unprocessed') b.cancelled++;
+      else if (o.status === 'done')   b.done++;
+      else                            b.open++;
+      b.pcs += o.total_qty || 0;
+      m.set(day, b);
+    }
+    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }
+
+  function dayByDayHtml(rows) {
+    if (rows.length < 2) return '';           // one day needs no breakdown
+    const shown = rows.slice(0, DAY_ROWS);
+    const today = sgToday();
+    // A ZERO IS A DASH, not a 0 — the eye should land on the days something
+    // actually happened, especially the cancellations.
+    const cell = (v, colour) => v ? `<b style="color:${colour}">${num(v)}</b>` : '<span class="muted">—</span>';
+    return `<div class="dbd-wrap">
+      <table class="dbd">
+        <thead><tr><th>Day</th><th>In progress</th><th>Completed</th><th>Cancelled</th></tr></thead>
+        <tbody>${shown.map(([day, b]) => `
+          <tr class="dbd-row${orDay === day ? ' on' : ''}" data-day="${esc(day)}" title="Show only this day">
+            <td>${day === today ? '<b>Today</b>' : fmtDay(day)}</td>
+            <td>${cell(b.open, 'inherit')}</td>
+            <td>${cell(b.done, 'var(--ok)')}</td>
+            <td>${cell(b.cancelled, 'var(--bad)')}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+      ${rows.length > DAY_ROWS
+        ? `<div class="muted" style="font-size:.66rem;margin-top:.3rem">${rows.length - DAY_ROWS} earlier day(s) not shown — use &#8681; Report for the full period.</div>`
+        : ''}
+    </div>`;
+  }
+
+  // A FILTERED LIST SAYS SO IN WORDS. A day with one cancelled order removes
+  // almost every row, which reads as "nothing here" unless the screen says what
+  // it is showing and offers the way back.
+  function dayNoteHtml(rows) {
+    if (!orDay) return '';
+    const hit = rows.find(([d]) => d === orDay);
+    const b = hit ? hit[1] : { open: 0, done: 0, cancelled: 0 };
+    return `<div class="day-note">
+      <span>&#128197; Showing <b>${orDay === sgToday() ? 'today' : fmtDay(orDay)}</b> only —
+        ${num(b.open)} in progress, ${num(b.done)} completed, ${num(b.cancelled)} cancelled</span>
+      <button class="btn-sm" id="orDayClear">Clear day</button>
+    </div>`;
+  }
+
   function renderOrders() {
     const q = ($('orSearch').value || '').trim().toLowerCase();
     const rows = orders.filter(o => {
       if (orFilter === 'done' && o.status !== 'done') return false;
       if (orFilter === 'cancelled' && o.status !== 'unprocessed') return false;
       if (orFilter === 'open' && (o.status === 'done' || o.status === 'unprocessed')) return false;
+      if (orDay && orderDay(o) !== orDay) return false;
       if (!q) return true;
       return String(o.order_number).toLowerCase().includes(q)
         || String(o.waybill || '').toLowerCase().includes(q);
@@ -653,12 +723,19 @@
     }
     const done = orders.filter(o => o.status === 'done').length;
     const open = orders.filter(o => o.status !== 'done' && o.status !== 'unprocessed').length;
+    const cancelled = orders.filter(o => o.status === 'unprocessed').length;
     const pcs = orders.reduce((s, o) => s + (o.total_qty || 0), 0);
-    $('orSummary').innerHTML = `<div class="card" style="margin-bottom:.6rem"><div class="strip">
-      <div><div class="v n">${num(open)}</div><div class="l">In progress</div></div>
-      <div><div class="v n" style="color:var(--ok)">${num(done)}</div><div class="l">Completed</div></div>
-      <div><div class="v n">${num(pcs)}</div><div class="l">Pieces total</div></div>
-    </div></div>`;
+    const dayRows = ordersByDay();
+    $('orSummary').innerHTML = `<div class="card" style="margin-bottom:.6rem">
+      <div class="strip s4">
+        <div><div class="v n">${num(open)}</div><div class="l">In progress</div></div>
+        <div><div class="v n" style="color:var(--ok)">${num(done)}</div><div class="l">Completed</div></div>
+        <div><div class="v n" style="color:${cancelled ? 'var(--bad)' : 'var(--muted)'}">${num(cancelled)}</div><div class="l">Cancelled</div></div>
+        <div><div class="v n">${num(pcs)}</div><div class="l">Pieces total</div></div>
+      </div>
+      <div class="muted" style="text-align:center;font-size:.66rem;margin-top:.3rem">Across the last 90 days</div>
+      ${dayByDayHtml(dayRows)}
+    </div>${dayNoteHtml(dayRows)}`;
 
     if (!rows.length) {
       $('orList').innerHTML = emptyState('&#128269;', 'Nothing matches', 'Try a different search or filter.');
@@ -1609,6 +1686,15 @@
     renderStock();
   });
   $('orSearch').addEventListener('input', renderOrders);
+  // Delegated: #orSummary is rebuilt on every render, so a bound listener would
+  // be thrown away with it.
+  document.addEventListener('click', e => {
+    if (e.target.closest('#orDayClear')) { orDay = ''; renderOrders(); return; }
+    const row = e.target.closest('.dbd-row');
+    if (!row) return;
+    orDay = (orDay === row.dataset.day) ? '' : row.dataset.day;   // tap again to clear
+    renderOrders();
+  });
   $('ibSearch').addEventListener('input', renderInbound);
   // Stock is a live position — straight download, no date window.
   $('stExport').addEventListener('click', async e => {

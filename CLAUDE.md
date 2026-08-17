@@ -4148,6 +4148,57 @@ pages had simply never been read.
   instead of counting toward the amber unmatched figure — a half-finished import
   no longer reads as a broken one.
 
+## Portal orders — Cancelled counted, and every figure BY THE DAY
+
+Reported from a client's own screen: the Orders tiles read "5 in progress / 75
+completed / 121 pieces" with the **Cancelled** filter selected — no cancelled
+figure anywhere, and three lifetime totals that did not move whatever was
+filtered. A client whose whole reason for the tab is *"maintain a list of orders
+that could not be fulfilled"* could not see how many there were, let alone when.
+
+- **A FOURTH TILE: Cancelled**, red when there is anything to see and grey at
+  zero, so an account with none does not look like it has a problem. `.strip.s4`
+  shrinks the number a little; all four fit a **320px** phone with no sideways
+  scroll (asserted).
+- **A DAY-BY-DAY TABLE under the tiles** — Day / In progress / Completed /
+  Cancelled, newest first. One lifetime total says nothing about whether things
+  are getting better or worse; three cancellations yesterday and none since is a
+  different conversation from three every day.
+- **WHICH DAY AN ORDER BELONGS TO DEPENDS ON WHAT HAPPENED TO IT**
+  (`orderDay()`): a cancelled order counts on the day it was CANCELLED — that is
+  the day the client has to re-place it — a completed one on the day it was
+  FINISHED, and one still being worked on the day it ARRIVED, which is what
+  makes a backlog visible. Deliberately the same rule the office list uses, so
+  the two can never disagree about which day a job counts on.
+- **SGT calendar days** (`sgDay()`, `en-CA` + `Asia/Singapore`) — never
+  `toISOString()`, which puts anything before 08:00 SGT on the previous day.
+  Same standing rule as everywhere else.
+- **A ZERO IS A DASH.** The eye should land on the days something actually
+  happened, especially the cancellations.
+- **TAPPING A DAY FILTERS THE LIST**, and it composes with the status chips
+  (Cancelled + a day = exactly that day's cancellations). **A filtered list says
+  so in words** — a `.day-note` reading "📅 Showing 15 Aug only — 0 in progress,
+  3 completed, 2 cancelled" with a Clear day button, the same rule as the office
+  KPI tiles; a day holding one order removes almost every row and would
+  otherwise read as "nothing here". Tapping the same day again clears it.
+- Client-side only — `/api/portal/orders` already returned `date`,
+  `completed_at` and `cancelled.at`. 14 days on screen, with a muted line
+  pointing at ⬇ Report for the full period (the standing 90-day screen /
+  365-day export split).
+- The listeners are **delegated on `document`**: `#orSummary` is rebuilt on
+  every render, so a bound listener would be thrown away with it.
+
+Verified 51 browser checks across desktop, a Pixel 5 and a 320px screen against
+an account with orders spread over three days: four tiles with the right
+figures, no sideways scroll, one row per active day in the right order,
+cancellations red by computed style, a dash where a day has none, tapping a day
+narrowing the list to exactly its orders, the note naming what is shown, Clear
+restoring everything, and the day and status filters composing.
+
+TEST GOTCHA: portal accounts are **one place at a time**, so a multi-viewport
+Playwright run must free the seat (`.../portal-users/:id/release`) or sign out
+between contexts — the second browser gets a 409 otherwise.
+
 ## Portal orders — the waybill you can open, and no pill that says nothing
 
 - **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing

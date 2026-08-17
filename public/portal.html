@@ -163,6 +163,31 @@
   .strip .v { font-size:1.16rem; font-weight:800; }
   .strip .l { font-size:.64rem; color:var(--muted); font-weight:800; text-transform:uppercase;
               letter-spacing:.04em; margin-top:.1rem; }
+  /* Four tiles once Cancelled joins In progress / Completed / Pieces. The
+     number shrinks a little so all four still fit a 320px phone without the
+     row scrolling sideways. */
+  .strip.s4 { grid-template-columns:repeat(4,1fr); }
+  .strip.s4 .v { font-size:1rem; }
+  .strip.s4 .l { font-size:.57rem; letter-spacing:.02em; }
+
+  /* Day-by-day breakdown under the orders strip. A client tracking orders we
+     could not fulfil needs them PER DAY — one lifetime total says nothing
+     about whether it is getting better or worse. */
+  .dbd-wrap { margin-top:.5rem; border-top:1px solid var(--border); padding-top:.4rem; overflow-x:auto; }
+  table.dbd { width:100%; border-collapse:collapse; font-size:.74rem; }
+  table.dbd th { text-align:right; font-size:.6rem; text-transform:uppercase; letter-spacing:.03em;
+                 color:var(--muted); font-weight:800; padding:.15rem .3rem; white-space:nowrap; }
+  table.dbd th:first-child, table.dbd td:first-child { text-align:left; }
+  table.dbd td { text-align:right; padding:.28rem .3rem; border-top:1px solid var(--border); white-space:nowrap; }
+  .dbd-row { cursor:pointer; }
+  .dbd-row:hover td { background:var(--surface-2); }
+  .dbd-row.on td { background:var(--info-bg); }
+  .dbd-row.on td:first-child { box-shadow:inset 3px 0 0 var(--brand, #1d4ed8); }
+
+  .day-note { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; justify-content:space-between;
+              background:var(--info-bg); border:1px solid #bfdbfe; border-radius:10px;
+              padding:.45rem .6rem; margin-bottom:.6rem; font-size:.76rem; }
+  .day-note .btn-sm { padding:.35rem .6rem; font-size:.72rem; }
 
   /* chart */
   /* Bars only — never text; see trendChart() in portal.js for why. */
