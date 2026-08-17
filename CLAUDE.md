@@ -4029,6 +4029,26 @@ kinds and the administrator removes whichever is the duplicate:
   is still there and still `done` afterwards.)
 - Admin or master; warehouse gets a real 403 and changes nothing.
 
+**BOTH POSTINGS WERE TAKEN OFF AND THE CLIENT LANDED ON ZERO.** Reported from a
+live screen: on hand **0**. Each undo was individually correct — it gave back
+exactly what its own posting added — but nothing stopped the second one and
+nothing offered a way home. Both halves of that were the bug:
+- **ONCE PER POSTING.** `db.undoneLedgerPostings[client|kind|key]` records the
+  take-off; asking again is refused (409) naming **when and by whom**, and the
+  row is shown on the list as "already taken off" rather than offering a button
+  that must not be pressed. Giving a posting back twice removes stock that was
+  only ever booked once.
+- **A TAKE-OFF IS ITSELF UNDOABLE.** `reverseLedgerUpload` now captures a
+  before-snapshot and the route stores it as its own `db.stockImports` entry
+  (`source: 'ledger-undo'`, 3-day window), so it appears on the same list with
+  **⎌ Put the stock back**. An undo with no way back is a one-way door, and the
+  floor walked through two in a row.
+- **PUTTING IT BACK RE-ARMS THE POSTING IT UNDID** — the marker is cleared, so
+  the correction is not a dead end. Without this the stock would be restored
+  while the posting stayed marked as given-back, and the double could never be
+  fixed after one wrong move. (Asserted end to end: take off → refused twice →
+  put back → takeable off again → lands on the right figure.)
+
 **REMOVING A ROW FROM THE LIST** (`DELETE /api/putaway/imports/:id`) is
 housekeeping, not a stock action — the stock is untouched and the AUDIT LOG is
 never what gets tidied.

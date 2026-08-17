@@ -12775,6 +12775,13 @@ app.post('/api/putaway/imports/:id/reverse', express.json(), (req, res) => {
   txn.reversed_by = who;
   if (moved.length) txn.reversed_partial_skipped = moved;
   delete txn.snapshot;
+  // PUTTING AN UNDO BACK RE-ARMS THE POSTING IT UNDID. Otherwise the stock is
+  // restored but the posting stays marked as already-given-back, and it could
+  // never be taken off again — the correction would be a dead end.
+  if (txn.source === 'ledger-undo' && txn.undo_of) {
+    const k = `${txn.clientId}|${txn.undo_of.kind}|${txn.undo_of.key}`;
+    if (db.undoneLedgerPostings) delete db.undoneLedgerPostings[k];
+  }
   writeDb(db);
   logAudit('stock_mass_upload_reversed', {
     txnId: txn.id, clientId: txn.clientId, uploadMode: txn.mode || 'add', filename: txn.filename,
@@ -22439,9 +22446,13 @@ app.get('/api/inventory/ledger-uploads', (req, res) => {
   const cid = String(req.query.clientId || '').trim();
   if (!cid) return res.status(400).json({ error: 'clientId is required' });
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
-  const dismissed = readDb().dismissedLedgerUploads || {};
+  const _db = readDb();
+  const dismissed = _db.dismissedLedgerUploads || {};
+  const undone = _db.undoneLedgerPostings || {};
   res.json({ rows: inventory.ledgerUploads(cid, { days: Number(req.query.days) || 30 })
-    .filter(r => !dismissed[`${cid}|${r.kind}|${r.key}`] && !dismissed[`${cid}|${r.key}`]) });
+    .filter(r => !dismissed[`${cid}|${r.kind}|${r.key}`] && !dismissed[`${cid}|${r.key}`])
+    // Already given back — shown, but as history, so nobody takes it off twice.
+    .map(r => ({ ...r, undone: undone[`${cid}|${r.kind}|${r.key}`] || null })) });
 });
 
 app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
@@ -22450,6 +22461,22 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   const kind = String(req.body?.kind || 'upload').trim();
   const key = String(req.body?.key || req.body?.minute || '').trim();
   if (!cid || !key) return res.status(400).json({ error: 'clientId and key are required' });
+  // ── ONCE PER POSTING ─────────────────────────────────────────────────────
+  // Reported live: both postings were backed off one after the other and the
+  // client's on-hand landed on ZERO. Each undo was individually correct — it
+  // gave back exactly what its own posting added — but nothing stopped the
+  // second one, and nothing said the first had already happened. A posting can
+  // only be given back once; asking again is refused with when and by whom.
+  {
+    const seen = (readDb().undoneLedgerPostings || {})[`${cid}|${kind}|${key}`];
+    if (seen) {
+      return res.status(409).json({
+        error: `That posting was already taken back off on ${String(seen.at).slice(0, 16).replace('T', ' ')}`
+          + `${seen.by ? ` by ${seen.by}` : ''} (${seen.units} pc(s)). Giving it back twice would remove stock that was only ever booked once.`,
+        alreadyUndone: seen,
+      });
+    }
+  }
   if (String(req.body?.confirm || '') !== 'yes') return res.status(409).json({ needsConfirm: true });
   const who = req.userId || _tokenUserId(req) || '';
   let out;
@@ -22464,12 +22491,32 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
     skus: out.skus, units: out.units,
     floored: out.floored.length, createdSkus: (out.created || []).map(x => x.sku).slice(0, 50), by: who,
   });
+  // THE UNDO IS ITSELF UNDOABLE, and listed as such. That is the way back from
+  // the zero the floor landed on.
   const db = readDb();
+  db.undoneLedgerPostings = db.undoneLedgerPostings || {};
+  db.undoneLedgerPostings[`${cid}|${kind}|${key}`] = { at: new Date().toISOString(), by: who, units: out.units };
+  let undoTxnId = null;
+  if (out.snapshot && (out.snapshot.skus || []).length) {
+    db.stockImports = db.stockImports || [];
+    undoTxnId = uuidv4();
+    db.stockImports.unshift({
+      id: undoTxnId, hash: `undo:${cid}|${kind}|${key}`, clientId: cid,
+      filename: kind === 'inbound' ? `undo of ${key}` : `undo of the upload of ${key}`,
+      at: new Date().toISOString(), by: who, mode: 'add', source: 'ledger-undo',
+      lines: out.skus, units: out.units, snapshot: out.snapshot,
+      undo_of: { kind, key },
+      reversible_until: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
+    });
+    pruneStockImportSnapshots(db);
+  }
+  writeDb(db);
   zortNotifyStockChange(db, cid, []);
   res.json({
-    ok: true, ...out,
+    ok: true, undoTxnId, ...out,
     note: `Took ${out.units} pc(s) back off ${out.skus} SKU(s).`
       + (kind === 'inbound' ? ' The receipt itself, its GRN and its trail are untouched — only the stock posting was backed out.' : '')
+      + ' This can be put back for 3 days from the same list.'
       + (out.floored.length ? ` ${out.floored.length} SKU(s) no longer held all of it — something shipped since, so those floored at what was there.` : '')
       + ((out.created || []).length ? ` ${(out.created || []).length} SKU(s) were CREATED by that upload and carry no movement row, so their quantity could not be worked out from the ledger — they are listed for you to set by hand.` : ''),
   });

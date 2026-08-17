@@ -16932,7 +16932,10 @@
           </div>`).join('') + legacyHtml;
         wireLedgerUndo(box); wireRowDelete(box);
         box.querySelectorAll('.inv-imp-undo').forEach(b => b.addEventListener('click', async () => {
-          if (!confirm('Undo this stock upload?\n\nEvery SKU it touched goes back to the on-hand figure it had before — including SKUs it created, which are removed again if nothing else gave them stock.\n\nThis is recorded on the audit trail.')) return;
+          const putBack = b.dataset.put === '1';
+          if (!confirm(putBack
+            ? 'Put this stock back on?\n\nThis reverses a take-off: every SKU goes back to the figure it had before the stock was removed, and the posting it came from becomes available to take off again.\n\nRecorded on the audit trail.'
+            : 'Undo this stock upload?\n\nEvery SKU it touched goes back to the on-hand figure it had before — including SKUs it created, which are removed again if nothing else gave them stock.\n\nThis is recorded on the audit trail.')) return;
           b.disabled = true;
           const send = skipMoved => fetch(`/api/putaway/imports/${b.dataset.id}/reverse`, {
             method: 'POST',
