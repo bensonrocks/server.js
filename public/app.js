@@ -12986,11 +12986,25 @@
       if (r.status === 409 && d.needsApplyConfirm) {
         btn.disabled = false;
         const p = d.preview || {};
-        const word = d.mode === 'set' ? 'SUPERSEDE (replace each listed bin with the sheet\u2019s figure)'
+        const word = d.mode === 'set' ? 'SUPERSEDE (this file BECOMES the whole position)'
                    : d.mode === 'reduce' ? 'REDUCE (subtract the sheet\u2019s quantities)'
                    : 'ADD (on top of what each bin holds)';
         let msg = `MASS ${word}\n\nClient: ${d.client}\nFile: ${d.filename}\n`
           + `${p.rows} row(s), ${p.units} pc(s), ${p.skus} SKU(s).`;
+        // SUPERSEDE: SAY THE ARITHMETIC, because "740 pcs" reads as an addition
+        // and the difference disappearing is otherwise a surprise. Reported
+        // live: 740 uploaded, screen still showed 844.
+        if (d.mode === 'set' && p.currentTotal !== undefined) {
+          msg += `\n\nON HAND NOW: ${p.currentTotal} pc(s)  \u2192  AFTER: ${p.afterTotal} pc(s)`;
+          if (p.zeroUnits) {
+            msg += `\n\n\u26a0 ${p.zeroSkuCount} SKU(s) holding ${p.zeroUnits} pc(s) are NOT in this file`
+              + ` and will be set to ZERO:\n`
+              + (p.zeroSkus || []).map(x => `\u2022 ${x.sku}: ${x.was} \u2192 0`).join('\n')
+              + (p.zeroSkuCount > (p.zeroSkus || []).length ? '\n\u2026' : '');
+          } else {
+            msg += `\n(Nothing is left behind \u2014 every SKU holding stock is in this file.)`;
+          }
+        }
         if (p.newSkuCount) msg += `\n${p.newSkuCount} new SKU(s) will be created: ${(p.newSkus || []).join(', ')}${p.newSkuCount > (p.newSkus || []).length ? '\u2026' : ''}`;
         if (p.newBinCount) msg += `\n${p.newBinCount} new bin(s) will be created.`;
         if (p.errorCount) msg += `\n\n\u26a0 ${p.errorCount} row(s) have ERRORS and will be skipped:\n`

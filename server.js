@@ -12628,6 +12628,12 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
         errors: pv.errors.slice(0, 30), errorCount: pv.errors.length,
         short: pv.short.slice(0, 30), shortCount: pv.short.length,
         sample: pv.cells.slice(0, 12),
+        // Supersede only: what the client holds NOW, what it will hold after,
+        // and the stock about to be zeroed because the file does not mention it.
+        currentTotal: pv.currentTotal, afterTotal: pv.afterTotal,
+        zeroUnits: pv.zeroUnits, replacedUnits: pv.replacedUnits,
+        zeroSkuCount: (pv.zeroSkus || []).length,
+        zeroSkus: (pv.zeroSkus || []).slice(0, 30),
       },
     });
   }

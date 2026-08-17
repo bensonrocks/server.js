@@ -1785,7 +1785,7 @@
         <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="add" style="margin-top:.2rem" />
           <span><b>&#10133; Mass ADD</b> — the sheet's quantities go on top of what each bin already holds (a delivery, opening stock).</span></label>
         <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="supersede" style="margin-top:.2rem" />
-          <span><b>&#9851; Mass SUPERSEDE</b> — the sheet states the position; each listed bin is replaced with the sheet's figure (a stock-take).</span></label>
+          <span><b>&#9851; Mass SUPERSEDE</b> — a stock-take: after this, <b>the sheet IS the whole position</b>. Every SKU is cleared first, so anything not in the file goes to <b>zero</b> (you are shown which, and the totals before and after, before anything happens).</span></label>
         <label style="display:flex;gap:.45rem;align-items:flex-start"><input type="radio" name="paImportMode" value="reduce" style="margin-top:.2rem" />
           <span><b>&#10134; Mass REDUCE</b> — the sheet's quantities are subtracted from each bin (a write-off / correction list).</span></label>
       </div>

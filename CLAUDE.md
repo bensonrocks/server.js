@@ -3979,6 +3979,26 @@ audit trail that reads as the mass action it was, with who did it.
 - The upload overlay has FOUR radio modes: fill-the-putaway-job (the old
   propose flow, still default), mass ADD, mass SUPERSEDE (`mode=set`), mass
   REDUCE. Supersede/reduce force the direct path (`wantsDirect`).
+- **SUPERSEDE MEANS THE FILE IS THE POSITION — the whole position.** Reported
+  live: 740 pcs uploaded as a supersede and the screen still read **844**. The
+  old `mode=set` cleared only the (sku, bin) **cells the file happened to
+  name**, so stock in any other bin, and every SKU the file did not mention,
+  survived untouched. That is not superseding anything; it is a per-cell
+  overwrite wearing the word. A supersede is a stock-take, so now every SKU the
+  client holds is cleared first: those in the file are filled from it, those
+  absent go to **zero** and are **reported by name and quantity**
+  (`out.zeroed`, `out.zeroedUnits`) — a count that quietly leaves stock behind
+  is worse than no count.
+  - **THE SNAPSHOT COVERS EVERYTHING IT CLEARS**, not just the named cells, or
+    the 3-day reversal would have a hole exactly where the behaviour is most
+    destructive. Asserted: reversing restores the full 844 including the SKU
+    the file never mentioned.
+  - **THE PREVIEW STATES THE ARITHMETIC** — `currentTotal → afterTotal`, plus
+    the SKUs about to be zeroed listed by code. "740 pcs" reads as an addition;
+    without the before/after the missing 104 is a surprise, which is exactly
+    how this was found.
+  - **ADD is untouched** and still additive (asserted) — a delivery being
+    binned is not a stock-take.
 - **PREVIEW-CONFIRM**: without `confirm_apply=yes` the route answers 409
   `{needsApplyConfirm, preview}` computed by `inventory.previewStockPositions`
   — rows/units/SKUs, new SKUs and bins that would be created, ERROR rows
