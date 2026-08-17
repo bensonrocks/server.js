@@ -4013,6 +4013,33 @@ halves rather than pretending the upload never happened.
 - Shown as a dashed row marked "(before uploads were tracked)", so the rougher
   recovery is never mistaken for the exact one.
 
+**THE SAME GOODS BOOKED TWICE — receipt AND upload.** Reported next: on hand
+went to double, "one set from our upload, and another from the inbound". Both
+are real postings and either could be the one to keep, so the list shows BOTH
+kinds and the administrator removes whichever is the duplicate:
+- **File uploads** grouped by minute (one upload writes its rows within a
+  second or two and has nothing else to key on).
+- **Inbound receipts** keyed by the receipt itself — `Receipt IB-260817-01`,
+  which the End-Receipt posting already writes as the movement reason. Better
+  than a timestamp: it names the job the stock came in on.
+- **IT BACKS OUT A STOCK POSTING; IT DELETES NOTHING ELSE.** An inbound receipt
+  really happened — the goods arrived and were counted — so the receipt record,
+  its GRN and its trail are left exactly as they are, and the note says so. What
+  is being corrected is the stock having been booked twice. (Asserted: the job
+  is still there and still `done` afterwards.)
+- Admin or master; warehouse gets a real 403 and changes nothing.
+
+**REMOVING A ROW FROM THE LIST** (`DELETE /api/putaway/imports/:id`) is
+housekeeping, not a stock action — the stock is untouched and the AUDIT LOG is
+never what gets tidied.
+- **THE TRAP IT GUARDS**: while a record is still reversible it is the ONLY
+  route back — its before-snapshot lives on it and nowhere else. Deleting one in
+  that state is refused unless the caller says plainly that is what they want
+  (`force: 'yes'`), and the trail records `gaveUpUndo`.
+- **A LEDGER ROW IS HIDDEN, NEVER DELETED** — it is derived from
+  `stock_movements`, and erasing rows out of the ledger to tidy a list would be
+  destroying the record. The dismissal is stored beside it instead.
+
 **TWO MOVEMENT TYPES WERE UNCLASSIFIED** and turned up while looking at this —
 `upload` and `quarantine_release`. Both are account-level and were counting in
 client statements with nothing saying what they were. Classified. That is

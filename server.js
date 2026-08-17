@@ -12880,6 +12880,66 @@ app.post('/api/putaway/imports/:id/complete-supersede', express.json(), (req, re
   });
 });
 
+// ── REMOVE AN UPLOAD FROM THE LIST ──────────────────────────────────────────
+// Housekeeping, not a stock action. Once an upload has been dealt with, its row
+// is clutter sitting between somebody and the one they still need to act on.
+//
+// THE TRAP THIS HAS TO AVOID: while a record is still reversible it is the ONLY
+// route back — its before-snapshot lives on it and nowhere else. Deleting one
+// in that state throws the undo away and leaves the stock exactly where it is,
+// so it is refused unless the caller says plainly that is what they want
+// (`force: 'yes'`). A record already reversed, or past its window, is just
+// history and goes quietly.
+//
+// The AUDIT LOG is untouched either way — that is the permanent trail, and a
+// tidy-up action must never be able to erase what happened.
+app.delete('/api/putaway/imports/:id', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const i = (db.stockImports || []).findIndex(x => x.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: 'Upload not found' });
+  const txn = db.stockImports[i];
+  const live = !!txn.snapshot && !txn.reversed_at
+    && txn.reversible_until && new Date(txn.reversible_until).getTime() > Date.now();
+  if (live && String(req.body?.force || '') !== 'yes') {
+    return res.status(409).json({
+      needsForce: true, units: txn.units, filename: txn.filename,
+      message: 'This upload can still be undone, and this record is the only way to do it. '
+        + 'Removing it leaves the stock exactly as it is now and gives up the undo for good. '
+        + 'Undo it first if that is what you meant.',
+    });
+  }
+  const who = req.userId || _tokenUserId(req) || '';
+  db.stockImports.splice(i, 1);
+  writeDb(db);
+  logAudit('stock_upload_record_deleted', {
+    txnId: txn.id, clientId: txn.clientId, filename: txn.filename, mode: txn.mode,
+    units: txn.units, source: txn.source || 'putaway',
+    wasReversed: !!txn.reversed_at, gaveUpUndo: live, by: who,
+  });
+  res.json({ ok: true, gaveUpUndo: live,
+    note: live ? 'Removed. The stock stays as it is — that undo is gone.' : 'Removed from the list.' });
+});
+
+// A LEDGER ROW CANNOT BE DELETED, ONLY DISMISSED. It is not a record we keep —
+// it is derived from stock_movements, and the movement ledger is the permanent
+// account of what happened to the stock. Erasing rows out of it to tidy a list
+// would be destroying the evidence. So the dismissal is stored beside it.
+app.post('/api/inventory/ledger-uploads/dismiss', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const cid = String(req.body?.clientId || '').trim();
+  const kind = String(req.body?.kind || 'upload').trim();
+  const minute = String(req.body?.key || req.body?.minute || '').trim();
+  if (!cid || !minute) return res.status(400).json({ error: 'clientId and key are required' });
+  const db = readDb();
+  db.dismissedLedgerUploads = db.dismissedLedgerUploads || {};
+  const key = `${cid}|${kind}|${minute}`;
+  db.dismissedLedgerUploads[key] = { at: new Date().toISOString(), by: req.userId || _tokenUserId(req) || '' };
+  writeDb(db);
+  logAudit('stock_ledger_upload_dismissed', { clientId: cid, minute, by: req.userId || _tokenUserId(req) || '' });
+  res.json({ ok: true, note: 'Hidden from the list. The movements themselves are untouched — they are the record.' });
+});
+
 app.get('/api/putaway/queue', (req, res) => {
   const db = readDb();
   const groups = putawayQueue(db);
@@ -22379,21 +22439,29 @@ app.get('/api/inventory/ledger-uploads', (req, res) => {
   const cid = String(req.query.clientId || '').trim();
   if (!cid) return res.status(400).json({ error: 'clientId is required' });
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
-  res.json({ rows: inventory.ledgerUploads(cid, { days: Number(req.query.days) || 30 }) });
+  const dismissed = readDb().dismissedLedgerUploads || {};
+  res.json({ rows: inventory.ledgerUploads(cid, { days: Number(req.query.days) || 30 })
+    .filter(r => !dismissed[`${cid}|${r.kind}|${r.key}`] && !dismissed[`${cid}|${r.key}`]) });
 });
 
 app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   if (!requireInboundAdmin(req, res)) return;
   const cid = String(req.body?.clientId || '').trim();
-  const minute = String(req.body?.minute || '').trim();
-  if (!cid || !minute) return res.status(400).json({ error: 'clientId and minute are required' });
+  const kind = String(req.body?.kind || 'upload').trim();
+  const key = String(req.body?.key || req.body?.minute || '').trim();
+  if (!cid || !key) return res.status(400).json({ error: 'clientId and key are required' });
   if (String(req.body?.confirm || '') !== 'yes') return res.status(409).json({ needsConfirm: true });
   const who = req.userId || _tokenUserId(req) || '';
   let out;
-  try { out = inventory.reverseLedgerUpload(cid, minute, { operator: who, reason: `stock upload of ${minute} undone` }); }
-  catch (e) { return res.status(400).json({ error: e.message }); }
+  try {
+    out = inventory.reverseLedgerUpload(cid, { kind, key }, {
+      operator: who,
+      reason: kind === 'inbound' ? `stock of ${key} backed out (booked twice)` : `stock upload of ${key} undone`,
+    });
+  } catch (e) { return res.status(400).json({ error: e.message }); }
   logAudit('inventory_upload_undone_from_ledger', {
-    clientId: cid, minute, skus: out.skus, units: out.units,
+    clientId: cid, kind, key, minute: kind === 'upload' ? key : undefined,
+    skus: out.skus, units: out.units,
     floored: out.floored.length, createdSkus: (out.created || []).map(x => x.sku).slice(0, 50), by: who,
   });
   const db = readDb();
@@ -22401,6 +22469,7 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
   res.json({
     ok: true, ...out,
     note: `Took ${out.units} pc(s) back off ${out.skus} SKU(s).`
+      + (kind === 'inbound' ? ' The receipt itself, its GRN and its trail are untouched — only the stock posting was backed out.' : '')
       + (out.floored.length ? ` ${out.floored.length} SKU(s) no longer held all of it — something shipped since, so those floored at what was there.` : '')
       + ((out.created || []).length ? ` ${(out.created || []).length} SKU(s) were CREATED by that upload and carry no movement row, so their quantity could not be worked out from the ledger — they are listed for you to set by hand.` : ''),
   });

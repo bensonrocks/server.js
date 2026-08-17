@@ -16904,16 +16904,21 @@
             return lr.ok ? ((await lr.json()).rows || []) : [];
           } catch (_) { return []; }
         })();
+        // An upload that already has a tracked record is not offered twice; an
+        // inbound receipt has no such record and is always offered.
         const seenMinutes = new Set(rows.map(x => String(x.at).slice(0, 16).replace('T', ' ')));
-        const legacyRows = legacy.filter(l => !seenMinutes.has(l.minute));
+        const legacyRows = legacy.filter(l => l.kind !== 'upload' || !seenMinutes.has(l.key));
         const legacyHtml = legacyRows.map(l => `
-          <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px dashed #cbd5e1;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
-            <span class="hint">${esc(l.minute)} · ${l.skus} SKU(s) · +${l.units} pc(s) <b>(before uploads were tracked)</b></span>
-            <button class="btn-danger btn-sm inv-led-undo" data-min="${esc(l.minute)}"
-              title="Give back exactly what this upload added, SKU by SKU, from the movement ledger">&#9100; Undo from ledger</button>
+          <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px dashed ${l.kind === 'inbound' ? '#bfdbfe' : '#cbd5e1'};border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
+            <span style="font-weight:700;color:${l.kind === 'inbound' ? '#1d4ed8' : '#475569'}">${l.kind === 'inbound' ? '&#128229; Inbound receipt' : '&#8679; File upload'}</span>
+            <span class="hint">${esc(l.kind === 'inbound' ? String(l.key).replace(/^Receipt /, '') : l.key)} · ${l.skus} SKU(s) · +${l.units} pc(s)${l.kind === 'upload' ? ' <b>(before uploads were tracked)</b>' : ''}</span>
+            <button class="btn-danger btn-sm inv-led-undo" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
+              title="${l.kind === 'inbound' ? 'Back this receipt\u2019s stock off the books. The receipt, its GRN and its trail stay exactly as they are — only the stock posting is undone.' : 'Give back exactly what this upload added, SKU by SKU, from the movement ledger'}">&#9100; Undo stock</button>
+            <button class="btn-secondary btn-sm inv-led-del" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
+              title="Hide this from the list. The movements themselves stay — they are the record of what happened.">&#128465;</button>
           </div>`).join('');
         if (!rows.length && !legacyRows.length) { box.innerHTML = '<div class="hint">No stock uploads for this client yet.</div>'; return; }
-        if (!rows.length) { box.innerHTML = legacyHtml; wireLedgerUndo(box); return; }
+        if (!rows.length) { box.innerHTML = legacyHtml; wireLedgerUndo(box); wireRowDelete(box); return; }
         box.innerHTML = rows.map(x => `
           <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
             <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
@@ -16922,8 +16927,10 @@
               : x.reversible
                 ? `<button class="btn-danger btn-sm inv-imp-undo" data-id="${esc(x.id)}" title="Put every SKU this file touched back to the on-hand figure it had before">&#9100; Undo (${x.hoursLeft}h left)</button>`
                 : `<span class="hint">window closed</span>`}
+            <button class="btn-secondary btn-sm inv-imp-del" data-id="${esc(x.id)}" data-live="${x.reversible && !x.reversed_at ? '1' : ''}"
+              title="Remove this entry from the list. Housekeeping only — the audit trail keeps what happened.">&#128465;</button>
           </div>`).join('') + legacyHtml;
-        wireLedgerUndo(box);
+        wireLedgerUndo(box); wireRowDelete(box);
         box.querySelectorAll('.inv-imp-undo').forEach(b => b.addEventListener('click', async () => {
           if (!confirm('Undo this stock upload?\n\nEvery SKU it touched goes back to the on-hand figure it had before — including SKUs it created, which are removed again if nothing else gave them stock.\n\nThis is recorded on the audit trail.')) return;
           b.disabled = true;
@@ -16946,16 +16953,57 @@
       } catch (_) { box.innerHTML = ''; }
     }
 
+    function wireRowDelete(box) {
+      // TRACKED ROW: the record IS the undo while the window is open, so
+      // removing one in that state is refused unless it is said out loud.
+      box.querySelectorAll('.inv-imp-del').forEach(b => b.addEventListener('click', async () => {
+        const live = b.dataset.live === '1';
+        if (!confirm(live
+          ? 'Remove this upload from the list?\n\n\u26a0 It can still be UNDONE, and this entry is the only way to do that. Removing it leaves the stock exactly as it is now and gives up the undo for good.\n\nIf you meant to take the stock back off, press Undo instead.\n\nRecorded on the audit trail.'
+          : 'Remove this entry from the list?\n\nHousekeeping only — the stock is not touched and the audit trail keeps what happened.')) return;
+        b.disabled = true;
+        try {
+          const r = await fetch(`/api/putaway/imports/${b.dataset.id}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+            body: JSON.stringify(live ? { force: 'yes' } : {}),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) { alert(d.message || d.error || 'Could not remove it.'); b.disabled = false; return; }
+          loadInvImports();
+        } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
+      }));
+      // LEDGER ROW: derived from the movement ledger, which is the permanent
+      // record — so it is hidden, never deleted.
+      box.querySelectorAll('.inv-led-del').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('Hide this upload from the list?\n\nIt is read from the movement ledger, so nothing is deleted — the movements stay as the record of what happened. It just stops showing here.')) return;
+        b.disabled = true;
+        try {
+          const r = await fetch('/api/inventory/ledger-uploads/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+            body: JSON.stringify({ clientId, kind: b.dataset.kind || 'upload', key: b.dataset.key }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) { alert(d.error || 'Could not hide it.'); b.disabled = false; return; }
+          loadInvImports();
+        } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
+      }));
+    }
+
     function wireLedgerUndo(box) {
       box.querySelectorAll('.inv-led-undo').forEach(b => b.addEventListener('click', async () => {
-        const minute = b.dataset.min;
-        if (!confirm(`Undo the stock upload of ${minute}?\n\nThis upload predates upload tracking, so it is recovered from the movement ledger: every SKU it topped up gives back exactly what it added.\n\nTwo things it cannot do, and it will tell you which:\n\u2022 a SKU that has SHIPPED since floors at what is left\n\u2022 a SKU the upload CREATED carries no movement row, so its quantity has to be set by hand\n\nRecorded on the audit trail.`)) return;
+        const kind = b.dataset.kind || 'upload', key = b.dataset.key;
+        const msg = kind === 'inbound'
+          ? `Back the stock of ${key} off the books?\n\nUse this when the same goods were booked TWICE — once by this receipt and once by a file upload — and only one should stand.\n\nThe receipt itself, its GRN and its trail are NOT touched. The goods really were received; this only undoes the stock it posted.\n\nA SKU that has shipped since floors at what is left, and will be named.\n\nRecorded on the audit trail.`
+          : `Undo the stock upload of ${key}?\n\nThis upload predates upload tracking, so it is recovered from the movement ledger: every SKU it topped up gives back exactly what it added.\n\nTwo things it cannot do, and it will tell you which:\n\u2022 a SKU that has SHIPPED since floors at what is left\n\u2022 a SKU the upload CREATED carries no movement row, so its quantity has to be set by hand\n\nRecorded on the audit trail.`;
+        if (!confirm(msg)) return;
         b.disabled = true;
         try {
           const r = await fetch('/api/inventory/ledger-uploads/undo', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
-            body: JSON.stringify({ clientId, minute, confirm: 'yes' }),
+            body: JSON.stringify({ clientId, kind, key, confirm: 'yes' }),
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok) { alert(d.error || 'Could not undo it.'); b.disabled = false; return; }
