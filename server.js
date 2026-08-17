@@ -20145,13 +20145,20 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
       if (w && w.found) {
         z = w.found;
         foundAs = { number: String(w.found.number || '').trim(), how: w.matchedOn, scanned: w.scanned };
-      } else {
-        const scan = w ? ` A wider search over the hub's own order list (last ${w.days} days, ${w.scanned} order(s)${w.exhausted ? '' : ', stopped early'}) did not find this number against the order number, reference, unique number or tracking number either.` : '';
+      } else if (w && w.couldNotLook) {
+        // THE SEARCH ITSELF CAME BACK EMPTY. That is not evidence about the
+        // order — it is evidence about the query, and saying "we looked and it
+        // is not there" would be a claim the search cannot support.
         return { number: n, apiReturns: false, inIdealOne: !!here, ourStatus: hereStatus,
-                 scanned: w ? w.scanned : 0, scanDays: w ? w.days : 0, scanExhausted: w ? w.exhausted : false,
+                 scanned: 0, couldNotLook: true,
+                 verdict: `The exact-number lookup found nothing, AND the wider search came back with no orders at all${w.lastError ? ` (the hub said: ${w.lastError})` : ''} — so it could not actually look. This is NOT proof the order is absent; it means the hub is not answering a plain order list for this key right now. Try Pull now on this store first: if that brings orders in, tell me and I will fix the search. To serve the client meanwhile, key the order in here as an upload.` };
+      } else {
+        const scan = w ? ` A wider search over the hub's own ${w.shape} (${w.scanned} order(s)) did not find this number against the order number, reference, unique number or tracking number either.` : '';
+        return { number: n, apiReturns: false, inIdealOne: !!here, ourStatus: hereStatus,
+                 scanned: w ? w.scanned : 0, scanDays: w ? w.days : 0, scanShape: w ? w.shape : '',
                  verdict: here
                    ? 'On our books, but the hub API no longer returns it.'
-                   : `The hub API does not return this order.${scan} Nothing we can pull will bring it in — either the number on that screen is not one the API exposes, or the order sits outside what this API key can see. To serve the client today, key it in here as an upload; then ask ZORT why their API withholds it.` };
+                   : `The hub API does not return this order.${scan} Either the number on that screen is not one the API exposes, or the order sits outside what this API key can see. To serve the client today, key it in here as an upload; then ask ZORT why their API withholds it.` };
       }
     }
     const stw = zortStatusWord(z.status);

@@ -1188,6 +1188,14 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     wrong order picked. Now: exact on any field, or a one-directional contained
     match with a 6-character floor (`MIN_PARTIAL`). Caught by the test, not by
     reading.
+  - **A SEARCH THAT RETURNED NOTHING IS NOT A FINDING.** Reported live: the
+    wider pass said "45 days, 0 order(s)" — it had scanned nothing at all, on a
+    store that pulls orders daily, so a long `updatedafter` window is the
+    suspect (the daily pull uses ~1 day and works). It now tries the **plain
+    paged list first, with no date filter**, then the window, and NAMES the
+    shape that produced rows. When every shape comes back empty it says the
+    search *could not look* — never "we looked and it is not there", which is a
+    claim the search cannot support.
   - When it genuinely finds nothing it says **how far it looked** (days, orders
     scanned, whether it stopped early) and what to do now — key the order in as
     an upload to serve the client today, then ask ZORT why their API withholds
