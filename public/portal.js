@@ -217,7 +217,7 @@
     // their own aging threshold. Both are hidden for a view-only login (and
     // both are refused server-side regardless).
     $('asnCard')?.classList.toggle('hidden', !write);
-    $('agingCard')?.classList.toggle('hidden', !write);
+    $('agingCard')?.classList.add('hidden');   // aging is not a portal feature
     if (!write && document.querySelector('nav button[data-tab="send"]')?.classList.contains('active')) {
       document.querySelector('nav button[data-tab="overview"]')?.click();
     }
@@ -372,9 +372,11 @@
     if (o.quarantineOpen > 0) alerts.push(`<div class="alert a-bad"><span>&#128683;</span><div>
       <b>${num(o.quarantineOpen)} unit${o.quarantineOpen === 1 ? '' : 's'} in quarantine</b>
       Held aside as damaged or pending inspection — not available to sell.</div></div>`);
-    if (s.aging > 0) alerts.push(`<div class="alert a-warn"><span>&#9203;</span><div>
-      <b>${num(s.aging)} SKU${s.aging === 1 ? '' : 's'} not moving${s.agingPieces ? ` (${num(s.agingPieces)} pcs)` : ''}</b>
-      No movement for more than ${o.agingDays} days. Open the Stock tab and tap “Aging” to see which.</div></div>`);
+    // AGING IS NOT SHOWN IN THE CLIENT PORTAL, per the user. How long a client's
+    // stock has sat here is our operational concern (and a billing one); putting
+    // it in front of them reads as a judgement on their own inventory, which is
+    // not ours to make on their screen. Still computed and still available on the
+    // office side — just not surfaced here.
     if (o.inboundSlaSummary?.overdue > 0) alerts.push(`<div class="alert a-warn"><span>&#128340;</span><div>
       <b>${num(o.inboundSlaSummary.overdue)} inbound shipment${o.inboundSlaSummary.overdue === 1 ? '' : 's'} past our service level</b>
       We're behind on receiving these. Your account manager has been notified.</div></div>`);
@@ -427,8 +429,8 @@
         </div>`);
     }
 
-    // ── Aging stock detail
-    if ((o.agingList || []).length) {
+    // ── Aging stock detail — deliberately not rendered (see above)
+    if (false && (o.agingList || []).length) {
       parts.push(`
         <div class="sec">
           <div class="sec-hd"><h3>Not moving</h3><span class="sub">Longest first</span></div>
@@ -562,7 +564,9 @@
     let rows = stock.filter(r => {
       if (stFilter === 'low') { if (!(r.available > 0 && r.available <= (r.reorder_point ?? 10))) return false; }
       else if (stFilter === 'out') { if (r.available > 0) return false; }
-      else if (stFilter === 'aging') { if (!r.aging) return false; }
+      // The Aging chip and card are removed from the portal; the branch stays as
+      // a no-op so a stale saved filter cannot empty somebody's stock list.
+      else if (stFilter === 'aging') { /* no longer offered */ }
       else if (stFilter === 'res') { if (!(r.reserved > 0)) return false; }
       if (!q) return true;
       return String(r.sku).toLowerCase().includes(q)
@@ -614,11 +618,9 @@
         </div>
         ${showMeter ? `<div class="meter" title="${num(r.available)} of ${num(r.on_hand)} free to pick"><i style="width:${pct}%"></i></div>` : ''}
         <div class="row" style="margin-top:.35rem;flex-wrap:wrap;gap:.3rem">
-          <span class="muted" style="font-size:.75rem">${num(r.on_hand)} on hand${r.reserved > 0 ? ` · ${num(r.reserved)} reserved` : ''}${
-            r.days_since_movement !== null && r.days_since_movement !== undefined
-              ? ` · last moved ${r.days_since_movement === 0 ? 'today' : r.days_since_movement + 'd ago'}` : ''}</span>
+          <span class="muted" style="font-size:.75rem">${num(r.on_hand)} on hand${r.reserved > 0 ? ` · ${num(r.reserved)} reserved` : ''}</span>
           <span style="display:flex;gap:.3rem;flex-wrap:wrap">
-            ${r.aging ? `<span class="pill p-aging" title="No movement for ${r.days_since_movement} days (your threshold is ${agingDays})">&#9203; Aging ${r.days_since_movement}d</span>` : ''}
+
             ${out ? '<span class="pill p-bad">Out of stock</span>'
               : low ? `<span class="pill p-open">Low · min ${num(r.reorder_point ?? 10)}</span>`
                     : '<span class="pill p-done">In stock</span>'}
@@ -689,6 +691,18 @@
     </div>`;
   }
 
+  // "All" no longer means literally all — cancelled orders sit in their own tab.
+  // A label that quietly excludes something is the sort of thing people discover
+  // by being confused, so when there ARE cancellations the screen says where
+  // they went, with one tap to get there.
+  function cancelledNoteHtml(n) {
+    if (!n || orFilter !== 'all') return '';
+    return `<div class="cx-note">
+      <span>${num(n)} cancelled order${n === 1 ? '' : 's'} are not shown here.</span>
+      <button class="btn-sm" id="orShowCancelled">View cancelled</button>
+    </div>`;
+  }
+
   // A FILTERED LIST SAYS SO IN WORDS. A day with one cancelled order removes
   // almost every row, which reads as "nothing here" unless the screen says what
   // it is showing and offers the way back.
@@ -709,6 +723,12 @@
       if (orFilter === 'done' && o.status !== 'done') return false;
       if (orFilter === 'cancelled' && o.status !== 'unprocessed') return false;
       if (orFilter === 'open' && (o.status === 'done' || o.status === 'unprocessed')) return false;
+      // CANCELLED ORDERS ARE OPT-IN. Per the user: the default view shows the
+      // work we did, and the cancellations are looked at deliberately. A client
+      // opening Orders was landing on a wall of red pills — which describes the
+      // exception, not the relationship. They keep their own tab, their tile
+      // and their count in the day table; they just do not lead.
+      if (orFilter === 'all' && o.status === 'unprocessed') return false;
       if (orDay && orderDay(o) !== orDay) return false;
       if (!q) return true;
       return String(o.order_number).toLowerCase().includes(q)
@@ -735,11 +755,19 @@
       </div>
       <div class="muted" style="text-align:center;font-size:.66rem;margin-top:.3rem">Across the last 90 days</div>
       ${dayByDayHtml(dayRows)}
-    </div>${dayNoteHtml(dayRows)}`;
+    </div>${cancelledNoteHtml(cancelled)}${dayNoteHtml(dayRows)}`;
 
     if (!rows.length) {
       $('orList').innerHTML = emptyState('&#128269;', 'Nothing matches', 'Try a different search or filter.');
       return;
+    }
+    // COMPLETED FIRST in the default view — that is what a client came to see.
+    // Newest first within each group, so the ordering is still chronological
+    // where it matters. The single-status views keep the server's own order.
+    if (orFilter === 'all') {
+      const rank = o => o.status === 'done' ? 0 : 1;
+      rows.sort((a2, b2) => rank(a2) - rank(b2)
+        || String(orderDay(b2) || '').localeCompare(String(orderDay(a2) || '')));
     }
     $('orList').innerHTML = rows.map(o => {
       const s = statusOf(o.status);
@@ -1689,6 +1717,11 @@
   // Delegated: #orSummary is rebuilt on every render, so a bound listener would
   // be thrown away with it.
   document.addEventListener('click', e => {
+    if (e.target.closest('#orShowCancelled')) {
+      orFilter = 'cancelled';
+      document.querySelectorAll('#orChips .chip').forEach(c => c.classList.toggle('on', c.dataset.f === 'cancelled'));
+      renderOrders(); return;
+    }
     if (e.target.closest('#orDayClear')) { orDay = ''; renderOrders(); return; }
     const row = e.target.closest('.dbd-row');
     if (!row) return;

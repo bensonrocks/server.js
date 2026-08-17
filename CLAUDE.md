@@ -4518,6 +4518,33 @@ TEST GOTCHA: portal accounts are **one place at a time**, so a multi-viewport
 Playwright run must free the seat (`.../portal-users/:id/release`) or sign out
 between contexts — the second browser gets a 409 otherwise.
 
+### Cancelled orders are opt-in; aging is not a client's business
+
+Two things asked for on the floor.
+
+- **CANCELLED ORDERS ARE NOT IN THE DEFAULT VIEW.** A client opening Orders was
+  landing on a wall of red pills, which describes the exception rather than the
+  relationship. "All" now means in-progress + completed, **completed first**
+  (newest first within each group). They keep their own chip, their own tile and
+  their count in the day table — they just do not lead.
+  - **A LABEL THAT QUIETLY EXCLUDES SOMETHING IS A TRAP**, so when there ARE
+    cancellations the screen says so (`.cx-note` — "6 cancelled orders are not
+    shown here", with a **View cancelled** button that switches the chip). The
+    note steps aside once you are in that view.
+- **AGING IS GONE FROM THE PORTAL** — the chip, the pill, the threshold editor,
+  the Overview "not moving" alert, the per-SKU "last moved" line, and the two
+  aging columns in the stock export. How long a client's stock has sat here is
+  an operational and billing concern of OURS; on their own screen it reads as a
+  judgement on their inventory, which is not ours to publish. Still computed and
+  still on the office side — `portalAgingDays` and `lastMovementBySku` remain, so
+  turning it back on is a UI change, not a rebuild. The `stFilter === 'aging'`
+  branch is kept as a no-op so a stale saved filter cannot empty a stock list.
+
+Verified 20 browser checks on desktop and a Pixel 5 against an account with 5
+completed, 6 cancelled and 2 open: not one cancelled order in the default view,
+completed leading, the note naming what is hidden, one tap showing exactly the
+cancelled six, and the word "aging" appearing nowhere on Stock or Overview.
+
 ## Portal orders — the waybill you can open, and no pill that says nothing
 
 - **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing

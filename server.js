@@ -5626,18 +5626,13 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
 
   if (kind === 'stock') {
     // Stock is a live position, not a period — no date filter applies.
+    // AGING IS NOT IN THE CLIENT'S REPORT, per the user. How long their stock has
+    // sat here is our operational and billing concern; on their own sheet it
+    // reads as a judgement on their inventory, which is not ours to publish.
+    // The office report keeps it.
     let rows = [];
-    const agingDays = portalAgingDays(db, client);
     try {
-      const lastMove = inventory.lastMovementBySku(cid);
-      const now = Date.now();
-      rows = inventory.getAll({ clientId: cid }).map(r => {
-        const last = lastMove.get(r.sku) || r.first_added_at || null;
-        const iso = last ? String(last).replace(' ', 'T') + (String(last).endsWith('Z') ? '' : 'Z') : null;
-        const days = iso ? Math.floor((now - new Date(iso).getTime()) / 86400000) : null;
-        return { ...r, _last_iso: iso, _days: days, _aging: r.stock_qty > 0 && days !== null && days > agingDays };
-      });
-      rows = sortStockRows(rows, req.query.sort, req.query.dir);
+      rows = sortStockRows(inventory.getAll({ clientId: cid }), req.query.sort, req.query.dir);
     } catch (_) {}
     aoa = [
       ...title('Stock on hand', false),
@@ -5645,14 +5640,10 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
         + `${String(req.query.dir || 'asc').toLowerCase() === 'desc' ? 'descending' : 'ascending'}`],
       ['Every SKU in your item master is listed. One with no stock shows 0 \u2014 it is not left out.'],
       [],
-      ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'On hand', 'Reserved', 'Available', 'Reorder point', 'Status',
-       'Last movement', 'Days since movement', `Aging (>${agingDays}d)`],
+      ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'On hand', 'Reserved', 'Available', 'Reorder point', 'Status'],
       ...rows.map(r => [r.sku, r.name || '', r.barcode || '', r.brand || '', r.category || '',
         Number(r.stock_qty) || 0, Number(r.reserved_qty) || 0, Number(r.available_qty) || 0, r.reorder_point ?? 10,
-        r.available_qty <= 0 ? 'Out of stock' : (r.available_qty <= (r.reorder_point ?? 10) ? 'Low' : 'OK'),
-        r._days === null ? 'never moved' : (r._days === 0 ? 'today' : `${r._days}d ago`),
-        r._days === null ? '' : r._days,
-        r._aging ? 'Yes' : '']),
+        r.available_qty <= 0 ? 'Out of stock' : (r.available_qty <= (r.reorder_point ?? 10) ? 'Low' : 'OK')]),
     ];
     sheet = 'Stock'; name = 'Stock';
   } else if (kind === 'movements') {

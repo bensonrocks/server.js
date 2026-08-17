@@ -188,6 +188,12 @@
               background:var(--info-bg); border:1px solid #bfdbfe; border-radius:10px;
               padding:.45rem .6rem; margin-bottom:.6rem; font-size:.76rem; }
   .day-note .btn-sm { padding:.35rem .6rem; font-size:.72rem; }
+  /* "All" excludes cancelled, so say where they went rather than let somebody
+     discover the omission by being confused. */
+  .cx-note { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; justify-content:space-between;
+             background:var(--bad-bg); border:1px solid #fecaca; border-radius:10px;
+             padding:.45rem .6rem; margin-bottom:.6rem; font-size:.76rem; color:#991b1b; }
+  .cx-note .btn-sm { padding:.35rem .6rem; font-size:.72rem; }
 
   /* chart */
   /* Bars only — never text; see trendChart() in portal.js for why. */
@@ -490,7 +496,7 @@
         <button class="chip on" data-f="all">All</button>
         <button class="chip" data-f="low">Low stock</button>
         <button class="chip" data-f="out">Out of stock</button>
-        <button class="chip" data-f="aging">Aging</button>
+
         <button class="chip" data-f="res">Reserved</button>
       </div>
       <div class="card" id="agingCard" style="margin-bottom:.6rem;padding:.7rem .85rem">
