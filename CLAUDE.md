@@ -3999,6 +3999,28 @@ audit trail that reads as the mass action it was, with who did it.
     how this was found.
   - **ADD is untouched** and still additive (asserted) — a delivery being
     binned is not a stock-take.
+  - **FINISHING A HALF-DONE ONE WITHOUT THE FILE**
+    (`POST /api/putaway/imports/:id/complete-supersede`, admin or master). Per
+    the user: *"adjust it now without any reuploading."* A supersede run under
+    the old rule left the rest of the position standing, and the sheet is long
+    gone — but the transaction's snapshot recorded exactly which cells it
+    touched, so `supersedeRowsFromSnapshot()` rebuilds what the sheet said from
+    those cells as they stand now. It then runs the ORDINARY corrected
+    supersede against them, so this is not a second way to write stock: same
+    preview, same confirm, same reporting, same 3-day reversal, and its own
+    entry on Recent stock uploads.
+    - **`whole_position: true` marks supersedes run under the corrected rule.**
+      Their snapshot covers everything they cleared rather than just the named
+      cells, so rebuilding from it would mean something entirely different —
+      they are refused ("already replaced the whole position") and the button
+      is not rendered for them. This distinction is the whole reason the marker
+      exists; without it the feature would silently do the wrong thing to every
+      supersede made from now on.
+    - **STOCK THAT MOVED SINCE IS REAL WORK, NOT LEFTOVER** — a receipt or a
+      pick after the upload is legitimately outside the sheet. `movedSkusSince`
+      names those SKUs in the confirm, because this will overwrite them.
+    - Runs once (`completed_at`), audited `stock_mass_supersede_completed`.
+    - UI: **↻ Finish supersede** on the Recent stock uploads row.
 - **PREVIEW-CONFIRM**: without `confirm_apply=yes` the route answers 409
   `{needsApplyConfirm, preview}` computed by `inventory.previewStockPositions`
   — rows/units/SKUs, new SKUs and bins that would be created, ERROR rows

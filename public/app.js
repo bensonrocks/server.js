@@ -13077,7 +13077,47 @@
           : x.reversible
             ? `<button class="btn-secondary btn-sm pa-imp-reverse" data-id="${esc(x.id)}" title="Put the stock position back exactly as it was before this upload">&#9100; Reverse (${x.hoursLeft}h left)</button>`
             : `<span class="hint">window closed</span>`}
+        ${x.mode === 'set' && !x.reversed_at && x.reversible && !x.completed_at && !x.whole_position
+          ? `<button class="btn-primary btn-sm pa-imp-complete" data-id="${esc(x.id)}" title="This supersede ran before the whole-position fix, so it only replaced the bins its sheet named and left the rest of the client's stock standing. Finish it from the same sheet's figures — no re-upload.">&#8635; Finish supersede</button>`
+          : ''}
+        ${x.completed_at ? `<span style="color:#059669;font-weight:600">finished ${new Date(x.completed_at).toLocaleDateString()}</span>` : ''}
       </div>`).join('');
+    // FINISH A HALF-DONE SUPERSEDE, with no re-upload. Same confirm discipline
+    // as the upload itself: the arithmetic first, then the word.
+    box.querySelectorAll('.pa-imp-complete').forEach(b => b.addEventListener('click', async () => {
+      const id = b.dataset.id;
+      b.disabled = true;
+      const send = (confirmIt) => fetchT(`/api/putaway/imports/${id}/complete-supersede`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+        body: JSON.stringify(confirmIt ? { confirm: 'yes' } : {}),
+      });
+      try {
+        const r2 = await send(false);
+        const d2 = await r2.json().catch(() => ({}));
+        if (r2.status !== 409 || !d2.needsConfirm) { alert(d2.error || 'Could not read that upload.'); b.disabled = false; return; }
+        const p = d2.preview || {};
+        let msg = `FINISH THE SUPERSEDE of ${d2.filename}\n\nClient: ${d2.client}\n`
+          + `Rebuilt from the ${p.cells} bin(s) that sheet named — ${p.units} pc(s) across ${p.skus} SKU(s).\n\n`
+          + `ON HAND NOW: ${p.currentTotal} pc(s)  \u2192  AFTER: ${p.afterTotal} pc(s)`;
+        if (p.zeroUnits) msg += `\n\n\u26a0 ${p.zeroSkuCount} SKU(s) holding ${p.zeroUnits} pc(s) are outside that sheet and will be set to ZERO:\n`
+          + (p.zeroSkus || []).map(x2 => `\u2022 ${x2.sku}: ${x2.was} \u2192 0`).join('\n')
+          + (p.zeroSkuCount > (p.zeroSkus || []).length ? '\n\u2026' : '');
+        else msg += `\n(Nothing is left over \u2014 that sheet already covers every SKU holding stock.)`;
+        if (p.movedCount) msg += `\n\n\u26a0 ${p.movedCount} SKU(s) have MOVED since that upload (received, picked or adjusted):\n`
+          + (p.movedSkus || []).join(', ')
+          + `\nTheir current figures are real work, and this will overwrite them. Check those first if you are not sure.`;
+        msg += `\n\nReversible for 3 days.\n\nOK = apply \u00b7 Cancel = nothing happens`;
+        if (!confirm(msg)) { b.disabled = false; return; }
+        const r3 = await send(true);
+        const d3 = await r3.json().catch(() => ({}));
+        if (!r3.ok) { alert(d3.error || 'Could not finish it.'); b.disabled = false; return; }
+        alert(d3.note || 'Done.');
+        loadPaImports().catch(() => {});
+        putawayUI.load().catch(() => {});
+        if (typeof loadInventory === 'function') loadInventory().catch(() => {});
+      } catch (e) { alert('Could not reach the server.'); b.disabled = false; }
+    }));
     box.querySelectorAll('.pa-imp-reverse').forEach(b => b.addEventListener('click', async () => {
       const id = b.dataset.id;
       if (!confirm('Reverse this upload?\n\nThe stock position goes back EXACTLY as it was before it — bins and on-hand figures included. This is recorded on the audit trail.')) return;

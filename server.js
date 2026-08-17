@@ -12672,6 +12672,11 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
     at: nowIso, by: who, mode,
     lines: result.placed, units: result.units,
     snapshot: result.snapshot,
+    // A supersede run under the WHOLE-POSITION rule needs no finishing, and its
+    // snapshot covers everything it cleared rather than just the cells its file
+    // named — so it must not be mistaken for a half-done one and "rebuilt" from
+    // a snapshot that means something different.
+    ...(mode === 'set' ? { whole_position: true } : {}),
     reversible_until: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
   });
   pruneStockImportSnapshots(db);
@@ -12726,6 +12731,9 @@ app.get('/api/putaway/imports', (req, res) => {
       id: x.id, at: x.at, by: x.by || '', mode: x.mode || 'add', client: x.clientId,
       filename: x.filename, lines: x.lines, units: x.units,
       reversed_at: x.reversed_at || null, reversed_by: x.reversed_by || null,
+      completed_at: x.completed_at || null, completed_by: x.completed_by || null,
+      whole_position: !!x.whole_position,
+      completes_txn: x.completes_txn || null,
       reversible: !!x.snapshot && !x.reversed_at && x.reversible_until && new Date(x.reversible_until).getTime() > now,
       hoursLeft: x.reversible_until ? Math.max(0, Math.round((new Date(x.reversible_until).getTime() - now) / 3600000)) : 0,
     }));
@@ -12776,6 +12784,97 @@ app.post('/api/putaway/imports/:id/reverse', express.json(), (req, res) => {
   zortNotifyStockChange(db, txn.clientId, skus.filter(s => !moved.includes(s)).slice(0, 200));
   res.json({ ok: true, cells: result.cells, skus: result.skus, skippedMoved: moved,
              note: moved.length ? `Reversed except ${moved.length} SKU(s) that moved since — left as they are.` : 'Fully reversed — the position is back to what it was before the upload.' });
+});
+
+// ── FINISH A SUPERSEDE THAT ONLY GOT HALF DONE ──────────────────────────────
+// Per the user, after the whole-position fix shipped: "adjust it now without
+// any reuploading." A supersede run under the old rule set the cells its file
+// named and left everything else standing — the sheet is gone, but the
+// transaction's snapshot records exactly which cells it touched, so what the
+// file INTENDED is rebuildable from those cells as they stand now.
+//
+// It then runs the ORDINARY corrected supersede against those rows, so this is
+// not a second way to write stock: same preview, same confirm word, same
+// reporting, same 3-day reversal.
+app.post('/api/putaway/imports/:id/complete-supersede', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const db = readDb();
+  const txn = (db.stockImports || []).find(x => x.id === req.params.id);
+  if (!txn) return res.status(404).json({ error: 'Upload not found' });
+  if (txn.mode !== 'set') return res.status(400).json({ error: 'Only a SUPERSEDE upload can be completed this way.' });
+  if (txn.reversed_at) return res.status(409).json({ error: 'That upload was reversed — there is nothing to finish.' });
+  if (!txn.snapshot) return res.status(410).json({ error: 'The record of which cells that upload touched has expired, so it cannot be rebuilt. Re-upload the sheet as a supersede instead.' });
+  if (txn.completed_at) return res.status(409).json({ error: `Already completed on ${txn.completed_at.slice(0, 10)} by ${txn.completed_by || 'unknown'}.` });
+  if (txn.whole_position) return res.status(409).json({ error: 'That supersede already replaced the whole position — there is nothing left over to finish.' });
+
+  const cid = txn.clientId;
+  let rows;
+  try { rows = inventory.supersedeRowsFromSnapshot(cid, txn.snapshot); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  if (!rows.length) return res.status(400).json({ error: 'That upload touched no cells — there is nothing to rebuild from.' });
+
+  // STOCK THAT MOVED SINCE IS REAL WORK, NOT LEFTOVER. A receipt or a pick
+  // after the upload is legitimately outside the sheet, and zeroing it would
+  // erase it. Named, and only skipped when the operator says so.
+  const skus = (txn.snapshot.skus || []).map(x => x.sku);
+  const moved = inventory.movedSkusSince(cid, skus, txn.snapshot.asOfMovementId);
+
+  let pv;
+  try { pv = inventory.previewStockPositions(cid, rows, 'set'); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+
+  if (String(req.body?.confirm || '') !== 'yes') {
+    return res.status(409).json({
+      needsConfirm: true, client: cid, filename: txn.filename, at: txn.at,
+      preview: {
+        cells: rows.length, units: pv.units, skus: pv.skus.length,
+        currentTotal: pv.currentTotal, afterTotal: pv.afterTotal,
+        zeroUnits: pv.zeroUnits, zeroSkuCount: (pv.zeroSkus || []).length,
+        zeroSkus: (pv.zeroSkus || []).slice(0, 30),
+        movedSkus: moved.slice(0, 30), movedCount: moved.length,
+      },
+    });
+  }
+
+  const who = req.userId || _tokenUserId(req) || '';
+  let result;
+  try {
+    result = inventory.setStockPositions(cid, rows, {
+      operator: who, mode: 'set',
+      reason: `completed the supersede of ${txn.filename} (no re-upload)`,
+    });
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+
+  // ITS OWN TRANSACTION, with its own reversal window — this moved stock, so it
+  // is undoable on the same terms as the upload that prompted it.
+  const txnId = uuidv4();
+  const nowIso = new Date().toISOString();
+  db.stockImports.unshift({
+    id: txnId, hash: `complete:${txn.id}`, clientId: cid,
+    filename: `${txn.filename} (supersede completed)`,
+    at: nowIso, by: who, mode: 'set',
+    lines: result.placed, units: result.units, snapshot: result.snapshot,
+    whole_position: true, completes_txn: txn.id,
+    reversible_until: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
+  });
+  txn.completed_at = nowIso; txn.completed_by = who; txn.completed_txn = txnId;
+  pruneStockImportSnapshots(db);
+  writeDb(db);
+  logAudit('stock_mass_supersede_completed', {
+    txnId, ofTxn: txn.id, clientId: cid, filename: txn.filename,
+    units: result.units, zeroedSkus: (result.zeroed || []).length, zeroedUnits: result.zeroedUnits,
+    movedSkus: moved.slice(0, 50), movedCount: moved.length, by: who,
+  });
+  zortNotifyStockChange(db, cid, result.skus.slice(0, 200));
+  res.json({
+    ok: true, txnId, client: cid,
+    units: result.units, zeroedUnits: result.zeroedUnits,
+    zeroed: (result.zeroed || []).slice(0, 50), zeroedCount: (result.zeroed || []).length,
+    movedSkus: moved,
+    note: `The position is now ${result.units} pc(s) — exactly what that sheet said.`
+        + (result.zeroedUnits ? ` ${result.zeroedUnits} pc(s) on ${(result.zeroed || []).length} SKU(s) outside the sheet were set to zero.` : '')
+        + ' Reversible for 3 days.',
+  });
 });
 
 app.get('/api/putaway/queue', (req, res) => {
