@@ -1172,8 +1172,27 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   `skipClients` remains the harder switch for clients who need NO record here.
   Both are matched on SKU attribution, after `clientForOrder` resolves.
 - **🔍 Find order** (store-row button; `POST .../stores/:id/lookup`, read-only)
-  answers "ZORT shows it and IdealOne never got it". It applies **the same
-  rules the pull uses** — status, the two skip lists, and the client the SKUs
+  answers "ZORT shows it and IdealOne never got it".
+  - **IT SEARCHES TWICE BEFORE SAYING ANYTHING FINAL.** `numberlist` is an EXACT
+    match on ZORT's OWN order number, and the number people read off the hub's
+    screen is often the MARKETPLACE's order id, or sits in `reference` /
+    `uniquenumber` / the tracking number. One exact-match miss was being
+    reported as "the hub API does NOT return this order — it can never sync",
+    which blamed the hub for a search we only tried one way. Reported live on a
+    real order. `findOrderAnywhere` now pages the hub's own recent list (45 days,
+    12 pages) and matches every identifier an order carries, handing back **the
+    hub's own number** to act on.
+  - **A LOOSE MATCH IS WORSE THAN NO MATCH.** The first cut also tried
+    `want.includes(v)`, which let ZORT's numeric id `1` match the needle
+    `169982235496068` and point at an unrelated order — in a warehouse, the
+    wrong order picked. Now: exact on any field, or a one-directional contained
+    match with a 6-character floor (`MIN_PARTIAL`). Caught by the test, not by
+    reading.
+  - When it genuinely finds nothing it says **how far it looked** (days, orders
+    scanned, whether it stopped early) and what to do now — key the order in as
+    an upload to serve the client today, then ask ZORT why their API withholds
+    it. "Not our problem" is not an answer when the client is waiting.
+  - It applies **the same rules the pull uses** — status, the two skip lists, and the client the SKUs
   attribute to — because a tool that reports "would import" about an order that
   never can explains nothing, which is exactly the moment somebody reaches for
   it. It names the client it files to and how it was attributed, since the skip

@@ -20112,6 +20112,18 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
     return res.status(502).json({ ok: false, error: err.message });
   }
   const byNum = new Map(list.map(z => [String(z.number || '').trim(), z]));
+  // A NUMBER THE EXACT-MATCH MISSED IS NOT A NUMBER THAT DOES NOT EXIST. The
+  // number people read off the hub's screen is often the MARKETPLACE's order id,
+  // or lives in reference / uniquenumber / the tracking number — so anything the
+  // header lookup missed gets a second, wider pass over the hub's own recent
+  // order list before we say anything final. Bounded, and it reports what it
+  // scanned so the answer is never a bigger claim than the search.
+  const wide = new Map();
+  for (const n of numbers) {
+    if (byNum.has(n)) continue;
+    try { wide.set(n, await zortApi.findOrderAnywhere(store, n, { days: 45 })); }
+    catch (_) { wide.set(n, null); }
+  }
   // THE SAME RULES THE PULL USES, or this tool answers a different question
   // from the one asked. "Would it import?" has to account for the client the
   // SKUs attribute to and the two skip lists — otherwise it cheerfully reports
@@ -20126,12 +20138,21 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
   const rows = numbers.map(n => {
     const here = findBatchForOrder(db, n);
     const hereStatus = here ? (here.orderStates?.[n]?.status || 'pending') : null;
-    const z = byNum.get(n);
+    let z = byNum.get(n);
+    let foundAs = null;
     if (!z) {
-      return { number: n, apiReturns: false, inIdealOne: !!here, ourStatus: hereStatus,
-               verdict: here
-                 ? 'On our books, but the hub API no longer returns it.'
-                 : 'The hub API does NOT return this order — it can never sync. If ZORT\'s screen shows it, that is a question for ZORT support.' };
+      const w = wide.get(n);
+      if (w && w.found) {
+        z = w.found;
+        foundAs = { number: String(w.found.number || '').trim(), how: w.matchedOn, scanned: w.scanned };
+      } else {
+        const scan = w ? ` A wider search over the hub's own order list (last ${w.days} days, ${w.scanned} order(s)${w.exhausted ? '' : ', stopped early'}) did not find this number against the order number, reference, unique number or tracking number either.` : '';
+        return { number: n, apiReturns: false, inIdealOne: !!here, ourStatus: hereStatus,
+                 scanned: w ? w.scanned : 0, scanDays: w ? w.days : 0, scanExhausted: w ? w.exhausted : false,
+                 verdict: here
+                   ? 'On our books, but the hub API no longer returns it.'
+                   : `The hub API does not return this order.${scan} Nothing we can pull will bring it in — either the number on that screen is not one the API exposes, or the order sits outside what this API key can see. To serve the client today, key it in here as an upload; then ask ZORT why their API withholds it.` };
+      }
     }
     const stw = zortStatusWord(z.status);
     const channel = String(z.saleschannel || z.channel || '').trim();
@@ -20149,7 +20170,9 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
              tracking: String(z.trackingno || '').trim(), channel,
              client: att.client || '', attributedVia: att.via || '',
              lines: (z.list || z.orderlist || []).length,
-             verdict: here ? `Already on our books (${hereStatus}).` : would };
+             foundAs,
+             verdict: (foundAs ? `Found it — the hub's OWN order number is "${foundAs.number}" (matched ${foundAs.how} against the number you gave, after scanning ${foundAs.scanned} recent order(s)). ` : '')
+               + (here ? `Already on our books (${hereStatus}).` : would) };
   });
   logAudit('zort_order_lookup', { storeId: store.id, numbers });
   res.json({ ok: true, rows });
