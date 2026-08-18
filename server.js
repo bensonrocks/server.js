@@ -9411,7 +9411,11 @@ const SYNC_ACTIVITY_EVENTS = {
   sync_packed_on_demand:        { what: 'Packed at the channel because a packer asked for the waybill', good: true },
   sync_label_attached_by_request: { what: 'Label attached to this order (fetched for it by name)', good: true },
   zort_packed_before_rts:       { what: 'Packed it at the channel (required before Ready to Ship)', good: true },
-  zort_completion_pushed:       { what: 'Told the channel the order is ready', good: true },
+  // "Told the channel" now means the hub was READ BACK and had moved. Before,
+  // it meant the call returned — which is how an order sat un-shipped behind a
+  // green tick while the client pressed Ready to Ship by hand.
+  zort_completion_pushed:       { what: 'Channel confirmed the order is Ready to Ship', good: true },
+  sync_rts_not_taking:          { what: 'Ready to Ship was sent but the channel did NOT move — retrying', good: false },
   zort_completion_push_failed:  { what: 'The channel REFUSED', good: false },
   zort_completion_repushed:     { what: 'Someone re-sent it by hand from the order row', good: true },
   sync_waybill_backfilled:      { what: 'Waybill number received from the channel', good: true },
@@ -19830,13 +19834,32 @@ function _zortSaid(resp) {
 }
 
 async function zortHubStatus(store, zortId) {
+  return (await zortHubState(store, zortId)).status;
+}
+
+// THE HUB'S STATUS *AND* THE MARKETPLACE'S, plus whether we managed to read at
+// all. `zortHubStatus` returned '' for both "the order is in no status we
+// recognise" and "the read failed", and callers treated that blank as PENDING —
+// which is how an order got Packed and Ready-to-Shipped on a status nobody had
+// actually seen. Unknown is not a state; it means we do not know.
+//
+// `integration` is the MARKETPLACE's own view (Lazada's "To Arrange Shipment"
+// etc). ZORT's status and the marketplace's are different facts — recorded
+// here, never conflated: ZORT can accept a Ready-to-Ship on its own books while
+// the marketplace push behind it does something else.
+async function zortHubState(store, zortId) {
   try {
     const d = await zortApi.getOrderDetail(store, zortId);
     const o = d?.order || d || {};
-    return zortStatusWord(o.status);
+    return {
+      read: true,
+      status: zortStatusWord(o.status),
+      integration: String(o.integrationStatus ?? o.integrationstatus ?? '').trim(),
+    };
   } catch (e) { console.error('[zort-status]', zortId, e.message); }
-  return '';
+  return { read: false, status: '', integration: '' };
 }
+const ZORT_RTS_DONE = ['waiting', 'shipping', 'success'];
 
 // WHICH MARKETPLACE, AND WHAT SHIPMENT NAME — one fetch, both facts. RTS
 // requires `shipment` (the docs mark it required), and only Lazada has a
@@ -20090,7 +20113,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
   }
   if (entry.kind === 'completion') {
     const t = entry.tracking || undefined;
-    let rtsDetail = null;
+    let rtsDetail = null, rtsHubStatus = '', rtsIntegration = '';
     if (entry.action === 'pack' || entry.action === 'readytoship') {
       // Same spec rule as the arrange path: marketplace orders name their
       // marketplace shipment channel; cached on the entry across retries.
@@ -20108,12 +20131,13 @@ async function _zortSendOutboxEntry(db, store, entry) {
         // first, then RTS. An order already past Pending skips straight to
         // RTS, and a Pack that is refused because it is ALREADY packed is not
         // an error — that is the state we wanted.
-        const hubStatus = await zortHubStatus(store, entry.zortId);
+        const before = await zortHubState(store, entry.zortId);
+        const hubStatus = before.status;
         // ALREADY READY-TO-SHIP (or past it). With rtsAtIntake on, every order
         // reaches completion already `waiting` — asking again would be refused
         // and the entry would retry until it stalled, on every single order.
         // The thing this push exists to achieve has already happened.
-        if (hubStatus && ['waiting', 'shipping', 'success'].includes(hubStatus)) {
+        if (hubStatus && ZORT_RTS_DONE.includes(hubStatus)) {
           logAudit('zort_completion_pushed', {
             order: entry.orderNumber, client: store.clientName || '', action: entry.action,
             hubStatus, note: 'already ready to ship on the channel — nothing more to send',
@@ -20128,12 +20152,45 @@ async function _zortSendOutboxEntry(db, store, entry) {
         if (!hubStatus || hubStatus === 'pending') {
           try {
             await zortApi.packOrder(store, args);
-            logAudit('zort_packed_before_rts', { order: entry.orderNumber, storeId: store.id, hubStatus: hubStatus || 'unknown' });
+            logAudit('zort_packed_before_rts', {
+              order: entry.orderNumber, storeId: store.id,
+              hubStatus: hubStatus || (before.read ? 'not recognised' : 'could not read the hub'),
+            });
           } catch (e) {
             if (!/already|packed/i.test(e.message || '')) throw e;
           }
         }
         resp = await zortApi.readyToShip(store, args);
+        // ── THE CALL RETURNING IS NOT THE ORDER MOVING ──────────────────────
+        // Reported live: the trail showed a green "Told the channel the order
+        // is ready" and the CLIENT still had to press Ready to Ship by hand
+        // before the courier could scan it. Nothing here had checked. This is
+        // the same overclaim that `sync_arrange_not_taking` was written for at
+        // intake — fixed there, and left standing here.
+        //
+        // So the hub is asked where the order stands AFTERWARDS. Not reaching
+        // Ready-to-Ship is not a success and is never recorded as one: the
+        // entry throws, keeps its place in the outbox and retries on the
+        // normal backoff, and the reason travels to the row's chip. A read we
+        // could not make is treated as NOT CONFIRMED rather than as agreement —
+        // claiming success on a status nobody saw is what produced this.
+        const after = await zortHubState(store, entry.zortId);
+        if (!after.read || !ZORT_RTS_DONE.includes(after.status)) {
+          logAudit('sync_rts_not_taking', {
+            order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+            before: hubStatus || '', after: after.status || (after.read ? 'not recognised' : 'could not read the hub'),
+            integration: after.integration || '', said: _zortSaid(resp),
+          });
+          throw new Error(after.read
+            ? `The channel accepted Ready-to-Ship but the order is still "${after.status || 'not ready'}" — it has not moved.`
+            : 'Ready-to-Ship was sent but the channel could not be read back, so it is not confirmed.');
+        }
+        // IT MOVED ON ZORT. Whether the MARKETPLACE behind it has caught up is
+        // a separate fact and is recorded, not asserted — ZORT's own status and
+        // Lazada's are two different things (the same confusion that once
+        // produced a false "the client RTS'd before packing" alarm).
+        rtsHubStatus = after.status;
+        rtsIntegration = after.integration || '';
       }
       // THE RTS RESPONSE CARRIES THE LABEL: per the v4 docs it returns
       // detail.trackingno AND detail.link (the label URL). This is the hub
@@ -20174,7 +20231,13 @@ async function _zortSendOutboxEntry(db, store, entry) {
         labelUrl: /^https?:\/\//i.test(link) ? link : undefined,
       });
     }
-    logAudit('zort_completion_pushed', { order: entry.orderNumber, client: store.clientName || '', action: entry.action });
+    // The hub's own confirmed status rides on the entry, so a green tick on
+    // this row is a fact somebody read back rather than a call that returned.
+    logAudit('zort_completion_pushed', {
+      order: entry.orderNumber, client: store.clientName || '', action: entry.action,
+      ...(rtsHubStatus ? { hubStatus: rtsHubStatus } : {}),
+      ...(rtsIntegration ? { integration: rtsIntegration } : {}),
+    });
     return true;
   }
   // ── THE ITEM MASTER ROW, PUSHED AS A PRODUCT ─────────────────────────────

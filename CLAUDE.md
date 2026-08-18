@@ -1201,6 +1201,27 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     is success, code 100 is never a failure, and the verdict only decides when
     the body carries nothing else — which is exactly the shape Pack /
     ReadyToShip / UpdateOrderStatus answer with.
+  - **AND A 200 FROM READY-TO-SHIP IS NOT A READY-TO-SHIP.** Reported live: the
+    trail showed a green "Told the channel the order is ready" and the CLIENT
+    still had to press Ready to Ship by hand before the courier could scan the
+    parcel. `zort_completion_pushed` was logged the instant `readyToShip`
+    RESOLVED — the identical overclaim `sync_arrange_not_taking` was written for
+    at intake, fixed there and left standing here. The hub is now READ BACK
+    afterwards: anything short of `waiting`/`shipping`/`success` throws, so the
+    entry keeps its place in the outbox, retries on the normal backoff and the
+    reason reaches the row's chip. Audited `sync_rts_not_taking` with where the
+    hub actually stopped and its own words.
+  - **A STATUS WE COULD NOT READ IS NOT AGREEMENT.** `zortHubStatus` returned
+    `''` for both "no status we recognise" and "the read failed", and callers
+    treated that blank as PENDING — which is how an order was Packed and
+    Ready-to-Shipped against a status nobody had seen (the live trail literally
+    read `hub was "unknown"`). `zortHubState` returns `{read, status,
+    integration}`; an unreadable hub is reported as such and retried, never
+    recorded as a success.
+  - **ZORT'S STATUS AND THE MARKETPLACE'S ARE TWO FACTS**, so the order detail's
+    `integrationStatus` is recorded alongside on the success entry. It is never
+    conflated with ZORT's own word — that confusion once produced a false
+    "the client RTS'd before packing" alarm.
   - **RTS IS ONLY LEGAL FROM PACKED** (Pending → Packed → Waiting). Asking a
     still-`pending` order to go ready-to-ship is refused, which is what happened
     to every order completed before arrange-at-intake began packing them. The
