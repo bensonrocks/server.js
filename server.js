@@ -15327,6 +15327,16 @@ function refileOneOrder(db, orderNumber, clientRaw, reason, who) {
   // master picks up this order's wording too.
   try { harvestCatalogueFromOrders(db, target, [order], 'refile'); } catch (_) {}
 
+  // THE "SKUs → …" FLAG IS ANSWERED NOW. It is stamped at pull time to say
+  // attribution could not decide and the filing fell back — and its tooltip
+  // tells you to fix the item master and re-pull. Once a person has said where
+  // this order belongs, both halves of that are wrong: the row is settled, and
+  // re-pulling would do nothing (the sync skips numbers it already holds). A
+  // warning that outlives the decision it asked for trains people to ignore
+  // warnings. It is kept on the audit entry, so what it said is not lost.
+  const wasHinted = order.attribution_hint || null;
+  if (wasHinted) delete order.attribution_hint;
+
   // A LIVE WAVE'S PICK LIST WAS BUILT AGAINST THE OLD CLIENT'S BINS. Saying so
   // is the honest move — silently leaving it would send a picker to a bin that
   // belongs to another account.
@@ -15338,7 +15348,7 @@ function refileOneOrder(db, orderNumber, clientRaw, reason, who) {
     batchId: newBatch.id, fromBatchId: batch.id, split, completed: done,
     releasedUnits, gaveBack, tookOff, notInMaster: notInMaster.slice(0, 20),
     reservedOn: tracked ? newCid : '', shortfall: shortfall.slice(0, 20),
-    wave: wave ? (wave.code || wave.id) : '',
+    wave: wave ? (wave.code || wave.id) : '', wasHinted,
   });
 
   const note = `${orderNumber} now belongs to ${target}.`

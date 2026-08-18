@@ -876,6 +876,14 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
     real and already on the floor; a backorder keeps it visible. A **live wave**
     is named in the response, because its pick list was built against the old
     client's bins.
+  - **THE "SKUs → …" FLAG IS CLEARED BY THE REFILE.** It is stamped at pull time
+    to say attribution could not decide, and its tooltip said to fix the item
+    master and RE-PULL — which cannot work, since the sync skips numbers it
+    already holds. Left standing on a row a person has just settled, it is a
+    warning that outlived the decision it asked for, which is how people learn
+    to ignore warnings. What it said is kept on the audit entry (`wasHinted`),
+    and the tooltip on the ones still flagged now points at 🔄 Refile and says
+    re-pulling will not fix it.
   - Admin or master; warehouse gets a real 403. Reason of 6+ characters, audited
     `order_refiled` with from/to/why/who. Transport jobs are deliberately NOT
     rewritten — their `clientName` is the CONSIGNEE, not the billing account.

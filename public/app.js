@@ -2563,7 +2563,7 @@
           ${chips ? `<div class="ord-chips">${chips}</div>` : ''}
           ${isDone && elapsed ? `<div class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</div>` : ''}
         </td>
-        <td class="ord-client-cell col-client"><span class="ord-client-name" title="${esc(ord.client_name || '')}">${esc(ord.client_name || '—')}</span>${ord.attribution_hint ? `<span class="client-hint" title="Suggested by this order's SKUs — filing fell back. The SKUs point at: ${esc(ord.attribution_hint)}. Fix the item master (one owner per SKU) and re-pull to file it properly.">SKUs → ${esc(ord.attribution_hint)}</span>` : ''}</td>
+        <td class="ord-client-cell col-client"><span class="ord-client-name" title="${esc(ord.client_name || '')}">${esc(ord.client_name || '—')}</span>${ord.attribution_hint ? `<span class="client-hint" title="This order's SKUs could not name one owner, so filing fell back to the channel map. They point at: ${esc(ord.attribution_hint)}. RE-PULLING WILL NOT FIX IT — the sync skips order numbers it already holds. Use 🔄 Refile on this row to move it, and de-duplicate the SKU (one owner per item master) so the next one files itself.">SKUs → ${esc(ord.attribution_hint)}</span>` : ''}</td>
         <td class="ord-customer-cell col-customer">${esc(ord.customer_name || '—')}</td>
         <td class="ord-waybill-cell col-waybill" title="${esc(ord.waybill_number || '')}">${esc(ord.waybill_number || '—')}</td>
         <td class="col-items">${itemsCell} ${carrierBadge}</td>
