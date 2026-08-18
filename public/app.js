@@ -2580,6 +2580,8 @@
           ${ord.archived ? '' : emailIndicator}
           ${ord.archived ? '' : kfBtn}
           ${ord.archived ? '' : syncBtn}
+          ${currentUser?.role === 'admin' && !ord.archived && !isDone ? `<button class="btn-secondary btn-sm btn-refile-order" data-order="${esc(ord.order_number)}" data-client="${esc(ord.client_name || '')}"
+                title="Filed under the wrong client? Move this order to the right account — its stock, billing and portal visibility go with it">&#128260;</button>` : ''}
           ${currentUser?.role === 'admin' && !ord.archived && !isDone && !ord.pending_deletion ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Request deletion">&#128465;</button>` : ''}
         </td>
       </tr>`;
@@ -2676,6 +2678,12 @@
       btn.addEventListener('click', e => {
         e.stopPropagation();
         openDeleteOrderModal(btn.dataset.order, btn.dataset.batchid);
+      });
+    });
+    document.querySelectorAll('.btn-refile-order').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();          // the row itself opens the scan overlay
+        openRefileModal(btn.dataset.order, btn.dataset.client);
       });
     });
 
@@ -8041,6 +8049,79 @@
   }
   document.getElementById('putawayPrintStaging').addEventListener('click', () => {
     if (_lastStaging) printStagingLabel(_lastStaging.jobId, _lastStaging.code);
+  });
+
+  // ── REFILE AN ORDER UNDER THE RIGHT CLIENT ─────────────────────────────────
+  // A misattributed sync order (SKUs owned by two item masters, so attribution
+  // refuses to guess and falls back to the channel map) lands on the wrong
+  // account and then cannot be seen from anywhere scoped to the right one —
+  // which reads as a missing order. This moves it. The client is a PICKER, never
+  // free text: a typed name is exactly how the phantom account got created.
+  let _refileTarget = null;   // { orderNumber, from }
+  async function openRefileModal(orderNumber, fromClient) {
+    _refileTarget = { orderNumber, from: fromClient || '' };
+    document.getElementById('refileOrderNumber').textContent = orderNumber;
+    document.getElementById('refileFromClient').textContent = fromClient || '(no client)';
+    document.getElementById('refileReason').value = '';
+    document.getElementById('refileOrderError').classList.add('hidden');
+    document.getElementById('refileConfirmBtn').disabled = true;
+    const sel = document.getElementById('refileClient');
+    sel.innerHTML = '<option value="">Loading clients…</option>';
+    document.getElementById('refileOrderOverlay').classList.remove('hidden');
+    try {
+      const r = await fetch('/api/putaway/clients', { headers: hdrs() });
+      const d = await r.json();
+      const here = String(fromClient || '').trim().toLowerCase();
+      const rows = (d.clients || d.rows || d || [])
+        .filter(c => String(c.name || '').trim().toLowerCase() !== here);
+      sel.innerHTML = '<option value="">— pick a client —</option>' + rows.map(c =>
+        `<option value="${esc(c.name)}">${esc(c.name)}${c.orders ? ` · ${c.orders} order(s)` : ''}${c.hasProfile ? ' · onboarded' : ''}</option>`).join('');
+    } catch (e) { sel.innerHTML = '<option value="">Could not load the client list</option>'; }
+  }
+  function _refileReady() {
+    return document.getElementById('refileClient').value !== ''
+        && document.getElementById('refileReason').value.trim().length >= 6;
+  }
+  // Both events: a <select> is driven by `change` in older engines and the
+  // textarea by `input`, and a button that stays dead reads as broken.
+  ['refileClient', 'refileReason'].forEach(id => ['input', 'change'].forEach(ev =>
+    document.getElementById(id).addEventListener(ev, () => {
+      const ok = _refileReady();
+      document.getElementById('refileConfirmBtn').disabled = !ok;
+      if (ok) document.getElementById('refileOrderError').classList.add('hidden');
+    })));
+  document.getElementById('refileCancelBtn').addEventListener('click', () => {
+    document.getElementById('refileOrderOverlay').classList.add('hidden');
+    _refileTarget = null;
+  });
+  document.getElementById('refileConfirmBtn').addEventListener('click', async () => {
+    if (!_refileTarget) return;
+    const client = document.getElementById('refileClient').value;
+    const reason = document.getElementById('refileReason').value.trim();
+    const btn = document.getElementById('refileConfirmBtn');
+    if (!confirm(`Move ${_refileTarget.orderNumber} from ${_refileTarget.from || '(no client)'} to ${client}?\n\n`
+      + `Its reservation is released from ${_refileTarget.from || 'the old account'} and taken against ${client}, and it becomes visible in ${client}'s portal.`)) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/api/orders/${encodeURIComponent(_refileTarget.orderNumber)}/refile`,
+        { method: 'POST', headers: hdrs(), body: JSON.stringify({ client, reason }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const err = document.getElementById('refileOrderError');
+        err.textContent = d.error || 'Could not refile this order.';
+        err.classList.remove('hidden');
+        return;
+      }
+      document.getElementById('refileOrderOverlay').classList.add('hidden');
+      _refileTarget = null;
+      // What actually happened — the shortfall and the wave both need saying.
+      alert('✓ ' + (d.note || 'Refiled.'));
+      await renderOrdersDash();
+    } catch (e) {
+      const err = document.getElementById('refileOrderError');
+      err.textContent = 'Could not reach the server.';
+      err.classList.remove('hidden');
+    } finally { btn.disabled = false; }
   });
 
   // ── Request Order Deletion (admin: reason + own password; Master approves) ──

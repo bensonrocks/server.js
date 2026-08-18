@@ -4216,6 +4216,32 @@
     </div>
   </div>
 
+  <!-- Refile an order under the right client. The batch is what carries the
+       client, so this MOVES the order rather than stamping an override on it —
+       every screen that scopes by client reads the batch. -->
+  <div id="refileOrderOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#128260;</div>
+      <div class="modal-title">Refile Under the Right Client</div>
+      <p class="modal-desc">Move <strong id="refileOrderNumber">&mdash;</strong> off <strong id="refileFromClient">&mdash;</strong>.
+        Its stock reservation, billing and client-portal visibility all move with it.</p>
+      <div class="form-group">
+        <label>File it under <span class="cfg-req">*</span></label>
+        <select id="refileClient"><option value="">Loading clients…</option></select>
+        <div class="hint">Only clients this system already knows — a typed name is how a phantom account gets created.</div>
+      </div>
+      <div class="form-group">
+        <label>Reason <span class="cfg-req">*</span></label>
+        <textarea id="refileReason" rows="2" placeholder="Why does this order belong to that client?" autocomplete="off"></textarea>
+      </div>
+      <div id="refileOrderError" class="login-error hidden">Pick a client and give a reason.</div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="refileCancelBtn">Cancel</button>
+        <button class="btn-primary" id="refileConfirmBtn" disabled>&#128260; Refile</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Request Inbound Record Deletion Modal — same admin-request/Master-approve flow as Orders -->
   <div id="deleteInboundOverlay" class="modal-overlay hidden">
     <div class="modal">

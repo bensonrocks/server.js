@@ -824,6 +824,52 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   order files to AlphaCo, the BBB-1 order to BetaCo, a SKU nobody owns falls
   back to the store AND is the only one flagged, and the pull splits into one
   batch per client.
+- **AND WHEN IT LANDS WRONG ANYWAY — `POST /api/orders/:orderNumber/refile`.**
+  Reported live as *"this order exists in Zort but not in IdealOne"*. It was in
+  IdealOne all along: its SKUs were registered in TWO item masters, so
+  attribution refused to guess (correctly), fell through to the channel map, and
+  filed it under a "client" called **LAZADA** — a sales channel, not an account.
+  From everywhere scoped to the client it really belongs to (their portal, their
+  stock, their billing, the sidebar filter) it was simply absent, which reads
+  exactly like a missing order. **A re-pull cannot fix it** — the sync skips
+  order numbers it already holds, which is what makes re-pulls idempotent.
+  - **THE BATCH IS WHAT CARRIES THE CLIENT, so this MOVES the order** rather
+    than stamping a per-order override. Every reader — portal, billing, reports,
+    sidebar, stock — resolves an order's client through `batch.client_name`; an
+    override would mean editing dozens of read sites and silently missing one,
+    which is the same class of mistake that misfiled it to begin with.
+  - A batch holding only that order is renamed; otherwise the order is **split**
+    into its own batch which KEEPS the job code, filename, upload time and
+    uploader — it really did arrive on that job, and rewriting its provenance to
+    tidy away a filing mistake would be worse than the mistake. `contentHash` is
+    deliberately NOT copied (two batches answering to the same-file fingerprint
+    would make the re-upload check ambiguous), and the new batch is **unshifted**
+    because `globalOrdersWithState` is newest-batch-wins.
+  - **THE STOCK MOVES WITH IT**, which is what makes this a fix rather than a
+    label change: the reservation is released on the old account and taken on
+    the new one, and pick locations are re-allocated — the pick list was pointing
+    at the WRONG CLIENT'S BINS. What to release is read from the ledger
+    (`openReservations`), never assumed from the order's lines: releasing a
+    quantity it never reserved would free somebody else's units on the same SKU.
+  - **A COMPLETED ORDER IS REFUSED** (409). Its stock is already deducted from
+    the old account and banked in the reports; moving it would mean reversing a
+    deduction on one client and re-applying it on another, which is a different
+    action with its own evidence requirements. Standing rule.
+  - A shortfall on the new account is **reported, never a block** — the order is
+    real and already on the floor; a backorder keeps it visible. A **live wave**
+    is named in the response, because its pick list was built against the old
+    client's bins.
+  - Admin or master; warehouse gets a real 403. Reason of 6+ characters, audited
+    `order_refiled` with from/to/why/who. Transport jobs are deliberately NOT
+    rewritten — their `clientName` is the CONSIGNEE, not the billing account.
+  - UI: 🔄 on the order row (admin, not-done) → `#refileOrderOverlay`. The client
+    is a **PICKER fed by `/api/putaway/clients`, never free text** — a typed name
+    is precisely how the phantom account appeared — and it never offers the
+    client the order is already on.
+  Verified 35 API checks (the reservation moving off one shelf and onto the
+  other with no on-hand touched, the sibling order untouched, provenance kept,
+  a completed order refused, warehouse 403) plus 28 browser checks on desktop
+  and a Pixel 5.
 - **IMPORTING AN ITEM MASTER ASKS whether to send it on.** Per the user.
   Loading a catalogue returns `storeOffer` (store id, name, SKU count) when a
   connected store carries that client, and the onboarding screen puts a yes/no
