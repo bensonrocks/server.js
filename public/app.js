@@ -2580,7 +2580,7 @@
           ${ord.archived ? '' : emailIndicator}
           ${ord.archived ? '' : kfBtn}
           ${ord.archived ? '' : syncBtn}
-          ${currentUser?.role === 'admin' && !ord.archived && !isDone ? `<button class="btn-secondary btn-sm btn-refile-order" data-order="${esc(ord.order_number)}" data-client="${esc(ord.client_name || '')}"
+          ${currentUser?.role === 'admin' && !ord.archived ? `<button class="btn-secondary btn-sm btn-refile-order" data-order="${esc(ord.order_number)}" data-client="${esc(ord.client_name || '')}" data-done="${isDone ? '1' : ''}"
                 title="Filed under the wrong client? Move this order to the right account — its stock, billing and portal visibility go with it">&#128260;</button>` : ''}
           ${currentUser?.role === 'admin' && !ord.archived && !isDone && !ord.pending_deletion ? `<button class="btn-del-order" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId || '')}" title="Request deletion">&#128465;</button>` : ''}
         </td>
@@ -2601,6 +2601,7 @@
         <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
         <button id="ordersBulkTxn" class="btn-secondary btn-sm" title="Download this client's transaction statement — everything in and out over the date range, with opening and closing balances">&#129534; Transactions</button>
         <button id="ordersBulkComplete" class="btn-secondary btn-sm" title="Complete the selected orders WITHOUT scanning — Administrator password required. Stock deducts and synced orders report back to their store exactly as a scanned completion would.">&#9989; Complete (skip scan)</button>
+        <button id="ordersBulkRefile" class="btn-secondary btn-sm" title="Filed under the wrong client? Move the selected orders to the right account — stock, billing and portal visibility go with them. Completed orders included.">&#128260; Refile</button>
         <button id="ordersBulkNotOurs" class="btn-secondary btn-sm" title="Mark these as not ours to fulfil — the client ships them at their end. They leave the packers' list and, unlike deleting, they do NOT come back on the next sync.">&#9003; Not ours (client ships)</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
@@ -2683,7 +2684,7 @@
     document.querySelectorAll('.btn-refile-order').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();          // the row itself opens the scan overlay
-        openRefileModal(btn.dataset.order, btn.dataset.client);
+        openRefileModal([{ orderNumber: btn.dataset.order, from: btn.dataset.client, done: !!btn.dataset.done }]);
       });
     });
 
@@ -2814,6 +2815,17 @@
         else orderSelection.delete(cb.dataset.order);
       });
       updateOrdersBulkBar();
+    });
+    // MASS REFILE. Archived orders are the only ones excluded — a completed
+    // order is deliberately still movable (its stock deduction moves with it).
+    document.getElementById('ordersBulkRefile')?.addEventListener('click', () => {
+      const picked = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && !o.archived);
+      if (!picked.length) { alert('None of the selected orders can be refiled (archived orders cannot be moved).'); return; }
+      openRefileModal(picked.map(o => ({
+        orderNumber: o.order_number, from: o.client_name || '', done: o.scan_status === 'done',
+      })));
     });
     document.getElementById('ordersBulkClear')?.addEventListener('click', () => {
       orderSelection.clear();
@@ -8057,11 +8069,32 @@
   // account and then cannot be seen from anywhere scoped to the right one —
   // which reads as a missing order. This moves it. The client is a PICKER, never
   // free text: a typed name is exactly how the phantom account got created.
-  let _refileTarget = null;   // { orderNumber, from }
-  async function openRefileModal(orderNumber, fromClient) {
-    _refileTarget = { orderNumber, from: fromClient || '' };
-    document.getElementById('refileOrderNumber').textContent = orderNumber;
-    document.getElementById('refileFromClient').textContent = fromClient || '(no client)';
+  // One or many. The same dialog serves a single row and a mass selection —
+  // one misattributed SKU misfiles every order that carries it, so these turn
+  // up in batches, and refiling them one at a time is not a fix anyone will
+  // finish.
+  let _refileTargets = null;   // [{ orderNumber, from, done }]
+  async function openRefileModal(targets) {
+    const list = (targets || []).filter(t => t && t.orderNumber);
+    if (!list.length) return;
+    _refileTargets = list;
+    const froms = [...new Set(list.map(t => t.from || '').filter(Boolean))];
+    const doneCount = list.filter(t => t.done).length;
+    document.getElementById('refileOrderNumber').textContent =
+      list.length === 1 ? list[0].orderNumber : `${list.length} orders`;
+    document.getElementById('refileFromClient').textContent =
+      froms.length === 1 ? froms[0] : (froms.length ? `${froms.length} different clients` : '(no client)');
+    // A COMPLETED ORDER'S GOODS HAVE ALREADY SHIPPED, so say what moving it
+    // actually does to the stock BEFORE it is done, not in the answer.
+    const warn = document.getElementById('refileDoneWarn');
+    if (warn) {
+      warn.classList.toggle('hidden', doneCount === 0);
+      warn.innerHTML = doneCount
+        ? `<b>&#9888; ${doneCount} of these ${doneCount === 1 ? 'is' : 'are'} already completed.</b> `
+          + 'The stock deduction moves with the order — given back on the old account and taken on the new one. '
+          + 'Bin positions are <b>not</b> rewritten (the pieces really did leave the old bins), so both accounts will want a cycle count on those SKUs.'
+        : '';
+    }
     document.getElementById('refileReason').value = '';
     document.getElementById('refileOrderError').classList.add('hidden');
     document.getElementById('refileConfirmBtn').disabled = true;
@@ -8071,9 +8104,11 @@
     try {
       const r = await fetch('/api/putaway/clients', { headers: hdrs() });
       const d = await r.json();
-      const here = String(fromClient || '').trim().toLowerCase();
+      // Never offer a client every selected order is already on; with a mixed
+      // selection every client is a legitimate destination for someone.
+      const here = froms.length === 1 ? froms[0].trim().toLowerCase() : null;
       const rows = (d.clients || d.rows || d || [])
-        .filter(c => String(c.name || '').trim().toLowerCase() !== here);
+        .filter(c => !here || String(c.name || '').trim().toLowerCase() !== here);
       sel.innerHTML = '<option value="">— pick a client —</option>' + rows.map(c =>
         `<option value="${esc(c.name)}">${esc(c.name)}${c.orders ? ` · ${c.orders} order(s)` : ''}${c.hasProfile ? ' · onboarded' : ''}</option>`).join('');
     } catch (e) { sel.innerHTML = '<option value="">Could not load the client list</option>'; }
@@ -8092,30 +8127,40 @@
     })));
   document.getElementById('refileCancelBtn').addEventListener('click', () => {
     document.getElementById('refileOrderOverlay').classList.add('hidden');
-    _refileTarget = null;
+    _refileTargets = null;
   });
   document.getElementById('refileConfirmBtn').addEventListener('click', async () => {
-    if (!_refileTarget) return;
+    if (!_refileTargets || !_refileTargets.length) return;
     const client = document.getElementById('refileClient').value;
     const reason = document.getElementById('refileReason').value.trim();
     const btn = document.getElementById('refileConfirmBtn');
-    if (!confirm(`Move ${_refileTarget.orderNumber} from ${_refileTarget.from || '(no client)'} to ${client}?\n\n`
-      + `Its reservation is released from ${_refileTarget.from || 'the old account'} and taken against ${client}, and it becomes visible in ${client}'s portal.`)) return;
+    const many = _refileTargets.length > 1;
+    const doneCount = _refileTargets.filter(t => t.done).length;
+    const what = many ? `${_refileTargets.length} orders` : _refileTargets[0].orderNumber;
+    if (!confirm(`Move ${what} to ${client}?\n\n`
+      + `Their stock, billing and client-portal visibility move with them.`
+      + (doneCount ? `\n\n⚠ ${doneCount} already completed — the stock deduction moves too, but bin positions are not rewritten.` : ''))) return;
     btn.disabled = true;
     try {
-      const r = await fetch(`/api/orders/${encodeURIComponent(_refileTarget.orderNumber)}/refile`,
-        { method: 'POST', headers: hdrs(), body: JSON.stringify({ client, reason }) });
+      const r = many
+        ? await fetch('/api/orders/bulk-refile', { method: 'POST', headers: hdrs(),
+            body: JSON.stringify({ orders: _refileTargets.map(t => t.orderNumber), client, reason }) })
+        : await fetch(`/api/orders/${encodeURIComponent(_refileTargets[0].orderNumber)}/refile`,
+            { method: 'POST', headers: hdrs(), body: JSON.stringify({ client, reason }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         const err = document.getElementById('refileOrderError');
-        err.textContent = d.error || 'Could not refile this order.';
+        err.textContent = d.error || 'Could not refile.';
         err.classList.remove('hidden');
         return;
       }
       document.getElementById('refileOrderOverlay').classList.add('hidden');
-      _refileTarget = null;
-      // What actually happened — the shortfall and the wave both need saying.
-      alert('✓ ' + (d.note || 'Refiled.'));
+      _refileTargets = null;
+      orderSelection.clear();
+      // What actually happened. A refusal inside a bulk run is named, not
+      // swallowed — the rest still moved and somebody has to know which did not.
+      alert('✓ ' + (d.note || 'Refiled.')
+        + ((d.refused || []).length ? '\n\nNot moved:\n' + d.refused.map(x => `• ${x.order} — ${x.why}`).join('\n') : ''));
       await renderOrdersDash();
     } catch (e) {
       const err = document.getElementById('refileOrderError');

@@ -4225,6 +4225,9 @@
       <div class="modal-title">Refile Under the Right Client</div>
       <p class="modal-desc">Move <strong id="refileOrderNumber">&mdash;</strong> off <strong id="refileFromClient">&mdash;</strong>.
         Its stock reservation, billing and client-portal visibility all move with it.</p>
+      <!-- Completed orders are movable too, but their goods have already
+           shipped — say what that does to the stock BEFORE it is done. -->
+      <div id="refileDoneWarn" class="hint hidden" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:.55rem .7rem;border-radius:8px;margin-bottom:.7rem;line-height:1.5"></div>
       <div class="form-group">
         <label>File it under <span class="cfg-req">*</span></label>
         <select id="refileClient"><option value="">Loading clients…</option></select>

@@ -851,10 +851,27 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
     at the WRONG CLIENT'S BINS. What to release is read from the ledger
     (`openReservations`), never assumed from the order's lines: releasing a
     quantity it never reserved would free somebody else's units on the same SKU.
-  - **A COMPLETED ORDER IS REFUSED** (409). Its stock is already deducted from
-    the old account and banked in the reports; moving it would mean reversing a
-    deduction on one client and re-applying it on another, which is a different
-    action with its own evidence requirements. Standing rule.
+  - **A COMPLETED ORDER MOVES TOO, and takes its deduction with it.** The first
+    cut refused one (the standing completed-work rule) — but the order actually
+    reported was already DONE, and what is wrong about it is the ATTRIBUTION,
+    not the shipment. So per the user the deduction is moved at ACCOUNT level:
+    given back on the account that never shipped it, taken on the one that did,
+    as `adjustment` movements naming the refile on both sides so neither balance
+    moves without an explanation. The work itself is never regressed — the order
+    stays `done`.
+    - **BIN POSITIONS ARE NOT REWRITTEN**, and cannot honestly be: the pieces
+      physically came out of the old client's bins, and inventing a bin movement
+      on the new client would be a claim about where stock sat that nobody can
+      support. Both the dialog (before) and the answer (after) say so, because
+      it means both accounts want a cycle count on those SKUs.
+    - Symmetric — moving it back returns both balances exactly, with no drift.
+    - A SKU the new client's master does not carry is **named**, never created.
+  - **MASS SELECTION** (`POST /api/orders/bulk-refile {orders[], client,
+    reason}`, 🔄 Refile on the Orders group bar). One misattributed SKU misfiles
+    every order carrying it, so these arrive in batches. ONE db write for the
+    lot, per-order outcomes so a single refusal reports itself instead of
+    stopping the rest, capped at 500. Audited `orders_bulk_refiled` alongside
+    each order's own `order_refiled` entry.
   - A shortfall on the new account is **reported, never a block** — the order is
     real and already on the floor; a backorder keeps it visible. A **live wave**
     is named in the response, because its pick list was built against the old
@@ -866,10 +883,13 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
     is a **PICKER fed by `/api/putaway/clients`, never free text** — a typed name
     is precisely how the phantom account appeared — and it never offers the
     client the order is already on.
-  Verified 35 API checks (the reservation moving off one shelf and onto the
-  other with no on-hand touched, the sibling order untouched, provenance kept,
-  a completed order refused, warehouse 403) plus 28 browser checks on desktop
-  and a Pixel 5.
+  Verified 37 API checks on the pending case (the reservation moving off one
+  shelf and onto the other with no on-hand touched, the sibling order untouched,
+  provenance kept, warehouse 403) and 37 more on the completed and bulk cases
+  (the deduction moving both ways and returning exactly on a move-back, both
+  ledgers naming the refile, an unknown SKU reported and not created, three
+  moved with the non-existent one refused by name, only the completed one moving
+  stock), plus 28 + 26 browser checks on desktop and a Pixel 5.
 - **IMPORTING AN ITEM MASTER ASKS whether to send it on.** Per the user.
   Loading a catalogue returns `storeOffer` (store id, name, SKU count) when a
   connected store carries that client, and the onboarding screen puts a yes/no

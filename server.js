@@ -15185,69 +15185,73 @@ app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
   res.json({ ok: true, cancelled, refused });
 });
 
-// ── FILED UNDER THE WRONG CLIENT — move it ───────────────────────────────────
-// Reported live: a Lazada order whose SKUs are registered in TWO item masters
-// could not be attributed, fell back to the channel map, and landed under a
-// "client" called LAZADA — a sales channel, not an account. The order was in
-// IdealOne all along; it was invisible from everywhere scoped to the client it
-// actually belongs to (their portal, their stock, their billing, the sidebar
-// filter), which reads exactly like a missing order.
-//
-// THE BATCH IS WHAT CARRIES THE CLIENT, so the fix is to move the order into a
-// batch that names the right one. Every reader — portal, billing, reports,
-// sidebar, stock — resolves an order's client through `batch.client_name`; a
-// per-order override would mean editing dozens of read sites and silently
-// missing one, which is the same class of mistake that misfiled this order to
-// begin with.
-//
-// Re-pulling cannot fix it: the sync skips order numbers it already holds (that
-// is what makes re-pulls idempotent), so the misfiled copy would simply stay.
-app.post('/api/orders/:orderNumber/refile', express.json(), (req, res) => {
-  if (!requireInboundAdmin(req, res, 'refile an order under a different client')) return;
-  const orderNumber = String(req.params.orderNumber || '');
-  const reason = String(req.body?.reason || '').trim();
-  const db = readDb();
+// THE MOVE ITSELF, shared by the single-order route and the bulk one — a second
+// copy would drift, and the first thing to drift would be whether the stock
+// followed the order. Returns {ok:false,status,error} instead of touching res,
+// so the bulk caller can report per-order outcomes and carry on.
+function refileOneOrder(db, orderNumber, clientRaw, reason, who) {
   const batch = findBatchForOrder(db, orderNumber);
-  if (!batch) return res.status(404).json({ error: 'Order not found.' });
+  if (!batch) return { ok: false, status: 404, error: 'Order not found.' };
   const from = String(batch.client_name || '').trim();
   // Adopt the spelling this client is already known by rather than imposing
   // another case-variant — "Mayer2026" and "MAYER2026" must stay one account.
-  const target = canonicalClientName(db, String(req.body?.client || '').trim());
-  if (!target) return res.status(400).json({ error: 'Name the client this order belongs to.' });
+  const target = canonicalClientName(db, String(clientRaw || '').trim());
+  if (!target) return { ok: false, status: 400, error: 'Name the client this order belongs to.' };
   if (from.toLowerCase() === target.toLowerCase()) {
-    return res.status(400).json({ error: `This order is already filed under ${from}.` });
+    return { ok: false, status: 400, error: `Already filed under ${from}.` };
   }
-  // A reason is the only record of why an order changed accounts, and this
-  // moves whose stock, billing and portal it sits on.
-  if (reason.length < 6) {
-    return res.status(400).json({ error: 'Give a reason — moving an order between accounts changes whose stock, billing and portal it sits on, and this is the only record of why.' });
-  }
-
   const st = (batch.orderStates || {})[orderNumber] || { status: 'pending', scanned: {} };
-  // COMPLETED WORK IS NEVER REWRITTEN — the standing rule. A done order already
-  // deducted stock from the old account and is banked against them in billing
-  // and the reports; moving it would mean reversing a deduction on one client
-  // and re-applying it on another, which is a different action with its own
-  // evidence requirements, not a filing correction.
-  if (st.status === 'done') {
-    return res.status(409).json({ error: `${orderNumber} is completed — its stock has already been deducted from ${from} and banked in the reports. Completed work is never refiled.` });
-  }
-  const holder = claimBlocker(st, req.userId);
-  if (holder) return res.status(409).json({ error: `${orderNumber} is open at ${holder}'s station — refiling it underneath them would move the stock they are picking against.` });
+  const done = st.status === 'done';
+  // A half-picked order underneath somebody is the one case still refused: the
+  // stock they are picking against would move mid-pick.
+  const holder = done ? null : claimBlocker(st, who);
+  if (holder) return { ok: false, status: 409, error: `Open at ${holder}'s station.` };
 
   const order = (batch.orders || []).find(o => o.order_number === orderNumber);
-  if (!order) return res.status(404).json({ error: 'Order not found in its batch.' });
-  const who = req.userId || _tokenUserId(req) || '';
+  if (!order) return { ok: false, status: 404, error: 'Order not found in its batch.' };
   const now = new Date().toISOString();
   const oldCid = batch.inventory_client || invClientId(from);
   const newCid = invClientId(target);
+  const items = (order.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: Number(l.qty) || 0 }));
 
-  // 1. GIVE THE UNITS BACK on the account they were wrongly promised against.
-  //    Derived from the ledger (what this order still actually holds), never
-  //    assumed from its lines — releasing a quantity it never reserved would
-  //    free somebody else's units on the same SKU.
-  let releasedUnits = 0;
-  if (inventory.available()) {
+  let releasedUnits = 0, gaveBack = 0, tookOff = 0;
+  const notInMaster = [];
+  if (done) {
+    // A COMPLETED ORDER'S GOODS HAVE ALREADY LEFT. Per the user these must be
+    // reclassifiable too, and what is wrong is the ATTRIBUTION, not the
+    // shipment. So the deduction is MOVED at account level: given back on the
+    // account it was wrongly taken from, and taken on the one that really
+    // shipped it, as `adjustment` movements that name the refile on both sides.
+    //
+    // BIN-LEVEL POSITIONS ARE NOT REWRITTEN, and cannot honestly be: the pieces
+    // physically came out of the old client's bins, and inventing a bin
+    // movement on the new client would be a claim about where stock sat that
+    // nobody can support. The answer says so, because it means the two accounts
+    // now need a cycle count to line their bins up with their balances.
+    if (st.inventory_deducted && inventory.available()) {
+      for (const it of items) {
+        try {
+          inventory.adjust(it.sku, oldCid, it.qty, 'adjustment',
+            `Refiled ${orderNumber} to ${target} — this account never shipped it`);
+          gaveBack += it.qty;
+        } catch (e) { /* the SKU is not on that account — nothing was taken off it */ }
+      }
+    }
+    if (clientStockTracked(newCid) && inventory.available()) {
+      for (const it of items) {
+        try {
+          inventory.adjust(it.sku, newCid, -it.qty, 'adjustment',
+            `Refiled ${orderNumber} from ${from} — shipped against this account`);
+          tookOff += it.qty;
+        } catch (e) { notInMaster.push(it.sku); }   // named, never silently created
+      }
+      if (tookOff) st.inventory_deducted = true;
+    }
+  } else if (inventory.available()) {
+    // GIVE THE UNITS BACK on the account they were wrongly promised against.
+    // Derived from the ledger (what this order still actually holds), never
+    // assumed from its lines — releasing a quantity it never reserved would
+    // free somebody else's units on the same SKU.
     try {
       const open = inventory.openReservations(oldCid).filter(r => String(r.order_id) === orderNumber);
       if (open.length) {
@@ -15257,13 +15261,13 @@ app.post('/api/orders/:orderNumber/refile', express.json(), (req, res) => {
     } catch (e) { console.warn('[refile] release failed:', e.message); }
   }
 
-  // 2. MOVE IT. A batch holding only this order is simply renamed; otherwise the
-  //    order is split into its own batch, which KEEPS the job code, filename,
-  //    upload time and uploader — the order really did arrive on that job, and
-  //    rewriting its provenance to tidy away a filing mistake would be worse
-  //    than the mistake. `contentHash` is deliberately NOT copied: that is the
-  //    same-file re-upload fingerprint, and two batches answering to it would
-  //    make that check ambiguous.
+  // MOVE IT. A batch holding only this order is simply renamed; otherwise the
+  // order is split into its own batch, which KEEPS the job code, filename,
+  // upload time and uploader — the order really did arrive on that job, and
+  // rewriting its provenance to tidy away a filing mistake would be worse than
+  // the mistake. `contentHash` is deliberately NOT copied: that is the
+  // same-file re-upload fingerprint, and two batches answering to it would make
+  // that check ambiguous.
   let newBatch = batch, split = false;
   if ((batch.orders || []).length === 1) {
     batch.client_name = target;
@@ -15292,11 +15296,12 @@ app.post('/api/orders/:orderNumber/refile', express.json(), (req, res) => {
     db.batches.unshift(newBatch);
   }
 
-  // 3. RESERVE ON THE NEW ACCOUNT, if that client's stock is tracked here. This
-  //    also re-runs pick allocation, which matters more than it looks: the pick
-  //    list was pointing at the OLD client's bins.
-  let tracked = false;
-  if (clientStockTracked(newCid)) {
+  // RESERVE ON THE NEW ACCOUNT, if that client's stock is tracked here. This
+  // also re-runs pick allocation, which matters more than it looks: the pick
+  // list was pointing at the OLD client's bins. A shipped order has nothing to
+  // reserve and nothing left to pick.
+  let tracked = done ? !!st.inventory_deducted : false;
+  if (!done && clientStockTracked(newCid)) {
     try {
       const rr = reserveIntakeOrders(db, newCid, target, [order], newBatch.id, 'fefo', 'wait');
       tracked = !!rr.tracked;
@@ -15312,9 +15317,9 @@ app.post('/api/orders/:orderNumber/refile', express.json(), (req, res) => {
     .filter(b => String(b.order_number) === orderNumber && b.status === 'open')
     .map(b => ({ sku: b.sku, short: Number(b.shortfall) || 0 }));
 
-  // 4. RECORDS THAT STAMPED THE CLIENT rather than deriving it. Backorders carry
-  //    it; transport jobs deliberately do NOT get rewritten — their `clientName`
-  //    is the CONSIGNEE (who receives the parcel), not whose account it bills to.
+  // RECORDS THAT STAMPED THE CLIENT rather than deriving it. Backorders carry
+  // it; transport jobs deliberately do NOT get rewritten — their `clientName`
+  // is the CONSIGNEE (who receives the parcel), not whose account it bills to.
   for (const bo of db.backorders || []) {
     if (String(bo.order_number) === orderNumber) { bo.client_name = target; bo.client_id = newCid; }
   }
@@ -15328,22 +15333,106 @@ app.post('/api/orders/:orderNumber/refile', express.json(), (req, res) => {
   const wave = (db.waves || []).find(w => w.status !== 'completed' && w.status !== 'cancelled'
     && (w.order_numbers || []).includes(orderNumber));
 
-  writeDb(db);
   logAudit('order_refiled', {
     order: orderNumber, from, to: target, reason, by: who,
-    batchId: newBatch.id, fromBatchId: batch.id, split,
-    releasedUnits, reservedOn: tracked ? newCid : '', shortfall: shortfall.slice(0, 20),
+    batchId: newBatch.id, fromBatchId: batch.id, split, completed: done,
+    releasedUnits, gaveBack, tookOff, notInMaster: notInMaster.slice(0, 20),
+    reservedOn: tracked ? newCid : '', shortfall: shortfall.slice(0, 20),
     wave: wave ? (wave.code || wave.id) : '',
   });
+
+  const note = `${orderNumber} now belongs to ${target}.`
+    + (releasedUnits ? ` ${releasedUnits} unit(s) released back to ${from}.` : '')
+    + (done
+        ? (gaveBack ? ` ${gaveBack} unit(s) given back to ${from}.` : '')
+          + (tookOff ? ` ${tookOff} unit(s) deducted from ${target} instead.` : '')
+          + ((gaveBack || tookOff)
+              ? ' Bin positions are NOT rewritten — the pieces physically left the old bins — so both accounts want a cycle count on these SKUs.'
+              : ' Its stock was never deducted here, so nothing moved.')
+        : (tracked ? ` Reserved against ${target}.` : ` ${target}'s stock is not tracked here, so nothing was reserved.`))
+    + (notInMaster.length ? ` Not in ${target}'s item master, so nothing was deducted for: ${notInMaster.join(', ')}.` : '')
+    + (shortfall.length ? ` ${shortfall.length} line(s) could not be covered and are on backorder.` : '')
+    + (wave ? ` It is in wave ${wave.code || wave.id} — regenerate that wave so its pick list points at ${target}'s bins.` : '');
+
+  return {
+    ok: true, order: orderNumber, from, to: target, split, completed: done,
+    releasedUnits, gaveBack, tookOff, notInMaster, tracked, shortfall,
+    wave: wave ? { id: wave.id, code: wave.code || '' } : null, note,
+  };
+}
+
+// ── FILED UNDER THE WRONG CLIENT — move it ───────────────────────────────────
+// Reported live: a Lazada order whose SKUs are registered in TWO item masters
+// could not be attributed, fell back to the channel map, and landed under a
+// "client" called LAZADA — a sales channel, not an account. The order was in
+// IdealOne all along; it was invisible from everywhere scoped to the client it
+// actually belongs to (their portal, their stock, their billing, the sidebar
+// filter), which reads exactly like a missing order.
+//
+// THE BATCH IS WHAT CARRIES THE CLIENT, so the fix is to move the order into a
+// batch that names the right one. Every reader — portal, billing, reports,
+// sidebar, stock — resolves an order's client through `batch.client_name`; a
+// per-order override would mean editing dozens of read sites and silently
+// missing one, which is the same class of mistake that misfiled this order to
+// begin with.
+//
+// Re-pulling cannot fix it: the sync skips order numbers it already holds (that
+// is what makes re-pulls idempotent), so the misfiled copy would simply stay.
+app.post('/api/orders/:orderNumber/refile', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res, 'refile an order under a different client')) return;
+  const reason = String(req.body?.reason || '').trim();
+  // A reason is the only record of why an order changed accounts, and this
+  // moves whose stock, billing and portal it sits on.
+  if (reason.length < 6) {
+    return res.status(400).json({ error: 'Give a reason — moving an order between accounts changes whose stock, billing and portal it sits on, and this is the only record of why.' });
+  }
+  const db = readDb();
+  const who = req.userId || _tokenUserId(req) || '';
+  const out = refileOneOrder(db, String(req.params.orderNumber || ''), req.body?.client, reason, who);
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  writeDb(db);
+  res.json(out);
+});
+
+// ── THE SAME THING FOR A SCREENFUL ───────────────────────────────────────────
+// One misattributed SKU misfiles every order that carries it, so these arrive in
+// batches, not one at a time. ONE db write for the lot, and a per-order outcome
+// so a single refusal reports itself instead of stopping the rest.
+app.post('/api/orders/bulk-refile', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res, 'refile orders under a different client')) return;
+  const wanted = [...new Set((req.body?.orders || []).map(String).filter(Boolean))];
+  const reason = String(req.body?.reason || '').trim();
+  const client = String(req.body?.client || '').trim();
+  if (!wanted.length) return res.status(400).json({ error: 'No orders listed.' });
+  if (!client) return res.status(400).json({ error: 'Name the client these orders belong to.' });
+  if (reason.length < 6) {
+    return res.status(400).json({ error: 'Give a reason — moving orders between accounts changes whose stock, billing and portal they sit on, and this is the only record of why.' });
+  }
+  if (wanted.length > 500) return res.status(400).json({ error: 'Refile at most 500 orders at a time.' });
+  const db = readDb();
+  const who = req.userId || _tokenUserId(req) || '';
+  const moved = [], refused = [];
+  for (const orderNumber of wanted) {
+    const out = refileOneOrder(db, orderNumber, client, reason, who);
+    if (out.ok) moved.push(out);
+    else refused.push({ order: orderNumber, why: out.error });
+  }
+  writeDb(db);
+  logAudit('orders_bulk_refiled', {
+    to: client, reason, by: who, count: moved.length,
+    orders: moved.map(m => m.order).slice(0, 200),
+    refused: refused.slice(0, 50),
+  });
+  const completed = moved.filter(m => m.completed).length;
+  const waves = [...new Set(moved.map(m => m.wave?.code || m.wave?.id).filter(Boolean))];
+  const notInMaster = [...new Set(moved.flatMap(m => m.notInMaster || []))];
   res.json({
-    ok: true, order: orderNumber, from, to: target, split,
-    releasedUnits, tracked, shortfall,
-    wave: wave ? { id: wave.id, code: wave.code || '' } : null,
-    note: `${orderNumber} now belongs to ${target}.`
-      + (releasedUnits ? ` ${releasedUnits} unit(s) released back to ${from}.` : '')
-      + (tracked ? ` Reserved against ${target}.` : ` ${target}'s stock is not tracked here, so nothing was reserved.`)
-      + (shortfall.length ? ` ${shortfall.length} line(s) could not be covered and are on backorder.` : '')
-      + (wave ? ` It is in wave ${wave.code || wave.id} — regenerate that wave so its pick list points at ${target}'s bins.` : ''),
+    ok: true, to: client, moved, refused,
+    note: `${moved.length} order(s) now belong to ${client}.`
+      + (completed ? ` ${completed} of them were already completed — their stock deduction was moved too, but bin positions are NOT rewritten, so both accounts want a cycle count.` : '')
+      + (notInMaster.length ? ` Not in ${client}'s item master, so nothing was deducted for: ${notInMaster.slice(0, 15).join(', ')}.` : '')
+      + (waves.length ? ` Regenerate wave(s) ${waves.join(', ')} — their pick lists were built against the old client's bins.` : '')
+      + (refused.length ? ` ${refused.length} could not be moved.` : ''),
   });
 });
 
