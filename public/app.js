@@ -11871,6 +11871,7 @@
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
+            <button class="btn-secondary btn-sm z-probe" title="Ask the hub four questions and show its raw answers — credentials, a plain read, the order list, and reading back one order by the hub's OWN id. Four requests, read-only. Use it when the channel is answering with no order.">&#129514; Probe</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
             <button class="btn-secondary btn-sm z-crosscheck" title="Ask the hub the current status of every open synced order here — finds orders the client fulfilled themselves, and offers to settle them">&#128270; Cross-check</button>
             <button class="btn-secondary btn-sm z-find" title="Ask the hub's API about specific order number(s) — answers 'ZORT shows it but IdealOne never got it': does the API even return it, what status, and what the import would do">&#128269; Find order</button>
@@ -11900,6 +11901,22 @@
             const d = await r2.json();
             zortStatus(d.ok ? 'success' : 'error', d.ok ? `✓ ${store.clientName}: connection OK` : `✗ ${store.clientName}: ${d.error}`);
           } catch (err) { zortStatus('error', 'Test failed: ' + err.message); }
+          e.target.disabled = false;
+        });
+        // FOUR QUESTIONS, RAW ANSWERS. When the hub returns no order, every next
+        // step is a guess without this.
+        tr.querySelector('.z-probe').addEventListener('click', async e => {
+          e.target.disabled = true;
+          zortStatus('progress', `Asking ${store.clientName} four questions…`);
+          try {
+            const r2 = await fetch(`/api/master/zort/stores/${id}/probe`, { method: 'POST', headers: zortHdrs() });
+            const d = await r2.json();
+            if (!r2.ok) { zortStatus('error', d.error || 'Probe failed'); return; }
+            const lines = (d.steps || []).map(st =>
+              `${st.ok ? '\u2713' : '\u2717'} ${st.name} — ${st.what}\n    ${st.ok ? (st.shape + '\n    ' + String(st.sample || '').slice(0, 300)) : st.error}`);
+            zortStatus(d.steps.every(x => x.ok) ? 'success' : 'error', `Probe: ${esc(d.verdict)}`);
+            alert(`${d.store} — hub probe\n\n${d.verdict}\n\n${lines.join('\n\n')}\n\n${d.note}`);
+          } catch (err) { zortStatus('error', 'Probe failed: ' + err.message); }
           e.target.disabled = false;
         });
         tr.querySelector('.z-pull').addEventListener('click', async e => {

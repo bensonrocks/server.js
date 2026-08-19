@@ -1234,6 +1234,20 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     reports it with the top consumers named. Counting only — a meter that can
     refuse work is a second failure mode. It resets on restart, so it is a
     FLOOR, not a total, and says so.
+  - **THE METER SETTLED ONE QUESTION AND OPENED ANOTHER.** It read **3 of
+    50,000**, so we are nowhere near the limit and `resCode 100 — API Request
+    Limits` is ZORT's STANDARD NOTICE attached to a reply, **not** "you have
+    used your quota". Do not read it as exhaustion again. Something else makes
+    order reads come back empty.
+  - **🧪 Probe** (`POST /api/master/zort/stores/:id/probe`, admin or master,
+    read-only, FOUR calls) asks the hub four questions and prints its raw
+    answers: ValidateApi → GetMerchantProfile → GetOrders(limit 1) →
+    **GetOrderDetail using the id the hub itself just returned**. That last pair
+    is decisive: a hub that LISTS an order with id X and then returns nothing for
+    that same X one call later is failing on its own side (most likely the key
+    is not permitted to read order detail), and those two answers are the
+    evidence to send them. If both work, the ids WE hold for the affected orders
+    are the next thing to check. Credentials are never echoed back.
   - **WAITING FOR A LABEL WAS THE BIGGEST CONSUMER.** A flat 60s retry for up to
     a day is **1,440 calls per unlabelled order** — and on a morning when
     nothing reaches Ready-to-Ship, every one of those orders is waiting for a

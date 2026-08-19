@@ -20598,6 +20598,78 @@ app.post('/api/master/zort/stores/:id/test', async (req, res) => {
   }
 });
 
+// ── ASK THE HUB FOUR QUESTIONS AND PRINT WHAT IT SAYS ───────────────────────
+// The usage meter came back at 3 of 50,000, which settles one thing and opens
+// another: we are nowhere near the request limit, so `resCode 100 — API Request
+// Limits` is ZORT's standard notice attached to a reply, NOT "you have used
+// your quota". Something else is making order reads come back empty, and every
+// further step was going to be a guess.
+//
+// So this asks, in order, and shows the RAW answers:
+//   1. ValidateApi        — are the credentials accepted at all?
+//   2. GetMerchantProfile — does any authenticated read work?
+//   3. GetOrders limit 1  — does the LIST read work, and what id does it hand us?
+//   4. GetOrderDetail     — the suspect call, using THE HUB'S OWN id from (3).
+//
+// (4) is the decisive one. If the hub lists an order with id X and then returns
+// nothing for that same X, the fault is on their side and this is the evidence
+// to send them. If it answers fine, the ids WE stored are wrong and it is ours.
+// Read-only, four calls, and the credentials are never echoed back.
+app.post('/api/master/zort/stores/:id/probe', async (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const store = zortStores(readDb()).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  const steps = [];
+  const shape = d => {
+    if (d === null || d === undefined) return 'null';
+    if (typeof d !== 'object') return typeof d;
+    return Array.isArray(d) ? `array(${d.length})` : `keys: ${Object.keys(d).slice(0, 15).join(', ') || '(none)'}`;
+  };
+  const run = async (name, what, fn) => {
+    try {
+      const d = await fn();
+      steps.push({ name, what, ok: true, shape: shape(d),
+        sample: JSON.stringify(d).slice(0, 600) });
+      return d;
+    } catch (e) {
+      steps.push({ name, what, ok: false, error: String(e.message || e).slice(0, 400) });
+      return null;
+    }
+  };
+
+  await run('ValidateApi', 'Are the credentials accepted?', () => zortApi.validateApi(store));
+  await run('GetMerchantProfile', 'Does any authenticated read work?',
+    () => zortApi.zortRequest(store, 'GET', 'Merchant/GetMerchantProfile'));
+  const list = await run('GetOrders', 'Does the order LIST read work?',
+    () => zortApi.getOrders(store, { limit: 1, page: 1 }));
+  const first = (list?.list || list?.orders || [])[0] || null;
+  const hubId = first?.id ?? null;
+  if (hubId === null || hubId === undefined) {
+    steps.push({ name: 'GetOrderDetail', what: 'Read one order by the id the hub just gave us',
+      ok: false, error: 'The list returned no order to test with, so the detail read could not be tried.' });
+  } else {
+    await run('GetOrderDetail', `Read order id ${hubId} — the id the hub itself just returned`,
+      () => zortApi.getOrderDetail(store, hubId));
+  }
+
+  const listOk = steps.find(s => s.name === 'GetOrders')?.ok;
+  const detail = steps.find(s => s.name === 'GetOrderDetail');
+  const detailUsable = !!detail?.ok && /status|number\b/.test(detail.sample || '');
+  const verdict = !steps[0]?.ok
+    ? 'The credentials are not being accepted — nothing else here is meaningful until that is fixed.'
+    : listOk && detail && !detailUsable
+      ? `The hub LISTS orders but returns no order for id ${hubId} — its own id, from its own list, one call earlier. That is a fault on the channel's side (most likely this API key is not permitted to read order detail), and these two answers are the evidence to send them.`
+      : listOk && detailUsable
+        ? 'Both reads work right now. So the empty replies were not permanent — the order ids WE hold for the affected orders are the next thing to check (🔍 Find order gives the hub\'s own id for one).'
+        : 'The list read failed — see the answers below.';
+
+  logAudit('zort_probe', { storeId: store.id, client: store.clientName || '',
+    by: req.userId || _tokenUserId(req) || '',
+    results: steps.map(s => ({ name: s.name, ok: !!s.ok })) });
+  res.json({ ok: true, store: store.clientName || store.id, verdict, steps,
+    calls: steps.length, note: 'Read-only. Four requests against the hub; no credentials are shown.' });
+});
+
 // Which marketplaces has this client linked INSIDE their Zort account?
 // (Lazada/Shopee/TikTok credentials are keyed into ZORT's own dashboard by
 // the merchant — Settings → Sales Channels — never into IDEALONE. We can
