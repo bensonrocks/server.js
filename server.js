@@ -5127,7 +5127,7 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
         // happened; the words tell them WHAT. These are the reasons recorded at
         // the time, per SKU, so the receipt explains itself without anyone
         // having to ring us.
-        damage_notes: (rec.late_damage || []).map(d => ({
+        damage_notes: (rec.late_damage || []).filter(d => !d.undone_at).map(d => ({
           sku: d.sku, qty: d.qty, condition: d.condition, reason: d.reason, at: d.at,
         })),
         can_delete: portalDeletable('inbound', rec) === null,
@@ -11214,6 +11214,11 @@ app.get('/api/inbound', (req, res) => {
       client_cancelled:  rec.client_cancelled || null,
       received_totals:   state.received_totals || null,   // sku -> qty received (for Putaway)
       putaway:           state.putaway || [],              // [{sku, location_id, qty, at, by}]
+      // The write-offs recorded after this receipt closed, so the row can show
+      // them AND offer to take a wrong one back off.
+      late_damage:       (rec.late_damage || []).filter(d => !d.undone_at)
+                           .map(d => ({ id: d.id || '', sku: d.sku, qty: d.qty, condition: d.condition,
+                                        reason: d.reason, beyond: !!d.beyond, at: d.at, by: d.by })),
       // Cargo received but parked in a staging area rather than binned — each
       // entry is a printed label stuck on the pallet.
       staging:           rec.staging || [],                // [{id, code, area, at, by, lines, units}]
@@ -11267,13 +11272,33 @@ app.post('/api/inbound/:id/damage', express.json(), (req, res) => {
   if (reason.length < 6) {
     return res.status(400).json({ error: 'Give a real reason — it goes on the client\'s record and is the only account of why the number changed.' });
   }
-  // NEVER MORE THAN WAS RECEIVED. Attributing 5 damaged units to a receipt that
-  // took 3 of that SKU is not a correction, it is a different event.
+  // ── WERE THESE UNITS COUNTED, OR NOT? Two different facts ────────────────
+  // Reported from the floor: "supposed to be 638, we already taken 2 out". The
+  // 636 on the receipt was the count AFTER the damaged pieces had been pulled
+  // aside, so those 2 never entered it. Recording them the ordinary way carves
+  // them OUT of the 636 and says good 634 — which understates the sellable
+  // stock and misstates what arrived.
+  //
+  //   • counted (default)  — of the N received, X were damaged. Received stays,
+  //                          good falls. The pieces are in stock and come off.
+  //   • beyond_received    — X MORE arrived and were never counted. Received
+  //                          rises, good stays. They were never added to stock,
+  //                          so nothing is deducted, ever.
+  //
+  // Which one it is cannot be inferred from the numbers, so the operator is
+  // asked and the answer is recorded on the entry.
+  const beyond = req.body?.beyond_received === true;
   const received = Number((state.scanned || {})[sku] || 0);
   const already = Number(((state.conditionTotals || {})[sku] || {})[condition] || 0);
-  if (!received) return res.status(400).json({ error: `${sku} was not received on this receipt, so damage cannot be attributed to it.` });
-  if (already + qty > received) {
-    return res.status(409).json({ error: `${sku} received ${received} on this receipt and ${already} ${condition} already recorded — ${qty} more would exceed what arrived.` });
+  if (!beyond) {
+    // NEVER MORE THAN WAS RECEIVED. Attributing 5 damaged units to a receipt
+    // that took 3 of that SKU is not a correction, it is a different event.
+    if (!received) return res.status(400).json({ error: `${sku} was not received on this receipt, so damage cannot be attributed to it. If these pieces arrived ON TOP of what was counted, record them as never counted instead.` });
+    if (already + qty > received) {
+      return res.status(409).json({ error: `${sku} received ${received} on this receipt and ${already} ${condition} already recorded — ${qty} more would exceed what arrived. If these pieces were never counted into the ${received}, record them as never counted instead.` });
+    }
+  } else if (!(rec.lines || []).some(l => l.sku === sku) && !received) {
+    return res.status(400).json({ error: `${sku} is not on this receipt at all — neither counted nor on the paperwork.` });
   }
   // EVIDENCE, same rule as End Receipt. A photo of the goods is best; when they
   // are long gone, the absence has to be explained rather than skipped.
@@ -11288,7 +11313,10 @@ app.post('/api/inbound/:id/damage', express.json(), (req, res) => {
   // ALREADY TAKEN OFF BY HAND? Then attribute it and DO NOT deduct again —
   // otherwise this doubles a correction somebody has already made, which is
   // exactly the trap that put a client on zero earlier today.
-  const alreadyAdjusted = req.body?.already_adjusted === true;
+  // Units that were never counted into the receipt were never added to stock
+  // either, so there is nothing to take off — deducting would remove good
+  // pieces. `beyond` therefore implies "already off" by construction.
+  const alreadyAdjusted = req.body?.already_adjusted === true || req.body?.beyond_received === true;
   const cid = invClientId(rec.client_name);
   const who = req.userId || _tokenUserId(req) || '';
   let stockAfter = null, deducted = 0;
@@ -11313,10 +11341,19 @@ app.post('/api/inbound/:id/damage', express.json(), (req, res) => {
   state.conditionTotals = state.conditionTotals || {};
   state.conditionTotals[sku] = state.conditionTotals[sku] || {};
   state.conditionTotals[sku][condition] = already + qty;
-  const good = Number(state.conditionTotals[sku].straight_to_inventory || 0);
-  if (good > 0) state.conditionTotals[sku].straight_to_inventory = Math.max(0, good - qty);
+  if (beyond) {
+    // They arrived on top of the count, so what ARRIVED goes up and the good
+    // figure is left exactly where it was — grnData derives good as
+    // received − damaged − kiv, so 636 + 2 damaged still reads good 636.
+    state.scanned = state.scanned || {};
+    state.scanned[sku] = received + qty;
+  } else {
+    const good = Number(state.conditionTotals[sku].straight_to_inventory || 0);
+    if (good > 0) state.conditionTotals[sku].straight_to_inventory = Math.max(0, good - qty);
+  }
   (rec.late_damage = rec.late_damage || []).push({
-    at: new Date().toISOString(), by: who, sku, qty, condition, reason,
+    id: uuidv4().slice(0, 8),
+    at: new Date().toISOString(), by: who, sku, qty, condition, reason, beyond,
     already_adjusted: alreadyAdjusted, deducted, no_photo_reason: hasPhoto ? '' : noPhotoWhy,
   });
   appendScanLog(state, { kind: 'late_damage', sku, qty, by: who,
@@ -11337,13 +11374,81 @@ app.post('/api/inbound/:id/damage', express.json(), (req, res) => {
   res.json({
     ok: true, sku, qty, condition, deducted, stockAfter,
     short: deducted < qty && !alreadyAdjusted ? qty - deducted : 0,
+    beyond,
     note: `${qty} ${condition === 'kiv' ? 'held' : 'damaged'} recorded against ${rec.serial || rec.id}.`
-      + (alreadyAdjusted
-          ? ' Stock was left alone — you said it had already been taken off.'
-          : ` ${deducted} unit(s) taken off stock${stockAfter !== null ? ` (now ${stockAfter})` : ''}.`)
+      + (beyond
+          ? ` They were never counted into this receipt, so what arrived is now ${received + qty} and the good count stays at ${received}. Nothing was taken off stock — they were never added to it.`
+          : alreadyAdjusted
+            ? ' Stock was left alone — you said it had already been taken off.'
+            : ` ${deducted} unit(s) taken off stock${stockAfter !== null ? ` (now ${stockAfter})` : ''}.`)
       + (deducted < qty && !alreadyAdjusted ? ` Only ${deducted} were still on hand, so the rest could not be taken off.` : '')
       + ' The client sees it on this receipt and on their stock movements.',
   });
+});
+
+// ── TAKE A RECORDED WRITE-OFF BACK OFF ──────────────────────────────────────
+// The two modes above are easy to pick the wrong way round — carving 2 out of a
+// count that never included them says good 634 when the truth is good 636 — and
+// without a way back the GRN is stuck saying it. So each entry can be removed,
+// exactly reversing what it did: the condition total comes down, a never-counted
+// entry takes its units back off what arrived, and anything it deducted from
+// stock is given back. Audited as its own event; the original entry is kept on
+// the record with when it was reversed and by whom, because a write-off that was
+// made and withdrawn is part of the history of this receipt.
+app.post('/api/inbound/:id/damage/undo', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res, 'remove a recorded write-off')) return;
+  const db = readDb();
+  const rec = findInbound(db, req.params.id);
+  if (!rec) return res.status(404).json({ error: 'Inbound record not found' });
+  const entryId = String(req.body?.entry_id || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+  const list = rec.late_damage || [];
+  const e = list.find(x => x.id === entryId && !x.undone_at);
+  if (!e) return res.status(404).json({ error: 'That write-off is not on this receipt, or has already been removed.' });
+  if (reason.length < 6) return res.status(400).json({ error: 'Give a reason — removing a write-off changes the client\'s record and the GRN.' });
+
+  const state = rec.state || (rec.state = {});
+  const who = req.userId || _tokenUserId(req) || '';
+  const cid = invClientId(rec.client_name);
+  const ct = (state.conditionTotals = state.conditionTotals || {});
+  ct[e.sku] = ct[e.sku] || {};
+  ct[e.sku][e.condition] = Math.max(0, Number(ct[e.sku][e.condition] || 0) - Number(e.qty || 0));
+  if (e.beyond) {
+    // It had raised what arrived; take those units back off it.
+    state.scanned = state.scanned || {};
+    state.scanned[e.sku] = Math.max(0, Number(state.scanned[e.sku] || 0) - Number(e.qty || 0));
+  } else {
+    ct[e.sku].straight_to_inventory = Number(ct[e.sku].straight_to_inventory || 0) + Number(e.qty || 0);
+  }
+  // Give back only what it actually took — never the quantity it claimed.
+  let restored = 0;
+  if (Number(e.deducted) > 0 && inventory.available()) {
+    try {
+      inventory.adjust(e.sku, cid, Number(e.deducted), 'adjustment',
+        `Write-off withdrawn on receipt ${rec.serial || rec.id} — ${reason}`);
+      restored = Number(e.deducted);
+    } catch (err) { console.warn('[damage-undo]', err.message); }
+  }
+  e.undone_at = new Date().toISOString(); e.undone_by = who; e.undone_reason = reason;
+  // The quarantine row it raised is no longer describing anything real.
+  for (const q of (db.quarantine || [])) {
+    if (q.sourceId === rec.id && q.sku === e.sku && q.status === 'open' && !q.withdrawn_at) {
+      q.status = 'withdrawn'; q.withdrawn_at = e.undone_at; q.withdrawn_reason = reason;
+      break;
+    }
+  }
+  appendScanLog(state, { kind: 'late_damage_undone', sku: e.sku, qty: e.qty, by: who,
+    note: `write-off of ${e.qty} ${e.condition} withdrawn — ${reason}` });
+  writeDb(db);
+  logAudit('inbound_damage_withdrawn', {
+    inboundId: rec.id, serial: rec.serial || '', client: rec.client_name || '',
+    sku: e.sku, qty: e.qty, condition: e.condition, beyond: !!e.beyond,
+    restored, reason, by: who,
+  });
+  res.json({ ok: true, sku: e.sku, qty: e.qty, restored,
+    note: `Removed ${e.qty} ${e.condition} from ${rec.serial || rec.id}.`
+      + (restored ? ` ${restored} unit(s) put back on stock.` : ' No stock moved — it had not taken any off.')
+      + ' The GRN reads as it did before.' });
 });
 
 app.post('/api/inbound/:id/photo', upload.single('photo'), tenantMiddleware, (req, res) => {
@@ -13408,7 +13513,7 @@ function grnData(rec) {
       // that already says 1 reads as two different facts. Only when a line
       // carries more than one write-off does each one need naming.
       note: (() => {
-        const ds = (rec.late_damage || []).filter(d => d.sku === sku);
+        const ds = (rec.late_damage || []).filter(d => d.sku === sku && !d.undone_at);
         if (!ds.length) return '';
         if (ds.length === 1) return String(ds[0].reason || '');
         return ds.map(d => `${d.qty} ${d.condition === 'kiv' ? 'held' : 'damaged'}: ${d.reason}`).join('; ');

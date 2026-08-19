@@ -4737,6 +4737,31 @@ stock movement whose reason names the receipt too.
   correction. That is the exact trap that put a client on zero earlier the same
   day. `already_adjusted: true` attributes it and leaves stock alone, and the
   response says which it did.
+- **COUNTED, OR NEVER COUNTED? Two different facts, and the numbers cannot tell
+  them apart.** Reported from the floor: *"supposed to be 638, we already taken
+  2 out"* — the 636 on the receipt was the count AFTER the damaged pieces were
+  pulled aside, so those 2 never entered it. Recording them the ordinary way
+  carves them OUT of the 636 and reports good 634, which understates the
+  sellable stock and misstates what arrived.
+  - **counted** (default) — of the N received, X were damaged. Received stays,
+    good falls, and the pieces come off stock because they were added to it.
+  - **`beyond_received`** — X MORE arrived and were never counted. Received
+    rises (636 → 638), good stays, and **nothing is ever deducted**: units that
+    were never counted in were never added to stock, so taking them off would
+    remove good pieces. `beyond` implies "already off" by construction.
+  The operator is asked, because only they know which happened. The line then
+  reads over the paperwork, which is the honest tally.
+- **A RECORDED WRITE-OFF CAN BE TAKEN BACK OFF** (`POST
+  /api/inbound/:id/damage/undo`, admin or master, reason of 6+). The two modes
+  are easy to pick the wrong way round and without a way back the GRN is stuck
+  saying it. It reverses exactly what the entry did — the condition total comes
+  down, a never-counted entry takes its units back off what arrived, and
+  anything it deducted is given back (only what it ACTUALLY took, never the
+  quantity it claimed). The entry is KEPT on the record marked `undone_at/by/
+  reason` — a write-off made and withdrawn is part of this receipt's history —
+  but stops being quoted on the GRN, on the client's row and on the office row.
+  Its quarantine row is marked `withdrawn`. UI: the red **⚠ N damaged** pill on
+  the Inbound row is clickable for an admin.
 - **NEVER MORE THAN ARRIVED.** Attributing 5 damaged units to a receipt that took
   3 of that SKU is not a correction, it is a different event (409, with both
   numbers).

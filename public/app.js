@@ -3083,7 +3083,10 @@
                     for (const k of Object.keys(ct)) { dmg += Number(ct[k]?.damaged || 0); kiv += Number(ct[k]?.kiv || 0); }
                     if (!dmg && !kiv) return '';
                     const bits = [dmg ? `${dmg} damaged` : '', kiv ? `${kiv} held` : ''].filter(Boolean).join(', ');
-                    return `<div class="inb-writeoff" style="color:#b91c1c;font-size:.72rem;font-weight:700;margin-bottom:.25rem;white-space:nowrap" title="Recorded against this receipt — it is on the GRN and the client sees it. These pieces arrived but are not sellable stock.">&#9888; ${bits}</div>`;
+                    // Clickable for an admin, because a write-off can be
+                    // recorded the wrong way round and the GRN is then stuck
+                    // saying it.
+                    return `<div class="inb-writeoff${isAdmin ? ' inb-writeoff-x' : ''}"${isAdmin ? ` data-inbound-undmg-id="${esc(job.id)}" role="button" tabindex="0"` : ''} style="color:#b91c1c;font-size:.72rem;font-weight:700;margin-bottom:.25rem;white-space:nowrap${isAdmin ? ';cursor:pointer;text-decoration:underline dotted' : ''}" title="${isAdmin ? 'Recorded against this receipt — click to review or take one back off. ' : ''}It is on the GRN and the client sees it. These pieces arrived but are not sellable stock.">&#9888; ${bits}</div>`;
                   })()}
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
@@ -3115,6 +3118,36 @@
     });
     list.querySelectorAll('[data-inbound-grndl-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); grnDownload(btn.dataset.inboundGrndlId); });
+    });
+    // TAKE A WRONG WRITE-OFF BACK OFF. The two modes (counted vs never counted)
+    // are easy to pick the wrong way round; without this the GRN keeps saying it.
+    list.querySelectorAll('[data-inbound-undmg-id]').forEach(el => {
+      el.addEventListener('click', async e => {
+        e.stopPropagation();
+        const id = el.dataset.inboundUndmgId;
+        const job = (inboundJobs || []).find(j => j.id === id);
+        const rows = (job?.late_damage || []);
+        if (!rows.length) { alert('Nothing recorded to take back off.'); return; }
+        const pick = prompt(`Recorded write-offs on this receipt:\n\n${
+          rows.map((d, i) => `${i + 1}. ${d.sku} — ${d.qty} ${d.condition}${d.beyond ? ' (never counted in)' : ' (out of the counted qty)'}\n    ${d.reason}`).join('\n')
+        }\n\nType the number to REMOVE one, or Cancel to leave them as they are.`);
+        if (!pick || !/^\d+$/.test(pick.trim())) return;
+        const d = rows[Number(pick.trim()) - 1];
+        if (!d) { alert('That is not one of them.'); return; }
+        const why = prompt(`Why is this write-off being removed?\n\n${d.sku} — ${d.qty} ${d.condition}\n"${d.reason}"\n\nIt goes on the record, and the GRN goes back to what it said before.`);
+        if (!why || why.trim().length < 6) { alert('Not removed — a real reason is needed.'); return; }
+        try {
+          const r = await fetch(`/api/inbound/${id}/damage/undo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+            body: JSON.stringify({ entry_id: d.id, reason: why.trim() }),
+          });
+          const out = await r.json().catch(() => ({}));
+          if (!r.ok) { alert(out.error || 'Could not remove it.'); return; }
+          alert(out.note || 'Removed.');
+          renderInboundTab();
+        } catch (_) { alert('Could not reach the server.'); }
+      });
     });
     list.querySelectorAll('[data-inbound-dmg-id]').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); recordLateDamage(btn.dataset.inboundDmgId); });
@@ -3377,7 +3410,20 @@
     // THE ONE QUESTION THAT MATTERS: has the stock already been taken off? If it
     // has and we deduct again, the correction doubles — the exact trap that put a
     // client on zero earlier. So it is asked plainly rather than assumed.
-    const already = confirm(
+    // ── WERE THESE COUNTED, OR NOT? Reported from the floor: "supposed to be
+    //    638, we already taken 2 out" — the 636 on the receipt was the count
+    //    AFTER the damaged pieces were pulled aside, so carving them out of it
+    //    says good 634 and understates the stock by 2. The numbers cannot tell
+    //    the two apart, so it is asked.
+    const counted = Number(counts[sku] || 0);
+    const beyond = !confirm(
+      `Were these ${qty} unit(s) part of the ${counted} already counted on this receipt?\n\n`
+      + `OK  = yes — of the ${counted} received, ${qty} were damaged (received stays ${counted}, good becomes ${Math.max(0, counted - qty)})\n`
+      + `Cancel = no, they were NEVER counted — pulled aside before counting `
+      + `(received becomes ${counted + qty}, good stays ${counted})`);
+    // Units never counted in were never added to stock, so there is nothing to
+    // take off and the question does not arise.
+    const already = beyond ? true : confirm(
       `Has this stock ALREADY been taken off inventory by hand?\n\n`
       + `OK  = yes, it is already off — just attribute it to this receipt\n`
       + `Cancel = no, take ${qty} unit(s) off now\n\n`
@@ -3385,7 +3431,7 @@
     const send = extra => fetch(`/api/inbound/${id}/damage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
-      body: JSON.stringify({ sku, qty, reason: reason.trim(), already_adjusted: already, ...extra }),
+      body: JSON.stringify({ sku, qty, reason: reason.trim(), already_adjusted: already, beyond_received: beyond, ...extra }),
     });
     try {
       let r = await send({});
