@@ -1234,11 +1234,19 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     reports it with the top consumers named. Counting only — a meter that can
     refuse work is a second failure mode. It resets on restart, so it is a
     FLOOR, not a total, and says so.
-  - **THE METER SETTLED ONE QUESTION AND OPENED ANOTHER.** It read **3 of
-    50,000**, so we are nowhere near the limit and `resCode 100 — API Request
-    Limits` is ZORT's STANDARD NOTICE attached to a reply, **not** "you have
-    used your quota". Do not read it as exhaustion again. Something else makes
-    order reads come back empty.
+  - **THE METER READ 3 OF 50,000 AND THAT NUMBER WAS NOT TRUSTWORTHY.** The two
+    label endpoints go out through a RAW fetch — they answer with PDF bytes, not
+    JSON — so they never passed through `zortRequest` and were never counted,
+    and the label wait loop was the single biggest consumer we had. Both are
+    counted now. Any usage figure taken before that fix understates it, possibly
+    by a lot.
+  - **THE PROBE SAID EVERY ENDPOINT ANSWERS WITH THE SAME EMPTY ENVELOPE** —
+    `{resCode:"100", resDesc:"API Request Limits (50000 requests/day)",
+    detail:null}` — for `Merchant/GetMerchantProfile` and `Order/GetOrders`
+    alike, so the list read fails too and there is no order to test the detail
+    read with. That is not a per-order fault: **the account is refused at the
+    gate**, and nothing on this side changes it. It is a question for ZORT about
+    the account's daily usage and whether the key is throttled or suspended.
   - **🧪 Probe** (`POST /api/master/zort/stores/:id/probe`, admin or master,
     read-only, FOUR calls) asks the hub four questions and prints its raw
     answers: ValidateApi → GetMerchantProfile → GetOrders(limit 1) →
@@ -1248,6 +1256,12 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     is not permitted to read order detail), and those two answers are the
     evidence to send them. If both work, the ids WE hold for the affected orders
     are the next thing to check. Credentials are never echoed back.
+    **A REPLY THAT CARRIES NO DATA IS NOT A SUCCESSFUL READ** — the first cut
+    ticked every step that did not throw, so GetOrders showed ✓ while answering
+    with nothing. That is the same overclaim this whole thread is about, made by
+    the tool built to diagnose it. A bare success CODE still counts for
+    ValidateApi, which has no payload to give; the quota-notice envelope never
+    counts, whichever endpoint returns it.
   - **WAITING FOR A LABEL WAS THE BIGGEST CONSUMER.** A flat 60s retry for up to
     a day is **1,440 calls per unlabelled order** — and on a morning when
     nothing reaches Ready-to-Ship, every one of those orders is waiting for a

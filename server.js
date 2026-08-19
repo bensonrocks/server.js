@@ -20625,19 +20625,38 @@ app.post('/api/master/zort/stores/:id/probe', async (req, res) => {
     if (typeof d !== 'object') return typeof d;
     return Array.isArray(d) ? `array(${d.length})` : `keys: ${Object.keys(d).slice(0, 15).join(', ') || '(none)'}`;
   };
-  const run = async (name, what, fn) => {
+  // A REPLY THAT CARRIES NO DATA IS NOT A SUCCESSFUL READ. The first cut ticked
+  // every step that did not throw — so GetOrders showed ✓ while answering with
+  // nothing but `resCode 100 … detail: null`. That is the same overclaim this
+  // whole thread has been about, made by the tool built to diagnose it.
+  const carriesData = d => {
+    if (!d || typeof d !== 'object') return false;
+    return ['list', 'orders', 'order', 'detail', 'data', 'products', 'items', 'count', 'status', 'number', 'id']
+      .some(k => d[k] !== undefined && d[k] !== null
+             && !(Array.isArray(d[k]) && d[k].length === 0));
+  };
+  // A bare success CODE is a complete answer for ValidateApi — that endpoint has
+  // no payload to give. The quota-notice envelope (code 100 and nothing else) is
+  // never a success, whichever endpoint returns it.
+  const successCode = d => {
+    const c = String(d?.resCode ?? d?.rescode ?? d?.code ?? '').trim().toLowerCase();
+    return c === '200' || c === 'success' || c === 'ok';
+  };
+  const run = async (name, what, fn, { needsData = true } = {}) => {
     try {
       const d = await fn();
-      steps.push({ name, what, ok: true, shape: shape(d),
+      const got = carriesData(d) || (!needsData && successCode(d));
+      steps.push({ name, what, ok: got, shape: shape(d),
+        ...(got ? {} : { error: 'answered, but with no data in it' }),
         sample: JSON.stringify(d).slice(0, 600) });
-      return d;
+      return got ? d : null;
     } catch (e) {
       steps.push({ name, what, ok: false, error: String(e.message || e).slice(0, 400) });
       return null;
     }
   };
 
-  await run('ValidateApi', 'Are the credentials accepted?', () => zortApi.validateApi(store));
+  await run('ValidateApi', 'Are the credentials accepted?', () => zortApi.validateApi(store), { needsData: false });
   await run('GetMerchantProfile', 'Does any authenticated read work?',
     () => zortApi.zortRequest(store, 'GET', 'Merchant/GetMerchantProfile'));
   const list = await run('GetOrders', 'Does the order LIST read work?',
@@ -20655,13 +20674,21 @@ app.post('/api/master/zort/stores/:id/probe', async (req, res) => {
   const listOk = steps.find(s => s.name === 'GetOrders')?.ok;
   const detail = steps.find(s => s.name === 'GetOrderDetail');
   const detailUsable = !!detail?.ok && /status|number\b/.test(detail.sample || '');
-  const verdict = !steps[0]?.ok
-    ? 'The credentials are not being accepted — nothing else here is meaningful until that is fixed.'
-    : listOk && detail && !detailUsable
-      ? `The hub LISTS orders but returns no order for id ${hubId} — its own id, from its own list, one call earlier. That is a fault on the channel's side (most likely this API key is not permitted to read order detail), and these two answers are the evidence to send them.`
-      : listOk && detailUsable
-        ? 'Both reads work right now. So the empty replies were not permanent — the order ids WE hold for the affected orders are the next thing to check (🔍 Find order gives the hub\'s own id for one).'
-        : 'The list read failed — see the answers below.';
+  // EVERY endpoint answering with the same empty envelope is not a per-order
+  // problem — the account is being refused at the gate, and no change on this
+  // side will alter that.
+  const allEmpty = steps.length >= 3
+    && steps.slice(0, 3).every(s => !s.ok && /no data|Request Limits/i.test(`${s.error || ''}${s.sample || ''}`));
+  const limitNotice = steps.some(s => /API Request Limits/i.test(s.sample || ''));
+  const verdict = allEmpty && limitNotice
+    ? 'EVERY endpoint is answering with the same empty envelope carrying "API Request Limits" and no data — not just order detail. The account is being refused at the gate, so nothing on this side can change it: it is a question for the channel about this account\'s daily usage and whether the key is throttled or suspended. Send them these raw answers.'
+    : !steps[0]?.ok
+      ? 'The credentials are not being accepted — nothing else here is meaningful until that is fixed.'
+      : listOk && detail && !detailUsable
+        ? `The hub LISTS orders but returns no order for id ${hubId} — its own id, from its own list, one call earlier. That is a fault on the channel's side (most likely this API key is not permitted to read order detail), and these two answers are the evidence to send them.`
+        : listOk && detailUsable
+          ? 'Both reads work right now. So the empty replies were not permanent — the order ids WE hold for the affected orders are the next thing to check (🔍 Find order gives the hub\'s own id for one).'
+          : 'The list read is answering with no data, so there was no order to test the detail read with — see the raw answers below.';
 
   logAudit('zort_probe', { storeId: store.id, client: store.clientName || '',
     by: req.userId || _tokenUserId(req) || '',
