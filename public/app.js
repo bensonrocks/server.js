@@ -11630,13 +11630,25 @@
         return `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">${name}</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${rows.map(x => `<div>${x}</div>`).join('')}</div></div>`;
       };
       const hubRows = (h.hub || []).map(s =>
-        `${dot(!s.enabled ? N : s.outboxStalled ? R : G)}<b>${esc(s.client || s.id)}</b> — ${s.enabled ? 'enabled' : 'off'} · last pull: ${when(s.lastPullAt)} · queue: ${s.outboxPending} pending${s.outboxStalled ? `, <span style="color:#dc2626">${s.outboxStalled} stalled</span>` : ''}`);
+        `${dot(!s.enabled ? N : (s.outboxStalled || s.quiet) ? R : G)}<b>${esc(s.client || s.id)}</b> — ${s.enabled ? 'enabled' : 'off'} · last pull: ${when(s.lastPullAt)} · queue: ${s.outboxPending} pending${s.outboxStalled ? `, <span style="color:#dc2626">${s.outboxStalled} stalled</span>` : ''}${s.quiet ? ' · <span style="color:#dc2626">the channel is not answering — the queue is held so we stop spending its request limit</span>' : ''}`);
+      // WHAT WE ARE SPENDING. The daily request limit is what stopped a
+      // morning's parcels, and "are we near it?" must be readable rather than
+      // argued about — with the biggest consumer named.
+      const hc = h.hubCalls || {};
+      const callCol = hc.pctOfLimit >= 80 ? R : hc.pctOfLimit >= 50 ? A : G;
+      const callRows = `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Channel API usage today</b>
+        <div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">
+          <div>${dot(callCol)}<b>${(hc.total || 0).toLocaleString()}</b> of ${(hc.limit || 50000).toLocaleString()} requests (${hc.pctOfLimit || 0}%) — ${esc(hc.day || '')}</div>
+          ${(hc.top || []).map(t => `<div style="color:#64748b;padding-left:1.1rem">${esc(t.path)} — ${t.count.toLocaleString()}</div>`).join('')}
+          <div class="hint" style="color:#94a3b8">${esc(hc.note || '')}</div>
+        </div></div>`;
       const om = h.onemap || {};
       out.innerHTML =
         mpSection('Lazada — direct', h.lazada) +
         mpSection('Shopee — direct', h.shopee) +
         `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">TikTok</b><div style="font-size:12px;margin-top:.25rem">${dot(N)}${esc(h.tiktok?.note || 'Via the Sales Channel Hub.')}</div></div>` +
         `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Sales Channel Hub</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${hubRows.length ? hubRows.map(x => `<div>${x}</div>`).join('') : `<div>${dot(N)}No stores connected.</div>`}</div></div>` +
+        callRows +
         `<div><b style="font-size:.85rem">Road distances (OneMap)</b><div style="font-size:12px;margin-top:.25rem">${dot(om.tokenValid ? G : A)}${om.tokenValid ? `Routing token valid until ${when(om.expiresAt)}${om.canRefresh ? ' · auto-refreshes' : ' · no auto-refresh (add email+password)'}` : 'No routing token — distances fall back to estimates'} · ${om.geocodeCached || 0} postal code(s) cached</div></div>` +
         `<div class="hint" style="margin-top:.6rem;color:#94a3b8">Snapshot at ${when(h.generatedAt)} — read-only, nothing was changed.</div>`;
     } catch (e) { out.innerHTML = `<div class="hint" style="color:#dc2626">${esc(e.message)}</div>`; }

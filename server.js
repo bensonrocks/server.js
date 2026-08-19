@@ -18251,7 +18251,27 @@ app.get('/api/master/connections/health', (req, res) => {
       lastResultOk: s.lastResult ? !s.lastResult.error : null,
       outboxPending: (db.zortOutbox || []).filter(o => o.storeId === s.id && !o.stalled).length,
       outboxStalled: (db.zortOutbox || []).filter(o => o.storeId === s.id && o.stalled).length,
+      // Is the hub currently refusing to answer this store? A held queue with
+      // no explanation reads as a stuck queue.
+      quiet: zortHubIsQuiet(s),
     })),
+    // ── WHAT WE ARE SPENDING AGAINST THE HUB'S DAILY LIMIT ───────────────────
+    // ZORT meters at 50,000 requests/day and, when it stops answering, says so
+    // in a notice carrying no order — which cost a morning of parcels. "Are we
+    // near it?" has to be readable, not estimated. Counted per SGT day, in the
+    // one place every call goes through, and broken down by endpoint so the
+    // biggest consumer is obvious rather than argued about.
+    hubCalls: (() => {
+      const st = zortApi.getCallStats ? zortApi.getCallStats() : { day: '', total: 0, byPath: {} };
+      const top = Object.entries(st.byPath || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
+        .map(([path, count]) => ({ path, count }));
+      return {
+        day: st.day, total: st.total, limit: 50000,
+        pctOfLimit: Math.round((st.total / 50000) * 1000) / 10,
+        top,
+        note: 'Counted since this server last started, for today (SGT). A restart resets it, so it is a floor, not a total.',
+      };
+    })(),
     onemap: (() => {
       const t = (db.config || {}).onemapToken; const nowS = Math.floor(now / 1000);
       return {
@@ -19871,8 +19891,11 @@ async function zortHubState(store, zortId) {
     if (!looksLikeOrder) {
       const notice = [d?.resCode ?? d?.rescode, String(d?.resDesc ?? d?.resdesc ?? '').trim()]
         .filter(x => x !== undefined && x !== null && x !== '').join(' — ');
-      return { read: false, status: '', integration: '',
-               why: notice ? `the hub answered with no order — ${notice}` : 'the hub answered with no order' };
+      const why = notice ? `the hub answered with no order — ${notice}` : 'the hub answered with no order';
+      // Everything queued for this store is about to hit the same wall, and
+      // each attempt spends the quota that is blocking us. Go quiet.
+      zortHubWentQuiet(store, why);
+      return { read: false, status: '', integration: '', why };
     }
     return {
       read: true,
@@ -20372,6 +20395,51 @@ async function _zortSendOutboxEntry(db, store, entry) {
 // How often to re-ask for a label that has not been generated yet. Flat, not
 // exponential — the wait is the channel's, not a fault of ours.
 const ZORT_LABEL_RETRY_MS = Math.max(1000, Number(process.env.ZORT_LABEL_RETRY_MS) || 60000);
+// ── WAITING FOR A LABEL COSTS REQUESTS ──────────────────────────────────────
+// A flat 60s wait for up to a day is 1,440 calls PER unlabelled order, and on a
+// morning when nothing is reaching Ready-to-Ship — the exact case that exhausted
+// the quota — every one of those orders is waiting for a label that cannot
+// exist yet. A channel that has not produced a label in ten minutes will not
+// produce one in the next sixty seconds either.
+//
+// So the wait grows: quick at first, because the common case really is a label
+// appearing a few minutes after the order, then backing off. Over 24h this is
+// about 40 calls instead of 1,440 — and a label generated at any point is still
+// picked up within its current step. `ZORT_LABEL_RETRY_MS` still overrides it
+// flat for tests, which is the only way to exercise a ladder measured in hours.
+const ZORT_LABEL_WAIT_LADDER_MS = [60000, 60000, 60000, 120000, 300000, 600000, 900000, 1800000];
+function _zortLabelWaitMs(waits) {
+  if (Number(process.env.ZORT_LABEL_RETRY_MS) > 0) return ZORT_LABEL_RETRY_MS;
+  return ZORT_LABEL_WAIT_LADDER_MS[Math.min(Math.max(0, waits - 1), ZORT_LABEL_WAIT_LADDER_MS.length - 1)]
+      ?? 3600000;
+}
+// ── WHEN THE HUB IS ANSWERING NOTHING, STOP ASKING ──────────────────────────
+// Every call made while it is returning its request-limit notice is a call that
+// cannot succeed AND one more against the very limit that is blocking us — the
+// retries make the recovery slower. So a store that answers with no order at
+// all goes quiet for a few minutes. Entries are HELD, not failed: nothing
+// stalls and no attempt is counted, because the hub being down is not the
+// order's fault. In memory on purpose — it is a live condition, not a setting,
+// and a restart should re-test rather than inherit a pause.
+const ZORT_HUB_QUIET_MS = Math.max(1000, Number(process.env.ZORT_HUB_QUIET_MS) || 5 * 60000);
+const _zortHubQuiet = new Map();   // storeId -> quiet-until epoch ms
+function zortHubWentQuiet(store, why) {
+  if (!store?.id) return;
+  const until = Date.now() + ZORT_HUB_QUIET_MS;
+  const had = _zortHubQuiet.get(store.id) || 0;
+  _zortHubQuiet.set(store.id, until);
+  if (had <= Date.now()) {
+    logAudit('zort_hub_quiet', { storeId: store.id, client: store.clientName || '', why: String(why || '').slice(0, 200),
+      forMinutes: Math.round(ZORT_HUB_QUIET_MS / 60000) });
+  }
+}
+const zortHubIsQuiet = store => (_zortHubQuiet.get(store?.id) || 0) > Date.now();
+
+// One pass never makes more than this many sends. A backlog that all comes due
+// at once would otherwise fire hundreds of calls in one tick; the rest simply
+// wait for the next pass 30 seconds later, which nothing depends on.
+const ZORT_DRAIN_MAX_PER_PASS = Math.max(1, Number(process.env.ZORT_DRAIN_MAX_PER_PASS) || 25);
+
 let _zortOutboxDraining = false;
 async function drainZortOutbox() {
   if (_zortOutboxDraining) return;
@@ -20381,12 +20449,15 @@ async function drainZortOutbox() {
     const ob = zortOutbox(db);
     if (!ob.length) return;
     const now = Date.now();
-    let changed = false;
+    let changed = false, sent = 0;
     const remaining = [];
     for (const entry of ob) {
       if (new Date(entry.nextAttemptAt).getTime() > now) { remaining.push(entry); continue; }
+      if (sent >= ZORT_DRAIN_MAX_PER_PASS) { remaining.push(entry); continue; }
       const store = zortStores(db).find(s => s.id === entry.storeId);
       if (!store || !store.enabled) { remaining.push(entry); continue; } // store paused — hold, don't drop
+      if (zortHubIsQuiet(store)) { remaining.push(entry); continue; }    // hub is not answering — hold
+      sent++;
       try {
         await _zortSendOutboxEntry(db, store, entry);
         changed = true; // success → drop entry (not pushed to remaining)
@@ -20398,9 +20469,12 @@ async function drainZortOutbox() {
         if (err.notReady) {
           entry.waits = (entry.waits || 0) + 1;
           entry.lastError = 'Waiting for the channel to generate the label';
-          entry.nextAttemptAt = new Date(now + ZORT_LABEL_RETRY_MS).toISOString();
-          // A day of waiting is long enough to say something is wrong.
-          if (entry.waits * ZORT_LABEL_RETRY_MS > 24 * 3600 * 1000 && !entry.stalled) {
+          entry.nextAttemptAt = new Date(now + _zortLabelWaitMs(entry.waits)).toISOString();
+          entry.waitedMs = (entry.waitedMs || 0) + _zortLabelWaitMs(entry.waits);
+          // A day of waiting is long enough to say something is wrong. Measured
+          // in ELAPSED time, not in attempts — the ladder means those are no
+          // longer the same thing.
+          if ((entry.waitedMs || 0) > 24 * 3600 * 1000 && !entry.stalled) {
             entry.stalled = true;
             logAudit('sync_label_never_arrived', { storeId: store.id, order: entry.orderNumber, waits: entry.waits });
           }

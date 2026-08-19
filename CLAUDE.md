@@ -1226,6 +1226,34 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     — every order behind it is stuck the same way, so it is not one order's bad
     luck. `zortBodyError` itself is unchanged; narrowing it again would repeat
     the outage it caused.
+  - **HOW MANY CALLS A DAY — counted, not estimated.** ZORT meters at **50,000
+    requests/day** and, when it stops answering, says so in a notice carrying no
+    order; "are we near it?" was unanswerable from anything we held.
+    `zortApi.getCallStats()` counts every call at the ONE place they all go
+    through, per SGT day and per endpoint, and `/api/master/connections/health`
+    reports it with the top consumers named. Counting only — a meter that can
+    refuse work is a second failure mode. It resets on restart, so it is a
+    FLOOR, not a total, and says so.
+  - **WAITING FOR A LABEL WAS THE BIGGEST CONSUMER.** A flat 60s retry for up to
+    a day is **1,440 calls per unlabelled order** — and on a morning when
+    nothing reaches Ready-to-Ship, every one of those orders is waiting for a
+    label that cannot exist yet. `ZORT_LABEL_WAIT_LADDER_MS` grows the wait
+    (1m ×3, 2m, 5m, 10m, 15m, then 30m): **54 calls for the same 24 hours**,
+    with the first minutes still quick because the common case really is a label
+    appearing shortly after the order. The stall limit is now measured in
+    ELAPSED time (`waitedMs`), since attempts and hours are no longer the same
+    thing.
+  - **WHEN THE HUB ANSWERS NOTHING, STOP ASKING** (`zortHubWentQuiet`,
+    `ZORT_HUB_QUIET_MS` 5 min). Every call made while it returns the
+    request-limit notice cannot succeed AND spends the limit that is blocking
+    us, so the retries slow the recovery down. The store goes quiet and its
+    entries are **HELD, not failed** — no attempt counted, nothing stalled,
+    because the hub being down is not the order's fault. In memory on purpose: a
+    live condition, not a setting, and a restart should re-test rather than
+    inherit a pause. Shown on the health panel in words.
+  - **ONE PASS NEVER SENDS MORE THAN `ZORT_DRAIN_MAX_PER_PASS` (25).** A backlog
+    all coming due at once would otherwise fire hundreds of calls in one tick;
+    the rest wait 30 seconds for the next pass, which nothing depends on.
   - **ONE READ, NOT TWO.** The arrange path fetched the same order detail twice
     per attempt (status, then shipment channel). `zortHubState` carries the
     channel fields and `zortShipmentFrom(state)` derives them, which halves the
