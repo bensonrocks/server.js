@@ -1262,6 +1262,18 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     the tool built to diagnose it. A bare success CODE still counts for
     ValidateApi, which has no payload to give; the quota-notice envelope never
     counts, whichever endpoint returns it.
+  - **AND IT WAS AIMED AT THE WRONG ENDPOINT.** The hub's own activity log
+    (369,278 requests in 14 days, against a 50,000/day limit) is almost entirely
+    label calls — and shows `Order/GetShipmentLabels` succeeding while every
+    `Order/GetShipmentLabelFile` beside it answers `resCode 100 "Invalid ID."`
+    or a 500 timeout. **`GetShipmentLabelFile` is not on the v4 docs page at
+    all** — the same trap as `Order/PackOrder`, and from the same old Postman
+    collection. We were trying it FIRST, so every label attempt cost two calls
+    and the first could never work. The documented list endpoint now goes first;
+    the undocumented one is a fallback, and a store that has refused it three
+    times (`store.labelFileFails`) is never asked again — it is undocumented, so
+    a store where it does not work is one where it never will. The counter is on
+    the store record, so a restart does not relearn it by burning more calls.
   - **WAITING FOR A LABEL WAS THE BIGGEST CONSUMER.** A flat 60s retry for up to
     a day is **1,440 calls per unlabelled order** — and on a morning when
     nothing reaches Ready-to-Ship, every one of those orders is waiting for a
