@@ -3067,6 +3067,24 @@
                 </td>
                 <td>${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
                 <td>
+                  ${(() => {
+                    // NOT ALL OF WHAT ARRIVED IS SELLABLE, and the list never said
+                    // so — only the GRN did. Reported from the floor as "record
+                    // damage done but the GRN doesn't reflect": with nothing on the
+                    // row there was no way to tell a write-off that landed from one
+                    // that never did.
+                    //
+                    // It lives in the ACTIONS cell because that is the ONLY one
+                    // that survives on a phone — the quantity and status cells are
+                    // both display:none under 768px, and the phone is the device
+                    // the floor actually works from.
+                    const ct = job.conditionTotals || {};
+                    let dmg = 0, kiv = 0;
+                    for (const k of Object.keys(ct)) { dmg += Number(ct[k]?.damaged || 0); kiv += Number(ct[k]?.kiv || 0); }
+                    if (!dmg && !kiv) return '';
+                    const bits = [dmg ? `${dmg} damaged` : '', kiv ? `${kiv} held` : ''].filter(Boolean).join(', ');
+                    return `<div class="inb-writeoff" style="color:#b91c1c;font-size:.72rem;font-weight:700;margin-bottom:.25rem;white-space:nowrap" title="Recorded against this receipt — it is on the GRN and the client sees it. These pieces arrived but are not sellable stock.">&#9888; ${bits}</div>`;
+                  })()}
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-grn-id="${esc(job.id)}" title="Goods Received Note — expected vs received vs damaged, printable proof of receipt">&#128196; GRN</button>` : ''}
@@ -3332,9 +3350,25 @@
     const counts = job?.scanned || {};
     const skus = Object.keys(counts).length ? Object.keys(counts)
                : (job?.lines || []).map(l => l.sku).filter(Boolean);
-    const sku = prompt(`Which SKU was damaged?${skus.length ? `\n\nOn this receipt:\n${skus.slice(0, 25).map(k => `• ${k}${counts[k] ? ` (${counts[k]} received)` : ''}`).join('\n')}` : ''}`);
-    if (!sku || !sku.trim()) return;
-    const qtyRaw = prompt(`How many units of ${sku.trim()} were damaged?`);
+    // A TYPED SKU HAS TO MATCH WHAT WAS RECEIVED, EXACTLY. The server attributes
+    // damage against `state.scanned[sku]`, so a different case or a mistyped
+    // character is refused — and on codes like OTMMO40DXXBKMY that is not a
+    // remote risk. So the received SKUs are NUMBERED and either the number or
+    // the code (case-insensitively) is accepted, and anything that does not
+    // resolve is said here rather than sent to be rejected.
+    const typed = prompt(`Which SKU was damaged?${skus.length
+      ? `\n\nType the number, or the code:\n${skus.slice(0, 25).map((k, i) => `${i + 1}. ${k}${counts[k] ? ` (${counts[k]} received)` : ''}`).join('\n')}`
+      : ''}`);
+    if (!typed || !typed.trim()) return;
+    const want = typed.trim();
+    const byIndex = /^\d+$/.test(want) && skus[Number(want) - 1];
+    const sku = byIndex || skus.find(k => k.toLowerCase() === want.toLowerCase()) || '';
+    if (!sku) {
+      alert(`"${want}" is not one of the SKUs received on this receipt, so damage cannot be attributed to it.`
+        + (skus.length ? `\n\nReceived here:\n${skus.slice(0, 25).map((k, i) => `${i + 1}. ${k}`).join('\n')}` : ''));
+      return;
+    }
+    const qtyRaw = prompt(`How many units of ${sku} were damaged?`);
     if (!qtyRaw) return;
     const qty = parseInt(qtyRaw, 10);
     if (!Number.isFinite(qty) || qty <= 0) { alert('That is not a number of units.'); return; }
@@ -3351,7 +3385,7 @@
     const send = extra => fetch(`/api/inbound/${id}/damage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
-      body: JSON.stringify({ sku: sku.trim(), qty, reason: reason.trim(), already_adjusted: already, ...extra }),
+      body: JSON.stringify({ sku, qty, reason: reason.trim(), already_adjusted: already, ...extra }),
     });
     try {
       let r = await send({});
