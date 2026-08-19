@@ -1274,6 +1274,17 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     times (`store.labelFileFails`) is never asked again — it is undocumented, so
     a store where it does not work is one where it never will. The counter is on
     the store record, so a restart does not relearn it by burning more calls.
+  - **AND "GetShipmentLabels SUCCESS" IS NOT "WE GOT A LABEL".** Reported from
+    the floor with the hub's log open: the documented call succeeds and no label
+    appears here. `fetchLabelPdf` returned a bare `null` for every outcome, and
+    the caller reported all of them as *"not generated yet"* — so a hub that
+    HANDED US something we cannot import was waited on for ever, one request
+    every few minutes. `Format` is documented as **Pdf, Html or Url** and there
+    is no server-side way to render HTML (playwright is a DEV dependency only).
+    So the two are now separated: an EMPTY list is a genuine wait and keeps the
+    flat ladder; rows we could not turn into a PDF are a real fault that names
+    what the channel offered (`sync_label_unusable`, "print it from the channel
+    for now") and stalls instead of retrying for a day.
   - **WAITING FOR A LABEL WAS THE BIGGEST CONSUMER.** A flat 60s retry for up to
     a day is **1,440 calls per unlabelled order** — and on a morning when
     nothing reaches Ready-to-Ship, every one of those orders is waiting for a

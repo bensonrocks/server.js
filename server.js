@@ -9422,6 +9422,7 @@ const SYNC_ACTIVITY_EVENTS = {
   sync_label_imported:          { what: 'Carrier label fetched and attached', good: true },
   sync_label_via_fallback:      { what: 'Label located', good: true },
   sync_label_never_arrived:     { what: 'The channel never produced a label', good: false },
+  sync_label_unusable:          { what: 'The channel has a label, but not in a form we can import — print it from the channel', good: false },
   sync_label_fetch_cancelled:   { what: 'Label fetch cancelled (label pull switched off)', good: false },
   zort_order_voided:            { what: 'The channel cancelled this order', good: false },
   zort_order_void_conflict:     { what: 'The channel cancelled it but work had started here', good: false },
@@ -20112,15 +20113,46 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // orders sat with a waybill and no printable label. fetchLabelPdf tries
     // the file endpoint, then the documented list endpoint's linkurl and
     // inline Data, and only reports absence when all three come back empty.
-    const got = await zortApi.fetchLabelPdf(store, { id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking, labelUrl: entry.labelUrl });
+    // THE UNDOCUMENTED FILE ENDPOINT RETIRES ITSELF. It is not on the v4 docs
+    // page, so a store where it refuses is a store where it always will — and
+    // on this account it answers `Invalid ID` every time while the documented
+    // list endpoint works. Three refusals and we stop asking, which is three
+    // wasted requests instead of one per label for ever. Recorded on the store
+    // in the SAME write that updates the outbox entry, because that write is
+    // the one that provably lands.
+    const got = await zortApi.fetchLabelPdf(store, {
+      id: entry.zortId, number: entry.orderNumber, tracking: entry.tracking, labelUrl: entry.labelUrl,
+      skipFileEndpoint: (_zortLabelFileFails.get(store.id) || 0) >= ZORT_LABEL_FILE_GIVEUP,
+    });
+    if (got && got.fileTried) {
+      const n = got.fileWorked ? 0 : (_zortLabelFileFails.get(store.id) || 0) + 1;
+      _zortLabelFileFails.set(store.id, n);
+      if (n === ZORT_LABEL_FILE_GIVEUP) {
+        logAudit('zort_label_file_endpoint_retired', {
+          storeId: store.id, client: store.clientName || '',
+          why: 'Order/GetShipmentLabelFile is not in the v4 docs and this store has refused it three times — it will not be called again until a restart',
+        });
+      }
+    }
     const pdf = got && got.pdf;
     if (got && got.via && got.via !== 'file') {
       logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: got.via });
     }
     if (!pdf) {
-      // Not generated yet. That is not a failure — it is "come back later", so
-      // it is thrown to get the normal backoff rather than dropped.
-      const e = new Error('Label not available yet');
+      // AN EMPTY ANSWER AND AN UNUSABLE ONE ARE DIFFERENT FACTS. "The channel
+      // has not generated it yet" is a wait, and gets the flat ladder. But a
+      // channel that HANDED US something we cannot import — an HTML label, a
+      // link that will not fetch — is never going to resolve itself, and
+      // waiting on it costs a request every few minutes for a day. Reported
+      // live as "GetShipmentLabels succeeds but I don't get the labels".
+      if (got && got.why === 'unusable') {
+        logAudit('sync_label_unusable', {
+          order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+          offered: (got.offered || []).slice(0, 10), detail: String(got.detail || '').slice(0, 200),
+        });
+        throw new Error(`The channel has a label for this order but not in a form we can import — ${got.detail}. Print it from the channel for now.`);
+      }
+      const e = new Error(got?.detail ? `Label not available yet — ${got.detail}` : 'Label not available yet');
       e.notReady = true;
       throw e;
     }
@@ -20505,6 +20537,21 @@ function _zortLabelWaitMs(waits) {
   return ZORT_LABEL_WAIT_LADDER_MS[Math.min(Math.max(0, waits - 1), ZORT_LABEL_WAIT_LADDER_MS.length - 1)]
       ?? 3600000;
 }
+// ── THE UNDOCUMENTED LABEL ENDPOINT RETIRES ITSELF ──────────────────────────
+// `Order/GetShipmentLabelFile` is not on the v4 docs page — the same trap as
+// `Order/PackOrder` — and on this account it answers `resCode 100 "Invalid ID."`
+// every time while the documented list endpoint works. Three refusals and a
+// store stops being asked: undocumented means a store where it does not work is
+// one where it never will, and asking anyway spends the request limit that is
+// already the problem.
+//
+// IN MEMORY, deliberately — the same reasoning as `_zortHubQuiet` below. It is
+// a live observation about a hub, not a setting somebody chose, and a restart
+// should re-test rather than inherit it. (It also cannot be lost to a
+// write-ordering race, which a field on the store record demonstrably could.)
+const ZORT_LABEL_FILE_GIVEUP = 3;
+const _zortLabelFileFails = new Map();   // storeId -> consecutive refusals
+
 // ── WHEN THE HUB IS ANSWERING NOTHING, STOP ASKING ──────────────────────────
 // Every call made while it is returning its request-limit notice is a call that
 // cannot succeed AND one more against the very limit that is blocking us — the
