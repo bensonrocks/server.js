@@ -20019,7 +20019,11 @@ async function zortHubState(store, zortId) {
 
 // The shipment facts out of an ALREADY-READ order, so a caller that has just
 // asked the hub where the order stands does not ask again for the channel.
-// Same rules as zortShipmentInfo, which stays for callers that hold no read.
+// RTS requires `shipment` (the docs mark it required) and only Lazada has a
+// documented safe default, so the caller has to be able to tell the channels
+// apart. Every caller already holds a `zortHubState`, which is why there is no
+// fetching variant of this — one existed and became dead the moment the arrange
+// path stopped reading the order twice.
 function zortShipmentFrom(state) {
   const chan = String(state?.channel || '');
   const marketplace = /lazada/.test(chan) ? 'lazada'
@@ -20029,23 +20033,6 @@ function zortShipmentFrom(state) {
   return { shipment: ch || (marketplace === 'lazada' ? 'lex' : ''), marketplace };
 }
 const ZORT_RTS_DONE = ['waiting', 'shipping', 'success'];
-
-// WHICH MARKETPLACE, AND WHAT SHIPMENT NAME — one fetch, both facts. RTS
-// requires `shipment` (the docs mark it required), and only Lazada has a
-// documented safe default, so the caller has to be able to tell them apart.
-async function zortShipmentInfo(store, zortId) {
-  try {
-    const d = await zortApi.getOrderDetail(store, zortId);
-    const o = d?.order || d || {};
-    const chan = `${o.saleschannel || ''} ${o.integrationName || ''}`.toLowerCase();
-    const marketplace = /lazada/.test(chan) ? 'lazada'
-                      : /shopee/.test(chan) ? 'shopee'
-                      : /tiktok/.test(chan) ? 'tiktok' : '';
-    const ch = String(o.shippingchannel ?? '').trim();
-    return { shipment: ch || (marketplace === 'lazada' ? 'lex' : ''), marketplace };
-  } catch (e) { console.error('[zort-shipment]', zortId, e.message); }
-  return { shipment: '', marketplace: '' };
-}
 
 async function zortShipmentChannel(store, zortId) {
   try {
