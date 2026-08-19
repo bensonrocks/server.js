@@ -19851,13 +19851,54 @@ async function zortHubState(store, zortId) {
   try {
     const d = await zortApi.getOrderDetail(store, zortId);
     const o = d?.order || d || {};
+    // ── AN EMPTY REPLY IS NOT AN ORDER WITH NO STATUS ────────────────────────
+    // Per the v4 docs GetOrderDetail returns the order at the TOP LEVEL —
+    // id / number / status / list. So a body carrying none of those is not an
+    // order we failed to understand; it is the hub not answering.
+    //
+    // Seen live: every read came back as just `resCode 100 — "API Request
+    // Limits (50000 requests/day)"`. `zortBodyError` deliberately treats code
+    // 100 as routine — it rides alongside the orders on every GetOrders, and
+    // judging by the code alone once stopped the live pull dead — so nothing
+    // threw, and an empty object was read as "status unrecognised". The order
+    // was then Packed and Ready-to-Shipped against a status nobody had seen.
+    //
+    // The distinction is DATA, not the code: 100 WITH an order is routine, 100
+    // with nothing at all is a hub that told us nothing. Reported as such,
+    // never as a state.
+    const looksLikeOrder = o && (o.status !== undefined || o.number !== undefined
+                                 || o.id !== undefined || Array.isArray(o.list));
+    if (!looksLikeOrder) {
+      const notice = [d?.resCode ?? d?.rescode, String(d?.resDesc ?? d?.resdesc ?? '').trim()]
+        .filter(x => x !== undefined && x !== null && x !== '').join(' — ');
+      return { read: false, status: '', integration: '',
+               why: notice ? `the hub answered with no order — ${notice}` : 'the hub answered with no order' };
+    }
     return {
       read: true,
       status: zortStatusWord(o.status),
       integration: String(o.integrationStatus ?? o.integrationstatus ?? '').trim(),
+      // Carried so the caller does not have to fetch the SAME document again
+      // just to learn which marketplace it is and what to name the shipment.
+      channel: `${o.saleschannel || ''} ${o.integrationName || ''}`.toLowerCase(),
+      shippingchannel: String(o.shippingchannel ?? '').trim(),
     };
-  } catch (e) { console.error('[zort-status]', zortId, e.message); }
-  return { read: false, status: '', integration: '' };
+  } catch (e) {
+    console.error('[zort-status]', zortId, e.message);
+    return { read: false, status: '', integration: '', why: e.message || 'the hub could not be reached' };
+  }
+}
+
+// The shipment facts out of an ALREADY-READ order, so a caller that has just
+// asked the hub where the order stands does not ask again for the channel.
+// Same rules as zortShipmentInfo, which stays for callers that hold no read.
+function zortShipmentFrom(state) {
+  const chan = String(state?.channel || '');
+  const marketplace = /lazada/.test(chan) ? 'lazada'
+                    : /shopee/.test(chan) ? 'shopee'
+                    : /tiktok/.test(chan) ? 'tiktok' : '';
+  const ch = String(state?.shippingchannel || '').trim();
+  return { shipment: ch || (marketplace === 'lazada' ? 'lex' : ''), marketplace };
 }
 const ZORT_RTS_DONE = ['waiting', 'shipping', 'success'];
 
@@ -19984,7 +20025,11 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // packOrder RESOLVED — which asserts nothing about whether the hub moved.
     // Same lesson as zortBodyError, one level up: the call returning is not the
     // outcome. So the hub is asked where the order stands, before and after.
-    const before = await zortHubStatus(store, entry.zortId);
+    // ONE READ, NOT TWO. The status and the shipment channel come out of the
+    // SAME document, and this path used to fetch it twice per attempt — which
+    // matters when the hub is metering our requests.
+    const beforeState = await zortHubState(store, entry.zortId);
+    const before = beforeState.status;
     // AN ORDER ALREADY MARKED PACKED STILL WANTS READY-TO-SHIP when the switch
     // is on. Packed is ZORT bookkeeping and mints nothing; without this, every
     // order arranged before the switch was turned on would sit packed and
@@ -20018,7 +20063,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     //     shipment name. Lazada is the one channel with a documented default.
     //   • audited under its OWN event, never as a pack: the trail must say what
     //     was actually declared to the marketplace.
-    const info = await zortShipmentInfo(store, entry.zortId);
+    const info = zortShipmentFrom(beforeState);
     if (wantsRts && info.marketplace === 'lazada') {
       const rts = await zortApi.readyToShip(store, { id: entry.zortId, shipment: info.shipment || 'lex' });
       const rtsSaid = _zortSaid(rts);
@@ -20178,12 +20223,24 @@ async function _zortSendOutboxEntry(db, store, entry) {
         if (!after.read || !ZORT_RTS_DONE.includes(after.status)) {
           logAudit('sync_rts_not_taking', {
             order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
-            before: hubStatus || '', after: after.status || (after.read ? 'not recognised' : 'could not read the hub'),
+            before: hubStatus || '', after: after.status || (after.read ? 'not recognised' : (after.why || 'could not read the hub')),
             integration: after.integration || '', said: _zortSaid(resp),
           });
+          // A HUB THAT ANSWERS NOTHING AT ALL IS AN OUTAGE, not one order's bad
+          // luck — every order behind it is stuck the same way, and the floor
+          // should not have to open a per-order dialog to discover that.
+          if (!after.read && /no order/i.test(after.why || '')) {
+            try {
+              recordSystemError({
+                app: 'office', context: 'zort/order-detail',
+                message: `The sales channel is answering with no order data — ${after.why}. Ready-to-Ship cannot be confirmed, so parcels will not be collectable until this clears.`,
+                client: store.clientName || '',
+              });
+            } catch (_) {}
+          }
           throw new Error(after.read
             ? `The channel accepted Ready-to-Ship but the order is still "${after.status || 'not ready'}" — it has not moved.`
-            : 'Ready-to-Ship was sent but the channel could not be read back, so it is not confirmed.');
+            : `Ready-to-Ship was sent but ${after.why || 'the channel could not be read back'}, so it is not confirmed.`);
         }
         // IT MOVED ON ZORT. Whether the MARKETPLACE behind it has caught up is
         // a separate fact and is recorded, not asserted — ZORT's own status and

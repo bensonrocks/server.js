@@ -1211,6 +1211,26 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     entry keeps its place in the outbox, retries on the normal backoff and the
     reason reaches the row's chip. Audited `sync_rts_not_taking` with where the
     hub actually stopped and its own words.
+  - **AN EMPTY REPLY IS NOT AN ORDER WITH NO STATUS.** Per the v4 docs
+    `GetOrderDetail` returns the order at the TOP LEVEL (id / number / status /
+    list), so a body carrying none of those is not an order we failed to parse —
+    it is the hub not answering. Seen live: every read came back as nothing but
+    `resCode 100 — "API Request Limits (50000 requests/day)"`, which
+    `zortBodyError` deliberately treats as routine (it rides alongside the
+    orders on every GetOrders, and judging by the code alone once stopped the
+    pull dead), so nothing threw and the empty object read as "status
+    unrecognised" — and the order was Packed and Ready-to-Shipped against a
+    status nobody had seen. **The distinction is DATA, not the code**: 100 WITH
+    an order is routine, 100 with nothing at all is a hub that told us nothing.
+    Reported with the hub's own notice quoted, and raised as a **System Outage**
+    — every order behind it is stuck the same way, so it is not one order's bad
+    luck. `zortBodyError` itself is unchanged; narrowing it again would repeat
+    the outage it caused.
+  - **ONE READ, NOT TWO.** The arrange path fetched the same order detail twice
+    per attempt (status, then shipment channel). `zortHubState` carries the
+    channel fields and `zortShipmentFrom(state)` derives them, which halves the
+    requests on the hot path — and when the hub is metering us, every retry we
+    do not make is one the real work can have.
   - **A STATUS WE COULD NOT READ IS NOT AGREEMENT.** `zortHubStatus` returned
     `''` for both "no status we recognise" and "the read failed", and callers
     treated that blank as PENDING — which is how an order was Packed and
