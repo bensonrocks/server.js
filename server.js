@@ -20808,11 +20808,45 @@ app.post('/api/master/zort/stores/:id/probe', async (req, res) => {
   } else {
     await run('GetOrderDetail', `Read order id ${hubId} — the id the hub itself just returned`,
       () => zortApi.getOrderDetail(store, hubId));
+    // ── 5. IS THERE ACTUALLY A LABEL? ────────────────────────────────────────
+    // Asked repeatedly and never answerable without a Postman session: the
+    // channel reports GetShipmentLabels as a success and no label appears here.
+    // Both can be true — on Lazada the AWB is minted at Ready-to-Ship, so an
+    // order still sitting Pending has no label to return and an EMPTY list is
+    // the correct answer, not a fault.
+    //
+    // So the raw reply is printed. An empty list means there is nothing to
+    // fetch yet and no change here can conjure one; rows with a Format we
+    // cannot import are ours to deal with, and now visible in one click.
+    // Not routed through `run`: an EMPTY label list is a correct and complete
+    // answer, not a step that failed, and the generic data heuristic would mark
+    // it ✗ and say nothing useful. This one needs its own words.
+    try {
+      const labels = await zortApi.getShipmentLabels(store, { orderIds: [hubId] });
+      const rows = Array.isArray(labels) ? labels : [];
+      const fmt = String(rows[0]?.Format || rows[0]?.format || '').trim();
+      steps.push({
+        name: 'GetShipmentLabels', what: `Is there a label for order ${hubId} yet?`,
+        ok: true, shape: `${rows.length} label row(s)`,
+        sample: JSON.stringify(rows).slice(0, 600),
+        verdict: !rows.length
+          ? 'The channel has NO label for this order yet. On Lazada the label is created when the order is declared Ready to Ship, so an order still Pending has none — nothing on our side can produce one.'
+          : /^pdf$|^url$/i.test(fmt)
+            ? `The channel HAS a label (${fmt}) and we can import that format — if it is not on the order here, that is ours to fix.`
+            : fmt
+              ? `The channel HAS a label but serves it as ${fmt}, which we cannot import as a PDF. Print it from the channel.`
+              : 'The channel returned label rows with no format — see the raw reply.',
+      });
+    } catch (e) {
+      steps.push({ name: 'GetShipmentLabels', what: `Is there a label for order ${hubId} yet?`,
+        ok: false, error: String(e.message || e).slice(0, 400) });
+    }
   }
 
   const listOk = steps.find(s => s.name === 'GetOrders')?.ok;
   const detail = steps.find(s => s.name === 'GetOrderDetail');
   const detailUsable = !!detail?.ok && /status|number\b/.test(detail.sample || '');
+
   // EVERY endpoint answering with the same empty envelope is not a per-order
   // problem — the account is being refused at the gate, and no change on this
   // side will alter that.

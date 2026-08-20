@@ -1247,6 +1247,24 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     read with. That is not a per-order fault: **the account is refused at the
     gate**, and nothing on this side changes it. It is a question for ZORT about
     the account's daily usage and whether the key is throttled or suspended.
+  - **🧪 Probe's FIFTH question: "is there actually a label?"** Asked repeatedly
+    and previously answerable only with a Postman session. It calls
+    `GetShipmentLabels` for the id the hub just returned and prints the raw
+    reply WITH a verdict, because the two facts people conflate are "the call
+    succeeded" and "there is a label". On Lazada the AWB is minted at
+    Ready-to-Ship, so an order still Pending correctly returns an EMPTY list —
+    that is not a fault and nothing here can produce one. Rows in Pdf/Url are
+    ours to import (if the order has none, that IS our bug); any other Format is
+    named and sent to the channel to print. Deliberately NOT routed through the
+    probe's generic data check: an empty label list is a complete, correct
+    answer, and the heuristic would mark it ✗ and say nothing useful.
+  - **THE CONNECTIONS PAGE IS FIVE COLLAPSIBLE SECTIONS** (`.conn-sec`, native
+    `<details>`). Reported as simply too long to work with — and most of it is
+    set up once and never touched, so only **Channel Connections** (the store
+    table) opens by default. Each summary carries a one-line purpose so a closed
+    section is not a mystery. Which sections a person leaves open is a habit,
+    not a setting, so it lives in `localStorage`, per browser. Measured: 1,050px
+    collapsed vs 2,428px expanded on desktop, 1,345 vs 4,291 on a phone.
   - **🧪 Probe** (`POST /api/master/zort/stores/:id/probe`, admin or master,
     read-only, FOUR calls) asks the hub four questions and prints its raw
     answers: ValidateApi → GetMerchantProfile → GetOrders(limit 1) →

@@ -11733,6 +11733,17 @@
         `<div class="hint" style="margin-top:.6rem;color:#94a3b8">Snapshot at ${when(h.generatedAt)} — read-only, nothing was changed.</div>`;
     } catch (e) { out.innerHTML = `<div class="hint" style="color:#dc2626">${esc(e.message)}</div>`; }
   }
+  // ── REMEMBER WHICH CONNECTION SECTIONS WERE LEFT OPEN ──────────────────────
+  // The sections collapse so the page is workable; which ones somebody wants
+  // open is a per-person habit, not a setting, so it lives in this browser.
+  document.querySelectorAll('.conn-sec[id]').forEach(sec => {
+    const key = 'conn_sec_' + sec.id;
+    const saved = localStorage.getItem(key);
+    if (saved === 'open') sec.open = true;
+    else if (saved === 'shut') sec.open = false;
+    sec.addEventListener('toggle', () => localStorage.setItem(key, sec.open ? 'open' : 'shut'));
+  });
+
   document.getElementById('connHealthBtn')?.addEventListener('click', loadConnHealth);
   document.getElementById('connRefreshTokensBtn')?.addEventListener('click', async () => {
     const out = document.getElementById('connHealthOut');
@@ -11993,7 +12004,8 @@
             const d = await r2.json();
             if (!r2.ok) { zortStatus('error', d.error || 'Probe failed'); return; }
             const lines = (d.steps || []).map(st =>
-              `${st.ok ? '\u2713' : '\u2717'} ${st.name} — ${st.what}\n    ${st.ok ? (st.shape + '\n    ' + String(st.sample || '').slice(0, 300)) : st.error}`);
+              `${st.ok ? '\u2713' : '\u2717'} ${st.name} — ${st.what}\n    ${st.ok ? (st.shape + '\n    ' + String(st.sample || '').slice(0, 300)) : st.error}`
+              + (st.verdict ? `\n    \u2192 ${st.verdict}` : ''));
             zortStatus(d.steps.every(x => x.ok) ? 'success' : 'error', `Probe: ${esc(d.verdict)}`);
             alert(`${d.store} — hub probe\n\n${d.verdict}\n\n${lines.join('\n\n')}\n\n${d.note}`);
           } catch (err) { zortStatus('error', 'Probe failed: ' + err.message); }

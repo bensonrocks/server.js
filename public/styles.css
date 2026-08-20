@@ -3175,6 +3175,31 @@ tr.row-pendingsync td { background: #fffbeb !important; }
 
 /* ── Connections tab (marketplace / OMS connectors) ──────────────────────── */
 #tab-connections { padding: 1.2rem; overflow-y: auto; }
+/* ── COLLAPSIBLE SECTIONS ON CONNECTIONS ─────────────────────────────────────
+   Reported: the page is too long to work with. Everything here is real, but
+   most of it is set up once and never touched again — the store table is the
+   only part used daily, so it is the only one open by default. Native
+   <details>, so it works with no JS, keyboard included; the JS only remembers
+   which ones were left open. */
+.conn-sec { border: 1px solid var(--border, #e2e8f0); border-radius: 12px; margin-bottom: .7rem;
+            background: var(--surface, #fff); overflow: hidden; }
+.conn-sec > summary { cursor: pointer; padding: .75rem 1rem; list-style: none;
+            display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+            font-weight: 700; user-select: none; }
+.conn-sec > summary::-webkit-details-marker { display: none; }
+.conn-sec > summary::before { content: '\25B8'; color: #94a3b8; font-size: .8rem;
+            transition: transform .15s ease; display: inline-block; }
+.conn-sec[open] > summary::before { transform: rotate(90deg); }
+.conn-sec > summary:hover { background: #f8fafc; }
+.conn-sec .cs-t { font-size: .95rem; }
+/* The one-line purpose, so a closed section still says what is inside it. */
+.conn-sec .cs-h { font-weight: 400; font-size: .76rem; color: #64748b; }
+.conn-sec[open] > summary { border-bottom: 1px solid var(--border, #e2e8f0); }
+/* The panels already carry their own border and padding; inside a section that
+   would be a box in a box. */
+.conn-sec > div { border: 0 !important; margin-bottom: 0 !important; border-radius: 0 !important; }
+@media (max-width: 640px) { .conn-sec .cs-h { display: none; } }
+
 .conn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .8rem; margin-bottom: 1.4rem; }
 .conn-card { position: relative; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 1rem; background: var(--surface, #fff); }
 /* padding-right keeps a longer card title clear of the absolutely-positioned
