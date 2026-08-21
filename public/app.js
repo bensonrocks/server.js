@@ -2540,6 +2540,12 @@
         ord.scan_status === 'unprocessed'
           ? `<span class="chip chip-sync-failed" title="${esc(ord.unprocessed_reason || 'Not processed')}${ord.unprocessed_at ? ` — ${new Date(ord.unprocessed_at).toLocaleString('en-GB', { hour12: false })}` : ''}">&#9003; ${esc((ord.unprocessed_reason || 'Cancelled').slice(0, 42))}${ord.auto_cancelled ? ' (auto)' : ''}</span>`
           : '',
+        // WHO cancelled it. A withdrawal the CLIENT made from their portal is
+        // not the same event as one we made here, and the row has to say so —
+        // these used to be hidden from the office list entirely.
+        ord.client_cancelled
+          ? `<span class="chip chip-client-withdrew" title="Withdrawn by the client from their portal${ord.client_cancelled.at ? ` — ${new Date(ord.client_cancelled.at).toLocaleString('en-GB', { hour12: false })}` : ''}${ord.client_cancelled.reason ? `\nReason: ${esc(ord.client_cancelled.reason)}` : ''}">&#128100; withdrawn by client</span>`
+          : '',
         // …and why the carrier label is missing, when it is.
         zortLabelChip(ord),
         // FULFILMENT KPI. The countdown to this order's handover, so a packer

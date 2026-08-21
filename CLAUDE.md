@@ -4796,10 +4796,36 @@ that could not be fulfilled"* could not see how many there were, let alone when.
     reported number) and the fixed code returns 5, with both stragglers listed
     and neither counting as yesterday's — plus 4 browser checks on desktop and
     a Pixel 5 reading the Cancelled sub-tab's own count off the screen.
-  (A second reason the two counts can differ, and this one is deliberate and
-  unchanged: `/api/orders` hides `client_cancelled` orders from the everyday
-  office view, showing them only in the admin review view, while the client
-  always sees their own cancellations. Ruled out as the cause here.)
+- **AND THE DAY RULE ALONE DID NOT CLOSE THE GAP — there were THREE defects,
+  not one.** After the bucketing fix shipped, the office still read 3 against
+  the portal's 5. I had called the second cause "ruled out" on the strength of
+  the order dates lining up; both causes predict a delta of exactly 2, so that
+  was never proof. The other two:
+  - **A WITHDRAWAL THE CLIENT MADE WAS UNREACHABLE FROM THE OFFICE.**
+    `/api/orders` filtered `client_cancelled` orders off the everyday list, and
+    `public/app.js` never asks for `?cancelled=1` — so an order the client
+    withdrew was in neither Active nor Cancelled nor anywhere else, and our
+    Cancelled count sat permanently below theirs. They are `unprocessed`, so
+    STATUS already keeps them out of the Active list; the extra filter only
+    ever hid the cancellation. They now show in the Cancelled view with a
+    **`.chip-client-withdrew`** amber "👤 withdrawn by client" pill (amber, not
+    red — the ✕ chip beside it already says cancelled; this one says who).
+    `?cancelled=1` still narrows to JUST those for an admin review.
+  - **THE WITHDRAWAL NEVER STAMPED `unprocessed_at`.** `POST /api/portal/delete`
+    set `status` and `client_cancelled` and nothing else, so even once visible
+    it had no cancellation day to bucket on and fell back to the upload date.
+    Now stamped — and every day-bucket reads `unprocessed_at ||
+    client_cancelled.at`, so withdrawals stored the OLD way heal on read
+    instead of needing a migration.
+  Verified 10 API checks on a seeding of all three shapes (three plain, two on
+  older uploads, one client withdrawal, one legacy withdrawal with no
+  timestamp): the office counts all seven, none counts as yesterday's, a
+  withdrawal carries who and when while one we made does not, `?cancelled=1`
+  still isolates the client's own, and not one appears as active work. The
+  previous commit — the day fix alone — returns **5 of 7**, so the test proves
+  the two remaining defects. Plus 14 browser checks on desktop and a Pixel 5
+  (the count, the rows, the pill's wording, its amber by computed style, its
+  tooltip, and that only the two withdrawals are marked).
 - **SGT calendar days** (`sgDay()`, `en-CA` + `Asia/Singapore`) — never
   `toISOString()`, which puts anything before 08:00 SGT on the previous day.
   Same standing rule as everywhere else.

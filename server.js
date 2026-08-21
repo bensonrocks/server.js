@@ -2765,7 +2765,10 @@ function globalOrdersWithState(keep) {
         // it, so it has to be in this cheap pre-filter shape too. Leaving it
         // out made the predicate read undefined and fall back to the upload
         // date, which is silently the old behaviour rather than an error.
-        unprocessed_at: state.unprocessed_at || null,
+        // `client_cancelled.at` is the fallback for withdrawals made BEFORE
+        // that path started stamping unprocessed_at — they heal on read
+        // instead of needing a migration.
+        unprocessed_at: state.unprocessed_at || state.client_cancelled?.at || null,
         uploadedAt:   batch.uploaded_at,
       })) continue;
       const enrichedLines = (ord.lines || []).map(l => {
@@ -2839,7 +2842,10 @@ function globalOrdersWithState(keep) {
         client_cancelled:  state.client_cancelled  || null,
         // WHY it is not being fulfilled, for the Cancelled view — a list of
         // cancelled orders with no reason on them is a list of questions.
-        unprocessed_at:     state.unprocessed_at     || null,
+        // Falls back to the withdrawal timestamp for orders the client
+        // cancelled before that path stamped one — so the day it counts on is
+        // right without rewriting stored records.
+        unprocessed_at:     state.unprocessed_at || state.client_cancelled?.at || null,
         unprocessed_reason: state.unprocessed_reason || '',
         auto_cancelled:     !!state.auto_cancelled,
         reopened_at:        state.reopened_at        || null,
@@ -6238,10 +6244,18 @@ app.post('/api/portal/delete', express.json(), requirePortalWrite, (req, res) =>
       // releaseOrphanReservations below (which treats 'unprocessed' as
       // holding no stock).
       found.orderStates = found.orderStates || {};
+      // `unprocessed_at` is what every day-bucket reads to say WHEN an order
+      // was cancelled. Setting client_cancelled without it left a withdrawal
+      // dated by the day the order arrived, so it never counted on the day it
+      // actually happened.
+      const cancelledAt = new Date().toISOString();
       found.orderStates[orderNumber] = {
         ...state,
         status: 'unprocessed',
-        client_cancelled: { at: new Date().toISOString(), by: `portal:${client}`, reason },
+        unprocessed_at: cancelledAt,
+        unprocessed_reason: state.unprocessed_reason || 'Withdrawn by the client',
+        updated_at: cancelledAt,
+        client_cancelled: { at: cancelledAt, by: `portal:${client}`, reason },
       };
       deleted.push(orderNumber);
     }
@@ -9487,9 +9501,16 @@ app.get('/api/orders', (req, res) => {
     };
   }
   let orders = globalOrdersWithState(keep);
-  orders = wantCancelled
-    ? orders.filter(o => o.client_cancelled)          // the admin's review view
-    : orders.filter(o => !o.client_cancelled);        // everyday: hidden
+  // A WITHDRAWAL IS STILL A CANCELLATION, AND THE OFFICE HAS TO SEE IT.
+  // These used to be filtered off the everyday list outright — and since the
+  // office UI never asks for ?cancelled=1, that made an order the client
+  // withdrew UNREACHABLE from the Orders tab: not in Active, not in Cancelled,
+  // nowhere. It also put our Cancelled count permanently below the client's
+  // own. They are `unprocessed`, so the status alone already keeps them out of
+  // the Active list; the extra filter only ever hid the cancellation. They now
+  // show in the Cancelled view, marked as withdrawn by the client.
+  // ?cancelled=1 still narrows to JUST those, for an admin reviewing them.
+  if (wantCancelled) orders = orders.filter(o => o.client_cancelled);
   // Cross-reference: show which Transport job (TR-...) each order is linked
   // to. Linked by order number → referenceId/clientId, the same match the
   // scan-completion confirm uses. Purely informational on the order row.

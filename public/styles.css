@@ -3673,3 +3673,9 @@ tr.pa-split-row td { border-top: 0; }
 /* When the buyer ordered, shown under the import date only when they differ —
    an order placed yesterday and pulled today used to read as today's work. */
 .ord-placed-sub { font-size: .68rem; color: #b45309; font-weight: 600; margin-top: 2px; white-space: nowrap; }
+
+/* A withdrawal the CLIENT made from their own portal — a different event from
+   a cancellation we made here, so it reads differently on the row. Amber, not
+   red: the red ✕ chip beside it already says the order is cancelled; this one
+   only says who did it. */
+.chip-client-withdrew { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
