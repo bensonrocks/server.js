@@ -2304,7 +2304,14 @@
     const todayStr = dayOf(new Date());
     const yestStr  = dayOf(new Date(Date.now() - 86400000));
     const weekStr  = dayOf(new Date(Date.now() - 6 * 86400000));
-    const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
+    // A settled order counts on the day it SETTLED — done on its completion
+    // day, cancelled on its cancellation day. Bucketing a cancellation on the
+    // upload date filed it under whichever day the order happened to arrive,
+    // so the Cancelled tab under "Today" could not say what was cancelled
+    // today. Same rule the client portal has always used, so the two agree.
+    const orderDay = o => dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt)
+                              : o.scan_status === 'unprocessed' ? (o.unprocessed_at || o.uploadedAt)
+                              : o.uploadedAt);
     const inDateFilter = o => {
       if (o.scan_status === 'pending' || o.scan_status === 'processing') return true;
       const d = orderDay(o);

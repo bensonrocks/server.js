@@ -4773,21 +4773,33 @@ that could not be fulfilled"* could not see how many there were, let alone when.
   the day the client has to re-place it — a completed one on the day it was
   FINISHED, and one still being worked on the day it ARRIVED, which is what
   makes a backlog visible.
-  **CORRECTION — this note used to claim the office list uses the same rule. IT
-  DOES NOT, and the two DO disagree.** The office (`orderDay` in
-  `renderOrdersList`, and the same predicate in `/api/orders`) buckets a
-  `done` order on `endTime` but EVERY other status — including `unprocessed` —
-  on `uploadedAt`. So an order uploaded on an earlier day and cancelled today
-  counts as today's cancellation on the client's screen and as that earlier
-  day's on ours, and the office's Cancelled tab under "Today" cannot answer
-  "what was cancelled today". Reported live as "office shows 15 orders, portal
-  shows 17". The office side is the one that is wrong; `unprocessed_at` is on
-  the order object and is what it should read. NOT YET FIXED — flagged here so
-  the next person does not re-derive it.
-  (The other reason the two counts can differ, and this one is deliberate:
-  `/api/orders` hides `client_cancelled` orders from the everyday office view,
-  showing them only in the admin review view, while the client always sees
-  their own cancellations.)
+  **THE OFFICE DID NOT USE THIS RULE, AND THE TWO DISAGREED IN PUBLIC.**
+  Reported live as *"shows a total of 15 orders. but client portal shows 17"* —
+  1+11+**3** against 1+11+**5**. The office (`orderDay` in `renderOrdersList`,
+  and the same predicate in `/api/orders`) bucketed a `done` order on `endTime`
+  but EVERY other status, `unprocessed` included, on `uploadedAt`. So an order
+  uploaded days earlier and cancelled today was filed under the day it
+  ARRIVED, and **the Cancelled tab under "Today" could not answer "what was
+  cancelled today"** — the one question that view exists for. Settled by the
+  client's own downloaded report: of five cancellations stamped 21 Aug, three
+  were on orders dated 21 Aug and two on orders dated 17 and 18 Aug. Exactly
+  the missing two. Both call sites now read `unprocessed_at || uploadedAt`.
+  - **THE CHEAP PRE-FILTER SHAPE HAD TO GAIN THE FIELD TOO.**
+    `globalOrdersWithState(keep)` hands the range predicate a small object
+    (order_number / scan_status / endTime / uploadedAt) to skip enrichment on
+    orders it will discard. `unprocessed_at` was not in it, so the fixed
+    predicate read `undefined` and fell back to the upload date — the OLD
+    behaviour, silently, with no error. Anything the predicate buckets on must
+    be in that shape.
+  - Verified against the reported shape: 5 cancellations, 3 on today's uploads
+    and 2 on uploads from 3 and 4 days ago. The pre-fix code returns **3** (the
+    reported number) and the fixed code returns 5, with both stragglers listed
+    and neither counting as yesterday's — plus 4 browser checks on desktop and
+    a Pixel 5 reading the Cancelled sub-tab's own count off the screen.
+  (A second reason the two counts can differ, and this one is deliberate and
+  unchanged: `/api/orders` hides `client_cancelled` orders from the everyday
+  office view, showing them only in the admin review view, while the client
+  always sees their own cancellations. Ruled out as the cause here.)
 - **SGT calendar days** (`sgDay()`, `en-CA` + `Asia/Singapore`) — never
   `toISOString()`, which puts anything before 08:00 SGT on the previous day.
   Same standing rule as everywhere else.

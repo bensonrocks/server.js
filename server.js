@@ -2761,6 +2761,11 @@ function globalOrdersWithState(keep) {
         order_number: ord.order_number,
         scan_status:  state.status || 'pending',
         endTime:      state.endTime || null,
+        // The day a CANCELLED order settled — the range predicate buckets on
+        // it, so it has to be in this cheap pre-filter shape too. Leaving it
+        // out made the predicate read undefined and fall back to the upload
+        // date, which is silently the old behaviour rather than an error.
+        unprocessed_at: state.unprocessed_at || null,
         uploadedAt:   batch.uploaded_at,
       })) continue;
       const enrichedLines = (ord.lines || []).map(l => {
@@ -9463,7 +9468,16 @@ app.get('/api/orders', (req, res) => {
       // badge. The date filter effectively applies to settled orders
       // (done/unprocessed) only.
       if (o.scan_status === 'pending' || o.scan_status === 'processing') return true;
-      const d = dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt) : o.uploadedAt);
+      // WHICH DAY A SETTLED ORDER COUNTS ON IS THE DAY IT SETTLED. A done
+      // order on the day it was finished; a CANCELLED one on the day it was
+      // cancelled, not the day it arrived — otherwise an order uploaded on
+      // Monday and cancelled on Friday is filed under Monday, and the
+      // Cancelled tab under "Today" cannot answer "what was cancelled today".
+      // (Reported live: the office read 3 cancellations where the client's own
+      // portal, which has always bucketed on the cancellation date, read 5.)
+      const d = dayOf(o.scan_status === 'done' ? (o.endTime || o.uploadedAt)
+                    : o.scan_status === 'unprocessed' ? (o.unprocessed_at || o.uploadedAt)
+                    : o.uploadedAt);
       if (!d) return true; // never hide records with no usable date
       if (range === 'today')     return d === todayStr;
       if (range === 'yesterday') return d === yestStr;
