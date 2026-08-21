@@ -5277,6 +5277,64 @@ of the seven order and collection labels explained by name, the receiving
 promise and the REAL daily cut-off both present, five Guide sections, and no
 sideways scroll.
 
+### The last three days on the Overview, and today updates on its own
+
+Per the user. The full day-by-day table lives on Orders; this is the short
+answer to "how are we doing" without leaving the dashboard.
+
+- **TODAY IS ALWAYS THE FIRST ROW, even when nothing has happened.**
+  `ordersByDay()` only holds days that carry orders, so on a quiet morning today
+  would simply be absent — and a client would hunt for a row that is not there
+  rather than read a row of dashes. `overviewDaysHtml` builds the three days
+  from `sgDayOffset()` and fills from the map.
+- Every row opens that day's orders, like everything else on this screen.
+- **THE LIVE POLL IS NARROW ON PURPOSE** (`LIVE_MS` 30s): only while the
+  Overview is the open tab AND `document.visibilityState === 'visible'` (a
+  dashboard left in a background tab for a week must not poll all week), and
+  only the two calls the tiles and the strip are built from — not `loadAll`,
+  which would re-fetch stock and inbound for nothing. Coming back to the tab
+  ticks immediately rather than waiting out the interval. Stopped on sign-out.
+- A dropped poll is silent: the next one is 30s away and the screen still holds
+  the last good figures.
+
+### A COMPLETED ORDER WITH NO COMPLETION TIME (`repairUndatedCompletions`)
+
+Found while proving the live update: the order genuinely completed, and today's
+row correctly did not move — because `completeOrderCore` took `endTime` **from
+the request body** and stored nothing when it was absent. The office screen does
+send it, so live packing was fine; **anything else** — a script, an integration,
+a replay — marked an order `done` and left it UNDATED.
+
+An undated completion falls back to the order's **upload date** in every
+day-bucket in the system: the client's day table, the office Orders tab,
+`fulfilmentSla` and `collectionDayFor`. Exactly the class of bug the 15-vs-17
+thread was about, from a different direction.
+
+- **The completion time is a fact the SERVER observes**, so it can never depend
+  on the caller supplying it: a supplied time is still honoured (an offline
+  replay legitimately says when it really happened), and its absence now means
+  now, never nothing. `startTime` defaults the same way.
+- **`repairUndatedCompletions(db)`** dates the ones already stored, from the
+  best evidence there is: the LAST SCAN on the order (packing finished at or
+  just after it), else `updated_at`, else **left alone** — an order with neither
+  has no evidence, and inventing a date would be worse than the gap. Stamped
+  `endTime_derived` so a derived date is never mistaken for an observed one.
+  Runs in the same boot pass as `repairStoredDateStrings`, idempotent, audited
+  `completions_redated`.
+
+Verified: 16 browser checks on the strip (three rows, today first and marked,
+the right three SGT days, each a link, no sideways scroll) and 9 on the live
+path — an order completed through the REAL endpoints while the client sits on
+the Overview, and today's Completed going 1 → 2 **28 seconds later with no
+reload and nobody pressing refresh**, plus a hidden tab making no requests at
+all. The boot repair dated a real undated order on the way in.
+
+TEST GOTCHAS, all mine, all the same lesson this codebase keeps teaching:
+`/api/scan/complete` answers **200 with `{ok:false}`** and the mismatches when
+the counts do not line up — asserting on the status alone "passed" against an
+order that was still `processing`. And a part-scanned or OVER-scanned order is
+refused, so the test lands the count with `setqty` rather than counting scans.
+
 ### Every figure on the client's Overview opens the rows behind it
 
 Per the user, pointing at the Overview: *"all this are to be clickable and

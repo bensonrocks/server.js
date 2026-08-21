@@ -137,6 +137,10 @@
   const fmtDate = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { ...SGT, day: '2-digit', month: 'short', year: 'numeric' }); };
   const fmtDateTime = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('en-GB', { ...SGT, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); };
   const sgToday = () => new Date().toLocaleDateString('en-CA', SGT);
+  // N days from today in SGT. Stepping by whole days off the CURRENT time, then
+  // formatting in Singapore — not arithmetic on the date string, which breaks
+  // across a month end.
+  const sgDayOffset = n => new Date(Date.now() + n * 86400000).toLocaleDateString('en-CA', SGT);
   // The SGT calendar day an instant falls on, as YYYY-MM-DD. Never
   // toISOString() — that puts anything before 08:00 SGT on the previous day.
   const sgDay = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString('en-CA', SGT); };
@@ -196,6 +200,7 @@
   }
   function logout() {
     api('/api/portal/logout', { method: 'POST' }).catch(() => {});
+    stopLive();
     token = ''; clientName = ''; portalUser = null;
     localStorage.removeItem('portal_token'); localStorage.removeItem('portal_client');
     localStorage.removeItem('portal_user');
@@ -211,6 +216,7 @@
     showSkeleton();
     await applyAccess();
     loadAll();
+    startLive();
   }
 
   // What this login may do, taken from the SERVER — the copy in localStorage is
@@ -300,6 +306,52 @@
     }
   }
 
+  // ── TODAY UPDATES ON ITS OWN ────────────────────────────────────────────
+  // Per the user. The Overview is the screen a client leaves open, and a figure
+  // that only moves when someone presses ↻ is a figure they stop trusting.
+  //
+  // NARROW ON PURPOSE:
+  //   - only while the Overview is the tab they are looking AT, and only while
+  //     the browser tab is actually visible. A dashboard left open in a
+  //     background tab for a week must not poll all week.
+  //   - only the two calls the strip and the tiles are built from (overview and
+  //     orders) — not the full loadAll, which would re-fetch stock and inbound
+  //     for nothing.
+  //   - it repaints; it never disturbs. If they have opened an order, tapped a
+  //     day filter, or scrolled into the alerts, none of that is on the
+  //     Overview, so a repaint of the Overview cannot take it away from them.
+  const LIVE_MS = 30000;
+  let liveTimer = null, liveBusy = false;
+  function overviewIsOpen() {
+    const sec = $('tab-overview');
+    return !!sec && !sec.classList.contains('hidden');
+  }
+  async function liveTick() {
+    if (liveBusy || !token) return;
+    if (document.visibilityState !== 'visible') return;   // a background tab polls nothing
+    if (!overviewIsOpen() || !visible('overview')) return;
+    liveBusy = true;
+    try {
+      const [ov, or] = await Promise.all([api('/api/portal/overview'), api('/api/portal/orders')]);
+      if (ov.status === 401 || or.status === 401) { logout(); return; }
+      if (ov.ok) overview = await ov.json();
+      if (or.ok) orders = await or.json();
+      if (ov.ok || or.ok) renderOverview();
+    } catch (e) {
+      // A dropped poll is not worth telling anyone about — the next one is 30
+      // seconds away and the screen still holds the last good figures.
+    } finally { liveBusy = false; }
+  }
+  function startLive() {
+    if (liveTimer) return;
+    liveTimer = setInterval(liveTick, LIVE_MS);
+    // Coming back to the tab should not mean waiting out the rest of a tick.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') liveTick();
+    });
+  }
+  function stopLive() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
+
   const emptyState = (ic, t, s) =>
     `<div class="card empty"><div class="e-ic">${ic}</div><div class="e-t">${t}</div><div class="e-s">${s}</div></div>`;
 
@@ -385,6 +437,9 @@
           ${tile('orders', 'done', 't-ok', '&#9989;', num(o.doneOrders), 'Orders shipped', 'All time')}
         </div>
       </div>`);
+
+    // ── The last three days, today first
+    parts.push(overviewDaysHtml(ordersByDay()));
 
     // ── Alerts (only when there is genuinely something to act on)
     const alerts = [];
@@ -696,6 +751,45 @@
   }
 
   const DAY_ROWS = 14;   // on screen; the full period is in the ⬇ Report
+  const OV_DAY_ROWS = 3; // Overview: today and the two before it
+
+  // ── THE LAST THREE DAYS, ON THE OVERVIEW ────────────────────────────────
+  // Per the user. The full day-by-day table lives on Orders; this is the short
+  // answer to "how are we doing" without leaving the dashboard, and every row
+  // opens that day's orders like everything else here.
+  //
+  // TODAY IS ALWAYS THE FIRST ROW, even when nothing has happened yet.
+  // `ordersByDay()` only has days that carry orders, so on a quiet morning
+  // today would simply be missing — and a client would be looking for a row
+  // that is not there rather than reading a row of dashes.
+  function overviewDaysHtml(rows) {
+    const today = sgToday();
+    const byDay = new Map(rows);
+    const days = [];
+    for (let i = 0; i < OV_DAY_ROWS; i++) {
+      const d = sgDayOffset(-i);
+      days.push([d, byDay.get(d) || { open: 0, done: 0, cancelled: 0, pcs: 0 }]);
+    }
+    const cell = (v, colour) => v ? `<b style="color:${colour}">${num(v)}</b>` : '<span class="muted">—</span>';
+    const canOpen = visible('orders');
+    return `<div class="sec">
+      <div class="sec-hd"><h3>Last three days</h3><span class="sub live-sub"><span class="dot"></span> today updates on its own</span></div>
+      <div class="card dbd-wrap">
+        <table class="dbd">
+          <thead><tr><th>Day</th><th>In progress</th><th>Completed</th><th>Cancelled</th></tr></thead>
+          <tbody>${days.map(([day, b]) => `
+            <tr class="dbd-row${canOpen ? ' ov-go' : ''}${day === today ? ' ov-today' : ''}"
+                ${canOpen ? `data-go="orders" data-f="all" data-day="${esc(day)}" role="link" tabindex="0"` : ''}
+                title="${canOpen ? 'Open this day\'s orders' : ''}">
+              <td>${day === today ? '<b>Today</b>' : fmtDay(day)}</td>
+              <td>${cell(b.open, 'inherit')}</td>
+              <td>${cell(b.done, 'var(--ok)')}</td>
+              <td>${cell(b.cancelled, 'var(--bad)')}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
   function ordersByDay() {
     const m = new Map();
     for (const o of orders) {
@@ -1769,6 +1863,7 @@
     document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'send') loadSubmissions();
     if (b.dataset.tab === 'help') loadGlossary();
+    if (b.dataset.tab === 'overview') liveTick();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }));
 

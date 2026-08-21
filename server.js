@@ -2055,6 +2055,46 @@ function _plainDay(v) {
   const d = new Date(v);
   return isNaN(d) ? null : d.toISOString().slice(0, 10);
 }
+// ── A COMPLETED ORDER WITH NO COMPLETION TIME ──────────────────────────────
+// `completeOrderCore` used to take `endTime` from the request body and store
+// nothing when it was absent, so an order completed by anything other than the
+// office screen was marked `done` and left UNDATED. Every day-bucket in the
+// system then falls back to the order's UPLOAD date — the client's day table,
+// the office Orders tab, the fulfilment KPI and the collection day — which puts
+// a completion on whatever day the order happened to arrive.
+//
+// The stamp is fixed going forward; these are the ones already stored. Derived
+// from the best evidence there is, in order:
+//   1. the LAST scan on the order — packing finished at or just after it, which
+//      is as close to the truth as this data gets;
+//   2. `updated_at` — the last time we touched it;
+//   3. nothing: left alone rather than guessed. An order with neither has no
+//      evidence at all, and inventing a date would be worse than the gap.
+// Idempotent, so it is a no-op on every boot after the first.
+function repairUndatedCompletions(db) {
+  let fixed = 0, unfixable = 0;
+  for (const b of db.batches || []) {
+    for (const [num, st] of Object.entries(b.orderStates || {})) {
+      if (!st || st.status !== 'done' || st.endTime) continue;
+      const lastScan = (st.scanLog || []).reduce((a, e) => (e?.at && e.at > a ? e.at : a), '');
+      const when = lastScan || st.updated_at || '';
+      if (!when) { unfixable++; continue; }
+      st.endTime = when;
+      st.endTime_derived = lastScan ? 'last-scan' : 'updated-at';
+      if (!st.startTime) st.startTime = (st.scanLog || [])[0]?.at || when;
+      fixed++;
+    }
+  }
+  if (fixed || unfixable) {
+    logAudit('completions_redated', {
+      fixed, unfixable,
+      note: 'Orders marked done with no completion time; dated from their last scan so they stop counting on their upload day.',
+    });
+    console.log(`[repair] dated ${fixed} completed order(s) that had no completion time${unfixable ? ` (${unfixable} had no evidence and were left alone)` : ''}`);
+  }
+  return { fixed, unfixable };
+}
+
 function repairStoredDateStrings(db) {
   let fixed = 0;
   const scrub = obj => {
@@ -2075,7 +2115,12 @@ function repairStoredDateStrings(db) {
 try {
   const _dsdb = readDb();
   const _dsn = repairStoredDateStrings(_dsdb);
-  if (_dsn) { writeDb(_dsdb); console.log(`[IdealOne] Repaired ${_dsn} field(s) holding a raw date string`); }
+  // Completed orders that were never dated. Same pass, same write.
+  const _und = repairUndatedCompletions(_dsdb);
+  if (_dsn || _und.fixed) {
+    writeDb(_dsdb);
+    if (_dsn) console.log(`[IdealOne] Repaired ${_dsn} field(s) holding a raw date string`);
+  }
 } catch (e) { console.error('[IdealOne] stored date repair failed:', e.message); }
 
 // The inventory store keys stock by the client NAME, so the same casing split
@@ -15391,9 +15436,19 @@ function completeOrderCore(db, batch, ord, state, { startTime, endTime, operator
     const closeTime = new Date().toISOString();
     for (const c of state.cartons) if (!c.closedAt) c.closedAt = closeTime;
   }
-  state.updated_at = new Date().toISOString();
+  const nowIso = new Date().toISOString();
+  state.updated_at = nowIso;
+  // WHEN THE WORK FINISHED IS A FACT THE SERVER OBSERVES — it must never depend
+  // on the caller having sent it. The office client does send `endTime`, but
+  // anything else completing an order (a script, an integration, a replay) left
+  // the order `done` with NO completion time at all — and an undated completion
+  // silently falls back to the order's UPLOAD date in the client's day table,
+  // the office day buckets, `fulfilmentSla` and `collectionDayFor`. So a
+  // supplied time is still honoured (an offline replay legitimately says when
+  // it really happened) and its absence now means now, never nothing.
   if (startTime) state.startTime = startTime;
-  if (endTime)   state.endTime   = endTime;
+  else if (!state.startTime) state.startTime = nowIso;
+  state.endTime = endTime || state.endTime || nowIso;
   if (operator)  state.operator  = operator;
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);

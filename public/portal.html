@@ -340,6 +340,15 @@
   /* The Guide's glossary. A LABEL COLUMN of the real pills beside plain
      English — seeing the actual pill is what makes it findable when they meet
      it on another tab. */
+  /* Today's row on the Overview strip — it is the one that moves. */
+  .dbd-row.ov-today > td { background:var(--info-bg); }
+  .dbd-row.ov-today > td:first-child { box-shadow:inset 3px 0 0 var(--brand); }
+  .live-sub { display:inline-flex; align-items:center; gap:.3rem; }
+  .live-sub .dot { width:6px; height:6px; border-radius:50%; background:var(--ok);
+                   animation:livepulse 2.4s ease-in-out infinite; }
+  @keyframes livepulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+  @media (prefers-reduced-motion:reduce) { .live-sub .dot { animation:none } }
+
   .gl-grp { margin-bottom:.9rem; }
   .gl-grp:last-child { margin-bottom:0; }
   .gl-hd { font-size:.7rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
