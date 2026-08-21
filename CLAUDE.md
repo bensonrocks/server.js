@@ -5032,6 +5032,45 @@ completed, 6 cancelled and 2 open: not one cancelled order in the default view,
 completed leading, the note naming what is hidden, one tap showing exactly the
 cancelled six, and the word "aging" appearing nowhere on Stock or Overview.
 
+### Every figure on the client's Overview opens the rows behind it
+
+Per the user, pointing at the Overview: *"all this are to be clickable and
+leads to its corresponding data"*. A number a client cannot open is a number
+they cannot act on — "165 SKUs out of stock" is only useful if those 165 are
+one tap away.
+
+- **The four KPI tiles**: Available → Stock, Reserved → Stock filtered to
+  reserved, Orders in progress → Orders (open), Orders shipped → Orders
+  (completed). The Last-30-days figures lead to the same place.
+- **Every alert** carries the tab and filter that answers it — out of stock,
+  running low, orders waiting for stock, receiving discrepancies, inbound past
+  the SLA. The wording that used to say "Open the Orders tab to see each one"
+  is gone: it IS the link now.
+- **The chart's bars** open that day's orders. A day with NO shipments is
+  deliberately not a link — tapping it would land on an empty list, which reads
+  as broken rather than as "nothing went out".
+- **`openFrom(tab, filter, day)` SETS THE CHIP as well as the variable.**
+  Leaving the chip on "All" while the list is filtered is exactly how someone
+  concludes their stock has vanished — the same lesson as the office KPI tiles'
+  `.kpi-filter-note`.
+- **A SECTION THIS LOGIN CANNOT SEE IS NEVER MADE A LINK** — the builders ask
+  `visible(k)`, the same rule the tabs and the API use, so a tile can never lead
+  somewhere that answers 403. Asserted: with Stock switched off for a login, the
+  Available and Reserved tiles stop being links while the Orders tiles stay.
+- ONE delegated listener on `document`, because this HTML is rebuilt on every
+  render and a bound listener would be thrown away with it. `role="link"` +
+  `tabindex="0"` + an Enter/Space handler, so it is not mouse-only.
+- The affordance is hover/focus only (plus a "View →" in each alert, since a
+  phone has no hover) — a dashboard should still read as a dashboard, not a
+  wall of buttons.
+
+Verified 34 browser checks on desktop and a Pixel 5 against an account seeded
+with real stock and a fortnight of shipments: every tile a link to the right
+tab and filter, tapping Reserved landing on Stock with the Reserved chip ON,
+each alert knowing where it leads and saying so, an empty chart day not being a
+link, tapping a live bar opening Orders narrowed to that day with the day-note
+naming it, and the visibility rule holding per login.
+
 ## Portal orders — the waybill you can open, and no pill that says nothing
 
 - **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing
