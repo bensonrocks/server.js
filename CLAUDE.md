@@ -1714,23 +1714,31 @@ and admin release both free it, switching off ends the session at once,
 downgrade bites on the next request, no hash or salt ever reaches the office)
 plus 19 browser checks across the office screen and two client phones.
 
-### What a client may SEE at all — `portal_visibility`, granted by us
+### What each LOGIN may SEE — `portalUsers[].visibility`, granted by us
 
 Per the user: *"Client Portal: need to be able to toggle and set what they can
-see, and what they cannot see unless granted. ie: reports etc."*
+see, and what they cannot see unless granted. ie: reports etc."* — and then,
+on seeing the first cut: *"THE ACCESSES should be per user level. not as a
+group."*
 
 Access (full / view) already said what one LOGIN may **do**. This is the other
-question and it is a different shape: whether that CLIENT'S portal carries a
-section in the first place.
+question: which sections that login's portal carries at all.
 
-- **PER CLIENT, NOT PER LOGIN** — `clientProfiles[].portal_visibility`. It is
-  the arrangement with the account (a client not paying for reporting does not
-  get reporting), and two colleagues on the same client seeing different
-  sections of the same data helps nobody. A per-login matrix was deliberately
-  not built, same reasoning as the two-level access toggle above.
-- **ABSENT READS AS VISIBLE, and so does an absent KEY.** No existing client
+- **PER LOGIN.** The first cut put ONE map on the client profile, reasoning
+  that it was the arrangement with the account. The user overruled it, and was
+  right: the same account holds a warehouse contact who needs Inbound and a
+  finance contact who needs Reports, and one shared setting means granting the
+  WIDER of the two to both. `portalUsers[].visibility`, set from that login's
+  own 👁 panel.
+- **THE CLIENT-LEVEL MAP IS STILL READ AS THE FALLBACK.**
+  `portalUserVisibility(profile, user)` takes the login's own map, else
+  `profile.portal_visibility`, else all-true — so a client configured under the
+  first shape becomes each of its logins' starting point instead of being
+  silently discarded. Saving on a login takes over from then on. There is no
+  longer a route that writes the client-level map.
+- **ABSENT READS AS VISIBLE, and so does an absent KEY.** No existing login
   changed the day this shipped, and a section added to `PORTAL_SECTIONS` later
-  can never silently vanish for every client already onboarded. Turning one off
+  can never silently vanish for every login already created. Turning one off
   is always a deliberate act on the onboarding screen.
 - Six sections: `overview`, `stock` (incl. their movement statement), `orders`,
   `inbound` (incl. GRNs and sending an ASN), `send`, `reports` (the ⬇ downloads
@@ -1750,27 +1758,34 @@ section in the first place.
   switching it back on simply returns the tab.
 - **A PORTAL SHOWING NOTHING IS A BROKEN LOGIN, NOT A CONFIGURATION**: at least
   one of `PORTAL_CORE_SECTIONS` (overview/stock/orders/inbound) must stay on
-  (400, said in words). `send` and `reports` may all be off.
+  **per login** (400, said in words). `send` and `reports` may all be off.
 - Client side: `visible(k)` mirrors the same absent-reads-as-visible rule,
   hidden tabs and the four ⬇ buttons come off, `loadAll` does not even ASK for a
   section that is off (the refusals would fill their console for something
   working as arranged), and if the tab they were standing on has gone the page
   moves to the first one that is still there.
-- Office: **Administrator → 🎉 Onboard Client → 👁 What this client can see**,
-  next to 👥 Portal logins. `POST .../portal-visibility` (checkMaster), audited
-  `client_portal_visibility_updated` with what was hidden, shown and changed. A
-  refused save re-renders from the server — ticks left showing a refused
-  configuration read as a partial save.
+- Office: **Administrator → 🎉 Onboard Client → 👥 Portal logins**, a **👁**
+  button on each login opening that login's own panel of ticks. Saved through
+  the EXISTING `POST .../portal-users` (`{id, visibility}`) — one route for
+  "change this login" — and audited under its own
+  `client_portal_visibility_updated` event carrying the **user id**, not folded
+  into the generic user-saved row. The row itself carries an amber
+  "👁 no Reports" summary, so the table answers "who can see what" without
+  opening six panels. A refused save re-renders from the server — ticks left
+  showing a refused configuration read as a partial save.
 
-Verified 41 API checks (everything open by default and on the login response and
-`/me`; reports off refuses the download in words and by name; stock off takes
-the movement statement with it and inbound off takes GRNs and the ASN template;
-`/me` and notices never hidden; all-off refused with nothing changed; it bites
-mid-session; a second login on the same client gets the same answer; another
-client untouched; the trail names what went) plus 28 browser checks on desktop
-and a Pixel 5 (the editor, the save saying what went, the on-screen refusal and
-its re-render, the tab and every ⬇ button gone, the API still refusing from that
-session, no sideways scroll, and switching it back on returning both).
+Verified 44 API checks (everything open by default on every login and on the
+login response and `/me`; Vera refused the download while Wes on the SAME client
+still gets it; stock off takes the movement statement with it and inbound off
+takes GRNs and the ASN template; `/me` and notices never hidden; all-off refused
+per login with nothing changed; it bites mid-session; changing one login leaves
+the other untouched; another client untouched; the trail names WHICH login) —
+including a two-phase check that a client configured under the old client-level
+shape still has it inherited and ENFORCED after a restart, and that saving on
+the login takes over — plus 36 browser checks on desktop and a Pixel 5 (a panel
+per login, closed until asked for, the save naming the person, the on-screen
+refusal and its re-render, the row summary, and the two logins' portals showing
+genuinely different tabs and buttons on the same client).
 
 ### Client order upload — THREE STEPS, and nothing reaches us until step 3
 
@@ -4757,8 +4772,22 @@ that could not be fulfilled"* could not see how many there were, let alone when.
   (`orderDay()`): a cancelled order counts on the day it was CANCELLED — that is
   the day the client has to re-place it — a completed one on the day it was
   FINISHED, and one still being worked on the day it ARRIVED, which is what
-  makes a backlog visible. Deliberately the same rule the office list uses, so
-  the two can never disagree about which day a job counts on.
+  makes a backlog visible.
+  **CORRECTION — this note used to claim the office list uses the same rule. IT
+  DOES NOT, and the two DO disagree.** The office (`orderDay` in
+  `renderOrdersList`, and the same predicate in `/api/orders`) buckets a
+  `done` order on `endTime` but EVERY other status — including `unprocessed` —
+  on `uploadedAt`. So an order uploaded on an earlier day and cancelled today
+  counts as today's cancellation on the client's screen and as that earlier
+  day's on ours, and the office's Cancelled tab under "Today" cannot answer
+  "what was cancelled today". Reported live as "office shows 15 orders, portal
+  shows 17". The office side is the one that is wrong; `unprocessed_at` is on
+  the order object and is what it should read. NOT YET FIXED — flagged here so
+  the next person does not re-derive it.
+  (The other reason the two counts can differ, and this one is deliberate:
+  `/api/orders` hides `client_cancelled` orders from the everyday office view,
+  showing them only in the admin review view, while the client always sees
+  their own cancellations.)
 - **SGT calendar days** (`sgDay()`, `en-CA` + `Asia/Singapore`) — never
   `toISOString()`, which puts anything before 08:00 SGT on the previous day.
   Same standing rule as everywhere else.

@@ -3884,15 +3884,16 @@ const PORTAL_ACCESS = new Set(['full', 'view']);
 // of their own account until a session they can no longer reach expires.
 const PORTAL_SESSION_IDLE_MIN = 15;
 
-// ── WHAT A CLIENT MAY SEE AT ALL — per client, granted by us ────────────────
-// Access (full / view) says what one LOGIN may DO. This is the other question,
-// and it is a different shape: whether that CLIENT'S portal carries a section
-// in the first place. That is an arrangement with the account — a client not
-// paying for reporting does not get reporting on any of their five logins — so
-// it lives on the profile, not on a person.
+// ── WHAT EACH LOGIN MAY SEE — per user, granted by us ──────────────────────
+// Access (full / view) says what a login may DO. This is the other question:
+// which sections that login's portal carries at all. Per the user, it is set
+// PER LOGIN, not for the client as a group — the same account can hold a
+// warehouse contact who needs Inbound and a finance contact who needs Reports
+// and nothing else, and forcing them onto one arrangement means granting the
+// wider of the two to both.
 //
 // ABSENT READS AS VISIBLE, and so does an absent KEY. A section added here
-// later must never silently vanish for every client already onboarded, and no
+// later must never silently vanish for every login already created, and no
 // existing client changes the day this ships. Turning one off is always a
 // deliberate act on the onboarding screen.
 const PORTAL_SECTIONS = [
@@ -3905,10 +3906,13 @@ const PORTAL_SECTIONS = [
 ];
 const PORTAL_SECTION_KEYS = PORTAL_SECTIONS.map(s => s.key);
 // A portal with no data section at all is a broken login, not a configuration —
-// the client signs in and is shown nothing. At least one of these has to stay.
+// the person signs in and is shown nothing. At least one of these has to stay.
 const PORTAL_CORE_SECTIONS = ['overview', 'stock', 'orders', 'inbound'];
-function portalVisibility(profile) {
-  const v = profile?.portal_visibility || {};
+// The login's own map, falling back to the client-level one this feature first
+// shipped with — so anything already configured for a client becomes the
+// starting point for each of its logins rather than being silently discarded.
+function portalUserVisibility(profile, user) {
+  const v = user?.visibility || profile?.portal_visibility || {};
   const out = {};
   for (const k of PORTAL_SECTION_KEYS) out[k] = v[k] !== false;
   return out;
@@ -3955,7 +3959,7 @@ function portalUsers(profile) {
   return profile.portalUsers;
 }
 // What the office may see. NEVER the salt or the hash.
-function portalUserPublic(u, live) {
+function portalUserPublic(u, live, profile) {
   return {
     id: u.id, name: u.name || u.id, email: u.email || '',
     access: u.access === 'view' ? 'view' : 'full',
@@ -3964,6 +3968,9 @@ function portalUserPublic(u, live) {
     last_login_at: u.last_login_at || null,
     signed_in: !!live,                        // someone is using it right now
     signed_in_at: live?.at || null,
+    // What THIS login sees. Resolved, not raw, so the screen shows the same
+    // answer the middleware will give rather than an empty object.
+    visibility: portalUserVisibility(profile, u),
   };
 }
 function portalUserId(name, existing) {
@@ -4351,42 +4358,13 @@ app.get('/api/master/client-profiles/:client/portal-users', (req, res) => {
   res.json({
     max: PORTAL_MAX_USERS,
     enabled: !!p.portal?.enabled,
-    users: users.map(u => portalUserPublic(u, livePortalSession(tenantId, p.client, u.id))),
-    // What this client's portal carries at all — the same payload the editor
-    // renders from, so the office never has to guess which keys exist.
+    users: users.map(u => portalUserPublic(u, livePortalSession(tenantId, p.client, u.id), p)),
+    // Which sections exist — the same payload the editor renders from, so the
+    // office never has to guess which keys there are. What each login SEES
+    // rides on that login's own row.
     sections: PORTAL_SECTIONS,
-    visibility: portalVisibility(p),
     coreSections: PORTAL_CORE_SECTIONS,
   });
-});
-
-// WHAT THIS CLIENT MAY SEE. Per-client, not per-login: it is the arrangement
-// with the account, and splitting it per person would let one colleague see a
-// section another cannot on the same client's data.
-app.post('/api/master/client-profiles/:client/portal-visibility', express.json(), (req, res) => {
-  if (!checkMaster(req, res)) return;
-  const db = readDb();
-  const p = clientProfiles(db).find(x => x.client === req.params.client);
-  if (!p) return res.status(404).json({ error: 'client not found' });
-  const want = req.body?.visibility;
-  if (!want || typeof want !== 'object') return res.status(400).json({ error: 'visibility is required' });
-  const next = {};
-  for (const k of PORTAL_SECTION_KEYS) next[k] = want[k] !== false;
-  if (!PORTAL_CORE_SECTIONS.some(k => next[k])) {
-    return res.status(400).json({
-      error: 'Leave at least one of Overview, Stock, Orders or Inbound switched on — a portal showing nothing is a login the client cannot use.',
-    });
-  }
-  const before = portalVisibility(p);
-  p.portal_visibility = next;
-  writeDb(db);
-  const off = PORTAL_SECTION_KEYS.filter(k => !next[k]);
-  logAudit('client_portal_visibility_updated', {
-    client: p.client, hidden: off, shown: PORTAL_SECTION_KEYS.filter(k => next[k]),
-    changed: PORTAL_SECTION_KEYS.filter(k => before[k] !== next[k]),
-    by: req.userId || 'master',
-  });
-  res.json({ ok: true, visibility: next, hidden: off });
 });
 
 app.post('/api/master/client-profiles/:client/portal-users', express.json(), (req, res) => {
@@ -4416,6 +4394,23 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
   if (b.email !== undefined) u.email = String(b.email || '').trim().slice(0, 160);
   if (b.access !== undefined) u.access = access;
   if (b.enabled !== undefined) u.enabled = !!b.enabled;
+  // WHAT THIS LOGIN SEES. Per login, so two people on the same client can be
+  // given different sections — which is the whole point of setting it here
+  // rather than on the account.
+  let visChanged = null;
+  if (b.visibility !== undefined) {
+    if (!b.visibility || typeof b.visibility !== 'object') return res.status(400).json({ error: 'visibility must be a map of sections' });
+    const next = {};
+    for (const k of PORTAL_SECTION_KEYS) next[k] = b.visibility[k] !== false;
+    if (!PORTAL_CORE_SECTIONS.some(k => next[k])) {
+      return res.status(400).json({
+        error: 'Leave at least one of Overview, Stock, Orders or Inbound switched on for this login — a portal showing nothing is a login they cannot use.',
+      });
+    }
+    const before = portalUserVisibility(p, u);
+    visChanged = PORTAL_SECTION_KEYS.filter(k => before[k] !== next[k]);
+    u.visibility = next;
+  }
   if (pw) {   // blank on edit = keep the current password
     if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
     u.salt = uuidv4().slice(0, 8);
@@ -4435,7 +4430,18 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
     client: p.client, user: u.id, access: u.access, enabled: u.enabled !== false,
     passwordSet: !!pw, by: req.userId || 'master',
   });
-  res.json({ ok: true, user: portalUserPublic(u, livePortalSession(tenantId, p.client, u.id)) });
+  if (visChanged) {
+    // Its own event: what a person may SEE is a different decision from what
+    // they may do, and burying it inside a generic "user saved" row would make
+    // it unanswerable later.
+    logAudit('client_portal_visibility_updated', {
+      client: p.client, user: u.id,
+      hidden: PORTAL_SECTION_KEYS.filter(k => !u.visibility[k]),
+      shown: PORTAL_SECTION_KEYS.filter(k => u.visibility[k]),
+      changed: visChanged, by: req.userId || 'master',
+    });
+  }
+  res.json({ ok: true, user: portalUserPublic(u, livePortalSession(tenantId, p.client, u.id), p) });
 });
 
 app.delete('/api/master/client-profiles/:client/portal-users/:userId', (req, res) => {
@@ -4592,7 +4598,7 @@ app.post('/api/portal/login', express.json(), (req, res) => {
     if (live2) { live2.last_login_at = now; writeDb(db); }
     logAudit('portal_login', { client: p.client, user: user.id, access: user.access || 'full' });
   });
-  res.json({ token, client: p.client, visibility: portalVisibility(p),
+  res.json({ token, client: p.client, visibility: portalUserVisibility(p, user),
              user: { id: user.id, name: user.name || user.id, access: user.access === 'view' ? 'view' : 'full' } });
 });
 function requirePortalAuthMiddleware(req, res, next) {
@@ -4627,7 +4633,7 @@ function requirePortalAuthMiddleware(req, res, next) {
       // a section that is switched off is off however it is reached — and a
       // refusal SAYS SO, because an empty payload reads as "you have nothing"
       // rather than "this is not switched on for you".
-      req.portalVisibility = portalVisibility(prof);
+      req.portalVisibility = portalUserVisibility(prof, u);
       const sec = portalSectionForPath(req.path);
       if (sec && req.portalVisibility[sec] === false) {
         const label = PORTAL_SECTIONS.find(s => s.key === sec)?.label || sec;
@@ -4658,7 +4664,7 @@ function requirePortalWrite(req, res, next) {
 }
 app.get('/api/portal/me', requirePortalAuthMiddleware, (req, res) => {
   res.json({ client: req.portalClient, user: req.portalUserId, name: req.portalUserName, access: req.portalAccess,
-             visibility: req.portalVisibility || portalVisibility(null) });
+             visibility: req.portalVisibility || portalUserVisibility(null, null) });
 });
 app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
   activeSessions.delete(req.portalSessionKey);

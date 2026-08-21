@@ -742,7 +742,9 @@
                 <div class="hint" style="margin:.2rem 0 .55rem">
                   Up to <b>5</b> people per client. <b>Full access</b> can send orders, waybills and ASNs and cancel their own
                   unprocessed work; <b>View only</b> can read and download everything but send nothing in.
-                  Every login sees the same live status on the same orders.
+                  <b>👁 Sections</b> sets what each login can see — per person, so one contact can have Inbound and another
+                  only Reports. Everything is on unless you switch it off, and a section switched off is
+                  <b>gone from their portal</b> and refused by the API, not merely hidden.
                   An account can only be signed in <b>one place at a time</b>.
                 </div>
                 <div id="obUserList"></div>
@@ -757,23 +759,6 @@
                   <button class="btn-primary btn-sm" id="obUserAddBtn">+ Add login</button>
                 </div>
                 <div id="obUserMsg" class="hint" style="margin-top:.4rem"></div>
-              </div>
-
-              <!-- What this client's portal carries at all. Separate from the
-                   full/view access above: that says what a person may DO, this
-                   says what the account is given in the first place. -->
-              <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">
-                <b>👁 What this client can see</b>
-                <div class="hint" style="margin:.2rem 0 .55rem">
-                  Applies to <b>all</b> of this client's logins — it is the arrangement with the account, not a setting per person.
-                  Everything is on unless you switch it off. A section switched off is <b>gone from their portal</b> and
-                  refused by the API, not merely hidden.
-                </div>
-                <div id="obVisList"></div>
-                <div style="display:flex;gap:.5rem;align-items:center;margin-top:.6rem">
-                  <button class="btn-primary btn-sm" id="obVisSaveBtn">Save what they see</button>
-                  <span id="obVisMsg" class="hint"></span>
-                </div>
               </div>
 
               <div style="border-top:1px solid #e2e8f0;padding-top:.9rem;margin-top:.9rem">

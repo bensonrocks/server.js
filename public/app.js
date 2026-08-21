@@ -11345,27 +11345,46 @@
         obUsers = d.users || [];
         $('obUserCount').textContent = `(${obUsers.length} of ${d.max})`;
         $('obUserForm').style.display = obUsers.length >= d.max ? 'none' : '';
+        obSections = d.sections || [];
+        obCoreSections = d.coreSections || [];
         renderPortalUsers(d.max);
-        renderPortalVisibility(d.sections || [], d.visibility || {}, d.coreSections || []);
       } catch (e) { /* leave whatever is on screen */ }
     }
 
-    // ── What this client's portal carries at all ───────────────────────────
-    // Deliberately a plain tick per section rather than a per-login matrix:
-    // it is the arrangement with the account, and two colleagues on the same
-    // client seeing different sections of the same data helps nobody.
-    function renderPortalVisibility(sections, vis, core) {
-      $('obVisList').innerHTML = sections.map(s => `
-        <label style="display:flex;gap:.5rem;align-items:flex-start;padding:.35rem 0;border-bottom:1px solid #f1f5f9">
-          <input type="checkbox" class="ob-vis" data-key="${esc(s.key)}" ${vis[s.key] === false ? '' : 'checked'} style="margin-top:.2rem">
-          <span style="flex:1">
-            <b style="font-size:.85rem">${esc(s.label)}</b>
-            ${core.includes(s.key) ? '' : '<span class="cs-pill" style="margin-left:.3rem">optional</span>'}
-            <div class="hint">${esc(s.hint)}</div>
-          </span>
-        </label>`).join('');
-      $('obVisMsg').textContent = '';
-    }
+    // ── What each login can SEE ────────────────────────────────────────────
+    // Per person, not per client: the same account can hold a warehouse
+    // contact who needs Inbound and a finance contact who needs Reports and
+    // nothing else, and one shared arrangement would mean granting the wider
+    // of the two to both.
+    let obSections = [], obCoreSections = [];
+    const visRowHtml = (u) => `
+      <tr class="ob-vis-row hidden" data-for="${esc(u.id)}"><td colspan="5" style="background:#f8fafc;padding:.6rem .75rem">
+        <div class="hint" style="margin-bottom:.4rem">What <b>${esc(u.name)}</b> sees when they sign in. Everything is on unless you switch it off.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.35rem 1.1rem">
+          ${obSections.map(s => `
+            <label style="display:flex;gap:.4rem;align-items:flex-start;flex:1 1 15rem;min-width:0">
+              <input type="checkbox" class="ob-vis" data-for="${esc(u.id)}" data-key="${esc(s.key)}"
+                     ${u.visibility?.[s.key] === false ? '' : 'checked'} style="margin-top:.2rem">
+              <span style="flex:1;min-width:0">
+                <b style="font-size:.82rem">${esc(s.label)}</b>
+                ${obCoreSections.includes(s.key) ? '' : '<span class="cs-pill" style="margin-left:.3rem">optional</span>'}
+                <div class="hint">${esc(s.hint)}</div>
+              </span>
+            </label>`).join('')}
+        </div>
+        <div style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem">
+          <button class="btn-primary btn-sm ob-vis-save" data-id="${esc(u.id)}">Save what ${esc(u.name)} sees</button>
+          <span class="ob-vis-msg hint" data-for="${esc(u.id)}"></span>
+        </div>
+      </td></tr>`;
+    // A login that has had something taken away says so on its own row, so the
+    // table answers "who can see what" without opening six panels.
+    const visSummary = (u) => {
+      const off = obSections.filter(s => u.visibility?.[s.key] === false);
+      return off.length
+        ? `<div class="hint" style="color:#b45309">👁 no ${off.map(s => esc(s.label)).join(', ')}</div>`
+        : '';
+    };
     function renderPortalUsers(max) {
       if (!obUsers.length) {
         $('obUserList').innerHTML = '<p class="hint">No logins yet — add one below and give the client the details.</p>';
@@ -11377,7 +11396,7 @@
           <td><b>${esc(u.name)}</b>${u.signed_in ? ' <span class="cs-pill ok" title="Signed in right now">● in use</span>' : ''}
               ${u.enabled ? '' : ' <span class="cs-pill bad">off</span>'}
               ${u.hasPassword ? '' : ' <span class="cs-pill warn">no password</span>'}
-              <div class="hint">${esc(u.id)}</div></td>
+              <div class="hint">${esc(u.id)}</div>${visSummary(u)}</td>
           <td>${esc(u.email || '—')}</td>
           <td>
             <select class="ob-user-access" data-id="${esc(u.id)}" style="padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px">
@@ -11387,11 +11406,12 @@
           </td>
           <td class="hint">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : 'never'}</td>
           <td style="white-space:nowrap">
+            <button class="btn-secondary btn-sm ob-user-vis" data-id="${esc(u.id)}" title="What this login can see">👁</button>
             <button class="btn-secondary btn-sm ob-user-pw"  data-id="${esc(u.id)}" title="Set a new password">🔑</button>
             <button class="btn-secondary btn-sm ob-user-tog" data-id="${esc(u.id)}" data-on="${u.enabled ? '1' : '0'}" title="${u.enabled ? 'Switch this login off' : 'Switch it back on'}">${u.enabled ? '⏸' : '▶'}</button>
             ${u.signed_in ? `<button class="btn-secondary btn-sm ob-user-rel" data-id="${esc(u.id)}" title="They are signed in elsewhere and cannot get back in — free the account">⏏</button>` : ''}
             <button class="btn-del-order ob-user-del" data-id="${esc(u.id)}" data-name="${esc(u.name)}" title="Remove this login">🗑</button>
-          </td></tr>`).join('')}</tbody></table>`;
+          </td></tr>${visRowHtml(u)}`).join('')}</tbody></table>`;
 
       const save = (id, body) => fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-users`,
         { method: 'POST', headers: mkJson(), body: JSON.stringify({ id, ...body }) });
@@ -11403,6 +11423,39 @@
         if (!r.ok) { msg(d.error || 'Could not change access', true); loadPortalUsers(); return; }
         msg(`${d.user.name} is now ${d.user.access === 'view' ? 'view only' : 'full access'}.`);
         loadPortalUsers();
+      }));
+      $('obUserList').querySelectorAll('.ob-user-vis').forEach(b => b.addEventListener('click', () => {
+        const row = $('obUserList').querySelector(`.ob-vis-row[data-for="${CSS.escape(b.dataset.id)}"]`);
+        row?.classList.toggle('hidden');
+      }));
+      $('obUserList').querySelectorAll('.ob-vis-save').forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.id;
+        const out = $('obUserList').querySelector(`.ob-vis-msg[data-for="${CSS.escape(id)}"]`);
+        const visibility = {};
+        $('obUserList').querySelectorAll(`.ob-vis[data-for="${CSS.escape(id)}"]`)
+          .forEach(c => { visibility[c.dataset.key] = c.checked; });
+        const off = Object.keys(visibility).filter(k => !visibility[k]);
+        const who = obUsers.find(u => u.id === id)?.name || id;
+        // Switching a section off takes it off that person's screen next time
+        // they load the page — say so before it happens.
+        if (off.length && !confirm(`Switch off ${off.length} section(s) for ${who}?\n\nTheir portal stops showing them and the API refuses them — this login only. Other logins on ${current} are unaffected.`)) return;
+        const r = await save(id, { visibility });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          // Nothing was saved, so put the ticks back to what the server holds —
+          // boxes left showing a refused configuration read as a partial save.
+          await loadPortalUsers();
+          const again = $('obUserList').querySelector(`.ob-vis-msg[data-for="${CSS.escape(id)}"]`);
+          $('obUserList').querySelector(`.ob-vis-row[data-for="${CSS.escape(id)}"]`)?.classList.remove('hidden');
+          if (again) again.innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Failed')}</span>`;
+          return;
+        }
+        await loadPortalUsers();
+        const again = $('obUserList').querySelector(`.ob-vis-msg[data-for="${CSS.escape(id)}"]`);
+        $('obUserList').querySelector(`.ob-vis-row[data-for="${CSS.escape(id)}"]`)?.classList.remove('hidden');
+        if (again) again.innerHTML = off.length
+          ? `<b style="color:#059669">✓ saved — ${off.length} section(s) switched off for ${esc(who)}.</b>`
+          : `<b style="color:#059669">✓ saved — ${esc(who)} can see everything.</b>`;
       }));
       $('obUserList').querySelectorAll('.ob-user-pw').forEach(b => b.addEventListener('click', async () => {
         const pw = prompt('New password for this login (min 6 characters):');
@@ -11568,28 +11621,6 @@
         $('obUserName').value = ''; $('obUserEmail').value = ''; $('obUserPass').value = '';
         $('obUserMsg').innerHTML = `<b style="color:#059669">✓ ${esc(d.user.name)} added — they sign in with the client name, "${esc(d.user.id)}" and that password.</b>`;
         loadPortalUsers();
-      });
-      $('obVisSaveBtn')?.addEventListener('click', async () => {
-        if (!current) { alert('Save the client first.'); return; }
-        const visibility = {};
-        $('obVisList').querySelectorAll('.ob-vis').forEach(c => { visibility[c.dataset.key] = c.checked; });
-        const off = Object.keys(visibility).filter(k => !visibility[k]);
-        // Switching a section off takes it off the client's screen the next
-        // time they load the page, so say so before it happens.
-        if (off.length && !confirm(`Switch off ${off.length} section(s) for ${current}?\n\nTheir portal will stop showing them, and the API will refuse them for every one of this client's logins.`)) return;
-        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-visibility`,
-          { method: 'POST', headers: mkJson(), body: JSON.stringify({ visibility }) });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          // Nothing was saved, so put the ticks back to what the server holds —
-          // boxes left showing a refused configuration read as a partial save.
-          await loadPortalUsers();
-          $('obVisMsg').innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Failed')}</span>`;
-          return;
-        }
-        $('obVisMsg').innerHTML = off.length
-          ? `<b style="color:#059669">✓ saved — ${off.length} section(s) switched off.</b>`
-          : '<b style="color:#059669">✓ saved — they can see everything.</b>';
       });
       $('obDeleteBtn')?.addEventListener('click', remove);
     }, 0);
