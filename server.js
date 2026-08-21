@@ -703,6 +703,25 @@ setInterval(() => {
 // matches. Scoped to the webhook paths so we don't hold a raw copy for every
 // request. (Route-level express.json on those paths still runs harmlessly.)
 const RAW_BODY_PATHS = /^\/api\/(lazada\/callback|shopee\/push)\b/;
+// ── THE HUB'S PUSH GETS A FORGIVING PARSER ─────────────────────────────────
+// Mounted BEFORE the global one so it wins. Two differences, both because a
+// receiver that argues with the caller is a receiver the hub stops sending to:
+//   - `strict: false` accepts a bare string or null at the top level. The
+//     global parser rejects those with a 400 the route never sees, and we have
+//     NOT verified what shape ZORT pushes — so refusing an unfamiliar one would
+//     take the whole channel down over a guess.
+//   - a size cap, because the body is external and we only ever read an
+//     identifier out of it.
+// A body that is not JSON at all still reaches the route with nothing in it,
+// which is logged as `no_order` and acknowledged — the honest outcome.
+app.use('/api/zort/webhook', express.json({ strict: false, limit: '256kb' }));
+app.use('/api/zort/webhook', (err, req, res, next) => {
+  // Even an unparseable body is ACKed. It is logged by the route as carrying
+  // no order; what must not happen is the hub seeing an error from us.
+  if (err) { req.body = {}; return next(); }
+  next();
+});
+
 app.use(express.json({
   verify: (req, _res, buf) => {
     try { if (buf && buf.length && RAW_BODY_PATHS.test(req.url || '')) req.rawBody = buf.toString('utf8'); } catch (_) {}
@@ -21275,6 +21294,20 @@ function zortBodyErrorSafe(resp) {
 const ZORT_PUSH_LOG_CAP = 200;
 const ZORT_PUSH_DEBOUNCE_MS = 20000;   // one read per order per 20s, however many pushes
 const _zortPushSeen = new Map();       // orderKey -> last read time (in memory: a live rate guard)
+// BOUNDED, because the key comes from an EXTERNAL caller: a push carrying many
+// distinct order refs would otherwise grow this map without limit. Entries are
+// only worth keeping for the debounce window anyway.
+const ZORT_PUSH_SEEN_CAP = 2000;
+function _zortPushSeenSet(key) {
+  const now = Date.now();
+  if (_zortPushSeen.size >= ZORT_PUSH_SEEN_CAP) {
+    for (const [k, t] of _zortPushSeen) if (now - t >= ZORT_PUSH_DEBOUNCE_MS) _zortPushSeen.delete(k);
+    // Still full of live entries: drop the oldest rather than grow. Losing a
+    // debounce costs one extra read; growing for ever costs the process.
+    if (_zortPushSeen.size >= ZORT_PUSH_SEEN_CAP) _zortPushSeen.delete(_zortPushSeen.keys().next().value);
+  }
+  _zortPushSeen.set(key, now);
+}
 // Every key a push might carry the order under. Defensive on purpose — see
 // above; an identifier we fail to recognise costs a logged `no_order`, not a
 // wrong action.
@@ -21305,7 +21338,16 @@ const _zortWebhookHandler = (req, res) => {
   setImmediate(() => {
     try {
       const db = readDb();
-      const store = (db.zortStores || []).find(x => x.webhookToken && x.webhookToken === token);
+      // CONSTANT-TIME COMPARE, same discipline as the Lazada/Shopee push
+      // signatures. A 32-hex token is not realistically timing-attackable over
+      // HTTP, but the cost of doing it properly is nil and the cost of being
+      // wrong about that is a valid push URL.
+      const store = (db.zortStores || []).find(x => {
+        if (!x.webhookToken || !token) return false;
+        const a = Buffer.from(String(x.webhookToken));
+        const b = Buffer.from(String(token));
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      });
       if (!store) {
         // Logged, not silently dropped: a push arriving on a token nobody holds
         // is worth being able to see.
@@ -21330,7 +21372,7 @@ const _zortWebhookHandler = (req, res) => {
         writeDb(db);
         return;
       }
-      _zortPushSeen.set(key, Date.now());
+      _zortPushSeenSet(key);
       _zortPushLog(db, { storeId: store.id, ref, action: 'reading' });
       writeDb(db);
       // The targeted read. `pullZortStore` already knows how to reconcile one

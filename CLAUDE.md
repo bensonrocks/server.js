@@ -1215,6 +1215,25 @@ tell us instead.
   knows what this deployment is published as), and offers to stop on the way
   back.
 
+- **HARDENING, because the receiver is PUBLIC** (self-review; CodeQL's count did
+  not move and is not evidence either way on new code):
+  - **Constant-time token compare** (`crypto.timingSafeEqual`), the same
+    discipline the Lazada/Shopee push signatures already use. A 32-hex token is
+    not realistically timing-attackable over HTTP, but the cost of doing it
+    properly is nil and the cost of being wrong is a valid push URL. Length is
+    compared first, so a correct PREFIX is rejected too.
+  - **The debounce Map is BOUNDED** (`ZORT_PUSH_SEEN_CAP` 2000, expired entries
+    swept first). Its key comes from an external caller, so a push carrying many
+    distinct order refs would otherwise grow it without limit. Losing a debounce
+    costs one extra read; growing for ever costs the process.
+  - **A FORGIVING PARSER on this path only**, mounted before the global one:
+    `strict: false` plus a 256kb cap. The global parser 400s a bare string or
+    `null` before the route ever sees it — and since ZORT's payload shape is NOT
+    verified, refusing an unfamiliar one would take the channel down over a
+    guess. **A receiver that argues with the caller is one the hub stops sending
+    to.** A body that is not JSON at all still reaches the route empty, is
+    logged `no_order`, and is acknowledged.
+
 HONEST CAVEAT: the exact field names `Webhook/UpdateWebhook` wants are NOT
 confirmed from here, so the common shapes (`url`, `orderUrl`, `webhookUrl`, …)
 are sent together and whatever the hub reads it reads; if it refuses, its own
@@ -1226,7 +1245,11 @@ the URL, the token never read back, an unknown token logged not dropped, ONE
 `GetOrders` per push carrying `numberlist` and no `updatedafter`, five more
 pushes costing nothing, a push with no order logged, an order found under
 `data.orderid`, `lastPullAt` unmoved and the store row unchanged, and revocation
-killing the URL) plus 9 browser checks on the Push dialog.
+killing the URL), 12 hardening checks on the public endpoint (a one-character
+miss and a correct prefix both rejected; null, a bare string, an array, a nested
+value and a 5kb string all acknowledged without taking the server down; 300
+pushes with distinct refs leaving it healthy; both log caps holding) and 9
+browser checks on the Push dialog.
 
 ### Telling the hub when WE cancel (`store.cancelSync`, `tellHubWeCancelled`)
 
