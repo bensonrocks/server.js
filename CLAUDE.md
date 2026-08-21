@@ -1234,6 +1234,13 @@ tell us instead.
     counted in memory and persisted at most once a minute WITH THE COUNT — the
     operator still learns "70 pushes on a dead URL from this address", which is
     the fact that matters, without 70 writes. Both maps are bounded.
+  - **THE TOKEN NEVER GOES ON THE TRAIL.** `logAudit('zort_webhook_registered')`
+    recorded the FULL push URL — secret included — and `db.auditLog` is never
+    wiped, is archived indefinitely, and the nightly backup is gzipped **and
+    emailed**. So the secret that authenticates every push would have travelled
+    by email and sat on disk for ever. `_redactPushUrl()` keeps WHERE we
+    registered (which is the useful part) and drops the key. The operator who
+    asked for it is still shown it once, in the response.
   - **A FORGIVING PARSER on this path only**, mounted before the global one:
     `strict: false` plus a 256kb cap. The global parser 400s a bare string or
     `null` before the route ever sees it — and since ZORT's payload shape is NOT
@@ -1253,11 +1260,13 @@ the URL, the token never read back, an unknown token logged not dropped, ONE
 `GetOrders` per push carrying `numberlist` and no `updatedafter`, five more
 pushes costing nothing, a push with no order logged, an order found under
 `data.orderid`, `lastPullAt` unmoved and the store row unchanged, and revocation
-killing the URL), 17 hardening checks on the public endpoint (a one-character
+killing the URL), 22 hardening checks on the public endpoint (a one-character
 miss and a correct prefix both rejected; null, a bare string, an array, a nested
 value and a 5kb string all acknowledged without taking the server down; 300
 pushes with distinct refs leaving it healthy; both log caps holding; 40 pushes
-on a dead token adding ONE row carrying `count: 70` rather than 40 rows) plus a
+on a dead token adding ONE row carrying `count: 70` rather than 40 rows; the
+full URL appearing NOWHERE in stored data while the trail still reads
+`webhook/••••••••`) plus a
 separate 3-check run at a deliberately low ceiling — the ceiling and the
 write-amplification guard hide each other from one address, so each is measured
 with the other raised out of the way (`ZORT_PUSH_IP_MAX`,

@@ -21346,6 +21346,10 @@ app.post('/api/master/zort/stores/:id/test', async (req, res) => {
 function zortBodyErrorSafe(resp) {
   try { return zortApi.zortBodyError(resp) || ''; } catch (_) { return ''; }
 }
+// The push URL with its secret taken out — safe to store and to show.
+function _redactPushUrl(u) {
+  return String(u || '').replace(/(\/api\/zort\/webhook\/)[0-9a-f]{4,}/i, '$1••••••••');
+}
 const ZORT_PUSH_LOG_CAP = 200;
 const ZORT_PUSH_DEBOUNCE_MS = 20000;   // one read per order per 20s, however many pushes
 const _zortPushSeen = new Map();       // orderKey -> last read time (in memory: a live rate guard)
@@ -21533,8 +21537,13 @@ app.post('/api/master/zort/stores/:id/webhook', express.json(), async (req, res)
   } catch (e) { said = String(e.message || e).slice(0, 300); }
   store.webhookRegisteredAt = ok ? new Date().toISOString() : store.webhookRegisteredAt || null;
   writeDb(db);
+  // THE TOKEN NEVER GOES ON THE TRAIL. `db.auditLog` is never wiped, is
+  // archived indefinitely, and the nightly backup is gzipped AND EMAILED — so
+  // logging the full URL would put the secret that authenticates every push
+  // into an inbox and onto disk for ever. The record needs to say WHERE we
+  // registered, not what the key is.
   logAudit('zort_webhook_registered', {
-    storeId: store.id, client: store.clientName || '', url, ok, said,
+    storeId: store.id, client: store.clientName || '', url: _redactPushUrl(url), ok, said,
     by: req.userId || _tokenUserId(req) || '',
   });
   res.json({ ok, url, said, raw: raw ? JSON.stringify(raw).slice(0, 600) : '' });
