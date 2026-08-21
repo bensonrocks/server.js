@@ -21328,6 +21328,35 @@ function _zortPushLog(db, entry) {
   if (db.zortPushLog.length > ZORT_PUSH_LOG_CAP) db.zortPushLog.splice(0, db.zortPushLog.length - ZORT_PUSH_LOG_CAP);
 }
 
+// ── AN UNAUTHENTICATED CALLER MUST NOT COST US A DISK WRITE ────────────────
+// The first cut did `readDb()` + `_zortPushLog()` + `writeDb()` for EVERY hit,
+// including one carrying a token nobody holds — so anybody who found the URL
+// shape could drive a database write per request. Two guards, both before any
+// db work:
+//   - a cheap per-IP ceiling (this is a machine-to-machine endpoint; a real hub
+//     sends a handful a minute, not hundreds);
+//   - unknown tokens are counted IN MEMORY and persisted at most once a minute.
+//     The operator still learns that pushes are arriving on a dead URL, which
+//     is the fact that matters, without one write per attempt.
+// Per IP per minute. A real hub sends a handful; this is generous. Overridable
+// for tests only, like ZORT_BACKOFF_MS — a ceiling cannot be exercised from the
+// same address without either raising it or lowering it on purpose.
+const ZORT_PUSH_IP_MAX = Number(process.env.ZORT_PUSH_IP_MAX || 120);
+const ZORT_PUSH_IP_WINDOW_MS = 60000;
+const _zortPushIp = new Map();         // ip -> {n, until}
+const _zortPushBadToken = new Map();   // ip -> {n, firstAt, loggedAt}
+const ZORT_PUSH_BADTOKEN_LOG_MS = Number(process.env.ZORT_PUSH_BADTOKEN_LOG_MS || 60000);
+function _zortPushRateOk(ip) {
+  const now = Date.now();
+  const e = _zortPushIp.get(ip);
+  if (!e || e.until <= now) { _zortPushIp.set(ip, { n: 1, until: now + ZORT_PUSH_IP_WINDOW_MS }); return true; }
+  e.n += 1;
+  // Bounded: the key is an external caller's address, so this cannot be
+  // allowed to grow. Sweep expired entries when it gets large.
+  if (_zortPushIp.size > 5000) for (const [k, v] of _zortPushIp) if (v.until <= now) _zortPushIp.delete(k);
+  return e.n <= ZORT_PUSH_IP_MAX;
+}
+
 // GET is for whatever "verify this URL" step the hub does; POST is the push.
 // Both ACK immediately — a receiver that makes the caller wait on our work is
 // how a hub decides we are down and stops sending.
@@ -21335,6 +21364,10 @@ const _zortWebhookHandler = (req, res) => {
   const token = String(req.params.token || '');
   res.json({ ok: true });                         // ACK first, always
   if (req.method === 'GET') return;
+  const ip = clientInfo(req).ip || 'unknown';
+  // OVER THE CEILING: still a 200 (already sent), but nothing is read, written
+  // or logged. A flood costs a Map increment.
+  if (!_zortPushRateOk(ip)) return;
   setImmediate(() => {
     try {
       const db = readDb();
@@ -21349,10 +21382,23 @@ const _zortWebhookHandler = (req, res) => {
         return a.length === b.length && crypto.timingSafeEqual(a, b);
       });
       if (!store) {
-        // Logged, not silently dropped: a push arriving on a token nobody holds
-        // is worth being able to see.
-        _zortPushLog(db, { action: 'unknown_token', token: token.slice(0, 6) + '…' });
-        writeDb(db);
+        // WORTH SEEING, BUT NOT WORTH A WRITE EACH TIME. Counted in memory and
+        // persisted at most once a minute per source, with the count — so the
+        // operator learns "47 pushes on a dead URL from this address" instead
+        // of us taking 47 disk writes from an unauthenticated caller.
+        const now = Date.now();
+        const e = _zortPushBadToken.get(ip) || { n: 0, firstAt: now, loggedAt: 0 };
+        e.n += 1;
+        // Overridable for tests only — the same escape hatch ZORT_BACKOFF_MS and
+        // ZORT_LABEL_RETRY_MS already have, since a window measured in minutes
+        // cannot otherwise be exercised.
+        if (now - e.loggedAt >= ZORT_PUSH_BADTOKEN_LOG_MS) {
+          _zortPushLog(db, { action: 'unknown_token', token: token.slice(0, 6) + '…', from: ip, count: e.n });
+          e.loggedAt = now; e.n = 0;
+          writeDb(db);
+        }
+        if (_zortPushBadToken.size > 5000) _zortPushBadToken.clear();
+        _zortPushBadToken.set(ip, e);
         return;
       }
       const ref = _zortPushOrderRef(req.body);

@@ -1226,6 +1226,14 @@ tell us instead.
     swept first). Its key comes from an external caller, so a push carrying many
     distinct order refs would otherwise grow it without limit. Losing a debounce
     costs one extra read; growing for ever costs the process.
+  - **AN UNAUTHENTICATED CALLER MUST NOT COST A DISK WRITE.** The first cut did
+    `readDb()` + `_zortPushLog()` + `writeDb()` for EVERY hit, including one
+    carrying a token nobody holds — so anyone who found the URL shape could
+    drive a database write per request. Now: a per-IP ceiling
+    (`ZORT_PUSH_IP_MAX`, 120/min) checked BEFORE any db work, and unknown tokens
+    counted in memory and persisted at most once a minute WITH THE COUNT — the
+    operator still learns "70 pushes on a dead URL from this address", which is
+    the fact that matters, without 70 writes. Both maps are bounded.
   - **A FORGIVING PARSER on this path only**, mounted before the global one:
     `strict: false` plus a 256kb cap. The global parser 400s a bare string or
     `null` before the route ever sees it — and since ZORT's payload shape is NOT
@@ -1245,11 +1253,16 @@ the URL, the token never read back, an unknown token logged not dropped, ONE
 `GetOrders` per push carrying `numberlist` and no `updatedafter`, five more
 pushes costing nothing, a push with no order logged, an order found under
 `data.orderid`, `lastPullAt` unmoved and the store row unchanged, and revocation
-killing the URL), 12 hardening checks on the public endpoint (a one-character
+killing the URL), 17 hardening checks on the public endpoint (a one-character
 miss and a correct prefix both rejected; null, a bare string, an array, a nested
 value and a 5kb string all acknowledged without taking the server down; 300
-pushes with distinct refs leaving it healthy; both log caps holding) and 9
-browser checks on the Push dialog.
+pushes with distinct refs leaving it healthy; both log caps holding; 40 pushes
+on a dead token adding ONE row carrying `count: 70` rather than 40 rows) plus a
+separate 3-check run at a deliberately low ceiling — the ceiling and the
+write-amplification guard hide each other from one address, so each is measured
+with the other raised out of the way (`ZORT_PUSH_IP_MAX`,
+`ZORT_PUSH_BADTOKEN_LOG_MS`, test-only escape hatches like `ZORT_BACKOFF_MS`) —
+and 9 browser checks on the Push dialog.
 
 ### Telling the hub when WE cancel (`store.cancelSync`, `tellHubWeCancelled`)
 
