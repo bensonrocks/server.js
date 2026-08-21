@@ -2895,6 +2895,35 @@ breaking the default.
     everywhere. Any FUTURE `logAudit()` call anywhere in this file must
     avoid a bare `type` key in its data object for the same reason.
 
+### The Inbound list on a phone is a card, not a sliced table
+
+Reported as showing almost nothing useful on the device the floor works from.
+It hid columns with `nth-child`, which had TWO problems:
+
+- **The indices assumed no tick column.** An ADMIN gets one (mass receive), so
+  every index was off by one and the WRONG columns were hidden for exactly the
+  people who use the screen most. Class-driven now, so nothing can shift it.
+- **Even when it worked it left a serial and a button** — no way to tell what
+  the receipt was, whose it was, or how far along.
+
+Same card treatment `.orders-tr` already had: serial and status on the first
+line, reference beneath, a one-line summary (`.inb-mobile-sum` — type · client ·
+counted/expected pcs · cartons · date) carrying what the dropped columns said,
+a status stripe down the left edge, and Receive as a full-width 46px target.
+The summary line is phone-only — on desktop every column it repeats is on
+screen, so showing it there would be noise.
+
+GOTCHA, the same one the Orders card hit: `> td { display: block }` beats a
+short `.inb-tr > .inb-actions`, so the actions cell never became a flex
+container and the main button stayed at its natural width. The selector has to
+be the long `#inboundList .orders-table > tbody > tr.inb-tr > td.inb-actions`.
+
+Verified 26 browser checks at 393px, 320px and desktop: the serial, status,
+reference and summary all on screen with the real columns not duplicated, the
+stripe coloured by status, Receive 330px wide and 46px tall and fully on
+screen, no sideways scroll at any width, the admin tick present and a real tap
+target, and the summary line absent on desktop where the columns are.
+
 ## The topbar page heading — "which screen am I on?" (`#ctTabTitle`)
 
 Per the user: the tab name must be readable at a glance, on phone AND desktop.

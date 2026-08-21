@@ -3064,22 +3064,22 @@
           </thead>
           <tbody>
             ${inboundJobs.map(job => `
-              <tr>
+              <tr class="inb-tr status-${esc(job.status)}">
                 ${isAdmin ? `<td class="ib-tick">${job.status === 'done' ? ''
                   : `<input type="checkbox" class="ib-pick" data-id="${esc(job.id)}" ${_ibPicked.has(job.id) ? 'checked' : ''}>`}</td>` : ''}
-                <td><code>${esc(job.serial || '—')}</code></td>
-                <td><span class="chip ${job.type === 'po' ? 'chip-cartons' : ''}">${job.type === 'po' ? 'PO / ASN' : 'Return'}</span></td>
-                <td>${esc(job.reference || '—')}</td>
-                <td>${esc(job.source_name || '—')}</td>
-                <td>${esc(job.client_name || '—')}</td>
-                <td>${job.scanned_total}${job.type === 'po' ? ` / ${job.expected_total}` : ''}</td>
-                <td>${job.cartons.length > 1 ? `📦 ${job.cartons.length}` : '—'}</td>
-                <td>
+                <td class="inb-serial"><code>${esc(job.serial || '—')}</code></td>
+                <td class="inb-type"><span class="chip ${job.type === 'po' ? 'chip-cartons' : ''}">${job.type === 'po' ? 'PO / ASN' : 'Return'}</span></td>
+                <td class="inb-ref">${esc(job.reference || '—')}</td>
+                <td class="inb-source">${esc(job.source_name || '—')}</td>
+                <td class="inb-client">${esc(job.client_name || '—')}</td>
+                <td class="inb-items">${job.scanned_total}${job.type === 'po' ? ` / ${job.expected_total}` : ''}</td>
+                <td class="inb-cartons">${job.cartons.length > 1 ? `📦 ${job.cartons.length}` : '—'}</td>
+                <td class="inb-status">
                   <span class="status-badge ${job.status}">${job.status}</span>
                   ${job.pending_deletion ? '<span class="status-badge unprocessed" title="Awaiting Master approval">Pending Deletion</span>' : ''}
                 </td>
-                <td>${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
-                <td>
+                <td class="inb-date">${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
+                <td class="inb-actions">
                   ${(() => {
                     // NOT ALL OF WHAT ARRIVED IS SELLABLE, and the list never said
                     // so — only the GRN did. Reported from the floor as "record
@@ -3100,6 +3100,21 @@
                     // recorded the wrong way round and the GRN is then stuck
                     // saying it.
                     return `<div class="inb-writeoff${isAdmin ? ' inb-writeoff-x' : ''}"${isAdmin ? ` data-inbound-undmg-id="${esc(job.id)}" role="button" tabindex="0"` : ''} style="color:#b91c1c;font-size:.72rem;font-weight:700;margin-bottom:.25rem;white-space:nowrap${isAdmin ? ';cursor:pointer;text-decoration:underline dotted' : ''}" title="${isAdmin ? 'Recorded against this receipt — click to review or take one back off. ' : ''}It is on the GRN and the client sees it. These pieces arrived but are not sellable stock.">&#9888; ${bits}</div>`;
+                  })()}
+                  ${(() => {
+                    // PHONE-ONLY SUMMARY LINE. The table's own columns are laid
+                    // out as a card under 768px and several are dropped; this
+                    // carries what a receiver actually needs — what it is, whose
+                    // it is, how far along, and when it landed — in one line.
+                    // Hidden on desktop, where the real columns are all there.
+                    const bits = [
+                      job.type === 'po' ? 'PO / ASN' : 'Return',
+                      esc(job.client_name || '—'),
+                      `${job.scanned_total}${job.type === 'po' ? ` / ${job.expected_total}` : ''} pcs`,
+                      job.cartons.length > 1 ? `📦 ${job.cartons.length}` : '',
+                      job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '',
+                    ].filter(Boolean);
+                    return `<div class="inb-mobile-sum">${bits.join(' · ')}</div>`;
                   })()}
                   <button class="btn-scan-now" data-inbound-id="${esc(job.id)}">${job.status === 'done' ? 'View' : 'Receive'} &#8594;</button>
                   ${job.status === 'done' ? `<button class="btn-secondary btn-sm" data-inbound-putaway-id="${esc(job.id)}" title="Direct received goods to bins">&#128205; Putaway${putawayRemaining(job) > 0 ? ` (${putawayRemaining(job)})` : ' &#10003;'}</button>` : ''}

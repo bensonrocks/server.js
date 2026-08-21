@@ -1591,14 +1591,64 @@ body.log-open { overflow: hidden; }
   .orders-table .col-client,
   .orders-table .col-date   { display: none; }
 
-  /* Inbound list on mobile: keep Serial / Reference / Items / Status / Actions —
-     drop Type, Source, Client, Cartons, Date so Receive/Status stay ON screen. */
-  #inboundList .orders-table th:nth-child(2), #inboundList .orders-table td:nth-child(2),
-  #inboundList .orders-table th:nth-child(4), #inboundList .orders-table td:nth-child(4),
-  #inboundList .orders-table th:nth-child(5), #inboundList .orders-table td:nth-child(5),
-  #inboundList .orders-table th:nth-child(6), #inboundList .orders-table td:nth-child(6),
-  #inboundList .orders-table th:nth-child(7), #inboundList .orders-table td:nth-child(7),
-  #inboundList .orders-table th:nth-child(9), #inboundList .orders-table td:nth-child(9) { display: none; }
+  /* ── INBOUND LIST ON A PHONE: a card, not a sliced table ────────────────
+     It used to hide columns by nth-child, which had two problems. The indices
+     assumed no tick column, so for an ADMIN — who gets one — every index was
+     off by one and the wrong columns went; and even when it worked, a receiver
+     was left with a serial and a button and no idea what the receipt was,
+     whose it was, or how far along. Same card treatment the Orders list has,
+     driven by CLASS names so the tick column cannot shift it. */
+  #inboundList .orders-table-wrap {
+    overflow-x: visible; border: 0; background: transparent; box-shadow: none; border-radius: 0;
+  }
+  #inboundList .orders-table { display: block; width: 100%; }
+  #inboundList .orders-table > thead { display: none; }
+  #inboundList .orders-table > tbody { display: block; width: 100%; }
+  #inboundList .orders-table > tbody > tr.inb-tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem;
+    padding: .7rem .8rem; margin-bottom: .55rem;
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 4px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm);
+  }
+  /* The status cue the badge carries, kept as a stripe so it reads at a glance */
+  #inboundList .orders-table > tbody > tr.inb-tr.status-pending    { border-left-color: #94a3b8; }
+  #inboundList .orders-table > tbody > tr.inb-tr.status-processing { border-left-color: #d97706; }
+  #inboundList .orders-table > tbody > tr.inb-tr.status-done       { border-left-color: #059669; }
+  #inboundList .orders-table > tbody > tr.inb-tr > td {
+    display: block; border: 0 !important; padding: 0; white-space: normal;
+  }
+  /* Folded into the one summary line inside the actions cell instead. */
+  #inboundList .inb-tr > .inb-type,
+  #inboundList .inb-tr > .inb-source,
+  #inboundList .inb-tr > .inb-client,
+  #inboundList .inb-tr > .inb-items,
+  #inboundList .inb-tr > .inb-cartons,
+  #inboundList .inb-tr > .inb-date { display: none !important; }
+
+  #inboundList .inb-tr > .ib-tick { flex: 0 0 auto; }
+  #inboundList .inb-tr > .ib-tick input { width: 20px; height: 20px; }
+  #inboundList .inb-tr > .inb-serial { flex: 1 1 auto; font-size: 1rem; font-weight: 800; }
+  #inboundList .inb-tr > .inb-serial code { font-size: 1rem; font-weight: 800; }
+  #inboundList .inb-tr > .inb-status { flex: 0 0 auto; }
+  #inboundList .inb-tr > .inb-ref {
+    flex: 1 1 100%; font-size: .8rem; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Long selector deliberately: the `> td { display: block }` rule above beats
+     a short one, and the cell would never become a flex container — the same
+     trap the Orders card hit, which left its main button at its natural width. */
+  #inboundList .orders-table > tbody > tr.inb-tr > td.inb-actions {
+    flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .25rem;
+  }
+  #inboundList .inb-tr > .inb-actions > .inb-mobile-sum {
+    flex: 1 1 100%; font-size: .76rem; color: var(--muted); margin: 0 0 .1rem;
+  }
+  #inboundList .orders-table > tbody > tr.inb-tr > td.inb-actions .btn-scan-now {
+    flex: 1 1 100%; width: 100%; min-height: 46px; font-size: 1rem; font-weight: 800;
+  }
+  #inboundList .orders-table > tbody > tr.inb-tr > td.inb-actions > *:not(.btn-scan-now):not(.inb-mobile-sum) {
+    flex: 0 0 auto; min-height: 38px;
+  }
 
   /* Putaway modal on mobile: each SKU becomes a card-style grid so the bin
      picker, qty and Place button never hang off-screen. */
@@ -3679,3 +3729,8 @@ tr.pa-split-row td { border-top: 0; }
    red: the red ✕ chip beside it already says the order is cancelled; this one
    only says who did it. */
 .chip-client-withdrew { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
+
+/* The Inbound card's one-line summary is a PHONE affordance — on desktop every
+   column it repeats is on screen, so showing it there would just be noise. */
+.inb-mobile-sum { display: none; }
+@media (max-width: 768px) { #inboundList .inb-mobile-sum { display: block; } }
