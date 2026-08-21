@@ -3957,7 +3957,7 @@ function portalSectionForPath(p) {
   if (p === '/api/portal/submissions' || p.startsWith('/api/portal/submissions/')
       || p === '/api/portal/submit-orders' || p === '/api/portal/preview-orders'
       || p === '/api/portal/submit-labels') return 'send';
-  return null;   // me / logout / notices / settings / delete are never hidden
+  return null;   // me / logout / notices / glossary / settings / delete: never hidden
 }
 
 // The accounts on a profile, migrating the ORIGINAL single credential into the
@@ -4687,6 +4687,64 @@ function requirePortalWrite(req, res, next) {
     next();
   });
 }
+// ── WHAT EVERY LABEL ON THIS PORTAL MEANS ──────────────────────────────────
+// A client meets a dozen coloured pills and has nowhere to look any of them up.
+// BUILT FROM THE SAME CONSTANTS THE PILLS ARE, so a wording change moves the
+// glossary with it — a hand-written list in the HTML would be wrong the first
+// time anyone edited a label, and a glossary that disagrees with the screen is
+// worse than none.
+app.get('/api/portal/glossary', requirePortalAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const pol = pickupPolicy(db);
+  res.json({
+    groups: [
+      {
+        title: 'Your orders',
+        items: [
+          { label: PORTAL_STATUS_LABEL.pending,    tone: 'wait', what: 'We have it and it is queued to be picked. Nothing has been touched yet.' },
+          { label: PORTAL_STATUS_LABEL.processing, tone: 'open', what: 'Someone is picking and packing it right now.' },
+          { label: PORTAL_STATUS_LABEL.done,       tone: 'done',   what: 'Picked, packed and checked. What happens next is under Collection below.' },
+          { label: PORTAL_STATUS_LABEL.unprocessed,tone: 'bad',  what: 'We are not fulfilling this one. The reason is shown on the order, and you can tell us where you re-placed it.' },
+          { label: 'Waiting for stock', tone: 'wait', what: 'The order is accepted but we do not hold enough to pick it. It moves the moment your replenishment lands.' },
+        ],
+      },
+      {
+        title: 'Collection',
+        items: [
+          { label: 'Ready for Collection', tone: 'done',   what: `Packed and on the shelf waiting for the courier. Our daily cut-off is ${pol.cutoff}.` },
+          { label: 'Picked Up',            tone: 'done',   what: 'It has left us. For a marketplace order this is the platform\'s own courier collecting it.' },
+          { label: 'Not collected',        tone: 'bad',  what: 'It was ready but the courier has not taken it by the day it was due. We chase these.' },
+          { label: 'Returned by the courier', tone: 'bad', what: 'The parcel came back to us. We count it in and get in touch — nothing is written off on your account without telling you.' },
+        ],
+      },
+      {
+        title: 'Your stock',
+        items: [
+          { label: 'Available',  tone: 'done',   what: 'Free to be picked right now. This is on hand minus anything reserved.' },
+          { label: 'Reserved',   tone: 'wait', what: 'Already set aside for an order you sent. It cannot be promised to a second order.' },
+          { label: 'Low stock',  tone: 'wait', what: 'At or below the reorder level you set. Worth topping up.' },
+          { label: 'Out of stock', tone: 'bad', what: 'Nothing free to pick. The SKU still appears, showing 0 — nothing ever disappears from your list.' },
+          { label: 'Held / quarantine', tone: 'bad', what: 'Arrived damaged or is waiting on an inspection. Counted as yours, but not sellable until it is released.' },
+        ],
+      },
+      {
+        title: 'Shipments in',
+        items: [
+          { label: 'Waiting for us to accept', tone: 'wait', what: 'You have sent the ASN and we have not opened it yet.' },
+          { label: 'In progress', tone: 'open', what: 'The shipment is being counted in, carton by carton.' },
+          { label: 'Received',    tone: 'done',   what: 'Counted and on the shelf. The Goods Received Note shows exactly what arrived.' },
+          { label: 'With issues', tone: 'bad',  what: 'What we counted did not match the paperwork, or some of it arrived damaged. The receipt note gives the detail line by line.' },
+          { label: `Received within ${INBOUND_SLA_WORKING_DAYS} working days`, tone: 'done',
+            what: `Our promise: your shipment is checked in and on your shelves within ${INBOUND_SLA_WORKING_DAYS} working days of the date it actually arrives. Green means we met it; blue means we did not.` },
+        ],
+      },
+    ],
+    screenDays: PORTAL_SCREEN_DAYS,
+    exportMaxDays: PORTAL_EXPORT_MAX_DAYS,
+    cutoff: pol.cutoff,
+    slaWorkingDays: INBOUND_SLA_WORKING_DAYS,
+  });
+});
 app.get('/api/portal/me', requirePortalAuthMiddleware, (req, res) => {
   res.json({ client: req.portalClient, user: req.portalUserId, name: req.portalUserName, access: req.portalAccess,
              visibility: req.portalVisibility || portalUserVisibility(null, null) });

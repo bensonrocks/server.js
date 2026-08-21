@@ -834,7 +834,7 @@
             ${stockPill(o.stock)}
             ${pickupPill(o.pickup)}
             ${deliveryPill(o.delivery)}
-            ${o.exception ? `<span class="p p-exc" title="${esc(o.exception.detail)}">${o.exception.state === 'returned' ? '&#8617;' : '&#9888;'} ${esc(o.exception.label)}</span>` : ''}
+            ${o.exception ? `<span class="pill p-exc" title="${esc(o.exception.detail)}">${o.exception.state === 'returned' ? '&#8617;' : '&#9888;'} ${esc(o.exception.label)}</span>` : ''}
             <div class="muted" style="font-size:.68rem;margin-top:.3rem">${isOpen ? '▲ hide' : '▼ details'}</div>
           </div>
         </div>
@@ -1728,10 +1728,47 @@
   }
 
   // ── Wiring ────────────────────────────────────────────────────────────────
+  // ── THE GUIDE'S GLOSSARY ────────────────────────────────────────────────
+  // Fetched from the server, which builds it from the SAME constants the pills
+  // are built from — a hand-written list would be wrong the first time anyone
+  // edited a label, and a glossary that disagrees with the screen is worse than
+  // no glossary. Loaded once, the first time the Guide is opened.
+  let glossaryLoaded = false;
+  async function loadGlossary() {
+    if (glossaryLoaded) return;
+    const el = $('glossary');
+    if (!el) return;
+    try {
+      const r = await api('/api/portal/glossary');
+      if (!r.ok) throw new Error('unavailable');
+      const d = await r.json();
+      glossaryLoaded = true;
+      el.innerHTML = (d.groups || []).map(g => `
+        <div class="gl-grp">
+          <div class="gl-hd">${esc(g.title)}</div>
+          ${(g.items || []).map(i => `
+            <div class="gl-row">
+              <span class="pill p-${esc(i.tone)} gl-pill">${esc(i.label)}</span>
+              <span class="gl-what">${esc(i.what)}</span>
+            </div>`).join('')}
+        </div>`).join('');
+      const rn = $('rangeNote');
+      if (rn && d.screenDays && d.exportMaxDays) {
+        rn.textContent = `The screens show the last ${d.screenDays} days; a download can cover up to ${d.exportMaxDays} days. `
+          + 'Anything still open always shows, however old it is.';
+      }
+    } catch (e) {
+      // Never a blank box — say what happened and leave the rest of the Guide
+      // perfectly usable.
+      el.innerHTML = '<div class="muted" style="font-size:.82rem">Could not load the label list just now. Pull down to refresh, or ask your account contact.</div>';
+    }
+  }
+
   document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
     document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'send') loadSubmissions();
+    if (b.dataset.tab === 'help') loadGlossary();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }));
 

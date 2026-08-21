@@ -336,6 +336,24 @@
   /* The channel brought the parcel back, or could not ship it. Red — the
      order otherwise reads as delivered, which is the misreading to prevent. */
   .p-exc      { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; font-weight:700; }
+
+  /* The Guide's glossary. A LABEL COLUMN of the real pills beside plain
+     English — seeing the actual pill is what makes it findable when they meet
+     it on another tab. */
+  .gl-grp { margin-bottom:.9rem; }
+  .gl-grp:last-child { margin-bottom:0; }
+  .gl-hd { font-size:.7rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+           color:var(--muted); padding-bottom:.35rem; border-bottom:1px solid var(--border); margin-bottom:.5rem; }
+  .gl-row { display:flex; gap:.6rem; align-items:flex-start; padding:.4rem 0; }
+  .gl-row + .gl-row { border-top:1px solid #f1f5f9; }
+  .gl-pill { flex:0 0 auto; }
+  .gl-what { flex:1 1 auto; min-width:0; font-size:.82rem; color:var(--text); line-height:1.45; }
+  /* On a phone the pill goes on its own line — squeezing a label and a
+     sentence side by side leaves both unreadable. */
+  @media (max-width:560px) {
+    .gl-row { flex-direction:column; gap:.25rem; }
+    .gl-what { font-size:.8rem; }
+  }
   /* Finished and on the shelf: good news, so green. */
   .p-ready    { background:#dcfce7; color:#166534; font-weight:700; }
   /* Gone. A stronger green so the terminal state is not just one more green. */
@@ -644,10 +662,43 @@
             <li>A SKU with no stock still appears, showing 0 — nothing ever looks lost.</li>
             <li>If an order cannot be covered by your stock, we say so before it is accepted, not after.</li>
             <li>You can cancel anything we have not started yet.</li>
-            <li>Up to five logins per account, each either full access or view-only.</li>
+            <li>Up to five logins per account, each either full access or view-only, and each can be given a different set of tabs.</li>
           </ul>
         </div>
       </div>
+
+      <!-- WHAT EVERY LABEL MEANS. Rendered from the server so it can never say
+           something different from the pills on the other tabs. -->
+      <div class="card" style="margin-top:.8rem">
+        <h2 style="margin:0 0 .3rem;font-size:1.05rem">What the labels mean</h2>
+        <p class="sub" style="margin:0 0 .9rem">Every status you will see on this portal, in one place.</p>
+        <div id="glossary"><div class="skel" style="height:120px;border-radius:12px"></div></div>
+      </div>
+
+      <div class="card" style="margin-top:.8rem">
+        <h2 style="margin:0 0 .3rem;font-size:1.05rem">Getting your figures out</h2>
+        <p class="sub" style="margin:0 0 .8rem">Everything on screen can be downloaded as Excel — nothing here is a dead end.</p>
+        <div class="abt">
+          <div><b>&#8681; Stock</b><span>Your live position, every SKU with on hand, reserved and available. No date range — it is where things stand right now.</span></div>
+          <div><b>&#8681; Orders</b><span>A dated workbook: orders, cancelled orders, and the full stock movement statement, each as its own tab.</span></div>
+          <div><b>&#8681; Inbound</b><span>Every shipment with what was expected, what arrived, and whether we met our receiving promise.</span></div>
+          <div><b>&#128198; On screen vs downloaded</b><span id="rangeNote">The screens show the recent window; a download can cover a longer period. Anything still open always shows, however old.</span></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:.8rem">
+        <h2 style="margin:0 0 .3rem;font-size:1.05rem">When something is not right</h2>
+        <p class="sub" style="margin:0 0 .8rem">What we do, and what is worth doing at your end.</p>
+        <div class="abt">
+          <div><b>&#128203; A shipment did not match</b><span>We record what we actually counted, not what the paperwork said, and the Goods Received Note shows both side by side. Short, over and damaged are three separate lines — nothing is rounded into one number.</span></div>
+          <div><b>&#128230; Something arrived damaged</b><span>It is photographed, held out of sellable stock, and shown on your receipt. It is never quietly absorbed into a count.</span></div>
+          <div><b>&#8617; A parcel came back</b><span>We count it in and get in touch. Your order says so, rather than continuing to read as delivered.</span></div>
+          <div><b>&#9203; An order is not moving</b><span>Almost always stock: the order reads <i>waiting for stock</i> and names the SKUs. Send a replenishment and it moves on its own.</span></div>
+          <div><b>&#9003; You need to pull an order back</b><span>Cancel it yourself from the Orders tab while it is untouched. Once picking has started, tell us instead — we will not silently drop work in progress.</span></div>
+          <div><b>&#128172; Anything else</b><span id="helpContact">Tell your account contact — and say which order or shipment, since every record here carries a reference.</span></div>
+        </div>
+      </div>
+
 
       <div class="card" style="margin-top:.8rem">
         <h2 style="margin:0 0 .3rem;font-size:1.05rem">About IDEALONE</h2>

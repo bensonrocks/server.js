@@ -5148,6 +5148,40 @@ completed, 6 cancelled and 2 open: not one cancelled order in the default view,
 completed leading, the note naming what is hidden, one tap showing exactly the
 cancelled six, and the word "aging" appearing nowhere on Stock or Overview.
 
+### The Guide is written to be handed to a client
+
+Per the user: the portal has to be good enough to give a client without
+apology. The screens were already there; the Guide was the gap — a client meets
+a dozen coloured pills and had nowhere to look any of them up.
+
+- **"What the labels mean" is SERVED, not written into the HTML**
+  (`GET /api/portal/glossary`, never hidden by section visibility — it explains
+  the tabs they DO have). It is built from the SAME constants the pills are:
+  `PORTAL_STATUS_LABEL`, `portalPickup`'s wording, `pickupPolicy().cutoff` and
+  `INBOUND_SLA_WORKING_DAYS`. A hand-written list would be wrong the first time
+  anyone edited a label, and **a glossary that disagrees with the screen is
+  worse than no glossary**.
+- Four groups — Your orders, Collection, Your stock, Shipments in — 19 labels,
+  each shown as the REAL pill beside plain English. Seeing the actual pill is
+  what makes it findable when they meet it on another tab; the tone names a
+  class that exists (`p-done`/`p-open`/`p-bad`/`p-wait`, there is no `p-ok`).
+- **"Getting your figures out"** — what each ⬇ contains, and the on-screen vs
+  download window stated in the REAL numbers from the server (90 / 365), not
+  copy that would go stale.
+- **"When something is not right"** — a shipment that did not match, damage, a
+  returned parcel, an order not moving, pulling an order back, and who to tell.
+  Written as what WE do and what is worth doing at their end.
+- Loaded once, when the Guide is first opened; a failure renders one honest
+  line rather than a blank box, and leaves the rest of the Guide usable.
+- On a phone the pill goes on its own line — a label and a sentence squeezed
+  side by side leaves both unreadable.
+
+Verified 34 browser checks on desktop and a Pixel 5: all four groups, 19 rows,
+every one a coloured pill with real text, nothing rendering as undefined, each
+of the seven order and collection labels explained by name, the receiving
+promise and the REAL daily cut-off both present, five Guide sections, and no
+sideways scroll.
+
 ### Every figure on the client's Overview opens the rows behind it
 
 Per the user, pointing at the Overview: *"all this are to be clickable and
