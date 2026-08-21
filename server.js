@@ -4003,6 +4003,13 @@ const PORTAL_SECTIONS = [
 // one button (the Orders workbook is orders + cancelled + the movement
 // statement), and every kind has to be listed or a download would be reachable
 // by URL after being switched off on screen.
+//
+// REMOVED, per the user: "What can ship" (`fulfillability`). It reports which
+// OPEN orders their stock covers, so on an account with nothing in progress it
+// is correctly empty — which read as broken. The route still serves the kind,
+// gated by the `reports` master alone, so an old bookmark answers rather than
+// 500s; only the button and its own tick are gone. Putting it back is this
+// entry, the button in portal.html and one line in REPORT_BTN.
 const PORTAL_REPORTS = [
   { key: 'report_stock',   label: 'Stock position',
     hint: 'Every SKU with on hand, reserved and available, as it stands now.',
@@ -4010,9 +4017,6 @@ const PORTAL_REPORTS = [
   { key: 'report_orders',  label: 'Orders & movements',
     hint: 'The dated workbook — orders, cancelled orders and the full stock movement statement.',
     kinds: ['report', 'orders', 'cancelled', 'movements', 'transactions'] },
-  { key: 'report_fulfil',  label: 'What can ship',
-    hint: 'Which open orders your stock covers, and which are short.',
-    kinds: ['fulfillability'] },
   { key: 'report_inbound', label: 'Inbound & receipts',
     hint: 'Every shipment in, what arrived against what was expected, and the service level.',
     kinds: ['inbound'] },

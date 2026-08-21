@@ -29,10 +29,9 @@
     // the master switch or its own report is off.
     const master = visible('reports');
     const REPORT_BTN = {
-      stExport:       'report_stock',
-      orExport:       'report_orders',
-      orFulfilExport: 'report_fulfil',
-      ibExport:       'report_inbound',
+      stExport: 'report_stock',
+      orExport: 'report_orders',
+      ibExport: 'report_inbound',
     };
     for (const [id, key] of Object.entries(REPORT_BTN)) {
       document.getElementById(id)?.classList.toggle('hidden', !master || !visible(key));
@@ -1986,7 +1985,6 @@
   $('orExport').addEventListener('click', () => openDownload('report'));
   // What can ship — fulfillability of the client's open orders against the
   // stock we hold, same sheets the office sees.
-  $('orFulfilExport').addEventListener('click', () => openDownload('fulfillability'));
   // Month-end statement: everything in and out, with balances that reconcile.
   $('ibExport').addEventListener('click', () => openDownload('inbound'));
   $('dlCancel').addEventListener('click', closeDownload);
