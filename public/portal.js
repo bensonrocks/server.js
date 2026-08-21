@@ -349,22 +349,40 @@
     const t30 = o.last30 || {};
     const parts = [];
 
+    // ── EVERY FIGURE ON THIS SCREEN OPENS THE ROWS BEHIND IT ────────────────
+    // Per the user. A number a client cannot open is a number they cannot act
+    // on: "165 SKUs out of stock" is only useful if those 165 are one tap
+    // away. Each tile and alert carries the tab it belongs to and the filter
+    // that narrows it, and the click is handled by ONE delegated listener —
+    // this HTML is rebuilt on every render, so anything bound directly would
+    // be thrown away with it.
+    //
+    // A section this login cannot SEE is never made a link: visible() is the
+    // same rule the tabs and the API use, so a tile can never lead somewhere
+    // that answers 403.
+    const tile = (go, f, cls, ic, val, label, sub) => {
+      const on = visible(go);
+      return `<div class="tile ${cls}${on ? ' ov-go' : ''}"${on ? ` data-go="${go}" data-f="${f}" role="link" tabindex="0"` : ''}>
+        <div class="ic">${ic}</div><div class="v n">${val}</div>
+        <div class="l">${label}</div><div class="x">${sub}</div></div>`;
+    };
+    const alert = (kind, go, f, ic, title, body) => {
+      const on = visible(go);
+      return `<div class="alert ${kind}${on ? ' ov-go' : ''}"${on ? ` data-go="${go}" data-f="${f}" role="link" tabindex="0"` : ''}>
+        <span>${ic}</span><div><b>${title}</b>${body}${on ? ' <span class="ov-go-hint">View →</span>' : ''}</div></div>`;
+    };
+
     // ── Key numbers
     parts.push(`
       <div class="sec">
         <div class="grid">
-          <div class="tile"><div class="ic">&#128230;</div><div class="v n">${num(s.available)}</div>
-            <div class="l">Available</div>
-            <div class="x">${num(s.skus)} SKU${s.skus === 1 ? '' : 's'} · ${num(s.onHand)} on hand</div></div>
-          <div class="tile ${s.reserved > 0 ? 't-warn' : 't-mute'}"><div class="ic">&#128274;</div><div class="v n">${num(s.reserved)}</div>
-            <div class="l">Reserved</div>
-            <div class="x">${s.reserved > 0 ? 'Allocated to open orders' : 'Nothing allocated'}</div></div>
-          <div class="tile ${o.openOrders > 0 ? '' : 't-mute'}"><div class="ic">&#128666;</div><div class="v n">${num(o.openOrders)}</div>
-            <div class="l">Orders in progress</div>
-            <div class="x">${o.openPieces ? num(o.openPieces) + ' pcs to ship' : 'Nothing queued'}</div></div>
-          <div class="tile t-ok"><div class="ic">&#9989;</div><div class="v n">${num(o.doneOrders)}</div>
-            <div class="l">Orders shipped</div>
-            <div class="x">All time</div></div>
+          ${tile('stock', 'all', '', '&#128230;', num(s.available), 'Available',
+                 `${num(s.skus)} SKU${s.skus === 1 ? '' : 's'} · ${num(s.onHand)} on hand`)}
+          ${tile('stock', 'res', s.reserved > 0 ? 't-warn' : 't-mute', '&#128274;', num(s.reserved), 'Reserved',
+                 s.reserved > 0 ? 'Allocated to open orders' : 'Nothing allocated')}
+          ${tile('orders', 'open', o.openOrders > 0 ? '' : 't-mute', '&#128666;', num(o.openOrders), 'Orders in progress',
+                 o.openPieces ? num(o.openPieces) + ' pcs to ship' : 'Nothing queued')}
+          ${tile('orders', 'done', 't-ok', '&#9989;', num(o.doneOrders), 'Orders shipped', 'All time')}
         </div>
       </div>`);
 
@@ -376,20 +394,20 @@
       const eg = (o.waitingStockSample || []).slice(0, 3)
         .map(x => `${esc(x.order)}${(x.skus || []).length ? ` (${esc((x.skus || []).slice(0, 2).join(', '))})` : ''}`)
         .join(', ');
-      alerts.push(`<div class="alert a-bad"><span>&#128230;</span><div>
-        <b>${num(o.waitingStockOrders)} order${o.waitingStockOrders === 1 ? '' : 's'} waiting for stock</b>
-        We cannot pick ${o.waitingStockPieces ? num(o.waitingStockPieces) + ' piece(s)' : 'these'} until the goods reach us.
-        ${eg ? `For example: ${eg}.` : ''} Open the Orders tab to see each one.</div></div>`);
+      alerts.push(alert('a-bad', 'orders', 'open', '&#128230;',
+        `${num(o.waitingStockOrders)} order${o.waitingStockOrders === 1 ? '' : 's'} waiting for stock`,
+        `We cannot pick ${o.waitingStockPieces ? num(o.waitingStockPieces) + ' piece(s)' : 'these'} until the goods reach us.`
+        + (eg ? ` For example: ${eg}.` : '')));
     }
-    if (s.outOfStock > 0) alerts.push(`<div class="alert a-bad"><span>&#9888;</span><div>
-      <b>${num(s.outOfStock)} SKU${s.outOfStock === 1 ? '' : 's'} out of stock</b>
-      Nothing available to pick. Send a replenishment shipment to keep orders moving.</div></div>`);
-    if (s.lowStock > 0) alerts.push(`<div class="alert a-warn"><span>&#128200;</span><div>
-      <b>${num(s.lowStock)} SKU${s.lowStock === 1 ? '' : 's'} running low</b>
-      At or below the reorder level — worth topping up soon.</div></div>`);
-    if (o.openDiscrepancies > 0) alerts.push(`<div class="alert a-warn"><span>&#128203;</span><div>
-      <b>${num(o.openDiscrepancies)} receiving discrepanc${o.openDiscrepancies === 1 ? 'y' : 'ies'}</b>
-      Counts differed from the paperwork. Open the Inbound tab and view the receipt note for the detail.</div></div>`);
+    if (s.outOfStock > 0) alerts.push(alert('a-bad', 'stock', 'out', '&#9888;',
+      `${num(s.outOfStock)} SKU${s.outOfStock === 1 ? '' : 's'} out of stock`,
+      'Nothing available to pick. Send a replenishment shipment to keep orders moving.'));
+    if (s.lowStock > 0) alerts.push(alert('a-warn', 'stock', 'low', '&#128200;',
+      `${num(s.lowStock)} SKU${s.lowStock === 1 ? '' : 's'} running low`,
+      'At or below the reorder level — worth topping up soon.'));
+    if (o.openDiscrepancies > 0) alerts.push(alert('a-warn', 'inbound', 'issue', '&#128203;',
+      `${num(o.openDiscrepancies)} receiving discrepanc${o.openDiscrepancies === 1 ? 'y' : 'ies'}`,
+      'Counts differed from the paperwork. Open the receipt note for the detail.'));
     if (o.quarantineOpen > 0) alerts.push(`<div class="alert a-bad"><span>&#128683;</span><div>
       <b>${num(o.quarantineOpen)} unit${o.quarantineOpen === 1 ? '' : 's'} in quarantine</b>
       Held aside as damaged or pending inspection — not available to sell.</div></div>`);
@@ -398,9 +416,9 @@
     // it in front of them reads as a judgement on their own inventory, which is
     // not ours to make on their screen. Still computed and still available on the
     // office side — just not surfaced here.
-    if (o.inboundSlaSummary?.overdue > 0) alerts.push(`<div class="alert a-warn"><span>&#128340;</span><div>
-      <b>${num(o.inboundSlaSummary.overdue)} inbound shipment${o.inboundSlaSummary.overdue === 1 ? '' : 's'} past our service level</b>
-      We're behind on receiving these. Your account manager has been notified.</div></div>`);
+    if (o.inboundSlaSummary?.overdue > 0) alerts.push(alert('a-warn', 'inbound', 'late', '&#128340;',
+      `${num(o.inboundSlaSummary.overdue)} inbound shipment${o.inboundSlaSummary.overdue === 1 ? '' : 's'} past our service level`,
+      "We're behind on receiving these. Your account manager has been notified."));
     if (alerts.length) {
       parts.push(`<div class="sec"><div class="sec-hd"><h3>Needs attention</h3></div>${alerts.join('')}</div>`);
     } else if (s.skus > 0) {
@@ -421,8 +439,8 @@
         <div class="sec">
           <div class="sec-hd"><h3>Last 30 days</h3></div>
           <div class="card"><div class="strip">
-            <div><div class="v n">${num(t30.orders)}</div><div class="l">Orders shipped</div></div>
-            <div><div class="v n">${num(t30.pieces)}</div><div class="l">Pieces shipped</div></div>
+            <div class="ov-go" data-go="orders" data-f="done" role="link" tabindex="0"><div class="v n">${num(t30.orders)}</div><div class="l">Orders shipped</div></div>
+            <div class="ov-go" data-go="orders" data-f="done" role="link" tabindex="0"><div class="v n">${num(t30.pieces)}</div><div class="l">Pieces shipped</div></div>
             <div><div class="v n">${t30.avgLinesPerOrder}</div><div class="l">Avg lines / order</div></div>
           </div></div>
         </div>`);
@@ -521,8 +539,13 @@
       const x = i * (bw + gap);
       const zero = d.pieces === 0;
       const hh = zero ? 1.5 : Math.max(h, 2);
-      return `<rect class="bar${zero ? ' z' : ''}" x="${x.toFixed(2)}" y="${(H - hh).toFixed(2)}"
-        width="${bw.toFixed(2)}" height="${hh.toFixed(2)}" rx="0.8"><title>${esc(`${d.day} — ${d.pieces} pcs, ${d.orders} order(s)`)}</title></rect>`;
+      // A DAY WITH SHIPMENTS OPENS THAT DAY'S ORDERS. A day with none is not a
+      // link — tapping it would land on an empty list, which reads as broken
+      // rather than as "nothing went out".
+      const go = !zero && visible('orders');
+      return `<rect class="bar${zero ? ' z' : ''}${go ? ' ov-go' : ''}"${go ? ` data-go="orders" data-f="done" data-day="${d.day}" role="link" tabindex="0"` : ''}
+        x="${x.toFixed(2)}" y="${(H - hh).toFixed(2)}"
+        width="${bw.toFixed(2)}" height="${hh.toFixed(2)}" rx="0.8"><title>${esc(`${d.day} — ${d.pieces} pcs, ${d.orders} order(s)${go ? ' · tap to open' : ''}`)}</title></rect>`;
     }).join('');
     // Day ruler in HTML: first day, midpoint and "today", positioned by flexbox
     // so nothing can distort or overflow.
@@ -1742,6 +1765,37 @@
       set(c.dataset.f);
     });
   }
+  // OPEN A TAB WITH A FILTER ALREADY ON, from an Overview tile or alert.
+  // It sets the chip as well as the variable: leaving the chip on "All" while
+  // the list is filtered is how someone concludes their stock has vanished.
+  function openFrom(tab, f, day) {
+    const btn = document.querySelector(`nav button[data-tab="${tab}"]`);
+    if (!btn || btn.classList.contains('hidden')) return;   // not theirs to see
+    btn.click();
+    const chipsId = { stock: 'stChips', orders: 'orChips', inbound: 'ibChips' }[tab];
+    if (chipsId && f) {
+      const wrap = document.getElementById(chipsId);
+      const chip = wrap?.querySelector(`.chip[data-f="${f}"]`);
+      if (chip) {
+        wrap.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === chip));
+        if (tab === 'stock')   { stFilter = f; renderStock(); }
+        if (tab === 'orders')  { orFilter = f; orDay = day || ''; renderOrders(); }
+        if (tab === 'inbound') { ibFilter = f; renderInbound(); }
+      }
+    }
+    // A filtered list has to start at the top, or the client lands mid-page on
+    // rows that are no longer the ones they tapped.
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  // Keyboard: these are links, so Enter and Space have to work on them.
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const go = e.target.closest?.('.ov-go');
+    if (!go) return;
+    e.preventDefault();
+    openFrom(go.dataset.go, go.dataset.f, go.dataset.day || '');
+  });
+
   wireChips('stChips', f => { stFilter = f; renderStock(); });
   wireChips('orChips', f => { orFilter = f; renderOrders(); });
   wireChips('ibChips', f => { ibFilter = f; renderInbound(); });
@@ -1769,6 +1823,9 @@
       renderOrders(); return;
     }
     if (e.target.closest('#orDayClear')) { orDay = ''; renderOrders(); return; }
+    // A tile, an alert or a bar on the chart — go to its tab with its filter on.
+    const go = e.target.closest('.ov-go');
+    if (go) { openFrom(go.dataset.go, go.dataset.f, go.dataset.day || ''); return; }
     const row = e.target.closest('.dbd-row');
     if (!row) return;
     orDay = (orDay === row.dataset.day) ? '' : row.dataset.day;   // tap again to clear

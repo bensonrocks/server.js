@@ -146,6 +146,17 @@
   .card + .card { margin-top:.55rem; }
 
   .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:.6rem; }
+  /* A FIGURE THAT OPENS ITS OWN ROWS has to look like it does — otherwise it
+     is a link nobody tries. Hover and focus only; no permanent decoration, so
+     the dashboard still reads as a dashboard rather than a wall of buttons. */
+  .ov-go { cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+  .tile.ov-go:hover, .alert.ov-go:hover, .ov-go:focus-visible {
+    transform:translateY(-1px); border-color:var(--brand); box-shadow:0 4px 14px rgba(0,0,0,.10); }
+  .ov-go:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  rect.bar.ov-go:hover { opacity:.82; }
+  .ov-go-hint { color:var(--brand); font-weight:700; white-space:nowrap; }
+  /* Touch has no hover, so the affordance is the arrow in the text. */
+  @media (hover:none) { .tile.ov-go:hover, .alert.ov-go:hover { transform:none; box-shadow:none; } }
   .tile { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:.8rem .85rem;
           box-shadow:var(--shadow); position:relative; overflow:hidden; }
   .tile::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--brand-2); opacity:.85; }
