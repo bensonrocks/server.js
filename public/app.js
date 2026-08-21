@@ -11346,7 +11346,25 @@
         $('obUserCount').textContent = `(${obUsers.length} of ${d.max})`;
         $('obUserForm').style.display = obUsers.length >= d.max ? 'none' : '';
         renderPortalUsers(d.max);
+        renderPortalVisibility(d.sections || [], d.visibility || {}, d.coreSections || []);
       } catch (e) { /* leave whatever is on screen */ }
+    }
+
+    // ── What this client's portal carries at all ───────────────────────────
+    // Deliberately a plain tick per section rather than a per-login matrix:
+    // it is the arrangement with the account, and two colleagues on the same
+    // client seeing different sections of the same data helps nobody.
+    function renderPortalVisibility(sections, vis, core) {
+      $('obVisList').innerHTML = sections.map(s => `
+        <label style="display:flex;gap:.5rem;align-items:flex-start;padding:.35rem 0;border-bottom:1px solid #f1f5f9">
+          <input type="checkbox" class="ob-vis" data-key="${esc(s.key)}" ${vis[s.key] === false ? '' : 'checked'} style="margin-top:.2rem">
+          <span style="flex:1">
+            <b style="font-size:.85rem">${esc(s.label)}</b>
+            ${core.includes(s.key) ? '' : '<span class="cs-pill" style="margin-left:.3rem">optional</span>'}
+            <div class="hint">${esc(s.hint)}</div>
+          </span>
+        </label>`).join('');
+      $('obVisMsg').textContent = '';
     }
     function renderPortalUsers(max) {
       if (!obUsers.length) {
@@ -11550,6 +11568,28 @@
         $('obUserName').value = ''; $('obUserEmail').value = ''; $('obUserPass').value = '';
         $('obUserMsg').innerHTML = `<b style="color:#059669">✓ ${esc(d.user.name)} added — they sign in with the client name, "${esc(d.user.id)}" and that password.</b>`;
         loadPortalUsers();
+      });
+      $('obVisSaveBtn')?.addEventListener('click', async () => {
+        if (!current) { alert('Save the client first.'); return; }
+        const visibility = {};
+        $('obVisList').querySelectorAll('.ob-vis').forEach(c => { visibility[c.dataset.key] = c.checked; });
+        const off = Object.keys(visibility).filter(k => !visibility[k]);
+        // Switching a section off takes it off the client's screen the next
+        // time they load the page, so say so before it happens.
+        if (off.length && !confirm(`Switch off ${off.length} section(s) for ${current}?\n\nTheir portal will stop showing them, and the API will refuse them for every one of this client's logins.`)) return;
+        const r = await fetch(`/api/master/client-profiles/${encodeURIComponent(current)}/portal-visibility`,
+          { method: 'POST', headers: mkJson(), body: JSON.stringify({ visibility }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          // Nothing was saved, so put the ticks back to what the server holds —
+          // boxes left showing a refused configuration read as a partial save.
+          await loadPortalUsers();
+          $('obVisMsg').innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Failed')}</span>`;
+          return;
+        }
+        $('obVisMsg').innerHTML = off.length
+          ? `<b style="color:#059669">✓ saved — ${off.length} section(s) switched off.</b>`
+          : '<b style="color:#059669">✓ saved — they can see everything.</b>';
       });
       $('obDeleteBtn')?.addEventListener('click', remove);
     }, 0);

@@ -3884,6 +3884,53 @@ const PORTAL_ACCESS = new Set(['full', 'view']);
 // of their own account until a session they can no longer reach expires.
 const PORTAL_SESSION_IDLE_MIN = 15;
 
+// ── WHAT A CLIENT MAY SEE AT ALL — per client, granted by us ────────────────
+// Access (full / view) says what one LOGIN may DO. This is the other question,
+// and it is a different shape: whether that CLIENT'S portal carries a section
+// in the first place. That is an arrangement with the account — a client not
+// paying for reporting does not get reporting on any of their five logins — so
+// it lives on the profile, not on a person.
+//
+// ABSENT READS AS VISIBLE, and so does an absent KEY. A section added here
+// later must never silently vanish for every client already onboarded, and no
+// existing client changes the day this ships. Turning one off is always a
+// deliberate act on the onboarding screen.
+const PORTAL_SECTIONS = [
+  { key: 'overview', label: 'Overview', hint: 'The dashboard — tiles, alerts and recent activity.' },
+  { key: 'stock',    label: 'Stock',    hint: 'Live stock levels and their stock movement statement.' },
+  { key: 'orders',   label: 'Orders',   hint: 'Outbound orders, their status, waybills and collection.' },
+  { key: 'inbound',  label: 'Inbound',  hint: 'Inbound shipments, receipts (GRN) and sending an ASN.' },
+  { key: 'send',     label: 'Send work in', hint: 'Uploading order files and waybill PDFs for our approval.' },
+  { key: 'reports',  label: 'Reports',  hint: 'The dated Excel downloads on every tab.' },
+];
+const PORTAL_SECTION_KEYS = PORTAL_SECTIONS.map(s => s.key);
+// A portal with no data section at all is a broken login, not a configuration —
+// the client signs in and is shown nothing. At least one of these has to stay.
+const PORTAL_CORE_SECTIONS = ['overview', 'stock', 'orders', 'inbound'];
+function portalVisibility(profile) {
+  const v = profile?.portal_visibility || {};
+  const out = {};
+  for (const k of PORTAL_SECTION_KEYS) out[k] = v[k] !== false;
+  return out;
+}
+// ONE map from request path to section, consulted inside
+// requirePortalAuthMiddleware — which EVERY portal route goes through, directly
+// or via requirePortalWrite. So a route cannot be added that forgets to ask.
+// Hiding a tab in the browser is a courtesy; this is the rule.
+function portalSectionForPath(p) {
+  if (p.startsWith('/api/portal/export/')) return 'reports';
+  if (p === '/api/portal/overview') return 'overview';
+  if (p === '/api/portal/stock' || p === '/api/portal/movements') return 'stock';
+  if (p === '/api/portal/orders' || p.startsWith('/api/portal/orders/')
+      || p.startsWith('/api/portal/order/')) return 'orders';
+  if (p === '/api/portal/inbound' || p.startsWith('/api/portal/grn/')
+      || p === '/api/portal/asn' || p === '/api/portal/asn-template') return 'inbound';
+  if (p === '/api/portal/submissions' || p.startsWith('/api/portal/submissions/')
+      || p === '/api/portal/submit-orders' || p === '/api/portal/preview-orders'
+      || p === '/api/portal/submit-labels') return 'send';
+  return null;   // me / logout / notices / settings / delete are never hidden
+}
+
 // The accounts on a profile, migrating the ORIGINAL single credential into the
 // list on first touch. Same salt and hash, so the password a client already has
 // keeps working — a rename of the storage must never be a password reset.
@@ -4305,7 +4352,41 @@ app.get('/api/master/client-profiles/:client/portal-users', (req, res) => {
     max: PORTAL_MAX_USERS,
     enabled: !!p.portal?.enabled,
     users: users.map(u => portalUserPublic(u, livePortalSession(tenantId, p.client, u.id))),
+    // What this client's portal carries at all — the same payload the editor
+    // renders from, so the office never has to guess which keys exist.
+    sections: PORTAL_SECTIONS,
+    visibility: portalVisibility(p),
+    coreSections: PORTAL_CORE_SECTIONS,
   });
+});
+
+// WHAT THIS CLIENT MAY SEE. Per-client, not per-login: it is the arrangement
+// with the account, and splitting it per person would let one colleague see a
+// section another cannot on the same client's data.
+app.post('/api/master/client-profiles/:client/portal-visibility', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const p = clientProfiles(db).find(x => x.client === req.params.client);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const want = req.body?.visibility;
+  if (!want || typeof want !== 'object') return res.status(400).json({ error: 'visibility is required' });
+  const next = {};
+  for (const k of PORTAL_SECTION_KEYS) next[k] = want[k] !== false;
+  if (!PORTAL_CORE_SECTIONS.some(k => next[k])) {
+    return res.status(400).json({
+      error: 'Leave at least one of Overview, Stock, Orders or Inbound switched on — a portal showing nothing is a login the client cannot use.',
+    });
+  }
+  const before = portalVisibility(p);
+  p.portal_visibility = next;
+  writeDb(db);
+  const off = PORTAL_SECTION_KEYS.filter(k => !next[k]);
+  logAudit('client_portal_visibility_updated', {
+    client: p.client, hidden: off, shown: PORTAL_SECTION_KEYS.filter(k => next[k]),
+    changed: PORTAL_SECTION_KEYS.filter(k => before[k] !== next[k]),
+    by: req.userId || 'master',
+  });
+  res.json({ ok: true, visibility: next, hidden: off });
 });
 
 app.post('/api/master/client-profiles/:client/portal-users', express.json(), (req, res) => {
@@ -4511,7 +4592,8 @@ app.post('/api/portal/login', express.json(), (req, res) => {
     if (live2) { live2.last_login_at = now; writeDb(db); }
     logAudit('portal_login', { client: p.client, user: user.id, access: user.access || 'full' });
   });
-  res.json({ token, client: p.client, user: { id: user.id, name: user.name || user.id, access: user.access === 'view' ? 'view' : 'full' } });
+  res.json({ token, client: p.client, visibility: portalVisibility(p),
+             user: { id: user.id, name: user.name || user.id, access: user.access === 'view' ? 'view' : 'full' } });
 });
 function requirePortalAuthMiddleware(req, res, next) {
   const token = req.headers['x-auth-token'] || req.query.token;
@@ -4541,6 +4623,20 @@ function requirePortalAuthMiddleware(req, res, next) {
       }
       req.portalAccess = u ? (u.access === 'view' ? 'view' : 'full') : 'full';
       req.portalUserName = u?.name || userId;
+      // WHAT THIS CLIENT MAY SEE. Checked here rather than route by route, so
+      // a section that is switched off is off however it is reached — and a
+      // refusal SAYS SO, because an empty payload reads as "you have nothing"
+      // rather than "this is not switched on for you".
+      req.portalVisibility = portalVisibility(prof);
+      const sec = portalSectionForPath(req.path);
+      if (sec && req.portalVisibility[sec] === false) {
+        const label = PORTAL_SECTIONS.find(s => s.key === sec)?.label || sec;
+        res.status(403).json({
+          error: `${label} is not switched on for your account. Contact IdealOne if you need it.`,
+          hiddenSection: sec,
+        });
+        return;
+      }
       next();
     });
     return;
@@ -4561,7 +4657,8 @@ function requirePortalWrite(req, res, next) {
   });
 }
 app.get('/api/portal/me', requirePortalAuthMiddleware, (req, res) => {
-  res.json({ client: req.portalClient, user: req.portalUserId, name: req.portalUserName, access: req.portalAccess });
+  res.json({ client: req.portalClient, user: req.portalUserId, name: req.portalUserName, access: req.portalAccess,
+             visibility: req.portalVisibility || portalVisibility(null) });
 });
 app.post('/api/portal/logout', requirePortalAuthMiddleware, (req, res) => {
   activeSessions.delete(req.portalSessionKey);

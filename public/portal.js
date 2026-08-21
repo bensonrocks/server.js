@@ -16,6 +16,20 @@
   // be what decides whether the Send tab appears.
   let portalUser = (() => { try { return JSON.parse(localStorage.getItem('portal_user') || 'null'); } catch { return null; } })();
   const canWrite = () => (portalUser?.access || 'full') !== 'view';
+  // Which sections this client's portal carries. An absent map, and an absent
+  // key inside it, both read as VISIBLE — the same rule the server applies, so
+  // the page and the API can never disagree about what is switched on.
+  const visible = k => (portalUser?.visibility || {})[k] !== false;
+  function applyVisibility() {
+    for (const k of ['overview', 'stock', 'orders', 'inbound']) {
+      document.querySelector(`nav button[data-tab="${k}"]`)?.classList.toggle('hidden', !visible(k));
+    }
+    // Reports are the downloads themselves, not a tab of their own.
+    const rep = !visible('reports');
+    for (const id of ['stExport', 'orExport', 'orFulfilExport', 'ibExport']) {
+      document.getElementById(id)?.classList.toggle('hidden', rep);
+    }
+  }
   let overview = null, stock = [], orders = [], inbound = [];
   let stFilter = 'all', orFilter = 'all', ibFilter = 'all', orDay = '';
   let agingDays = 15, screenDays = 90, exportMaxDays = 365, slaWorkingDays = 2;
@@ -170,7 +184,7 @@
         return;
       }
       token = d.token; clientName = d.client;
-      portalUser = d.user || null;
+      portalUser = d.user ? { ...d.user, visibility: d.visibility || {} } : null;
       localStorage.setItem('portal_token', token);
       localStorage.setItem('portal_client', clientName);
       localStorage.setItem('portal_user', JSON.stringify(portalUser || {}));
@@ -211,15 +225,19 @@
         localStorage.setItem('portal_user', JSON.stringify(portalUser));
       }
     } catch (e) { /* keep whatever we had */ }
+    applyVisibility();
     const write = canWrite();
-    document.querySelector('nav button[data-tab="send"]')?.classList.toggle('hidden', !write);
+    document.querySelector('nav button[data-tab="send"]')?.classList.toggle('hidden', !write || !visible('send'));
     // The other two places a client can write: sending an ASN, and setting
     // their own aging threshold. Both are hidden for a view-only login (and
     // both are refused server-side regardless).
     $('asnCard')?.classList.toggle('hidden', !write);
     $('agingCard')?.classList.add('hidden');   // aging is not a portal feature
-    if (!write && document.querySelector('nav button[data-tab="send"]')?.classList.contains('active')) {
-      document.querySelector('nav button[data-tab="overview"]')?.click();
+    // If the tab we are standing on has just gone away, move to the first one
+    // that is still there — never leave the client looking at a blank main area.
+    const cur = document.querySelector('nav button.active');
+    if (!cur || cur.classList.contains('hidden')) {
+      document.querySelector('nav button:not(.hidden)')?.click();
     }
     const chip = $('whoUser');
     if (chip) {
@@ -243,9 +261,12 @@
     loading = true;
     $('refreshBtn').classList.add('spin');
     try {
+      // A section that is not switched on for this client is not asked for —
+      // the server would refuse it anyway, and asking would fill their browser
+      // console with refusals for something that is working as arranged.
+      const ask = k => visible(k) ? api('/api/portal/' + k) : Promise.resolve({ ok: false, status: 0 });
       const [ov, st, or, ib] = await Promise.all([
-        api('/api/portal/overview'), api('/api/portal/stock'),
-        api('/api/portal/orders'), api('/api/portal/inbound'),
+        ask('overview'), ask('stock'), ask('orders'), ask('inbound'),
       ]);
       if ([ov, st, or, ib].some(r => r.status === 401)) { logout(); return; }
       if (ov.ok) overview = await ov.json();

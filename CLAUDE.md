@@ -1714,6 +1714,64 @@ and admin release both free it, switching off ends the session at once,
 downgrade bites on the next request, no hash or salt ever reaches the office)
 plus 19 browser checks across the office screen and two client phones.
 
+### What a client may SEE at all — `portal_visibility`, granted by us
+
+Per the user: *"Client Portal: need to be able to toggle and set what they can
+see, and what they cannot see unless granted. ie: reports etc."*
+
+Access (full / view) already said what one LOGIN may **do**. This is the other
+question and it is a different shape: whether that CLIENT'S portal carries a
+section in the first place.
+
+- **PER CLIENT, NOT PER LOGIN** — `clientProfiles[].portal_visibility`. It is
+  the arrangement with the account (a client not paying for reporting does not
+  get reporting), and two colleagues on the same client seeing different
+  sections of the same data helps nobody. A per-login matrix was deliberately
+  not built, same reasoning as the two-level access toggle above.
+- **ABSENT READS AS VISIBLE, and so does an absent KEY.** No existing client
+  changed the day this shipped, and a section added to `PORTAL_SECTIONS` later
+  can never silently vanish for every client already onboarded. Turning one off
+  is always a deliberate act on the onboarding screen.
+- Six sections: `overview`, `stock` (incl. their movement statement), `orders`,
+  `inbound` (incl. GRNs and sending an ASN), `send`, `reports` (the ⬇ downloads
+  — not a tab of its own).
+- **ENFORCED IN THE ONE MIDDLEWARE EVERY PORTAL ROUTE GOES THROUGH.**
+  `portalSectionForPath()` maps the request path to a section and
+  `requirePortalAuthMiddleware` refuses it — so a route cannot be added that
+  forgets to ask, and `requirePortalWrite` inherits it for free. Hiding a tab
+  in the browser is the courtesy; this is the rule.
+- **A REFUSAL SAYS SO** (403 + `hiddenSection`), never a silent empty payload —
+  an empty list reads as "you have nothing" rather than "this is not switched
+  on for you".
+- **`/me` and `/notices` are never hidden.** The page has to know who it is, and
+  we must always be able to tell a client something.
+- **RE-READ ON EVERY REQUEST**, like access — switching a section off bites at
+  once rather than at their next login, and nothing is stamped on their data, so
+  switching it back on simply returns the tab.
+- **A PORTAL SHOWING NOTHING IS A BROKEN LOGIN, NOT A CONFIGURATION**: at least
+  one of `PORTAL_CORE_SECTIONS` (overview/stock/orders/inbound) must stay on
+  (400, said in words). `send` and `reports` may all be off.
+- Client side: `visible(k)` mirrors the same absent-reads-as-visible rule,
+  hidden tabs and the four ⬇ buttons come off, `loadAll` does not even ASK for a
+  section that is off (the refusals would fill their console for something
+  working as arranged), and if the tab they were standing on has gone the page
+  moves to the first one that is still there.
+- Office: **Administrator → 🎉 Onboard Client → 👁 What this client can see**,
+  next to 👥 Portal logins. `POST .../portal-visibility` (checkMaster), audited
+  `client_portal_visibility_updated` with what was hidden, shown and changed. A
+  refused save re-renders from the server — ticks left showing a refused
+  configuration read as a partial save.
+
+Verified 41 API checks (everything open by default and on the login response and
+`/me`; reports off refuses the download in words and by name; stock off takes
+the movement statement with it and inbound off takes GRNs and the ASN template;
+`/me` and notices never hidden; all-off refused with nothing changed; it bites
+mid-session; a second login on the same client gets the same answer; another
+client untouched; the trail names what went) plus 28 browser checks on desktop
+and a Pixel 5 (the editor, the save saying what went, the on-screen refusal and
+its re-render, the tab and every ⬇ button gone, the API still refusing from that
+session, no sideways scroll, and switching it back on returning both).
+
 ### Client order upload — THREE STEPS, and nothing reaches us until step 3
 
 Per the user: *"step 1. upload order csv. completed then / step 2. upload
