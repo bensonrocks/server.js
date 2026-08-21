@@ -12343,6 +12343,26 @@
     // a marketplace parcel has no other way of ever being closed off.
     const zfCol = document.getElementById('zfCollectionSync');
     if (zfCol) zfCol.checked = store ? store.collectionSync !== false : true;
+    // A VOID CANNOT BE UNDONE from this side, so it asks on the way ON — and,
+    // like RTS, never on the way off.
+    const zfCancel = document.getElementById('zfCancelSync');
+    if (zfCancel) {
+      zfCancel.checked = !!store?.cancelSync;
+      if (!zfCancel.dataset.wired) {
+        zfCancel.dataset.wired = '1';
+        zfCancel.addEventListener('change', e => {
+          if (!e.target.checked) return;
+          const ok = confirm(
+            'Void at the channel when we cancel here\n\n'
+            + 'Cancelling an order in IdealOne will send a VOID to the channel.\n\n'
+            + 'A void CANNOT be undone from this side.\n\n'
+            + 'It is never sent on an order completed here, on one the channel '
+            + 'itself voided, or on a parcel the channel has already shipped.\n\n'
+            + 'Turn this on?');
+          if (!ok) e.target.checked = false;
+        });
+      }
+    }
     const zfRts = document.getElementById('zfRtsAtIntake');
     if (zfRts) {
       zfRts.checked = !!store?.rtsAtIntake;
@@ -12423,6 +12443,7 @@
       arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
       collectionSync: document.getElementById('zfCollectionSync')?.checked ?? true,
       rtsAtIntake: document.getElementById('zfRtsAtIntake')?.checked ?? false,
+      cancelSync: document.getElementById('zfCancelSync')?.checked ?? false,
       labelPath: document.getElementById('zfLabelPath').value.trim(),
       skipClients: document.getElementById('zfSkipClients').value.trim(),
       recordOnlyClients: document.getElementById('zfRecordClients')?.value.trim() ?? undefined,

@@ -1169,6 +1169,46 @@ more and leaves no stalled entry, and suspending stops it — plus 20 browser
 checks on desktop and a Pixel 5 (off by default, the cost written on the form,
 cancelling the confirm leaves it off, and switching it off never asks).
 
+### Telling the hub when WE cancel (`store.cancelSync`, `tellHubWeCancelled`)
+
+Cancelling an order here left the hub believing it was still live — so the
+client's own ZORT screen, and every channel report drawn from it, went on
+counting work nobody was going to pick.
+
+- **OFF BY DEFAULT, and never a default.** A void on the hub is DESTRUCTIVE and
+  cannot be undone from this side. Turning it on is a confirm that says exactly
+  that, and flipping the switch is audited (`zort_cancel_sync_changed`) with
+  who did it. Asking on the way ON only — suspending stays frictionless, same
+  as `rtsAtIntake`.
+- `Order/VoidOrder` IS on the v4 docs page, unlike `PackOrder`. `voidOrder()`
+  added to lib/zort.js.
+- **A 200 IS NOT A VOID** — the same lesson Pack and Ready-to-Ship each taught.
+  The drain branch reads the hub BEFORE and AFTER; anything short of `voided`
+  afterwards throws, so the entry retries and the reason reaches the row.
+- Never sent for: work **done** here, an order the **hub itself** voided (that
+  is telling them what they just told us), an order with no matching `zort_id`,
+  or one already pushed (`state.zort_void_pushed_at`).
+- **NEVER VOIDS SOMETHING THAT HAS LEFT.** Between our cancelling and the drain,
+  the hub may have shipped it — voiding then would erase a real shipment from
+  their books. Refused, stamped `shipped-meanwhile`, audited
+  `sync_void_refused_shipped` AND raised in **System Outages**, because it means
+  a parcel is in the post that we have written off.
+- **The cross-check settle deliberately does NOT tell them** — that tool exists
+  because the hub already said the order was handled elsewhere, so voiding it
+  would contradict what we just read.
+- Hooked at the office bulk-cancel and the client's own portal withdrawal.
+
+Verified 15 API checks against a hub that accepts voids and refuses shipped ones
+(off by default and silent; the switch saving and auditing who; cancelling
+queueing and the hub genuinely moving to Voided; recorded only after the
+read-back; a second cancel not sending twice; a shipped parcel refused, reported
+and raised as an outage; and a void the channel reported never echoed back).
+
+TEST GOTCHAS, all three of which cost a run: a mock helper that used an empty
+query value to PEEK was setting the status to `''`; the audit log is never wiped
+so every assertion needs a `T0` scope; and db.json persistence is deferred, so
+reading the file the instant a request returns can miss what it just wrote.
+
 ### The parcel came back, or never got away (`noteHubException`)
 
 `returned` and `failed shipment` are in `ZORT_IMPORT_SKIP_STATUSES`, so they are

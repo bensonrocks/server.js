@@ -2438,6 +2438,13 @@
               Marking an order <i>Packed</i> is only ZORT's own bookkeeping and never reaches the marketplace, so it cannot produce a waybill. Only <b>Ready&nbsp;to&nbsp;Ship</b> does &mdash; and it tells Lazada the parcel is ready for the courier, <b>before anything has been picked</b>. Turn this on only if having the label early is worth that. Lazada only (Shopee and TikTok need a pickup/dropoff choice this system will not guess). <b>Switch it off any time</b> &mdash; orders already queued fall back to just marking them Packed.
             </div>
             <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
+              <input type="checkbox" id="zfCancelSync" style="width:16px;height:16px" />
+              <span><b>&#9003; Void the order at the channel when we cancel it here</b></span>
+            </label>
+            <div class="hint" style="margin:.3rem 0 0;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:.4rem .5rem">
+              Without this, cancelling an order here leaves the channel believing it is still live &mdash; so the client's own ZORT screen, and every report drawn from it, keeps counting work nobody is going to pick. With it on, we send a <b>void</b>. <b>A void cannot be undone from this side.</b> Never sent on an order already completed here, never on one the channel itself voided, and never on a parcel the channel has already shipped &mdash; that disagreement is reported in System Outages instead.
+            </div>
+            <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
               <input type="checkbox" id="zfCollectionSync" style="width:16px;height:16px" />
               <span><b>&#128666; Close off collection when the hub says it shipped</b></span>
             </label>

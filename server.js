@@ -6283,6 +6283,8 @@ app.post('/api/portal/delete', express.json(), requirePortalWrite, (req, res) =>
         updated_at: cancelledAt,
         client_cancelled: { at: cancelledAt, by: `portal:${client}`, reason },
       };
+      // The CLIENT withdrew it — the hub should hear that too.
+      tellHubWeCancelled(db, orderNumber, reason || 'Withdrawn by the client', 'client');
       deleted.push(orderNumber);
     }
   }
@@ -9589,6 +9591,10 @@ const SYNC_ACTIVITY_EVENTS = {
   sync_label_unusable:          { what: 'The channel has a label, but not in a form we can import — print it from the channel', good: false },
   sync_label_fetch_cancelled:   { what: 'Label fetch cancelled (label pull switched off)', good: false },
   zort_order_voided:            { what: 'The channel cancelled this order', good: false },
+  sync_void_queued:             { what: 'Queued: tell the channel we cancelled this', good: true },
+  sync_void_pushed:             { what: 'Channel confirmed the order is VOID', good: true },
+  sync_void_already:            { what: 'Already void at the channel — nothing to send', good: true },
+  sync_void_refused_shipped:    { what: 'NOT voided — the channel had already shipped it', good: false },
   sync_order_returned:          { what: 'The courier RETURNED this parcel to us', good: false },
   sync_order_shipment_failed:   { what: 'The courier could NOT ship this parcel', good: false },
   zort_order_void_conflict:     { what: 'The channel cancelled it but work had started here', good: false },
@@ -15473,6 +15479,8 @@ app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
     st.updated_at = now;
     delete st.claimedBy; delete st.claimedAt;
     batch.orderStates[orderNumber] = st;
+    // TELL THE HUB. Off unless the store opts in — see tellHubWeCancelled.
+    tellHubWeCancelled(db, orderNumber, reason, 'office');
     cancelled.push(orderNumber);
   }
   // Give back whatever they had promised — same reconciler every other
@@ -18948,6 +18956,9 @@ function zortStorePublic(s, db) {
     // OFF unless deliberately turned on — it declares a parcel ready for the
     // courier before anything has been picked. See the arrange branch.
     rtsAtIntake: !!s.rtsAtIntake,
+    // OFF unless deliberately turned on — a void on the hub is destructive and
+    // cannot be undone from this side.
+    cancelSync: !!s.cancelSync,
     skipClients: s.skipClients || [],
     recordOnlyClients: s.recordOnlyClients || [],
     channelClients: s.channelClients || {},
@@ -20139,6 +20150,65 @@ function enqueueZortArrange(db, storeId, { orderNumber, zortId }) {
   });
   return true;
 }
+// ── TELLING THE HUB WE ARE NOT DOING IT ────────────────────────────────────
+// Cancelling here left the hub believing the order was live — so the client's
+// own ZORT screen, and every channel report drawn from it, went on counting an
+// order nobody was going to pick.
+//
+// OFF BY DEFAULT (`store.cancelSync`), and never a default, because a void on
+// the hub is DESTRUCTIVE and cannot be undone from this side. Turning it on is
+// a confirm that says so.
+//
+// Never enqueued for:
+//   - work that is DONE here (the standing rule; a shipped order is not void)
+//   - an order the HUB ITSELF voided — that would be telling them what they
+//     just told us, and `zort_cancel_origin` is stamped so we can tell
+//   - an order with no matching `zort_id` (an upload is not a hub order)
+// Stamped so a re-cancel cannot tell the hub twice, and so the row can say what
+// happened. Its own readDb/writeDb because the drainer runs outside a request.
+function _stampVoidPushed(orderNumber, outcome) {
+  try {
+    const db = readDb();
+    const f = lazadaFindOrder(db, orderNumber, '');
+    if (!f) return;
+    f.batch.orderStates = f.batch.orderStates || {};
+    const st = f.batch.orderStates[f.ord.order_number]
+      || (f.batch.orderStates[f.ord.order_number] = { status: 'unprocessed', scanned: {} });
+    st.zort_void_pushed_at = new Date().toISOString();
+    st.zort_void_outcome = outcome;
+    writeDb(db);
+  } catch (e) { console.warn('[zort-void-stamp]', e.message); }
+}
+function enqueueZortVoid(db, storeId, { orderNumber, zortId, reason }) {
+  const ob = zortOutbox(db);
+  if (ob.some(e => e.kind === 'void' && e.storeId === storeId && e.orderNumber === orderNumber && !e.stalled)) return false;
+  ob.push({
+    id: uuidv4(), kind: 'void', storeId, orderNumber, zortId,
+    reason: String(reason || '').slice(0, 200),
+    attempts: 0, nextAttemptAt: new Date().toISOString(), createdAt: new Date().toISOString(),
+  });
+  return true;
+}
+// The one place the cancel sites call. Resolves the store from the order, so a
+// caller only has to say "this order was cancelled here, and why".
+function tellHubWeCancelled(db, orderNumber, reason, origin) {
+  try {
+    const f = lazadaFindOrder(db, orderNumber, '');
+    if (!f || !f.ord.zort_id || !f.ord.zort_store_id) return '';
+    const state = f.batch.orderStates?.[f.ord.order_number] || {};
+    if (state.status === 'done') return '';                    // never void shipped work
+    if (origin === 'hub') return '';                           // they told US
+    if (state.zort_void_pushed_at) return '';                  // already told them
+    const store = (db.zortStores || []).find(x => String(x.id) === String(f.ord.zort_store_id));
+    if (!store || !store.enabled || !store.cancelSync) return 'off';
+    if (enqueueZortVoid(db, store.id, { orderNumber, zortId: f.ord.zort_id, reason })) {
+      logAudit('sync_void_queued', { order: orderNumber, client: f.batch.client_name || '', reason, storeId: store.id });
+      return 'queued';
+    }
+    return 'already';
+  } catch (e) { console.warn('[zort-void-enqueue]', e.message); return ''; }
+}
+
 // Follow-up to an arrangement: poll the order until the platform has assigned
 // its tracking number, then backfill the imported order's waybill immediately
 // (instead of waiting for the next scheduled pull's backfill).
@@ -20441,6 +20511,46 @@ async function _zortSendOutboxEntry(db, store, entry) {
     logAudit('sync_label_imported', {
       order: entry.orderNumber, client: store.clientName || '',
       importId: out.importId, pages: out.pageCount, matched: out.matched,
+    });
+    return true;
+  }
+  if (entry.kind === 'void') {
+    // A 200 IS NOT A VOID — the same lesson as Pack and Ready-to-Ship, which
+    // both reported success on a hub that had not moved. Read the order back
+    // and only record it when the hub actually says voided.
+    const before = await zortHubState(store, entry.zortId);
+    if (!before.read) throw new Error(`Could not read the order at the hub — ${before.why || 'no answer'}`);
+    if (before.status === 'voided') {
+      // Already void there. Nothing to do, and not a failure.
+      _stampVoidPushed(entry.orderNumber, 'already');
+      logAudit('sync_void_already', { order: entry.orderNumber, storeId: store.id, hubStatus: before.status });
+      return true;
+    }
+    // NEVER VOID SOMETHING THAT HAS LEFT. Between our cancelling and this
+    // draining, the hub may have shipped it — voiding then would erase a real
+    // shipment from their books.
+    if (ZORT_LEFT_STATUSES.has(before.status) || before.status === 'success') {
+      _stampVoidPushed(entry.orderNumber, 'shipped-meanwhile');
+      logAudit('sync_void_refused_shipped', {
+        order: entry.orderNumber, storeId: store.id, hubStatus: before.status,
+        note: 'The hub had already shipped it — not voided, and someone should look.',
+      });
+      recordSystemError({
+        app: 'office', page: 'zort-void', context: 'zort',
+        message: `ZORT: ${entry.orderNumber} was cancelled here but the channel had already shipped it — not voided`,
+        client: store.clientName || '',
+      });
+      return true;
+    }
+    const resp = await zortApi.voidOrder(store, { id: entry.zortId, number: entry.orderNumber, remark: entry.reason || 'Cancelled in IdealOne' });
+    const after = await zortHubState(store, entry.zortId);
+    if (after.read && after.status !== 'voided') {
+      throw new Error(`Void was sent but the channel did NOT void it — it is still "${after.status}"${_zortSaid(resp)}`);
+    }
+    _stampVoidPushed(entry.orderNumber, 'voided');
+    logAudit('sync_void_pushed', {
+      order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+      reason: entry.reason || '', hubStatus: after.status || '(unreadable)', said: _zortSaid(resp),
     });
     return true;
   }
@@ -20963,6 +21073,15 @@ app.post('/api/master/zort/stores', (req, res) => {
       enabled: store.rtsAtIntake, by: req.userId || _tokenUserId(req) || '',
     });
   } else if (b.rtsAtIntake !== undefined) store.rtsAtIntake = !!b.rtsAtIntake;
+  // Void the order at the hub when we cancel it here. Destructive and not
+  // reversible from our side, so who turned it on belongs on the record.
+  if (b.cancelSync !== undefined && !!b.cancelSync !== !!store.cancelSync) {
+    store.cancelSync = !!b.cancelSync;
+    logAudit('zort_cancel_sync_changed', {
+      storeId: store.id, client: store.clientName || '',
+      enabled: store.cancelSync, by: req.userId || _tokenUserId(req) || '',
+    });
+  } else if (b.cancelSync !== undefined) store.cancelSync = !!b.cancelSync;
   // Clients this store must NOT bring in — they fulfil their own orders.
   if (b.skipClients !== undefined) {
     store.skipClients = String(b.skipClients || '').split(',').map(x => x.trim()).filter(Boolean);
@@ -21359,6 +21478,9 @@ app.post('/api/master/zort/stores/:id/settle', (req, res) => {
       st.status = 'unprocessed';
       st.unprocessed_reason = 'Fulfilled outside IdealOne (ZORT cross-check)';
       st.unprocessed_at = new Date().toISOString();
+      // NOT told to the hub: the cross-check exists because the hub already
+      // says this one was handled elsewhere. Voiding it would contradict what
+      // we just read from them.
       settled.push(o.order_number);
     }
   }
