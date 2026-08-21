@@ -11396,6 +11396,7 @@
         $('obUserCount').textContent = `(${obUsers.length} of ${d.max})`;
         $('obUserForm').style.display = obUsers.length >= d.max ? 'none' : '';
         obSections = d.sections || [];
+        obReports = d.reports || [];
         obCoreSections = d.coreSections || [];
         renderPortalUsers(d.max);
       } catch (e) { /* leave whatever is on screen */ }
@@ -11406,7 +11407,7 @@
     // contact who needs Inbound and a finance contact who needs Reports and
     // nothing else, and one shared arrangement would mean granting the wider
     // of the two to both.
-    let obSections = [], obCoreSections = [];
+    let obSections = [], obReports = [], obCoreSections = [];
     const visRowHtml = (u) => `
       <tr class="ob-vis-row hidden" data-for="${esc(u.id)}"><td colspan="5" style="background:#f8fafc;padding:.6rem .75rem">
         <div class="hint" style="margin-bottom:.4rem">What <b>${esc(u.name)}</b> sees when they sign in. Everything is on unless you switch it off.</div>
@@ -11422,6 +11423,18 @@
               </span>
             </label>`).join('')}
         </div>
+        <div class="ob-vis-reports" data-for="${esc(u.id)}" style="margin-top:.5rem;padding:.5rem .6rem;background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+          <div class="hint" style="margin-bottom:.35rem"><b>Which reports</b> — only these are downloadable. Switching all of them off is the same as switching Reports off.</div>
+          <div style="display:flex;flex-wrap:wrap;gap:.3rem 1.1rem">
+            ${obReports.map(r => `
+              <label style="display:flex;gap:.4rem;align-items:flex-start;flex:1 1 14rem;min-width:0">
+                <input type="checkbox" class="ob-vis ob-vis-rep" data-for="${esc(u.id)}" data-key="${esc(r.key)}"
+                       ${u.visibility?.[r.key] === false ? '' : 'checked'} style="margin-top:.2rem">
+                <span style="flex:1;min-width:0"><b style="font-size:.8rem">${esc(r.label)}</b>
+                  <div class="hint">${esc(r.hint)}</div></span>
+              </label>`).join('')}
+          </div>
+        </div>
         <div style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem">
           <button class="btn-primary btn-sm ob-vis-save" data-id="${esc(u.id)}">Save what ${esc(u.name)} sees</button>
           <span class="ob-vis-msg hint" data-for="${esc(u.id)}"></span>
@@ -11431,8 +11444,16 @@
     // table answers "who can see what" without opening six panels.
     const visSummary = (u) => {
       const off = obSections.filter(s => u.visibility?.[s.key] === false);
-      return off.length
-        ? `<div class="hint" style="color:#b45309">👁 no ${off.map(s => esc(s.label)).join(', ')}</div>`
+      // Reports switched off individually count too — otherwise a login with
+      // Reports "on" but three of four downloads gone reads as unrestricted.
+      const repOff = u.visibility?.reports === false
+        ? [] : obReports.filter(r => u.visibility?.[r.key] === false);
+      const bits = [
+        ...off.map(s => esc(s.label)),
+        ...repOff.map(r => esc(r.label)),
+      ];
+      return bits.length
+        ? `<div class="hint" style="color:#b45309">👁 no ${bits.join(', ')}</div>`
         : '';
     };
     function renderPortalUsers(max) {
@@ -11474,6 +11495,19 @@
         msg(`${d.user.name} is now ${d.user.access === 'view' ? 'view only' : 'full access'}.`);
         loadPortalUsers();
       }));
+      // The report ticks only mean anything while Reports itself is on.
+      const syncReportBlock = id => {
+        const master = $('obUserList').querySelector(`.ob-vis[data-for="${CSS.escape(id)}"][data-key="reports"]`);
+        const block = $('obUserList').querySelector(`.ob-vis-reports[data-for="${CSS.escape(id)}"]`);
+        if (!master || !block) return;
+        const on = master.checked;
+        block.style.opacity = on ? '' : '.45';
+        block.querySelectorAll('input').forEach(c => { c.disabled = !on; });
+      };
+      $('obUserList').querySelectorAll('.ob-vis[data-key="reports"]').forEach(c => {
+        syncReportBlock(c.dataset.for);
+        c.addEventListener('change', () => syncReportBlock(c.dataset.for));
+      });
       $('obUserList').querySelectorAll('.ob-user-vis').forEach(b => b.addEventListener('click', () => {
         const row = $('obUserList').querySelector(`.ob-vis-row[data-for="${CSS.escape(b.dataset.id)}"]`);
         row?.classList.toggle('hidden');

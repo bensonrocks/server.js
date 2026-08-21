@@ -1934,6 +1934,27 @@ question: which sections that login's portal carries at all.
 - Six sections: `overview`, `stock` (incl. their movement statement), `orders`,
   `inbound` (incl. GRNs and sending an ASN), `send`, `reports` (the ⬇ downloads
   — not a tab of its own).
+- **AND WHICH REPORTS, WITHIN Reports** (per the user: *"also determine what
+  reports they can see/download"*). `PORTAL_REPORTS` — Stock position, Orders &
+  movements, What can ship, Inbound & receipts — each its own
+  `report_*` key on the same map, so a login can have the stock position without
+  the commercial detail in the orders workbook.
+  - **`reports` is the MASTER and still wins**: off refuses every download
+    whatever the individual ticks say (asserted).
+  - **EVERY server-side kind that feeds a button is listed** in that report's
+    `kinds`. The Orders workbook is `report` + `orders` + `cancelled` +
+    `movements` + `transactions`, and all five are refused together — a download
+    switched off on screen must not stay reachable by URL.
+  - **An unknown kind falls back to the master alone**, never to "allowed".
+  - `portalSectionForPath` returns an ARRAY for an export (the master AND the
+    report); the middleware refuses on the FIRST key that is off and names it,
+    so "Reports is not switched on" and "Orders & movements is not switched on"
+    are told apart.
+  - Office: the four ticks nest inside the login's 👁 panel and grey out when
+    Reports is switched off — ticking a report that cannot apply is a
+    configuration nobody can reason about later. The row summary counts them
+    too, or a login with Reports "on" and three of four downloads gone would
+    read as unrestricted.
 - **ENFORCED IN THE ONE MIDDLEWARE EVERY PORTAL ROUTE GOES THROUGH.**
   `portalSectionForPath()` maps the request path to a section and
   `requirePortalAuthMiddleware` refuses it — so a route cannot be added that

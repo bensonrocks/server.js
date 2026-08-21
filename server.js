@@ -3993,7 +3993,37 @@ const PORTAL_SECTIONS = [
   { key: 'send',     label: 'Send work in', hint: 'Uploading order files and waybill PDFs for our approval.' },
   { key: 'reports',  label: 'Reports',  hint: 'The dated Excel downloads on every tab.' },
 ];
-const PORTAL_SECTION_KEYS = PORTAL_SECTIONS.map(s => s.key);
+// ── AND WHICH REPORTS, WITHIN Reports ──────────────────────────────────────
+// Per the user: "also determine what reports they can see/download". The
+// `reports` section is the master switch; these are the individual downloads
+// under it, so a login can be given the stock position without the commercial
+// detail in the orders workbook, or inbound receipts without either.
+//
+// `kinds` is what the EXPORT ROUTE is asked for. Several server-side kinds feed
+// one button (the Orders workbook is orders + cancelled + the movement
+// statement), and every kind has to be listed or a download would be reachable
+// by URL after being switched off on screen.
+const PORTAL_REPORTS = [
+  { key: 'report_stock',   label: 'Stock position',
+    hint: 'Every SKU with on hand, reserved and available, as it stands now.',
+    kinds: ['stock'] },
+  { key: 'report_orders',  label: 'Orders & movements',
+    hint: 'The dated workbook — orders, cancelled orders and the full stock movement statement.',
+    kinds: ['report', 'orders', 'cancelled', 'movements', 'transactions'] },
+  { key: 'report_fulfil',  label: 'What can ship',
+    hint: 'Which open orders your stock covers, and which are short.',
+    kinds: ['fulfillability'] },
+  { key: 'report_inbound', label: 'Inbound & receipts',
+    hint: 'Every shipment in, what arrived against what was expected, and the service level.',
+    kinds: ['inbound'] },
+];
+const PORTAL_REPORT_KEYS = PORTAL_REPORTS.map(r => r.key);
+// kind → the report key that governs it. Built once so the route and the
+// screen can never disagree about which download belongs to which tick.
+const PORTAL_REPORT_BY_KIND = {};
+for (const r of PORTAL_REPORTS) for (const k of r.kinds) PORTAL_REPORT_BY_KIND[k] = r.key;
+
+const PORTAL_SECTION_KEYS = [...PORTAL_SECTIONS.map(s => s.key), ...PORTAL_REPORT_KEYS];
 // A portal with no data section at all is a broken login, not a configuration —
 // the person signs in and is shown nothing. At least one of these has to stay.
 const PORTAL_CORE_SECTIONS = ['overview', 'stock', 'orders', 'inbound'];
@@ -4010,8 +4040,15 @@ function portalUserVisibility(profile, user) {
 // requirePortalAuthMiddleware — which EVERY portal route goes through, directly
 // or via requirePortalWrite. So a route cannot be added that forgets to ask.
 // Hiding a tab in the browser is a courtesy; this is the rule.
+// Returns a key, an ARRAY of keys (all of which must be on), or null.
 function portalSectionForPath(p) {
-  if (p.startsWith('/api/portal/export/')) return 'reports';
+  if (p.startsWith('/api/portal/export/')) {
+    // The master switch AND the individual report. An unknown kind falls back
+    // to the master alone rather than being silently allowed.
+    const kind = decodeURIComponent(p.slice('/api/portal/export/'.length).split('/')[0] || '');
+    const r = PORTAL_REPORT_BY_KIND[kind];
+    return r ? ['reports', r] : 'reports';
+  }
   if (p === '/api/portal/overview') return 'overview';
   if (p === '/api/portal/stock' || p === '/api/portal/movements') return 'stock';
   if (p === '/api/portal/orders' || p.startsWith('/api/portal/orders/')
@@ -4452,6 +4489,7 @@ app.get('/api/master/client-profiles/:client/portal-users', (req, res) => {
     // office never has to guess which keys there are. What each login SEES
     // rides on that login's own row.
     sections: PORTAL_SECTIONS,
+    reports: PORTAL_REPORTS.map(r => ({ key: r.key, label: r.label, hint: r.hint })),
     coreSections: PORTAL_CORE_SECTIONS,
   });
 });
@@ -4723,12 +4761,19 @@ function requirePortalAuthMiddleware(req, res, next) {
       // refusal SAYS SO, because an empty payload reads as "you have nothing"
       // rather than "this is not switched on for you".
       req.portalVisibility = portalUserVisibility(prof, u);
-      const sec = portalSectionForPath(req.path);
-      if (sec && req.portalVisibility[sec] === false) {
-        const label = PORTAL_SECTIONS.find(s => s.key === sec)?.label || sec;
+      // A path can require MORE THAN ONE key — a download needs both Reports
+      // and its own report. The refusal names the one that is actually off, so
+      // "Reports is not switched on" and "the Orders workbook is not switched
+      // on" are told apart.
+      const need = portalSectionForPath(req.path);
+      const keys = need ? (Array.isArray(need) ? need : [need]) : [];
+      const off = keys.find(k => req.portalVisibility[k] === false);
+      if (off) {
+        const label = PORTAL_SECTIONS.find(x => x.key === off)?.label
+                   || PORTAL_REPORTS.find(x => x.key === off)?.label || off;
         res.status(403).json({
           error: `${label} is not switched on for your account. Contact IdealOne if you need it.`,
-          hiddenSection: sec,
+          hiddenSection: off,
         });
         return;
       }

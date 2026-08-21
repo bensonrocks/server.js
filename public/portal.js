@@ -24,10 +24,18 @@
     for (const k of ['overview', 'stock', 'orders', 'inbound']) {
       document.querySelector(`nav button[data-tab="${k}"]`)?.classList.toggle('hidden', !visible(k));
     }
-    // Reports are the downloads themselves, not a tab of their own.
-    const rep = !visible('reports');
-    for (const id of ['stExport', 'orExport', 'orFulfilExport', 'ibExport']) {
-      document.getElementById(id)?.classList.toggle('hidden', rep);
+    // Reports are the downloads themselves, not a tab of their own — and each
+    // one can be switched off individually, so a button comes off when EITHER
+    // the master switch or its own report is off.
+    const master = visible('reports');
+    const REPORT_BTN = {
+      stExport:       'report_stock',
+      orExport:       'report_orders',
+      orFulfilExport: 'report_fulfil',
+      ibExport:       'report_inbound',
+    };
+    for (const [id, key] of Object.entries(REPORT_BTN)) {
+      document.getElementById(id)?.classList.toggle('hidden', !master || !visible(key));
     }
   }
   let overview = null, stock = [], orders = [], inbound = [];
