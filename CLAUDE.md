@@ -4063,9 +4063,39 @@ case where an assignment must follow the count down and back up, a shipped
 serial left alone, and the close-then-refuse boundary) plus 15 browser checks on
 desktop and a Pixel 5.
 
-STILL NOT GUARDED, deliberately flagged: nothing warns at SCAN time when a line
-goes past its expected quantity — the discrepancy still only surfaces at End
-Receipt. Correcting it is now easy; noticing it early is not yet built.
+### An over-receipt is told at the SCAN, not discovered at End Receipt
+
+The discrepancy used to surface only at End Receipt, by which point the pallet
+is broken down and nobody can say whether it was a miscount or the supplier
+genuinely sent more. `/api/inbound/:id/scan` now returns `over` — `{expected,
+scanned, by, justCrossed}` — whenever a line passes its expected quantity.
+
+- **NEVER BLOCKED.** Receiving more than the paperwork says is routine, and
+  refusing the scan would push people into not scanning at all, which is a
+  worse number than a wrong one. The piece is counted either way (asserted).
+- **`justCrossed` is the scan worth interrupting for.** After that the receiver
+  already knows, so the line drops to a quiet "⚠ 2 over the expected 3"; a
+  repeated shout is noise. The crossing warning holds for 12s rather than the
+  default 3.5s, since a receiver mid-carton will not have read it otherwise.
+- **A LINE THAT LANDS EXACTLY IS NOT AN OVER-RECEIPT**, and a SKU that is not on
+  the paperwork at all is a different thing entirely — already reported as an
+  extra, and calling it "over" against an expectation of zero would be
+  nonsense. A RETURN has no expected list, so nothing there can ever be over.
+- This is IN ADDITION to the End Receipt discrepancy prompt, not instead of it
+  (asserted: End Receipt still 409s naming the line).
+
+Verified 18 API checks (nothing at 1, 2 and exactly 3 of 3; the fourth flagged
+as the crossing scan with both numbers and still counted; the fifth flagged but
+no longer crossing; a keyed qty of 5 against an expected 2 crossing in one go;
+an unlisted SKU and a return both exempt; End Receipt unchanged) plus 20 browser
+checks on a Pixel 5 and desktop (the loud line, its wording, its error styling,
+the Received box really reading 4, the row's `inb-over` class and its "+1 over"
+pill, and the quieter fifth).
+
+TEST GOTCHA, cost a run: resetting a receipt by writing db.json under a running
+server does nothing — it holds the db in memory. Reset through the API
+(`/setqty`), and re-authenticate first, since one active device per user means
+the browser signing in as demo invalidates the harness's token.
 
 ### Mass receive — accepting the paperwork, and saying so
 

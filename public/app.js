@@ -7840,6 +7840,22 @@
         // ⚡ CROSS-DOCK: outbound orders are waiting on this SKU — stage it for
         // packing instead of shelving it.
         showFeedback(feedback, 'error', `${data.sku}: ${data.scanned_qty} received — ⚡ ${data.crossdock.needed} pc(s) NEEDED by ${data.crossdock.orders.join(', ')} — stage for packing, don't shelve${crossMsg}`);
+      } else if (data.over) {
+        // ⚠ PAST WHAT THE PAPERWORK SAYS. Loud on the scan that crosses, quieter
+        // afterwards — the receiver already knows by then, and a repeated shout
+        // is noise. Never blocking: the piece is counted either way.
+        const o = data.over;
+        showFeedback(feedback, 'error',
+          o.justCrossed
+            ? `${data.sku}: ⚠ MORE THAN EXPECTED — ${o.scanned} received against ${o.expected} on the paperwork (+${o.by}). Counted. Check the pallet before you carry on${crossMsg}`
+            : `${data.sku}: ${o.scanned} received — ⚠ ${o.by} over the expected ${o.expected}${crossMsg}`);
+        if (o.justCrossed) {
+          // The default 3.5s can expire while the receiver is still reaching
+          // for the next carton. Hold the crossing warning long enough to be
+          // read, the same way the damage line does.
+          clearTimeout(feedback._t);
+          feedback._t = setTimeout(() => feedback.classList.add('hidden'), 12000);
+        }
       } else showFeedback(feedback, crossMsg ? 'pending' : 'success', `${data.sku}: ${data.scanned_qty} received${crossMsg}`);
       if (inboundCondition !== 'straight_to_inventory') setInboundCondition('straight_to_inventory');
     } catch (err) {

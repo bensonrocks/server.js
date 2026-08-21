@@ -11928,8 +11928,31 @@ app.post('/api/inbound/:id/scan', (req, res) => {
     const waiting = (db.backorders || []).filter(b => b.client_id === cid && b.sku === sku && b.status === 'open');
     if (waiting.length) crossdock = { needed: waiting.reduce((s, b) => s + b.remaining, 0), orders: waiting.slice(0, 3).map(b => b.order_number) };
   } catch (_) {}
+  // ── OVER-RECEIPT, SAID AT THE SCAN, NOT AT THE END ───────────────────────
+  // A line going past its expected quantity used to surface only at End
+  // Receipt, by which point the pallet is broken down and nobody can tell
+  // whether it was a miscount or the supplier genuinely sent more. Warned on
+  // the scan that crosses, and NEVER blocked: receiving more than the
+  // paperwork says is routine, and refusing it would push people into not
+  // scanning at all, which is worse than a wrong number.
+  //
+  // A SKU that is not on the paperwork AT ALL is a different thing — it is
+  // already reported as an extra, and calling it an over-receipt against an
+  // expectation of zero would be nonsense.
+  let over = null;
+  const expected = (rec.lines || []).filter(l => l.sku === sku)
+                                    .reduce((s, l) => s + (Number(l.expected_qty) || 0), 0);
+  if (expected > 0 && state.scanned[sku] > expected) {
+    over = {
+      expected, scanned: state.scanned[sku], by: state.scanned[sku] - expected,
+      // The scan that took it past is the one worth interrupting for; after
+      // that the receiver already knows and a repeated shout is just noise.
+      justCrossed: (state.scanned[sku] - inc) <= expected,
+    };
+  }
+
   res.json({ ok: true, sku, description, scanned_qty: state.scanned[sku], condition: cond,
-    condition_totals: state.conditionTotals[sku], crossdock,
+    condition_totals: state.conditionTotals[sku], crossdock, over, expected_qty: expected || null,
     cartonNum: carton.num, cartonCount: state.cartons.length,
     allocation,                       // which assignment took this piece, and whose it was
     assignments: rec.assignments || [] });
