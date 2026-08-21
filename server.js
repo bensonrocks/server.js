@@ -8492,7 +8492,10 @@ app.get('/api/master/system-errors/health', (req, res) => {
 });
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
-  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/') || req.path.startsWith('/api/portal/')) return next();
+  if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')
+      || req.path.startsWith('/api/portal/')
+      // The hub's own push. The secret is IN THE PATH — see the receiver.
+      || req.path.startsWith('/api/zort/webhook/')) return next();
   // Allow master key access to /api/master/* and /api/transport/import/* endpoints
   if ((req.path.startsWith('/api/master/') || req.path === '/api/transport/import') && req.headers['x-master-key'] === MASTER_PASS) return next();
   requireAuth(req, res, next);
@@ -19017,6 +19020,12 @@ function zortStorePublic(s, db) {
     // OFF unless deliberately turned on — a void on the hub is destructive and
     // cannot be undone from this side.
     cancelSync: !!s.cancelSync,
+    // The push URL's state. NEVER the token — that is what authenticates it.
+    webhookOn: !!s.webhookToken,
+    webhookRegisteredAt: s.webhookRegisteredAt || null,
+    webhookLastPushAt: s.webhookLastPushAt || null,
+    lastWebhookReadAt: s.lastWebhookReadAt || null,
+    lastWebhookResult: s.lastWebhookResult || null,
     skipClients: s.skipClients || [],
     recordOnlyClients: s.recordOnlyClients || [],
     channelClients: s.channelClients || {},
@@ -19274,14 +19283,21 @@ function handleZortVoid(db, orderNumber, zortId, store) {
 }
 
 // Pull new/updated orders from one store into a fresh batch.
-async function pullZortStore(db, store) {
+async function pullZortStore(db, store, opts = {}) {
   const existing = new Set();
   for (const b of db.batches || []) for (const o of b.orders || []) existing.add(o.order_number);
 
+  // TARGETED READ. A webhook says "something happened on order X", so we ask
+  // for exactly that one instead of sweeping a date window — which is the whole
+  // saving. `numberlist` is an EXACT match on ZORT's own order number and rides
+  // in a HEADER, not the query (see getOrdersByNumbers).
+  const only = (opts.onlyNumbers || []).map(String).filter(Boolean);
   // Look back 1 day past the last pull (or 7 days on first pull) — date
   // params are day-granular, overlap is deduped by order number anyway.
   const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
-  const query = { limit: 100, page: 1, updatedafter: new Date(sinceMs).toISOString().slice(0, 10) };
+  const query = only.length
+    ? { limit: 100, page: 1 }
+    : { limit: 100, page: 1, updatedafter: new Date(sinceMs).toISOString().slice(0, 10) };
 
   const rows = [];
   const zortMeta = {};
@@ -19304,8 +19320,13 @@ async function pullZortStore(db, store) {
   const recordClients = new Set((store.recordOnlyClients || [])
     .map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
   let recordOnlyOrders = 0;
-  for (let page = 1; page <= 20; page++) {
-    const resp = await zortApi.getOrders(store, { ...query, page });
+  // A targeted read is ONE call and one page by definition — paging a
+  // single-order lookup would spend exactly what this is here to save.
+  const maxPages = only.length ? 1 : 20;
+  for (let page = 1; page <= maxPages; page++) {
+    const resp = only.length
+      ? await zortApi.getOrdersByNumbers(store, only)
+      : await zortApi.getOrders(store, { ...query, page });
     const list = resp.list || resp.orders || resp.data || [];
     fetched += list.length;
     for (const o of list) {
@@ -19589,13 +19610,20 @@ async function pullZortStore(db, store) {
       }
     }
   }
-  store.lastPullAt = new Date().toISOString();
+  // A TARGETED READ MUST NOT MOVE THE WINDOW. `lastPullAt` is what the next
+  // scheduled pull looks back from, so letting a webhook advance it would make
+  // the sweep skip everything that changed in between — the safety net would
+  // quietly stop catching anything.
+  if (!only.length) store.lastPullAt = new Date().toISOString();
+  else store.lastWebhookReadAt = new Date().toISOString();
   // WHICH ORDERS COULD NOT BE PLACED WITH CONFIDENCE. Reported rather than
   // buried: an order filed under the store's own name has its stock, billing
   // and portal visibility against the wrong account, and nobody would know.
   const unsure = orders.filter(o => o._attribution_unsure)
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
-  store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
+  // Likewise the store row's summary describes the SWEEP; a one-order read
+  // would otherwise overwrite it with "fetched 1" and hide the real picture.
+  const _result = { at: new Date().toISOString(), fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
                        collectionsClosed, collectionConflicts,
                        // Parcels the courier brought back or could not ship.
                        hubExceptions: hubExceptions.slice(0, 50),
@@ -19603,6 +19631,8 @@ async function pullZortStore(db, store) {
                        skippedByStatus, skippedHandledSample,
                        skippedClientOrders, skippedClientSample, recordOnlyOrders,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
+  if (only.length) store.lastWebhookResult = _result;   // kept apart from the sweep's own row
+  else store.lastResult = _result;
   if (unsure.length) {
     logAudit('sync_client_attribution_unsure', { storeId: store.id, count: unsure.length, orders: unsure.slice(0, 20) });
   }
@@ -19611,7 +19641,9 @@ async function pullZortStore(db, store) {
   // stock-sync stores (e.g. a Shopee sale reserving stock updates the
   // Lazada-visible number for the same client).
   for (const [cid, skuSet] of reservedByClient) zortNotifyStockChange(db, cid, [...skuSet]);
-  logAudit('zort_pull', { storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid, clients: batchClients.slice(0, 20) });
+  logAudit(only.length ? 'zort_webhook_read' : 'zort_pull',
+    { storeId: store.id, fetched, created: orders.length, skippedExisting, skippedVoid,
+      ...(only.length ? { orders: only } : {}), clients: batchClients.slice(0, 20) });
   // New orders — or a waybill backfilled onto an existing one — may be exactly
   // what earlier-uploaded label pages were waiting for (the labels arrive in
   // one PDF; the orders and their tracking numbers trickle in per pull).
@@ -21211,6 +21243,207 @@ app.post('/api/master/zort/stores/:id/test', async (req, res) => {
 // nothing for that same X, the fault is on their side and this is the evidence
 // to send them. If it answers fine, the ids WE stored are wrong and it is ours.
 // Read-only, four calls, and the credentials are never echoed back.
+// ── THE HUB TELLS US, INSTEAD OF US ASKING EVERY FEW MINUTES ───────────────
+// The polling pull is what spends the 50,000/day: every enabled store, every
+// cadence, whether or not anything changed. `Webhook/UpdateWebhook` lets the
+// hub push instead.
+//
+// THE PUSH IS A TRIGGER, NEVER THE TRUTH. It says "something happened, maybe on
+// order X"; we then make ONE targeted read of that order and act on the
+// authoritative answer, reusing the paths that already exist (void, tracking
+// backfill, collection close, returned/failed). Two reasons, and both matter:
+//   - the payload shape and whether ZORT signs it are NOT verified from here
+//     (the sandbox cannot reach zortout.com), so trusting the body would be
+//     building on a guess — the same mistake `Order/PackOrder` was;
+//   - a push that carried an order's state would still have to be reconciled
+//     against ours, and a read is the thing we already know works.
+// So a wrong guess about the payload costs us a wasted read, not a wrong order.
+//
+// AUTHENTICATION IS THE TOKEN IN THE PATH. ZORT's push signing is undocumented
+// on the page we can reach, so the URL itself is the secret: 32 hex characters,
+// per store, regenerable. Anyone holding it can make us re-read an order and
+// nothing else — the endpoint has no destructive power of its own.
+//
+// THE PULL IS NOT SWITCHED OFF. A missed push must never mean a lost order, so
+// the scheduled pull stays as the safety net; its cadence is the operator's
+// setting and is deliberately left alone rather than quietly lowered.
+// zortBodyError RETURNS the refusal (it does not throw) — wrapped only so a
+// body shaped in a way it cannot read never takes this route down with it.
+function zortBodyErrorSafe(resp) {
+  try { return zortApi.zortBodyError(resp) || ''; } catch (_) { return ''; }
+}
+const ZORT_PUSH_LOG_CAP = 200;
+const ZORT_PUSH_DEBOUNCE_MS = 20000;   // one read per order per 20s, however many pushes
+const _zortPushSeen = new Map();       // orderKey -> last read time (in memory: a live rate guard)
+// Every key a push might carry the order under. Defensive on purpose — see
+// above; an identifier we fail to recognise costs a logged `no_order`, not a
+// wrong action.
+function _zortPushOrderRef(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const flat = { ...b, ...(b.data && typeof b.data === 'object' ? b.data : {}),
+                       ...(b.order && typeof b.order === 'object' ? b.order : {}) };
+  for (const k of ['number', 'ordernumber', 'orderNumber', 'order_no', 'orderno',
+                   'id', 'orderid', 'orderId', 'order_id', 'reference', 'uniquenumber']) {
+    const v = flat[k];
+    if (v !== undefined && v !== null && String(v).trim()) return String(v).trim();
+  }
+  return '';
+}
+function _zortPushLog(db, entry) {
+  if (!db.zortPushLog) db.zortPushLog = [];
+  db.zortPushLog.push({ at: new Date().toISOString(), ...entry });
+  if (db.zortPushLog.length > ZORT_PUSH_LOG_CAP) db.zortPushLog.splice(0, db.zortPushLog.length - ZORT_PUSH_LOG_CAP);
+}
+
+// GET is for whatever "verify this URL" step the hub does; POST is the push.
+// Both ACK immediately — a receiver that makes the caller wait on our work is
+// how a hub decides we are down and stops sending.
+const _zortWebhookHandler = (req, res) => {
+  const token = String(req.params.token || '');
+  res.json({ ok: true });                         // ACK first, always
+  if (req.method === 'GET') return;
+  setImmediate(() => {
+    try {
+      const db = readDb();
+      const store = (db.zortStores || []).find(x => x.webhookToken && x.webhookToken === token);
+      if (!store) {
+        // Logged, not silently dropped: a push arriving on a token nobody holds
+        // is worth being able to see.
+        _zortPushLog(db, { action: 'unknown_token', token: token.slice(0, 6) + '…' });
+        writeDb(db);
+        return;
+      }
+      const ref = _zortPushOrderRef(req.body);
+      store.webhookLastPushAt = new Date().toISOString();
+      if (!ref) {
+        _zortPushLog(db, { storeId: store.id, action: 'no_order', body: JSON.stringify(req.body || {}).slice(0, 400) });
+        writeDb(db);
+        return;
+      }
+      // ONE READ PER ORDER PER WINDOW. A push storm on one order must not
+      // become a call storm — which would spend the very limit this exists to
+      // protect.
+      const key = `${store.id}:${ref}`;
+      const last = _zortPushSeen.get(key) || 0;
+      if (Date.now() - last < ZORT_PUSH_DEBOUNCE_MS) {
+        _zortPushLog(db, { storeId: store.id, ref, action: 'debounced' });
+        writeDb(db);
+        return;
+      }
+      _zortPushSeen.set(key, Date.now());
+      _zortPushLog(db, { storeId: store.id, ref, action: 'reading' });
+      writeDb(db);
+      // The targeted read. `pullZortStore` already knows how to reconcile one
+      // order against everything we hold; pointing it at a single number is the
+      // whole saving, and means the webhook path can never diverge from the
+      // polled one.
+      // pullZortStore takes (db, store) — and it WRITES, so it must be handed a
+      // freshly read db rather than the one this handler already mutated.
+      const db3 = readDb();
+      const live = (db3.zortStores || []).find(x => String(x.id) === String(store.id));
+      if (!live) return;
+      pullZortStore(db3, live, { onlyNumbers: [ref] })
+        .then(r => {
+          const db2 = readDb();
+          _zortPushLog(db2, { storeId: store.id, ref, action: 'read_done',
+                              fetched: r?.fetched ?? 0, created: r?.created ?? 0 });
+          writeDb(db2);
+        })
+        .catch(e => {
+          const db2 = readDb();
+          _zortPushLog(db2, { storeId: store.id, ref, action: 'read_failed', error: String(e.message || e).slice(0, 200) });
+          writeDb(db2);
+        });
+    } catch (e) { console.warn('[zort-webhook]', e.message); }
+  });
+};
+app.post('/api/zort/webhook/:token', _zortWebhookHandler);
+app.get('/api/zort/webhook/:token', _zortWebhookHandler);
+
+// Register (or re-register) this store's push URL with the hub. Admin or
+// master — it changes what an external system sends us.
+app.post('/api/master/zort/stores/:id/webhook', express.json(), async (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const db = readDb();
+  const store = (db.zortStores || []).find(x => String(x.id) === String(req.params.id));
+  if (!store) return res.status(404).json({ error: 'store not found' });
+  const base = String(req.body?.baseUrl || process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+  if (!/^https:\/\//i.test(base)) {
+    return res.status(400).json({
+      error: 'A public https address for this deployment is required — the hub has to be able to reach it. e.g. https://idealone.tech',
+    });
+  }
+  // A NEW TOKEN EVERY TIME IT IS REGISTERED. If the old URL leaked, re-register
+  // and the old one is dead — which is the only revocation this design has.
+  store.webhookToken = crypto.randomBytes(16).toString('hex');
+  const url = `${base}/api/zort/webhook/${store.webhookToken}`;
+  let said = '', ok = false, raw = null;
+  try {
+    // The exact field names Webhook/UpdateWebhook wants are NOT confirmed from
+    // here, so the common shapes are sent together and whatever the hub reads
+    // it reads. If it refuses, its own words come back to the screen.
+    raw = await zortApi.registerWebhook(store, {
+      url, orderUrl: url, orderurl: url, webhookUrl: url, webhookurl: url,
+    });
+    said = _zortSaid(raw);
+    ok = !zortBodyErrorSafe(raw);
+  } catch (e) { said = String(e.message || e).slice(0, 300); }
+  store.webhookRegisteredAt = ok ? new Date().toISOString() : store.webhookRegisteredAt || null;
+  writeDb(db);
+  logAudit('zort_webhook_registered', {
+    storeId: store.id, client: store.clientName || '', url, ok, said,
+    by: req.userId || _tokenUserId(req) || '',
+  });
+  res.json({ ok, url, said, raw: raw ? JSON.stringify(raw).slice(0, 600) : '' });
+});
+
+// STOP THE PUSHES. Registering without a way back is a one-way door, and there
+// are real reasons to close it: the URL leaked, the store is being retired, or
+// the pushes are misbehaving and the sweep should carry it alone for a while.
+// Clearing the token kills the URL instantly at OUR end whatever the hub still
+// holds — which is the only revocation this design has, and the reason the
+// token is regenerated on every register.
+app.delete('/api/master/zort/stores/:id/webhook', async (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const db = readDb();
+  const store = (db.zortStores || []).find(x => String(x.id) === String(req.params.id));
+  if (!store) return res.status(404).json({ error: 'store not found' });
+  const had = !!store.webhookToken;
+  delete store.webhookToken;
+  store.webhookRegisteredAt = null;
+  // Best-effort: ask the hub to stop sending too. If it refuses, the URL is
+  // dead here anyway — say what happened rather than pretending it worked.
+  let said = '';
+  try { said = _zortSaid(await zortApi.registerWebhook(store, { url: '', orderUrl: '', orderurl: '', webhookUrl: '', webhookurl: '' })); }
+  catch (e) { said = String(e.message || e).slice(0, 300); }
+  writeDb(db);
+  logAudit('zort_webhook_revoked', {
+    storeId: store.id, client: store.clientName || '', had, said,
+    by: req.userId || _tokenUserId(req) || '',
+  });
+  res.json({ ok: true, had, said,
+             note: 'The push URL no longer works here, whatever the channel still holds. The scheduled pull is unaffected.' });
+});
+
+// What the hub thinks it is pushing to, and what has actually arrived.
+app.get('/api/master/zort/stores/:id/webhook', async (req, res) => {
+  if (!requireTransportAdmin(req, res)) return;
+  const db = readDb();
+  const store = (db.zortStores || []).find(x => String(x.id) === String(req.params.id));
+  if (!store) return res.status(404).json({ error: 'store not found' });
+  let atHub = null, err = '';
+  try { atHub = await zortApi.getWebhook(store); }
+  catch (e) { err = String(e.message || e).slice(0, 300); }
+  res.json({
+    registered: !!store.webhookToken,
+    registeredAt: store.webhookRegisteredAt || null,
+    lastPushAt: store.webhookLastPushAt || null,
+    // NEVER the token itself — it is the secret that authenticates the push.
+    atHub: atHub ? JSON.stringify(atHub).slice(0, 800) : '', error: err,
+    recent: (db.zortPushLog || []).filter(e => !e.storeId || e.storeId === store.id).slice(-25).reverse(),
+  });
+});
+
 app.post('/api/master/zort/stores/:id/probe', async (req, res) => {
   if (!requireTransportAdmin(req, res)) return;
   const store = zortStores(readDb()).find(s => s.id === req.params.id);

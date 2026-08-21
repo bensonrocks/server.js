@@ -1169,6 +1169,65 @@ more and leaves no stalled entry, and suspending stops it — plus 20 browser
 checks on desktop and a Pixel 5 (off by default, the cost written on the form,
 cancelling the confirm leaves it off, and switching it off never asks).
 
+### The hub pushes; we make ONE targeted read (`/api/zort/webhook/:token`)
+
+The polling pull is what spends the 50,000/day: every enabled store, every
+cadence, whether or not anything changed. `Webhook/UpdateWebhook` lets the hub
+tell us instead.
+
+- **THE PUSH IS A TRIGGER, NEVER THE TRUTH.** It says "something happened, maybe
+  on order X"; we then make ONE targeted read of that order and act on the
+  authoritative answer, reusing the paths that already exist (void, tracking
+  backfill, collection close, returned/failed). Two reasons: the payload shape
+  and whether ZORT signs it are **not verified from here** (the sandbox cannot
+  reach zortout.com), so trusting the body would be building on a guess — the
+  same mistake `Order/PackOrder` was; and a push carrying state would still have
+  to be reconciled against ours, while a read is the thing we know works. **A
+  wrong guess about the payload costs a wasted read, not a wrong order.**
+- `pullZortStore(db, store, {onlyNumbers})` does the targeted read via
+  `getOrdersByNumbers` (the `numberlist` HEADER, exact match), **one page** —
+  paging a single-order lookup would spend exactly what this saves. Measured:
+  one push = one `GetOrders` call carrying `numberlist`, with no `updatedafter`.
+- **AUTHENTICATION IS THE TOKEN IN THE PATH.** ZORT's push signing is
+  undocumented on the page we can reach, so the URL is the secret: 32 hex
+  characters, per store, **regenerated on every register** (which is the only
+  revocation the design has) and **never read back** by the info endpoint.
+  Holding it can make us re-read an order and nothing else.
+- **ACK FIRST, ALWAYS** — GET and POST both `res.json({ok:true})` before any
+  work. A receiver that makes the caller wait is how a hub decides we are down.
+- **A PUSH STORM IS NOT A CALL STORM**: `ZORT_PUSH_DEBOUNCE_MS` (20s) per
+  (store, order), in memory. Five more pushes on the same order inside the
+  window cost nothing and are logged `debounced`.
+- **A TARGETED READ MUST NOT MOVE THE WINDOW.** `lastPullAt` is what the next
+  sweep looks back from, so a webhook advancing it would make the safety net
+  quietly stop catching anything. It stamps `lastWebhookReadAt` and
+  `lastWebhookResult` instead, and never overwrites the store row's summary
+  with "fetched 1". Audited as `zort_webhook_read`, kept apart from `zort_pull`.
+- **THE SWEEP IS NOT SWITCHED OFF.** A missed push must never mean a lost order;
+  the cadence is the operator's setting and is deliberately left alone rather
+  than quietly lowered.
+- Everything is logged to `db.zortPushLog` (capped 200) and shown on the ⚡ Push
+  dialog: an unknown token, a push with no recognisable order, a debounce, the
+  read and its outcome. `DELETE .../webhook` revokes — registering without a way
+  back is a one-way door, and there are real reasons to close it.
+- UI: **📡 Push** on each store row — reports the live state and what has
+  arrived, asks for the public https address on the way on (only the operator
+  knows what this deployment is published as), and offers to stop on the way
+  back.
+
+HONEST CAVEAT: the exact field names `Webhook/UpdateWebhook` wants are NOT
+confirmed from here, so the common shapes (`url`, `orderUrl`, `webhookUrl`, …)
+are sent together and whatever the hub reads it reads; if it refuses, its own
+words come back to the screen. The receiver itself does not care — it is
+triggered by any push on the token.
+
+Verified 27 API checks (registration refused without https, a 32-char secret in
+the URL, the token never read back, an unknown token logged not dropped, ONE
+`GetOrders` per push carrying `numberlist` and no `updatedafter`, five more
+pushes costing nothing, a push with no order logged, an order found under
+`data.orderid`, `lastPullAt` unmoved and the store row unchanged, and revocation
+killing the URL) plus 9 browser checks on the Push dialog.
+
 ### Telling the hub when WE cancel (`store.cancelSync`, `tellHubWeCancelled`)
 
 Cancelling an order here left the hub believing it was still live — so the

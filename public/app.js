@@ -12083,6 +12083,7 @@
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
+            <button class="btn-secondary btn-sm z-hook" title="Let the channel PUSH changes to us instead of us asking every few minutes. One order read per push instead of a full sweep — this is where the daily request limit goes.">&#128225; Push</button>
             <button class="btn-secondary btn-sm z-probe" title="Ask the hub four questions and show its raw answers — credentials, a plain read, the order list, and reading back one order by the hub's OWN id. Four requests, read-only. Use it when the channel is answering with no order.">&#129514; Probe</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
             <button class="btn-secondary btn-sm z-crosscheck" title="Ask the hub the current status of every open synced order here — finds orders the client fulfilled themselves, and offers to settle them">&#128270; Cross-check</button>
@@ -12117,6 +12118,57 @@
         });
         // FOUR QUESTIONS, RAW ANSWERS. When the hub returns no order, every next
         // step is a guess without this.
+        tr.querySelector('.z-hook').addEventListener('click', async e => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          try {
+            const cur = await (await fetch(`/api/master/zort/stores/${id}/webhook`, { headers: zortHdrs() })).json();
+            const lines = [
+              cur.registered
+                ? `Push is ON for ${store?.clientName || store?.storename || 'this store'}.`
+                : `Push is OFF for ${store?.clientName || store?.storename || 'this store'}.`,
+              cur.registeredAt ? `Registered: ${new Date(cur.registeredAt).toLocaleString('en-GB', { hour12: false })}` : '',
+              cur.lastPushAt ? `Last push received: ${new Date(cur.lastPushAt).toLocaleString('en-GB', { hour12: false })}`
+                             : (cur.registered ? 'Nothing has arrived yet.' : ''),
+              '', 'Recent pushes:',
+              ...(cur.recent || []).slice(0, 8).map(x => `  ${new Date(x.at).toLocaleTimeString('en-GB', { hour12: false })}  ${x.action}${x.ref ? ' ' + x.ref : ''}`),
+              (cur.recent || []).length ? '' : '  (none)',
+            ].filter(x => x !== undefined);
+            const turnOff = cur.registered && confirm(lines.join('\n')
+              + '\n\nOK = STOP the pushes (the scheduled pull carries on regardless).'
+              + '\nCancel = leave it on.');
+            if (turnOff) {
+              const r = await (await fetch(`/api/master/zort/stores/${id}/webhook`, { method: 'DELETE', headers: zortHdrs() })).json();
+              alert('Push stopped.\n\n' + (r.note || '') + (r.said ? `\n\nThe channel said: ${r.said}` : ''));
+              loadZortStores();
+              return;
+            }
+            if (cur.registered) return;
+            // TURNING IT ON needs a public address — the channel has to be able
+            // to reach us, and only the operator knows what this deployment is
+            // published as.
+            const base = prompt(
+              'Let the channel push changes to us.\n\n'
+              + 'It sends a message when an order changes; we then read just that\n'
+              + 'one order instead of sweeping every few minutes. The scheduled\n'
+              + 'pull stays on as the safety net.\n\n'
+              + 'Enter the public https address of this deployment:',
+              location.origin.startsWith('https') ? location.origin : 'https://idealone.tech');
+            if (!base) return;
+            const r = await fetch(`/api/master/zort/stores/${id}/webhook`,
+              { method: 'POST', headers: zortHdrs(), body: JSON.stringify({ baseUrl: base }) });
+            const d = await r.json();
+            if (!r.ok) { alert('Could not register the push URL.\n\n' + (d.error || '')); return; }
+            alert((d.ok ? 'Push registered.' : 'The channel did not confirm it.')
+              + `\n\nURL: ${d.url}`
+              + (d.said ? `\n\nThe channel said: ${d.said}` : '')
+              + '\n\nKeep this URL private — it is what authenticates the push.'
+              + '\nRe-registering issues a new one and kills the old.');
+            loadZortStores();
+          } catch (err) {
+            alert('Could not reach the push settings — ' + (err.message || err));
+          } finally { btn.disabled = false; }
+        });
         tr.querySelector('.z-probe').addEventListener('click', async e => {
           e.target.disabled = true;
           zortStatus('progress', `Asking ${store.clientName} four questions…`);
