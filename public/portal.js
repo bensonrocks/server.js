@@ -834,9 +834,15 @@
             ${stockPill(o.stock)}
             ${pickupPill(o.pickup)}
             ${deliveryPill(o.delivery)}
+            ${o.exception ? `<span class="p p-exc" title="${esc(o.exception.detail)}">${o.exception.state === 'returned' ? '&#8617;' : '&#9888;'} ${esc(o.exception.label)}</span>` : ''}
             <div class="muted" style="font-size:.68rem;margin-top:.3rem">${isOpen ? '▲ hide' : '▼ details'}</div>
           </div>
         </div>
+        ${o.exception ? `
+          <div style="border-top:1px solid #f1f5f9;margin-top:.45rem;padding-top:.45rem">
+            <div style="font-size:.78rem;font-weight:700;color:#991b1b">${esc(o.exception.label)}</div>
+            <div class="muted" style="font-size:.74rem">${esc(o.exception.detail)}${o.exception.at ? ` · ${fmtDateTime(o.exception.at)}` : ''}</div>
+          </div>` : ''}
         ${o.cancelled ? `
           <div style="border-top:1px solid #f1f5f9;margin-top:.45rem;padding-top:.45rem">
             <div class="muted" style="font-size:.74rem">

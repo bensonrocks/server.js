@@ -3734,3 +3734,7 @@ tr.pa-split-row td { border-top: 0; }
    column it repeats is on screen, so showing it there would just be noise. */
 .inb-mobile-sum { display: none; }
 @media (max-width: 768px) { #inboundList .inb-mobile-sum { display: block; } }
+
+/* The channel says the parcel came back or never got away. Red, because the
+   order otherwise reads as shipped and that is the misreading to prevent. */
+.chip-hub-exception { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }

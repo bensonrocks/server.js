@@ -2850,6 +2850,9 @@ function globalOrdersWithState(keep) {
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         pending_deletion:  state.pending_deletion  || null,
+        // The courier brought it back, or never got it away. Recorded from the
+        // hub; the order itself is never regressed by it.
+        hub_exception:     state.hub_exception      || null,
         // Cancelled by the client from their own portal. Kept for the trail,
         // filtered off the everyday screens by whoever reads this list.
         client_cancelled:  state.client_cancelled  || null,
@@ -5197,6 +5200,18 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         pickup: _pk,
         stock: _sk ? { ...PORTAL_STOCK_LABEL[_sk.state], state: _sk.state, short: _sk.short.slice(0, 20) } : null,
         // Why it was cancelled, and where the client says they moved it to.
+        // THE CLIENT IS TOLD, in our words rather than the channel's status
+        // code. An order that came back reading as delivered is exactly the
+        // kind of thing they find out about from their customer instead of us.
+        exception: st.hub_exception ? {
+          state: st.hub_exception.status === 'returned' ? 'returned' : 'failed',
+          label: st.hub_exception.status === 'returned'
+            ? 'Returned by the courier' : 'The courier could not ship this',
+          detail: st.hub_exception.status === 'returned'
+            ? 'The parcel has come back to us. We will count it in and be in touch.'
+            : 'The courier was unable to ship it. We are looking into it.',
+          at: st.hub_exception.at || null,
+        } : null,
         cancelled: st.status === 'unprocessed' ? {
           at: cancelledAtOf(st),
           reason: st.unprocessed_reason || '',
@@ -9574,6 +9589,8 @@ const SYNC_ACTIVITY_EVENTS = {
   sync_label_unusable:          { what: 'The channel has a label, but not in a form we can import — print it from the channel', good: false },
   sync_label_fetch_cancelled:   { what: 'Label fetch cancelled (label pull switched off)', good: false },
   zort_order_voided:            { what: 'The channel cancelled this order', good: false },
+  sync_order_returned:          { what: 'The courier RETURNED this parcel to us', good: false },
+  sync_order_shipment_failed:   { what: 'The courier could NOT ship this parcel', good: false },
   zort_order_void_conflict:     { what: 'The channel cancelled it but work had started here', good: false },
   order_completed:              { what: 'Completed here (picked, packed, scanned)', good: true },
 };
@@ -19026,6 +19043,72 @@ function _zortShippedAt(o) {
 // the hub record. An uploaded order that merely shares an order number is not
 // this order, and an upload carries no channel relationship at all.
 //
+// ── THE PARCEL CAME BACK, OR NEVER GOT AWAY ────────────────────────────────
+// `returned` and `failed shipment` are skipped at IMPORT (never fresh floor
+// work) but were never acted on for an order we already hold — so an order the
+// courier brought back went on reading as shipped, on our screens and on the
+// client's. That is the one thing this system must not do: report an outcome
+// that did not happen.
+//
+// It RECORDS and REPORTS; it changes nothing else. Specifically:
+//   - a DONE order stays done. It really was picked and packed, and the pick
+//     was not wrong because the courier failed.
+//   - the collection record is left alone. A returned parcel DID leave, so
+//     un-picking it up would be a second false statement.
+//   - no stock moves. What physically came back has to be counted, and that is
+//     what Inbound is for — inventing a receipt from a status word would put
+//     units on the shelf nobody has seen.
+// Never re-stamps the same status, so a re-pull cannot move the record; a
+// status that CHANGES (failed, then returned) updates and is audited again.
+const ZORT_EXCEPTION_STATUSES = new Set(['returned', 'failed shipment']);
+const ZORT_EXCEPTION_WORDS = {
+  'returned':         { label: 'Returned to us',   client: 'Returned by the courier' },
+  'failed shipment':  { label: 'Shipment failed',  client: 'The courier could not ship this' },
+};
+// Returns 'noted' | 'changed' | 'conflict' | '' (nothing to do).
+function noteHubException(db, orderNumber, zortId, statusWord, store, hubOrder) {
+  try {
+    if (!ZORT_EXCEPTION_STATUSES.has(statusWord)) return '';
+    const f = lazadaFindOrder(db, orderNumber, '');
+    if (!f) return '';
+    // API-ONLY GATE, same as the collection close: an uploaded order that
+    // merely shares a number is not the order the hub is talking about.
+    if (!f.ord.zort_id) return '';
+    if (zortId && String(f.ord.zort_id) !== String(zortId)) return '';
+    // A fresh import has no state record at all — create it lazily, or the
+    // write silently does nothing. Fourth time this trap has come up; see
+    // closeCollectionFromHub and the no-stock sweep.
+    f.batch.orderStates = f.batch.orderStates || {};
+    const state = f.batch.orderStates[f.ord.order_number]
+      || (f.batch.orderStates[f.ord.order_number] = { status: 'pending', scanned: {} });
+    const prev = state.hub_exception;
+    if (prev && prev.status === statusWord) return '';        // already recorded
+    const nowIso = new Date().toISOString();
+    state.hub_exception = {
+      status: statusWord,
+      label: ZORT_EXCEPTION_WORDS[statusWord]?.label || statusWord,
+      at: _zortShippedAt(hubOrder) || nowIso,
+      noticed_at: nowIso,
+      via: 'zort',
+      hub_status: statusWord,
+      local_status: state.status || 'pending',
+      store_id: store?.id || '',
+    };
+    state.updated_at = nowIso;
+    // THE HUB SAYS IT CAME BACK AND WE NEVER SHIPPED IT is a different problem
+    // from a return: either the parcel was never ours, or somebody shipped it
+    // outside the system. Reported as its own thing rather than filed as a
+    // routine return.
+    const conflict = (state.status || 'pending') !== 'done';
+    logAudit(statusWord === 'returned' ? 'sync_order_returned' : 'sync_order_shipment_failed', {
+      order: orderNumber, client: f.batch.client_name || '',
+      hubStatus: statusWord, localStatus: state.status || 'pending',
+      neverShippedHere: conflict, changedFrom: prev?.status || '', storeId: store?.id || '',
+    });
+    return conflict ? 'conflict' : (prev ? 'changed' : 'noted');
+  } catch (e) { console.warn('[zort-exception]', e.message); return ''; }
+}
+
 // Returns 'closed' | 'conflict' | '' (nothing to do).
 function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubOrder) {
   try {
@@ -19137,6 +19220,9 @@ async function pullZortStore(db, store) {
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
   let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0;
   let collectionsClosed = 0, collectionConflicts = 0;
+  // Parcels the hub says came back or failed to ship. Reported on the store
+  // row, because a count of zero and a count of nine are different mornings.
+  const hubExceptions = []; let hubExceptionConflicts = 0;
   const skippedByStatus = {}; const skippedHandledSample = [];
   let skippedClientOrders = 0; const skippedClientSample = [];
   // Clients this store must not bring in at all — they fulfil their own orders.
@@ -19222,6 +19308,13 @@ async function pullZortStore(db, store) {
           const r = closeCollectionFromHub(db, number, o.id, stw, store, o);
           if (r === 'closed') collectionsClosed++;
           else if (r === 'conflict') collectionConflicts++;
+        }
+        // THE PARCEL CAME BACK, OR NEVER GOT AWAY. Recorded on the order so
+        // neither our screens nor the client's go on saying it shipped.
+        const ex = noteHubException(db, number, o.id, stw, store, o);
+        if (ex) {
+          hubExceptions.push({ order: number, status: stw, neverShippedHere: ex === 'conflict' });
+          if (ex === 'conflict') hubExceptionConflicts++;
         }
         continue;
       }
@@ -19435,6 +19528,9 @@ async function pullZortStore(db, store) {
     .map(o => ({ order: o.order_number, client: o._client, via: o._attributed_via, why: o._attribution_unsure }));
   store.lastResult = { at: store.lastPullAt, fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
                        collectionsClosed, collectionConflicts,
+                       // Parcels the courier brought back or could not ship.
+                       hubExceptions: hubExceptions.slice(0, 50),
+                       hubExceptionCount: hubExceptions.length, hubExceptionConflicts,
                        skippedByStatus, skippedHandledSample,
                        skippedClientOrders, skippedClientSample, recordOnlyOrders,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };

@@ -2535,6 +2535,12 @@
         (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord) : '',
         // Marketplace push-back state — only ever on synced orders.
         zortPushChip(ord),
+        // THE COURIER BROUGHT IT BACK, OR NEVER GOT IT AWAY. Without this the
+        // order went on reading as shipped — the one thing this system must
+        // not do, report an outcome that did not happen.
+        ord.hub_exception
+          ? `<span class="chip chip-hub-exception" title="${esc(ord.hub_exception.label)} — the channel reported this on ${ord.hub_exception.at ? new Date(ord.hub_exception.at).toLocaleString('en-GB', { hour12: false }) : 'an unknown date'}.${ord.hub_exception.local_status !== 'done' ? '\nWe never shipped it from here, so this needs a look.' : '\nWhat comes back has to be counted in through Inbound — nothing has moved on stock.'}">${ord.hub_exception.status === 'returned' ? '&#8617;' : '&#9888;'} ${esc(ord.hub_exception.label)}${ord.hub_exception.local_status !== 'done' ? ' — never shipped here' : ''}</span>`
+          : '',
         // WHY this one is not being fulfilled. A list of cancelled orders
         // with no reason on them is a list of questions.
         ord.scan_status === 'unprocessed'

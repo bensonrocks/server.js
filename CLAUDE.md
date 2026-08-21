@@ -1169,6 +1169,53 @@ more and leaves no stalled entry, and suspending stops it — plus 20 browser
 checks on desktop and a Pixel 5 (off by default, the cost written on the form,
 cancelling the confirm leaves it off, and switching it off never asks).
 
+### The parcel came back, or never got away (`noteHubException`)
+
+`returned` and `failed shipment` are in `ZORT_IMPORT_SKIP_STATUSES`, so they are
+never imported as fresh floor work — but nothing acted on them for an order we
+ALREADY hold. A parcel the courier brought back went on reading as **shipped**,
+on our screens and on the client's. That is the one thing this system must not
+do: report an outcome that did not happen.
+
+`noteHubException` records it on `state.hub_exception` `{status, label, at,
+noticed_at, via, hub_status, local_status, store_id}` and **changes nothing
+else**:
+
+- **A DONE ORDER STAYS DONE.** It really was picked and packed, and the pick was
+  not wrong because the courier failed.
+- **THE COLLECTION RECORD IS LEFT ALONE.** A returned parcel DID leave, so
+  un-picking it up would be a second false statement. Same for the fulfilment
+  KPI: it was handed over on time, and the return is a later, separate event.
+- **NO STOCK MOVES.** What physically came back has to be counted, and that is
+  what Inbound is for — inventing a receipt from a status word would put units
+  on the shelf nobody has seen.
+- **API-ONLY GATE** (`zort_id` must match) and the usual lazy state creation —
+  a fresh import has no state record, and the write would otherwise silently do
+  nothing. Fourth time that trap has come up.
+- **NEVER RE-STAMPS the same status**, so a re-pull cannot move the record; a
+  status that CHANGES (failed, then returned) updates and is audited again, and
+  the earlier event stays on the trail rather than being rewritten.
+- **"THE HUB SAYS IT CAME BACK AND WE NEVER SHIPPED IT" is a different problem**
+  — either the parcel was never ours or somebody shipped it outside the system.
+  Audited `neverShippedHere: true` and said on the chip in those words.
+- Audited `sync_order_returned` / `sync_order_shipment_failed`, counted on the
+  store row (`hubExceptionCount`, `hubExceptions[]`), and worded in the
+  Sync-activity dialog.
+- **THE CLIENT IS TOLD, in our words** — a red `.p-exc` pill on their order plus
+  a line saying what happens next ("The parcel has come back to us. We will
+  count it in and be in touch."). An order that came back reading as delivered
+  is exactly what a client finds out about from their customer instead of us.
+
+Verified 24 API checks against a hub whose parcels come back (both orders import
+clean; one is genuinely picked and completed here; the return is recorded with
+its own wording and both timestamps; the work, the collection and the stock are
+all untouched; a re-pull does not re-stamp; an order we never shipped is flagged
+as such on the trail; a change to failed-shipment updates the record and keeps
+the earlier event; the store row carries the count; and a hub that changes its
+mind back does not erase what it told us) plus 12 browser checks on desktop and
+a Pixel 5 (the chip, its wording, its red by computed style, the tooltip, and
+the never-shipped-here case).
+
 ### ZORT order status — words, the import filter, and the cross-check tool
 
 CONFIRMED against developers.zortout.com/api-reference/order (read 2026-08-11
