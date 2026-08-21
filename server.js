@@ -2718,6 +2718,22 @@ function applyNoStockAutoCancel(db, opts = {}) {
 setInterval(() => { try { applyNoStockAutoCancel(readDb()); } catch (e) { console.error('[auto-cancel]', e.message); } }, 5 * 60000);
 setTimeout(() => { try { applyNoStockAutoCancel(readDb()); } catch (_) {} }, 90000);
 
+// WHEN AN ORDER WAS CANCELLED — one chain, used by every screen that dates a
+// cancellation, so the office and the client's portal can never disagree about
+// which day it counts on. (They did: the office read 3 where the portal read 5
+// on the same day, because the two had grown separate fallbacks.)
+//   unprocessed_at   — stamped by every path that cancels an order
+//   client_cancelled — a withdrawal made from the portal
+//   updated_at       — last resort: the marketplace void handlers ran for a
+//                      long time without stamping anything else, so this is
+//                      all the older records have. Not exact, but it is the
+//                      day we touched the order, which beats the day it
+//                      arrived by a mile.
+// Returns null when there is nothing at all, so callers can fall back to the
+// upload date themselves rather than being handed a wrong answer.
+function cancelledAtOf(state) {
+  return state?.unprocessed_at || state?.client_cancelled?.at || state?.updated_at || null;
+}
 function globalOrdersWithState(keep) {
   const db          = readDb();
   const _lineLookup = _makeSkuLookup();
@@ -2765,10 +2781,7 @@ function globalOrdersWithState(keep) {
         // it, so it has to be in this cheap pre-filter shape too. Leaving it
         // out made the predicate read undefined and fall back to the upload
         // date, which is silently the old behaviour rather than an error.
-        // `client_cancelled.at` is the fallback for withdrawals made BEFORE
-        // that path started stamping unprocessed_at — they heal on read
-        // instead of needing a migration.
-        unprocessed_at: state.unprocessed_at || state.client_cancelled?.at || null,
+        unprocessed_at: cancelledAtOf(state),
         uploadedAt:   batch.uploaded_at,
       })) continue;
       const enrichedLines = (ord.lines || []).map(l => {
@@ -2842,10 +2855,8 @@ function globalOrdersWithState(keep) {
         client_cancelled:  state.client_cancelled  || null,
         // WHY it is not being fulfilled, for the Cancelled view — a list of
         // cancelled orders with no reason on them is a list of questions.
-        // Falls back to the withdrawal timestamp for orders the client
-        // cancelled before that path stamped one — so the day it counts on is
-        // right without rewriting stored records.
-        unprocessed_at:     state.unprocessed_at || state.client_cancelled?.at || null,
+        // ONE chain, shared with the portal — see cancelledAtOf.
+        unprocessed_at:     cancelledAtOf(state),
         unprocessed_reason: state.unprocessed_reason || '',
         auto_cancelled:     !!state.auto_cancelled,
         reopened_at:        state.reopened_at        || null,
@@ -5187,7 +5198,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         stock: _sk ? { ...PORTAL_STOCK_LABEL[_sk.state], state: _sk.state, short: _sk.short.slice(0, 20) } : null,
         // Why it was cancelled, and where the client says they moved it to.
         cancelled: st.status === 'unprocessed' ? {
-          at: st.unprocessed_at || st.updated_at || null,
+          at: cancelledAtOf(st),
           reason: st.unprocessed_reason || '',
           automatic: !!st.auto_cancelled,
         } : null,
@@ -5831,7 +5842,7 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
       for (const o of b.orders || []) {
         const st = b.orderStates?.[o.order_number] || {};
         if (st.status !== 'unprocessed') continue;
-        const when = st.unprocessed_at || st.updated_at || o.date || b.uploaded_at;
+        const when = cancelledAtOf(st) || o.date || b.uploaded_at;
         if (!inRange(when)) continue;
         out.push([o.order_number,
           sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
@@ -5924,7 +5935,7 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
         const st = b.orderStates?.[o.order_number] || {};
         const pcs = o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
         if (st.status === 'unprocessed') {
-          const when = st.unprocessed_at || st.updated_at || o.date || b.uploaded_at;
+          const when = cancelledAtOf(st) || o.date || b.uploaded_at;
           if (!inRange(when)) continue;
           cancelledOut.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
             when ? new Date(when).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
@@ -18151,6 +18162,10 @@ function lazadaVoidOrder(db, batch, ord) {
     return 'void_conflict';
   }
   state.status = 'unprocessed';
+    // STAMP WHEN. Without it the only date on a marketplace void was
+    // `updated_at`, so every screen had to guess — and the office and the
+    // portal guessed differently. See cancelledAtOf.
+    state.unprocessed_at = new Date().toISOString();
   let releasedSkus = [];
   if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
     const cid = batch.inventory_client || invClientId(batch.client_name);
@@ -18705,6 +18720,10 @@ function shopeeVoidOrder(db, batch, ord) {
     return 'void_conflict';
   }
   state.status = 'unprocessed';
+    // STAMP WHEN. Without it the only date on a marketplace void was
+    // `updated_at`, so every screen had to guess — and the office and the
+    // portal guessed differently. See cancelledAtOf.
+    state.unprocessed_at = new Date().toISOString();
   let releasedSkus = [];
   if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
     const cid = batch.inventory_client || invClientId(batch.client_name);
@@ -19057,6 +19076,10 @@ function handleZortVoid(db, orderNumber, zortId, store) {
 
     // Pending + untouched → cancel it and give the reserved units back.
     state.status = 'unprocessed';
+    // STAMP WHEN. Without it the only date on a marketplace void was
+    // `updated_at`, so every screen had to guess — and the office and the
+    // portal guessed differently. See cancelledAtOf.
+    state.unprocessed_at = new Date().toISOString();
     let releasedSkus = [];
     if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
       const cid = batch.inventory_client || invClientId(batch.client_name);

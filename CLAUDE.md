@@ -4817,15 +4817,37 @@ that could not be fulfilled"* could not see how many there were, let alone when.
     Now stamped — and every day-bucket reads `unprocessed_at ||
     client_cancelled.at`, so withdrawals stored the OLD way heal on read
     instead of needing a migration.
-  Verified 10 API checks on a seeding of all three shapes (three plain, two on
-  older uploads, one client withdrawal, one legacy withdrawal with no
-  timestamp): the office counts all seven, none counts as yesterday's, a
-  withdrawal carries who and when while one we made does not, `?cancelled=1`
-  still isolates the client's own, and not one appears as active work. The
-  previous commit — the day fix alone — returns **5 of 7**, so the test proves
-  the two remaining defects. Plus 14 browser checks on desktop and a Pixel 5
-  (the count, the rows, the pill's wording, its amber by computed style, its
-  tooltip, and that only the two withdrawals are marked).
+  - **AND A FOURTH, which is the one that was actually biting Mayer2026: THE
+    MARKETPLACE VOID HANDLERS NEVER STAMPED A CANCELLATION DATE.**
+    `handleLazadaCancel`, the Shopee equivalent and `handleZortVoid` set
+    `status = 'unprocessed'` and `updated_at` and nothing else. The portal's
+    chain happened to end in `|| st.updated_at`, so it dated them from that and
+    counted them today; the office's did not, so it had nothing to read and
+    fell back to the upload date. A Lazada order voted void by the channel is
+    exactly what these two were. All three now stamp `unprocessed_at`.
+  - **ONE CHAIN, `cancelledAtOf(state)`** — `unprocessed_at ||
+    client_cancelled.at || updated_at` — used by the order object, the range
+    pre-filter, `/api/portal/orders` and BOTH export sheets. Five call sites had
+    grown three different fallbacks between them, which is the whole reason two
+    screens could disagree about the same day. `updated_at` stays as the last
+    resort so records already stored heal on read; it is the day we touched the
+    order, which is not exact but beats the day it arrived by a mile.
+  Verified 12 API checks on a seeding of every shape (three plain, two on older
+  uploads, one client withdrawal, one legacy withdrawal with no timestamp, and
+  two marketplace voids carrying only `updated_at`): the office counts all
+  nine, none counts as yesterday's, a withdrawal carries who and when while one
+  we made does not, a marketplace void is not mistaken for something the client
+  did, `?cancelled=1` still isolates the client's own, and not one appears as
+  active work. **Each fix was proved against the build it replaced** — the day
+  fix alone returns 5 of 7, the withdrawal fix 7 of 9 — so the tests catch real
+  behaviour rather than agreeing with themselves. Plus 14 browser checks on
+  desktop and a Pixel 5.
+
+  LESSON, since it cost three round trips: on a screen fed by many writers,
+  "why do these two numbers differ" is rarely ONE cause. Each fix here removed
+  a real defect and the visible number did not move, because another was hiding
+  behind it. Seed every shape that can produce the symptom before believing a
+  count.
 - **SGT calendar days** (`sgDay()`, `en-CA` + `Asia/Singapore`) — never
   `toISOString()`, which puts anything before 08:00 SGT on the previous day.
   Same standing rule as everywhere else.
