@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Reveal } from "@/components/reveal";
 
 const contactSchema = z.object({
   name: z.string().min(2, "Enter your full name"),
@@ -41,7 +42,7 @@ export function ContactSection() {
   return (
     <section className="mx-auto max-w-7xl px-6 py-24">
       <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1fr_1.1fr]">
-        <div>
+        <Reveal>
           <span className="text-xs font-bold uppercase tracking-wider text-brand">Contact</span>
           <h2 className="mt-3 font-display text-4xl font-bold text-ink">Talk to the desk.</h2>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-muted">
@@ -81,9 +82,9 @@ export function ContactSection() {
               referrerPolicy="no-referrer-when-downgrade"
             />
           </div>
-        </div>
+        </Reveal>
 
-        <div className="rounded-lg border border-border bg-paper-alt p-8">
+        <Reveal delay={0.1} className="rounded-lg border border-border bg-paper-alt p-8">
           {submitted ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <CheckCircle2 className="h-10 w-10 text-confirm" />
@@ -131,7 +132,7 @@ export function ContactSection() {
               </Button>
             </form>
           )}
-        </div>
+        </Reveal>
       </div>
     </section>
   );

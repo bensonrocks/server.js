@@ -1,9 +1,10 @@
 import { SELF_RUN_MARKETS, PARTNER_MARKETS, formatMarketList } from "@/lib/site-config";
+import { Reveal } from "@/components/reveal";
 
 export function Credibility() {
   return (
     <section className="border-y border-border bg-paper-alt">
-      <div className="mx-auto max-w-7xl px-6 py-14">
+      <Reveal className="mx-auto max-w-7xl px-6 py-14">
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
           Fulfillment network
         </p>
@@ -20,7 +21,7 @@ export function Credibility() {
           <li>Same-day dispatch cut-offs</li>
           <li>Real-time visibility through IdealOne</li>
         </ul>
-      </div>
+      </Reveal>
     </section>
   );
 }

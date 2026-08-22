@@ -353,11 +353,11 @@ export function QuoteForm() {
           </Button>
 
           {step < STEPS.length - 1 ? (
-            <Button type="button" onClick={goNext}>
+            <Button key="next-btn" type="button" onClick={goNext}>
               Next <ChevronRight className="h-4 w-4" />
             </Button>
           ) : (
-            <Button type="submit" disabled={isSubmitting}>
+            <Button key="submit-btn" type="submit" disabled={isSubmitting}>
               {isSubmitting ? "Submitting…" : "Submit request"}
             </Button>
           )}

@@ -5,6 +5,8 @@ import { Search, Plug, MousePointerClick } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { Reveal } from "@/components/reveal";
+import { staggerDelay } from "@/lib/motion";
 
 interface Row {
   id: string;
@@ -106,7 +108,7 @@ function DataPanel({ rows }: { rows: Row[] }) {
 export function PlatformMockup() {
   return (
     <section className="mx-auto max-w-7xl px-6 py-24">
-      <div className="max-w-2xl">
+      <Reveal className="max-w-2xl">
         <span className="text-xs font-bold uppercase tracking-wider text-brand">
           Platform — IdealOne
         </span>
@@ -118,28 +120,32 @@ export function PlatformMockup() {
           from a single view. This is a simplified, illustrative preview — try the tabs and the
           filter field below.
         </p>
-      </div>
+      </Reveal>
 
       <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2">
-        <div className="rounded-lg border border-border bg-paper p-6">
-          <Plug className="h-6 w-6 text-brand" />
-          <h3 className="mt-4 font-display text-lg font-bold text-ink">With integration</h3>
-          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-            Connect your storefront, marketplace, or WMS to IdealOne via API or file feed. Orders,
-            inventory, and status updates sync automatically — no re-keying.
-          </p>
-        </div>
-        <div className="rounded-lg border border-border bg-paper p-6">
-          <MousePointerClick className="h-6 w-6 text-brand" />
-          <h3 className="mt-4 font-display text-lg font-bold text-ink">Without integration</h3>
-          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-            No systems to connect yet? Log in and run orders, inventory, and shipments directly
-            from IdealOne, or upload a spreadsheet — no engineering time required to get started.
-          </p>
-        </div>
+        <Reveal delay={staggerDelay(0)}>
+          <div className="h-full rounded-lg border border-border bg-paper p-6">
+            <Plug className="h-6 w-6 text-brand" />
+            <h3 className="mt-4 font-display text-lg font-bold text-ink">With integration</h3>
+            <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+              Connect your storefront, marketplace, or WMS to IdealOne via API or file feed. Orders,
+              inventory, and status updates sync automatically — no re-keying.
+            </p>
+          </div>
+        </Reveal>
+        <Reveal delay={staggerDelay(1)}>
+          <div className="h-full rounded-lg border border-border bg-paper p-6">
+            <MousePointerClick className="h-6 w-6 text-brand" />
+            <h3 className="mt-4 font-display text-lg font-bold text-ink">Without integration</h3>
+            <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+              No systems to connect yet? Log in and run orders, inventory, and shipments directly
+              from IdealOne, or upload a spreadsheet — no engineering time required to get started.
+            </p>
+          </div>
+        </Reveal>
       </div>
 
-      <div className="mt-6 rounded-lg border border-border bg-paper-alt p-6 sm:p-8">
+      <Reveal delay={0.15} className="mt-6 rounded-lg border border-border bg-paper-alt p-6 sm:p-8">
         <Tabs defaultValue="orders">
           <TabsList>
             <TabsTrigger value="orders">Orders</TabsTrigger>
@@ -156,7 +162,7 @@ export function PlatformMockup() {
             <DataPanel rows={SHIPMENTS} />
           </TabsContent>
         </Tabs>
-      </div>
+      </Reveal>
     </section>
   );
 }
