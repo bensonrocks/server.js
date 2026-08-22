@@ -2,32 +2,48 @@
 @plugin "tailwindcss-animate";
 
 @theme {
-  /* ---------- Brand palette (same tokens as the NimbusTrade marketing site) ---------- */
-  --color-ink: #14171b;
-  --color-ink-muted: #52585f;
+  /* ---------- Manifest System: NimbusTrade's design language ----------
+     An editorial hand for freight paperwork — serif authority for display,
+     its Source Sans sibling for UI, tabular Source Code Pro reserved for
+     reference numbers only. Single navy accent; status is told in words,
+     not badges. Flat, hairline-bordered, asymmetric layout over rounded
+     cards and drop shadows. */
+  --color-ink: #191c20;
+  --color-ink-muted: #666e77;
+  --color-ink-faint: #9aa1a8;
   --color-paper: #ffffff;
-  --color-paper-alt: #f4f5f3;
-  --color-paper-deep: #eceeed;
-  --color-border: rgba(20, 23, 27, 0.14);
-  --color-border-strong: rgba(20, 23, 27, 0.22);
+  --color-paper-alt: #fafaf9;
+  --color-paper-deep: #f1f1ee;
+  --color-border: rgba(25, 28, 32, 0.14);
+  --color-border-strong: rgba(25, 28, 32, 0.32);
 
-  --color-brand: #0a558b;
-  --color-brand-strong: #0f6aa8;
-  --color-brand-bright: #4a9bd4;
-  --color-brand-tint: #eaf2f8;
+  --color-brand: #123a63;
+  --color-brand-strong: #0b2745;
+  --color-brand-bright: #3f6f9e;
+  --color-brand-tint: #eef2f6;
 
   --color-signal: #9c3223;
   --color-signal-tint: #f7e9e6;
   --color-confirm: #1f7a4d;
   --color-confirm-tint: #e7f3ec;
 
-  --font-display: var(--font-big-shoulders), "Arial Narrow", sans-serif;
-  --font-body: var(--font-ibm-plex-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-ibm-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+  --font-display: var(--font-source-serif), "Iowan Old Style", "Palatino Linotype", serif;
+  --font-body: var(--font-source-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-source-code), ui-monospace, "SFMono-Regular", monospace;
 
+  /* Type scale — a fixed rhythm, not ad hoc per component */
+  --text-display-2xl: 3.75rem;
+  --text-display-xl: 2.75rem;
+  --text-display-lg: 2.125rem;
+  --text-display-md: 1.5rem;
+  --text-body-lg: 1.0625rem;
+  --text-caption: 0.8125rem;
+  --text-micro: 0.75rem;
+
+  /* Radius stays close to flat throughout — no rounded-2xl cards */
   --radius-sm: 0.125rem;
   --radius-md: 0.1875rem;
-  --radius-lg: 0.375rem;
+  --radius-lg: 0.25rem;
 
   --animate-fade-up: fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 
@@ -57,7 +73,13 @@
   }
   h1, h2, h3, h4 {
     font-family: var(--font-display);
-    letter-spacing: 0.005em;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+  }
+  ::selection {
+    background: var(--color-brand);
+    color: var(--color-paper);
   }
 }
 

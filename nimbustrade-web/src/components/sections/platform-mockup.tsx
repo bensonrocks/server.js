@@ -34,13 +34,13 @@ const SHIPMENTS: Row[] = [
 ];
 
 const STATUS_STYLE: Record<Row["status"], string> = {
-  "On track": "bg-confirm-tint text-confirm",
-  "Delivered": "bg-confirm-tint text-confirm",
-  "In stock": "bg-confirm-tint text-confirm",
-  "Booked": "bg-confirm-tint text-confirm",
-  "Attention": "bg-signal-tint text-signal",
-  "Low stock": "bg-signal-tint text-signal",
-  "In transit": "bg-brand-tint text-brand",
+  "On track": "text-confirm",
+  "Delivered": "text-confirm",
+  "In stock": "text-confirm",
+  "Booked": "text-confirm",
+  "Attention": "text-signal",
+  "Low stock": "text-signal",
+  "In transit": "text-brand",
 };
 
 function DataPanel({ rows }: { rows: Row[] }) {
@@ -80,7 +80,7 @@ function DataPanel({ rows }: { rows: Row[] }) {
                 <td className="px-4 py-3">
                   <span
                     className={cn(
-                      "inline-block rounded-sm px-2 py-1 text-xs font-semibold whitespace-nowrap",
+                      "whitespace-nowrap text-sm font-semibold",
                       STATUS_STYLE[r.status]
                     )}
                   >

@@ -47,9 +47,9 @@ export function SiteHeader() {
           )}
           aria-label="NimbusTrade Solutions home"
         >
-          <WaveMark className="h-9 w-auto shrink-0 text-brand sm:h-11 md:h-14" />
+          <WaveMark className="h-7 w-auto shrink-0 text-brand sm:h-11 md:h-14" />
           <span className="flex min-w-0 flex-col leading-none">
-            <span className="whitespace-nowrap font-display text-base font-bold tracking-[0.03em] text-brand sm:text-xl sm:tracking-[0.08em] md:text-2xl">
+            <span className="whitespace-nowrap font-display text-sm font-semibold tracking-[0.005em] text-brand sm:text-xl sm:font-bold sm:tracking-[0.08em] md:text-2xl">
               NIMBUSTRADE
               <span className="text-ink"> SOLUTIONS</span>
             </span>

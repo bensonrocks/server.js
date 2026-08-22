@@ -146,12 +146,12 @@ export function QuoteForm() {
           <li key={s.id} className="flex items-center gap-2">
             <span
               className={cn(
-                "flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold",
+                "flex h-7 w-7 items-center justify-center border text-xs font-bold",
                 i < step
-                  ? "bg-confirm text-white"
+                  ? "border-confirm bg-confirm text-white"
                   : i === step
-                  ? "bg-brand text-white"
-                  : "bg-paper-deep text-ink-muted"
+                  ? "border-brand bg-brand text-white"
+                  : "border-border-strong bg-paper-deep text-ink-muted"
               )}
             >
               {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}

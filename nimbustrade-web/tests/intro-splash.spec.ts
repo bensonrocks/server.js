@@ -6,11 +6,11 @@ test.describe("Intro splash", () => {
     await expect(page.getByRole("button", { name: "Skip" })).toBeVisible();
 
     await page.getByRole("button", { name: "Skip" }).click();
-    await expect(page.getByRole("heading", { name: /One control tower/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /The operating layer/ })).toBeVisible();
 
     await page.reload();
     await expect(page.getByRole("button", { name: "Skip" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: /One control tower/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /The operating layer/ })).toBeVisible();
   });
 
   test("auto-dismisses on its own after a few seconds", async ({ page }) => {
@@ -24,7 +24,7 @@ test.describe("Intro splash", () => {
     const page = await context.newPage();
     await page.goto("/");
     await expect(page.getByRole("button", { name: "Skip" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: /One control tower/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /The operating layer/ })).toBeVisible();
     await context.close();
   });
 });
