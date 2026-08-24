@@ -9094,13 +9094,41 @@
         }).catch(() => {}); // persists server-side + audit trail — never block the UI on it
         resolve();
       };
+      // PRINTING IS THE CONFIRMATION. The packer has produced the label and is
+      // sticking it on; asking them to then tick a second button would be a
+      // step that means nothing. Writing by hand stays as the fallback, so a
+      // dead printer never stops the pick.
+      const printBtn = document.getElementById('cartonLabelPrintBtn');
+      const onPrint = async () => {
+        if (printBtn) printBtn.disabled = true;
+        const okPrinted = await printCartonLabel(cartonNum);
+        if (printBtn) printBtn.disabled = false;
+        // Only counts as labelled if the label actually got as far as the
+        // print dialog — a blocked pop-up must not tick the box for them.
+        if (okPrinted) confirm();
+      };
+      // ASSIGNED, not addEventListener — this prompt opens once per carton and
+      // a listener added each time would stack up and print twice on the third
+      // box. Same reason the confirm button below uses .onclick.
+      if (printBtn) printBtn.onclick = onPrint;
       // Any key dismisses it — a packer who's written the label and starts
       // scanning/typing the next SKU shouldn't need to also reach for the
       // mouse. Still a genuine, intentional action (not a timer), so
       // labelConfirmed keeps meaning what it says.
-      const onKeydown = () => confirm();
+      // ANY KEY DISMISSES — a packer who has labelled the box and starts
+      // scanning the next SKU should not have to reach for the mouse.
+      // EXCEPT when focus is on one of this prompt's own buttons: the handler
+      // is capture-phase, so Enter on the focused Print button would dismiss
+      // before the click ever fired, and the label would never be printed.
+      const onKeydown = e => {
+        if (e.target && e.target.closest && e.target.closest('#cartonLabelOverlay')) return;
+        confirm();
+      };
       document.addEventListener('keydown', onKeydown, true);
       document.getElementById('cartonLabelConfirmBtn').onclick = confirm;
+      // Focus Print, so a packer working the keyboard gets the label rather
+      // than dismissing the prompt with the first key they touch.
+      setTimeout(() => printBtn?.focus(), 50);
     });
   }
 
@@ -9290,6 +9318,111 @@
   // slip (order no. + carton no. + a scannable barcode of the order, so a box
   // separated from its slip is still traceable, plus SKU/qty contents). Does
   // not touch increment/new-carton/complete or any existing state at all.
+  // ── PRINT THE CARTON LABEL INSTEAD OF WRITING IT ──────────────────────────
+  // Per the user. The mandatory prompt used to say "write 24944949-01 on the
+  // box" — legible only if the packer's handwriting is, and carrying nothing
+  // else. This prints a stick-on label instead: the carton id big and
+  // barcoded, plus the order information needed to trace the box back if the
+  // paperwork and the carton are ever separated.
+  //
+  // Sized 100×150mm (the common thermal label) with a fallback for A4, so it
+  // works on whatever is plugged in.
+  async function printCartonLabel(cartonNum, { silent } = {}) {
+    if (!activeOrder) return false;
+    try {
+      const q = cartonNum ? `?cartonNum=${encodeURIComponent(cartonNum)}` : '';
+      const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(activeOrder.order_number)}${q}`, { headers: hdrs() });
+      const data = await resp.json();
+      if (!resp.ok) { if (!silent) alert(data.error || 'Could not build the label.'); return false; }
+      const w = window.open('', '_blank', 'width=420,height=640');
+      if (!w) { if (!silent) alert('Please allow pop-ups to print the carton label.'); return false; }
+      // Only the identifiers this order actually has — a label of empty
+      // captions is harder to read than a short one.
+      const idRows = [
+        ['Client',   data.clientName],
+        ['Customer', data.customerName],
+        ['GI',       data.issueNo],
+        ['Waybill',  data.waybill],
+        ['PO',       data.poNo],
+        ['Job',      data.jobCode],
+      ].filter(([, v]) => v)
+       .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join('');
+      // THE LABEL GOES ON THE BOX BEFORE IT IS PACKED, so at carton 1 there is
+      // nothing in it yet. An empty "contents" table is noise on a label; the
+      // order total is the useful thing at that moment, and the 🏷 button
+      // reprints it with real contents once the box is full.
+      const packed = (data.items || []).filter(i => i.qty > 0);
+      const itemsBlock = packed.length
+        ? `<table class="it">
+             <thead><tr><th>SKU</th><th style="text-align:right">Qty</th></tr></thead>
+             <tbody>${packed.map(i => `<tr><td>${esc(i.sku)}</td><td class="q">${i.qty}</td></tr>`).join('')}</tbody>
+           </table>`
+        : `<div class="pend">${data.orderedTotal || 0} pc${data.orderedTotal === 1 ? '' : 's'} on this order &middot; reprint once packed for contents</div>`;
+      const label = data.labelText || `${data.orderNumber}-${String(data.cartonNum).padStart(2, '0')}`;
+      w.document.write(`
+        <html><head><title>${esc(label)}</title>
+        <script src="/vendor/jsbarcode.min.js"><\/script>
+        <style>
+          @page { size: 100mm 150mm; margin: 4mm; }
+          @media print { .hint { display: none; } }
+          * { box-sizing: border-box; }
+          body { font-family: -apple-system, Arial, sans-serif; margin: 0; padding: 4mm;
+                 width: 100mm; color: #000; }
+          .lbl { font-size: 30px; font-weight: 900; letter-spacing: .5px; line-height: 1.05;
+                 word-break: break-all; }
+          .ctn { font-size: 15px; font-weight: 800; margin: 1mm 0 2mm; }
+          svg { width: 100%; height: 62px; }
+          table.ids { width: 100%; border-collapse: collapse; margin-top: 2mm; font-size: 11px; }
+          table.ids th { text-align: left; width: 22mm; color: #444; font-weight: 600;
+                         padding: .6mm 0; vertical-align: top; }
+          table.ids td { padding: .6mm 0; font-weight: 700; word-break: break-all; }
+          table.it { width: 100%; border-collapse: collapse; margin-top: 2.5mm; font-size: 11px; }
+          table.it th { border-bottom: 1px solid #000; text-align: left; font-size: 9px;
+                        letter-spacing: .5px; text-transform: uppercase; padding-bottom: .5mm; }
+          table.it td { border-bottom: 1px dotted #bbb; padding: .7mm 0; }
+          table.it td.q { text-align: right; font-weight: 800; width: 14mm; }
+          .foot { margin-top: 2.5mm; font-size: 9px; color: #444;
+                  display: flex; justify-content: space-between; }
+          .muted { color: #666; }
+          .pend { margin-top: 2.5mm; font-size: 11px; color: #333; border-top: 1px solid #000;
+                  padding-top: 1.2mm; }
+          .hint { margin-top: 3mm; font-size: 10px; color: #666; }
+        </style></head>
+        <body>
+          <div class="lbl">${esc(label)}</div>
+          <div class="ctn">&#128230; CARTON ${data.cartonNum} OF ${data.cartonCount}${
+            data.packedHere ? ` &middot; ${data.packedHere} pc${data.packedHere === 1 ? '' : 's'}` : ''}</div>
+          <svg id="bc"></svg>
+          <table class="ids">${idRows}</table>
+          ${itemsBlock}
+          <div class="foot"><span>${esc(data.orderNumber)}</span><span>${
+            new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { hour12: false })}</span></div>
+          <div class="hint">If this did not print, check the printer and use the &#128462; button on the carton bar.</div>
+          <script>
+            // The BARCODE IS THE CARTON ID, not the order number — scanning a
+            // box has to identify that box, and two cartons of one order are
+            // otherwise indistinguishable.
+            try { JsBarcode("#bc", ${JSON.stringify(label)}, { format: "CODE128", width: 2, height: 50, fontSize: 13, margin: 0 }); } catch (e) {}
+            window.onload = () => setTimeout(() => window.print(), 350);
+          <\/script>
+        </body></html>`);
+      w.document.close();
+      return true;
+    } catch (err) {
+      if (!silent) alert(err.message);
+      return false;
+    }
+  }
+
+  // Reprint the label for whichever carton is open — used once the box is
+  // packed, so the contents are on it.
+  async function reprintCartonLabel() {
+    const btn = document.getElementById('printCartonLabelBtn');
+    if (btn) btn.disabled = true;
+    try { await printCartonLabel(activeOrder?.cartonNum); }
+    finally { if (btn) btn.disabled = false; }
+  }
+
   async function printCartonSlip() {
     if (!activeOrder) return;
     const btn = document.getElementById('printCartonSlipBtn');
@@ -9343,6 +9476,7 @@
       btn.disabled = false;
     }
   }
+  document.getElementById('printCartonLabelBtn')?.addEventListener('click', reprintCartonLabel);
   document.getElementById('printCartonSlipBtn')?.addEventListener('click', printCartonSlip);
   document.getElementById('scanSerialsBtn')?.addEventListener('click', () => {
     if (!activeOrder) return;

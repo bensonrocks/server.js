@@ -10260,12 +10260,26 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
       }
       return { sku, description: line?.description || '', qty, contains };
     });
+  // The printed LABEL needs the identifiers that are actually on the paperwork
+  // — the packer is sticking this on a box that has to be findable later, and a
+  // carton number alone is not enough to trace it back.
+  const orderedTotal = uniqueSkuLines(ord).reduce((n, l) => n + (Number(l.qty) || 0), 0);
+  const packedHere   = Object.values(carton.scans || {}).reduce((n, q) => n + (Number(q) || 0), 0);
   res.json({
     orderNumber,
     cartonNum:    carton.num,
     cartonCount:  cartons.length,
     customerName: ord.customer_name || '',
     clientName:   batch.client_name || ord.client_name || '',
+    // Every identifier this order carries — the label prints whichever exist.
+    issueNo:      ord.issue_no || '',
+    waybill:      ord.waybill_number || '',
+    poNo:         ord.po_number || '',
+    pickTicket:   ord.pick_ticket || '',
+    jobCode:      batch.idealscan_code || '',
+    orderedTotal, packedHere,
+    labelText:    `${orderNumber}-${String(carton.num).padStart(2, '0')}`,
+    printedAt:    new Date().toISOString(),
     items,
   });
 });

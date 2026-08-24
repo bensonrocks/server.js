@@ -2900,6 +2900,39 @@ breaking the default.
   Packers print their own reusable card via the 🖨 button next to "+ New
   Carton" (`printNewCartonCard()`, same window.open+JsBarcode+window.print
   pattern as `printWaybillLabel()`).
+- PRINTED CARTON LABEL (`printCartonLabel`, 🏷 on the carton bar, and the
+  primary button on the mandatory label prompt). Per the user: *"we want to
+  print the cartons labels + order information instead of writting"*.
+  - **PRINTING IS THE CONFIRMATION.** The packer has produced the label and is
+    sticking it on; a second "I've done it" tick would mean nothing. **Written
+    by hand stays** as the fallback so a dead printer never stops a pick, and
+    the box is only marked labelled if the print actually reached the dialog —
+    a blocked pop-up must not tick it for them.
+  - **THE BARCODE IS THE CARTON ID (`24944949-01`), NOT the order number.**
+    Scanning a box has to identify THAT box; two cartons of one order are
+    otherwise indistinguishable. (The packing slip deliberately still barcodes
+    the ORDER — it answers a different question.)
+  - Carries every identifier the order actually has — client, customer, GI,
+    waybill, PO, job code — and prints only the ones that exist, because a
+    label of empty captions is harder to read than a short one.
+  - **AN EMPTY CARTON PRINTS NO CONTENTS TABLE.** The label goes on the box
+    BEFORE it is packed (carton 1's prompt fires as the order opens), so there
+    is nothing to list; it states the order total and says to reprint once
+    packed. 🏷 then reprints it with the real contents.
+  - 100×150mm page (the common thermal label) with an A4 fallback.
+  - `/api/scan/carton-slip/:orderNumber` gained `issueNo`, `waybill`, `poNo`,
+    `pickTicket`, `jobCode`, `orderedTotal`, `packedHere` and `labelText` — one
+    endpoint feeds both the slip and the label so they cannot drift.
+  - GOTCHA: the prompt's any-key dismissal is CAPTURE-phase on `document`, so
+    Enter on a focused Print button dismissed the prompt before the click ever
+    fired. It now ignores keys whose target is inside the overlay.
+  Verified 20 browser checks driving a real pick.
+
+  TEST GOTCHA, cost three runs: resetting the order needs the server STOPPED
+  first (a running one re-persists its in-memory db over the file) AND
+  `scan-journal.ndjson` deleted — the journal replays at startup and takes the
+  HIGHER count, so a seed that only rewrites db.json is silently overwritten by
+  the previous run's scans.
 - PER-CARTON PACKING SLIP (📋 button, `printCartonSlip()` / `GET
   /api/scan/carton-slip/:orderNumber`): a READ-ONLY add-on, separate from the
   Waybill label and from the full completion slip. Defaults to the currently
