@@ -2926,6 +2926,35 @@ breaking the default.
   - GOTCHA: the prompt's any-key dismissal is CAPTURE-phase on `document`, so
     Enter on a focused Print button dismissed the prompt before the click ever
     fired. It now ignores keys whose target is inside the overlay.
+  - **IT PRINTS ITSELF, INCLUDING CARTON 1** (per the user). The prompt fires
+    and the label goes to the printer without anyone pressing anything —
+    printing is how this label gets onto a box, so a button in front of it only
+    ever cost time. Printing IS the confirmation, so the prompt then closes;
+    if the print never happened the prompt STAYS UP saying so, with **Written
+    by hand** still there for a dead printer. Fires once per prompt, so a
+    reopen never produces a second copy.
+  - **PRINTED FROM A HIDDEN IFRAME, NOT `window.open`.** A pop-up outside a
+    click handler is blocked by every browser, so the auto-print silently did
+    nothing — found in the browser test, not by reading. The frame is reused
+    (ten cartons must not leave ten frames), positioned OFF-SCREEN rather than
+    `display:none` (an unrendered frame lays out as nothing and Chrome prints a
+    blank page), and `focus()`ed before `print()` or the TOP document goes to
+    the printer instead.
+  - **THE ORDER REFERENCE IS THE SECOND-BIGGEST THING ON IT**, carrying the
+    CUSTOMER — per the user, the block someone reads across a bench. The GI
+    leads when there is one (it is the reference on the client's paperwork)
+    with the order number beneath it; the carton id still leads overall,
+    because scanning a box has to identify THAT box.
+  - **QUANTITY IS STATED, not derived.** "3 pcs in this carton · 6 on the
+    order" — adding up the contents table is not a thing anyone does on a
+    loading bay. Stated ONCE: the empty-carton line used to repeat the order
+    total and now just says how to get the contents on later.
+  Verified 22 browser checks driving a real pick — the label printing itself on
+  open with nothing pressed, reaching the print dialog, the prompt closing
+  itself, the reference and customer sized above the identifier rows and below
+  the carton id, neither duplicated in the table below, and the same box
+  reprinted after packing showing 3 pcs and both SKU lines.
+
   Verified 20 browser checks driving a real pick.
 
   TEST GOTCHA, cost three runs: resetting the order needs the server STOPPED

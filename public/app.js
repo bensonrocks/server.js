@@ -9111,6 +9111,32 @@
       // a listener added each time would stack up and print twice on the third
       // box. Same reason the confirm button below uses .onclick.
       if (printBtn) printBtn.onclick = onPrint;
+      // ── IT PRINTS ITSELF ───────────────────────────────────────────────
+      // Per the user: auto-print when the prompt is triggered, INCLUDING
+      // carton 1. Printing is the normal way this label gets onto a box, so
+      // making the packer press a button first is a step that only ever costs
+      // time. The prompt STAYS OPEN behind it: the print may be blocked by a
+      // pop-up rule, the printer may be dead, and "Written by hand" has to
+      // still be there — the box must get labelled either way.
+      //
+      // Fires ONCE (`autoTried`), never on a reopen of the same prompt, so a
+      // packer who dismissed it and came back does not get a second copy.
+      let autoTried = false;
+      setTimeout(async () => {
+        if (autoTried) return;
+        autoTried = true;
+        const printed = await printCartonLabel(cartonNum, { silent: true });
+        // Printing IS the confirmation — same rule as pressing the button. If
+        // it never reached the dialog, say so and leave the prompt up.
+        if (printed) confirm();
+        else {
+          const note = document.getElementById('cartonLabelAutoNote');
+          if (note) {
+            note.textContent = 'Could not print automatically — allow pop-ups, or press Print, or write it by hand.';
+            note.classList.remove('hidden');
+          }
+        }
+      }, 120);
       // Any key dismisses it — a packer who's written the label and starts
       // scanning/typing the next SKU shouldn't need to also reach for the
       // mouse. Still a genuine, intentional action (not a timer), so
@@ -9334,19 +9360,48 @@
       const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(activeOrder.order_number)}${q}`, { headers: hdrs() });
       const data = await resp.json();
       if (!resp.ok) { if (!silent) alert(data.error || 'Could not build the label.'); return false; }
-      const w = window.open('', '_blank', 'width=420,height=640');
-      if (!w) { if (!silent) alert('Please allow pop-ups to print the carton label.'); return false; }
+      // ── PRINTED FROM A HIDDEN IFRAME, NOT A POP-UP ─────────────────────
+      // The label now prints ITSELF when the prompt fires, and a `window.open`
+      // that is not inside a click handler is blocked by every browser — so
+      // the auto-print silently did nothing. An iframe carries no such rule
+      // and needs no pop-up permission, which also means the button path stops
+      // depending on one. Reused rather than recreated so a packer working
+      // through ten cartons does not accumulate ten frames.
+      let frame = document.getElementById('cartonLabelFrame');
+      if (!frame) {
+        frame = document.createElement('iframe');
+        frame.id = 'cartonLabelFrame';
+        frame.setAttribute('aria-hidden', 'true');
+        // Off-screen rather than display:none — a frame that is not rendered
+        // does not lay out, and Chrome then prints a blank page.
+        frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:120mm;height:170mm;border:0;';
+        document.body.appendChild(frame);
+      }
+      const w = frame.contentWindow;
+      if (!w) { if (!silent) alert('Could not open the label for printing.'); return false; }
       // Only the identifiers this order actually has — a label of empty
       // captions is harder to read than a short one.
       const idRows = [
-        ['Client',   data.clientName],
-        ['Customer', data.customerName],
-        ['GI',       data.issueNo],
-        ['Waybill',  data.waybill],
-        ['PO',       data.poNo],
-        ['Job',      data.jobCode],
+        ['Client',  data.clientName],
+        ['Waybill', data.waybill],
+        ['PO',      data.poNo],
+        ['Job',     data.jobCode],
       ].filter(([, v]) => v)
        .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join('');
+      // ── THE ORDER REFERENCE, LARGE, WITH THE CUSTOMER ON IT ────────────
+      // Per the user. This is the block someone reads across a bench or off a
+      // pallet: which order this box belongs to and who it is for. The GI is
+      // the reference actually printed on the client's paperwork, so it leads
+      // when there is one and the order number stands in when there is not.
+      const orderRef = data.issueNo || data.orderNumber;
+      const refBlock = `
+        <div class="ref">
+          <span class="cap">Order</span>
+          <div class="ref-no">${esc(String(orderRef))}</div>
+          ${data.issueNo && data.orderNumber && data.issueNo !== data.orderNumber
+            ? `<div class="ref-alt">${esc(String(data.orderNumber))}</div>` : ''}
+          ${data.customerName ? `<div class="ref-cust">${esc(String(data.customerName))}</div>` : ''}
+        </div>`;
       // THE LABEL GOES ON THE BOX BEFORE IT IS PACKED, so at carton 1 there is
       // nothing in it yet. An empty "contents" table is noise on a label; the
       // order total is the useful thing at that moment, and the 🏷 button
@@ -9357,7 +9412,16 @@
              <thead><tr><th>SKU</th><th style="text-align:right">Qty</th></tr></thead>
              <tbody>${packed.map(i => `<tr><td>${esc(i.sku)}</td><td class="q">${i.qty}</td></tr>`).join('')}</tbody>
            </table>`
-        : `<div class="pend">${data.orderedTotal || 0} pc${data.orderedTotal === 1 ? '' : 's'} on this order &middot; reprint once packed for contents</div>`;
+        : `<div class="pend">Reprint with the &#127991; button once the box is packed to list its contents.</div>`;
+      // QUANTITY, said outright. It was only ever derivable by adding up the
+      // contents table, which is not a thing anyone does on a loading bay.
+      const inBox = Number(data.packedHere) || 0;
+      const ordered = Number(data.orderedTotal) || 0;
+      const qtyBlock = `
+        <div class="qty">
+          <span><b>${inBox}</b> pc${inBox === 1 ? '' : 's'} in this carton</span>
+          ${ordered ? `<span class="muted">${ordered} on the order</span>` : ''}
+        </div>`;
       const label = data.labelText || `${data.orderNumber}-${String(data.cartonNum).padStart(2, '0')}`;
       w.document.write(`
         <html><head><title>${esc(label)}</title>
@@ -9372,6 +9436,22 @@
                  word-break: break-all; }
           .ctn { font-size: 15px; font-weight: 800; margin: 1mm 0 2mm; }
           svg { width: 100%; height: 62px; }
+          /* THE ORDER REFERENCE. Read across a bench, so it is the second
+             biggest thing on the label after the carton id — and it carries
+             the customer, which is what a person matches the box against. */
+          .ref { margin-top: 2mm; border-top: 2px solid #000; border-bottom: 1px solid #000;
+                 padding: 1.5mm 0; }
+          .ref .cap { display: block; font-size: 8px; font-weight: 700; letter-spacing: 1.2px;
+                      text-transform: uppercase; color: #444; }
+          .ref-no { font-size: 26px; font-weight: 900; line-height: 1.08; word-break: break-all;
+                    margin-top: .3mm; }
+          .ref-alt { font-size: 11px; font-weight: 700; color: #444; word-break: break-all; }
+          .ref-cust { font-size: 17px; font-weight: 800; line-height: 1.15; margin-top: .8mm;
+                      word-break: break-word; }
+          .qty { display: flex; justify-content: space-between; align-items: baseline;
+                 margin-top: 1.6mm; font-size: 13px; }
+          .qty b { font-size: 20px; }
+          .qty .muted { font-size: 10px; }
           table.ids { width: 100%; border-collapse: collapse; margin-top: 2mm; font-size: 11px; }
           table.ids th { text-align: left; width: 22mm; color: #444; font-weight: 600;
                          padding: .6mm 0; vertical-align: top; }
@@ -9393,6 +9473,8 @@
           <div class="ctn">&#128230; CARTON ${data.cartonNum} OF ${data.cartonCount}${
             data.packedHere ? ` &middot; ${data.packedHere} pc${data.packedHere === 1 ? '' : 's'}` : ''}</div>
           <svg id="bc"></svg>
+          ${refBlock}
+          ${qtyBlock}
           <table class="ids">${idRows}</table>
           ${itemsBlock}
           <div class="foot"><span>${esc(data.orderNumber)}</span><span>${
@@ -9403,7 +9485,9 @@
             // box has to identify that box, and two cartons of one order are
             // otherwise indistinguishable.
             try { JsBarcode("#bc", ${JSON.stringify(label)}, { format: "CODE128", width: 2, height: 50, fontSize: 13, margin: 0 }); } catch (e) {}
-            window.onload = () => setTimeout(() => window.print(), 350);
+            // focus() first: printing an iframe prints the TOP document unless
+            // the frame has focus, which would send the whole app to the printer.
+            window.onload = () => setTimeout(() => { try { window.focus(); } catch (e) {} window.print(); }, 350);
           <\/script>
         </body></html>`);
       w.document.close();
