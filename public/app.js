@@ -9000,7 +9000,7 @@
     ].filter(Boolean).join('');
     document.getElementById('scanOrderMeta').innerHTML = `
       <div class="scan-meta-primary">
-        <span class="meta-pill">${esc(order.customer_name || '—')}</span>
+        <span class="meta-pill meta-pill-customer">${esc(order.customer_name || '—')}</span>
         ${order.client_name ? `<span class="meta-pill">${esc(order.client_name)}</span>` : ''}
         <span class="meta-pill meta-pill-carrier" title="${esc(order.carrier || '')}">${esc(carrierLabel(order.carrier) || '—')}</span>
         ${(() => { const v = orderStockVerdict(order); return v ? `<span class="meta-pill meta-pill-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>` : ''; })()}

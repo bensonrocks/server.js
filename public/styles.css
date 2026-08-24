@@ -2648,11 +2648,21 @@ body.ls-open { overflow: hidden; }
 
 /* header details enlarged — bigger than before, smaller than product info */
 .scan-meta-primary .meta-pill { font-size: 1.3rem; padding: .4rem 1rem; }
+/* THE CUSTOMER NAME IS THE ONE A PACKER CHECKS THE BOX AGAINST, so it leads the
+   header rather than sitting at reference size beside the carrier and the job
+   code. Scoped to .scan-meta-primary deliberately: the rules above are two
+   classes deep, so a bare `.meta-pill-customer` loses on specificity and does
+   nothing at all. Sized per breakpoint for the same reason. */
+.scan-meta-primary .meta-pill-customer {
+  font-size: 1.85rem; font-weight: 800; color: #0f172a; letter-spacing: -.01em;
+  padding: .3rem 1rem; max-width: 46ch; overflow: hidden; text-overflow: ellipsis;
+}
 .meta-details-btn { font-size: 1.15rem; padding: .38rem 1.1rem; }
 .scan-meta-details { font-size: 1.2rem; }
 @media (min-width: 1024px) {
   .scan-order-no { font-size: 1.9rem; }
   .scan-meta-primary .meta-pill { font-size: 1.5rem; padding: .45rem 1.15rem; }
+  .scan-meta-primary .meta-pill-customer { font-size: 2.15rem; padding: .32rem 1.15rem; }
   .meta-details-btn { font-size: 1.3rem; }
   .scan-meta-details { font-size: 1.35rem; }
 }
@@ -2685,6 +2695,9 @@ body.ls-open { overflow: hidden; }
   .nb-badge                              { font-size: .6rem; }
   .nb-inline-bc-wrap svg                 { width: 76px; height: 76px; }
   .scan-meta-primary .meta-pill          { font-size: .95rem; padding: .3rem .7rem; }
+  /* Still the biggest thing in the header, but it must not push the stock and
+     GI pills off the row on a phone. */
+  .scan-meta-primary .meta-pill-customer { font-size: 1.35rem; padding: .22rem .7rem; max-width: 62vw; }
   .meta-details-btn                      { font-size: .9rem; }
   .scan-meta-details                     { font-size: .95rem; }
   .scan-pager                            { gap: .6rem; padding: .4rem .5rem; }
@@ -2700,6 +2713,7 @@ body.ls-open { overflow: hidden; }
   .scan-order-no     { font-size: 1.1rem; }
   .scan-order-meta   { padding: .25rem .8rem; }
   .scan-meta-primary .meta-pill { font-size: .8rem; padding: .18rem .55rem; }
+  .scan-meta-primary .meta-pill-customer { font-size: 1.1rem; padding: .14rem .55rem; }
   .item-scan-dock    { padding: .35rem .6rem .45rem; }
   .item-scan-wrap    { margin-bottom: .3rem; }
   .big-scan-input    { padding: .5rem .5rem; font-size: 1rem; }
