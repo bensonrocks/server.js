@@ -3152,6 +3152,21 @@ breaking the default.
   - GOTCHA: the prompt's any-key dismissal is CAPTURE-phase on `document`, so
     Enter on a focused Print button dismissed the prompt before the click ever
     fired. It now ignores keys whose target is inside the overlay.
+  - **EVERY BOX PRINTS AT THE MOMENT IT IS OPENED — including each NEW carton
+    from "+ New Carton".** Reported live (Yvonne, betime): "only the 1st carton
+    label can be printed, subsequent label unable to print". The prompt logic
+    only ever fired for the carton being CLOSED — and carton 1 is already
+    labelled at order-open by then, so on a multi-carton order NOTHING prompted
+    carton 2 at all; its label existed only behind the 🏷 button. `requestNewCarton`
+    now prompts (and auto-prints) the NEWLY ACTIVE carton too, which also means
+    the final carton is labelled before completion, keeping the completion-time
+    prompt the no-op it already was for single-box orders.
+  - **A FRESH PRINT IFRAME PER PRINT, never a rewritten one.** The print fires
+    from the written document's `window.onload`, and whether `load` re-fires on
+    a document.write into an already-loaded frame is exactly the kind of
+    behaviour that differs between headless and desktop Chrome — a silent
+    no-print on every label after the first. The old frame is removed first, so
+    the page still holds ONE frame.
   - **IT PRINTS ITSELF, INCLUDING CARTON 1** (per the user). The prompt fires
     and the label goes to the printer without anyone pressing anything —
     printing is how this label gets onto a box, so a button in front of it only
@@ -3221,7 +3236,11 @@ breaking the default.
   labels each with its OWN barcode, all blank, none claiming a total, one per
   page — and the order still holds exactly one carton afterwards).
 
-  Verified 20 browser checks driving a real pick.
+  Verified 20 browser checks driving a real pick, plus 9 more on the
+  multi-carton print path: carton 1 prints at open, opening carton 2 prints
+  carton 2's OWN label and closes its prompt, a third box still prints (no
+  decay after the first), one print frame on the page, and 🏷 reprint still
+  fires afterwards. The pre-fix build fails 4 of the 9.
 
   TEST GOTCHA, cost three runs: resetting the order needs the server STOPPED
   first (a running one re-persists its in-memory db over the file) AND

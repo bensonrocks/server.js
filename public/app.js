@@ -9320,6 +9320,19 @@
       if (!cartonLabelConfirmed(activeOrder, closedNum)) {
         await showCartonLabelPrompt(`${activeOrder.order_number}-${String(closedNum).padStart(2, '0')}`, closedNum);
       }
+      // ── THE NEW BOX GETS ITS LABEL THE MOMENT IT IS OPENED ─────────────
+      // Same rule as carton 1 at order-start: the label goes on the box before
+      // it is packed. The old flow only ever prompted the carton being CLOSED
+      // — and carton 1 is already labelled by then, so on a multi-carton order
+      // NOTHING prompted carton 2 at all; its label existed only behind the 🏷
+      // button, which the floor read as "subsequent labels unable to print"
+      // (reported live). With this, the final carton is also labelled by the
+      // time the order completes, so the completion-time prompt stays the
+      // no-op it already was for single-carton orders.
+      if (!cartonLabelConfirmed(activeOrder, data.activeCartonNum)) {
+        await showCartonLabelPrompt(
+          `${activeOrder.order_number}-${String(data.activeCartonNum).padStart(2, '0')}`, data.activeCartonNum);
+      }
     } catch (err) {
       showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
     } finally {
@@ -9520,18 +9533,23 @@
     // that is not inside a click handler is blocked by every browser — so
     // the auto-print silently did nothing. An iframe carries no such rule
     // and needs no pop-up permission, which also means the button path stops
-    // depending on one. Reused rather than recreated so a packer working
-    // through ten cartons does not accumulate ten frames.
-    let frame = document.getElementById('cartonLabelFrame');
-    if (!frame) {
-      frame = document.createElement('iframe');
-      frame.id = 'cartonLabelFrame';
-      frame.setAttribute('aria-hidden', 'true');
-      // Off-screen rather than display:none — a frame that is not rendered
-      // does not lay out, and Chrome then prints a blank page.
-      frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:120mm;height:170mm;border:0;';
-      document.body.appendChild(frame);
-    }
+    // depending on one.
+    //
+    // A FRESH FRAME PER PRINT, never a rewritten one. The print fires from
+    // `window.onload` of the written document, and whether `load` re-fires on
+    // a document.write into an ALREADY-LOADED frame is exactly the kind of
+    // browser behaviour that differs between headless and a real desktop
+    // Chrome — a silent no-print on every label after the first is the floor's
+    // "subsequent labels unable to print". The old frame is removed first, so
+    // a packer working through ten cartons still holds one frame, not ten.
+    document.getElementById('cartonLabelFrame')?.remove();
+    const frame = document.createElement('iframe');
+    frame.id = 'cartonLabelFrame';
+    frame.setAttribute('aria-hidden', 'true');
+    // Off-screen rather than display:none — a frame that is not rendered
+    // does not lay out, and Chrome then prints a blank page.
+    frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:120mm;height:170mm;border:0;';
+    document.body.appendChild(frame);
     const w = frame.contentWindow;
     if (!w) { if (!silent) alert('Could not open the label for printing.'); return false; }
     w.document.write(`
