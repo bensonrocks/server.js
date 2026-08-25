@@ -1989,9 +1989,21 @@ else, and a piece count cannot be re-placed.
 - The catalogue's wording wins for the description (`description ||
   source_description`), so a line is never left as a bare code.
 
-Verified 22 API checks against a client with cancelled orders and 20 against
-one with live orders — the fixture splits the two cases, and a check with no
-rows behind it is SKIPPED out loud rather than passing on an empty sheet.
+Verified 24 API checks against a client carrying BOTH shipped and cancelled
+orders, plus 22 against a cancelled-only client. A check with no rows behind it
+is SKIPPED out loud rather than passing on an empty sheet — which is how the
+first run was caught proving nothing about one-row-per-order on a fixture that
+had no live orders in it.
+
+**THE DOWNLOAD DIALOG NAMED THE WRONG REPORT** — found by screenshotting the
+real portal rather than by reading the code. `openDownload(kind)` set its title
+with an if/else chain whose last arm was "Download inbound report", and the
+Orders tab asks for `'report'` (the combined workbook), which matched no arm —
+so a client pressing ⬇ Report on Orders was told they were downloading the
+INBOUND report. It is a `DL_TITLE` lookup now, which cannot fall through, and
+an unknown kind says "Download report" rather than something wrong. The stale
+`fulfillability` title went with it: that download was removed at the user's
+request and its title was still here.
 
 TEST GOTCHA: `POST .../portal-users` with a name and no id creates a SECOND
 account, so a non-idempotent run left `mia-2`/`mia-3` behind — then logging in

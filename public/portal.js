@@ -1399,12 +1399,25 @@
   // Dated report picker. Stock is a live position so it downloads immediately;
   // orders and inbound are period reports and get the date window.
   let dlKind = null;
+  // NAMED PER KIND, and never by an else-branch. The Orders tab asks for
+  // 'report' (the combined workbook), which was in no arm of the old chain, so
+  // it fell through to the last one and told the client they were downloading
+  // the INBOUND report — a different report from the one about to arrive. A
+  // lookup cannot fall through, and an unknown kind now says nothing specific
+  // rather than something wrong. ('fulfillability' is gone — that download was
+  // removed, and its title was still here.)
+  const DL_TITLE = {
+    report:       'Download orders & movements',
+    orders:       'Download orders report',
+    cancelled:    'Download cancelled orders',
+    transactions: 'Download transaction statement',
+    stock:        'Download stock position',
+    movements:    'Download stock movements',
+    inbound:      'Download inbound report',
+  };
   function openDownload(kind) {
     dlKind = kind;
-    $('dlTitle').textContent = kind === 'orders' ? 'Download orders report'
-      : kind === 'fulfillability' ? 'Download: what can ship from stock'
-      : kind === 'transactions' ? 'Download transaction statement'
-      : 'Download inbound report';
+    $('dlTitle').textContent = DL_TITLE[kind] || 'Download report';
     $('dlHint').textContent = `Pick any period up to ${exportMaxDays} days. The screen shows the last ${screenDays} days — reports can reach further back.`;
     const to = sgToday();
     const from = new Date(Date.now() - 89 * 86400000).toLocaleDateString('en-CA', SGT);
