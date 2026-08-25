@@ -432,6 +432,66 @@ close parcels), plus 18 relay checks (the client sees Picked Up / Not collected
 in our words, self-drop flagged as ours, an unfinished order carries nothing,
 closing and undoing both propagate, and the XLSX carries the same value).
 
+## Reclassifying COMPLETED orders — the one password-gated exception (server.js `/api/orders/bulk-reclassify`)
+
+Per the user: *"orders could be done. but I need to be able to reclassify them
+to pending (put back inventory), or cancel order. user can select a few and
+choose to reclassify. password of the user is needed."* This DELIBERATELY bends
+the standing completed-work-is-never-regressed rule — do not "fix" it away, and
+do not widen it: everywhere else (bulk-cancel, batch delete, mass putaway,
+refile's pending path…) the rule stands, and this route is the one door
+through it, gated on the person's own password.
+
+- **`POST /api/orders/bulk-reclassify` `{orders[], to:'pending'|'cancelled',
+  reason, password}`** — `verifyAdminReconfirm(role:'admin')`: the caller's OWN
+  login password or the Administrator key, **403 never 401** (a 401 trips the
+  client's session-expired reload and eats the typed reason). Warehouse gets a
+  real 403 server-side and the button is hidden for them. Reason ≥ 6 chars.
+  Only `done` orders accepted; anything else is refused BY NAME (open orders
+  already have ✕ Cancel / deletion). Per-order outcomes, one `writeDb`.
+- **"PUT BACK INVENTORY", precisely.** Completion deducted on-hand and released
+  the reservation, so the give-back is gated on `state.inventory_deducted`
+  (an untracked batch or a repeat call can never inflate stock) and differs by
+  destination:
+  - **→ pending**: deduction returned as `adjustment` movements naming the
+    reclassification, then the reservation is RE-TAKEN (`reserveOrder`) — a
+    pending tracked order holds one. A shortfall on re-reserve is REPORTED,
+    never a block. Scan counts reset, cartons/endTime/startTime/pickup cleared
+    — the floor genuinely re-picks — while `scanLog` keeps the history plus a
+    `reclassified` entry.
+  - **→ cancelled**: deduction returned, NOTHING reserved. `unprocessed_at` is
+    stamped (the `cancelledAtOf` day-bucket field — omitting it refiles the
+    cancellation under the upload date, the 15-vs-17 class of bug), reason
+    recorded, and the hub is told through `tellHubWeCancelled` — the same
+    guarded path as the office bulk-cancel (off unless the store opted in, and
+    its read-back refuses a parcel that already shipped).
+- **BIN POSITIONS ARE NOT REWRITTEN** — same honesty as the completed-order
+  refile — and both the modal (before) and the outcome dialog (after) say so:
+  the account balance is corrected, the SKUs want a putaway/cycle count.
+- Audited `order_reclassified` per order (units returned, shortfalls,
+  wasPickedUp, who, viaMaster) + one `orders_bulk_reclassified`.
+- **NOT reversed here, stated honestly**: a transport job flipped to
+  `confirmed` by the completion, and anything the completion push already told
+  the hub (`zort_pushed_at` is left standing so completion does not re-push).
+- UI: **↺ Reclassify** on the Orders bulk bar — counts only the selected DONE
+  orders, disabled at zero, hidden for warehouse. `#reclassifyOverlay`: the two
+  destinations spelled out in consequences, the bin caveat, reason + password.
+  A wrong password shows INLINE and keeps the typed reason.
+
+Verified 30 API checks driven through the REAL pipeline (stock in → upload
+reserves → complete deducts → reclassify), so the stock assertions measure the
+genuine ledger: wrong password/short reason/unknown state each refused with
+nothing moved, pending gets its units back AND re-reserved with counts reset, a
+repeat finds the order no longer done and moves nothing, cancelled gets units
+back with nothing reserved and the day stamped, a mixed selection refuses by
+name and carries on, warehouse 403s, and the trail names who/why/how much.
+Plus 14 browser checks on the full flow.
+
+TEST GOTCHA: the office Orders screen's Active/Completed/Cancelled switcher is
+a `data-oview` SUB-TAB, not a `.filter-chip` (those are the date chips) — a
+selector that "clicks Completed" via the chips silently no-ops and the test
+then reads the Active list.
+
 ## Duplicate-line upload safeguard (server.js `findDuplicateLineWarnings`)
 
 Two lines in the SAME order sharing SKU + batch_number + expiry_date is

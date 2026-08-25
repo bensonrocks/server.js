@@ -15723,6 +15723,135 @@ app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
   res.json({ ok: true, cancelled, refused });
 });
 
+// ── RECLASSIFY COMPLETED ORDERS — back to Pending, or to Cancelled ──────────
+// Per the user: "orders could be done, but I need to be able to reclassify
+// them to pending (put back inventory), or cancel order" — mass selection,
+// with the USER'S OWN PASSWORD re-entered. This is the one deliberate,
+// password-gated exception to the standing completed-work-is-never-regressed
+// rule: everywhere else stays refused, and here nothing moves without a
+// person's name and reason against it.
+//
+// WHAT "PUT BACK INVENTORY" MEANS, precisely. Completion deducted on-hand and
+// released the reservation (`deductOrder`), so:
+//   → pending:   the deduction is GIVEN BACK (adjustment movements naming the
+//                reclassification), the reservation is RE-TAKEN — a pending
+//                tracked order holds one — and the scan state resets so the
+//                floor genuinely re-picks it. A shortfall on re-reserving is
+//                REPORTED, never a block: the order is real either way.
+//   → cancelled: the deduction is given back and nothing is reserved; the
+//                order is recorded unfulfilled with the reason, stamped
+//                `unprocessed_at` (the day-bucket field — see cancelledAtOf),
+//                and the hub is told through the same guarded path the office
+//                bulk-cancel uses (off unless the store opted in).
+//
+// BIN POSITIONS ARE NOT REWRITTEN — same honesty as the completed-order
+// refile: the pieces physically left specific bins, and inventing bin rows to
+// receive them back would claim to know which shelf the returned goods sit on.
+// The account balance is corrected; the bins want a putaway/cycle count, and
+// the response says so whenever stock actually moved.
+app.post('/api/orders/bulk-reclassify', express.json(), (req, res) => {
+  const wanted = [...new Set((req.body?.orders || []).map(String))].slice(0, 200);
+  const to = String(req.body?.to || '');
+  const reason = String(req.body?.reason || '').trim();
+  if (!wanted.length) return res.status(400).json({ error: 'No orders listed' });
+  if (to !== 'pending' && to !== 'cancelled') {
+    return res.status(400).json({ error: "Say what to reclassify to: 'pending' or 'cancelled'." });
+  }
+  if (reason.length < 6) {
+    return res.status(400).json({ error: 'Give a reason — undoing completed work has no document behind it, so the trail is the only record of why.' });
+  }
+  // THE PERSON'S OWN PASSWORD (or the Administrator key), and admin role —
+  // same gate as a hand stock adjustment, and 403 never 401 so the client's
+  // session-expired handler cannot force a reload over a mistyped password.
+  const v = verifyAdminReconfirm(req, { role: 'admin' });
+  if (v.error) return res.status(v.code).json({ error: v.error });
+
+  const db = readDb();
+  const who = v.user.id;
+  const now = new Date().toISOString();
+  const results = [], refused = [];
+  for (const orderNumber of wanted) {
+    const batch = findBatchForOrder(db, orderNumber);
+    if (!batch) { refused.push({ order: orderNumber, why: 'not found' }); continue; }
+    if (!batch.orderStates) batch.orderStates = {};
+    const st = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    // ONLY COMPLETED ORDERS. Open work already has ✕ Cancel / ⌫ Not ours /
+    // deletion — this tool exists solely for the case those refuse.
+    if (st.status === 'unprocessed') { refused.push({ order: orderNumber, why: 'already cancelled' }); continue; }
+    if (st.status !== 'done') { refused.push({ order: orderNumber, why: 'not completed — cancel open orders with the normal ✕ Cancel' }); continue; }
+    const ord = (batch.orders || []).find(o => o.order_number === orderNumber);
+    if (!ord) { refused.push({ order: orderNumber, why: 'not found in its batch' }); continue; }
+
+    const cid = batch.inventory_client || invClientId(batch.client_name);
+    const items = (ord.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: Number(l.qty) || 0 }));
+    let unitsReturned = 0; const shortfalls = [];
+    // GIVE THE DEDUCTION BACK — only if completion actually took it
+    // (`inventory_deducted`), so an untracked batch or a double call can never
+    // inflate stock that was never deducted.
+    if (st.inventory_deducted && inventory.available()) {
+      for (const it of items) {
+        try {
+          inventory.adjust(it.sku, cid, it.qty, 'adjustment',
+            `Reclassified ${orderNumber} from Completed to ${to === 'pending' ? 'Pending' : 'Cancelled'} — units returned to stock`, orderNumber);
+          unitsReturned += it.qty;
+        } catch (e) { /* SKU not on the account — completion never deducted it either */ }
+      }
+      delete st.inventory_deducted;
+    }
+    const wasPickedUp = !!st.pickup;
+    const hadEndTime = st.endTime || '';
+
+    if (to === 'pending') {
+      // RE-TAKE THE RESERVATION a pending tracked order holds. A shortfall is
+      // reported so someone looks, never a block — the order exists either way
+      // and hiding it would repeat the backorder-invisibility mistake.
+      if (batch.inventory_tracked && inventory.available()) {
+        try {
+          for (const r of inventory.reserveOrder(cid, { id: orderNumber, items })) {
+            if (r.ok && r.shortfall > 0) shortfalls.push({ sku: r.sku, short: r.shortfall });
+          }
+        } catch (e) { console.warn('[reclassify] reserve failed:', orderNumber, e.message); }
+      }
+      // BACK TO GENUINELY PENDING: the floor re-picks, so the counts reset.
+      // The scanLog keeps the history — the pick that was undone still
+      // happened, and erasing it would erase the explanation.
+      st.status = 'pending';
+      st.scanned = {};
+      delete st.cartons; delete st.activeCartonNum;
+      delete st.endTime; delete st.endTime_derived; delete st.startTime; delete st.operator;
+      delete st.pickup;                // it has not left — the parcel is back on the bench
+      delete st.claimedBy; delete st.claimedAt;
+      appendScanLog(st, { kind: 'reclassified', by: who, note: `Completed → Pending: ${reason}` });
+    } else {
+      st.status = 'unprocessed';
+      st.unprocessed_reason = reason;
+      st.unprocessed_at = now;         // the day-bucket field — without it the
+                                       // cancellation files under the upload date
+      st.auto_cancelled = false;
+      appendScanLog(st, { kind: 'reclassified', by: who, note: `Completed → Cancelled: ${reason}` });
+      // Tell the hub, through the same guarded path as the office bulk-cancel —
+      // off unless the store opted in, and its own read-back refuses a parcel
+      // that has already shipped.
+      tellHubWeCancelled(db, orderNumber, reason, 'reclassify');
+    }
+    st.updated_at = now;
+    batch.orderStates[orderNumber] = st;
+    journalOrderState(orderNumber, st);
+    logAudit('order_reclassified', { order: orderNumber, from: 'done', to, unitsReturned,
+      shortfalls: shortfalls.length ? shortfalls : undefined,
+      wasPickedUp: wasPickedUp || undefined, completedAt: hadEndTime || undefined,
+      reason, by: who, viaMaster: v.viaMaster || undefined });
+    results.push({ order: orderNumber, to, unitsReturned, shortfalls });
+  }
+  writeDb(db);
+  logAudit('orders_bulk_reclassified', { count: results.length, to, orders: results.map(r => r.order).slice(0, 100),
+    refused: refused.slice(0, 30), reason, by: who });
+  res.json({ ok: true, results, refused,
+    note: results.some(r => r.unitsReturned)
+      ? 'Stock was returned at ACCOUNT level — bin positions are not rewritten, so the affected SKUs want a putaway or cycle count.'
+      : undefined });
+});
+
 // THE MOVE ITSELF, shared by the single-order route and the bulk one — a second
 // copy would drift, and the first thing to drift would be whether the stock
 // followed the order. Returns {ok:false,status,error} instead of touching res,

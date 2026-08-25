@@ -4270,6 +4270,47 @@
     </div>
   </div>
 
+  <!-- Reclassify COMPLETED orders — back to Pending (stock returned & re-reserved,
+       floor re-picks) or to Cancelled (stock returned, recorded unfulfilled).
+       The one password-gated exception to completed-work-is-never-regressed. -->
+  <div id="reclassifyOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">&#8634;</div>
+      <div class="modal-title">Reclassify Completed Orders</div>
+      <p class="modal-desc"><strong id="reclassifyCount">&mdash;</strong> completed order(s) selected:</p>
+      <div id="reclassifyList" style="max-height:110px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.45rem .7rem;font-size:.8rem;font-weight:700;line-height:1.7;margin-bottom:.8rem"></div>
+      <div class="form-group">
+        <label style="display:flex;gap:.5rem;align-items:flex-start;cursor:pointer;font-weight:400">
+          <input type="radio" name="reclassifyTo" value="pending" style="margin-top:.2rem" />
+          <span><b>&#8617; Back to Pending</b><br>
+            <span class="hint" style="margin:0">The completion is undone: units go back into stock and are re-reserved for the order, the counts reset, and the floor picks it again.</span></span>
+        </label>
+        <label style="display:flex;gap:.5rem;align-items:flex-start;cursor:pointer;font-weight:400;margin-top:.5rem">
+          <input type="radio" name="reclassifyTo" value="cancelled" style="margin-top:.2rem" />
+          <span><b>&#10005; Cancel Order</b><br>
+            <span class="hint" style="margin:0">Units go back into stock and the order is recorded as not fulfilled, with your reason. Nothing is reserved.</span></span>
+        </label>
+      </div>
+      <div class="hint" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:.5rem .7rem;border-radius:8px;margin-bottom:.7rem;line-height:1.5">
+        Stock is returned at <b>account</b> level — bin positions are not rewritten, so the affected SKUs will want a putaway or cycle count.
+      </div>
+      <div class="form-group">
+        <label>Reason <span class="cfg-req">*</span></label>
+        <textarea id="reclassifyReason" rows="2" placeholder="Why is this completion being undone? Goes on the audit trail." autocomplete="off"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Your Login Password <span class="cfg-req">*</span></label>
+        <input type="password" id="reclassifyPassword" placeholder="The password you sign in with" autocomplete="new-password" />
+        <div class="hint">The same password you use to sign in. The Administrator key also works.</div>
+      </div>
+      <div id="reclassifyError" class="login-error hidden"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="reclassifyCancelBtn">Cancel</button>
+        <button class="btn-primary" id="reclassifyConfirmBtn">&#8634; Reclassify</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Request Inbound Record Deletion Modal — same admin-request/Master-approve flow as Orders -->
   <div id="deleteInboundOverlay" class="modal-overlay hidden">
     <div class="modal">

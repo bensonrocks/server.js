@@ -2621,6 +2621,7 @@
         <button id="ordersBulkTxn" class="btn-secondary btn-sm" title="Download this client's transaction statement — everything in and out over the date range, with opening and closing balances">&#129534; Transactions</button>
         <button id="ordersBulkComplete" class="btn-secondary btn-sm" title="Complete the selected orders WITHOUT scanning — Administrator password required. Stock deducts and synced orders report back to their store exactly as a scanned completion would.">&#9989; Complete (skip scan)</button>
         <button id="ordersBulkRefile" class="btn-secondary btn-sm" title="Filed under the wrong client? Move the selected orders to the right account — stock, billing and portal visibility go with them. Completed orders included.">&#128260; Refile</button>
+        <button id="ordersBulkReclassify" class="btn-secondary btn-sm" title="Undo the completion of the selected COMPLETED orders — back to Pending (stock returned and re-reserved, floor re-picks) or Cancelled (stock returned, recorded unfulfilled). Your own password is required.">&#8634; Reclassify</button>
         <button id="ordersBulkNotOurs" class="btn-secondary btn-sm" title="Mark these as not ours to fulfil — the client ships them at their end. They leave the packers' list and, unlike deleting, they do NOT come back on the next sync.">&#9003; Not ours (client ships)</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
@@ -2798,6 +2799,17 @@
       delBtn.disabled = selectable.length === 0;
       delBtn.textContent = `\u{1F5D1} Request Deletion${selectable.length ? ` (${selectable.length})` : ''}`;
     }
+    // Reclassify takes COMPLETED orders only, and admins only — the server
+    // enforces the role (403), hiding the button is the courtesy.
+    const reclBtn = document.getElementById('ordersBulkReclassify');
+    if (reclBtn) {
+      const doneSel = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status === 'done' && !o.archived);
+      reclBtn.disabled = doneSel.length === 0;
+      reclBtn.textContent = `\u{21BA} Reclassify${doneSel.length ? ` (${doneSel.length})` : ''}`;
+      reclBtn.classList.toggle('hidden', (currentUser?.role || '') === 'warehouse');
+    }
     // "Create Wave" takes orders that still have picking to do and are not
     // already inside a live wave.
     const waveable = [...orderSelection]
@@ -2845,6 +2857,18 @@
       openRefileModal(picked.map(o => ({
         orderNumber: o.order_number, from: o.client_name || '', done: o.scan_status === 'done',
       })));
+    });
+    document.getElementById('ordersBulkReclassify')?.addEventListener('click', () => {
+      // ONLY COMPLETED ORDERS — this tool exists for the case every other
+      // action refuses. Open work already has ✕ Cancel / deletion.
+      const done = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status === 'done' && !o.archived);
+      if (!done.length) {
+        alert('Reclassify is for COMPLETED orders only.\n\nNone of the selected orders is completed — cancel open orders with the normal actions.');
+        return;
+      }
+      openReclassifyModal(done.map(o => o.order_number));
     });
     document.getElementById('ordersBulkClear')?.addEventListener('click', () => {
       orderSelection.clear();
@@ -8204,6 +8228,65 @@
   // up in batches, and refiling them one at a time is not a fix anyone will
   // finish.
   let _refileTargets = null;   // [{ orderNumber, from, done }]
+  // ── RECLASSIFY COMPLETED ORDERS — Pending or Cancelled, password-gated ────
+  let _reclassifyOrders = [];
+  function openReclassifyModal(orderNumbers) {
+    _reclassifyOrders = orderNumbers || [];
+    if (!_reclassifyOrders.length) return;
+    document.getElementById('reclassifyCount').textContent = String(_reclassifyOrders.length);
+    document.getElementById('reclassifyList').textContent = _reclassifyOrders.join('  ·  ');
+    document.querySelectorAll('input[name="reclassifyTo"]').forEach(r => { r.checked = false; });
+    document.getElementById('reclassifyReason').value = '';
+    document.getElementById('reclassifyPassword').value = '';
+    document.getElementById('reclassifyError').classList.add('hidden');
+    document.getElementById('reclassifyOverlay').classList.remove('hidden');
+  }
+  document.getElementById('reclassifyCancelBtn')?.addEventListener('click', () => {
+    document.getElementById('reclassifyOverlay').classList.add('hidden');
+  });
+  document.getElementById('reclassifyConfirmBtn')?.addEventListener('click', async () => {
+    const to = document.querySelector('input[name="reclassifyTo"]:checked')?.value || '';
+    const reason = document.getElementById('reclassifyReason').value.trim();
+    const password = document.getElementById('reclassifyPassword').value;
+    const errEl = document.getElementById('reclassifyError');
+    const say = m => { errEl.textContent = m; errEl.classList.remove('hidden'); };
+    if (!to) return say('Choose what to reclassify to — back to Pending, or Cancelled.');
+    if (reason.length < 6) return say('Give a real reason — it is the only record of why completed work was undone.');
+    if (!password) return say('Enter your password to confirm.');
+    const btn = document.getElementById('reclassifyConfirmBtn');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/orders/bulk-reclassify', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({ orders: _reclassifyOrders, to, reason, password }),
+      });
+      const data = await r.json();
+      // 403 = wrong password / wrong role. Shown INLINE — never a reload, and
+      // the typed reason survives for the retry.
+      if (!r.ok) return say(data.error || 'Could not reclassify.');
+      document.getElementById('reclassifyOverlay').classList.add('hidden');
+      const lines = [];
+      if ((data.results || []).length) {
+        lines.push(`${data.results.length} order(s) reclassified to ${to === 'pending' ? 'Pending' : 'Cancelled'}.`);
+        const units = data.results.reduce((n, x) => n + (x.unitsReturned || 0), 0);
+        if (units) lines.push(`${units} unit(s) returned to stock.`);
+        const shorts = data.results.flatMap(x => x.shortfalls || []);
+        if (shorts.length) lines.push(`⚠ Short on re-reserve: ${shorts.map(s => `${s.sku} (${s.short})`).join(', ')}.`);
+      }
+      if ((data.refused || []).length) {
+        lines.push(`Refused: ${data.refused.map(x => `${x.order} — ${x.why}`).join('; ')}.`);
+      }
+      if (data.note) lines.push(data.note);
+      alert(lines.join('\n') || 'Nothing changed.');
+      orderSelection.clear();
+      renderOrdersDash();
+    } catch (e) {
+      say(e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   async function openRefileModal(targets) {
     const list = (targets || []).filter(t => t && t.orderNumber);
     if (!list.length) return;
